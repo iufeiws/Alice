@@ -1,0 +1,20 @@
+{
+  "name": "alice-companion-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "dev:api": "npm run build && node dist/apps/api/src/index.js",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.65.0"
+  }
+}

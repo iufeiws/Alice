@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@alice/types": ["packages/types/src/index.ts"],
+      "@alice/config": ["packages/config/src/index.ts"],
+      "@alice/agent": ["core/agent/src/index.ts"],
+      "@alice/event-bus": ["core/event-bus/src/index.ts"],
+      "@alice/input-buffer": ["core/input-buffer/src/index.ts"],
+      "@alice/llm": ["core/llm/src/index.ts"],
+      "@alice/output-router": ["core/output-router/src/index.ts"],
+      "@alice/policy": ["core/policy/src/index.ts"],
+      "@alice/router": ["core/router/src/index.ts"],
+      "@alice/session": ["core/session/src/index.ts"],
+      "@alice/feishu": ["plugins/feishu/src/index.ts"]
+    }
+  },
+  "include": ["apps/**/*.ts", "core/**/*.ts", "plugins/**/*.ts", "packages/**/*.ts", "workers/**/*.ts", "tests/**/*.ts"]
+}

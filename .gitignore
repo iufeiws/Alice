@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+logs/
+memory-files/indexes/
+.env
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*

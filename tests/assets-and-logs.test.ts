@@ -49,6 +49,27 @@ test("file log store uses configured local date for file names and cleanup", () 
   assert.equal(fs.existsSync(path.join(root, "2026-05-16.log.jsonl")), false);
 });
 
+test("file log store resolves timezone dynamically", () => {
+  const root = makeTempDir("logs-dynamic");
+  let timeZone = "UTC";
+  const store = createFileLogStore(root, { getTimeZone: () => timeZone });
+
+  store.append({
+    time: "2026-05-23T18:00:00.000Z",
+    level: "info",
+    message: "utc date"
+  });
+  assert.ok(fs.existsSync(path.join(root, "2026-05-23.log.jsonl")));
+
+  timeZone = "Asia/Singapore";
+  store.append({
+    time: "2026-05-23T18:00:00.000Z",
+    level: "info",
+    message: "singapore date"
+  });
+  assert.ok(fs.existsSync(path.join(root, "2026-05-24.log.jsonl")));
+});
+
 function makeTempDir(name: string): string {
   const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });

@@ -16,7 +16,7 @@ The file is intentionally monolithic for the current prototype. It loads `.env`,
 - Serve JSON admin APIs.
 - Create `AgentCore`.
 - Create the Feishu channel plugin.
-- Persist message logs and memories through `packages/storage`.
+- Persist Core-facing messages, message event logs, and memories through `packages/storage`.
 - Persist system logs through file log storage.
 - Register the daily 04:00 cleanup task.
 
@@ -36,8 +36,10 @@ Admin config:
 
 Admin logs and memory:
 
+- `GET /admin/api/llm-requests`
 - `GET /admin/api/logs`
 - `GET /admin/api/message-logs`
+- `GET /admin/api/message-event-logs`
 - `GET /admin/api/memories`
 
 Feishu:
@@ -53,7 +55,8 @@ Feishu:
 ## Helper Functions
 
 - `appendLog(level, message)`: writes system/debug logs to memory and local JSONL files.
-- `appendMessageLog(input)`: writes message history to memory and SQLite.
+- `appendMessageLog(input)`: writes append-only message event/debug entries to memory and SQLite.
+- `appendLLMRequestLog(input)`: records recent LLM chat payloads for the admin panel.
 - `createLLMClientFromConfig()`: chooses OpenAI-compatible or stub LLM client.
 - `resolveFeishuTestTarget(body)`: resolves admin send tests to the unique bound Feishu contact.
 - `updateEnvFile(path, updates)`: updates `.env` while preserving omitted secret fields.
@@ -61,4 +64,15 @@ Feishu:
 
 ## Operational Notes
 
-System logs are debug artifacts and live under `logs/system`. Message logs and memory live in `data/alice.sqlite`. The API process must be restarted after code changes because the runtime uses compiled files from `dist`.
+System logs are debug artifacts and live under `logs/system`. Core-facing messages, message event logs, and memory live in `data/alice.sqlite`. The API process must be restarted after code changes because the runtime uses compiled files from `dist`.
+
+## Message Runtime
+
+The runtime uses two storage layers:
+
+- `messages`: one current-state row per conversation message. Core reads this table to build context, and the admin Message Log view displays it as chat history.
+- `message_logs`: append-only event/debug entries for Feishu callbacks, send attempts, raw JSON, and failures.
+
+Feishu text messages upsert `messages` and mark a conversation dirty. Feishu reaction/read/recall callbacks only update the matching `messages` row and write debug entries; they do not trigger Core on their own.
+
+The admin panel exposes the latest prebuilt LLM chat request under the `LLM Request` tab. AgentCore records the final `messages` array immediately before calling the configured provider or stub client.

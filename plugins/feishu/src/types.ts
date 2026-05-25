@@ -1,4 +1,5 @@
 import type { AgentOutput, AgentEvent } from "../../../packages/types/src/index.js";
+import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { FeishuPairingStore } from "./pairing.js";
 
 export type FeishuTextMessageEvent = {
@@ -24,6 +25,27 @@ export type FeishuTextMessageEvent = {
     };
   };
 };
+
+export type FeishuMessageLifecycleEvent =
+  | {
+      kind: "reaction.created" | "reaction.deleted";
+      externalEventId?: string;
+      externalMessageId: string;
+      conversationId?: string;
+      actorId?: string;
+      emoji: string;
+      occurredAt: string;
+      raw?: unknown;
+    }
+  | {
+      kind: "message.read" | "message.recalled";
+      externalEventId?: string;
+      externalMessageId: string;
+      conversationId?: string;
+      actorId?: string;
+      occurredAt: string;
+      raw?: unknown;
+    };
 
 export type FeishuSendPlan =
   | {
@@ -71,9 +93,11 @@ export type FeishuOutboundClient = {
 
 export type FeishuPluginDeps = {
   onEvent(event: AgentEvent): Promise<void>;
+  onLifecycleEvent?(event: FeishuMessageLifecycleEvent): Promise<void>;
   log?(level: "info" | "warn" | "error", message: string): void;
   outbound?: FeishuOutboundClient;
   pairingStore?: FeishuPairingStore;
+  time?: CurrentTimeProvider;
 };
 
 export type RenderFeishuOutput = (output: AgentOutput) => FeishuSendPlan;

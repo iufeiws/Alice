@@ -4,10 +4,11 @@ This directory contains the Feishu channel plugin implementation.
 
 ## Module Map
 
-- `index.ts`: plugin factory and AgentCore bridge.
+- `index.ts`: plugin factory and message-runtime bridge.
 - `client.ts`: Feishu/Lark SDK wrapper for WebSocket events and outbound messages.
 - `monitor.ts`: lifecycle facade over the client.
 - `handlers/message.ts`: text message normalization.
+- `handlers/lifecycle.ts`: reaction/read/recall normalization.
 - `renderer.ts`: `AgentOutput` to Feishu send plan.
 - `policy.ts`: Feishu-specific access policy.
 - `pairing.ts`: unique binding store.
@@ -23,6 +24,14 @@ textMessageEventToAgentEvent(raw, bindings, accountId?): Promise<AgentEvent>
 ```
 
 Parses Feishu text event content, resolves a session id, strips mention keys, and returns a standard `AgentEvent`.
+
+```ts
+reactionEventToLifecycleEvent(raw, kind): FeishuMessageLifecycleEvent
+readEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
+recalledEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
+```
+
+Parses Feishu lifecycle callbacks into message-state updates. These updates target an existing message by Feishu `message_id`; they are stored for debug and update the Core-facing message row, but they do not become independent Core messages.
 
 ```ts
 createInMemoryFeishuBindingStore(): FeishuBindingStore
@@ -47,6 +56,14 @@ createFeishuClient(config, deps): FeishuClient
 ```
 
 Starts the Feishu WebSocket client and sends Feishu messages through `client.im.v1.message.create`.
+
+Subscribed event callbacks:
+
+- `im.message.receive_v1`
+- `im.message.reaction.created_v1`
+- `im.message.reaction.deleted_v1`
+- `im.message.message_read_v1`
+- `im.message.recalled_v1`
 
 Media behavior:
 

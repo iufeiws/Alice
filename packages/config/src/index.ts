@@ -68,7 +68,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
 
   return {
     core: {
-      timezone: env.AGENT_TIMEZONE ?? "Asia/Shanghai",
+      timezone: env.AGENT_TIMEZONE ?? "Asia/Singapore",
       defaultAgentProfile: "main",
       inboundDebounceMs: numberValue(env.AGENT_INBOUND_DEBOUNCE_MS, 1000)
     },

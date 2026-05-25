@@ -27,6 +27,12 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 - `data/alice.sqlite` stores message logs and memory records.
 - `logs/system/` stores debug logs; retention is managed by the daily scheduler.
 - `memory-files/indexes/feishu-paired-contacts.json` stores the single bound Feishu contact state.
+- Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). New persisted agent-facing timestamps should use that provider's timezone-aware ISO format, for example `2026-05-25T08:00:00.000+08:00`, not bare UTC-only formatting from direct `new Date().toISOString()`.
+
+## Agent State Notes
+
+- Current expected behavior: messages received during `away`, `sleeping`, or `working` still count elapsed wall-clock time toward the saved `responseDelayMs`; when the state later allows replies, old pending messages may be handled immediately if their elapsed time already exceeds the delay.
+- Current expected behavior: AgentCore is treated as a single non-concurrent worker. `working` is not designed for concurrent or nested `handleEvent()` calls yet.
 
 ## Review Checklist
 

@@ -112,6 +112,8 @@ export function renderAdminHtmlV2(): string {
             <form id="agent-form">
               <label for="inboundDebounceMs">Message Wait Ms</label>
               <input id="inboundDebounceMs" name="inboundDebounceMs" inputmode="numeric" />
+              <label for="timezone">Timezone</label>
+              <input id="timezone" name="timezone" autocomplete="off" />
               <button type="submit">Save</button>
               <p class="muted" id="agent-status"></p>
             </form>
@@ -121,11 +123,15 @@ export function renderAdminHtmlV2(): string {
       <main>
         <div class="tabbar main-tabs">
           <button class="tab active" data-main-tab="prompts" type="button">Prompt</button>
+          <button class="tab" data-main-tab="llm-request" type="button">LLM Request</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
+          <button class="tab" data-main-tab="events" type="button">Event Log</button>
           <button class="tab" data-main-tab="system" type="button">System Log</button>
         </div>
         <section id="main-prompts" class="pane active"><div id="prompts">Loading...</div></section>
+        <section id="main-llm-request" class="pane"><div id="llmRequests" class="logs">No LLM request yet.</div></section>
         <section id="main-messages" class="pane"><div id="messageLogs" class="logs">Loading...</div></section>
+        <section id="main-events" class="pane"><div id="eventLogs" class="logs">Loading...</div></section>
         <section id="main-system" class="pane"><div id="logs" class="logs">Loading...</div></section>
       </main>
     </div>
@@ -133,11 +139,14 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-messages,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-llm-request,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
-      document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", () => setTabs("main", button.dataset.mainTab)));
+      document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
+        setTabs("main", button.dataset.mainTab);
+        if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
+      }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
 
       async function refresh() {
@@ -148,6 +157,7 @@ export function renderAdminHtmlV2(): string {
         $("temperature").value = String(config.llm.temperature ?? "");
         $("timeoutMs").value = String(config.llm.timeoutMs ?? "");
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
+        $("timezone").value = config.core.timezone || "Asia/Singapore";
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
         $("feishuAppId").value = config.plugins.feishu.appId || "";
@@ -160,7 +170,22 @@ export function renderAdminHtmlV2(): string {
         \`).join("");
         const pairings = await fetch("/admin/api/plugins/feishu/pairings").then((res) => res.json());
         $("pairings").textContent = JSON.stringify(pairings.contacts, null, 2);
+        await refreshLLMRequests();
         await refreshLogs();
+      }
+
+      async function refreshLLMRequests() {
+        const payload = await fetch("/admin/api/llm-requests").then((res) => res.json());
+        const current = payload.preview || payload.requests[payload.requests.length - 1];
+        if (!current) {
+          $("llmRequests").textContent = "No messages available to build an LLM request preview.";
+          return;
+        }
+        $("llmRequests").innerHTML = \`
+          <div class="log-line">[\${escapeHtml(current.time)}] source=\${escapeHtml(current.source || "actual")} model=\${escapeHtml(current.model || "")} temperature=\${escapeHtml(current.temperature ?? "")}\${current.conversationId ? " conversation=" + escapeHtml(current.conversationId) : ""}</div>
+          \${current.messages.map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\\n\${escapeHtml(message.content)}</div>\`).join("")}
+        \`;
+        $("llmRequests").scrollTop = 0;
       }
 
       async function refreshLogs() {
@@ -168,8 +193,24 @@ export function renderAdminHtmlV2(): string {
         $("logs").innerHTML = system.logs.map((entry) => \`<div class="log-line log-\${entry.level}">[\${entry.time}] [\${entry.level.toUpperCase()}] \${escapeHtml(entry.message)}</div>\`).join("");
         $("logs").scrollTop = $("logs").scrollHeight;
         const messages = await fetch("/admin/api/message-logs").then((res) => res.json());
-        $("messageLogs").innerHTML = messages.logs.map((entry) => \`<div class="log-line">[\${entry.time}] [\${entry.direction}] [\${entry.plugin}/\${entry.kind}] \${escapeHtml(entry.target || "")} · \${escapeHtml(entry.summary)}</div>\`).join("");
+        $("messageLogs").innerHTML = messages.logs.map((entry) => {
+          const time = entry.createdAt || entry.time;
+          const kind = entry.contentType || entry.kind;
+          const target = entry.conversationId || entry.target || "";
+          const summary = entry.contentText || entry.summary || "";
+          const state = entry.status ? " " + entry.status : "";
+          const flags = [entry.isRead ? "read" : "", entry.isRecalled ? "recalled" : ""].filter(Boolean).join(",");
+          return \`<div class="log-line">[\${time}] [\${entry.direction}\${state}] [\${entry.plugin}/\${kind}] \${escapeHtml(target)}\${flags ? " · " + escapeHtml(flags) : ""} · \${escapeHtml(summary)}</div>\`;
+        }).join("");
         $("messageLogs").scrollTop = $("messageLogs").scrollHeight;
+        const events = await fetch("/admin/api/message-event-logs").then((res) => res.json());
+        $("eventLogs").innerHTML = events.logs.map((entry) => {
+          const status = entry.status ? " " + entry.status : "";
+          const target = entry.target || entry.sessionId || entry.rawMessageId || "";
+          const error = entry.error ? " · error=" + entry.error : "";
+          return \`<div class="log-line">[\${entry.time}] [\${entry.direction}\${status}] [\${entry.plugin}/\${entry.kind}] \${escapeHtml(target)} · \${escapeHtml(entry.summary || "")}\${escapeHtml(error)}</div>\`;
+        }).join("");
+        $("eventLogs").scrollTop = $("eventLogs").scrollHeight;
       }
 
       function escapeHtml(value) {
@@ -201,7 +242,7 @@ export function renderAdminHtmlV2(): string {
       $("agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { inboundDebounceMs: form.get("inboundDebounceMs") };
+        const body = { inboundDebounceMs: form.get("inboundDebounceMs"), timezone: form.get("timezone") };
         const result = await fetch("/admin/api/config/agent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("agent-status").textContent = result.ok ? "Agent config saved." : "Failed to save agent config.";
         await refresh();
@@ -216,6 +257,7 @@ export function renderAdminHtmlV2(): string {
         const result = await fetch("/admin/api/plugins/feishu/" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("send-test-status").textContent = result.ok ? label + " test sent." : label + " test failed: " + (result.error || "unknown error");
         await refreshLogs();
+        await refreshLLMRequests();
       }
       refresh();
       setInterval(refreshLogs, 3000);

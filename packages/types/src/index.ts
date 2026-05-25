@@ -81,7 +81,7 @@ export interface ChannelPlugin {
   id: string;
   start(): Promise<void>;
   stop(): Promise<void>;
-  send(output: AgentOutput): Promise<void>;
+  send(output: AgentOutput): Promise<unknown>;
 }
 
 export type ToolDefinition = {

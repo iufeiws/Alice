@@ -7,8 +7,8 @@
 ```ts
 interface OutputRouter {
   register(plugin: ChannelPlugin): void;
-  send(output: AgentOutput): Promise<void>;
-  sendAll(outputs: AgentOutput[]): Promise<void>;
+  send(output: AgentOutput): Promise<unknown>;
+  sendAll(outputs: AgentOutput[]): Promise<unknown[]>;
   listChannels(): string[];
 }
 ```
@@ -21,4 +21,4 @@ createOutputRouter(): OutputRouter
 
 ## Behavior
 
-The target plugin is read from `output.target.plugin`. If no matching channel is registered, `send()` throws.
+The target plugin is read from `output.target.plugin`. If no matching channel is registered, `send()` throws. Channel send results are returned to the caller so the message runtime can persist platform ids after successful sends.

@@ -1,5 +1,6 @@
 import type { FeishuConfig } from "../../../packages/config/src/index.js";
 import type { AgentEvent } from "../../../packages/types/src/index.js";
+import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 
 export type FeishuPairedContact = {
   id: string;
@@ -25,7 +26,8 @@ export interface FeishuPairingStore {
   pairFromEvent(event: AgentEvent): { ok: true; contact: FeishuPairedContact } | { ok: false; reason: "already_bound"; contact: FeishuPairedContact };
 }
 
-export function createFeishuPairingStore(path: string, io: PairingFileIO): FeishuPairingStore {
+export function createFeishuPairingStore(path: string, io: PairingFileIO, options: { time?: CurrentTimeProvider } = {}): FeishuPairingStore {
+  const time = options.time ?? createCurrentTimeProvider("UTC");
   let contacts = readContacts(path, io);
 
   function save(): void {
@@ -46,7 +48,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO): Feish
       });
     },
     pairFromEvent(event) {
-      const now = new Date().toISOString();
+      const now = time.now().iso;
       const id = event.session.scope === "dm"
         ? `feishu:dm:${event.source.userId ?? event.source.channelId ?? event.session.sessionId}`
         : `feishu:group:${event.source.channelId ?? event.session.sessionId}`;

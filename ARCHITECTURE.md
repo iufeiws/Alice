@@ -25,6 +25,7 @@ OutputRouter
 Feishu Channel Plugin
   WebSocket event subscription
   text normalization
+  reaction/read/recall lifecycle normalization
   unique user pairing
   markdown/image/audio/file sending
 ```
@@ -40,16 +41,26 @@ Feishu WS event
   -> plugins/feishu client
   -> textMessageEventToAgentEvent()
   -> pairing and Feishu policy checks
-  -> AgentCore.handleEvent()
+  -> messages table upsert
+  -> message event log append
+  -> MessageRuntime dirty conversation debounce
+  -> AgentCore.handleEvent() with context from messages
   -> memory recall from SQLite
   -> OpenAI-compatible /v1/chat/completions call
   -> memory capture into SQLite
-  -> AgentOutput
+  -> AgentOutput inserted as messages.status=sending
   -> OutputRouter
   -> Feishu send API
+  -> messages.status=sent or send_failed
 ```
 
-Inbound and outbound user-facing messages are persisted as message logs in SQLite. System/debug logs are written to local JSONL files.
+Inbound and outbound user-facing messages are persisted in the Core-facing `messages` table in SQLite. Feishu callbacks and send attempts are also written to append-only `message_logs` event/debug entries. System/debug logs are written to local JSONL files.
+
+Feishu lifecycle callbacks are message-state updates, not standalone Core messages:
+
+- `im.message.reaction.created_v1` and `im.message.reaction.deleted_v1` update `messages.reactions_json`.
+- `im.message.message_read_v1` updates `messages.is_read/read_at`.
+- `im.message.recalled_v1` updates `messages.is_recalled/recalled_at`.
 
 ### Admin Send Test
 
@@ -146,7 +157,7 @@ The UI uses the JSON endpoints in `apps/api/src/index.ts`; there is no separate 
 - Only one Feishu user/contact can be bound.
 - Agent behavior is still a placeholder prompt.
 - Memory extraction is heuristic and text-only.
-- Message logs persist, but older in-memory-only logs from before SQLite migration cannot be recovered.
-- Feishu receive path currently normalizes text messages only.
+- Core-facing messages persist, but older in-memory-only logs from before SQLite migration cannot be recovered.
+- Feishu receive path currently normalizes text messages plus reaction/read/recall lifecycle updates.
 - Feishu send path supports markdown card, image, audio, and file, but media must be provided as local file paths.
 - Codex, skills, workers, desktop pet, and full web admin are still placeholders.

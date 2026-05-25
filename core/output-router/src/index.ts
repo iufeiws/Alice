@@ -2,8 +2,8 @@ import type { AgentOutput, ChannelPlugin } from "../../../packages/types/src/ind
 
 export interface OutputRouter {
   register(plugin: ChannelPlugin): void;
-  send(output: AgentOutput): Promise<void>;
-  sendAll(outputs: AgentOutput[]): Promise<void>;
+  send(output: AgentOutput): Promise<unknown>;
+  sendAll(outputs: AgentOutput[]): Promise<unknown[]>;
   listChannels(): string[];
 }
 
@@ -18,10 +18,10 @@ export function createOutputRouter(): OutputRouter {
       if (!channel) {
         throw new Error(`No channel plugin registered for ${output.target.plugin}`);
       }
-      await channel.send(output);
+      return channel.send(output);
     },
     async sendAll(outputs) {
-      await Promise.all(outputs.map((output) => router.send(output)));
+      return Promise.all(outputs.map((output) => router.send(output)));
     },
     listChannels() {
       return [...channels.keys()];

@@ -1,20 +1,27 @@
 import type { FeishuConfig } from "../../../packages/config/src/index.js";
+import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
 export type FeishuClient = {
   start(): Promise<void>;
   stop(): Promise<void>;
-  sendText(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; text: string }): Promise<void>;
-  sendMarkdown(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; markdown: string }): Promise<void>;
-  sendImage(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string }): Promise<void>;
-  sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<void>;
-  sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<void>;
+  sendText(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; text: string }): Promise<FeishuSendResult>;
+  sendMarkdown(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; markdown: string }): Promise<FeishuSendResult>;
+  sendImage(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string }): Promise<FeishuSendResult>;
+  sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
+  sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
+};
+
+export type FeishuSendResult = {
+  messageId?: string;
 };
 
 export type FeishuClientDeps = {
   onMessage(data: unknown): Promise<void>;
+  onLifecycle?(kind: "reaction.created" | "reaction.deleted" | "message.read" | "message.recalled", data: unknown): Promise<void>;
   log?(level: "info" | "warn" | "error", message: string): void;
+  time?: CurrentTimeProvider;
 };
 
 type LarkModule = {
@@ -26,6 +33,7 @@ type LarkModule = {
 };
 
 export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps): FeishuClient {
+  const time = deps.time ?? createCurrentTimeProvider("UTC");
   let client: any;
   let wsClient: any;
   let lark: LarkModule | undefined;
@@ -63,7 +71,23 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       const eventDispatcher = new lark.EventDispatcher({}).register({
         "im.message.receive_v1": async (data: any) => {
           deps.log?.("info", `[feishu] received im.message.receive_v1 ${data?.message?.message_id ?? ""}`);
-          await deps.onMessage(wrapLarkMessageEvent(data));
+          await deps.onMessage(wrapLarkMessageEvent(data, time));
+        },
+        "im.message.reaction.created_v1": async (data: any) => {
+          deps.log?.("info", `[feishu] received im.message.reaction.created_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          await deps.onLifecycle?.("reaction.created", data);
+        },
+        "im.message.reaction.deleted_v1": async (data: any) => {
+          deps.log?.("info", `[feishu] received im.message.reaction.deleted_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          await deps.onLifecycle?.("reaction.deleted", data);
+        },
+        "im.message.message_read_v1": async (data: any) => {
+          deps.log?.("info", `[feishu] received im.message.message_read_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          await deps.onLifecycle?.("message.read", data);
+        },
+        "im.message.recalled_v1": async (data: any) => {
+          deps.log?.("info", `[feishu] received im.message.recalled_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          await deps.onLifecycle?.("message.recalled", data);
         }
       });
 
@@ -85,22 +109,24 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       deps.log?.("info", "[feishu] websocket client stopped");
     },
     async sendText(input) {
-      await sendMessage(client, {
+      const result = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
         msgType: "text",
         content: { text: input.text }
       });
       deps.log?.("info", `[feishu] sent text to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
     },
     async sendMarkdown(input) {
-      await sendMessage(client, {
+      const result = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
         msgType: "interactive",
         content: buildMarkdownCard(input.markdown)
       });
       deps.log?.("info", `[feishu] sent markdown card to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
     },
     async sendImage(input) {
       assertStarted(client);
@@ -114,13 +140,14 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       const imageKey = uploaded?.image_key;
       if (!imageKey) throw new Error("Feishu image upload did not return image_key");
 
-      await sendMessage(client, {
+      const result = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
         msgType: "image",
         content: { image_key: imageKey }
       });
       deps.log?.("info", `[feishu] sent image ${path.basename(imagePath)} to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
     },
     async sendAudio(input) {
       const audioPath = resolveAssetPath(input.assetId);
@@ -131,13 +158,14 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         duration: input.duration
       });
 
-      await sendMessage(client, {
+      const result = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
         msgType: "audio",
         content: { file_key: uploaded }
       });
       deps.log?.("info", `[feishu] sent audio ${path.basename(audioPath)} to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
     },
     async sendFile(input) {
       const filePath = resolveAssetPath(input.assetId);
@@ -147,13 +175,14 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         fileName: input.filename
       });
 
-      await sendMessage(client, {
+      const result = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
         msgType: "file",
         content: { file_key: uploaded }
       });
       deps.log?.("info", `[feishu] sent file ${input.filename} to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
     }
   };
 }
@@ -172,9 +201,9 @@ async function sendMessage(
     msgType: string;
     content: Record<string, unknown>;
   }
-): Promise<void> {
+): Promise<FeishuSendResult> {
   assertStarted(client);
-  await client.im.v1.message.create({
+  const result = await client.im.v1.message.create({
     params: {
       receive_id_type: input.receiveIdType
     },
@@ -184,6 +213,7 @@ async function sendMessage(
       msg_type: input.msgType
     }
   });
+  return { messageId: result?.message_id ?? result?.data?.message_id };
 }
 
 async function uploadFile(
@@ -236,12 +266,12 @@ function resolveAssetPath(assetId: string): string {
   return filePath;
 }
 
-function wrapLarkMessageEvent(data: any): unknown {
+function wrapLarkMessageEvent(data: any, time: CurrentTimeProvider): unknown {
   return {
     schema: "2.0",
     header: {
       event_id: data?.event_id,
-      create_time: data?.message?.create_time ?? Date.now().toString()
+      create_time: data?.message?.create_time ?? time.now().epochMs.toString()
     },
     event: {
       message: {

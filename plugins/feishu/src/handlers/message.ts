@@ -1,12 +1,14 @@
 import type { AgentEvent } from "../../../../packages/types/src/index.js";
 import { createId } from "../../../../packages/types/src/index.js";
+import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../../core/time/src/index.js";
 import type { FeishuBindingStore } from "../bindings.js";
 import type { FeishuTextMessageEvent } from "../types.js";
 
 export async function textMessageEventToAgentEvent(
   raw: FeishuTextMessageEvent,
   bindings: FeishuBindingStore,
-  accountId = "main"
+  accountId = "main",
+  time: CurrentTimeProvider = createCurrentTimeProvider("UTC")
 ): Promise<AgentEvent> {
   const message = raw.event.message;
   const sender = raw.event.sender.sender_id;
@@ -43,7 +45,7 @@ export async function textMessageEventToAgentEvent(
       text
     },
     meta: {
-      receivedAt: raw.header?.create_time ? new Date(Number(raw.header.create_time)).toISOString() : new Date().toISOString(),
+      receivedAt: raw.header?.create_time ? time.addMs(0, new Date(Number(raw.header.create_time))).iso : time.now().iso,
       mentionsBot,
       replyTo: message.message_id,
       raw

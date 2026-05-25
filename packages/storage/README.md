@@ -18,7 +18,8 @@ createAliceStore(dbPath): AliceStore
 
 Responsibilities:
 
-- Persist message logs.
+- Persist Core-facing conversation messages.
+- Persist append-only message event logs for debugging.
 - Persist lightweight memories.
 - Create SQLite FTS5 index for memory recall.
 - Capture text turns after AgentCore responses.
@@ -28,9 +29,24 @@ Important methods:
 
 - `insertMessageLog(input)`
 - `listMessageLogs(limit)`
+- `upsertInboundMessage(input)`
+- `insertOutboundMessage(input)`
+- `listMessages(limit)`
+- `listMessagesForConversation(conversationId, limit)`
+- `markMessageRead(plugin, externalMessageId, readAt)`
+- `markMessageRecalled(plugin, externalMessageId, recalledAt)`
+- `updateMessageReaction(input)`
 - `captureTurn(event, outputs)`
 - `recallForEvent(event, limit)`
 - `listMemories(limit)`
+
+## Message Tables
+
+`messages` is the Core-facing conversation state. It stores one row per inbound or outbound message with content, sender, time, send status, read/recall flags, and aggregated reactions. Core context is built from this table.
+
+`message_logs` is an append-only event/debug log. It records Feishu callbacks, outbound send attempts, raw JSON, errors, and processing metadata. Reaction/read/recall events are stored here for debugging, then applied to the matching row in `messages`.
+
+Schema migration backfills older message event log rows into `messages` when possible. Normal message rows become conversation messages; older read/recall/reaction events are applied as state updates to their matching message id.
 
 SQLite state lives at:
 

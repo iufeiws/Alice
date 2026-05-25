@@ -1,5 +1,6 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMClient } from "../../../core/llm/src/index.js";
+import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import { defaultPromptRegistry } from "../../../core/agent/src/prompts.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody } from "./http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
@@ -10,17 +11,21 @@ export type AdminRoutesContext = {
   config: AppConfig;
   logs: unknown[];
   messageLogs: unknown[];
-  store: { listMemories(limit: number): unknown[] } | undefined;
+  llmRequestLogs: unknown[];
+  store: { listMemories(limit: number): unknown[]; listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
+  getLLMRequestPreview(): unknown;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
-    send(output: any): Promise<void>;
+    send(output: any): Promise<unknown>;
   };
   runtime: { feishuStarted: boolean };
   getLLM(): LLMClient;
   reloadLLM(): void;
+  time: CurrentTimeProvider;
+  setTimeZone(timeZone: string): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: {
     direction: "inbound" | "outbound";
@@ -28,6 +33,7 @@ export type AdminRoutesContext = {
     kind: string;
     target?: string;
     sessionId?: string;
+    status?: string;
     summary: string;
   }): unknown;
 };
@@ -62,13 +68,23 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
+        writeJson(response, 200, { requests: context.llmRequestLogs, preview: context.getLLMRequestPreview() });
+        return;
+      }
+
       if (request.method === "GET" && request.url === "/admin/api/logs") {
         writeJson(response, 200, { logs: context.logs });
         return;
       }
 
       if (request.method === "GET" && request.url === "/admin/api/message-logs") {
-        writeJson(response, 200, { logs: context.messageLogs });
+        writeJson(response, 200, { logs: context.store?.listMessages?.(500) ?? context.messageLogs });
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/message-event-logs") {
+        writeJson(response, 200, { logs: context.store?.listMessageLogs?.(500) ?? context.messageLogs });
         return;
       }
 
@@ -160,7 +176,7 @@ async function sendFeishuTest(context: AdminRoutesContext, request: any, respons
     target,
     content,
     meta: {
-      createdAt: new Date().toISOString(),
+      createdAt: context.time.now().iso,
       urgency: "normal"
     }
   });
@@ -258,13 +274,23 @@ async function saveFeishuConfig(context: AdminRoutesContext, request: any, respo
 async function saveAgentConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const inboundDebounceMs = numberFromUnknown(body.inboundDebounceMs, context.config.core.inboundDebounceMs);
+  const timezone = requiredString(body.timezone) || context.config.core.timezone;
   if (inboundDebounceMs < 0 || inboundDebounceMs > 10_000) {
     writeJson(response, 400, { ok: false, error: "invalid_inbound_debounce_ms" });
     return;
   }
-  updateEnvFile(".env", { AGENT_INBOUND_DEBOUNCE_MS: String(inboundDebounceMs) });
+  if (!isValidTimeZone(timezone)) {
+    writeJson(response, 400, { ok: false, error: "invalid_timezone" });
+    return;
+  }
+  updateEnvFile(".env", {
+    AGENT_INBOUND_DEBOUNCE_MS: String(inboundDebounceMs),
+    AGENT_TIMEZONE: timezone
+  });
   context.config.core.inboundDebounceMs = inboundDebounceMs;
-  context.appendLog("info", `agent config saved: inboundDebounceMs=${inboundDebounceMs}`);
+  context.config.core.timezone = timezone;
+  context.setTimeZone(timezone);
+  context.appendLog("info", `agent config saved: inboundDebounceMs=${inboundDebounceMs} timezone=${timezone}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
@@ -367,6 +393,15 @@ function optionalString(value: unknown): string | undefined {
 function requiredString(value: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value);
+}
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function numberFromUnknown(value: unknown, fallback: number): number {

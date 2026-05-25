@@ -14,10 +14,10 @@ export type FileLogStore = {
   cleanupOlderThan(retentionDays: number, now?: Date): number;
 };
 
-export function createFileLogStore(root: string, options: { timeZone?: string } = {}): FileLogStore {
+export function createFileLogStore(root: string, options: { timeZone?: string; getTimeZone?: () => string | undefined } = {}): FileLogStore {
   fs.mkdirSync(root, { recursive: true });
   let nextId = Math.max(1, ...readAll(root).map((entry) => entry.id + 1));
-  const timeZone = options.timeZone;
+  const getTimeZone = options.getTimeZone ?? (() => options.timeZone);
 
   return {
     append(input) {
@@ -27,7 +27,7 @@ export function createFileLogStore(root: string, options: { timeZone?: string } 
       };
       nextId += 1;
 
-      fs.appendFileSync(logPathFor(root, input.time, timeZone), `${JSON.stringify(entry)}\n`);
+      fs.appendFileSync(logPathFor(root, input.time, getTimeZone()), `${JSON.stringify(entry)}\n`);
       return entry;
     },
     listRecent(limit) {
@@ -39,7 +39,7 @@ export function createFileLogStore(root: string, options: { timeZone?: string } 
       for (const file of fs.readdirSync(root)) {
         if (!file.endsWith(".log.jsonl")) continue;
         const date = file.slice(0, "YYYY-MM-DD".length);
-        if (date < toLocalDate(cutoff, timeZone)) {
+        if (date < toLocalDate(cutoff, getTimeZone())) {
           fs.rmSync(path.join(root, file));
           removed += 1;
         }

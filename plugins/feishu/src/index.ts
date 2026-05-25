@@ -5,20 +5,27 @@ import { isFeishuConfigured } from "./config.js";
 import { createFeishuMonitor } from "./monitor.js";
 import { checkFeishuEventPolicy } from "./policy.js";
 import { renderForFeishu } from "./renderer.js";
-import type { FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
+import type { FeishuMessageLifecycleEvent, FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
 import { textMessageEventToAgentEvent } from "./handlers/message.js";
+import { reactionEventToLifecycleEvent, readEventToLifecycleEvent, recalledEventToLifecycleEvent } from "./handlers/lifecycle.js";
 import { getPairingCommand, isPairingCommand } from "./pairing.js";
 import { createRecentMessageDeduper } from "./dedupe.js";
+import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
 
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
 } {
+  const time = deps.time ?? createCurrentTimeProvider("UTC");
   const bindings = createInMemoryFeishuBindingStore();
   const deduper = createRecentMessageDeduper();
   const monitor = createFeishuMonitor(config, {
     log: deps.log,
+    time,
     async onMessage(raw) {
       await receiveTextMessage(raw as FeishuTextMessageEvent);
+    },
+    async onLifecycle(kind, raw) {
+      await receiveLifecycleEvent(kind, raw);
     }
   });
 
@@ -37,49 +44,44 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     async send(output: AgentOutput) {
       const plan = renderForFeishu(output);
       if (deps.outbound) {
-        await deps.outbound.send(plan);
-        return;
+        return deps.outbound.send(plan);
       }
 
       if (plan.kind === "text") {
-        await monitor.sendText({
+        return monitor.sendText({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           text: plan.text
         });
-        return;
       }
 
       if (plan.kind === "markdown") {
-        await monitor.sendMarkdown({
+        return monitor.sendMarkdown({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           markdown: plan.markdown
         });
-        return;
       }
 
       if (plan.kind === "image") {
-        await monitor.sendImage({
+        return monitor.sendImage({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           assetId: plan.assetId
         });
-        return;
       }
 
       if (plan.kind === "audio") {
-        await monitor.sendAudio({
+        return monitor.sendAudio({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           assetId: plan.assetId,
           duration: plan.duration,
           filename: plan.filename
         });
-        return;
       }
 
-      await monitor.sendFile({
+      return monitor.sendFile({
         receiveIdType: plan.receiveIdType,
         receiveId: plan.receiveId,
         assetId: plan.assetId,
@@ -91,9 +93,26 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     }
   };
 
+  async function receiveLifecycleEvent(
+    kind: "reaction.created" | "reaction.deleted" | "message.read" | "message.recalled",
+    raw: unknown
+  ): Promise<void> {
+    try {
+      const event = normalizeLifecycleEvent(kind, raw, time);
+      if (!event.externalMessageId) {
+        deps.log?.("warn", `[feishu] ignored ${kind}: missing message id`);
+        return;
+      }
+      deps.log?.("info", `[feishu] normalized lifecycle ${kind} ${event.externalMessageId}`);
+      await deps.onLifecycleEvent?.(event);
+    } catch (error) {
+      deps.log?.("error", `[feishu] failed to receive lifecycle event: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async function receiveTextMessage(raw: FeishuTextMessageEvent): Promise<void> {
     try {
-      const event = await textMessageEventToAgentEvent(raw, bindings);
+      const event = await textMessageEventToAgentEvent(raw, bindings, "main", time);
       deps.log?.("info", `[feishu] normalized message ${event.source.rawMessageId ?? event.id}: ${event.payload.kind}`);
       const dedupeKey = event.source.rawMessageId ?? event.id;
       if (!deduper.remember(dedupeKey)) {
@@ -134,7 +153,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
               text: "Pairing rejected. This agent is already bound to one Feishu user."
             },
             meta: {
-              createdAt: new Date().toISOString(),
+              createdAt: time.now().iso,
               urgency: "normal"
             }
           });
@@ -157,7 +176,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
             text: "Paired as the unique Feishu user. I can now reply here and keep this contact for future proactive messages."
           },
           meta: {
-            createdAt: new Date().toISOString(),
+              createdAt: time.now().iso,
             urgency: "normal"
           }
         });
@@ -179,6 +198,20 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
   return plugin;
 }
 
+function normalizeLifecycleEvent(
+  kind: "reaction.created" | "reaction.deleted" | "message.read" | "message.recalled",
+  raw: unknown,
+  time = createCurrentTimeProvider("UTC")
+): FeishuMessageLifecycleEvent {
+  if (kind === "reaction.created" || kind === "reaction.deleted") {
+    return reactionEventToLifecycleEvent(raw, kind, time);
+  }
+  if (kind === "message.read") {
+    return readEventToLifecycleEvent(raw, time);
+  }
+  return recalledEventToLifecycleEvent(raw, time);
+}
+
 export { renderForFeishu } from "./renderer.js";
 export { textMessageEventToAgentEvent } from "./handlers/message.js";
-export type { FeishuSendPlan, FeishuTextMessageEvent } from "./types.js";
+export type { FeishuMessageLifecycleEvent, FeishuSendPlan, FeishuTextMessageEvent } from "./types.js";

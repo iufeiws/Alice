@@ -37,7 +37,7 @@ interface ChannelPlugin {
   id: string;
   start(): Promise<void>;
   stop(): Promise<void>;
-  send(output: AgentOutput): Promise<void>;
+  send(output: AgentOutput): Promise<unknown>;
 }
 
 interface ToolPlugin {
@@ -46,5 +46,7 @@ interface ToolPlugin {
   execute(call: ToolCall): Promise<ToolResult>;
 }
 ```
+
+`send()` may return platform send metadata. Feishu returns `{ messageId }` when the platform response includes a message id, allowing storage to update outbound message state.
 
 Tool plugins are defined but not used by the current runtime.

@@ -104,6 +104,21 @@ export function renderAdminHtmlV2(): string {
             <input id="testAudioPath" autocomplete="off" value="/home/wyf98/Alice/assets/test.opus" />
             <button type="button" id="send-test-audio">Send Audio</button>
             <p class="muted" id="send-test-status"></p>
+            <h2>Messaging Tools</h2>
+            <label for="toolViewScope">View Scope</label>
+            <input id="toolViewScope" autocomplete="off" value="today" />
+            <button type="button" id="tool-view">View Messages</button>
+            <label for="toolSearchContent">Search Content</label>
+            <input id="toolSearchContent" autocomplete="off" />
+            <label for="toolSearchDirection">Search Direction</label>
+            <input id="toolSearchDirection" autocomplete="off" value="backward" />
+            <button type="button" id="tool-search">Search Messages</button>
+            <label for="toolSendType">Send Type</label>
+            <input id="toolSendType" autocomplete="off" value="message" />
+            <label for="toolSendContent">Send Content</label>
+            <textarea id="toolSendContent" rows="4"></textarea>
+            <button type="button" id="tool-send">Send Message</button>
+            <pre id="tool-result">No tool run yet.</pre>
             <h2>Unique Bound Contact</h2>
             <pre id="pairings">Loading...</pre>
           </div>
@@ -183,6 +198,7 @@ export function renderAdminHtmlV2(): string {
         }
         $("llmRequests").innerHTML = \`
           <div class="log-line">[\${escapeHtml(current.time)}] source=\${escapeHtml(current.source || "actual")} model=\${escapeHtml(current.model || "")} temperature=\${escapeHtml(current.temperature ?? "")}\${current.conversationId ? " conversation=" + escapeHtml(current.conversationId) : ""}</div>
+          \${current.tools ? \`<div class="log-line">tools: \${escapeHtml(current.tools.map((tool) => tool.function.name).join(", "))}</div>\` : ""}
           \${current.messages.map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\\n\${escapeHtml(message.content)}</div>\`).join("")}
         \`;
         $("llmRequests").scrollTop = 0;
@@ -253,9 +269,18 @@ export function renderAdminHtmlV2(): string {
       $("send-test-markdown").addEventListener("click", async () => sendTest("test-markdown", { markdown: $("testMarkdown").value }, "Markdown"));
       $("send-test-image").addEventListener("click", async () => sendTest("test-image", { assetId: $("testImagePath").value }, "Image"));
       $("send-test-audio").addEventListener("click", async () => sendTest("test-audio", { assetId: $("testAudioPath").value }, "Audio"));
+      $("tool-view").addEventListener("click", async () => runMessagingTool("view", { scope: $("toolViewScope").value || "today" }));
+      $("tool-search").addEventListener("click", async () => runMessagingTool("search", { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
+      $("tool-send").addEventListener("click", async () => runMessagingTool("send", { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));
       async function sendTest(path, body, label) {
         const result = await fetch("/admin/api/plugins/feishu/" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("send-test-status").textContent = result.ok ? label + " test sent." : label + " test failed: " + (result.error || "unknown error");
+        await refreshLogs();
+        await refreshLLMRequests();
+      }
+      async function runMessagingTool(path, body) {
+        const result = await fetch("/admin/api/tools/messaging/" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
+        $("tool-result").textContent = result.content || result.error || "";
         await refreshLogs();
         await refreshLLMRequests();
       }

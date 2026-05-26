@@ -95,6 +95,7 @@ export type ToolCall = {
   toolName: string;
   input: Record<string, unknown>;
   requester?: AgentEvent["source"];
+  session?: AgentEvent["session"];
 };
 
 export type ToolResult = {

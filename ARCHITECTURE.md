@@ -15,6 +15,7 @@ apps/api
 AgentCore
   Intent routing
   LLM call
+  Tool-call execution
   memory recall/capture hooks
     |
     | sends AgentOutput through
@@ -47,6 +48,7 @@ Feishu WS event
   -> AgentCore.handleEvent() with context from messages
   -> memory recall from SQLite
   -> OpenAI-compatible /v1/chat/completions call
+  -> optional platform-neutral messaging tool calls
   -> memory capture into SQLite
   -> AgentOutput inserted as messages.status=sending
   -> OutputRouter
@@ -99,7 +101,7 @@ The shared internal protocol lives in `packages/types`.
 - `AgentPayload`: normalized message payload.
 - `AgentOutput`: normalized outbound message.
 - `ChannelPlugin`: channel lifecycle and send interface.
-- `ToolPlugin`: placeholder interface for future tool plugins.
+- `ToolPlugin`: platform-neutral function tools executable by AgentCore.
 
 AgentCore only consumes `AgentEvent` and emits `AgentOutput`; platform-specific details stay in plugins.
 
@@ -113,7 +115,9 @@ Alice follows the same broad split used by local-first agent systems such as Ope
 
 Current implementation:
 
-- SQLite table `message_logs` persists user-visible message history.
+- SQLite table `message_logs` persists user-visible message events.
+- SQLite table `messages` stores user-facing conversation history and is indexed by `messages_fts` for persisted message search tools.
+- SQLite table `tool_cursors` stores per-conversation cursors for `view_messages(scope="new")`.
 - SQLite table `memories` stores lightweight episodic memories.
 - SQLite FTS5 table `memories_fts` supports keyword recall.
 - `AgentCoreDeps.memory.recall()` injects relevant memory as an additional system message.
@@ -144,7 +148,7 @@ Layout:
 
 - Left collapsible panel:
   - LLM Settings
-  - Feishu Settings, including send tests and unique binding info
+  - Feishu Settings, including send tests, messaging tool trials, and unique binding info
 - Right panel:
   - Prompt
   - Message Log

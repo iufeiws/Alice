@@ -78,6 +78,30 @@ Supported send kinds:
 
 For media, `assetId` currently means a local file path or `file://` path.
 
+## Agent Messaging Tools
+
+AgentCore exposes platform-neutral tool names to the LLM. Feishu is the current adapter behind those tools:
+
+- `view_messages`
+  - args: `scope?: "today" | "new"`; default `today`.
+  - legacy typo `scpe` is accepted as an alias.
+  - `new` uses a persisted per-conversation cursor.
+  - output is a plain string for the LLM; lines use: `[{local time}] user/Alice:{content}[reaction][已撤回]`.
+  - no new messages returns `nothing new`.
+- `search_messages`
+  - args: `content`, `direction?: "backward" | "forward"`, `limit?: number`, `contextCount?: number`.
+  - defaults: `direction="backward"`, `limit=3`, `contextCount=10`.
+  - Chinese aliases are accepted: `从后到前`, `从前到后`.
+  - searches persisted Feishu messages through SQLite FTS5.
+  - output is plain context text, not JSON.
+- `send_message`
+  - args: `type?: "message" | "markdown" | "image"`, `content`.
+  - default `type` is `message`.
+  - in `message` mode, newline-separated content is split into multiple Feishu text messages.
+  - split text messages are sent 500 ms apart.
+  - with streaming LLM responses, each decoded newline in `content` is sent immediately instead of waiting for the final JSON tool arguments.
+  - `voice` is intentionally unsupported.
+
 ## Key Functions
 
 - `createFeishuClient(config, deps)`: wraps Feishu SDK `Client` and `WSClient`.

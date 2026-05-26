@@ -9,6 +9,7 @@ import { createIntentRouter } from "../../../core/router/src/index.js";
 import { createSessionResolver } from "../../../core/session/src/index.js";
 import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
+import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyScheduler } from "../../../core/scheduler/src/index.js";
@@ -55,6 +56,7 @@ type LLMRequestLogEntry = {
   model?: string;
   temperature?: number;
   messages: LLMChatInput["messages"];
+  tools?: LLMChatInput["tools"];
 };
 
 type LLMRequestPreview = LLMRequestLogEntry & {
@@ -118,6 +120,23 @@ const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu
     fs.writeFileSync(filePath, content);
   }
 }, { time: currentTime });
+const messagingTools = createMessagingTools({
+  store,
+  outputRouter,
+  time: currentTime,
+  getDefaultTarget() {
+    const contact = feishuPairingStore.list()[0];
+    if (!contact) return undefined;
+    return {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: contact.channelId,
+      userId: contact.channelId ? undefined : contact.userId,
+      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
+    };
+  },
+  appendMessageLog
+});
 const core = createAgentCore({
   config,
   llm: activeLLM,
@@ -137,6 +156,7 @@ const core = createAgentCore({
       store?.captureTurn(event, outputs);
     }
   },
+  tools: [messagingTools],
   state: agentState,
   time: currentTime,
   onLLMRequestPrepared: appendLLMRequestLog
@@ -188,6 +208,7 @@ const server = http.createServer(createApiRequestHandler({
   getLLMRequestPreview,
   outputRouter,
   feishuPairingStore,
+  messagingTools,
   feishu,
   runtime: runtimeState,
   getLLM: () => llm,
@@ -305,7 +326,8 @@ function appendLLMRequestLog(input: LLMChatInput): void {
     time: currentTime.now().iso,
     model: input.model,
     temperature: input.temperature,
-    messages: input.messages.map((message) => ({ ...message }))
+    messages: input.messages.map((message) => ({ ...message })),
+    tools: input.tools?.map((tool) => ({ ...tool, function: { ...tool.function } }))
   });
   nextLLMRequestLogId += 1;
   if (llmRequestLogs.length > 50) {
@@ -374,7 +396,15 @@ function buildLLMRequestPreviewFromMessages(): LLMRequestPreview | undefined {
           }]
         : []),
       { role: "user", content: userContent }
-    ]
+    ],
+    tools: messagingTools.listTools().map((tool) => ({
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema
+      }
+    }))
   };
 }
 

@@ -6,7 +6,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 type DatabaseSync = any;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 export type StoredMessageLog = {
   id: number;
@@ -74,6 +74,9 @@ export type AliceStore = {
   insertOutboundMessage(input: InsertOutboundMessageInput): StoredConversationMessage;
   listMessages(limit: number): StoredConversationMessage[];
   listMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
+  searchMessages(input: SearchMessagesInput): StoredConversationMessage[];
+  getToolCursor(plugin: string, conversationId: string, toolName: string): number | undefined;
+  setToolCursor(plugin: string, conversationId: string, toolName: string, lastSeenMessageId: number): void;
   listPendingCoreConversations(): Array<{ conversationId: string; latestMessageId: number; latestTime: string }>;
   listUnprocessedCoreMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
   markMessagesCoreProcessed(ids: number[], processedAt: string, batchId: string): void;
@@ -86,6 +89,14 @@ export type AliceStore = {
   captureTurn(event: AgentEvent, outputs: AgentOutput[]): void;
   recallForEvent(event: AgentEvent, limit: number): StoredMemory[];
   listMemories(limit: number): StoredMemory[];
+};
+
+export type SearchMessagesInput = {
+  plugin?: string;
+  conversationId?: string;
+  query: string;
+  direction?: "forward" | "backward";
+  limit: number;
 };
 
 export type UpsertInboundMessageInput = {
@@ -183,7 +194,25 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       score REAL NOT NULL DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS tool_cursors (
+      plugin TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      last_seen_message_id INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(plugin, conversation_id, tool_name)
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, source, content='memories', content_rowid='id');
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      content_text,
+      plugin UNINDEXED,
+      conversation_id UNINDEXED,
+      content='messages',
+      content_rowid='id',
+      tokenize='trigram'
+    );
 
     CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
       INSERT INTO memories_fts(rowid, content, source) VALUES (new.id, new.content, new.source);
@@ -196,6 +225,19 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
     CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
       INSERT INTO memories_fts(memories_fts, rowid, content, source) VALUES('delete', old.id, old.content, old.source);
       INSERT INTO memories_fts(rowid, content, source) VALUES (new.id, new.content, new.source);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, content_text, plugin, conversation_id) VALUES (new.id, new.content_text, new.plugin, new.conversation_id);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content_text, plugin, conversation_id) VALUES('delete', old.id, old.content_text, old.plugin, old.conversation_id);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content_text, plugin, conversation_id) VALUES('delete', old.id, old.content_text, old.plugin, old.conversation_id);
+      INSERT INTO messages_fts(rowid, content_text, plugin, conversation_id) VALUES (new.id, new.content_text, new.plugin, new.conversation_id);
     END;
   `);
   if (currentVersion < SCHEMA_VERSION) {
@@ -217,6 +259,9 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       }
       if (currentVersion < 5) {
         backfillMessagesFromEventLogs(db);
+      }
+      if (currentVersion < 6) {
+        db.prepare("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')").run();
       }
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       db.exec("COMMIT");
@@ -377,6 +422,83 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return db.prepare(conversationMessageSelect("WHERE conversation_id = ? ORDER BY id DESC LIMIT ?"))
         .all(conversationId, limit)
         .reverse();
+    },
+    searchMessages(input) {
+      const query = buildMessageFtsQuery(input.query);
+      if (!query) return [];
+      const clauses = ["messages_fts MATCH ?"];
+      const values: unknown[] = [query];
+      if (input.plugin) {
+        clauses.push("m.plugin = ?");
+        values.push(input.plugin);
+      }
+      if (input.conversationId) {
+        clauses.push("m.conversation_id = ?");
+        values.push(input.conversationId);
+      }
+      const direction = input.direction === "forward" ? "ASC" : "DESC";
+      const fallbackLike = () => {
+        const likeClauses = ["m.content_text LIKE ?"];
+        const likeValues: unknown[] = [`%${input.query}%`];
+        if (input.plugin) {
+          likeClauses.push("m.plugin = ?");
+          likeValues.push(input.plugin);
+        }
+        if (input.conversationId) {
+          likeClauses.push("m.conversation_id = ?");
+          likeValues.push(input.conversationId);
+        }
+        return db.prepare(conversationMessageSelect(`WHERE ${likeClauses.join(" AND ")} ORDER BY id ${direction} LIMIT ?`))
+          .all(...likeValues, input.limit);
+      };
+      try {
+        const rows = db.prepare(`
+          SELECT
+            m.id,
+            m.plugin,
+            m.external_message_id AS externalMessageId,
+            m.conversation_id AS conversationId,
+            m.direction,
+            m.sender_id AS senderId,
+            m.sender_role AS senderRole,
+            m.content_type AS contentType,
+            m.content_text AS contentText,
+            m.content_json AS contentJson,
+            m.created_at AS createdAt,
+            m.status,
+            m.is_read AS isRead,
+            m.read_at AS readAt,
+            m.is_recalled AS isRecalled,
+            m.recalled_at AS recalledAt,
+            m.reactions_json AS reactionsJson,
+            m.last_event_at AS lastEventAt,
+            m.core_processed_at AS coreProcessedAt,
+            m.core_batch_id AS coreBatchId,
+            m.send_failure_reason AS sendFailureReason
+          FROM messages_fts f
+          JOIN messages m ON m.id = f.rowid
+          WHERE ${clauses.join(" AND ")}
+          ORDER BY m.id ${direction}
+          LIMIT ?
+        `).all(...values, input.limit);
+        return rows.length > 0 ? rows : fallbackLike();
+      } catch {
+        return fallbackLike();
+      }
+    },
+    getToolCursor(plugin, conversationId, toolName) {
+      const row = db.prepare("SELECT last_seen_message_id AS lastSeenMessageId FROM tool_cursors WHERE plugin = ? AND conversation_id = ? AND tool_name = ?")
+        .get(plugin, conversationId, toolName);
+      return typeof row?.lastSeenMessageId === "number" ? row.lastSeenMessageId : undefined;
+    },
+    setToolCursor(plugin, conversationId, toolName, lastSeenMessageId) {
+      db.prepare(`
+        INSERT INTO tool_cursors(plugin, conversation_id, tool_name, last_seen_message_id, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(plugin, conversation_id, tool_name) DO UPDATE SET
+          last_seen_message_id = excluded.last_seen_message_id,
+          updated_at = excluded.updated_at
+      `).run(plugin, conversationId, toolName, lastSeenMessageId, time.now().iso);
     },
     listPendingCoreConversations() {
       return db.prepare(`
@@ -750,4 +872,12 @@ function buildFtsQuery(text: string): string {
     .slice(0, 8);
 
   return terms.map((term) => `"${term.replace(/"/g, "")}"`).join(" OR ");
+}
+
+function buildMessageFtsQuery(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/"/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return `"${normalized}"`;
 }

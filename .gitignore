@@ -3,6 +3,7 @@ dist/
 data/
 logs/
 memory-files/indexes/
+memory-files/state/
 .env
 .DS_Store
 npm-debug.log*

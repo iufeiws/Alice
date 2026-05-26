@@ -15,6 +15,7 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
 - Internal OpenAI-compatible `/v1` LLM client:
   - supports configurable `LLM_BASE_URL`
   - works with OpenAI, DeepSeek, opencode, and similar `/v1/chat/completions` providers
+  - supports OpenAI-style function tool calls executed by AgentCore
   - falls back to a stub client when no API key/base URL is configured
 - Feishu channel plugin:
   - WebSocket event subscription via Feishu/Lark SDK
@@ -23,6 +24,7 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
   - text, markdown, image, audio, and file sending
 - Local persistence:
   - SQLite message logs and memory
+  - SQLite FTS5 search over persisted messages
   - file-based system logs with seven-day retention
 - Admin UI at `http://127.0.0.1:3030/admin`.
 

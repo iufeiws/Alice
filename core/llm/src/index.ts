@@ -4,6 +4,27 @@ export type LLMMessage = {
   role: LLMRole;
   content: string;
   name?: string;
+  toolCallId?: string;
+  toolCalls?: LLMToolCall[];
+};
+
+export type LLMToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+export type LLMToolCallDelta = {
+  index: number;
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
 };
 
 export type LLMToolSpec = {
@@ -46,8 +67,14 @@ export type LLMModel = {
 
 export interface LLMClient {
   chat(input: LLMChatInput): Promise<LLMChatResult>;
+  chatStream?(input: LLMChatInput, handlers?: LLMStreamHandlers): Promise<LLMChatResult>;
   listModels?(): Promise<LLMModel[]>;
 }
+
+export type LLMStreamHandlers = {
+  onContentDelta?(content: string): void | Promise<void>;
+  onToolCallDelta?(delta: LLMToolCallDelta): void | Promise<void>;
+};
 
 export type MutableLLMClient = LLMClient & {
   setClient(client: LLMClient): void;
@@ -66,7 +93,18 @@ type OpenAIChatCompletionResponse = {
   id?: string;
   model?: string;
   choices?: Array<{
-    message?: { role?: string; content?: string | null };
+    message?: {
+      role?: string;
+      content?: string | null;
+      tool_calls?: Array<{
+        id?: string;
+        type?: string;
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
+    };
     finish_reason?: string;
   }>;
   usage?: {
@@ -75,6 +113,31 @@ type OpenAIChatCompletionResponse = {
     total_tokens?: number;
   };
 };
+
+type OpenAIChatCompletionChunk = {
+  id?: string;
+  model?: string;
+  choices?: Array<{
+    delta?: {
+      role?: string;
+      content?: string | null;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        type?: string;
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
+    };
+    finish_reason?: string;
+  }>;
+};
+
+type OpenAIToolCall = NonNullable<
+  NonNullable<NonNullable<OpenAIChatCompletionResponse["choices"]>[number]["message"]>["tool_calls"]
+>[number];
 
 export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LLMClient {
   const baseURL = config.baseURL.replace(/\/+$/, "");
@@ -105,11 +168,115 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     }
   }
 
+  async function requestStream(
+    path: string,
+    body: Record<string, unknown>,
+    handlers: LLMStreamHandlers | undefined
+  ): Promise<LLMChatResult> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
+    const response = await fetch(`${baseURL}${path}`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({ ...body, stream: true })
+    });
+
+    try {
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${text}`);
+      }
+      if (!response.body) throw new Error("LLM stream response did not include a body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let id: string | undefined;
+      let model: string | undefined;
+      let content = "";
+      let finishReason: string | undefined;
+      const toolCalls = new Map<number, LLMToolCall>();
+      const processLine = async (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const data = trimmed.slice("data:".length).trim();
+        if (!data || data === "[DONE]") return;
+        const chunk = JSON.parse(data) as OpenAIChatCompletionChunk;
+        id = chunk.id ?? id;
+        model = chunk.model ?? model;
+        const choice = chunk.choices?.[0];
+        finishReason = choice?.finish_reason ?? finishReason;
+        const deltaContent = choice?.delta?.content;
+        if (deltaContent) {
+          content += deltaContent;
+          await handlers?.onContentDelta?.(deltaContent);
+        }
+        for (const rawCall of choice?.delta?.tool_calls ?? []) {
+          const index = typeof rawCall.index === "number" ? rawCall.index : 0;
+          const current = toolCalls.get(index) ?? {
+            id: rawCall.id ?? `tool_${index}`,
+            type: "function" as const,
+            function: {
+              name: "",
+              arguments: ""
+            }
+          };
+          if (rawCall.id) current.id = rawCall.id;
+          if (rawCall.function?.name) current.function.name = rawCall.function.name;
+          if (rawCall.function?.arguments) current.function.arguments += rawCall.function.arguments;
+          toolCalls.set(index, current);
+          await handlers?.onToolCallDelta?.({
+            index,
+            id: rawCall.id,
+            type: rawCall.type === "function" ? "function" : undefined,
+            function: {
+              name: rawCall.function?.name,
+              arguments: rawCall.function?.arguments
+            }
+          });
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          await processLine(line);
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) await processLine(buffer);
+
+      return {
+        id,
+        model,
+        message: {
+          role: "assistant",
+          content,
+          toolCalls: [...toolCalls.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([, call]) => call)
+            .filter((call) => call.function.name)
+        },
+        finishReason
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   return {
     async chat(input) {
       const body = {
         model: input.model ?? config.model,
-        messages: input.messages,
+        messages: input.messages.map(toOpenAIMessage),
         temperature: input.temperature ?? config.temperature ?? 0.2,
         tools: input.tools,
         max_tokens: input.maxTokens
@@ -126,7 +293,8 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         model: json.model,
         message: {
           role: "assistant",
-          content: choice?.message?.content ?? ""
+          content: choice?.message?.content ?? "",
+          toolCalls: normalizeToolCalls(choice?.message?.tool_calls)
         },
         finishReason: choice?.finish_reason,
         usage: json.usage
@@ -138,6 +306,16 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
           : undefined,
         raw: json
       };
+    },
+    async chatStream(input, handlers) {
+      const body = {
+        model: input.model ?? config.model,
+        messages: input.messages.map(toOpenAIMessage),
+        temperature: input.temperature ?? config.temperature ?? 0.2,
+        tools: input.tools,
+        max_tokens: input.maxTokens
+      };
+      return requestStream("/chat/completions", body, handlers);
     },
     async listModels() {
       const json = await request<{ data?: Array<{ id: string; owned_by?: string }> }>("/models", {
@@ -153,6 +331,46 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   };
 }
 
+function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    role: message.role,
+    content: message.content
+  };
+  if (message.name) result.name = message.name;
+  if (message.toolCallId) result.tool_call_id = message.toolCallId;
+  if (message.toolCalls) {
+    result.tool_calls = message.toolCalls.map((call) => ({
+      id: call.id,
+      type: call.type,
+      function: {
+        name: call.function.name,
+        arguments: call.function.arguments
+      }
+    }));
+  }
+  return result;
+}
+
+function normalizeToolCalls(raw: OpenAIToolCall[] | undefined): LLMToolCall[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const calls = raw
+    .map((call) => {
+      const id = typeof call.id === "string" ? call.id : "";
+      const name = typeof call.function?.name === "string" ? call.function.name : "";
+      if (!id || !name) return undefined;
+      return {
+        id,
+        type: "function" as const,
+        function: {
+          name,
+          arguments: typeof call.function?.arguments === "string" ? call.function.arguments : "{}"
+        }
+      };
+    })
+    .filter((call): call is LLMToolCall => Boolean(call));
+  return calls.length > 0 ? calls : undefined;
+}
+
 export function createMutableLLMClient(initialClient: LLMClient): MutableLLMClient {
   let currentClient = initialClient;
   return {
@@ -164,6 +382,9 @@ export function createMutableLLMClient(initialClient: LLMClient): MutableLLMClie
     },
     chat(input) {
       return currentClient.chat(input);
+    },
+    chatStream(input, handlers) {
+      return currentClient.chatStream ? currentClient.chatStream(input, handlers) : currentClient.chat(input);
     },
     listModels() {
       return currentClient.listModels ? currentClient.listModels() : Promise.resolve([]);

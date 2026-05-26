@@ -1,6 +1,7 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMClient } from "../../../core/llm/src/index.js";
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import { defaultPromptRegistry } from "../../../core/agent/src/prompts.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody } from "./http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
@@ -16,6 +17,7 @@ export type AdminRoutesContext = {
   getLLMRequestPreview(): unknown;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
+  messagingTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
@@ -98,6 +100,21 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/view") {
+        await executeMessagingTool(context, request, response, "view_messages");
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/search") {
+        await executeMessagingTool(context, request, response, "search_messages");
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/send") {
+        await executeMessagingTool(context, request, response, "send_message");
+        return;
+      }
+
       if (request.method === "POST" && request.url === "/admin/api/plugins/feishu/test-markdown") {
         await sendFeishuTest(context, request, response, "markdown");
         return;
@@ -155,6 +172,38 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       handleHttpError(context, response, error);
     }
   };
+}
+
+async function executeMessagingTool(
+  context: AdminRoutesContext,
+  request: any,
+  response: any,
+  toolName: "view_messages" | "search_messages" | "send_message"
+): Promise<void> {
+  const body = await readJsonBody(request);
+  const result = await context.messagingTools.execute({
+    id: `admin_${toolName}_${Date.now()}`,
+    toolName,
+    input: body
+  });
+  context.appendLog(result.ok ? "info" : "warn", `messaging tool ${toolName}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+  writeJson(response, result.ok ? 200 : 400, {
+    ok: result.ok,
+    content: formatToolResultForLLM(result),
+    error: result.error
+  });
+}
+
+function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }): string {
+  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
+  if (typeof result.output === "string") return result.output;
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  try {
+    return JSON.stringify(result.output);
+  } catch {
+    return String(result.output);
+  }
 }
 
 async function sendFeishuTest(context: AdminRoutesContext, request: any, response: any, kind: "markdown" | "image" | "audio"): Promise<void> {

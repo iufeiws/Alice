@@ -49,4 +49,4 @@ interface ToolPlugin {
 
 `send()` may return platform send metadata. Feishu returns `{ messageId }` when the platform response includes a message id, allowing storage to update outbound message state.
 
-Tool plugins are defined but not used by the current runtime.
+Tool plugins are executed by AgentCore during OpenAI-compatible tool-call rounds. `ToolCall` includes the requester source and session when a tool is invoked from an inbound event.

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMutableLLMClient, type LLMClient } from "../core/llm/src/index.js";
+import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../core/llm/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
@@ -16,6 +16,40 @@ test("mutable LLM client delegates to the latest configured client", async () =>
   client.setClient(second);
   assert.equal((await client.chat({ messages: [] })).message.content, "second");
   assert.deepEqual(await client.listModels?.(), [{ id: "second" }]);
+});
+
+test("openai stream client processes a final SSE frame without trailing newline", async () => {
+  const originalFetch = globalThis.fetch;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"view_messages","arguments":"{\\"scope\\":\\"today\\"}"}}]},"finish_reason":"tool_calls"}]}'
+      ));
+      controller.close();
+    }
+  });
+  globalThis.fetch = async () => new Response(stream, { status: 200 });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chatStream?.({
+      messages: [],
+      tools: [{
+        type: "function",
+        function: {
+          name: "view_messages",
+          parameters: { type: "object" }
+        }
+      }]
+    });
+    assert.equal(result?.message.toolCalls?.[0].function.name, "view_messages");
+    assert.equal(result?.message.toolCalls?.[0].function.arguments, "{\"scope\":\"today\"}");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("sqlite store initializes schema version without losing existing logs", () => {
@@ -44,7 +78,7 @@ test("sqlite store initializes schema version without losing existing logs", () 
   assert.equal(reopened.listUnprocessedInboundForSession("session-1", 10).length, 0);
 
   const db: any = new sqlite.DatabaseSync(dbPath);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
 });
 
 test("sqlite migration marks legacy inbound logs processed", () => {
@@ -69,7 +103,7 @@ test("sqlite migration marks legacy inbound logs processed", () => {
 
   const store = createAliceStore(dbPath);
   assert.equal(store.listUnprocessedInboundForSession("session-legacy", 10).length, 0);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
 });
 
 test("sqlite migration backfills message event logs into core-facing messages", () => {
@@ -134,7 +168,7 @@ test("sqlite migration backfills message event logs into core-facing messages", 
   assert.equal(message.contentText, "old text");
   assert.equal(Boolean(message.isRead), true);
   assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
 });
 
 test("sqlite store keeps core-facing message state separate from event logs", () => {

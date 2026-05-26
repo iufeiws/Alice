@@ -33,6 +33,7 @@ export type MessagingToolsDeps = {
   >;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
+  sleep?: (ms: number) => Promise<void>;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   appendMessageLog?(input: {
@@ -47,12 +48,27 @@ export type MessagingToolsDeps = {
   }): unknown;
 };
 
-export function createMessagingTools(deps: MessagingToolsDeps): ToolPlugin {
+export type MessagingToolPlugin = ToolPlugin & {
+  noteLLMRequestStarted(): void;
+};
+
+const messageDelayMsPerCharacter = 120;
+const minMessageDelayMs = 500;
+const maxMessageDelayMs = 8_000;
+const maxSendRetryAttempts = 3;
+
+export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const userName = () => deps.getUserName?.() || "user";
+  const sleep = deps.sleep ?? delay;
+  let lastMessageTimestampMs: number | undefined;
+  let retryQueue = Promise.resolve();
 
   return {
     id: "messaging",
+    noteLLMRequestStarted() {
+      lastMessageTimestampMs = time.now().epochMs;
+    },
     listTools() {
       return [checkFeishuTool, sendFeishuTool];
     },
@@ -151,10 +167,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): ToolPlugin {
 
     const results = [];
     for (const [index, part] of parts.entries()) {
-      if (index > 0) await delay(500);
+      await waitForMessageSendSlot(part);
       const output = buildOutput(target, type, part);
       const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
       try {
+        markMessageAttemptedNow();
         const sent = await deps.outputRouter.send(output);
         const sentAt = time.now().iso;
         deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAt);
@@ -181,6 +198,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): ToolPlugin {
           summary: summarizeOutput(output),
           error: reason
         });
+        enqueueSendRetry({ output, storedId: stored.id, content: part });
         results.push({ ok: false, error: reason, content: part });
       }
     }
@@ -192,6 +210,73 @@ export function createMessagingTools(deps: MessagingToolsDeps): ToolPlugin {
       output: formatSendResults(type, results),
       error: failed?.error
     };
+  }
+
+  async function waitForMessageSendSlot(content: string): Promise<void> {
+    const delayMs = messageDelayForContent(content);
+    const nowMs = time.now().epochMs;
+    if (lastMessageTimestampMs !== undefined) {
+      const elapsedMs = nowMs - lastMessageTimestampMs;
+      if (elapsedMs < delayMs) {
+        await sleep(delayMs - elapsedMs);
+      }
+    }
+  }
+
+  function markMessageAttemptedNow(): void {
+    lastMessageTimestampMs = time.now().epochMs;
+  }
+
+  function enqueueSendRetry(input: { output: AgentOutput; storedId: number; content: string }): void {
+    retryQueue = retryQueue
+      .then(() => retrySend(input))
+      .catch((error) => {
+        deps.appendMessageLog?.({
+          direction: "outbound",
+          plugin: input.output.target.plugin,
+          kind: input.output.content.kind,
+          target: input.output.target.channelId ?? input.output.target.userId,
+          sessionId: input.output.target.sessionId,
+          status: "retry_queue_failed",
+          summary: summarizeOutput(input.output),
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }
+
+  async function retrySend(input: { output: AgentOutput; storedId: number; content: string }): Promise<void> {
+    for (let attempt = 1; attempt <= maxSendRetryAttempts; attempt += 1) {
+      await waitForMessageSendSlot(input.content);
+      try {
+        markMessageAttemptedNow();
+        const sent = await deps.outputRouter.send(input.output);
+        const sentAt = time.now().iso;
+        deps.store.markOutboundMessageSent(input.storedId, extractSentMessageId(sent), sentAt);
+        deps.appendMessageLog?.({
+          direction: "outbound",
+          plugin: input.output.target.plugin,
+          kind: input.output.content.kind,
+          target: input.output.target.channelId ?? input.output.target.userId,
+          sessionId: input.output.target.sessionId,
+          status: "retry_sent",
+          summary: summarizeOutput(input.output)
+        });
+        return;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        deps.store.markOutboundMessageFailed(input.storedId, time.now().iso, reason);
+        deps.appendMessageLog?.({
+          direction: "outbound",
+          plugin: input.output.target.plugin,
+          kind: input.output.content.kind,
+          target: input.output.target.channelId ?? input.output.target.userId,
+          sessionId: input.output.target.sessionId,
+          status: "retry_failed",
+          summary: summarizeOutput(input.output),
+          error: reason
+        });
+      }
+    }
   }
 
   function resolveTarget(call: ToolCall): MessagingToolTarget | undefined {
@@ -437,6 +522,11 @@ function formatSendResults(type: "message" | "markdown" | "image", results: Arra
     const status = result.ok ? "sent" : `failed: ${result.error ?? "unknown error"}`;
     return `#${index + 1} ${type} ${status}${result.messageId ? ` ${result.messageId}` : ""}: ${result.content}`;
   }).join("\n");
+}
+
+function messageDelayForContent(content: string): number {
+  const characterCount = Array.from(content.replace(/\s+/g, "")).length;
+  return Math.min(maxMessageDelayMs, Math.max(minMessageDelayMs, characterCount * messageDelayMsPerCharacter));
 }
 
 function delay(ms: number): Promise<void> {

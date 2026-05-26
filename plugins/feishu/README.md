@@ -92,7 +92,8 @@ AgentCore exposes Feishu-specific tool names to the LLM:
   - args: `type?: "message" | "markdown" | "image"`, `content`.
   - default `type` is `message`.
   - in `message` mode, newline-separated content is split into multiple Feishu text messages.
-  - split text messages are sent 500 ms apart.
+  - split text messages are throttled by content length; the first send also accounts for time elapsed since the LLM call started.
+  - a send attempt occupies the throttle window before the channel returns, so failed attempts still count as typed/sent time. Failed sends are marked `send_failed` and retried in the in-memory retry queue up to three times.
   - with streaming LLM responses, each decoded newline in `content` is sent immediately instead of waiting for the final JSON tool arguments.
   - `voice` is intentionally unsupported.
 

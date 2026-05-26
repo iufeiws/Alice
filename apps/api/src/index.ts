@@ -200,7 +200,10 @@ const core = createAgentCore({
   onLLMResponseReceived: appendLLMResponseLog,
   onLLMLog(event) {
     const mode = event.stream ? "stream" : "non-stream";
-    if (event.kind === "call_start") appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
+    if (event.kind === "call_start") {
+      messagingTools.noteLLMRequestStarted();
+      appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
+    }
     if (event.kind === "stream_start") appendLog("info", `llm stream start: round=${event.round} model=${event.model ?? config.llm.model}`);
     if (event.kind === "stream_end") appendLog("info", `llm stream end: round=${event.round} model=${event.model ?? config.llm.model}`);
     if (event.kind === "response_received") appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);

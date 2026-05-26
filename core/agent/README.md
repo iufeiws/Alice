@@ -56,7 +56,7 @@ Unknown variables are preserved as written.
 The current runtime exposes platform-neutral tool names to the LLM:
 
 - `check_feishu({ scope = "today" })`: 查看当前一对一飞书聊天记录。`scope="new"` 返回上次查看后的新增飞书消息。
-- `send_feishu({ type = "message", content })`: 发送飞书消息到当前一对一聊天。`message` 模式会把换行分隔内容拆成多条飞书消息，间隔 500 ms 发送。
+- `send_feishu({ type = "message", content })`: 发送飞书消息到当前一对一聊天。`message` 模式会把换行分隔内容拆成多条飞书消息，并按内容字数节流发送；发送尝试会立即占用节流窗口，失败后进入内存重试队列。
 
 Tool results are plain strings in the same compact format shown to the LLM. The first adapter behind these tools is Feishu, but the LLM-facing names intentionally do not include Feishu.
 

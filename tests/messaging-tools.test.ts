@@ -162,6 +162,7 @@ test("send_feishu defaults to message and splits newline text into multiple send
   const tools = createMessagingTools({
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
     outputRouter: {
       async send(output) {
         sent.push(output);
@@ -186,6 +187,166 @@ test("send_feishu defaults to message and splits newline text into multiple send
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
 });
+
+test("send_message waits from llm start using content length based delay", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-delay"), "alice.sqlite"));
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const sleeps: number[] = [];
+  const sentAt: number[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+    outputRouter: {
+      async send() {
+        sentAt.push(nowMs);
+        return { messageId: `sent_${sentAt.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  tools.noteLLMRequestStarted();
+  const result = await tools.execute({
+    id: "call_send_delay",
+    toolName: "send_message",
+    input: { content: "hello\nworldwide" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sleeps, [600, 1080]);
+  assert.deepEqual(sentAt, [
+    Date.parse("2026-05-26T00:00:00.600Z"),
+    Date.parse("2026-05-26T00:00:01.680Z")
+  ]);
+});
+
+test("send_message updates delay timestamp before send attempt completes", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-attempt-delay"), "alice.sqlite"));
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const sleeps: number[] = [];
+  const sentAt: number[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+    outputRouter: {
+      async send() {
+        sentAt.push(nowMs);
+        nowMs += 100;
+        return { messageId: `sent_${sentAt.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_attempt_delay",
+    toolName: "send_message",
+    input: { content: "hello\nhello" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sleeps, [500]);
+  assert.deepEqual(sentAt, [
+    Date.parse("2026-05-26T00:00:00.000Z"),
+    Date.parse("2026-05-26T00:00:00.600Z")
+  ]);
+});
+
+test("send_message failed attempt occupies delay window and retries queued send", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-retry"), "alice.sqlite"));
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const sleeps: number[] = [];
+  const attemptsAt: number[] = [];
+  const logs: string[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+    outputRouter: {
+      async send() {
+        attemptsAt.push(nowMs);
+        if (attemptsAt.length === 1) throw new Error("temporary send failure");
+        return { messageId: `sent_${attemptsAt.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" }),
+    appendMessageLog(input) {
+      if (input.status) logs.push(input.status);
+    }
+  });
+
+  const result = await tools.execute({
+    id: "call_send_retry",
+    toolName: "send_message",
+    input: { content: "hello" }
+  });
+  await eventually(() => attemptsAt.length >= 2);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "temporary send failure");
+  assert.deepEqual(sleeps, [600]);
+  assert.deepEqual(attemptsAt, [
+    Date.parse("2026-05-26T00:00:00.000Z"),
+    Date.parse("2026-05-26T00:00:00.600Z")
+  ]);
+  assert.deepEqual(logs, ["send_failed", "retry_sent"]);
+  const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].status, "sent");
+  assert.equal(stored[0].externalMessageId, "sent_2");
+});
+
+test("send_message sends immediately when llm work already exceeded the content delay", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-delay-elapsed"), "alice.sqlite"));
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const sleeps: number[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+    outputRouter: {
+      async send() {
+        return { messageId: "sent_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  tools.noteLLMRequestStarted();
+  nowMs += 1_000;
+  const result = await tools.execute({
+    id: "call_send_elapsed",
+    toolName: "send_message",
+    input: { content: "hi" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sleeps, []);
+});
+
+async function eventually(condition: () => boolean, timeoutMs = 500): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("condition was not met before timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
 
 function makeTempDir(name: string): string {
   const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);

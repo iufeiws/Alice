@@ -272,7 +272,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         sendChain = sendChain.then(async () => {
           for (const line of lines) {
             const sentCount = sentCounts.get(callId) ?? 0;
-            if (sentCount > 0) await delay(500);
             await sendStreamingLine(plugin, event, callId, line, resultsByCallId);
             sentCounts.set(callId, sentCount + 1);
           }
@@ -287,7 +286,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           sendChain = sendChain.then(async () => {
             for (const line of lines) {
               const sentCount = sentCounts.get(callId) ?? 0;
-              if (sentCount > 0) await delay(500);
               await sendStreamingLine(plugin, event, callId, line, resultsByCallId);
               sentCounts.set(callId, sentCount + 1);
             }
@@ -532,10 +530,6 @@ function decodeJsonEscape(char: string): string {
   if (char === "b") return "\b";
   if (char === "f") return "\f";
   return char;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildReply(

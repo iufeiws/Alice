@@ -1,8 +1,8 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
-import { getPromptContent } from "../../../core/agent/src/prompts.js";
-import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput } from "../../../core/llm/src/index.js";
+import { buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
+import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../core/policy/src/index.js";
 import { createIntentRouter } from "../../../core/router/src/index.js";
@@ -57,6 +57,21 @@ type LLMRequestLogEntry = {
   temperature?: number;
   messages: LLMChatInput["messages"];
   tools?: LLMChatInput["tools"];
+  rawRequest?: unknown;
+  diffFromPrevious?: LLMRequestDiff;
+};
+
+type LLMRequestDiff = {
+  sameAsPrevious: boolean;
+  firstDiffPath?: string;
+  previousValue?: unknown;
+  currentValue?: unknown;
+  commonPrefixChars?: number;
+  roughCommonPrefixTokens?: number;
+  valueDiffIndex?: number;
+  roughValuePrefixTokens?: number;
+  previousExcerpt?: string;
+  currentExcerpt?: string;
 };
 
 type LLMRequestPreview = LLMRequestLogEntry & {
@@ -64,12 +79,31 @@ type LLMRequestPreview = LLMRequestLogEntry & {
   conversationId?: string;
 };
 
+type LLMResponseLogEntry = {
+  id: number;
+  time: string;
+  message: LLMChatResult["message"];
+  finishReason?: string;
+  usage?: LLMChatResult["usage"];
+  raw?: unknown;
+};
+
+type ActiveLLMSession = {
+  startedAt: string;
+  updatedAt: string;
+  requestIds: number[];
+  latestRequest?: unknown;
+};
+
 const logs: LogEntry[] = [];
 const messageLogs: MessageLogEntry[] = [];
 const llmRequestLogs: LLMRequestLogEntry[] = [];
+const llmResponseLogs: LLMResponseLogEntry[] = [];
+let activeLLMSession: ActiveLLMSession | undefined;
 let nextLogId = 1;
 let nextMessageLogId = 1;
 let nextLLMRequestLogId = 1;
+let nextLLMResponseLogId = 1;
 let store: ReturnType<typeof createAliceStore> | undefined;
 let systemLogStore: ReturnType<typeof createFileLogStore> | undefined;
 const currentTime = createMutableCurrentTimeProvider("UTC");
@@ -120,10 +154,12 @@ const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu
     fs.writeFileSync(filePath, content);
   }
 }, { time: currentTime });
+const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
   time: currentTime,
+  getUserName: () => promptProfileStore.get().userName,
   getDefaultTarget() {
     const contact = feishuPairingStore.list()[0];
     if (!contact) return undefined;
@@ -157,9 +193,21 @@ const core = createAgentCore({
     }
   },
   tools: [messagingTools],
+  getPromptProfile: () => promptProfileStore.get(),
   state: agentState,
   time: currentTime,
-  onLLMRequestPrepared: appendLLMRequestLog
+  onLLMRequestPrepared: appendLLMRequestLog,
+  onLLMResponseReceived: appendLLMResponseLog,
+  onLLMLog(event) {
+    const mode = event.stream ? "stream" : "non-stream";
+    if (event.kind === "call_start") appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
+    if (event.kind === "stream_start") appendLog("info", `llm stream start: round=${event.round} model=${event.model ?? config.llm.model}`);
+    if (event.kind === "stream_end") appendLog("info", `llm stream end: round=${event.round} model=${event.model ?? config.llm.model}`);
+    if (event.kind === "response_received") appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
+  },
+  onLLMSessionCompleted(result) {
+    clearActiveLLMSession(result.sentMessage ? "send_feishu" : "llm_turn_completed");
+  }
 });
 
 const feishu = createFeishuPlugin(config.plugins.feishu, {
@@ -177,6 +225,17 @@ const feishu = createFeishuPlugin(config.plugins.feishu, {
 const messageRuntime = createMessageRuntime({
   getDelayMs: () => config.core.inboundDebounceMs,
   time: currentTime,
+  getProcessNowTarget() {
+    const contact = feishuPairingStore.list()[0];
+    if (!contact) return undefined;
+    return {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: contact.channelId,
+      userId: contact.channelId ? undefined : contact.userId,
+      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
+    };
+  },
   store,
   core,
   agentState,
@@ -204,13 +263,20 @@ const server = http.createServer(createApiRequestHandler({
   logs,
   messageLogs,
   llmRequestLogs,
+  llmResponseLogs,
+  getActiveLLMSession: () => activeLLMSession,
   store,
   getLLMRequestPreview,
+  getLLMRequestProfilePreview,
+  clearLLMChainCache,
   outputRouter,
   feishuPairingStore,
+  promptProfileStore,
+  agentState,
   messagingTools,
   feishu,
   runtime: runtimeState,
+  messageRuntime,
   getLLM: () => llm,
   reloadLLM() {
     llm = createLLMClientFromConfig();
@@ -315,49 +381,279 @@ function createLLMClientFromConfig() {
         apiKey: config.llm.apiKey,
         model: config.llm.model,
         temperature: config.llm.temperature,
-        timeoutMs: config.llm.timeoutMs
+        timeoutMs: config.llm.timeoutMs,
+        extraParams: config.llm.extraParams
       })
     : createStubLLMClient();
 }
 
 function appendLLMRequestLog(input: LLMChatInput): void {
-  llmRequestLogs.push({
+  const rawRequest = buildRawLLMRequest(input);
+  const previous = llmRequestLogs[llmRequestLogs.length - 1]?.rawRequest;
+  const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
+  const entry = {
     id: nextLLMRequestLogId,
     time: currentTime.now().iso,
     model: input.model,
     temperature: input.temperature,
     messages: input.messages.map((message) => ({ ...message })),
-    tools: input.tools?.map((tool) => ({ ...tool, function: { ...tool.function } }))
-  });
+    tools: input.tools?.map((tool) => ({ ...tool, function: { ...tool.function } })),
+    rawRequest,
+    diffFromPrevious
+  };
+  llmRequestLogs.push(entry);
+  noteActiveLLMRequest(entry);
+  if (diffFromPrevious) {
+    appendLog("info", diffFromPrevious.sameAsPrevious
+      ? `llm request diff: same as previous, common_prefix_chars=${diffFromPrevious.commonPrefixChars}`
+      : [
+          "llm request diff:",
+          `first_diff=${diffFromPrevious.firstDiffPath}`,
+          `common_prefix_chars=${diffFromPrevious.commonPrefixChars}`,
+          `rough_common_prefix_tokens=${formatTokenCount(diffFromPrevious.roughCommonPrefixTokens)}`,
+          `value_diff_index=${formatTokenCount(diffFromPrevious.valueDiffIndex)}`,
+          `rough_value_prefix_tokens=${formatTokenCount(diffFromPrevious.roughValuePrefixTokens)}`,
+          `previous=${formatDiffValue(diffFromPrevious.previousValue)}`,
+          `current=${formatDiffValue(diffFromPrevious.currentValue)}`,
+          `previous_excerpt=${JSON.stringify(diffFromPrevious.previousExcerpt ?? "")}`,
+          `current_excerpt=${JSON.stringify(diffFromPrevious.currentExcerpt ?? "")}`
+        ].join(" "));
+  }
   nextLLMRequestLogId += 1;
   if (llmRequestLogs.length > 50) {
     llmRequestLogs.splice(0, llmRequestLogs.length - 50);
   }
 }
 
-function getLLMRequestPreview(): LLMRequestPreview | undefined {
-  const preview = buildLLMRequestPreviewFromMessages();
-  if (preview) return preview;
-
-  const latest = llmRequestLogs[llmRequestLogs.length - 1];
-  return latest ? { ...latest, source: "actual" } : undefined;
+function diffRequests(previous: unknown, current: unknown): LLMRequestDiff {
+  const first = firstDiff(previous, current, "$");
+  const previousText = stableStringify(previous);
+  const currentText = stableStringify(current);
+  const valueDiff = first ? diffValueExcerpt(first.previousValue, first.currentValue) : undefined;
+  return {
+    sameAsPrevious: !first,
+    firstDiffPath: first?.path,
+    previousValue: first?.previousValue,
+    currentValue: first?.currentValue,
+    commonPrefixChars: commonPrefixLength(previousText, currentText),
+    roughCommonPrefixTokens: estimateDeepSeekTokens(previousText.slice(0, commonPrefixLength(previousText, currentText))),
+    valueDiffIndex: valueDiff?.index,
+    roughValuePrefixTokens: valueDiff ? estimateDeepSeekTokens(valueTextPrefix(first?.previousValue, valueDiff.index)) : undefined,
+    previousExcerpt: valueDiff?.previousExcerpt,
+    currentExcerpt: valueDiff?.currentExcerpt
+  };
 }
 
-function buildLLMRequestPreviewFromMessages(): LLMRequestPreview | undefined {
+function firstDiff(previous: unknown, current: unknown, path: string): { path: string; previousValue: unknown; currentValue: unknown } | undefined {
+  if (Object.is(previous, current)) return undefined;
+  if (!previous || !current || typeof previous !== "object" || typeof current !== "object") {
+    return { path, previousValue: previous, currentValue: current };
+  }
+  if (Array.isArray(previous) || Array.isArray(current)) {
+    if (!Array.isArray(previous) || !Array.isArray(current)) return { path, previousValue: previous, currentValue: current };
+    const length = Math.max(previous.length, current.length);
+    for (let index = 0; index < length; index += 1) {
+      if (index >= previous.length || index >= current.length) return { path: `${path}[${index}]`, previousValue: previous[index], currentValue: current[index] };
+      const nested = firstDiff(previous[index], current[index], `${path}[${index}]`);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  const previousRecord = previous as Record<string, unknown>;
+  const currentRecord = current as Record<string, unknown>;
+  const keys = [...new Set([...Object.keys(previousRecord), ...Object.keys(currentRecord)])].sort();
+  for (const key of keys) {
+    if (!(key in previousRecord) || !(key in currentRecord)) return { path: `${path}.${key}`, previousValue: previousRecord[key], currentValue: currentRecord[key] };
+    const nested = firstDiff(previousRecord[key], currentRecord[key], `${path}.${key}`);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) => {
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) return nested;
+    return Object.fromEntries(Object.entries(nested as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)));
+  }) ?? "";
+}
+
+function commonPrefixLength(left: string, right: string): number {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < length && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function formatDiffValue(value: unknown): string {
+  const text = typeof value === "string" ? value : stableStringify(value);
+  return JSON.stringify(text.length > 160 ? `${text.slice(0, 160)}...` : text);
+}
+
+function diffValueExcerpt(previous: unknown, current: unknown): { index: number; previousExcerpt: string; currentExcerpt: string } {
+  const previousText = typeof previous === "string" ? previous : stableStringify(previous);
+  const currentText = typeof current === "string" ? current : stableStringify(current);
+  const index = commonPrefixLength(previousText, currentText);
+  return {
+    index,
+    previousExcerpt: excerptAround(previousText, index),
+    currentExcerpt: excerptAround(currentText, index)
+  };
+}
+
+function excerptAround(text: string, index: number): string {
+  const radius = 80;
+  const start = Math.max(0, index - radius);
+  const end = Math.min(text.length, index + radius);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < text.length ? "..." : "";
+  return `${prefix}${text.slice(start, end)}${suffix}`;
+}
+
+function valueTextPrefix(value: unknown, length: number): string {
+  const text = typeof value === "string" ? value : stableStringify(value);
+  return text.slice(0, length);
+}
+
+function estimateDeepSeekTokens(text: string): number {
+  let tokens = 0;
+  for (const char of text) {
+    tokens += /[\u4e00-\u9fff]/.test(char) ? 0.6 : 0.3;
+  }
+  return Math.round(tokens);
+}
+
+function appendLLMResponseLog(result: LLMChatResult): void {
+  appendLLMUsageLog(result);
+  llmResponseLogs.push({
+    id: nextLLMResponseLogId,
+    time: currentTime.now().iso,
+    message: { ...result.message },
+    finishReason: result.finishReason,
+    usage: result.usage,
+    raw: result.raw
+  });
+  nextLLMResponseLogId += 1;
+  if (llmResponseLogs.length > 50) {
+    llmResponseLogs.splice(0, llmResponseLogs.length - 50);
+  }
+}
+
+function appendLLMUsageLog(result: LLMChatResult): void {
+  const rawUsage = extractRawUsage(result.raw);
+  const usage = result.usage;
+  if (!usage) {
+    appendLog("info", `llm token usage: input=? output=? total=? cache_hit=? cache_miss=? model=${result.model ?? config.llm.model} raw_usage=${rawUsage}`);
+    return;
+  }
+  appendLog("info", [
+    "llm token usage:",
+    `input=${formatTokenCount(usage.inputTokens)}`,
+    `output=${formatTokenCount(usage.outputTokens)}`,
+    `total=${formatTokenCount(usage.totalTokens)}`,
+    `cache_hit=${formatTokenCount(usage.cacheHitTokens)}`,
+    `cache_miss=${formatTokenCount(usage.cacheMissTokens)}`,
+    `model=${result.model ?? config.llm.model}`,
+    `raw_usage=${rawUsage}`
+  ].join(" "));
+}
+
+function extractRawUsage(raw: unknown): string {
+  if (!raw || typeof raw !== "object") return "undefined";
+  const usage = (raw as { usage?: unknown }).usage;
+  if (usage === undefined) return "undefined";
+  try {
+    return JSON.stringify(usage);
+  } catch {
+    return String(usage);
+  }
+}
+
+function formatTokenCount(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "?";
+}
+
+function clearLLMChainCache(): void {
+  clearActiveLLMSession("admin_clear");
+}
+
+function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
+  if (!activeLLMSession) {
+    activeLLMSession = {
+      startedAt: entry.time,
+      updatedAt: entry.time,
+      requestIds: [],
+      latestRequest: entry.rawRequest
+    };
+  }
+  activeLLMSession.updatedAt = entry.time;
+  activeLLMSession.requestIds.push(entry.id);
+  activeLLMSession.latestRequest = entry.rawRequest;
+}
+
+function clearActiveLLMSession(reason: string): void {
+  if (!activeLLMSession) return;
+  const requestCount = activeLLMSession.requestIds.length;
+  activeLLMSession = undefined;
+  appendLog("info", `llm active session cleared: reason=${reason} requests=${requestCount}`);
+}
+
+async function getLLMRequestPreview(): Promise<LLMRequestPreview | undefined> {
+  const preview = await buildLLMRequestPreviewFromMessages();
+  if (preview) return { ...preview, rawRequest: buildRawLLMRequest(preview) };
+
+  const latest = llmRequestLogs[llmRequestLogs.length - 1];
+  if (latest) return { ...latest, source: "actual" };
+  return undefined;
+}
+
+async function getLLMRequestProfilePreview(): Promise<LLMRequestPreview | undefined> {
+  const profilePreview = await buildLLMRequestPreviewFromProfile();
+  return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
+}
+
+async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | undefined> {
+  const profile = promptProfileStore.get();
+  const previewEvent = {
+    id: "preview",
+    source: {
+      plugin: "feishu",
+      channelId: "preview"
+    },
+    session: {
+      scope: "dm",
+      sessionId: "preview"
+    },
+    type: "message.text",
+    payload: { kind: "text", text: "" },
+    meta: {
+      receivedAt: currentTime.now().iso
+    }
+  } as const;
+  return {
+    id: 0,
+    source: "preview",
+    conversationId: "preview",
+    time: currentTime.now().iso,
+    model: config.llm.model,
+    temperature: config.llm.temperature,
+    messages: await buildPromptPreviewMessages(profile, previewEvent),
+    tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema
+      }
+    }))
+  };
+}
+
+async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview | undefined> {
   const recent = store?.listMessages(500) ?? [];
   const latestInbound = [...recent].reverse().find((message) => message.direction === "inbound" && !message.isRecalled);
   if (!latestInbound) return undefined;
 
-  const conversation = store?.listMessagesForConversation(latestInbound.conversationId, 30) ?? [];
-  const beforeLatest = conversation
-    .filter((message) => message.id < latestInbound.id)
-    .slice(-12);
-  const context = beforeLatest.map(formatPreviewContextLine).join("\n");
-  const latestText = latestInbound.contentText;
-  const userContent = context
-    ? `Conversation context:\n${context}\n\nLatest user messages:\n${latestText}`
-    : latestText;
-  const recalled = store?.recallForEvent({
+  const previewEvent = {
     id: `preview_${latestInbound.id}`,
     source: {
       plugin: latestInbound.plugin,
@@ -370,12 +666,13 @@ function buildLLMRequestPreviewFromMessages(): LLMRequestPreview | undefined {
       sessionId: latestInbound.conversationId
     },
     type: "message.text",
-    payload: { kind: "text", text: userContent },
+    payload: { kind: "text", text: "" },
     meta: {
       receivedAt: latestInbound.createdAt,
       replyTo: latestInbound.externalMessageId
     }
-  }, 5).map((item) => item.content) ?? [];
+  } as const;
+  const profile = promptProfileStore.get();
 
   return {
     id: 0,
@@ -384,20 +681,8 @@ function buildLLMRequestPreviewFromMessages(): LLMRequestPreview | undefined {
     time: latestInbound.lastEventAt || latestInbound.createdAt,
     model: config.llm.model,
     temperature: config.llm.temperature,
-    messages: [
-      {
-        role: "system",
-        content: getPromptContent("agent.placeholder.system")
-      },
-      ...(recalled.length > 0
-        ? [{
-            role: "system" as const,
-            content: `Relevant persistent memory:\n${recalled.map((item) => `- ${item}`).join("\n")}`
-          }]
-        : []),
-      { role: "user", content: userContent }
-    ],
-    tools: messagingTools.listTools().map((tool) => ({
+    messages: await buildPromptPreviewMessages(profile, previewEvent),
+    tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
       type: "function" as const,
       function: {
         name: tool.name,
@@ -405,6 +690,61 @@ function buildLLMRequestPreviewFromMessages(): LLMRequestPreview | undefined {
         parameters: tool.inputSchema
       }
     }))
+  };
+}
+
+async function buildPromptPreviewMessages(
+  profile: ReturnType<typeof promptProfileStore.get>,
+  event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"]
+): Promise<LLMChatInput["messages"]> {
+  return buildPromptMessagesWithToolResults(profile, { event, time: currentTime }, async (layer, call) => {
+    if (call.toolName === "send_feishu") {
+      return {
+        callId: call.id,
+        ok: false,
+        error: "send_feishu cannot run from request preview"
+      };
+    }
+    try {
+      return await messagingTools.execute(call);
+    } catch (error) {
+      return {
+        callId: call.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  });
+}
+
+function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens">): unknown {
+  return {
+    ...config.llm.extraParams,
+    model: input.model,
+    stream: config.llm.stream !== false,
+    temperature: input.temperature,
+    messages: input.messages.map((message) => {
+      const result: Record<string, unknown> = {
+        role: message.role,
+        content: message.content
+      };
+      if (message.name) result.name = message.name;
+      if (message.toolCallId) result.tool_call_id = message.toolCallId;
+      if (message.reasoningContent) result.reasoning_content = message.reasoningContent;
+      if (message.toolCalls) {
+        result.tool_calls = message.toolCalls.map((call) => ({
+          id: call.id,
+          type: call.type,
+          function: {
+            name: call.function.name,
+            arguments: call.function.arguments
+          }
+        }));
+      }
+      return result;
+    }),
+    tools: input.tools,
+    max_tokens: input.maxTokens
   };
 }
 

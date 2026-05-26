@@ -11,7 +11,8 @@ export type AgentBehaviorState =
   | "working"
   | "going_to_sleep"
   | "sleeping"
-  | "serious";
+  | "serious"
+  | "test";
 
 export type AgentStateSnapshot = {
   state: AgentBehaviorState;
@@ -117,7 +118,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
 
     if (state === "idle") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(2 * MINUTE, 15 * MINUTE, random));
-    } else if (state === "waiting" || state === "curious" || state === "going_to_sleep") {
+    } else if (state === "waiting" || state === "curious" || state === "going_to_sleep" || state === "test") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? ACTIVE_TIMEOUT_MS);
     } else if (state === "away") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(5 * MINUTE, 30 * MINUTE, random));
@@ -209,11 +210,11 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       return commit(next);
     },
     noteWorkStarted(opts = {}) {
-      const baseline = opts.serious ? "serious" : snapshot.state === "serious" ? "serious" : "waiting";
+      const baseline = opts.serious ? "serious" : snapshot.state === "serious" ? "serious" : snapshot.state === "test" ? "test" : "waiting";
       return transition("working", { reason: opts.serious ? "serious_task" : "task", previousState: baseline });
     },
     noteWorkFinished() {
-      const baseline = snapshot.previousState === "serious" ? "serious" : "waiting";
+      const baseline = snapshot.previousState === "serious" ? "serious" : snapshot.previousState === "test" ? "test" : "waiting";
       return transition(baseline, { reason: "task_finished" });
     },
     getInboundDelayMs() {
@@ -287,7 +288,8 @@ function isAgentBehaviorState(value: unknown): value is AgentBehaviorState {
     "working",
     "going_to_sleep",
     "sleeping",
-    "serious"
+    "serious",
+    "test"
   ].includes(value);
 }
 
@@ -327,6 +329,7 @@ function clone(snapshot: AgentStateSnapshot): AgentStateSnapshot {
 function responseDelayFor(state: AgentBehaviorState, random: () => number): number {
   if (state === "idle") return randomRange(20 * SECOND, 120 * SECOND, random);
   if (state === "away") return randomRange(5 * MINUTE, 30 * MINUTE, random);
+  if (state === "test") return 8 * SECOND;
   if (state === "curious") return randomRange(8 * SECOND, 12 * SECOND, random);
   return randomRange(8 * SECOND, 15 * SECOND, random);
 }

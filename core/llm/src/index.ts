@@ -3,6 +3,7 @@ export type LLMRole = "system" | "user" | "assistant" | "tool";
 export type LLMMessage = {
   role: LLMRole;
   content: string;
+  reasoningContent?: string;
   name?: string;
   toolCallId?: string;
   toolCalls?: LLMToolCall[];
@@ -48,6 +49,8 @@ export type LLMUsage = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
 };
 
 export type LLMChatResult = {
@@ -87,6 +90,7 @@ export type OpenAICompatibleConfig = {
   model: string;
   temperature?: number;
   timeoutMs?: number;
+  extraParams?: Record<string, unknown>;
 };
 
 type OpenAIChatCompletionResponse = {
@@ -96,6 +100,7 @@ type OpenAIChatCompletionResponse = {
     message?: {
       role?: string;
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         id?: string;
         type?: string;
@@ -107,10 +112,23 @@ type OpenAIChatCompletionResponse = {
     };
     finish_reason?: string;
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
+  usage?: OpenAIUsage | null;
+};
+
+type OpenAIUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  cache_hit_tokens?: number;
+  cache_miss_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+  };
+  input_tokens_details?: {
+    cached_tokens?: number;
+    cache_read?: number;
   };
 };
 
@@ -121,6 +139,7 @@ type OpenAIChatCompletionChunk = {
     delta?: {
       role?: string;
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         index?: number;
         id?: string;
@@ -133,6 +152,7 @@ type OpenAIChatCompletionChunk = {
     };
     finish_reason?: string;
   }>;
+  usage?: OpenAIUsage | null;
 };
 
 type OpenAIToolCall = NonNullable<
@@ -198,7 +218,10 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       let id: string | undefined;
       let model: string | undefined;
       let content = "";
+      let reasoningContent = "";
       let finishReason: string | undefined;
+      let rawUsage: OpenAIUsage | null | undefined;
+      let usage: LLMUsage | undefined;
       const toolCalls = new Map<number, LLMToolCall>();
       const processLine = async (line: string) => {
         const trimmed = line.trim();
@@ -208,12 +231,18 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         const chunk = JSON.parse(data) as OpenAIChatCompletionChunk;
         id = chunk.id ?? id;
         model = chunk.model ?? model;
+        rawUsage = chunk.usage ?? rawUsage;
+        usage = normalizeUsage(chunk.usage) ?? usage;
         const choice = chunk.choices?.[0];
         finishReason = choice?.finish_reason ?? finishReason;
         const deltaContent = choice?.delta?.content;
         if (deltaContent) {
           content += deltaContent;
           await handlers?.onContentDelta?.(deltaContent);
+        }
+        const deltaReasoningContent = choice?.delta?.reasoning_content;
+        if (deltaReasoningContent) {
+          reasoningContent += deltaReasoningContent;
         }
         for (const rawCall of choice?.delta?.tool_calls ?? []) {
           const index = typeof rawCall.index === "number" ? rawCall.index : 0;
@@ -260,12 +289,15 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         message: {
           role: "assistant",
           content,
+          reasoningContent: reasoningContent || undefined,
           toolCalls: [...toolCalls.entries()]
             .sort(([left], [right]) => left - right)
             .map(([, call]) => call)
             .filter((call) => call.function.name)
         },
-        finishReason
+        finishReason,
+        usage,
+        raw: rawUsage === undefined ? undefined : { usage: rawUsage }
       };
     } finally {
       clearTimeout(timeout);
@@ -275,6 +307,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   return {
     async chat(input) {
       const body = {
+        ...(config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
         temperature: input.temperature ?? config.temperature ?? 0.2,
@@ -294,21 +327,17 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         message: {
           role: "assistant",
           content: choice?.message?.content ?? "",
+          reasoningContent: choice?.message?.reasoning_content ?? undefined,
           toolCalls: normalizeToolCalls(choice?.message?.tool_calls)
         },
         finishReason: choice?.finish_reason,
-        usage: json.usage
-          ? {
-              inputTokens: json.usage.prompt_tokens,
-              outputTokens: json.usage.completion_tokens,
-              totalTokens: json.usage.total_tokens
-            }
-          : undefined,
+        usage: normalizeUsage(json.usage),
         raw: json
       };
     },
     async chatStream(input, handlers) {
       const body = {
+        ...(config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
         temperature: input.temperature ?? config.temperature ?? 0.2,
@@ -338,6 +367,7 @@ function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {
   };
   if (message.name) result.name = message.name;
   if (message.toolCallId) result.tool_call_id = message.toolCallId;
+  if (message.reasoningContent) result.reasoning_content = message.reasoningContent;
   if (message.toolCalls) {
     result.tool_calls = message.toolCalls.map((call) => ({
       id: call.id,
@@ -369,6 +399,27 @@ function normalizeToolCalls(raw: OpenAIToolCall[] | undefined): LLMToolCall[] | 
     })
     .filter((call): call is LLMToolCall => Boolean(call));
   return calls.length > 0 ? calls : undefined;
+}
+
+function normalizeUsage(usage: OpenAIUsage | null | undefined): LLMUsage | undefined {
+  if (!usage) return undefined;
+  const cacheHitTokens = usage.prompt_cache_hit_tokens
+    ?? usage.cache_hit_tokens
+    ?? usage.prompt_tokens_details?.cached_tokens
+    ?? usage.input_tokens_details?.cached_tokens
+    ?? usage.input_tokens_details?.cache_read;
+  const cacheMissTokens = usage.prompt_cache_miss_tokens
+    ?? usage.cache_miss_tokens
+    ?? (typeof usage.prompt_tokens === "number" && typeof cacheHitTokens === "number"
+      ? Math.max(0, usage.prompt_tokens - cacheHitTokens)
+      : undefined);
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    totalTokens: usage.total_tokens,
+    cacheHitTokens,
+    cacheMissTokens
+  };
 }
 
 export function createMutableLLMClient(initialClient: LLMClient): MutableLLMClient {

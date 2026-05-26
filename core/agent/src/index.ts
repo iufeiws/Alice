@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { LLMChatInput, LLMClient, LLMToolCallDelta } from "../../llm/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCallDelta } from "../../llm/src/index.js";
 import type { OutputRouter } from "../../output-router/src/index.js";
 import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
@@ -7,7 +7,7 @@ import type { SessionResolver } from "../../session/src/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
-import { getPromptContent } from "./prompts.js";
+import { buildPromptMessagesWithToolResults, defaultPromptProfile, type PromptLayer, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
 
 export type AgentCoreDeps = {
@@ -22,9 +22,13 @@ export type AgentCoreDeps = {
     capture(event: AgentEvent, outputs: AgentOutput[]): Promise<void>;
   };
   tools?: ToolPlugin[];
+  getPromptProfile?: () => PromptProfile;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
+  onLLMResponseReceived?(result: LLMChatResult): void;
+  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received"; round: number; stream: boolean; model?: string }): void;
+  onLLMSessionCompleted?(result: { sentMessage: boolean }): void;
 };
 
 export interface AgentCore {
@@ -88,21 +92,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           ];
         }
 
-        const recalled = await deps.memory?.recall(event) ?? [];
-        const toolPlugins = deps.tools ?? [];
+        const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
+        const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
+        const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, { event, time }, (layer, call) => {
+          return runPromptToolRequest(layer, call, toolPlugins);
+        });
+        if (promptMessages.length === 0) {
+          return [];
+        }
         const llmInput = {
           messages: [
-            {
-              role: "system",
-              content: getPromptContent("agent.placeholder.system")
-            },
-            ...(recalled.length > 0
-              ? [{
-                  role: "system" as const,
-                  content: `Relevant persistent memory:\n${recalled.map((item) => `- ${item}`).join("\n")}`
-                }]
-              : []),
-            { role: "user", content: routed.text }
+            ...promptMessages
           ],
           model: deps.config.llm.model,
           temperature: deps.config.llm.temperature,
@@ -115,16 +115,15 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             }
           })))
         } satisfies LLMChatInput;
-        const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins);
+        let sentMessage = false;
+        try {
+          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins);
+          sentMessage = llmResult.sentMessage;
+        } finally {
+          deps.onLLMSessionCompleted?.({ sentMessage });
+        }
 
-        const outputs = [
-          buildReply(event, time, {
-            kind: "text",
-            text: llmResult.message.content || `Echo: ${routed.text}`
-          })
-        ];
-        await deps.memory?.capture(event, outputs);
-        return outputs;
+        return [];
       } finally {
         deps.state?.noteWorkFinished();
       }
@@ -135,7 +134,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     input: LLMChatInput,
     event: AgentEvent,
     toolPlugins: ToolPlugin[]
-  ) {
+  ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean }> {
     const toolMap = new Map<string, ToolPlugin>();
     for (const plugin of toolPlugins) {
       for (const tool of plugin.listTools()) {
@@ -144,24 +143,41 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     }
 
     let nextInput = input;
+    let sentMessage = false;
     const maxToolRounds = 2;
     for (let round = 0; round <= maxToolRounds; round += 1) {
       deps.onLLMRequestPrepared?.(nextInput);
+      const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
+      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: nextInput.model });
       const streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
-      const result = deps.llm.chatStream
-        ? await deps.llm.chatStream(nextInput, {
+      let result: LLMChatResult;
+      if (useStream && deps.llm.chatStream) {
+        deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: nextInput.model });
+        try {
+          result = await deps.llm.chatStream(nextInput, {
             onToolCallDelta(delta) {
               return streamingToolSender.onToolCallDelta(delta);
             }
-          })
-        : await deps.llm.chat(nextInput);
+          });
+        } finally {
+          deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: nextInput.model });
+        }
+      } else {
+        result = await deps.llm.chat(nextInput);
+        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: nextInput.model });
+      }
       await streamingToolSender.finish();
+      deps.onLLMResponseReceived?.(result);
       const calls = result.message.toolCalls ?? [];
-      if (calls.length === 0 || round === maxToolRounds) return result;
+      if (calls.length === 0) return { message: result.message, sentMessage };
 
-      const toolMessages = await Promise.all(calls.map(async (call) => {
+      const effectiveCalls = calls.some((call) => call.function.name === "send_feishu")
+        ? calls.filter((call) => call.function.name === "send_feishu")
+        : calls;
+      const toolMessages = await Promise.all(effectiveCalls.map(async (call) => {
         const streamedResult = streamingToolSender.resultFor(call.id);
         if (streamedResult) {
+          sentMessage = sentMessage || call.function.name === "send_feishu" && streamedResult.ok;
           return {
             role: "tool" as const,
             toolCallId: call.id,
@@ -171,7 +187,13 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
         const plugin = toolMap.get(call.function.name);
         let toolResult: ToolResult;
-        if (!plugin) {
+        if (round === maxToolRounds && call.function.name !== "send_feishu") {
+          toolResult = {
+            callId: call.id,
+            ok: false,
+            error: `Tool round limit reached before ${call.function.name}`
+          };
+        } else if (!plugin) {
           toolResult = {
             callId: call.id,
             ok: false,
@@ -195,6 +217,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
         }
 
+        sentMessage = sentMessage || call.function.name === "send_feishu" && toolResult.ok;
         return {
           role: "tool" as const,
           toolCallId: call.id,
@@ -203,6 +226,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         };
       }));
 
+      if (sentMessage) {
+        return { message: result.message, sentMessage };
+      }
+
       nextInput = {
         ...nextInput,
         messages: [
@@ -210,14 +237,19 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           {
             role: "assistant",
             content: result.message.content,
-            toolCalls: calls
+            reasoningContent: result.message.reasoningContent,
+            toolCalls: effectiveCalls
           },
           ...toolMessages
         ]
       };
     }
 
-    return deps.llm.chat(nextInput);
+    deps.onLLMLog?.({ kind: "call_start", round: maxToolRounds + 1, stream: false, model: nextInput.model });
+    const finalResult = await deps.llm.chat(nextInput);
+    deps.onLLMLog?.({ kind: "response_received", round: maxToolRounds + 1, stream: false, model: nextInput.model });
+    deps.onLLMResponseReceived?.(finalResult);
+    return { message: finalResult.message, sentMessage };
   }
 
   function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
@@ -235,8 +267,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         if (state.canStreamNow()) state.dropPendingLines();
         if (lines.length === 0) return;
         const callId = state.callId;
-        const plugin = toolMap.get("send_message");
-        if (!callId || !plugin || state.toolName !== "send_message") return;
+        const plugin = toolMap.get("send_feishu");
+        if (!callId || !plugin || state.toolName !== "send_feishu") return;
         sendChain = sendChain.then(async () => {
           for (const line of lines) {
             const sentCount = sentCounts.get(callId) ?? 0;
@@ -250,8 +282,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         for (const state of states.values()) {
           const lines = state.finish();
           const callId = state.callId;
-          const plugin = toolMap.get("send_message");
-          if (!callId || !plugin || state.toolName !== "send_message" || !state.shouldSendAsMessage()) continue;
+          const plugin = toolMap.get("send_feishu");
+          if (!callId || !plugin || state.toolName !== "send_feishu" || !state.shouldSendAsMessage()) continue;
           sendChain = sendChain.then(async () => {
             for (const line of lines) {
               const sentCount = sentCounts.get(callId) ?? 0;
@@ -268,6 +300,52 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
     };
   }
+
+  async function runPromptToolRequest(
+    layer: PromptLayer,
+    call: {
+      id: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      requester?: AgentEvent["source"];
+      session?: AgentEvent["session"];
+    },
+    toolPlugins: ToolPlugin[]
+  ): Promise<ToolResult> {
+    if (call.toolName === "send_feishu") {
+      return {
+        callId: call.id,
+        ok: false,
+        error: "send_feishu cannot run from prompt prebuild"
+      };
+    }
+    const plugin = findToolPlugin(toolPlugins, call.toolName);
+    if (!plugin) {
+      return {
+        callId: call.id,
+        ok: false,
+        error: `Unknown prompt tool: ${call.toolName}`
+      };
+    }
+    try {
+      return await plugin.execute(call);
+    } catch (error) {
+      return {
+        callId: call.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+}
+
+function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
+  if (profile.visibleTools.feishu !== false) return tools;
+  return tools.filter((plugin) => plugin.id !== "messaging");
+}
+
+function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {
+  return tools.find((plugin) => plugin.listTools().some((tool) => tool.name === toolName));
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {
@@ -303,7 +381,7 @@ async function sendStreamingLine(
   try {
     const result = await plugin.execute({
       id: `${callId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      toolName: "send_message",
+      toolName: "send_feishu",
       input: { type: "message", content: line },
       requester: event.source,
       session: event.session
@@ -365,7 +443,7 @@ class StreamingSendMessageState {
   }
 
   canStreamNow(): boolean {
-    return this.sawExplicitMessageType && !this.sawNonMessageType;
+    return !this.sawNonMessageType;
   }
 
   shouldSendAsMessage(): boolean {

@@ -2,7 +2,8 @@ import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMClient } from "../../../core/llm/src/index.js";
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
-import { defaultPromptRegistry } from "../../../core/agent/src/prompts.js";
+import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
+import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody } from "./http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
@@ -13,10 +14,16 @@ export type AdminRoutesContext = {
   logs: unknown[];
   messageLogs: unknown[];
   llmRequestLogs: unknown[];
+  llmResponseLogs: unknown[];
+  getActiveLLMSession(): unknown;
   store: { listMemories(limit: number): unknown[]; listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
-  getLLMRequestPreview(): unknown;
+  getLLMRequestPreview(): unknown | Promise<unknown>;
+  getLLMRequestProfilePreview(): unknown | Promise<unknown>;
+  clearLLMChainCache(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
+  promptProfileStore: PromptProfileStore;
+  agentState: AgentStateController;
   messagingTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
@@ -24,6 +31,12 @@ export type AdminRoutesContext = {
     send(output: any): Promise<unknown>;
   };
   runtime: { feishuStarted: boolean };
+  messageRuntime: {
+    pauseHeartbeat(): void;
+    resumeHeartbeat(): void;
+    processNow(): Promise<void>;
+    getStatus(): unknown;
+  };
   getLLM(): LLMClient;
   reloadLLM(): void;
   time: CurrentTimeProvider;
@@ -39,6 +52,18 @@ export type AdminRoutesContext = {
     summary: string;
   }): unknown;
 };
+
+const AGENT_STATES: AgentBehaviorState[] = [
+  "idle",
+  "waiting",
+  "away",
+  "curious",
+  "working",
+  "going_to_sleep",
+  "sleeping",
+  "serious",
+  "test"
+];
 
 export function createApiRequestHandler(context: AdminRoutesContext) {
   return async (request: any, response: any) => {
@@ -66,12 +91,48 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "GET" && request.url === "/admin/api/prompts") {
-        writeJson(response, 200, { prompts: defaultPromptRegistry });
+        writeJson(response, 200, {
+          prompts: defaultPromptRegistry,
+          profile: context.promptProfileStore.get(),
+          variables: getPromptVariablePreview(context)
+        });
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/prompt-profile") {
+        writeJson(response, 200, {
+          profile: context.promptProfileStore.get(),
+          variables: getPromptVariablePreview(context),
+          tools: getVisiblePromptTools(context)
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/prompt-profile") {
+        await savePromptProfile(context, request, response);
         return;
       }
 
       if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
-        writeJson(response, 200, { requests: context.llmRequestLogs, preview: context.getLLMRequestPreview() });
+        writeJson(response, 200, {
+          requests: context.llmRequestLogs,
+          activeSession: context.getActiveLLMSession(),
+          profilePreview: await context.getLLMRequestProfilePreview(),
+          messagePreview: await context.getLLMRequestPreview(),
+          actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
+        });
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/llm-responses") {
+        writeJson(response, 200, { responses: context.llmResponseLogs });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/llm-chain/clear") {
+        context.clearLLMChainCache();
+        context.appendLog("info", "llm active session clear requested");
+        writeJson(response, 200, { ok: true });
         return;
       }
 
@@ -95,13 +156,26 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/admin/api/agent-state") {
+        writeJson(response, 200, { state: context.agentState.getSnapshot(), states: AGENT_STATES });
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/runtime/status") {
+        writeJson(response, 200, {
+          feishu: getFeishuRuntimeStatus(context),
+          messages: context.messageRuntime.getStatus()
+        });
+        return;
+      }
+
       if (request.method === "GET" && request.url === "/admin/api/plugins/feishu/pairings") {
         writeJson(response, 200, { contacts: context.feishuPairingStore.list() });
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/view") {
-        await executeMessagingTool(context, request, response, "view_messages");
+        await executeMessagingTool(context, request, response, "check_feishu");
         return;
       }
 
@@ -111,7 +185,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/send") {
-        await executeMessagingTool(context, request, response, "send_message");
+        await executeMessagingTool(context, request, response, "send_feishu");
         return;
       }
 
@@ -145,6 +219,29 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "PUT" && request.url === "/admin/api/agent-state") {
+        await saveAgentState(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/runtime/heartbeat/pause") {
+        context.messageRuntime.pauseHeartbeat();
+        writeJson(response, 200, { ok: true, status: context.messageRuntime.getStatus() });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/runtime/heartbeat/resume") {
+        context.messageRuntime.resumeHeartbeat();
+        writeJson(response, 200, { ok: true, status: context.messageRuntime.getStatus() });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/runtime/process-now") {
+        await context.messageRuntime.processNow();
+        writeJson(response, 200, { ok: true, status: context.messageRuntime.getStatus() });
+        return;
+      }
+
       if (request.method === "POST" && request.url === "/admin/api/plugins/feishu/start") {
         await startFeishu(context, response);
         return;
@@ -174,11 +271,55 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
   };
 }
 
+async function savePromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const profile = context.promptProfileStore.save(body as PromptProfile);
+  context.appendLog("info", `prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
+  writeJson(response, 200, {
+    ok: true,
+    profile,
+    variables: getPromptVariablePreview(context)
+  });
+}
+
+function getPromptVariablePreview(context: AdminRoutesContext): Record<string, string> {
+  const contact = context.feishuPairingStore.list()[0];
+  return promptVariables(context.promptProfileStore.get(), {
+    time: context.time,
+    event: {
+      id: "preview",
+      source: {
+        plugin: "feishu",
+        channelId: contact?.channelId,
+        userId: contact?.userId
+      },
+      session: {
+        scope: "dm",
+        sessionId: contact?.sessionId ?? contact?.channelId ?? contact?.userId ?? "preview"
+      },
+      type: "message.text",
+      payload: { kind: "text", text: "" },
+      meta: {
+        receivedAt: context.time.now().iso
+      }
+    }
+  });
+}
+
+function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: string; description?: string }> {
+  const profile = context.promptProfileStore.get();
+  if (profile.visibleTools.feishu === false) return [];
+  return context.messagingTools.listTools().map((tool) => ({
+    name: tool.name,
+    description: tool.description
+  }));
+}
+
 async function executeMessagingTool(
   context: AdminRoutesContext,
   request: any,
   response: any,
-  toolName: "view_messages" | "search_messages" | "send_message"
+  toolName: "check_feishu" | "search_messages" | "send_feishu"
 ): Promise<void> {
   const body = await readJsonBody(request);
   const result = await context.messagingTools.execute({
@@ -266,10 +407,13 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
   const model = requiredString(body.model);
   const temperature = numberFromUnknown(body.temperature, context.config.llm.temperature);
   const timeoutMs = numberFromUnknown(body.timeoutMs, context.config.llm.timeoutMs);
+  const stream = body.stream === undefined ? context.config.llm.stream : booleanFromUnknown(body.stream);
+  const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
   if (baseURL && !isValidHttpUrl(baseURL)) return writeJson(response, 400, { ok: false, error: "invalid_base_url" });
   if (!model) return writeJson(response, 400, { ok: false, error: "missing_model" });
   if (temperature < 0 || temperature > 2) return writeJson(response, 400, { ok: false, error: "invalid_temperature" });
   if (timeoutMs < 1_000 || timeoutMs > 300_000) return writeJson(response, 400, { ok: false, error: "invalid_timeout_ms" });
+  if (!extraParamsResult.ok) return writeJson(response, 400, { ok: false, error: "invalid_extra_params" });
 
   updateEnvFile(".env", {
     LLM_PROVIDER: "openai-compatible",
@@ -277,7 +421,9 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
     LLM_API_KEY: optionalString(body.apiKey),
     LLM_MODEL: model,
     LLM_TEMPERATURE: String(temperature),
-    LLM_TIMEOUT_MS: String(timeoutMs)
+    LLM_TIMEOUT_MS: String(timeoutMs),
+    LLM_STREAM_ENABLED: String(stream),
+    LLM_EXTRA_PARAMS: JSON.stringify(extraParamsResult.value)
   });
   context.config.llm.provider = baseURL && apiKey ? "openai-compatible" : "stub";
   context.config.llm.baseURL = baseURL;
@@ -285,6 +431,8 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
   context.config.llm.model = model;
   context.config.llm.temperature = temperature;
   context.config.llm.timeoutMs = timeoutMs;
+  context.config.llm.stream = stream;
+  context.config.llm.extraParams = extraParamsResult.value;
   context.reloadLLM();
   context.appendLog("info", `llm config saved: ${baseURL || "(empty)"} ${model || "(empty)"}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
@@ -343,6 +491,20 @@ async function saveAgentConfig(context: AdminRoutesContext, request: any, respon
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
+async function saveAgentState(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const state = requiredString(body.state) as AgentBehaviorState;
+  const intimacy = body.intimacy === undefined ? undefined : numberFromUnknown(body.intimacy, context.agentState.getSnapshot().intimacy);
+  if (!AGENT_STATES.includes(state)) {
+    writeJson(response, 400, { ok: false, error: "invalid_agent_state" });
+    return;
+  }
+  let snapshot = context.agentState.setState(state, { reason: "admin" });
+  if (intimacy !== undefined) snapshot = context.agentState.setIntimacy(intimacy);
+  context.appendLog("info", `agent state saved: state=${snapshot.state} intimacy=${snapshot.intimacy} delay=${snapshot.responseDelayMs}`);
+  writeJson(response, 200, { ok: true, state: snapshot, states: AGENT_STATES });
+}
+
 async function startFeishu(context: AdminRoutesContext, response: any): Promise<void> {
   if (Object.keys(context.config.plugins.feishu.accounts).length === 0) {
     context.appendLog("warn", "feishu start rejected: missing credentials");
@@ -376,6 +538,8 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       model: context.config.llm.model,
       temperature: context.config.llm.temperature,
       timeoutMs: context.config.llm.timeoutMs,
+      stream: context.config.llm.stream,
+      extraParams: context.config.llm.extraParams,
       apiKeyConfigured: Boolean(context.config.llm.apiKey)
     },
     plugins: {
@@ -456,6 +620,36 @@ function isValidTimeZone(value: string): boolean {
 function numberFromUnknown(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseJsonObject(value: string): { ok: true; value: Record<string, unknown> } | { ok: false } {
+  const text = value.trim();
+  if (!text) return { ok: true, value: {} };
+  const candidates = [
+    text,
+    removeTrailingJsonCommas(text),
+    text.startsWith("{") ? "" : `{${text}}`,
+    text.startsWith("{") ? "" : removeTrailingJsonCommas(`{${text}}`)
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const parsed = parseJsonObjectCandidate(candidate);
+    if (parsed.ok) return parsed;
+  }
+  return { ok: false };
+}
+
+function parseJsonObjectCandidate(value: string): { ok: true; value: Record<string, unknown> } | { ok: false } {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return { ok: true, value: parsed as Record<string, unknown> };
+    return { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function removeTrailingJsonCommas(value: string): string {
+  return value.replace(/,\s*([}\]])/g, "$1").replace(/,\s*$/, "");
 }
 
 function booleanFromUnknown(value: unknown): boolean {

@@ -4,6 +4,7 @@ data/
 logs/
 memory-files/indexes/
 memory-files/state/
+memory-files/config/
 .env
 .DS_Store
 npm-debug.log*

@@ -61,13 +61,13 @@ test("agent state writes current-time fields in the configured timezone", () => 
   });
 
   controller.start();
-  assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:00:00.000+08:00");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T08:05:00.000+08:00");
+  assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:00:00.000");
+  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T08:05:00.000");
 
   current = new Date("2026-05-25T00:05:00.000Z");
   controller.tick();
   assert.equal(controller.getSnapshot().state, "idle");
-  assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:05:00.000+08:00");
+  assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:05:00.000");
 });
 
 test("agent state returns configured delay ranges", () => {
@@ -86,6 +86,10 @@ test("agent state returns configured delay ranges", () => {
 
   controller.setState("curious", { durationMs: 1 });
   assert.equal(controller.getInboundDelayMs(), 9_000);
+
+  controller.setState("test", { durationMs: 1 });
+  assert.equal(controller.getInboundDelayMs(), 8_000);
+  assert.equal(controller.getSnapshot().responseDelayMs, 8_000);
 });
 
 test("waiting degrades to idle after inactivity", () => {
@@ -116,7 +120,7 @@ test("sleep flow moves from going_to_sleep to sleeping and back to waiting", () 
   current = new Date("2026-05-25T00:00:00.001Z");
   controller.tick();
   assert.equal(controller.getSnapshot().state, "sleeping");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T06:00:00.001Z");
+  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T06:00:00.001");
   assert.equal(controller.canRunHeartbeat(), false);
   assert.equal(controller.canReplyToInbound(), false);
 
@@ -137,6 +141,22 @@ test("serious mode only switches through working and returns to serious", () => 
 
   controller.noteWorkFinished();
   assert.equal(controller.getSnapshot().state, "serious");
+});
+
+test("test mode switches through working and returns to test", () => {
+  const controller = createAgentStateController({
+    store: memoryStore()
+  });
+
+  controller.setState("test");
+  assert.equal(controller.getSnapshot().responseDelayMs, 8_000);
+
+  controller.noteWorkStarted();
+  assert.equal(controller.getSnapshot().state, "working");
+
+  controller.noteWorkFinished();
+  assert.equal(controller.getSnapshot().state, "test");
+  assert.equal(controller.getSnapshot().responseDelayMs, 8_000);
 });
 
 function memoryStore(initial?: string): AgentStateStore & { content?: string } {

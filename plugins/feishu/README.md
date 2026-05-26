@@ -80,21 +80,15 @@ For media, `assetId` currently means a local file path or `file://` path.
 
 ## Agent Messaging Tools
 
-AgentCore exposes platform-neutral tool names to the LLM. Feishu is the current adapter behind those tools:
+AgentCore exposes Feishu-specific tool names to the LLM:
 
-- `view_messages`
+- `check_feishu`
   - args: `scope?: "today" | "new"`; default `today`.
   - legacy typo `scpe` is accepted as an alias.
   - `new` uses a persisted per-conversation cursor.
-  - output is a plain string for the LLM; lines use: `[{local time}] user/Alice:{content}[reaction][已撤回]`.
+  - output is a plain string for the LLM. Adjacent messages follow WeChat-style time merging: messages less than five minutes apart share one `[local time]` header, followed by `user/Alice:{content}[reaction][已撤回]` lines.
   - no new messages returns `nothing new`.
-- `search_messages`
-  - args: `content`, `direction?: "backward" | "forward"`, `limit?: number`, `contextCount?: number`.
-  - defaults: `direction="backward"`, `limit=3`, `contextCount=10`.
-  - Chinese aliases are accepted: `从后到前`, `从前到后`.
-  - searches persisted Feishu messages through SQLite FTS5.
-  - output is plain context text, not JSON.
-- `send_message`
+- `send_feishu`
   - args: `type?: "message" | "markdown" | "image"`, `content`.
   - default `type` is `message`.
   - in `message` mode, newline-separated content is split into multiple Feishu text messages.

@@ -37,16 +37,29 @@ createAgentCore(deps: AgentCoreDeps): AgentCore
 - Recalled memories are injected as an extra system message.
 - Text turns are captured after the LLM response.
 
-The system prompt currently comes from `core/agent/src/prompts.ts`.
+The active prompt comes from the editable prompt profile in `memory-files/config/prompt-profile.json`.
+The admin UI can change layer order, layer content, layer role, user name, and visible tool groups.
+
+Prompt layers support runtime variables:
+
+- `{{time}}`
+- `{{date}}`
+- `{{timezone}}`
+- `{{user}}`
+- `{{session}}`
+- `{{channel}}`
+
+Unknown variables are preserved as written.
 
 ## Messaging Tools
 
 The current runtime exposes platform-neutral tool names to the LLM:
 
-- `view_messages({ scope = "today" })`: reads current-conversation messages. `scope="new"` returns messages since the last tool view cursor.
-- `search_messages({ content, direction = "backward", limit = 3, contextCount = 10 })`: searches persisted current-conversation messages with SQLite FTS5 and returns context blocks.
-- `send_message({ type = "message", content })`: sends to the current conversation. `message` mode splits newline-separated content into multiple messages sent 500 ms apart.
+- `check_feishu({ scope = "today" })`: 查看当前一对一飞书聊天记录。`scope="new"` 返回上次查看后的新增飞书消息。
+- `send_feishu({ type = "message", content })`: 发送飞书消息到当前一对一聊天。`message` 模式会把换行分隔内容拆成多条飞书消息，间隔 500 ms 发送。
 
 Tool results are plain strings in the same compact format shown to the LLM. The first adapter behind these tools is Feishu, but the LLM-facing names intentionally do not include Feishu.
 
-When the configured LLM adapter supports streaming, AgentCore watches `send_message` tool-call argument deltas. For `type="message"`, every decoded newline in `content` immediately sends the completed line, so long multi-message replies do not wait for the final JSON arguments object.
+When the configured LLM adapter supports streaming, AgentCore watches `send_feishu` tool-call argument deltas. For `type="message"`, every decoded newline in `content` immediately sends the completed line, so long multi-message replies do not wait for the final JSON arguments object.
+
+If `send_feishu` appears in a tool-call response, AgentCore treats it as the terminal action for that inbound event. It executes only `send_feishu` calls from that response, skips any mixed read/search calls, and does not feed the send result back into another LLM round. This rule is intentional so future prompt/tool policy updates do not reintroduce repeated read/send loops.

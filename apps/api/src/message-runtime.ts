@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentOutput } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
 import type { AgentStateController } from "../../../core/agent/src/state.js";
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type {
   InsertOutboundMessageInput,
   StoredConversationMessage,
@@ -13,6 +13,13 @@ import type {
 export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
+  getProcessNowTarget?(): {
+    plugin: string;
+    accountId?: string;
+    channelId?: string;
+    userId?: string;
+    sessionId: string;
+  } | undefined;
   now?: () => Date;
   time?: CurrentTimeProvider;
   store: {
@@ -47,6 +54,15 @@ export type MessageRuntime = {
   ingestEvent(event: AgentEvent): void;
   ingestLifecycle(event: MessageLifecycleEvent): void;
   recoverPendingSessions(): void;
+  pauseHeartbeat(): void;
+  resumeHeartbeat(): void;
+  processNow(): Promise<void>;
+  getStatus(): {
+    heartbeatPaused: boolean;
+    pendingSessions: string[];
+    processingSessions: string[];
+    heartbeatScheduled: boolean;
+  };
   flushAll(): Promise<void>;
 };
 
@@ -80,6 +96,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+  let heartbeatPaused = false;
   const unsubscribeState = deps.agentState?.onChange(() => scheduleHeartbeat(0));
   scheduleHeartbeat(0);
 
@@ -156,6 +173,28 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         markPending(session.conversationId);
       }
     },
+    pauseHeartbeat() {
+      heartbeatPaused = true;
+      clearHeartbeat();
+      deps.appendLog("info", "message runtime heartbeat paused");
+    },
+    resumeHeartbeat() {
+      heartbeatPaused = false;
+      deps.appendLog("info", "message runtime heartbeat resumed");
+      scheduleHeartbeat(0);
+    },
+    async processNow() {
+      const processed = await runHeartbeat({ force: true });
+      if (processed === 0) await runManualSession();
+    },
+    getStatus() {
+      return {
+        heartbeatPaused,
+        pendingSessions: [...pendingSessions],
+        processingSessions: [...processingSessions],
+        heartbeatScheduled: Boolean(heartbeatTimer)
+      };
+    },
     async flushAll() {
       clearHeartbeat();
       unsubscribeState?.();
@@ -168,6 +207,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function scheduleHeartbeat(delayMs = deps.getHeartbeatIntervalMs?.() ?? 1000): void {
+    if (heartbeatPaused) return;
     if (heartbeatTimer) return;
     heartbeatTimer = setTimeout(() => {
       heartbeatTimer = undefined;
@@ -182,13 +222,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     heartbeatTimer = undefined;
   }
 
-  async function runHeartbeat(options: { force?: boolean } = {}): Promise<void> {
+  async function runHeartbeat(options: { force?: boolean } = {}): Promise<number> {
     const force = options.force ?? false;
     deps.agentState?.tick();
     if (!force && !canRunHeartbeat()) {
       scheduleHeartbeat();
-      return;
+      return 0;
     }
+    let processed = 0;
     const sessionIds = [...pendingSessions];
     for (const sessionId of sessionIds) {
       if (processingSessions.has(sessionId)) continue;
@@ -204,6 +245,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       processingSessions.add(sessionId);
       try {
         await handleDirtySession(sessionId);
+        processed += 1;
         if (deps.store.listUnprocessedCoreMessagesForConversation(sessionId, 1).length === 0) {
           pendingSessions.delete(sessionId);
         }
@@ -215,6 +257,62 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
 
     if (!force) scheduleHeartbeat();
+    return processed;
+  }
+
+  async function runManualSession(): Promise<void> {
+    const target = deps.getProcessNowTarget?.();
+    if (!target) {
+      deps.appendLog("warn", "process now skipped: no default messaging target");
+      return;
+    }
+    if (processingSessions.has(target.sessionId)) return;
+    processingSessions.add(target.sessionId);
+    try {
+      const event = buildManualProcessEvent(target);
+      deps.appendLog("info", `manual process now session started: ${target.sessionId}`);
+      const outputs = await deps.core.handleEvent(event);
+      const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
+        plugin: output.target.plugin,
+        conversationId: output.target.sessionId,
+        senderRole: "assistant",
+        contentType: output.content.kind,
+        contentText: summarizeOutput(output.content),
+        contentJson: safeJson(output.content),
+        createdAt: output.meta.createdAt
+      }));
+      try {
+        const sendResults = await deps.outputRouter.sendAll(outputs);
+        const sentAt = time.now().iso;
+        const resultList = Array.isArray(sendResults) ? sendResults : [];
+        for (const [index, message] of outboundMessages.entries()) {
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+        }
+      } catch (error) {
+        const failedAt = time.now().iso;
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const message of outboundMessages) {
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+        }
+        throw error;
+      }
+      for (const output of outputs) {
+        deps.appendMessageLog({
+          direction: "outbound",
+          plugin: output.target.plugin,
+          kind: output.content.kind,
+          target: output.target.channelId ?? output.target.userId,
+          sessionId: output.target.sessionId,
+          status: "sent",
+          summary: summarizeOutput(output.content)
+        });
+      }
+      deps.appendLog("info", `manual process now session handled: ${outputs.length} output(s)`);
+    } catch (error) {
+      deps.appendLog("error", `manual process now failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      processingSessions.delete(target.sessionId);
+    }
   }
 
   function canRunHeartbeat(): boolean {
@@ -225,7 +323,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     if (deps.agentState && !deps.agentState.canReplyToInbound()) return false;
     const latest = pending[pending.length - 1];
     const delayMs = deps.agentState?.getInboundDelayMs() ?? deps.getDelayMs();
-    return now().getTime() - new Date(latest.createdAt).getTime() >= delayMs;
+    return now().getTime() - parseZonedIso(latest.createdAt, time.timeZone).getTime() >= delayMs;
   }
 
   async function handleDirtySession(sessionId: string): Promise<void> {
@@ -238,7 +336,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     const agentEvent = buildAgentEventFromMessageLog(sessionId, pending);
     deps.appendLog("info", `feishu session processing from message log: ${sessionId} pending=${pending.length}`);
 
-    const outputs = await deps.core.handleEvent(agentEvent);
+    let outputs: AgentOutput[];
+    try {
+      outputs = await deps.core.handleEvent(agentEvent);
+    } catch (error) {
+      markPendingCoreFailed(pending, error);
+      throw error;
+    }
     const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
       plugin: output.target.plugin,
       conversationId: output.target.sessionId,
@@ -295,19 +399,34 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     deps.appendLog("info", `feishu session handled: ${outputs.length} output(s), batch=${batchId}`);
   }
 
+  function markPendingCoreFailed(pending: StoredConversationMessage[], error: unknown): void {
+    const failedAt = time.now().iso;
+    const batchId = createId("core_failed");
+    const reason = error instanceof Error ? error.message : String(error);
+    deps.store.markMessagesCoreProcessed(pending.map((entry) => entry.id), failedAt, batchId);
+    for (const entry of pending) {
+      deps.appendMessageLog({
+        direction: "inbound",
+        plugin: entry.plugin,
+        kind: entry.contentType,
+        target: entry.conversationId,
+        sessionId: entry.conversationId,
+        rawMessageId: entry.externalMessageId,
+        status: "core_failed",
+        processedAt: failedAt,
+        processedBatchId: batchId,
+        error: reason,
+        summary: entry.contentText
+      });
+    }
+    deps.appendLog("error", `core failed; marked ${pending.length} inbound message(s) processed as failed, batch=${batchId}`);
+  }
+
   function buildAgentEventFromMessageLog(sessionId: string, pending: StoredConversationMessage[]): AgentEvent {
     const latestLog = pending[pending.length - 1];
     const latestEvent = latestSessionEvents.get(sessionId);
     const allSessionLogs = deps.store.listMessagesForConversation(sessionId, 30);
-    const context = allSessionLogs
-      .filter((entry) => entry.id < pending[0].id)
-      .slice(-12)
-      .map((entry) => formatContextLine(entry))
-      .join("\n");
-    const latestText = pending.map((entry) => entry.contentText).join("\n");
-    const text = context
-      ? `Conversation context:\n${context}\n\nLatest user messages:\n${latestText}`
-      : latestText;
+    const text = "A Feishu message event was received. Use messaging tools to inspect conversation history before replying.";
 
     if (latestEvent) {
       return {
@@ -350,6 +469,34 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         raw: {
           recoveredFromMessageLog: true,
           pendingIds: pending.map((entry) => entry.id)
+        }
+      }
+    };
+  }
+
+  function buildManualProcessEvent(target: NonNullable<ReturnType<NonNullable<MessageRuntimeDeps["getProcessNowTarget"]>>>): AgentEvent {
+    const receivedAt = time.now().iso;
+    return {
+      id: createId("evt"),
+      source: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId
+      },
+      session: {
+        scope: "dm",
+        sessionId: target.sessionId
+      },
+      type: "message.text",
+      payload: {
+        kind: "text",
+        text: "A manual process-now event was requested from the admin panel. Use messaging tools to inspect conversation history before replying."
+      },
+      meta: {
+        receivedAt,
+        raw: {
+          adminProcessNow: true
         }
       }
     };

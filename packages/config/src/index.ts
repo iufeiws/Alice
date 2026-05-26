@@ -5,6 +5,8 @@ export type LLMConfig = {
   model: string;
   temperature: number;
   timeoutMs: number;
+  stream: boolean;
+  extraParams: Record<string, unknown>;
 };
 
 export type FeishuConfig = {
@@ -60,6 +62,16 @@ function numberValue(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function jsonObjectValue(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 export function loadConfig(env: Env = process.env): AppConfig {
   const llmBaseURL = env.LLM_BASE_URL?.replace(/\/+$/, "");
   const llmApiKey = env.LLM_API_KEY;
@@ -82,7 +94,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
       apiKey: llmApiKey,
       model: env.LLM_MODEL ?? "gpt-4.1-mini",
       temperature: numberValue(env.LLM_TEMPERATURE, 0.2),
-      timeoutMs: numberValue(env.LLM_TIMEOUT_MS, 60_000)
+      timeoutMs: numberValue(env.LLM_TIMEOUT_MS, 60_000),
+      stream: bool(env.LLM_STREAM_ENABLED, true),
+      extraParams: jsonObjectValue(env.LLM_EXTRA_PARAMS)
     },
     plugins: {
       feishu: {

@@ -11,7 +11,7 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
 - AgentCore runtime boundary:
   - standardized `AgentEvent` and `AgentOutput`
   - in-memory event/session/output routing
-  - placeholder agent logic with memory recall/capture hooks
+  - editable prompt profile with memory recall/capture hooks
 - Internal OpenAI-compatible `/v1` LLM client:
   - supports configurable `LLM_BASE_URL`
   - works with OpenAI, DeepSeek, opencode, and similar `/v1/chat/completions` providers
@@ -59,6 +59,7 @@ For a local opencode-compatible endpoint, point `LLM_BASE_URL` at its `/v1` base
 data/alice.sqlite
 logs/system/*.log.jsonl
 memory-files/indexes/feishu-paired-contacts.json
+memory-files/config/prompt-profile.json
 ```
 
 `data/`, `logs/`, `.env`, `dist/`, and `node_modules/` are ignored by git.

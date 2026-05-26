@@ -16,6 +16,7 @@ AgentCore
   Intent routing
   LLM call
   Tool-call execution
+  Editable prompt profile rendering
   memory recall/capture hooks
     |
     | sends AgentOutput through
@@ -89,6 +90,9 @@ logs/system/YYYY-MM-DD.log.jsonl
 memory-files/indexes/feishu-paired-contacts.json
   Unique Feishu binding for the one allowed user/contact.
 
+memory-files/config/prompt-profile.json
+  Editable prompt layers, user name, variables, and visible tool groups.
+
 assets/
   Local test assets, currently including generated image/audio test files.
 ```
@@ -160,6 +164,7 @@ The UI uses the JSON endpoints in `apps/api/src/index.ts`; there is no separate 
 
 - Only one Feishu user/contact can be bound.
 - Agent behavior is still a placeholder prompt.
+- Agent prompt behavior is editable in the admin UI, but there is only one active local profile.
 - Memory extraction is heuristic and text-only.
 - Core-facing messages persist, but older in-memory-only logs from before SQLite migration cannot be recovered.
 - Feishu receive path currently normalizes text messages plus reaction/read/recall lifecycle updates.

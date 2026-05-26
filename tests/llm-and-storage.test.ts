@@ -20,15 +20,23 @@ test("mutable LLM client delegates to the latest configured client", async () =>
 
 test("openai stream client processes a final SSE frame without trailing newline", async () => {
   const originalFetch = globalThis.fetch;
+  let requestBody: any;
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(
-        'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"view_messages","arguments":"{\\"scope\\":\\"today\\"}"}}]},"finish_reason":"tool_calls"}]}'
+        [
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"think "}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"more"}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_feishu","arguments":"{\\"scope\\":\\"today\\"}"}}]},"finish_reason":"tool_calls"}]}'
+        ].join("\n\n")
       ));
       controller.close();
     }
   });
-  globalThis.fetch = async () => new Response(stream, { status: 200 });
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(stream, { status: 200 });
+  };
   try {
     const client = createOpenAICompatibleClient({
       baseURL: "http://example.test/v1",
@@ -36,17 +44,167 @@ test("openai stream client processes a final SSE frame without trailing newline"
       model: "test"
     });
     const result = await client.chatStream?.({
-      messages: [],
+      messages: [{ role: "assistant", content: "", reasoningContent: "prior thinking" }],
       tools: [{
         type: "function",
         function: {
-          name: "view_messages",
+          name: "check_feishu",
           parameters: { type: "object" }
         }
       }]
     });
-    assert.equal(result?.message.toolCalls?.[0].function.name, "view_messages");
+    assert.equal(result?.message.toolCalls?.[0].function.name, "check_feishu");
     assert.equal(result?.message.toolCalls?.[0].function.arguments, "{\"scope\":\"today\"}");
+    assert.equal(result?.message.reasoningContent, "think more");
+    assert.equal(requestBody.messages[0].reasoning_content, "prior thinking");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client preserves include_usage final usage chunk", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: any;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        [
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"answer"}}],"usage":null}',
+          'data: {"id":"chat_1","model":"test","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"prompt_cache_hit_tokens":6,"prompt_cache_miss_tokens":4}}',
+          "data: [DONE]"
+        ].join("\n\n")
+      ));
+      controller.close();
+    }
+  });
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(stream, { status: 200 });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test",
+      extraParams: {
+        stream_options: {
+          include_usage: true
+        }
+      }
+    });
+    const result = await client.chatStream?.({ messages: [] });
+    assert.equal(requestBody.stream, true);
+    assert.deepEqual(requestBody.stream_options, { include_usage: true });
+    assert.equal(result?.message.content, "answer");
+    assert.deepEqual(result?.usage, {
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      cacheHitTokens: 6,
+      cacheMissTokens: 4
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client preserves non-stream reasoning content", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: "chat_1",
+    model: "test",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "answer",
+        reasoning_content: "private reasoning"
+      },
+      finish_reason: "stop"
+    }]
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.message.content, "answer");
+    assert.equal(result.message.reasoningContent, "private reasoning");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client preserves token usage cache hit stats", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: "chat_1",
+    model: "test",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "answer"
+      },
+      finish_reason: "stop"
+    }],
+    usage: {
+      prompt_tokens: 11,
+      completion_tokens: 7,
+      total_tokens: 18,
+      prompt_cache_hit_tokens: 5,
+      prompt_cache_miss_tokens: 6
+    }
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.deepEqual(result.usage, {
+      inputTokens: 11,
+      outputTokens: 7,
+      totalTokens: 18,
+      cacheHitTokens: 5,
+      cacheMissTokens: 6
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client reads OpenAI-style cached token details", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: "chat_1",
+    model: "test",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "answer"
+      },
+      finish_reason: "stop"
+    }],
+    usage: {
+      prompt_tokens: 20,
+      completion_tokens: 3,
+      total_tokens: 23,
+      prompt_tokens_details: {
+        cached_tokens: 12
+      }
+    }
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.usage?.cacheHitTokens, 12);
+    assert.equal(result.usage?.cacheMissTokens, 8);
   } finally {
     globalThis.fetch = originalFetch;
   }

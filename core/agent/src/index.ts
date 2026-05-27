@@ -149,27 +149,37 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
     let nextInput = input;
     let sentMessage = false;
-    const maxLLMRequests = 5;
-    for (let round = 0; round < maxLLMRequests; round += 1) {
-      deps.onLLMRequestPrepared?.(nextInput);
+    let previousToolCallSignature: string | undefined;
+    let repeatedToolCallCount = 0;
+    let sendFeishuCallCount = 0;
+    let totalToolCallCount = 0;
+    let round = 0;
+    const maxLLMRequests = 12;
+    const maxTotalToolCalls = 20;
+    while (true) {
+      const requestInput = {
+        ...nextInput,
+        extraParams: round === 0 ? deps.config.llm.extraParams : deps.config.llm.followupExtraParams
+      };
+      deps.onLLMRequestPrepared?.(requestInput);
       const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
-      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: nextInput.model });
+      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: requestInput.model });
       const streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
       let result: LLMChatResult;
       if (useStream && deps.llm.chatStream) {
-        deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: nextInput.model });
+        deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: requestInput.model });
         try {
-          result = await deps.llm.chatStream(nextInput, {
+          result = await deps.llm.chatStream(requestInput, {
             onToolCallDelta(delta) {
               return streamingToolSender.onToolCallDelta(delta);
             }
           });
         } finally {
-          deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: nextInput.model });
+          deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: requestInput.model });
         }
       } else {
-        result = await deps.llm.chat(nextInput);
-        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: nextInput.model });
+        result = await deps.llm.chat(requestInput);
+        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: requestInput.model });
       }
       await streamingToolSender.finish();
       deps.onLLMResponseReceived?.(result);
@@ -179,7 +189,22 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const effectiveCalls = calls.some((call) => call.function.name === "send_feishu")
         ? calls.filter((call) => call.function.name === "send_feishu")
         : calls;
+      let reachedToolCallLimit = false;
       const toolMessages = await Promise.all(effectiveCalls.map(async (call) => {
+        totalToolCallCount += 1;
+        if (totalToolCallCount >= maxTotalToolCalls) reachedToolCallLimit = true;
+        const currentToolCallSignature = toolCallSignature(call.function.name, call.function.arguments);
+        if (currentToolCallSignature === previousToolCallSignature) {
+          repeatedToolCallCount += 1;
+        } else {
+          previousToolCallSignature = currentToolCallSignature;
+          repeatedToolCallCount = 1;
+        }
+        if (repeatedToolCallCount >= 3) reachedToolCallLimit = true;
+        if (call.function.name === "send_feishu") {
+          sendFeishuCallCount += 1;
+          if (sendFeishuCallCount >= 5) reachedToolCallLimit = true;
+        }
         const streamedResult = streamingToolSender.resultFor(call.id);
         if (streamedResult) {
           sentMessage = sentMessage || call.function.name === "send_feishu" && streamedResult.ok;
@@ -225,7 +250,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         };
       }));
 
-      if (round === maxLLMRequests - 1) {
+      if (reachedToolCallLimit || round + 1 >= maxLLMRequests) {
         return { message: result.message, sentMessage };
       }
 
@@ -236,15 +261,14 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           {
             role: "assistant",
             content: result.message.content,
-            reasoningContent: result.message.reasoningContent,
+            reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, effectiveCalls.length),
             toolCalls: effectiveCalls
           },
           ...toolMessages
         ]
       };
+      round += 1;
     }
-
-    return { message: nextInput.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage };
   }
 
   function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
@@ -348,6 +372,26 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function toolCallSignature(name: string, rawArguments: string): string {
+  return `${name}:${stableJson(parseToolArguments(rawArguments))}`;
+}
+
+function reasoningContentForToolRequest(reasoningContent: string | undefined, toolCallCount: number): string | undefined {
+  if (reasoningContent) return reasoningContent;
+  return toolCallCount > 0 ? "Need to call the requested tool." : undefined;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function formatToolResultForLLM(result: ToolResult): string {

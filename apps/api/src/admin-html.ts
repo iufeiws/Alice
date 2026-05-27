@@ -54,6 +54,10 @@ export function renderAdminHtmlV2(): string {
       .shell-image-preview.hidden { display: none; }
       .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .logs { max-height: calc(100vh - 150px); overflow: auto; background: #111827; color: #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+      .llm-split { display: grid; grid-template-rows: minmax(280px, 1fr) minmax(280px, 1fr); gap: 12px; height: calc(100vh - 145px); }
+      .llm-window { min-height: 0; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
+      .llm-window h2 { margin: 0; }
+      .llm-window .logs { max-height: none; min-height: 0; }
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } }
@@ -88,7 +92,9 @@ export function renderAdminHtmlV2(): string {
               <label><input id="streamEnabled" name="stream" type="checkbox" /> Streaming</label>
               <label for="extraParams">Extra Params JSON</label>
               <textarea id="extraParams" name="extraParams" rows="6" spellcheck="false">{}</textarea>
-              <p class="muted">JSON object merged into the LLM request body. Object-body fragments are also accepted. For streaming token usage, include "stream_options":{"include_usage":true}.</p>
+              <label for="followupExtraParams">Follow-up Extra Params JSON</label>
+              <textarea id="followupExtraParams" name="followupExtraParams" rows="6" spellcheck="false">{}</textarea>
+              <p class="muted">First-call params apply to the first LLM request in a session; follow-up params apply to later tool-result requests. Object-body fragments are also accepted. For streaming token usage, include "stream_options":{"include_usage":true}.</p>
               <button type="submit">Save</button>
               <p class="muted" id="save-status"></p>
             </form>
@@ -174,9 +180,8 @@ export function renderAdminHtmlV2(): string {
         <div class="tabbar main-tabs">
           <button class="tab active" data-main-tab="prompts" type="button">Prompt</button>
           <button class="tab" data-main-tab="shells" type="button">Shell</button>
-          <button class="tab" data-main-tab="llm-request" type="button">LLM Request</button>
-          <button class="tab" data-main-tab="llm-responses" type="button">LLM Responses</button>
-          <button class="tab" data-main-tab="llm-chain" type="button">LLM Chain</button>
+          <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
+          <button class="tab" data-main-tab="llm-chain" type="button">LLM Request</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
           <button class="tab" data-main-tab="events" type="button">Event Log</button>
           <button class="tab" data-main-tab="system" type="button">System Log</button>
@@ -190,10 +195,18 @@ export function renderAdminHtmlV2(): string {
           <p class="muted" id="shell-status"></p>
         </section>
         <section id="main-llm-request" class="pane"><div id="llmRequests" class="logs">No LLM request yet.</div></section>
-        <section id="main-llm-responses" class="pane"><div id="llmResponses" class="logs">No LLM response yet.</div></section>
         <section id="main-llm-chain" class="pane">
           <button type="button" id="llm-chain-clear" class="secondary">Clear Active Session</button>
-          <div id="llmChain" class="logs">No LLM chain yet.</div>
+          <div class="llm-split">
+            <div class="llm-window">
+              <h2>Requests</h2>
+              <div id="llmChainRequests" class="logs">No LLM request yet.</div>
+            </div>
+            <div class="llm-window">
+              <h2>Responses</h2>
+              <div id="llmChainResponses" class="logs">No LLM response yet.</div>
+            </div>
+          </div>
         </section>
         <section id="main-messages" class="pane"><div id="messageLogs" class="logs">Loading...</div></section>
         <section id="main-events" class="pane"><div id="eventLogs" class="logs">Loading...</div></section>
@@ -204,7 +217,7 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-responses,#main-llm-chain,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
@@ -212,7 +225,6 @@ export function renderAdminHtmlV2(): string {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
         if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
-        if (button.dataset.mainTab === "llm-responses") await refreshLLMResponses();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
       }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
@@ -226,6 +238,7 @@ export function renderAdminHtmlV2(): string {
         $("timeoutMs").value = String(config.llm.timeoutMs ?? "");
         $("streamEnabled").checked = config.llm.stream !== false;
         $("extraParams").value = JSON.stringify(config.llm.extraParams || {}, null, 2);
+        $("followupExtraParams").value = JSON.stringify(config.llm.followupExtraParams || {}, null, 2);
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
         $("timezone").value = config.core.timezone || "Asia/Singapore";
         await refreshAgentState();
@@ -255,27 +268,66 @@ export function renderAdminHtmlV2(): string {
         $("llmRequests").scrollTop = 0;
       }
 
-      async function refreshLLMResponses() {
-        const payload = await fetch("/admin/api/llm-responses").then((res) => res.json());
-        $("llmResponses").innerHTML = renderLLMResponses(payload.responses || []) || "No LLM response yet.";
-        $("llmResponses").scrollTop = 0;
-      }
-
       async function refreshLLMChain() {
-        const requestPayload = await fetch("/admin/api/llm-requests").then((res) => res.json());
-        const items = (requestPayload.requests || []).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
-        const active = requestPayload.activeSession ? renderActiveLLMSession(requestPayload.activeSession) : '<div class="log-line">Active session: none</div>';
-        const history = items.length ? items.slice(-30).map(renderLLMChainItem).join("") : '<div class="log-line">No LLM request history yet.</div>';
-        $("llmChain").innerHTML = active + history;
-        $("llmChain").scrollTop = $("llmChain").scrollHeight;
+        const [requestPayload, responsePayload] = await Promise.all([
+          fetch("/admin/api/llm-requests").then((res) => res.json()),
+          fetch("/admin/api/llm-responses").then((res) => res.json())
+        ]);
+        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.requests || [], requestPayload.activeSession);
+        $("llmChainResponses").innerHTML = renderLLMResponseGroups(responsePayload.responses || [], requestPayload.activeSession);
+        $("llmChainRequests").scrollTop = $("llmChainRequests").scrollHeight;
+        $("llmChainResponses").scrollTop = $("llmChainResponses").scrollHeight;
       }
 
       function renderActiveLLMSession(session) {
-        return \`<details class="log-line" open><summary>Active session started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml((session.requestIds || []).join(", "))}</summary>latest raw json\\n\${escapeHtml(JSON.stringify(session.latestRequest || {}, null, 2))}</details>\`;
+        return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml((session.requestIds || []).join(", "))}</div>\`;
       }
 
-      function renderLLMChainItem(entry) {
-        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] request #\${escapeHtml(entry.id || "")} model=\${escapeHtml(entry.model || "")}</summary>\${(entry.messages || []).map((message, index) => \`#\${index + 1} [\${escapeHtml(message.role)}]\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}\`).join("\\n\\n")}\\nraw json\\n\${escapeHtml(JSON.stringify(entry.rawRequest || entry, null, 2))}</details>\`;
+      function renderLLMRequestGroups(requests, activeSession) {
+        const groups = groupLLMEntries(requests);
+        const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
+        if (!groups.length) return active + '<div class="log-line">No LLM request history yet.</div>';
+        return active + groups.map((group) => {
+          const open = activeSession && String(activeSession.id) === String(group.sessionId) ? " open" : "";
+          return \`<details class="log-line"\${open}><summary>Session \${escapeHtml(group.sessionId)} · \${escapeHtml(group.items.length)} request(s) · \${escapeHtml(group.startedAt || "")}</summary>\${group.items.map((entry, index) => renderLLMRequestItem(entry, index + 1)).join("")}</details>\`;
+        }).join("");
+      }
+
+      function renderLLMResponseGroups(responses, activeSession) {
+        const groups = groupLLMEntries(responses);
+        const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
+        if (!groups.length) return active + '<div class="log-line">No LLM response history yet.</div>';
+        return active + groups.map((group) => {
+          const open = activeSession && String(activeSession.id) === String(group.sessionId) ? " open" : "";
+          return \`<details class="log-line"\${open}><summary>Session \${escapeHtml(group.sessionId)} · \${escapeHtml(group.items.length)} response(s) · \${escapeHtml(group.startedAt || "")}</summary>\${group.items.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("")}</details>\`;
+        }).join("");
+      }
+
+      function groupLLMEntries(entries) {
+        const ordered = [...entries].sort(compareLLMEntries).slice(-50);
+        const groups = new Map();
+        for (const entry of ordered) {
+          const sessionId = entry.sessionId ?? "legacy";
+          if (!groups.has(sessionId)) groups.set(sessionId, { sessionId, startedAt: entry.time || "", items: [] });
+          groups.get(sessionId).items.push(entry);
+        }
+        return [...groups.values()].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")));
+      }
+
+      function compareLLMEntries(left, right) {
+        const bySession = Number(left.sessionId ?? 0) - Number(right.sessionId ?? 0);
+        if (bySession) return bySession;
+        const byTime = String(left.time || "").localeCompare(String(right.time || ""));
+        if (byTime) return byTime;
+        return Number(left.id || 0) - Number(right.id || 0);
+      }
+
+      function renderLLMRequestItem(entry, index) {
+        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] request #\${index} global=\${escapeHtml(entry.id || "")} model=\${escapeHtml(entry.model || "")}</summary>\${(entry.messages || []).map((message, messageIndex) => \`#\${messageIndex + 1} [\${escapeHtml(message.role)}]\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}\`).join("\\n\\n")}\\nraw json\\n\${escapeHtml(JSON.stringify(entry.rawRequest || entry, null, 2))}</details>\`;
+      }
+
+      function renderLLMResponseItem(entry, index) {
+        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] response #\${index} global=\${escapeHtml(entry.id || "")} request=\${escapeHtml(entry.requestId || "")} finish=\${escapeHtml(entry.finishReason || "")}</summary><div># [\${escapeHtml(entry.message?.role || "")}]\\n\${escapeHtml(entry.message?.content || "")}\${entry.message?.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(entry.message.reasoningContent) : ""}\${entry.message?.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(entry.message.toolCalls, null, 2)) : ""}\\nraw json\\n\${escapeHtml(JSON.stringify({ message: entry.message, finishReason: entry.finishReason, usage: entry.usage, raw: entry.raw }, null, 2))}</div></details>\`;
       }
 
       function renderLLMRequestBlock(title, current) {
@@ -292,18 +344,6 @@ export function renderAdminHtmlV2(): string {
           \${current.tools && current.tools.length ? \`<div class="log-line">tool: feishu\\n\${escapeHtml(current.tools.map((tool) => tool.function.name).join(", "))}</div>\` : ""}
           \${(current.messages || []).map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}</div>\`).join("")}
           <div class="log-line">raw json\\n\${escapeHtml(JSON.stringify(raw, null, 2))}</div>
-        \`;
-      }
-
-      function renderLLMResponses(responses) {
-        if (!responses.length) return "";
-        return \`
-          \${responses.slice(-10).reverse().map((entry) => \`
-            <details class="log-line">
-              <summary>[\${escapeHtml(entry.time || "")}] response #\${escapeHtml(entry.id || "")} finish=\${escapeHtml(entry.finishReason || "")}</summary>
-              <div># [\${escapeHtml(entry.message?.role || "")}]\\n\${escapeHtml(entry.message?.content || "")}\${entry.message?.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(entry.message.reasoningContent) : ""}\${entry.message?.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(entry.message.toolCalls, null, 2)) : ""}\\nraw json\\n\${escapeHtml(JSON.stringify({ message: entry.message, finishReason: entry.finishReason, usage: entry.usage, raw: entry.raw }, null, 2))}</div>
-            </details>
-          \`).join("")}
         \`;
       }
 
@@ -897,7 +937,7 @@ export function renderAdminHtmlV2(): string {
       $("llm-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { baseURL: form.get("baseURL"), model: form.get("model"), temperature: form.get("temperature"), timeoutMs: form.get("timeoutMs"), stream: $("streamEnabled").checked, extraParams: form.get("extraParams") };
+        const body = { baseURL: form.get("baseURL"), model: form.get("model"), temperature: form.get("temperature"), timeoutMs: form.get("timeoutMs"), stream: $("streamEnabled").checked, extraParams: form.get("extraParams"), followupExtraParams: form.get("followupExtraParams") };
         const apiKey = form.get("apiKey");
         if (apiKey) body.apiKey = apiKey;
         const result = await fetch("/admin/api/config/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
@@ -950,7 +990,7 @@ export function renderAdminHtmlV2(): string {
       });
       $("llm-chain-clear").addEventListener("click", async () => {
         const result = await fetch("/admin/api/llm-chain/clear", { method: "POST" }).then((res) => res.json());
-        $("llmChain").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
+        $("llmChainRequests").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
         await refreshLLMRequests();
         await refreshLLMChain();
       });

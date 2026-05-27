@@ -14,6 +14,7 @@ export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
   onHeartbeatTick?: () => void;
+  isLLMSessionActive?: () => boolean;
   getProcessNowTarget?(): {
     plugin: string;
     accountId?: string;
@@ -318,6 +319,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function canRunHeartbeat(): boolean {
+    if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
   }
 

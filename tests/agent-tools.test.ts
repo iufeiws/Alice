@@ -126,6 +126,54 @@ test("agent core appends assistant tool call and tool result before the next llm
   assert.equal(requests[1].messages.at(-1)?.content, "history result");
 });
 
+test("agent core adds fallback reasoning content for tool requests when missing", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_view",
+              type: "function",
+              function: {
+                name: "check_feishu",
+                arguments: "{}"
+              }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "history result" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "Need to call the requested tool.");
+});
+
 test("agent core filters messaging tools when feishu visibility is disabled", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
@@ -748,7 +796,60 @@ test("agent core continues after send_feishu until the next response has no tool
   assert.equal(requests.length, 4);
 });
 
-test("agent core stops after five llm requests when tool calls continue", async () => {
+test("agent core uses first-call and follow-up extra params", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_view",
+              type: "function",
+              function: {
+                name: "check_feishu",
+                arguments: "{}"
+              }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({
+      LLM_MODEL: "test-model",
+      LLM_EXTRA_PARAMS: "{\"cache_prompt\":true}",
+      LLM_FOLLOWUP_EXTRA_PARAMS: "{\"cache_prompt\":false,\"reasoning_effort\":\"low\"}"
+    }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "history" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(requests.map((request) => request.extraParams), [
+    { cache_prompt: true },
+    { cache_prompt: false, reasoning_effort: "low" }
+  ]);
+});
+
+test("agent core stops after three consecutive identical tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const llm: LLMClient = {
@@ -790,8 +891,161 @@ test("agent core stops after five llm requests when tool calls continue", async 
   });
 
   await core.handleEvent(textEvent());
+  assert.equal(requests.length, 3);
+  assert.deepEqual(calls, ["tool_view_1", "tool_view_2", "tool_view_3"]);
+});
+
+test("agent core falls back after max llm requests when tool calls alternate", async () => {
+  const requests: LLMChatInput[] = [];
+  const calls: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      const useSearch = requests.length % 2 === 0;
+      return {
+        message: {
+          role: "assistant",
+          content: "still looping",
+          toolCalls: [{
+            id: `tool_${requests.length}`,
+            type: "function",
+            function: {
+              name: useSearch ? "search_messages" : "check_feishu",
+              arguments: useSearch ? "{\"content\":\"loop\"}" : "{}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [
+          { name: "check_feishu", description: "view", inputSchema: { type: "object" } },
+          { name: "search_messages", description: "search", inputSchema: { type: "object" } }
+        ];
+      },
+      async execute(call) {
+        calls.push(call.toolName);
+        return { callId: call.id, ok: true, output: "ok" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.equal(requests.length, 12);
+  assert.equal(calls.length, 12);
+});
+
+test("agent core stops after three consecutive identical send_feishu calls", async () => {
+  const requests: LLMChatInput[] = [];
+  const sent: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return {
+        message: {
+          role: "assistant",
+          content: "still sending",
+          toolCalls: [{
+            id: `tool_send_${requests.length}`,
+            type: "function",
+            function: {
+              name: "send_feishu",
+              arguments: "{\"type\":\"message\",\"content\":\"same\"}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        sent.push(`${call.id}:${String(call.input.content)}`);
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.equal(requests.length, 3);
+  assert.deepEqual(sent, [
+    "tool_send_1:same",
+    "tool_send_2:same",
+    "tool_send_3:same"
+  ]);
+});
+
+test("agent core stops after five total send_feishu calls even when not consecutive identical", async () => {
+  const requests: LLMChatInput[] = [];
+  const sent: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      const content = requests.length % 2 === 0 ? "even" : "odd";
+      return {
+        message: {
+          role: "assistant",
+          content: "still sending",
+          toolCalls: [{
+            id: `tool_send_${requests.length}`,
+            type: "function",
+            function: {
+              name: "send_feishu",
+              arguments: `{"type":"message","content":"${content}"}`
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        sent.push(`${call.id}:${String(call.input.content)}`);
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
   assert.equal(requests.length, 5);
-  assert.deepEqual(calls, ["tool_view_1", "tool_view_2", "tool_view_3", "tool_view_4", "tool_view_5"]);
+  assert.deepEqual(sent, [
+    "tool_send_1:odd",
+    "tool_send_2:even",
+    "tool_send_3:odd",
+    "tool_send_4:even",
+    "tool_send_5:odd"
+  ]);
 });
 
 test("agent core skips non-send tools when send_feishu appears in the same round", async () => {

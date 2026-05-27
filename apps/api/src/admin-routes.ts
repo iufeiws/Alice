@@ -643,11 +643,13 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
   const timeoutMs = numberFromUnknown(body.timeoutMs, context.config.llm.timeoutMs);
   const stream = body.stream === undefined ? context.config.llm.stream : booleanFromUnknown(body.stream);
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
+  const followupExtraParamsResult = parseJsonObject(optionalString(body.followupExtraParams) ?? "{}");
   if (baseURL && !isValidHttpUrl(baseURL)) return writeJson(response, 400, { ok: false, error: "invalid_base_url" });
   if (!model) return writeJson(response, 400, { ok: false, error: "missing_model" });
   if (temperature < 0 || temperature > 2) return writeJson(response, 400, { ok: false, error: "invalid_temperature" });
   if (timeoutMs < 1_000 || timeoutMs > 300_000) return writeJson(response, 400, { ok: false, error: "invalid_timeout_ms" });
   if (!extraParamsResult.ok) return writeJson(response, 400, { ok: false, error: "invalid_extra_params" });
+  if (!followupExtraParamsResult.ok) return writeJson(response, 400, { ok: false, error: "invalid_followup_extra_params" });
 
   updateEnvFile(".env", {
     LLM_PROVIDER: "openai-compatible",
@@ -657,7 +659,8 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
     LLM_TEMPERATURE: String(temperature),
     LLM_TIMEOUT_MS: String(timeoutMs),
     LLM_STREAM_ENABLED: String(stream),
-    LLM_EXTRA_PARAMS: JSON.stringify(extraParamsResult.value)
+    LLM_EXTRA_PARAMS: JSON.stringify(extraParamsResult.value),
+    LLM_FOLLOWUP_EXTRA_PARAMS: JSON.stringify(followupExtraParamsResult.value)
   });
   context.config.llm.provider = baseURL && apiKey ? "openai-compatible" : "stub";
   context.config.llm.baseURL = baseURL;
@@ -667,6 +670,7 @@ async function saveLLMConfig(context: AdminRoutesContext, request: any, response
   context.config.llm.timeoutMs = timeoutMs;
   context.config.llm.stream = stream;
   context.config.llm.extraParams = extraParamsResult.value;
+  context.config.llm.followupExtraParams = followupExtraParamsResult.value;
   context.reloadLLM();
   context.appendLog("info", `llm config saved: ${baseURL || "(empty)"} ${model || "(empty)"}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
@@ -774,6 +778,7 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       timeoutMs: context.config.llm.timeoutMs,
       stream: context.config.llm.stream,
       extraParams: context.config.llm.extraParams,
+      followupExtraParams: context.config.llm.followupExtraParams,
       apiKeyConfigured: Boolean(context.config.llm.apiKey)
     },
     plugins: {

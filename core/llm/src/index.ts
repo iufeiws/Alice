@@ -43,6 +43,7 @@ export type LLMChatInput = {
   temperature?: number;
   tools?: LLMToolSpec[];
   maxTokens?: number;
+  extraParams?: Record<string, unknown>;
 };
 
 export type LLMUsage = {
@@ -307,7 +308,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   return {
     async chat(input) {
       const body = {
-        ...(config.extraParams ?? {}),
+        ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
         temperature: input.temperature ?? config.temperature ?? 0.2,
@@ -337,7 +338,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     },
     async chatStream(input, handlers) {
       const body = {
-        ...(config.extraParams ?? {}),
+        ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
         temperature: input.temperature ?? config.temperature ?? 0.2,
@@ -369,6 +370,7 @@ function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {
   if (message.toolCallId) result.tool_call_id = message.toolCallId;
   if (message.reasoningContent) result.reasoning_content = message.reasoningContent;
   if (message.toolCalls) {
+    if (!result.reasoning_content) result.reasoning_content = "Need to call the requested tool.";
     result.tool_calls = message.toolCalls.map((call) => ({
       id: call.id,
       type: call.type,

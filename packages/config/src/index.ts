@@ -7,6 +7,7 @@ export type LLMConfig = {
   timeoutMs: number;
   stream: boolean;
   extraParams: Record<string, unknown>;
+  followupExtraParams: Record<string, unknown>;
 };
 
 export type FeishuConfig = {
@@ -96,7 +97,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
       temperature: numberValue(env.LLM_TEMPERATURE, 0.2),
       timeoutMs: numberValue(env.LLM_TIMEOUT_MS, 60_000),
       stream: bool(env.LLM_STREAM_ENABLED, true),
-      extraParams: jsonObjectValue(env.LLM_EXTRA_PARAMS)
+      extraParams: jsonObjectValue(env.LLM_EXTRA_PARAMS),
+      followupExtraParams: env.LLM_FOLLOWUP_EXTRA_PARAMS === undefined
+        ? jsonObjectValue(env.LLM_EXTRA_PARAMS)
+        : jsonObjectValue(env.LLM_FOLLOWUP_EXTRA_PARAMS)
     },
     plugins: {
       feishu: {

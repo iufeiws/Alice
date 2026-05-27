@@ -62,6 +62,57 @@ test("openai stream client processes a final SSE frame without trailing newline"
   }
 });
 
+test("openai-compatible client adds fallback reasoning content for tool request messages", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: any;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ok" } }]
+    }), { status: 200 });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    await client.chat({
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_missing",
+            type: "function",
+            function: {
+              name: "check_feishu",
+              arguments: "{}"
+            }
+          }]
+        },
+        {
+          role: "assistant",
+          content: "",
+          reasoningContent: "original thinking",
+          toolCalls: [{
+            id: "call_original",
+            type: "function",
+            function: {
+              name: "search_messages",
+              arguments: "{\"content\":\"x\"}"
+            }
+          }]
+        }
+      ]
+    });
+    assert.equal(requestBody.messages[0].reasoning_content, "Need to call the requested tool.");
+    assert.equal(requestBody.messages[1].reasoning_content, "original thinking");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("openai stream client preserves include_usage final usage chunk", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody: any;
@@ -103,6 +154,38 @@ test("openai stream client preserves include_usage final usage chunk", async () 
       cacheHitTokens: 6,
       cacheMissTokens: 4
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client lets request extra params replace default extra params", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: any;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ok" } }]
+    }), { status: 200 });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test",
+      extraParams: {
+        cache_prompt: true,
+        stream_options: { include_usage: true }
+      }
+    });
+    await client.chat({
+      messages: [],
+      extraParams: {
+        cache_prompt: false
+      }
+    });
+    assert.equal(requestBody.cache_prompt, false);
+    assert.equal(requestBody.stream_options, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

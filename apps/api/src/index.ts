@@ -53,11 +53,13 @@ type MessageLogEntry = {
 
 type LLMRequestLogEntry = {
   id: number;
+  sessionId?: number;
   time: string;
   model?: string;
   temperature?: number;
   messages: LLMChatInput["messages"];
   tools?: LLMChatInput["tools"];
+  extraParams?: Record<string, unknown>;
   rawRequest?: unknown;
   diffFromPrevious?: LLMRequestDiff;
 };
@@ -82,6 +84,8 @@ type LLMRequestPreview = LLMRequestLogEntry & {
 
 type LLMResponseLogEntry = {
   id: number;
+  sessionId?: number;
+  requestId?: number;
   time: string;
   message: LLMChatResult["message"];
   finishReason?: string;
@@ -90,6 +94,7 @@ type LLMResponseLogEntry = {
 };
 
 type ActiveLLMSession = {
+  id: number;
   startedAt: string;
   updatedAt: string;
   requestIds: number[];
@@ -105,6 +110,7 @@ let nextLogId = 1;
 let nextMessageLogId = 1;
 let nextLLMRequestLogId = 1;
 let nextLLMResponseLogId = 1;
+let nextLLMSessionId = 1;
 let store: ReturnType<typeof createAliceStore> | undefined;
 let systemLogStore: ReturnType<typeof createFileLogStore> | undefined;
 const currentTime = createMutableCurrentTimeProvider("UTC");
@@ -252,6 +258,7 @@ const messageRuntime = createMessageRuntime({
   core,
   agentState,
   outputRouter,
+  isLLMSessionActive: () => Boolean(activeLLMSession),
   onHeartbeatTick() {
     dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
   },
@@ -408,13 +415,17 @@ function appendLLMRequestLog(input: LLMChatInput): void {
   const rawRequest = buildRawLLMRequest(input);
   const previous = llmRequestLogs[llmRequestLogs.length - 1]?.rawRequest;
   const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
+  const now = currentTime.now().iso;
+  const sessionId = ensureActiveLLMSession(now).id;
   const entry = {
     id: nextLLMRequestLogId,
-    time: currentTime.now().iso,
+    sessionId,
+    time: now,
     model: input.model,
     temperature: input.temperature,
     messages: input.messages.map((message) => ({ ...message })),
     tools: input.tools?.map((tool) => ({ ...tool, function: { ...tool.function } })),
+    extraParams: input.extraParams,
     rawRequest,
     diffFromPrevious
   };
@@ -543,6 +554,8 @@ function appendLLMResponseLog(result: LLMChatResult): void {
   appendLLMUsageLog(result);
   llmResponseLogs.push({
     id: nextLLMResponseLogId,
+    sessionId: activeLLMSession?.id,
+    requestId: activeLLMSession?.requestIds.at(-1),
     time: currentTime.now().iso,
     message: { ...result.message },
     finishReason: result.finishReason,
@@ -593,25 +606,33 @@ function clearLLMChainCache(): void {
   clearActiveLLMSession("admin_clear");
 }
 
-function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
+function ensureActiveLLMSession(time: string): ActiveLLMSession {
   if (!activeLLMSession) {
     activeLLMSession = {
-      startedAt: entry.time,
-      updatedAt: entry.time,
+      id: nextLLMSessionId,
+      startedAt: time,
+      updatedAt: time,
       requestIds: [],
-      latestRequest: entry.rawRequest
+      latestRequest: undefined
     };
+    nextLLMSessionId += 1;
   }
-  activeLLMSession.updatedAt = entry.time;
-  activeLLMSession.requestIds.push(entry.id);
-  activeLLMSession.latestRequest = entry.rawRequest;
+  return activeLLMSession;
+}
+
+function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
+  const session = ensureActiveLLMSession(entry.time);
+  session.updatedAt = entry.time;
+  session.requestIds.push(entry.id);
+  session.latestRequest = entry.rawRequest;
 }
 
 function clearActiveLLMSession(reason: string): void {
   if (!activeLLMSession) return;
+  const sessionId = activeLLMSession.id;
   const requestCount = activeLLMSession.requestIds.length;
   activeLLMSession = undefined;
-  appendLog("info", `llm active session cleared: reason=${reason} requests=${requestCount}`);
+  appendLog("info", `llm active session cleared: session=${sessionId} reason=${reason} requests=${requestCount}`);
 }
 
 async function getLLMRequestPreview(): Promise<LLMRequestPreview | undefined> {
@@ -655,6 +676,7 @@ async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | 
     time: currentTime.now().iso,
     model: config.llm.model,
     temperature: config.llm.temperature,
+    extraParams: config.llm.extraParams,
     messages: await buildPromptPreviewMessages(profile, previewEvent),
     tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
       type: "function" as const,
@@ -705,6 +727,7 @@ async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview |
     time: latestInbound.lastEventAt || latestInbound.createdAt,
     model: config.llm.model,
     temperature: config.llm.temperature,
+    extraParams: config.llm.extraParams,
     messages: await buildPromptPreviewMessages(profile, previewEvent),
     tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
       type: "function" as const,
@@ -748,9 +771,9 @@ async function buildPromptPreviewMessages(
   });
 }
 
-function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens">): unknown {
+function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {
   return {
-    ...config.llm.extraParams,
+    ...(input.extraParams ?? config.llm.extraParams),
     model: input.model,
     stream: config.llm.stream !== false,
     temperature: input.temperature,

@@ -214,6 +214,40 @@ test("message runtime heartbeat does not count delay while state cannot reply", 
   await waitFor(() => coreInputs.length === 1);
 });
 
+test("message runtime heartbeat waits while another llm session is active", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-active-llm-gate"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let llmActive = true;
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    isLLMSessionActive: () => llmActive,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [textOutput("session-1", "ok")];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEvent("session-1", "om_1", "hello"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(coreInputs.length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
+
+  llmActive = false;
+  await waitFor(() => coreInputs.length === 1);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
 test("message runtime flushAll stops heartbeat without force-processing pending inbound", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-flush-gated"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];

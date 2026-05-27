@@ -33,6 +33,7 @@ export type PromptProfile = {
   layers: PromptLayer[];
   visibleTools: {
     feishu: boolean;
+    media?: boolean;
   };
 };
 
@@ -85,7 +86,8 @@ export function defaultPromptProfile(): PromptProfile {
   return {
     userName: "user",
     visibleTools: {
-      feishu: true
+      feishu: true,
+      media: true
     },
     layers: [
       {
@@ -132,6 +134,7 @@ export function defaultPromptProfile(): PromptProfile {
           "可用飞书工具：",
           "- check_feishu：查看当前一对一飞书聊天记录。同一 LLM 会话内首次调用返回 today 内容：本地时间 6 点前从前一天 00:00 开始，6 点后从当天 00:00 开始；再次及后续调用只返回上次查看后的新增飞书消息。",
           "- send_feishu：发送飞书消息到当前一对一聊天。必须先提供 type，再提供 content；type=message 会把换行分隔的 content 拆成多条飞书消息。",
+          "- selfie：自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前飞书聊天；默认 aspectRatio 为 3:4。调用 selfie 后不要再调用 send_feishu 发送同一张图。",
           "- 多行飞书回复要先写 type=message，再在 content 中用换行分段；确认 type=message 后，流式发送会在每个换行处发送已完成的一段。"
         ].join("\n")
       },
@@ -221,7 +224,8 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
   return {
     userName: nonEmptyString(profile.userName) ?? fallback.userName,
     visibleTools: {
-      feishu: profile.visibleTools?.feishu !== false
+      feishu: profile.visibleTools?.feishu !== false,
+      media: profile.visibleTools?.media !== false
     },
     layers: layers.map((layer, index) => ({
       id: nonEmptyString(layer.id) ?? `layer_${index + 1}`,

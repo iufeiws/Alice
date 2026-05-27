@@ -43,6 +43,7 @@ export interface AgentCore {
 export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const channels: ChannelPlugin[] = [];
   const time = deps.time ?? createCurrentTimeProvider("UTC");
+  let lastCompletedToolName: string | undefined;
 
   return {
     async start() {
@@ -190,9 +191,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         ? calls.filter((call) => call.function.name === "send_feishu")
         : calls;
       let reachedToolCallLimit = false;
+      let previousToolNameForConsecutiveCheck = lastCompletedToolName;
       const toolMessages = await Promise.all(effectiveCalls.map(async (call) => {
         totalToolCallCount += 1;
         if (totalToolCallCount >= maxTotalToolCalls) reachedToolCallLimit = true;
+        const isConsecutiveSelfie = call.function.name === "selfie" && previousToolNameForConsecutiveCheck === "selfie";
+        previousToolNameForConsecutiveCheck = call.function.name;
         const currentToolCallSignature = toolCallSignature(call.function.name, call.function.arguments);
         if (currentToolCallSignature === previousToolCallSignature) {
           repeatedToolCallCount += 1;
@@ -208,6 +212,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const streamedResult = streamingToolSender.resultFor(call.id);
         if (streamedResult) {
           sentMessage = sentMessage || call.function.name === "send_feishu" && streamedResult.ok;
+          lastCompletedToolName = call.function.name;
           return {
             role: "tool" as const,
             toolCallId: call.id,
@@ -217,7 +222,13 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
         const plugin = toolMap.get(call.function.name);
         let toolResult: ToolResult;
-        if (!plugin) {
+        if (isConsecutiveSelfie) {
+          toolResult = {
+            callId: call.id,
+            ok: false,
+            error: "selfie cannot be called twice in a row"
+          };
+        } else if (!plugin) {
           toolResult = {
             callId: call.id,
             ok: false,
@@ -242,6 +253,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
 
         sentMessage = sentMessage || call.function.name === "send_feishu" && toolResult.ok;
+        lastCompletedToolName = call.function.name;
         return {
           role: "tool" as const,
           toolCallId: call.id,
@@ -283,11 +295,14 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         states.set(delta.index, state);
         const { readyLines } = state.accept(delta);
         const lines = state.canStreamNow() ? readyLines : [];
-        if (state.canStreamNow()) state.dropPendingLines();
         if (lines.length === 0) return;
         const callId = state.callId;
         const plugin = toolMap.get("send_feishu");
-        if (!callId || !plugin || state.toolName !== "send_feishu") return;
+        if (!callId || !plugin || state.toolName !== "send_feishu") {
+          state.restoreReadyLines(lines);
+          return;
+        }
+        state.dropPendingLines();
         sendChain = sendChain.then(async () => {
           for (const line of lines) {
             const sentCount = sentCounts.get(callId) ?? 0;
@@ -357,8 +372,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 }
 
 function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
-  if (profile.visibleTools.feishu !== false) return tools;
-  return tools.filter((plugin) => plugin.id !== "messaging");
+  return tools.filter((plugin) => {
+    if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
+    if (plugin.id === "media") return profile.visibleTools.media !== false;
+    return true;
+  });
 }
 
 function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {
@@ -575,6 +593,10 @@ class StreamingSendMessageState {
     const lines = this.readyLines;
     this.readyLines = [];
     return lines;
+  }
+
+  restoreReadyLines(lines: string[]): void {
+    this.readyLines = [...lines, ...this.readyLines];
   }
 }
 

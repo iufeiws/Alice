@@ -22,6 +22,11 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
   - text message normalization into `AgentEvent`
   - unique user pairing with `/pair alice`
   - text, markdown, image, audio, and file sending
+- Media tool plugin:
+  - `selfie` tool for Image API-generated Alice photos
+  - uses character, outfit, and library reference images
+  - sends a short in-progress message before image generation
+  - rejects consecutive `selfie` tool calls
 - Local persistence:
   - SQLite message logs and memory
   - SQLite FTS5 search over persisted messages
@@ -51,6 +56,14 @@ LLM_MODEL=deepseek-chat
 ```
 
 For a local opencode-compatible endpoint, point `LLM_BASE_URL` at its `/v1` base URL.
+
+For the selfie image tool, set an OpenAI Image API key:
+
+```bash
+OPENAI_API_KEY=...
+```
+
+See `plugins/media/README.md` for detailed media tool configuration and the standalone speed test command.
 
 ## Important Local State
 

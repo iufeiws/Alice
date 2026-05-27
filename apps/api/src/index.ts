@@ -10,6 +10,7 @@ import { createIntentRouter } from "../../../core/router/src/index.js";
 import { createSessionResolver } from "../../../core/session/src/index.js";
 import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
+import { createMediaTools } from "../../../plugins/media/src/index.js";
 import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
@@ -186,6 +187,51 @@ const messagingTools = createMessagingTools({
   },
   appendMessageLog
 });
+const mediaTools = createMediaTools({
+  store,
+  outputRouter,
+  time: currentTime,
+  selfieReferenceDir: config.media.selfieReferenceDir,
+  selfieOutputDir: config.media.selfieOutputDir,
+  selfieCodexCommand: config.media.selfieCodexCommand,
+  selfieCodexTimeoutMs: config.media.selfieCodexTimeoutMs,
+  selfieImageApiKey: config.media.selfieImageApiKey,
+  selfieImageApiBaseURL: config.media.selfieImageApiBaseURL,
+  selfieImageApiModel: config.media.selfieImageApiModel,
+  selfieImageApiSize: config.media.selfieImageApiSize,
+  selfieImageApiQuality: config.media.selfieImageApiQuality,
+  selfieImageApiOutputFormat: config.media.selfieImageApiOutputFormat,
+  selfieImageApiOutputCompression: config.media.selfieImageApiOutputCompression,
+  selfieImageApiTimeoutMs: config.media.selfieImageApiTimeoutMs,
+  selfieMaxBytes: config.media.selfieMaxBytes,
+  getSelfieContext() {
+    const daily = dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
+    const profile = promptProfileStore.get();
+    return {
+      mainPrompt: profile.layers.map((layer) => layer.content).join("\n\n"),
+      personalityName: daily.personality.name,
+      personalityContent: daily.personality.content,
+      outfitId: daily.outfit.id,
+      outfitName: daily.outfit.name,
+      outfitContent: daily.outfit.content,
+      outfitImageUrl: daily.outfit.imageUrl
+    };
+  },
+  getDefaultTarget() {
+    const contact = feishuPairingStore.list()[0];
+    if (!contact) return undefined;
+    return {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: contact.channelId,
+      userId: contact.channelId ? undefined : contact.userId,
+      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
+    };
+  },
+  appendLog,
+  appendMessageLog
+});
+const toolPlugins = [messagingTools, mediaTools];
 const core = createAgentCore({
   config,
   llm: activeLLM,
@@ -205,7 +251,7 @@ const core = createAgentCore({
       store?.captureTurn(event, outputs);
     }
   },
-  tools: [messagingTools],
+  tools: toolPlugins,
   getPromptProfile: () => promptProfileStore.get(),
   getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
   state: agentState,
@@ -298,6 +344,7 @@ const server = http.createServer(createApiRequestHandler({
   dailyShellStore,
   agentState,
   messagingTools,
+  mediaTools,
   feishu,
   runtime: runtimeState,
   messageRuntime,
@@ -678,14 +725,7 @@ async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | 
     temperature: config.llm.temperature,
     extraParams: config.llm.extraParams,
     messages: await buildPromptPreviewMessages(profile, previewEvent),
-    tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
-      type: "function" as const,
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.inputSchema
-      }
-    }))
+    tools: visibleToolSpecs(profile)
   };
 }
 
@@ -729,15 +769,25 @@ async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview |
     temperature: config.llm.temperature,
     extraParams: config.llm.extraParams,
     messages: await buildPromptPreviewMessages(profile, previewEvent),
-    tools: profile.visibleTools.feishu === false ? [] : messagingTools.listTools().map((tool) => ({
+    tools: visibleToolSpecs(profile)
+  };
+}
+
+function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): LLMChatInput["tools"] {
+  return toolPlugins
+    .filter((plugin) => {
+      if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
+      if (plugin.id === "media") return profile.visibleTools.media !== false;
+      return true;
+    })
+    .flatMap((plugin) => plugin.listTools().map((tool) => ({
       type: "function" as const,
       function: {
         name: tool.name,
         description: tool.description,
         parameters: tool.inputSchema
       }
-    }))
-  };
+    })));
 }
 
 async function buildPromptPreviewMessages(

@@ -3,6 +3,7 @@ dist/
 data/
 logs/
 assets/booksummaries.tar.gz
+assets/generated/
 memory-files/indexes/
 memory-files/state/
 memory-files/config/

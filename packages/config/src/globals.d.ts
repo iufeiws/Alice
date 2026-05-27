@@ -6,5 +6,6 @@ declare const process: {
 
 declare const Buffer: {
   from(input: string): any;
+  from(input: string, encoding: string): any;
   concat(chunks: any[]): { toString(encoding: "utf8"): string };
 };

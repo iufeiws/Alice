@@ -383,7 +383,8 @@ export function renderAdminHtmlV2(): string {
           <pre>\${escapeHtml(Object.entries(promptVariables).map(([key, value]) => "{{" + key + "}} = " + value).join("\\n"))}</pre>
           <h2>Visible Tools</h2>
           <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
-          <p class="muted">check_feishu · send_feishu</p>
+          <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
+          <p class="muted">check_feishu · send_feishu · selfie</p>
           <h2>Layers</h2>
           <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length)).join("")}</div>
           <button type="button" id="prompt-add">Add Layer</button>
@@ -391,6 +392,7 @@ export function renderAdminHtmlV2(): string {
         \`;
         $("promptUserName").addEventListener("input", () => { promptProfile.userName = $("promptUserName").value; });
         $("toolFeishuVisible").addEventListener("change", () => { promptProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
+        $("toolMediaVisible").addEventListener("change", () => { promptProfile.visibleTools.media = $("toolMediaVisible").checked; });
         layers.forEach((layer, index) => bindPromptLayer(layer, index));
         $("prompt-add").addEventListener("click", () => {
           const order = Math.max(0, ...promptProfile.layers.map((layer) => Number(layer.order) || 0)) + 10;

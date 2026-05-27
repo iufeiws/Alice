@@ -31,6 +31,7 @@ export type AdminRoutesContext = {
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
+  mediaTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
@@ -368,11 +369,14 @@ function getPromptVariablePreview(context: AdminRoutesContext): Record<string, s
 
 function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: string; description?: string }> {
   const profile = context.promptProfileStore.get();
-  if (profile.visibleTools.feishu === false) return [];
-  return context.messagingTools.listTools().map((tool) => ({
+  const plugins = [
+    profile.visibleTools.feishu === false ? undefined : context.messagingTools,
+    profile.visibleTools.media === false ? undefined : context.mediaTools
+  ].filter((plugin): plugin is ToolPlugin => Boolean(plugin));
+  return plugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
     name: tool.name,
     description: tool.description
-  }));
+  })));
 }
 
 function getShellConfig(context: AdminRoutesContext): unknown {

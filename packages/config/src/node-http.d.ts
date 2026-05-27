@@ -13,12 +13,13 @@ declare module "node:fs" {
   const fs: {
     existsSync(path: string): boolean;
     readFileSync(path: string, encoding: "utf8"): string;
-    writeFileSync(path: string, data: string): void;
+    readFileSync(path: string): any;
+    writeFileSync(path: string, data: string | any): void;
     mkdirSync(path: string, options: { recursive: boolean }): void;
     createReadStream(path: string): any;
     appendFileSync(path: string, data: string): void;
     readdirSync(path: string): string[];
-    rmSync(path: string): void;
+    rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
     renameSync(oldPath: string, newPath: string): void;
     statSync(path: string): { isFile(): boolean; size: number };
   };

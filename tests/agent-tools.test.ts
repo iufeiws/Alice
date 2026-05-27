@@ -126,6 +126,61 @@ test("agent core appends assistant tool call and tool result before the next llm
   assert.equal(requests[1].messages.at(-1)?.content, "history result");
 });
 
+test("agent core rejects two consecutive selfie tool calls", async () => {
+  const requests: LLMChatInput[] = [];
+  const executed: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "tool_selfie_1",
+                type: "function",
+                function: { name: "selfie", arguments: "{\"action\":\"first\"}" }
+              },
+              {
+                id: "tool_selfie_2",
+                type: "function",
+                function: { name: "selfie", arguments: "{\"action\":\"second\"}" }
+              }
+            ]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "media",
+      listTools() {
+        return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        executed.push(String(call.input.action));
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(executed, ["first"]);
+  assert.equal(requests[1].messages.at(-2)?.content, "sent");
+  assert.equal(requests[1].messages.at(-1)?.content, "error: selfie cannot be called twice in a row");
+});
+
 test("agent core adds fallback reasoning content for tool requests when missing", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
@@ -211,6 +266,49 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
 
   await core.handleEvent(textEvent());
   assert.deepEqual(requests[0].tools, []);
+});
+
+test("agent core filters media tools when media visibility is disabled", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "ok" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true, media: false },
+      layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }]
+    }),
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "history" };
+      }
+    }, {
+      id: "media",
+      listTools() {
+        return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_feishu"]);
 });
 
 test("agent core skips llm calls when prompt profile has no enabled messages", async () => {
@@ -478,6 +576,78 @@ test("agent core waits for final send_feishu JSON when type is omitted", async (
 
   await core.handleEvent(textEvent());
   assert.deepEqual(sentLines, ["one", "two"]);
+});
+
+test("agent core keeps streamed send_feishu lines when tool metadata arrives after arguments", async () => {
+  const sentLines: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
+    },
+    async chatStream(input, handlers) {
+      if (input.messages.some((message) => message.role === "tool")) {
+        return { message: { role: "assistant", content: "done" } };
+      }
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        function: {
+          arguments: "{\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
+        }
+      });
+      assert.deepEqual(sentLines, []);
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        id: "tool_send",
+        type: "function",
+        function: {
+          name: "send_feishu"
+        }
+      });
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_send",
+            type: "function",
+            function: {
+              name: "send_feishu",
+              arguments: "{\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{
+          name: "send_feishu",
+          description: "send",
+          inputSchema: { type: "object" }
+        }];
+      },
+      async execute(call) {
+        sentLines.push(String(call.input.content));
+        return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(sentLines, [
+    "对、对不起……主人不是在凶您。",
+    "只是上次您熬到凌晨五点，",
+    "主人有点担心……"
+  ]);
 });
 
 test("agent core does not stream send_feishu before type is known", async () => {

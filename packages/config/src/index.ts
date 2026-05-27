@@ -48,6 +48,21 @@ export type AppConfig = {
   skills: {
     root: string;
   };
+  media: {
+    selfieReferenceDir: string;
+    selfieOutputDir: string;
+    selfieCodexCommand: string;
+    selfieCodexTimeoutMs: number;
+    selfieImageApiKey?: string;
+    selfieImageApiBaseURL: string;
+    selfieImageApiModel: string;
+    selfieImageApiSize: string;
+    selfieImageApiQuality: string;
+    selfieImageApiOutputFormat: string;
+    selfieImageApiOutputCompression: number;
+    selfieImageApiTimeoutMs: number;
+    selfieMaxBytes: number;
+  };
 };
 
 type Env = Record<string, string | undefined>;
@@ -129,6 +144,21 @@ export function loadConfig(env: Env = process.env): AppConfig {
     },
     skills: {
       root: "skills"
+    },
+    media: {
+      selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
+      selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",
+      selfieCodexCommand: env.SELFIE_CODEX_COMMAND ?? "codex",
+      selfieCodexTimeoutMs: numberValue(env.SELFIE_CODEX_TIMEOUT_MS, 180_000),
+      selfieImageApiKey: env.SELFIE_IMAGE_API_KEY ?? env.OPENAI_API_KEY,
+      selfieImageApiBaseURL: (env.SELFIE_IMAGE_API_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
+      selfieImageApiModel: env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2",
+      selfieImageApiSize: env.SELFIE_IMAGE_API_SIZE ?? "768x1024",
+      selfieImageApiQuality: env.SELFIE_IMAGE_API_QUALITY ?? "low",
+      selfieImageApiOutputFormat: env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
+      selfieImageApiOutputCompression: numberValue(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45),
+      selfieImageApiTimeoutMs: numberValue(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000),
+      selfieMaxBytes: numberValue(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
     }
   };
 }

@@ -12,17 +12,18 @@ const require = createRequire(import.meta.url);
 loadDotEnv(path.join(repoRoot, ".env"));
 installProxyAgent();
 
-const apiKey = process.env.OPENAI_API_KEY;
-const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+const apiKey = process.env.SELFIE_IMAGE_API_KEY ?? process.env.OPENAI_API_KEY;
+const baseUrl = (process.env.SELFIE_IMAGE_API_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
 const model = process.env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2";
 const size = process.env.SELFIE_IMAGE_API_SIZE ?? "768x1024";
 const quality = process.env.SELFIE_IMAGE_API_QUALITY ?? "low";
 const outputFormat = process.env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg";
 const outputCompression = process.env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION ?? "45";
+const apiTimeoutMs = numberValue(process.env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000);
 const action = process.argv.slice(2).join(" ").trim() || "lean close to the camera, tilt her head slightly, with a shy expression";
 
 if (!apiKey) {
-  console.error("OPENAI_API_KEY is required. Put it in /home/wyf98/Alice/.env or export it in the shell.");
+  console.error("OPENAI_API_KEY or SELFIE_IMAGE_API_KEY is required. Put it in /home/wyf98/Alice/.env or export it in the shell.");
   process.exit(2);
 }
 
@@ -55,18 +56,34 @@ for (const imagePath of imagePaths) {
   form.append("image[]", await fileBlob(imagePath), path.basename(imagePath));
 }
 
-console.error(`Calling Image API edit: model=${model} size=${size} quality=${quality} format=${outputFormat} compression=${outputCompression}`);
+console.error(`Calling Image API edit: model=${model} size=${size} quality=${quality} format=${outputFormat} compression=${outputCompression} timeoutMs=${apiTimeoutMs}`);
 console.error(`References: ${imagePaths.map((value) => path.relative(repoRoot, value)).join(", ")}`);
 console.error(`Output: ${path.relative(repoRoot, outputPath)}`);
 
 const started = performance.now();
-const response = await fetch(`${baseUrl}/images/edits`, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${apiKey}`
-  },
-  body: form
-});
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), apiTimeoutMs);
+let response;
+try {
+  response = await fetch(`${baseUrl}/images/edits`, {
+    method: "POST",
+    signal: controller.signal,
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
+} catch (error) {
+  const elapsedSeconds = (performance.now() - started) / 1000;
+  if (error instanceof Error && error.name === "AbortError") {
+    console.error(`Image API timed out after ${elapsedSeconds.toFixed(1)}s (limit ${apiTimeoutMs}ms)`);
+    process.exit(124);
+  }
+  console.error(`Image API request failed after ${elapsedSeconds.toFixed(1)}s: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+} finally {
+  clearTimeout(timer);
+}
 const elapsedSeconds = (performance.now() - started) / 1000;
 const bodyText = await response.text();
 
@@ -159,6 +176,11 @@ function formatNamedBlock(name, content) {
 
 function safeFilePart(value) {
   return String(value ?? "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function numberValue(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 async function fileBlob(filePath) {

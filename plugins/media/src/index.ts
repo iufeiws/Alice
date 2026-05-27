@@ -97,6 +97,7 @@ const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
+const defaultFastSelfieRunner = path.resolve("Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
 
 export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
@@ -114,7 +115,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
   const imageApiTimeoutMs = deps.selfieImageApiTimeoutMs ?? 120_000;
   const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
   const maxBytes = deps.selfieMaxBytes ?? 10 * 1024 * 1024;
-  const executor = deps.selfieExecutor ?? runImageApiSelfie;
+  const executor = deps.selfieExecutor ?? runAliceSelfieFastSkill;
 
   return {
     id: "media",
@@ -418,6 +419,34 @@ async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExec
   }
 }
 
+async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
+  const runnerPath = process.env.ALICE_SELFIE_FAST_RUNNER ?? defaultFastSelfieRunner;
+  const configPath = path.join(input.workDir, "alice-selfie-fast-input.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    workDir: input.workDir,
+    fileName: input.fileName,
+    prompt: input.prompt,
+    referenceImages: input.referenceImages,
+    aspectRatio: input.aspectRatio,
+    apiBaseURL: input.apiBaseURL,
+    apiModel: input.apiModel,
+    apiSize: input.apiSize,
+    apiQuality: input.apiQuality,
+    apiOutputFormat: input.apiOutputFormat,
+    apiOutputCompression: input.apiOutputCompression,
+    apiTimeoutMs: input.apiTimeoutMs,
+    proxyUrl: input.proxyUrl
+  }));
+  const result = await execFile("node", [runnerPath, "--tool-input", configPath], input.timeoutMs, {
+    SELFIE_IMAGE_API_KEY: input.apiKey ?? ""
+  });
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    lastMessage: excerpt(result.stderr || result.stdout, 1000)
+  };
+}
+
 async function runCodexSelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
   const prompt = [
     input.prompt,
@@ -452,9 +481,9 @@ async function runCodexSelfie(input: SelfieExecutorInput): Promise<SelfieExecuto
   };
 }
 
-function execFile(command: string, args: string[], timeoutMs: number): Promise<SelfieExecutorResult> {
+function execFile(command: string, args: string[], timeoutMs: number, env: NodeJS.ProcessEnv = {}): Promise<SelfieExecutorResult> {
   return new Promise((resolve, reject) => {
-    const child = childProcess.spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = childProcess.spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timer = setTimeout(() => {
@@ -462,7 +491,7 @@ function execFile(command: string, args: string[], timeoutMs: number): Promise<S
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       child.kill("SIGTERM");
       const detail = [
-        `codex selfie generation timed out after ${timeoutMs}ms`,
+        `selfie generation timed out after ${timeoutMs}ms`,
         stderr.trim() ? `stderr: ${stderr.trim()}` : "",
         stdout.trim() ? `stdout/events: ${stdout.trim()}` : ""
       ].filter(Boolean).join("\n");
@@ -479,7 +508,7 @@ function execFile(command: string, args: string[], timeoutMs: number): Promise<S
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== 0) {
-        const detail = [`codex exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`, stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+        const detail = [`selfie generator exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`, stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
         reject(new Error(detail || "codex selfie generation failed"));
         return;
       }

@@ -89,6 +89,70 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
   }
 });
 
+test("selfie default executor calls the fast runner", async () => {
+  const outputRoot = makeAssetTempDir("selfie-fast-runner");
+  const referenceRoot = makeTempDir("selfie-ref-fast-runner");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-fast-runner"), "dress.jpg");
+  const runnerDir = makeTempDir("selfie-runner");
+  const runnerPath = path.join(runnerDir, "runner.mjs");
+  const store = createAliceStore(path.join(makeTempDir("selfie-fast-runner-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const previousRunner = process.env.ALICE_SELFIE_FAST_RUNNER;
+  let nextMessageId = 1;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+  fs.writeFileSync(runnerPath, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "const configPath = process.argv[3];",
+    "const input = JSON.parse(fs.readFileSync(configPath, 'utf8'));",
+    "if (process.argv[2] !== '--tool-input') process.exit(2);",
+    "if ('apiKey' in input) process.exit(3);",
+    "if (process.env.SELFIE_IMAGE_API_KEY !== 'test-key') process.exit(4);",
+    "fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from('fast-runner-jpg'));",
+    "console.error(`Image API completed in 1234ms; file=${input.fileName}`);"
+  ].join("\n"));
+  process.env.ALICE_SELFIE_FAST_RUNNER = runnerPath;
+
+  try {
+    const tools = createMediaTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieImageApiKey: "test-key",
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+          return { messageId: `om_selfie_${nextMessageId++}` };
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_fast_runner",
+      toolName: "selfie",
+      input: { action: "靠近镜头" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(sent[1].content.kind, "image");
+    assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
+  } finally {
+    if (previousRunner === undefined) {
+      delete process.env.ALICE_SELFIE_FAST_RUNNER;
+    } else {
+      process.env.ALICE_SELFIE_FAST_RUNNER = previousRunner;
+    }
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    fs.rmSync(runnerDir, { recursive: true, force: true });
+  }
+});
+
 test("selfie fails before codex when the outfit reference image is missing", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-outfit");
   const referenceRoot = makeTempDir("selfie-ref-missing-outfit");

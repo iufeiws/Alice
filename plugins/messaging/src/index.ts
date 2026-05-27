@@ -103,6 +103,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
+      const latest = all[all.length - 1];
+      if (latest) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
     }
 
     const currentDate = time.now().date;

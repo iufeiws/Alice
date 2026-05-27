@@ -2,9 +2,11 @@ node_modules/
 dist/
 data/
 logs/
+assets/booksummaries.tar.gz
 memory-files/indexes/
 memory-files/state/
 memory-files/config/
+memory-files/shell/
 .env
 .DS_Store
 npm-debug.log*

@@ -59,9 +59,23 @@ test("check_feishu defaults to today and new scope advances a cursor", async () 
 
   const firstNew = await tools.execute({ id: "call_2", toolName: "check_feishu", input: { scope: "new" } });
   assert.equal(firstNew.ok, true);
-  assert.match(String(firstNew.output), /hello today/);
+  assert.match(String(firstNew.output), /^<chat>\nnothing new\n<\/chat>\nCurrent time is \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$/);
 
-  const secondNew = await tools.execute({ id: "call_3", toolName: "check_feishu", input: { scope: "new" } });
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_3",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "after today check",
+    createdAt: new Date(baseTime + 7 * 60 * 1000).toISOString()
+  });
+
+  const nextNew = await tools.execute({ id: "call_3", toolName: "check_feishu", input: { scope: "new" } });
+  assert.equal(nextNew.ok, true);
+  assert.match(String(nextNew.output), /after today check/);
+
+  const secondNew = await tools.execute({ id: "call_4", toolName: "check_feishu", input: { scope: "new" } });
   assert.equal(secondNew.ok, true);
   assert.match(String(secondNew.output), /^<chat>\nnothing new\n<\/chat>\nCurrent time is \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$/);
 });

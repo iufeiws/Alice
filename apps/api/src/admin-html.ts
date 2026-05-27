@@ -128,8 +128,6 @@ export function renderAdminHtmlV2(): string {
             <button type="button" id="send-test-audio">Send Audio</button>
             <p class="muted" id="send-test-status"></p>
             <h2>Messaging Tools</h2>
-            <label for="toolViewScope">View Scope</label>
-            <input id="toolViewScope" autocomplete="off" value="today" />
             <button type="button" id="tool-view">View Messages</button>
             <label for="toolSearchContent">Search Content</label>
             <input id="toolSearchContent" autocomplete="off" />
@@ -962,7 +960,7 @@ export function renderAdminHtmlV2(): string {
       $("send-test-markdown").addEventListener("click", async () => sendTest("test-markdown", { markdown: $("testMarkdown").value }, "Markdown"));
       $("send-test-image").addEventListener("click", async () => sendTest("test-image", { assetId: $("testImagePath").value }, "Image"));
       $("send-test-audio").addEventListener("click", async () => sendTest("test-audio", { assetId: $("testAudioPath").value }, "Audio"));
-      $("tool-view").addEventListener("click", async () => runMessagingTool("view", { scope: $("toolViewScope").value || "today" }));
+      $("tool-view").addEventListener("click", async () => runMessagingTool("view", {}));
       $("tool-search").addEventListener("click", async () => runMessagingTool("search", { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
       $("tool-send").addEventListener("click", async () => runMessagingTool("send", { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));
       async function sendTest(path, body, label) {

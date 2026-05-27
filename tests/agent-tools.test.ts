@@ -25,7 +25,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
               type: "function",
               function: {
                 name: "check_feishu",
-                arguments: "{\"scope\":\"today\"}"
+                arguments: "{}"
               }
             }]
           }
@@ -82,7 +82,7 @@ test("agent core appends assistant tool call and tool result before the next llm
               type: "function",
               function: {
                 name: "check_feishu",
-                arguments: "{\"scope\":\"today\"}"
+                arguments: "{}"
               }
             }]
           },
@@ -253,7 +253,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
         thinking: "need history",
         toolName: "check_feishu",
         toolCallId: "call_prompt_history",
-        toolArguments: "{\"scope\":\"today\"}",
+        toolArguments: "{}",
         order: 1
       }]
     }),
@@ -277,7 +277,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
 
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].toolName, "check_feishu");
-  assert.deepEqual(toolCalls[0].input, { scope: "today" });
+  assert.deepEqual(toolCalls[0].input, {});
   assert.equal(requests[0].messages[0].role, "assistant");
   assert.equal(requests[0].messages[0].toolCalls?.[0].id, "call_prompt_history");
   assert.equal(requests[0].messages[1].role, "tool");
@@ -359,11 +359,11 @@ test("agent core streams send_feishu message content on newlines before final to
   const outputs = await core.handleEvent(textEvent());
   assert.deepEqual(outputs, []);
   assert.deepEqual(sentLines, ["one", "two", "three"]);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("agent core streams send_feishu as message when type is omitted", async () => {
+test("agent core waits for final send_feishu JSON when type is omitted", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -382,7 +382,7 @@ test("agent core streams send_feishu as message when type is omitted", async () 
           arguments: "{\"content\":\"one\\n"
         }
       });
-      assert.deepEqual(sentLines, ["one"]);
+      assert.deepEqual(sentLines, []);
       await handlers?.onToolCallDelta?.({
         index: 0,
         function: {
@@ -432,12 +432,154 @@ test("agent core streams send_feishu as message when type is omitted", async () 
   assert.deepEqual(sentLines, ["one", "two"]);
 });
 
+test("agent core does not stream send_feishu before type is known", async () => {
+  const sentLines: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
+    },
+    async chatStream(input, handlers) {
+      if (input.messages.some((message) => message.role === "tool")) {
+        return { message: { role: "assistant", content: "done" } };
+      }
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        id: "tool_send",
+        type: "function",
+        function: {
+          name: "send_feishu",
+          arguments: "{\"content\":\"should not stream\\n"
+        }
+      });
+      assert.deepEqual(sentLines, []);
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        function: {
+          arguments: "\",\"type\":\"markdown\"}"
+        }
+      });
+      assert.deepEqual(sentLines, []);
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_send",
+            type: "function",
+            function: {
+              name: "send_feishu",
+              arguments: "{\"content\":\"should not stream\\n\",\"type\":\"markdown\"}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{
+          name: "send_feishu",
+          description: "send",
+          inputSchema: { type: "object" }
+        }];
+      },
+      async execute(call) {
+        sentLines.push(`${call.input.type ?? "message"}:${call.input.content}`);
+        return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
+});
+
+test("agent core merges streamed send_feishu chat outputs into one tool message", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
+    },
+    async chatStream(input, handlers) {
+      requests.push(input);
+      if (requests.length > 1) {
+        return { message: { role: "assistant", content: "done" } };
+      }
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        id: "tool_send",
+        type: "function",
+        function: {
+          name: "send_feishu",
+          arguments: "{\"content\":\"one\\n"
+        }
+      });
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        function: {
+          arguments: "two\"}"
+        }
+      });
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_send",
+            type: "function",
+            function: {
+              name: "send_feishu",
+              arguments: "{\"content\":\"one\\ntwo\"}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return {
+          callId: call.id,
+          ok: true,
+          output: `<chat>\n[22:48]\nAlice:${String(call.input.content)}\n</chat>\nCurrent time is [2026-05-27 22:48:53]`
+        };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  const toolMessage = requests[1].messages.find((message) => message.role === "tool");
+  assert.equal(toolMessage?.content, "<chat>\n[22:48]\nAlice:one\n[22:48]\nAlice:two\n</chat>\nCurrent time is [2026-05-27 22:48:53]");
+});
+
 test("agent core can disable LLM streaming from config", async () => {
   const sentLines: string[] = [];
   let chatCalls = 0;
   const llm: LLMClient = {
-    async chat() {
+    async chat(input) {
       chatCalls += 1;
+      if (input.messages.some((message) => message.role === "tool")) {
+        return { message: { role: "assistant", content: "done" } };
+      }
       return {
         message: {
           role: "assistant",
@@ -481,7 +623,7 @@ test("agent core can disable LLM streaming from config", async () => {
   });
 
   await core.handleEvent(textEvent());
-  assert.equal(chatCalls, 1);
+  assert.equal(chatCalls, 2);
   assert.deepEqual(sentLines, ["one\ntwo"]);
 });
 
@@ -533,7 +675,7 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
   assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
 });
 
-test("agent core executes send_feishu at max tool round and stops", async () => {
+test("agent core continues after send_feishu until the next response has no tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -549,7 +691,23 @@ test("agent core executes send_feishu at max tool round and stops", async () => 
               type: "function",
               function: {
                 name: "check_feishu",
-                arguments: "{\"scope\":\"today\"}"
+                arguments: "{}"
+              }
+            }]
+          }
+        };
+      }
+      if (requests.length === 3) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_send",
+              type: "function",
+              function: {
+                name: "send_feishu",
+                arguments: "{\"type\":\"message\",\"content\":\"final\"}"
               }
             }]
           }
@@ -558,15 +716,7 @@ test("agent core executes send_feishu at max tool round and stops", async () => 
       return {
         message: {
           role: "assistant",
-          content: "",
-          toolCalls: [{
-            id: "tool_send",
-            type: "function",
-            function: {
-              name: "send_feishu",
-              arguments: "{\"type\":\"message\",\"content\":\"final\"}"
-            }
-          }]
+          content: "done"
         }
       };
     }
@@ -595,13 +745,62 @@ test("agent core executes send_feishu at max tool round and stops", async () => 
 
   await core.handleEvent(textEvent());
   assert.deepEqual(sent, ["final"]);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
+});
+
+test("agent core stops after five llm requests when tool calls continue", async () => {
+  const requests: LLMChatInput[] = [];
+  const calls: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return {
+        message: {
+          role: "assistant",
+          content: "still checking",
+          toolCalls: [{
+            id: `tool_view_${requests.length}`,
+            type: "function",
+            function: {
+              name: "check_feishu",
+              arguments: "{}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        calls.push(call.id);
+        return { callId: call.id, ok: true, output: "history" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.equal(requests.length, 5);
+  assert.deepEqual(calls, ["tool_view_1", "tool_view_2", "tool_view_3", "tool_view_4", "tool_view_5"]);
 });
 
 test("agent core skips non-send tools when send_feishu appears in the same round", async () => {
   const calls: string[] = [];
   const llm: LLMClient = {
-    async chat() {
+    async chat(input) {
+      if (input.messages.some((message) => message.role === "tool")) {
+        return { message: { role: "assistant", content: "done" } };
+      }
       return {
         message: {
           role: "assistant",

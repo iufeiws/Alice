@@ -1,3 +1,5 @@
+import { formatZonedIso } from "../../time/src/index.js";
+
 const fs = await import("node:fs");
 const path = await import("node:path");
 
@@ -55,6 +57,10 @@ export type DailyShellStore = {
   reroll(date: Date, timeZone: string): DailyShell;
 };
 
+export type DailyShellStoreOptions = {
+  onSwitch?(entry: ShellSwitchLogEntry): void;
+};
+
 type DailyShellRecord = {
   date: string;
   createdAt?: string;
@@ -64,7 +70,7 @@ type DailyShellRecord = {
   rendered: string;
 };
 
-export function createDailyShellStore(rootDir: string): DailyShellStore {
+export function createDailyShellStore(rootDir: string, options: DailyShellStoreOptions = {}): DailyShellStore {
   const shellDir = path.join(rootDir, "shell");
   const paths = {
     personalitiesDir: path.join(shellDir, "personalities"),
@@ -82,13 +88,13 @@ export function createDailyShellStore(rootDir: string): DailyShellStore {
   return {
     get(date, timeZone) {
       const settings = readSettings(paths.settings);
-      if (cached && !isDailyShellExpired(cached.createdAt, date, timeZone, settings.rolloverHour)) return cached;
+      if (cached && !isDailyShellExpired(cached.createdAt, date, timeZone, settings.rolloverHour, cached.date)) return cached;
       const personalities = readOptions(paths.personalitiesDir, defaultPersonalities());
       const relationships = readOptions(paths.relationshipsDir, defaultRelationships());
       const outfits = readOptions(paths.outfitsDir, defaultOutfits());
       const existing = readDailyShell(paths.daily);
       if (existing && !isRecordExpired(existing, date, timeZone, settings.rolloverHour)) {
-        const createdAt = existing.createdAt ?? date.toISOString();
+        const createdAt = existing.createdAt ?? formatZonedIso(date, timeZone);
         const daily = {
           date: existing.date,
           createdAt,
@@ -110,13 +116,13 @@ export function createDailyShellStore(rootDir: string): DailyShellStore {
 
       const daily: DailyShell = {
         date: formatLocalDate(date, timeZone),
-        createdAt: date.toISOString(),
+        createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
         relationship: pick(relationships),
         outfit: pick(outfits)
       };
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
-      appendSwitchLog(paths.switchLog, daily);
+      noteShellSwitch(paths.switchLog, daily, options);
       cached = daily;
       return daily;
     },
@@ -174,20 +180,24 @@ export function createDailyShellStore(rootDir: string): DailyShellStore {
       fs.writeFileSync(paths.promptTemplate, next.endsWith("\n") ? next : `${next}\n`);
     },
     reroll(date, timeZone) {
-      const localDate = formatLocalDate(date, timeZone);
       const daily: DailyShell = {
-        date: localDate,
-        createdAt: date.toISOString(),
+        date: formatLocalDate(date, timeZone),
+        createdAt: formatZonedIso(date, timeZone),
         personality: pick(readOptions(paths.personalitiesDir, defaultPersonalities())),
         relationship: pick(readOptions(paths.relationshipsDir, defaultRelationships())),
         outfit: pick(readOptions(paths.outfitsDir, defaultOutfits()))
       };
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
-      appendSwitchLog(paths.switchLog, daily);
+      noteShellSwitch(paths.switchLog, daily, options);
       cached = daily;
       return daily;
     }
   };
+}
+
+function noteShellSwitch(filePath: string, shell: DailyShell, options: DailyShellStoreOptions): void {
+  const entry = appendSwitchLog(filePath, shell);
+  options.onSwitch?.(entry);
 }
 
 function replaceDailyOption(daily: DailyShell, category: ShellCategory, option: ShellOption, previousId?: string): DailyShell {
@@ -355,7 +365,7 @@ function writeDailyShell(filePath: string, shell: DailyShell, promptTemplate = d
   fs.writeFileSync(filePath, `${JSON.stringify(record, null, 2)}\n`);
 }
 
-function appendSwitchLog(filePath: string, shell: DailyShell): void {
+function appendSwitchLog(filePath: string, shell: DailyShell): ShellSwitchLogEntry {
   const entry: ShellSwitchLogEntry = {
     time: shell.createdAt,
     date: shell.date,
@@ -366,6 +376,7 @@ function appendSwitchLog(filePath: string, shell: DailyShell): void {
   };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`);
+  return entry;
 }
 
 function readSwitchLogs(filePath: string, limit: number): ShellSwitchLogEntry[] {
@@ -464,7 +475,7 @@ function defaultSettings(): ShellSettings {
 }
 
 function isRecordExpired(record: DailyShellRecord, now: Date, timeZone: string, rolloverHour: number): boolean {
-  return isDailyShellExpired(record.createdAt ?? `${record.date}T00:00:00.000Z`, now, timeZone, rolloverHour, record.date);
+  return isDailyShellExpired(record.createdAt ?? `${record.date}T00:00:00.000`, now, timeZone, rolloverHour, record.date);
 }
 
 function isDailyShellExpired(createdAt: string, now: Date, timeZone: string, rolloverHour: number, fallbackCreatedDate?: string): boolean {

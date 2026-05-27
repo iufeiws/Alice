@@ -27,7 +27,7 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 - `data/alice.sqlite` stores message logs and memory records.
 - `logs/system/` stores debug logs; retention is managed by the daily scheduler.
 - `memory-files/indexes/feishu-paired-contacts.json` stores the single bound Feishu contact state.
-- Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). New persisted agent-facing timestamps should use that provider's timezone-aware ISO format, for example `2026-05-25T08:00:00.000+08:00`, not bare UTC-only formatting from direct `new Date().toISOString()`.
+- Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). Persisted agent-facing timestamps must be saved as local wall-clock ISO strings in the configured timezone, for example `2026-05-25T08:00:00.000`. Do not save UTC `Z` timestamps or offset-suffixed forms such as `+08:00`; avoid direct `new Date().toISOString()` for records.
 
 ## Agent State Notes
 

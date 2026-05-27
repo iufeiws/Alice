@@ -2,12 +2,14 @@ import type { AgentOutput } from "../../../packages/types/src/index.js";
 import type { FeishuSendPlan } from "./types.js";
 
 export function renderForFeishu(output: AgentOutput): FeishuSendPlan {
-  const receiveId = output.target.channelId ?? output.target.userId;
+  const channelId = normalizeFeishuChatId(output.target.channelId);
+  const userId = channelId ? undefined : normalizeFeishuOpenId(output.target.userId ?? output.target.channelId);
+  const receiveId = channelId ?? userId;
   if (!receiveId) {
     throw new Error("Feishu output target requires channelId or userId");
   }
 
-  const receiveIdType = output.target.channelId ? "chat_id" : "open_id";
+  const receiveIdType = channelId ? "chat_id" : "open_id";
 
   if (output.content.kind === "text") {
     return {
@@ -80,4 +82,22 @@ function renderCardAsMarkdown(card: { title: string; body?: string; fields?: Arr
     lines.push("", `**${field.label}:** ${field.value}`);
   }
   return lines.join("\n");
+}
+
+function normalizeFeishuChatId(value: string | undefined): string | undefined {
+  const unwrapped = unwrapFeishuInternalId(value);
+  if (!unwrapped) return undefined;
+  return unwrapped.prefixed && !unwrapped.id.startsWith("oc_") ? undefined : unwrapped.id;
+}
+
+function normalizeFeishuOpenId(value: string | undefined): string | undefined {
+  const unwrapped = unwrapFeishuInternalId(value);
+  if (!unwrapped) return undefined;
+  return unwrapped.prefixed && unwrapped.id.startsWith("oc_") ? undefined : unwrapped.id;
+}
+
+function unwrapFeishuInternalId(value: string | undefined): { id: string; prefixed: boolean } | undefined {
+  if (!value) return undefined;
+  const match = /^feishu:(?:dm|group):(.+)$/.exec(value);
+  return match ? { id: match[1], prefixed: true } : { id: value, prefixed: false };
 }

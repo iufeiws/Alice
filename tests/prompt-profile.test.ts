@@ -76,7 +76,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
         thinking: "thinking for {{user}}",
         toolName: "check_feishu",
         toolCallId: "call_prompt_1",
-        toolArguments: "{\"scope\":\"today\"}",
+        toolArguments: "{}",
         order: 1
       }
     ]
@@ -88,7 +88,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
   }, async (layer, call) => {
     assert.equal(layer.id, "request");
     assert.equal(call.toolName, "check_feishu");
-    assert.deepEqual(call.input, { scope: "today" });
+    assert.deepEqual(call.input, {});
     return {
       callId: call.id,
       ok: true,
@@ -199,7 +199,12 @@ test("daily shell rolls over after the configured next-day hour", () => {
 
 test("daily shell store records shell switch logs", () => {
   const root = makeTempDir("daily-shell-switch-log");
-  const store = createDailyShellStore(root);
+  const switchEvents: string[] = [];
+  const store = createDailyShellStore(root, {
+    onSwitch(entry) {
+      switchEvents.push(entry.message);
+    }
+  });
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "冷淡", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "同桌", content: "relationship one" }]);
   replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "制服", content: "outfit one" }]);
@@ -211,8 +216,16 @@ test("daily shell store records shell switch logs", () => {
 
   const logs = store.listSwitchLogs();
   assert.equal(logs.length, 2);
+  assert.equal(logs[0].time, "2026-05-26T20:00:00.000");
+  assert.equal(logs[1].time, "2026-05-27T04:00:00.000");
+  assert.doesNotMatch(logs[0].time, /Z$|[+-]\d{2}:\d{2}$/);
+  assert.doesNotMatch(logs[1].time, /Z$|[+-]\d{2}:\d{2}$/);
   assert.equal(logs[0].message, "切换到冷淡的同桌爱丽丝");
   assert.equal(logs[1].message, "切换到冷淡的同桌爱丽丝");
+  assert.deepEqual(switchEvents, [
+    "切换到冷淡的同桌爱丽丝",
+    "切换到冷淡的同桌爱丽丝"
+  ]);
 });
 
 function textEvent(): AgentEvent {

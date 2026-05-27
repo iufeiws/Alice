@@ -80,6 +80,7 @@ export type AliceStore = {
   listPendingCoreConversations(): Array<{ conversationId: string; latestMessageId: number; latestTime: string }>;
   listUnprocessedCoreMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
   markMessagesCoreProcessed(ids: number[], processedAt: string, batchId: string): void;
+  markMessagesReadAndCoreProcessed(ids: number[], readAt: string, batchId: string): void;
   listPendingOutboundMessages(plugin: string, limit: number): StoredConversationMessage[];
   markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAt: string): void;
   markOutboundMessageFailed(id: number, failedAt: string, failureReason: string): void;
@@ -504,13 +505,13 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return db.prepare(`
         SELECT conversation_id AS conversationId, MAX(id) AS latestMessageId, MAX(created_at) AS latestTime
         FROM messages
-        WHERE direction = 'inbound' AND core_processed_at IS NULL
+        WHERE direction = 'inbound' AND core_processed_at IS NULL AND is_read = 0
         GROUP BY conversation_id
         ORDER BY latestMessageId ASC
       `).all();
     },
     listUnprocessedCoreMessagesForConversation(conversationId, limit) {
-      return db.prepare(conversationMessageSelect("WHERE conversation_id = ? AND direction = 'inbound' AND core_processed_at IS NULL ORDER BY id ASC LIMIT ?"))
+      return db.prepare(conversationMessageSelect("WHERE conversation_id = ? AND direction = 'inbound' AND core_processed_at IS NULL AND is_read = 0 ORDER BY id ASC LIMIT ?"))
         .all(conversationId, limit);
     },
     markMessagesCoreProcessed(ids, processedAt, batchId) {
@@ -518,6 +519,19 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       const placeholders = ids.map(() => "?").join(", ");
       db.prepare(`UPDATE messages SET core_processed_at = ?, core_batch_id = ? WHERE id IN (${placeholders})`)
         .run(processedAt, batchId, ...ids);
+    },
+    markMessagesReadAndCoreProcessed(ids, readAt, batchId) {
+      if (ids.length === 0) return;
+      const placeholders = ids.map(() => "?").join(", ");
+      db.prepare(`
+        UPDATE messages
+        SET is_read = 1,
+          read_at = COALESCE(read_at, ?),
+          last_event_at = CASE WHEN is_read = 0 THEN ? ELSE last_event_at END,
+          core_processed_at = COALESCE(core_processed_at, ?),
+          core_batch_id = COALESCE(core_batch_id, ?)
+        WHERE id IN (${placeholders})
+      `).run(readAt, readAt, readAt, batchId, ...ids);
     },
     listPendingOutboundMessages(plugin, limit) {
       return db.prepare(conversationMessageSelect("WHERE plugin = ? AND direction = 'outbound' AND status = 'sending' ORDER BY id ASC LIMIT ?"))

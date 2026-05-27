@@ -149,8 +149,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
     let nextInput = input;
     let sentMessage = false;
-    const maxToolRounds = 2;
-    for (let round = 0; round <= maxToolRounds; round += 1) {
+    const maxLLMRequests = 5;
+    for (let round = 0; round < maxLLMRequests; round += 1) {
       deps.onLLMRequestPrepared?.(nextInput);
       const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
       deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: nextInput.model });
@@ -192,13 +192,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
         const plugin = toolMap.get(call.function.name);
         let toolResult: ToolResult;
-        if (round === maxToolRounds && call.function.name !== "send_feishu") {
-          toolResult = {
-            callId: call.id,
-            ok: false,
-            error: `Tool round limit reached before ${call.function.name}`
-          };
-        } else if (!plugin) {
+        if (!plugin) {
           toolResult = {
             callId: call.id,
             ok: false,
@@ -231,7 +225,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         };
       }));
 
-      if (sentMessage) {
+      if (round === maxLLMRequests - 1) {
         return { message: result.message, sentMessage };
       }
 
@@ -250,11 +244,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       };
     }
 
-    deps.onLLMLog?.({ kind: "call_start", round: maxToolRounds + 1, stream: false, model: nextInput.model });
-    const finalResult = await deps.llm.chat(nextInput);
-    deps.onLLMLog?.({ kind: "response_received", round: maxToolRounds + 1, stream: false, model: nextInput.model });
-    deps.onLLMResponseReceived?.(finalResult);
-    return { message: finalResult.message, sentMessage };
+    return { message: nextInput.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage };
   }
 
   function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
@@ -361,6 +351,7 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 }
 
 function formatToolResultForLLM(result: ToolResult): string {
+  if (!result.ok && typeof result.output === "string") return result.output;
   if (!result.ok) return result.error ? `error: ${result.error}` : "error";
   if (typeof result.output === "string") return result.output;
   if (result.output === undefined || result.output === null) return "ok";
@@ -393,7 +384,7 @@ async function sendStreamingLine(
     resultsByCallId.set(callId, {
       callId,
       ok: previous?.ok === false ? false : result.ok,
-      output: [previousOutput, output].filter(Boolean).join("\n"),
+      output: mergeToolOutputs(previousOutput, output),
       error: previous?.error ?? result.error
     });
   } catch (error) {
@@ -405,6 +396,21 @@ async function sendStreamingLine(
       error: previous?.error ?? reason
     });
   }
+}
+
+function mergeToolOutputs(previousOutput: string, nextOutput: string): string {
+  if (!previousOutput) return nextOutput;
+  if (!nextOutput) return previousOutput;
+  const previousChat = parseChatToolOutput(previousOutput);
+  const nextChat = parseChatToolOutput(nextOutput);
+  if (!previousChat || !nextChat) return [previousOutput, nextOutput].filter(Boolean).join("\n");
+  return `<chat>\n${[previousChat.body, nextChat.body].filter(Boolean).join("\n")}\n</chat>\nCurrent time is [${nextChat.currentTime}]`;
+}
+
+function parseChatToolOutput(output: string): { body: string; currentTime: string } | undefined {
+  const match = /^<chat>\n([\s\S]*)\n<\/chat>\nCurrent time is \[([^\]]+)\]$/.exec(output.trim());
+  if (!match) return undefined;
+  return { body: match[1], currentTime: match[2] };
 }
 
 class StreamingSendMessageState {
@@ -446,7 +452,7 @@ class StreamingSendMessageState {
   }
 
   canStreamNow(): boolean {
-    return !this.sawNonMessageType;
+    return this.sawExplicitMessageType && !this.sawNonMessageType;
   }
 
   shouldSendAsMessage(): boolean {

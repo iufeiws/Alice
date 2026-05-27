@@ -130,9 +130,9 @@ export function defaultPromptProfile(): PromptProfile {
         order: 40,
         content: [
           "可用飞书工具：",
-          "- check_feishu：查看当前一对一飞书聊天记录。默认 scope=today，本地时间 6 点前从前一天 00:00 开始，6 点后从当天 00:00 开始；scope=new 只返回上次查看后的新增飞书消息。",
-          "- send_feishu：发送飞书消息到当前一对一聊天。type 默认 message；message 模式会把换行分隔的 content 拆成多条飞书消息。",
-          "- 多行飞书回复要在 content 中用换行分段，流式发送会在每个换行处发送已完成的一段。"
+          "- check_feishu：查看当前一对一飞书聊天记录。同一 LLM 会话内首次调用返回 today 内容：本地时间 6 点前从前一天 00:00 开始，6 点后从当天 00:00 开始；再次及后续调用只返回上次查看后的新增飞书消息。",
+          "- send_feishu：发送飞书消息到当前一对一聊天。必须先提供 type，再提供 content；type=message 会把换行分隔的 content 拆成多条飞书消息。",
+          "- 多行飞书回复要先写 type=message，再在 content 中用换行分段；确认 type=message 后，流式发送会在每个换行处发送已完成的一段。"
         ].join("\n")
       },
       {

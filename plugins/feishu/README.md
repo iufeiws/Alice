@@ -83,18 +83,17 @@ For media, `assetId` currently means a local file path or `file://` path.
 AgentCore exposes Feishu-specific tool names to the LLM:
 
 - `check_feishu`
-  - args: `scope?: "today" | "new"`; default `today`.
-  - legacy typo `scpe` is accepted as an alias.
-  - `new` uses a persisted per-conversation cursor.
+  - args: none.
+  - first call in an LLM session returns `today`: before local 06:00 it starts at the previous 00:00, otherwise at the current 00:00.
+  - later calls in the same LLM session return only messages after the persisted per-conversation cursor.
   - output is a plain string for the LLM. Adjacent messages follow WeChat-style time merging: messages less than five minutes apart share one `[local time]` header, followed by `user/Alice:{content}[reaction][已撤回]` lines.
   - no new messages returns `nothing new`.
 - `send_feishu`
-  - args: `type?: "message" | "markdown" | "image"`, `content`.
-  - default `type` is `message`.
+  - args: `type: "message" | "markdown" | "image"`, `content`; provide `type` before `content`.
   - in `message` mode, newline-separated content is split into multiple Feishu text messages.
   - split text messages are throttled by content length; the first send also accounts for time elapsed since the LLM call started.
   - a send attempt occupies the throttle window before the channel returns, so failed attempts still count as typed/sent time. Failed sends are marked `send_failed` and retried in the in-memory retry queue up to three times.
-  - with streaming LLM responses, each decoded newline in `content` is sent immediately instead of waiting for the final JSON tool arguments.
+  - with streaming LLM responses, each decoded newline in `content` is sent immediately only after `type="message"` has appeared; omitted or late `type` waits for the final JSON tool arguments.
   - `voice` is intentionally unsupported.
 
 ## Key Functions

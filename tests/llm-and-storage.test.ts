@@ -27,7 +27,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
         [
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"think "}}]}',
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"more"}}]}',
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_feishu","arguments":"{\\"scope\\":\\"today\\"}"}}]},"finish_reason":"tool_calls"}]}'
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_feishu","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
         ].join("\n\n")
       ));
       controller.close();
@@ -54,7 +54,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
       }]
     });
     assert.equal(result?.message.toolCalls?.[0].function.name, "check_feishu");
-    assert.equal(result?.message.toolCalls?.[0].function.arguments, "{\"scope\":\"today\"}");
+    assert.equal(result?.message.toolCalls?.[0].function.arguments, "{}");
     assert.equal(result?.message.reasoningContent, "think more");
     assert.equal(requestBody.messages[0].reasoning_content, "prior thinking");
   } finally {
@@ -354,10 +354,14 @@ test("sqlite store keeps core-facing message state separate from event logs", ()
     at: "2026-05-24T00:01:00.000Z"
   }), true);
   assert.equal(store.markMessageRead("feishu", "om_1", "2026-05-24T00:02:00.000Z"), true);
+  assert.deepEqual(store.listPendingCoreConversations(), []);
+  assert.deepEqual(store.listUnprocessedCoreMessagesForConversation("feishu:dm:ou_user", 10), []);
+  store.markMessagesReadAndCoreProcessed([message.id], "2026-05-24T00:04:00.000Z", "check_read_later");
   assert.equal(store.markMessageRecalled("feishu", "om_1", "2026-05-24T00:03:00.000Z"), true);
 
   const updated = store.listMessagesForConversation("feishu:dm:ou_user", 10)[0];
   assert.equal(Boolean(updated.isRead), true);
+  assert.equal(updated.readAt, "2026-05-24T00:02:00.000Z");
   assert.equal(Boolean(updated.isRecalled), true);
   assert.deepEqual(JSON.parse(updated.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
 });

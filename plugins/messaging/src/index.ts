@@ -27,6 +27,7 @@ export type MessagingToolsDeps = {
     | "searchMessages"
     | "getToolCursor"
     | "setToolCursor"
+    | "markMessagesReadAndCoreProcessed"
     | "insertOutboundMessage"
     | "markOutboundMessageSent"
     | "markOutboundMessageFailed"
@@ -55,9 +56,10 @@ export type MessagingToolsDeps = {
 
 export type MessagingToolPlugin = ToolPlugin & {
   noteLLMRequestStarted(): void;
+  noteLLMSessionCompleted(): void;
 };
 
-const messageDelayMsPerCharacter = 120;
+const messageDelayMsPerCharacter = 480;
 const minMessageDelayMs = 500;
 const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
@@ -67,12 +69,22 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const userName = () => deps.getUserName?.() || "user";
   const sleep = deps.sleep ?? delay;
   let lastMessageTimestampMs: number | undefined;
+  let activeLLMSession = false;
+  let checkFeishuCallsInLLMSession = 0;
   let retryQueue = Promise.resolve();
 
   return {
     id: "messaging",
     noteLLMRequestStarted() {
+      if (!activeLLMSession) {
+        activeLLMSession = true;
+        checkFeishuCallsInLLMSession = 0;
+      }
       lastMessageTimestampMs = time.now().epochMs;
+    },
+    noteLLMSessionCompleted() {
+      activeLLMSession = false;
+      checkFeishuCallsInLLMSession = 0;
     },
     listTools() {
       return [checkFeishuTool, sendFeishuTool];
@@ -88,7 +100,15 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
     if (!target) return toolError(call, "No current messaging session is available");
-    const scope = stringValue(call.input.scope ?? call.input.scpe) === "new" ? "new" : "today";
+    return viewMessagesForScope(call.id, target, resolveViewScope(), { readonly: call.input.__preview === true });
+  }
+
+  function viewMessagesForScope(
+    callId: string,
+    target: MessagingToolTarget,
+    scope: "today" | "new",
+    options: { readonly?: boolean } = {}
+  ): ToolResult {
     const all = deps.store.listMessages(500).filter((message) => message.plugin === target.plugin);
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
@@ -98,19 +118,20 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       sinceDate = cursorMessage ? parseMessageTime(cursorMessage.createdAt, time.timeZone) : new Date(0);
       messages = all.filter((message) => message.id > cursor);
       const latest = all[all.length - 1];
-      if (latest) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
+      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
       const latest = all[all.length - 1];
-      if (latest) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
+      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
     }
 
     const currentDate = time.now().date;
     const shellEvents = readShellSwitchContext(sinceDate);
+    if (!options.readonly) markViewedUserMessages(messages);
     return {
-      callId: call.id,
+      callId,
       ok: true,
       output: appendCurrentTime(
         messages.length > 0 || shellEvents.length > 0
@@ -120,6 +141,20 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         currentDate
       )
     };
+  }
+
+  function resolveViewScope(): "today" | "new" {
+    if (!activeLLMSession) return "today";
+    checkFeishuCallsInLLMSession += 1;
+    return checkFeishuCallsInLLMSession === 1 ? "today" : "new";
+  }
+
+  function markViewedUserMessages(messages: StoredConversationMessage[]): void {
+    const ids = messages
+      .filter((message) => message.direction === "inbound" && message.senderRole === "user")
+      .map((message) => message.id);
+    if (ids.length === 0) return;
+    deps.store.markMessagesReadAndCoreProcessed(ids, time.now().iso, createId("check_read"));
   }
 
   async function searchMessages(call: ToolCall): Promise<ToolResult> {
@@ -194,7 +229,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         });
         results.push({ ok: true, messageId: extractSentMessageId(sent), content: part });
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = normalizeSendError(error);
         deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
         deps.appendMessageLog?.({
           direction: "outbound",
@@ -212,12 +247,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const failed = results.find((result) => !result.ok);
-    return {
-      callId: call.id,
-      ok: !failed,
-      output: formatSendResults(type, results),
-      error: failed?.error
-    };
+    const view = viewMessagesForScope(call.id, target, "new");
+    return failed ? { ...view, ok: false, error: failed.error } : view;
   }
 
   async function waitForMessageSendSlot(content: string): Promise<void> {
@@ -253,6 +284,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 
   async function retrySend(input: { output: AgentOutput; storedId: number; content: string }): Promise<void> {
+    let lastReason: string | undefined;
     for (let attempt = 1; attempt <= maxSendRetryAttempts; attempt += 1) {
       await waitForMessageSendSlot(input.content);
       try {
@@ -271,33 +303,46 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         });
         return;
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = normalizeSendError(error);
+        lastReason = reason;
         deps.store.markOutboundMessageFailed(input.storedId, time.now().iso, reason);
-        deps.appendMessageLog?.({
-          direction: "outbound",
-          plugin: input.output.target.plugin,
-          kind: input.output.content.kind,
-          target: input.output.target.channelId ?? input.output.target.userId,
-          sessionId: input.output.target.sessionId,
-          status: "retry_failed",
-          summary: summarizeOutput(input.output),
-          error: reason
-        });
       }
     }
+    deps.appendMessageLog?.({
+      direction: "outbound",
+      plugin: input.output.target.plugin,
+      kind: input.output.content.kind,
+      target: input.output.target.channelId ?? input.output.target.userId,
+      sessionId: input.output.target.sessionId,
+      status: "retry_failed",
+      summary: summarizeOutput(input.output),
+      error: lastReason ? `retry failed after ${maxSendRetryAttempts} attempt(s): ${lastReason}` : `retry failed after ${maxSendRetryAttempts} attempt(s)`
+    });
   }
 
   function resolveTarget(call: ToolCall): MessagingToolTarget | undefined {
     if (call.requester?.plugin && call.session?.sessionId) {
-      return {
+      return normalizeTarget({
         plugin: call.requester.plugin,
         accountId: call.requester.accountId,
         channelId: call.requester.channelId,
         userId: call.requester.userId,
         sessionId: call.session.sessionId
-      };
+      });
     }
-    return deps.getDefaultTarget?.();
+    const target = deps.getDefaultTarget?.();
+    return target ? normalizeTarget(target) : undefined;
+  }
+
+  function normalizeTarget(target: MessagingToolTarget): MessagingToolTarget {
+    if (target.plugin !== "feishu") return target;
+    const normalizedChannelId = normalizeFeishuChatId(target.channelId);
+    const normalizedUserId = normalizedChannelId ? target.userId : normalizeFeishuOpenId(target.userId ?? target.channelId);
+    return {
+      ...target,
+      channelId: normalizedChannelId,
+      userId: normalizedUserId
+    };
   }
 
   function buildOutput(target: MessagingToolTarget, type: "message" | "markdown" | "image", content: string): AgentOutput {
@@ -337,27 +382,24 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 const checkFeishuTool: ToolDefinition = {
   name: "check_feishu",
-  description: "查看当前一对一飞书聊天记录。默认读取 today 消息：本地时间 6 点前从前一天 00:00 开始，6 点后从当天 00:00 开始；scope=new 只返回上次查看后新增的飞书消息。",
+  description: "查看与<user>的聊天记录。连续调用首次调用返回今天的内容(6点前为从前一天00:00开始，6点后从当天00:00开始)；后续调用只返回新增的飞书消息。",
   inputSchema: {
     type: "object",
-    properties: {
-      scope: { type: "string", enum: ["today", "new"], default: "today" },
-      scpe: { type: "string", enum: ["today", "new"], description: "Deprecated alias for scope." }
-    },
+    properties: {},
     additionalProperties: false
   }
 };
 
 const sendFeishuTool: ToolDefinition = {
   name: "send_feishu",
-  description: "发送飞书消息到当前一对一聊天。type 默认 message；message 模式会把 content 中的换行拆成多条飞书消息并间隔发送。",
+  description: "发送消息给<user>。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条飞书消息并间隔发送。发送成功后自动查询并返回与<user>的聊天记录。",
   inputSchema: {
     type: "object",
     properties: {
-      type: { type: "string", enum: ["message", "markdown", "image"], default: "message" },
+      type: { type: "string", enum: ["message", "markdown", "image"] },
       content: { type: "string" }
     },
-    required: ["content"],
+    required: ["type", "content"],
     additionalProperties: false
   }
 };
@@ -455,8 +497,13 @@ function appendCurrentTime(output: string, timeZone: string, date: Date): string
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
   const speaker = message.direction === "outbound" || message.senderRole === "assistant" ? "Alice" : userName;
   const recalled = message.isRecalled ? "[已撤回]" : "";
+  const sendStatus = message.direction === "outbound" && message.status === "send_failed"
+    ? "[发送失败]"
+    : message.direction === "outbound" && message.status === "sending"
+      ? "[发送中]"
+      : "";
   const reactions = summarizeReactions(message.reactionsJson);
-  return `${speaker}:${message.isRecalled ? "(message recalled)" : message.contentText}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
+  return `${speaker}:${message.isRecalled ? "(message recalled)" : message.contentText}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
 }
 
 function summarizeReactions(raw: string): string {
@@ -555,6 +602,24 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : value === undefined || value === null ? "" : String(value);
 }
 
+function normalizeFeishuChatId(value: string | undefined): string | undefined {
+  const unwrapped = unwrapFeishuInternalId(value);
+  if (!unwrapped) return undefined;
+  return unwrapped.prefixed && !unwrapped.id.startsWith("oc_") ? undefined : unwrapped.id;
+}
+
+function normalizeFeishuOpenId(value: string | undefined): string | undefined {
+  const unwrapped = unwrapFeishuInternalId(value);
+  if (!unwrapped) return undefined;
+  return unwrapped.prefixed && unwrapped.id.startsWith("oc_") ? undefined : unwrapped.id;
+}
+
+function unwrapFeishuInternalId(value: string | undefined): { id: string; prefixed: boolean } | undefined {
+  if (!value) return undefined;
+  const match = /^feishu:(?:dm|group):(.+)$/.exec(value);
+  return match ? { id: match[1], prefixed: true } : { id: value, prefixed: false };
+}
+
 function toStoredOutbound(output: AgentOutput): InsertOutboundMessageInput {
   return {
     plugin: output.target.plugin,
@@ -583,11 +648,35 @@ function extractSentMessageId(value: unknown): string | undefined {
   return typeof record.messageId === "string" ? record.messageId : undefined;
 }
 
-function formatSendResults(type: "message" | "markdown" | "image", results: Array<{ ok: boolean; messageId?: string; error?: string; content: string }>): string {
-  return results.map((result, index) => {
-    const status = result.ok ? "sent" : `failed: ${result.error ?? "unknown error"}`;
-    return `#${index + 1} ${type} ${status}${result.messageId ? ` ${result.messageId}` : ""}: ${result.content}`;
-  }).join("\n");
+function normalizeSendError(error: unknown): string {
+  const record = isRecord(error) ? error : undefined;
+  const response = isRecord(record?.response) ? record.response : undefined;
+  const data = isRecord(response?.data) ? response.data : undefined;
+  const nestedError = isRecord(data?.error) ? data.error : undefined;
+  const code = data?.code ?? record?.code;
+  const msg = typeof data?.msg === "string"
+    ? data.msg
+    : error instanceof Error
+      ? error.message
+      : typeof record?.message === "string"
+        ? record.message
+        : String(error);
+  const logId = typeof data?.log_id === "string"
+    ? data.log_id
+    : typeof nestedError?.log_id === "string"
+      ? nestedError.log_id
+      : undefined;
+  if (code !== undefined || data?.msg) {
+    return `Feishu API${code !== undefined ? ` ${String(code)}` : ""}: ${msg}${logId ? ` log_id=${logId}` : ""}`;
+  }
+  if (response?.status !== undefined) {
+    return `HTTP ${String(response.status)}: ${msg}`;
+  }
+  return msg;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
 }
 
 function messageDelayForContent(content: string): number {

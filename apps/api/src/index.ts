@@ -156,7 +156,11 @@ const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu
   }
 }, { time: currentTime });
 const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
-const dailyShellStore = createDailyShellStore(config.memoryFiles.root);
+const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
+  onSwitch(entry) {
+    appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
+  }
+});
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
@@ -213,6 +217,7 @@ const core = createAgentCore({
     if (event.kind === "response_received") appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
   },
   onLLMSessionCompleted(result) {
+    messagingTools.noteLLMSessionCompleted();
     clearActiveLLMSession(result.sentMessage ? "send_feishu" : "llm_turn_completed");
   }
 });
@@ -610,10 +615,12 @@ function clearActiveLLMSession(reason: string): void {
 }
 
 async function getLLMRequestPreview(): Promise<LLMRequestPreview | undefined> {
+  const latest = llmRequestLogs[llmRequestLogs.length - 1];
+  if (activeLLMSession && latest) return { ...latest, source: "actual" };
+
   const preview = await buildLLMRequestPreviewFromMessages();
   if (preview) return { ...preview, rawRequest: buildRawLLMRequest(preview) };
 
-  const latest = llmRequestLogs[llmRequestLogs.length - 1];
   if (latest) return { ...latest, source: "actual" };
   return undefined;
 }
@@ -662,7 +669,12 @@ async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | 
 
 async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview | undefined> {
   const recent = store?.listMessages(500) ?? [];
-  const latestInbound = [...recent].reverse().find((message) => message.direction === "inbound" && !message.isRecalled);
+  const latestInbound = [...recent].reverse().find((message) => (
+    message.direction === "inbound" &&
+    !message.isRecalled &&
+    !message.isRead &&
+    !message.coreProcessedAt
+  ));
   if (!latestInbound) return undefined;
 
   const previewEvent = {
@@ -722,7 +734,10 @@ async function buildPromptPreviewMessages(
       };
     }
     try {
-      return await messagingTools.execute(call);
+      return await messagingTools.execute({
+        ...call,
+        input: { ...call.input, __preview: true }
+      });
     } catch (error) {
       return {
         callId: call.id,

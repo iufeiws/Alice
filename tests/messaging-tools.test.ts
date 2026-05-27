@@ -127,6 +127,35 @@ test("check_feishu chat labels use the injected current time", async () => {
   assert.match(String(result.output), /\[yesterday 23:30\]\nuser:late yesterday/);
 });
 
+test("check_feishu merges shell switch logs into chat context", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "hello",
+    createdAt: "2026-05-26T10:01:00.000Z"
+  });
+
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
+    getShellSwitchLogs: () => [{
+      time: "2026-05-26T10:00:00.000Z",
+      personalityName: "冷淡",
+      relationshipName: "同桌"
+    }]
+  });
+
+  const result = await tools.execute({ id: "call_shell_switch", toolName: "check_feishu", input: {} });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /\(壳切换-切换为冷淡的同桌爱丽丝\)\nuser:hello/);
+});
+
 test("search_messages uses persisted message FTS with default limits and context", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-search"), "alice.sqlite"));
   for (const [index, text] of ["before", "project alpha decision", "after"].entries()) {

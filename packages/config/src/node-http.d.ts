@@ -19,6 +19,7 @@ declare module "node:fs" {
     appendFileSync(path: string, data: string): void;
     readdirSync(path: string): string[];
     rmSync(path: string): void;
+    renameSync(oldPath: string, newPath: string): void;
     statSync(path: string): { isFile(): boolean; size: number };
   };
 

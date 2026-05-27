@@ -36,6 +36,11 @@ export type MessagingToolsDeps = {
   sleep?: (ms: number) => Promise<void>;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
+  getShellSwitchLogs?(): Array<{
+    time: string;
+    personalityName: string;
+    relationshipName: string;
+  }>;
   appendMessageLog?(input: {
     direction: "inbound" | "outbound";
     plugin: string;
@@ -101,12 +106,13 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const currentDate = time.now().date;
+    const shellEvents = readShellSwitchContext(sinceDate);
     return {
       callId: call.id,
       ok: true,
       output: appendCurrentTime(
-        messages.length > 0
-          ? formatMessageBlocks(messages, time.timeZone, userName(), currentDate)
+        messages.length > 0 || shellEvents.length > 0
+          ? formatTimelineBlocks(messages, shellEvents, time.timeZone, userName(), currentDate)
           : "nothing new",
         time.timeZone,
         currentDate
@@ -314,6 +320,17 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       }
     };
   }
+
+  function readShellSwitchContext(sinceDate: Date): ShellSwitchContextEntry[] {
+    return (deps.getShellSwitchLogs?.() ?? [])
+      .map((entry) => ({
+        kind: "shell" as const,
+        time: parseMessageTime(entry.time, time.timeZone),
+        personalityName: entry.personalityName,
+        relationshipName: entry.relationshipName
+      }))
+      .filter((entry) => entry.time.getTime() >= sinceDate.getTime());
+  }
 }
 
 const checkFeishuTool: ToolDefinition = {
@@ -363,6 +380,46 @@ const searchMessagesTool: ToolDefinition = {
   }
 };
 
+type ShellSwitchContextEntry = {
+  kind: "shell";
+  time: Date;
+  personalityName: string;
+  relationshipName: string;
+};
+
+type ChatContextEntry =
+  | { kind: "message"; time: Date; message: StoredConversationMessage }
+  | ShellSwitchContextEntry;
+
+function formatTimelineBlocks(
+  messages: StoredConversationMessage[],
+  shellEvents: ShellSwitchContextEntry[],
+  timeZone: string,
+  userName: string,
+  now: Date
+): string {
+  const entries: ChatContextEntry[] = [
+    ...messages.map((message) => ({ kind: "message" as const, time: parseMessageTime(message.createdAt, timeZone), message })),
+    ...shellEvents
+  ].sort((left, right) => left.time.getTime() - right.time.getTime());
+
+  const blocks: string[] = [];
+  let currentLines: string[] = [];
+  let currentTime: Date | undefined;
+
+  for (const entry of entries) {
+    if (!currentTime || entry.time.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
+      if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
+      currentTime = entry.time;
+      currentLines = [`[${formatChatTime(entry.time, timeZone, now)}]`];
+    }
+    currentLines.push(formatContextEntryLine(entry, userName));
+  }
+
+  if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
+  return blocks.join("\n");
+}
+
 function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: string, userName: string, now: Date): string {
   const blocks: string[] = [];
   let currentLines: string[] = [];
@@ -380,6 +437,13 @@ function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: st
 
   if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
   return blocks.join("\n");
+}
+
+function formatContextEntryLine(entry: ChatContextEntry, userName: string): string {
+  if (entry.kind === "shell") {
+    return `(壳切换-切换为${entry.personalityName}的${entry.relationshipName}爱丽丝)`;
+  }
+  return formatMessageContentLine(entry.message, userName);
 }
 
 function appendCurrentTime(output: string, timeZone: string, date: Date): string {

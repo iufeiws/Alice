@@ -2,6 +2,7 @@ import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
+import { createDailyShellStore } from "../../../core/agent/src/shells.js";
 import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../core/policy/src/index.js";
@@ -155,11 +156,13 @@ const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu
   }
 }, { time: currentTime });
 const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
+const dailyShellStore = createDailyShellStore(config.memoryFiles.root);
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
   time: currentTime,
   getUserName: () => promptProfileStore.get().userName,
+  getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getDefaultTarget() {
     const contact = feishuPairingStore.list()[0];
     if (!contact) return undefined;
@@ -194,6 +197,7 @@ const core = createAgentCore({
   },
   tools: [messagingTools],
   getPromptProfile: () => promptProfileStore.get(),
+  getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
   state: agentState,
   time: currentTime,
   onLLMRequestPrepared: appendLLMRequestLog,
@@ -243,6 +247,9 @@ const messageRuntime = createMessageRuntime({
   core,
   agentState,
   outputRouter,
+  onHeartbeatTick() {
+    dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
+  },
   appendLog,
   appendMessageLog
 });
@@ -275,6 +282,8 @@ const server = http.createServer(createApiRequestHandler({
   outputRouter,
   feishuPairingStore,
   promptProfileStore,
+  getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+  dailyShellStore,
   agentState,
   messagingTools,
   feishu,
@@ -700,7 +709,11 @@ async function buildPromptPreviewMessages(
   profile: ReturnType<typeof promptProfileStore.get>,
   event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"]
 ): Promise<LLMChatInput["messages"]> {
-  return buildPromptMessagesWithToolResults(profile, { event, time: currentTime }, async (layer, call) => {
+  return buildPromptMessagesWithToolResults(profile, {
+    event,
+    time: currentTime,
+    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone)
+  }, async (layer, call) => {
     if (call.toolName === "send_feishu") {
       return {
         callId: call.id,

@@ -10,7 +10,7 @@ export class HttpJsonError extends Error {
 }
 
 export function isAdminPath(url: string | undefined): boolean {
-  return url === "/admin" || Boolean(url?.startsWith("/admin/api/"));
+  return url === "/admin" || Boolean(url?.startsWith("/admin/api/")) || Boolean(url?.startsWith("/admin/assets/"));
 }
 
 export function isLoopbackAddress(remoteAddress: string | undefined): boolean {
@@ -57,4 +57,24 @@ export async function readJsonBody(
   }
 
   return parsed as Record<string, unknown>;
+}
+
+export async function readRawBody(
+  request: AsyncIterable<unknown>,
+  options: { maxBytes?: number } = {}
+): Promise<any> {
+  const maxBytes = options.maxBytes ?? 10 * 1024 * 1024;
+  const chunks: any[] = [];
+  let bytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk as any);
+    bytes += buffer.length;
+    if (bytes > maxBytes) {
+      throw new HttpJsonError(413, "request_too_large", "Request body is too large");
+    }
+    chunks.push(buffer);
+  }
+
+  return Buffer.concat(chunks);
 }

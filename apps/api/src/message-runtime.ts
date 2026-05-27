@@ -13,6 +13,7 @@ import type {
 export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
+  onHeartbeatTick?: () => void;
   getProcessNowTarget?(): {
     plugin: string;
     accountId?: string;
@@ -229,6 +230,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       scheduleHeartbeat();
       return 0;
     }
+    if (canRunHeartbeat()) deps.onHeartbeatTick?.();
     let processed = 0;
     const sessionIds = [...pendingSessions];
     for (const sessionId of sessionIds) {

@@ -6,6 +6,7 @@ import {
   createPromptProfileStore,
   defaultPromptProfile
 } from "../core/agent/src/prompts.js";
+import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../core/agent/src/shells.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import type { AgentEvent } from "../packages/types/src/index.js";
 
@@ -106,6 +107,114 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.match(messages[1].content, /小王:hello/);
 });
 
+test("daily shell store creates category files and reuses one shell per day", () => {
+  const root = makeTempDir("daily-shell");
+  const store = createDailyShellStore(root);
+  const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  const second = store.get(new Date("2026-05-26T15:59:59.000Z"), "Asia/Shanghai");
+  const shellDir = path.join(root, "shell");
+
+  assert.equal(first.date, "2026-05-26");
+  assert.equal(second.date, "2026-05-26");
+  assert.equal(second.personality.id, first.personality.id);
+  assert.equal(second.relationship.id, first.relationship.id);
+  assert.equal(second.outfit.id, first.outfit.id);
+  assert.equal(fs.readdirSync(path.join(shellDir, "personalities")).filter((item) => item.endsWith(".json")).length >= 10, true);
+  assert.equal(fs.readdirSync(path.join(shellDir, "relationships")).filter((item) => item.endsWith(".json")).length >= 10, true);
+  assert.equal(fs.readdirSync(path.join(shellDir, "outfits")).filter((item) => item.endsWith(".json")).length >= 10, true);
+  assert.match(fs.readFileSync(path.join(shellDir, "daily-shell.json"), "utf8"), /rendered/);
+  assert.match(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai"), /爱丽丝今日的\*外壳\*是/);
+});
+
+test("daily shell store preserves outfit image urls", () => {
+  const root = makeTempDir("daily-shell-image");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "outfits", [
+    { id: "custom_outfit", name: "Custom Outfit", content: "custom content", group: "fantasy", imageUrl: "memory-files/shell/assets/custom.png" }
+  ]);
+
+  assert.equal(fs.existsSync(path.join(root, "shell", "outfits", "custom_outfit.json")), true);
+  const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  assert.equal(config.outfits[0].imageUrl, "memory-files/shell/assets/custom.png");
+  assert.equal(config.outfits[0].group, "fantasy");
+  assert.doesNotMatch(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai"), /图片地址:/);
+});
+
+test("daily shell prompt template is editable", () => {
+  const root = makeTempDir("daily-shell-prompt");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p2", name: "P Two", content: "personality two" },
+    { id: "p1", name: "P One", content: "personality one" }
+  ]);
+  store.savePromptTemplate("P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
+
+  const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  assert.equal(config.personalities[0].id, "p1");
+  assert.equal(config.promptTemplate, "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
+  assert.match(config.rendered, /^P=/);
+});
+
+test("daily shell remains stable when the active option is edited", () => {
+  const root = makeTempDir("daily-shell-stable");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one" }
+  ]);
+  replaceShellCategory(root, store, "relationships", [
+    { id: "r1", name: "R One", content: "relationship one" }
+  ]);
+  replaceShellCategory(root, store, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one" }
+  ]);
+
+  const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  store.saveOption("personalities", { id: "p2", name: "P Two", content: "personality two" }, "p1");
+  const second = store.get(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
+
+  assert.equal(first.relationship.id, second.relationship.id);
+  assert.equal(first.outfit.id, second.outfit.id);
+  assert.equal(second.personality.id, "p2");
+  assert.equal(store.render(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai"), store.render(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai"));
+});
+
+test("daily shell rolls over after the configured next-day hour", () => {
+  const root = makeTempDir("daily-shell-rollover");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+  store.saveSettings({ rolloverHour: 4 });
+
+  const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  const before = store.get(new Date("2026-05-26T19:59:00.000Z"), "Asia/Shanghai");
+  const after = store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
+
+  assert.equal(first.date, "2026-05-26");
+  assert.equal(before.createdAt, first.createdAt);
+  assert.equal(after.date, "2026-05-27");
+  assert.notEqual(after.createdAt, first.createdAt);
+  assert.equal(store.getSettings().rolloverHour, 4);
+});
+
+test("daily shell store records shell switch logs", () => {
+  const root = makeTempDir("daily-shell-switch-log");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "冷淡", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "同桌", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "制服", content: "outfit one" }]);
+  store.saveSettings({ rolloverHour: 4 });
+
+  store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  store.get(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
+  store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
+
+  const logs = store.listSwitchLogs();
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0].message, "切换到冷淡的同桌爱丽丝");
+  assert.equal(logs[1].message, "切换到冷淡的同桌爱丽丝");
+});
+
 function textEvent(): AgentEvent {
   return {
     id: "evt_1",
@@ -125,6 +234,18 @@ function textEvent(): AgentEvent {
       receivedAt: "2026-05-26T00:00:00.000Z"
     }
   };
+}
+
+function replaceShellCategory(root: string, store: DailyShellStore, category: ShellCategory, options: ShellOption[]): void {
+  const dir = path.join(root, "shell", category);
+  if (fs.existsSync(dir)) {
+    for (const fileName of fs.readdirSync(dir)) {
+      fs.rmSync(path.join(dir, fileName));
+    }
+  }
+  for (const option of options) {
+    store.saveOption(category, option);
+  }
 }
 
 function makeTempDir(name: string): string {

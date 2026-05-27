@@ -39,6 +39,7 @@ export type PromptProfile = {
 export type PromptRenderContext = {
   event: AgentEvent;
   time: CurrentTimeProvider;
+  dailyShell?: string;
 };
 
 export type PromptProfileStore = {
@@ -141,6 +142,8 @@ export function defaultPromptProfile(): PromptProfile {
         enabled: true,
         order: 50,
         content: [
+          "{{daily_shell}}",
+          "",
           "Stay immersed in the Alice role while preserving tool accuracy.",
           "Do not mention platform-specific implementation names unless the user asks.",
           "Treat Feishu history tool output as-is."
@@ -201,6 +204,7 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     time: formatLocalDateTime(now.date, context.time.timeZone),
     date,
     timezone: context.time.timeZone,
+    daily_shell: context.dailyShell ?? "",
     user: profile.userName,
     session: context.event.session.sessionId,
     channel: context.event.source.channelId ?? context.event.source.userId ?? context.event.session.sessionId

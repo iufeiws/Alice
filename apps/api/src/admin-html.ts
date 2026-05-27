@@ -41,6 +41,18 @@ export function renderAdminHtmlV2(): string {
       .prompt-layer[open] summary { margin-bottom: 8px; }
       .prompt-actions { display: flex; gap: 6px; flex-wrap: wrap; }
       .prompt-actions button { margin-top: 6px; }
+      .shell-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+      .shell-category-outfits { grid-column: 1 / -1; }
+      .shell-option { border-bottom: 1px solid #e4e7eb; padding: 10px 0; }
+      .shell-option summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 800; padding: 6px 0; }
+      .shell-option summary .shell-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .shell-option summary .shell-save { margin-left: auto; }
+      .shell-marker { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+      .shell-option summary button { margin: 0; padding: 5px 8px; }
+      .shell-option textarea { min-height: 110px; }
+      .shell-image-preview { margin-top: 10px; max-width: 220px; max-height: 160px; border: 1px solid #d7dce3; border-radius: 6px; object-fit: contain; background: #f8fafc; display: block; }
+      .shell-image-preview.hidden { display: none; }
+      .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .logs { max-height: calc(100vh - 150px); overflow: auto; background: #111827; color: #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
@@ -163,6 +175,7 @@ export function renderAdminHtmlV2(): string {
       <main>
         <div class="tabbar main-tabs">
           <button class="tab active" data-main-tab="prompts" type="button">Prompt</button>
+          <button class="tab" data-main-tab="shells" type="button">Shell</button>
           <button class="tab" data-main-tab="llm-request" type="button">LLM Request</button>
           <button class="tab" data-main-tab="llm-responses" type="button">LLM Responses</button>
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Chain</button>
@@ -173,6 +186,10 @@ export function renderAdminHtmlV2(): string {
         <section id="main-prompts" class="pane active">
           <div id="promptProfile">Loading...</div>
           <p class="muted" id="prompt-status"></p>
+        </section>
+        <section id="main-shells" class="pane">
+          <div id="shellEditor">Loading...</div>
+          <p class="muted" id="shell-status"></p>
         </section>
         <section id="main-llm-request" class="pane"><div id="llmRequests" class="logs">No LLM request yet.</div></section>
         <section id="main-llm-responses" class="pane"><div id="llmResponses" class="logs">No LLM response yet.</div></section>
@@ -189,12 +206,13 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-llm-request,#main-llm-responses,#main-llm-chain,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-responses,#main-llm-chain,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
+        if (button.dataset.mainTab === "shells") await refreshShellEditor();
         if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
         if (button.dataset.mainTab === "llm-responses") await refreshLLMResponses();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
@@ -220,6 +238,7 @@ export function renderAdminHtmlV2(): string {
         $("feishu-status").textContent = config.plugins.feishu.runtimeStarted ? "Feishu runtime started." : "Feishu runtime stopped.";
 
         await refreshPromptProfile();
+        await refreshShellEditor();
         await refreshRuntimeStatus();
         const pairings = await fetch("/admin/api/plugins/feishu/pairings").then((res) => res.json());
         $("pairings").textContent = JSON.stringify(pairings.contacts, null, 2);
@@ -447,6 +466,403 @@ export function renderAdminHtmlV2(): string {
           renderPromptProfile();
         }
         await refreshLLMRequests();
+      }
+
+      let shellData = null;
+      let shellOrder = { personalities: [], relationships: [], outfits: [] };
+      const shellCategories = [
+        { key: "personalities", title: "性格 / 语气" },
+        { key: "relationships", title: "关系 / 称呼" },
+        { key: "outfits", title: "服装 / Cosplay" }
+      ];
+
+      async function refreshShellEditor() {
+        const [data, orderPayload] = await Promise.all([
+          fetch("/admin/api/shell").then((res) => res.json()),
+          fetch("/admin/api/shell-ui/order").then((res) => res.json())
+        ]);
+        shellData = data;
+        shellOrder = orderPayload.order || shellOrder;
+        shellCategories.forEach((category) => {
+          shellData[category.key] = applyShellOrder(category.key, shellData[category.key] || []);
+        });
+        renderShellEditor();
+      }
+
+      function renderShellEditor() {
+        if (!shellData) return;
+        $("shellEditor").innerHTML = \`
+          <div class="shell-head">
+            <h2>Daily Shell</h2>
+            <button type="button" id="shell-reroll" class="secondary">Reroll Today</button>
+          </div>
+          <details class="prompt-layer">
+            <summary>Today<span>\${escapeHtml(shellData.daily?.date || "")}</span></summary>
+            <p class="muted">Created at: \${escapeHtml(shellData.daily?.createdAt || "")}</p>
+            <pre>\${escapeHtml(shellData.rendered || "")}</pre>
+          </details>
+          <details class="prompt-layer">
+            <summary>Shell Settings<span>daily refresh clock</span></summary>
+            <label for="shellRolloverHour">Daily Refresh Clock (0-23)</label>
+            <input id="shellRolloverHour" inputmode="numeric" value="\${escapeAttr(shellData.settings?.rolloverHour ?? 4)}" />
+            <button type="button" id="shell-settings-save">Save Shell Settings</button>
+          </details>
+          <details class="prompt-layer">
+            <summary>Shell Prompt<span>template</span></summary>
+            <p class="muted">Variables: {{personality_name}}, {{personality_content}}, {{relationship_name}}, {{relationship_content}}, {{outfit_name}}, {{outfit_content}}, {{date}}</p>
+            <textarea id="shellPromptTemplate" rows="12">\${escapeHtml(shellData.promptTemplate || "")}</textarea>
+            <button type="button" id="shell-prompt-save">Save Shell Prompt</button>
+          </details>
+          <details class="prompt-layer" open>
+            <summary>语气 / 称呼<span>top</span></summary>
+            <div class="shell-grid">
+              \${shellCategories.slice(0, 2).map((category) => renderShellCategory(category)).join("")}
+            </div>
+          </details>
+          <details class="prompt-layer" open>
+            <summary>服装<span>bottom</span></summary>
+            \${renderShellCategory(shellCategories[2])}
+          </details>
+        \`;
+        $("shell-reroll").addEventListener("click", rerollShell);
+        $("shell-settings-save").addEventListener("click", saveShellSettings);
+        $("shell-prompt-save").addEventListener("click", saveShellPromptTemplate);
+        shellCategories.forEach((category) => bindShellCategory(category.key));
+      }
+
+      function renderShellCategory(category) {
+        const options = shellData[category.key] || [];
+        return \`
+          <div class="prompt-layer shell-category-\${escapeAttr(category.key)}" data-shell-category="\${escapeAttr(category.key)}">
+            <div class="shell-head">
+              <h2>\${escapeHtml(category.title)}</h2>
+              <span class="muted">\${options.length} options</span>
+            </div>
+            <div class="shell-category-body">
+              \${renderShellGroups(category.key, options)}
+            </div>
+            <button type="button" data-action="add">Add</button>
+          </div>
+        \`;
+      }
+
+      function renderShellGroups(category, options) {
+        const groups = new Map();
+        options.forEach((option, index) => {
+          const group = option.group || "root";
+          if (!groups.has(group)) groups.set(group, []);
+          groups.get(group).push({ option, index });
+        });
+        return [...groups.entries()].map(([group, items]) => \`
+          <div class="item">
+            <strong>\${escapeHtml(group)}</strong>
+            \${items.map(({ option, index }) => renderShellOption(category, option, index)).join("")}
+          </div>
+        \`).join("");
+      }
+
+      function applyShellOrder(category, options) {
+        const order = shellOrder[category] || [];
+        if (!order.length) return options;
+        const byId = new Map(options.map((option) => [option.id, option]));
+        const sorted = order.map((id) => byId.get(id)).filter(Boolean);
+        const seen = new Set(sorted.map((option) => option.id));
+        return [...sorted, ...options.filter((option) => !seen.has(option.id))];
+      }
+
+      function renderShellOption(category, option, index) {
+        return \`
+          <details class="shell-option" data-shell-index="\${index}">
+            <summary>
+              <span class="shell-title">\${escapeHtml(option.name || "New Shell")}</span>
+              <span class="shell-marker" data-field="marker"></span>
+              <button type="button" data-action="up" title="Move up">↑</button>
+              <button type="button" data-action="down" title="Move down">↓</button>
+              <button type="button" class="shell-save" data-action="save-one" title="Save">S</button>
+            </summary>
+            <div class="row">
+              <div>
+                <label>ID</label>
+                <input data-field="id" value="\${escapeAttr(option.id || "")}" />
+              </div>
+              <div></div>
+            </div>
+            <label>Name</label>
+            <input data-field="name" value="\${escapeAttr(option.name || "")}" />
+            <label>Group</label>
+            <input data-field="group" value="\${escapeAttr(option.group || "")}" placeholder="root / 原神 / ..." />
+            \${category === "outfits" ? \`
+              <label>Image</label>
+              <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
+              <input data-field="imageUpload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+              <button type="button" data-action="upload-image">Upload Image</button>
+            \` : ""}
+            <label>Content</label>
+            <textarea data-field="content" rows="6">\${escapeHtml(option.content || "")}</textarea>
+            <button type="button" data-action="delete" class="secondary">Delete</button>
+          </details>
+        \`;
+      }
+
+      function bindShellCategory(category) {
+        const root = document.querySelector('[data-shell-category="' + cssEscape(category) + '"]');
+        if (!root) return;
+        root.querySelector('[data-action="add"]').addEventListener("click", () => {
+          shellData[category].push({ id: category.slice(0, -1) + "_" + Date.now(), name: "New Shell", content: "", group: "" });
+          renderShellEditor();
+        });
+        root.querySelectorAll(".shell-option").forEach((optionRoot) => {
+          const index = Number(optionRoot.dataset.shellIndex);
+          const option = shellData[category][index];
+          option._previousId = option._previousId || option.id;
+          optionRoot.querySelector('[data-field="id"]').addEventListener("input", (event) => { option.id = event.target.value; markShellOption(optionRoot, "dirty"); });
+          optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
+          optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
+          optionRoot.querySelector('[data-action="upload-image"]')?.addEventListener("click", () => uploadShellOutfitImage(optionRoot, option, category, index));
+          optionRoot.querySelector('[data-field="content"]').addEventListener("input", (event) => { option.content = event.target.value; markShellOption(optionRoot, "dirty"); });
+          optionRoot.querySelector('[data-action="save-one"]').addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+              await saveShellOption(category, currentShellIndex(optionRoot));
+            } catch (error) {
+              $("shell-status").textContent = "Shell save failed: " + (error?.message || "unknown error");
+            }
+          });
+          optionRoot.querySelector('[data-action="up"]').addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            moveShellOption(category, currentShellIndex(optionRoot), -1).catch((error) => {
+              $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
+            });
+          });
+          optionRoot.querySelector('[data-action="down"]').addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            moveShellOption(category, currentShellIndex(optionRoot), 1).catch((error) => {
+              $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
+            });
+          });
+          optionRoot.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+            if (shellData[category].length <= 1) {
+              $("shell-status").textContent = "Each shell category must keep at least one option.";
+              return;
+            }
+            try {
+              await deleteShellOption(category, currentShellIndex(optionRoot));
+            } catch (error) {
+              $("shell-status").textContent = "Shell delete failed: " + (error?.message || "unknown error");
+            }
+          });
+        });
+      }
+
+      async function moveShellOption(category, index, delta) {
+        const options = shellData[category];
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= options.length) return;
+        const current = options[index];
+        options[index] = options[nextIndex];
+        options[nextIndex] = current;
+        await saveShellOrder(category);
+        $("shell-status").textContent = "Shell order saved.";
+        moveShellOptionNode(category, index, nextIndex, delta);
+      }
+
+      async function saveShellOption(category, index) {
+        const optionRoot = document.querySelector('[data-shell-category="' + cssEscape(category) + '"] [data-shell-index="' + index + '"]');
+        const option = shellData[category][index];
+        const result = await persistShellOption(category, index);
+        $("shell-status").textContent = "Shell saved: " + (option?.name || option?.id || category);
+        shellData[category][index] = { ...result.option, _previousId: result.option.id };
+        optionRootLabel(category, index, result.option);
+        if (optionRoot) {
+          markShellOption(optionRoot, "saved");
+          optionRoot.open = false;
+        }
+      }
+
+      async function persistShellOption(category, index) {
+        const option = shellData[category][index];
+        const previousId = option?._previousId || option?.id;
+        const payload = { ...option };
+        delete payload._previousId;
+        const result = await fetch("/admin/api/shell-option", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ category, previousId, option: payload })
+        }).then((res) => res.json());
+        if (!result.ok) throw new Error(result.error || "unknown error");
+        shellData[category][index] = { ...result.option, _previousId: result.option.id };
+        return result;
+      }
+
+      async function deleteShellOption(category, index) {
+        const option = shellData[category][index];
+        const id = option?._previousId || option?.id;
+        const result = await fetch("/admin/api/shell-option", {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ category, id })
+        }).then((res) => res.json());
+        if (!result.ok) throw new Error(result.error || "unknown error");
+        shellData[category].splice(index, 1);
+        shellOrder = result.order || shellOrder;
+        $("shell-status").textContent = "Shell deleted: " + (option?.name || id || category);
+        renderShellEditor();
+      }
+
+      function optionRootLabel(category, index, option) {
+        const root = document.querySelector('[data-shell-category="' + cssEscape(category) + '"] [data-shell-index="' + index + '"] .shell-title');
+        if (root) root.textContent = option.name || "New Shell";
+      }
+
+      function markShellOption(optionRoot, state) {
+        const marker = optionRoot.querySelector('[data-field="marker"]');
+        if (!marker) return;
+        marker.textContent = state === "dirty" ? "[●]" : state === "saved" ? "[M]" : "";
+      }
+
+      function moveShellOptionNode(category, index, nextIndex, delta) {
+        const root = document.querySelector('[data-shell-category="' + cssEscape(category) + '"]');
+        const current = root?.querySelector('[data-shell-index="' + index + '"]');
+        const target = root?.querySelector('[data-shell-index="' + nextIndex + '"]');
+        if (!current || !target || !current.parentElement || current.parentElement !== target.parentElement) return;
+        if (delta < 0) {
+          target.before(current);
+        } else {
+          target.after(current);
+        }
+        current.dataset.shellIndex = String(nextIndex);
+        target.dataset.shellIndex = String(index);
+      }
+
+      function currentShellIndex(optionRoot) {
+        return Number(optionRoot.dataset.shellIndex);
+      }
+
+      async function saveShellOrder(category) {
+        shellOrder[category] = shellData[category].map((option) => option.id);
+        const result = await fetch("/admin/api/shell-ui/order", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ category, order: shellOrder[category] })
+        }).then((res) => res.json());
+        if (!result.ok) throw new Error(result.error || "unknown error");
+        shellOrder = result.order || shellOrder;
+      }
+
+      function shellImageSrc(imageUrl) {
+        const value = String(imageUrl || "");
+        if (!value) return "";
+        if (/^https?:\\/\\//.test(value) || value.startsWith("data:")) return value;
+        const prefix = "memory-files/shell/";
+        if (value.startsWith(prefix)) return "/admin/assets/shell/" + value.slice(prefix.length).split("/").map(encodeURIComponent).join("/");
+        return value;
+      }
+
+      function updateShellImagePreview(optionRoot, imageUrl, bustCache) {
+        const preview = optionRoot.querySelector('[data-field="imagePreview"]');
+        if (!preview) return;
+        const baseSrc = shellImageSrc(imageUrl);
+        const src = baseSrc && bustCache ? baseSrc + (baseSrc.includes("?") ? "&" : "?") + "v=" + Date.now() : baseSrc;
+        preview.src = src;
+        preview.classList.toggle("hidden", !src);
+      }
+
+      async function rerollShell() {
+        const result = await fetch("/admin/api/shell/reroll", { method: "POST" }).then((res) => res.json());
+        $("shell-status").textContent = result.rendered ? "Daily shell rerolled." : "Daily shell reroll failed.";
+        shellData = result;
+        renderShellEditor();
+        await refreshPromptProfile();
+        await refreshLLMRequests();
+      }
+
+      async function saveShellPromptTemplate() {
+        const result = await fetch("/admin/api/shell-prompt", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ promptTemplate: $("shellPromptTemplate").value })
+        }).then((res) => res.json());
+        $("shell-status").textContent = result.ok ? "Shell prompt saved." : "Shell prompt save failed: " + (result.error || "unknown error");
+        if (result.ok) {
+          shellData = result;
+          renderShellEditor();
+          await refreshPromptProfile();
+          await refreshLLMRequests();
+        }
+      }
+
+      async function saveShellSettings() {
+        const result = await fetch("/admin/api/shell-settings", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rolloverHour: Number($("shellRolloverHour").value) })
+        }).then((res) => res.json());
+        $("shell-status").textContent = result.ok ? "Shell settings saved." : "Shell settings save failed: " + (result.error || "unknown error");
+        if (result.ok) {
+          shellData = result;
+          renderShellEditor();
+        }
+      }
+
+      async function uploadShellOutfitImage(optionRoot, option, category, index) {
+        const file = optionRoot.querySelector('[data-field="imageUpload"]')?.files?.[0];
+        if (!file) {
+          $("shell-status").textContent = "Choose an outfit image first.";
+          return;
+        }
+        const imageBlob = await convertImageToJpeg(file);
+        const result = await fetch("/admin/api/shell/outfit-image", {
+          method: "POST",
+          headers: {
+            "content-type": "image/jpeg",
+            "x-shell-id": encodeURIComponent(option.id || "outfit")
+          },
+          body: imageBlob
+        }).then((res) => res.json());
+        if (!result.ok) {
+          $("shell-status").textContent = "Image upload failed: " + (result.error || "unknown error");
+          return;
+        }
+        option.imageUrl = result.imageUrl;
+        updateShellImagePreview(optionRoot, result.imageUrl, true);
+        const saved = await persistShellOption(category, index);
+        shellData[category][index] = { ...saved.option, _previousId: saved.option.id };
+        optionRootLabel(category, index, saved.option);
+        markShellOption(optionRoot, "saved");
+        $("shell-status").textContent = "Image uploaded and saved: " + (saved.option.name || saved.option.id || "outfit");
+      }
+
+      function convertImageToJpeg(file) {
+        return new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const image = new Image();
+          image.onload = () => {
+            try {
+              const canvas = document.createElement("canvas");
+              canvas.width = image.naturalWidth || image.width;
+              canvas.height = image.naturalHeight || image.height;
+              const context = canvas.getContext("2d");
+              context.fillStyle = "#fff";
+              context.fillRect(0, 0, canvas.width, canvas.height);
+              context.drawImage(image, 0, 0);
+              canvas.toBlob((blob) => {
+                URL.revokeObjectURL(url);
+                blob ? resolve(blob) : reject(new Error("image_convert_failed"));
+              }, "image/jpeg", 0.92);
+            } catch (error) {
+              URL.revokeObjectURL(url);
+              reject(error);
+            }
+          };
+          image.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("image_load_failed"));
+          };
+          image.src = url;
+        });
       }
 
       async function refreshLogs() {

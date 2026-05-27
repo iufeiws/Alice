@@ -23,6 +23,7 @@ export type AgentCoreDeps = {
   };
   tools?: ToolPlugin[];
   getPromptProfile?: () => PromptProfile;
+  getDailyShell?: () => string;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
@@ -94,7 +95,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
         const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
         const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
-        const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, { event, time }, (layer, call) => {
+        const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, {
+          event,
+          time,
+          dailyShell: deps.getDailyShell?.()
+        }, (layer, call) => {
           return runPromptToolRequest(layer, call, toolPlugins);
         });
         if (promptMessages.length === 0) {

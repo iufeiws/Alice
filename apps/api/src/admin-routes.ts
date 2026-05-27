@@ -4,10 +4,14 @@ import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
-import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody } from "./http-utils.js";
+import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
+import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } from "./http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
+
+const fs = await import("node:fs");
+const path = await import("node:path");
 
 export type AdminRoutesContext = {
   config: AppConfig;
@@ -23,6 +27,8 @@ export type AdminRoutesContext = {
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
   promptProfileStore: PromptProfileStore;
+  getDailyShell(): string;
+  dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
   feishu: {
@@ -75,6 +81,12 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url?.startsWith("/admin/assets/shell/")) {
+        const assetPath = request.url.slice("/admin/assets/shell/".length).split(/[?#]/, 1)[0];
+        serveShellAsset(context, assetPath, response);
+        return;
+      }
+
       if (request.method === "GET" && request.url === "/healthz") {
         writeJson(response, 200, {
           ok: true,
@@ -110,6 +122,53 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "PUT" && request.url === "/admin/api/prompt-profile") {
         await savePromptProfile(context, request, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/shell") {
+        writeJson(response, 200, getShellConfig(context));
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/shell-ui/order") {
+        writeJson(response, 200, { ok: true, order: readShellUiOrder() });
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/shell-ui/order") {
+        await saveShellUiOrder(request, response);
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/shell-prompt") {
+        await saveShellPromptTemplate(context, request, response);
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/shell-settings") {
+        await saveShellSettings(context, request, response);
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/shell-option") {
+        await saveShellOption(context, request, response);
+        return;
+      }
+
+      if (request.method === "DELETE" && request.url === "/admin/api/shell-option") {
+        await deleteShellOption(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url?.startsWith("/admin/api/shell/outfit-image")) {
+        await uploadShellOutfitImage(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/shell/reroll") {
+        context.dailyShellStore.reroll(context.time.now().date, context.time.timeZone);
+        context.appendLog("info", "daily shell rerolled");
+        writeJson(response, 200, getShellConfig(context));
         return;
       }
 
@@ -286,6 +345,7 @@ function getPromptVariablePreview(context: AdminRoutesContext): Record<string, s
   const contact = context.feishuPairingStore.list()[0];
   return promptVariables(context.promptProfileStore.get(), {
     time: context.time,
+    dailyShell: context.getDailyShell(),
     event: {
       id: "preview",
       source: {
@@ -313,6 +373,180 @@ function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: strin
     name: tool.name,
     description: tool.description
   }));
+}
+
+function getShellConfig(context: AdminRoutesContext): unknown {
+  return context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
+}
+
+type ShellUiOrder = Record<ShellCategory, string[]>;
+
+function shellUiOrderPath(): string {
+  return path.join("apps", "api", "admin-ui", "shell-order.json");
+}
+
+function readShellUiOrder(): ShellUiOrder {
+  const empty: ShellUiOrder = { personalities: [], relationships: [], outfits: [] };
+  const filePath = shellUiOrderPath();
+  if (!fs.existsSync(filePath)) return empty;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<ShellUiOrder>;
+    return {
+      personalities: normalizeIdList(parsed.personalities),
+      relationships: normalizeIdList(parsed.relationships),
+      outfits: normalizeIdList(parsed.outfits)
+    };
+  } catch {
+    return empty;
+  }
+}
+
+async function saveShellUiOrder(request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const category = requiredString(body.category);
+  if (!isShellCategory(category)) {
+    writeJson(response, 400, { ok: false, error: "unknown_shell_category" });
+    return;
+  }
+  const order = normalizeIdList(body.order);
+  const current = readShellUiOrder();
+  current[category] = order;
+  const filePath = shellUiOrderPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(current, null, 2)}\n`);
+  writeJson(response, 200, { ok: true, order: current });
+}
+
+function normalizeIdList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === "string" && id.length > 0).filter((id, index, ids) => ids.indexOf(id) === index)
+    : [];
+}
+
+async function saveShellPromptTemplate(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const content = requiredString(body.promptTemplate);
+  context.dailyShellStore.savePromptTemplate(content);
+  context.appendLog("info", "shell prompt template saved");
+  writeJson(response, 200, { ok: true, ...context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone) });
+}
+
+async function saveShellSettings(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const rolloverHour = numberFromUnknown(body.rolloverHour, context.dailyShellStore.getSettings().rolloverHour);
+  if (!Number.isInteger(rolloverHour) || rolloverHour < 0 || rolloverHour > 23) {
+    writeJson(response, 400, { ok: false, error: "invalid_rollover_hour" });
+    return;
+  }
+  const settings = context.dailyShellStore.saveSettings({ rolloverHour });
+  context.appendLog("info", `shell settings saved: rolloverHour=${settings.rolloverHour}`);
+  writeJson(response, 200, { ok: true, ...context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone) });
+}
+
+async function saveShellOption(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const category = requiredString(body.category);
+  if (!isShellCategory(category)) {
+    writeJson(response, 400, { ok: false, error: "unknown_shell_category" });
+    return;
+  }
+  const option = body.option;
+  if (!option || typeof option !== "object" || Array.isArray(option)) {
+    writeJson(response, 400, { ok: false, error: "invalid_shell_option" });
+    return;
+  }
+  try {
+    const saved = context.dailyShellStore.saveOption(category, option as ShellOption, optionalString(body.previousId));
+    context.appendLog("info", `shell option saved: ${category}/${saved.id}`);
+    writeJson(response, 200, { ok: true, option: saved });
+  } catch (error) {
+    writeJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid_shell_option" });
+  }
+}
+
+async function deleteShellOption(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const category = requiredString(body.category);
+  const id = requiredString(body.id);
+  if (!isShellCategory(category)) {
+    writeJson(response, 400, { ok: false, error: "unknown_shell_category" });
+    return;
+  }
+  if (!id) {
+    writeJson(response, 400, { ok: false, error: "missing_shell_id" });
+    return;
+  }
+  context.dailyShellStore.deleteOption(category, id);
+  const order = readShellUiOrder();
+  order[category] = order[category].filter((item) => item !== id);
+  const filePath = shellUiOrderPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(order, null, 2)}\n`);
+  context.appendLog("info", `shell option deleted: ${category}/${id}`);
+  writeJson(response, 200, { ok: true, order });
+}
+
+function isShellCategory(value: string): value is ShellCategory {
+  return value === "personalities" || value === "relationships" || value === "outfits";
+}
+
+function decodeHeaderFileName(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function serveShellAsset(context: AdminRoutesContext, rawName: string, response: any): void {
+  const normalized = path.normalize(decodeHeaderFileName(rawName));
+  const fullPath = path.resolve(context.config.memoryFiles.root, "shell", normalized);
+  const root = path.resolve(context.config.memoryFiles.root, "shell");
+  const relative = path.relative(root, fullPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+    response.end("invalid asset path");
+    return;
+  }
+  if (!fs.existsSync(fullPath)) {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("not found");
+    return;
+  }
+  const extension = path.extname(fullPath).toLowerCase();
+  const contentType = extension === ".png"
+    ? "image/png"
+    : extension === ".jpg" || extension === ".jpeg"
+      ? "image/jpeg"
+      : extension === ".webp"
+        ? "image/webp"
+        : extension === ".gif"
+          ? "image/gif"
+          : "application/octet-stream";
+  response.writeHead(200, { "content-type": contentType, "cache-control": "no-store" });
+  fs.createReadStream(fullPath).pipe(response);
+}
+
+async function uploadShellOutfitImage(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readRawBody(request, { maxBytes: 10 * 1024 * 1024 });
+  if (body.length === 0) {
+    writeJson(response, 400, { ok: false, error: "empty_upload" });
+    return;
+  }
+  const shellId = requiredString(decodeHeaderFileName(optionalString(request.headers?.["x-shell-id"]) ?? ""));
+  if (!shellId) {
+    writeJson(response, 400, { ok: false, error: "missing_shell_id" });
+    return;
+  }
+  const safeId = shellId.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || `outfit_${Date.now()}`;
+  const outfitDir = path.join(context.config.memoryFiles.root, "shell", "outfits");
+  const storedName = `${safeId}.jpg`;
+  const fullPath = path.join(outfitDir, storedName);
+  fs.mkdirSync(outfitDir, { recursive: true });
+  fs.writeFileSync(fullPath, body);
+  const imageUrl = path.join(context.config.memoryFiles.root, "shell", "outfits", storedName);
+  context.appendLog("info", `shell outfit image uploaded: ${imageUrl}`);
+  writeJson(response, 200, { ok: true, imageUrl });
 }
 
 async function executeMessagingTool(

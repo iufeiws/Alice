@@ -11,6 +11,10 @@ import type {
   StoredConversationMessage
 } from "../../../packages/storage/src/sqlite-store.js";
 
+const fs = await import("node:fs");
+const fsp = await import("node:fs/promises");
+const path = await import("node:path");
+
 export type MessagingToolTarget = {
   plugin: string;
   accountId?: string;
@@ -18,6 +22,29 @@ export type MessagingToolTarget = {
   userId?: string;
   sessionId: string;
 };
+
+export type GenieTTSConfig = {
+  genieBaseURL: string;
+  genieCharacterName: string;
+  genieModelDir: string;
+  genieLanguage: string;
+  genieReferenceAudio: string;
+  genieReferenceText: string;
+  genieOutputDir: string;
+  genieTimeoutMs: number;
+};
+
+export type VoiceSynthesisInput = {
+  text: string;
+  time: CurrentTimeProvider;
+};
+
+export type VoiceSynthesisResult = {
+  assetId: string;
+  filePath: string;
+};
+
+export type VoiceSynthesizer = (input: VoiceSynthesisInput) => Promise<VoiceSynthesisResult>;
 
 export type MessagingToolsDeps = {
   store: Pick<
@@ -33,6 +60,8 @@ export type MessagingToolsDeps = {
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
   sleep?: (ms: number) => Promise<void>;
+  tts?: GenieTTSConfig;
+  voiceSynthesizer?: VoiceSynthesizer;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   getShellSwitchLogs?(): Array<{
@@ -50,6 +79,7 @@ export type MessagingToolsDeps = {
     summary: string;
     error?: string;
   }): unknown;
+  appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
 
 export type MessagingToolPlugin = ToolPlugin & {
@@ -63,11 +93,13 @@ const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
+type SendType = "message" | "markdown" | "image" | "voice";
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const userName = () => deps.getUserName?.() || "user";
   const sleep = deps.sleep ?? delay;
+  const voiceSynthesizer = deps.voiceSynthesizer ?? createGenieTTSVoiceSynthesizer(deps.tts);
   let lastMessageTimestampMs: number | undefined;
   let activeLLMSession = false;
   let checkChatCallsInLLMSession = 0;
@@ -206,41 +238,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (parts.length === 0) return toolError(call, "content is required");
 
     const results = [];
-    for (const [index, part] of parts.entries()) {
-      await waitForMessageSendSlot(part);
-      const output = buildOutput(target, type, part);
-      const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
-      try {
-        markMessageAttemptedNow();
-        const sent = await deps.outputRouter.send(output);
-        const sentAt = time.now().iso;
-        deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAt);
-        deps.appendMessageLog?.({
-          direction: "outbound",
-          plugin: output.target.plugin,
-          kind: output.content.kind,
-          target: output.target.channelId ?? output.target.userId,
-          sessionId: output.target.sessionId,
-          status: "sent",
-          summary: summarizeOutput(output)
-        });
-        results.push({ ok: true, messageId: extractSentMessageId(sent), content: part });
-      } catch (error) {
-        const reason = normalizeSendError(error);
-        deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
-        deps.appendMessageLog?.({
-          direction: "outbound",
-          plugin: output.target.plugin,
-          kind: output.content.kind,
-          target: output.target.channelId ?? output.target.userId,
-          sessionId: output.target.sessionId,
-          status: "send_failed",
-          summary: summarizeOutput(output),
-          error: reason
-        });
-        enqueueSendRetry({ output, storedId: stored.id, content: part });
-        results.push({ ok: false, error: reason, content: part });
-      }
+    for (const part of parts) {
+      results.push(type === "voice"
+        ? await sendVoicePart(target, part)
+        : await sendOutputPart(target, type, part, { retry: true }));
     }
 
     const failed = results.find((result) => !result.ok);
@@ -254,8 +255,77 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (lastMessageTimestampMs !== undefined) {
       const elapsedMs = nowMs - lastMessageTimestampMs;
       if (elapsedMs < delayMs) {
-        await sleep(delayMs - elapsedMs);
+      await sleep(delayMs - elapsedMs);
       }
+    }
+  }
+
+  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<{ ok: boolean; messageId?: string; error?: string; content: string }> {
+    await waitForMessageSendSlot(text);
+    let synthesized: VoiceSynthesisResult | undefined;
+    try {
+      deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);
+      synthesized = await voiceSynthesizer({ text, time });
+      return await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
+    } catch (error) {
+      const reason = normalizeSendError(error);
+      if (!synthesized) {
+        deps.appendMessageLog?.({
+          direction: "outbound",
+          plugin: target.plugin,
+          kind: "audio",
+          target: target.channelId ?? target.userId,
+          sessionId: target.sessionId,
+          status: "tts_failed",
+          summary: text,
+          error: reason
+        });
+      }
+      return { ok: false, error: reason, content: text };
+    } finally {
+      if (synthesized) await removeGeneratedVoice(synthesized.filePath);
+    }
+  }
+
+  async function sendOutputPart(
+    target: MessagingToolTarget,
+    type: SendType,
+    content: string,
+    options: { transcript?: string; retry: boolean; skipWait?: boolean }
+  ): Promise<{ ok: boolean; messageId?: string; error?: string; content: string }> {
+    if (!options.skipWait) await waitForMessageSendSlot(options.transcript ?? content);
+    const output = buildOutput(target, type, content, options.transcript);
+    const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
+    try {
+      markMessageAttemptedNow();
+      const sent = await deps.outputRouter.send(output);
+      const sentAt = time.now().iso;
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAt);
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "sent",
+        summary: summarizeOutput(output)
+      });
+      return { ok: true, messageId: extractSentMessageId(sent), content: options.transcript ?? content };
+    } catch (error) {
+      const reason = normalizeSendError(error);
+      deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "send_failed",
+        summary: summarizeOutput(output),
+        error: reason
+      });
+      if (options.retry) enqueueSendRetry({ output, storedId: stored.id, content });
+      return { ok: false, error: reason, content: options.transcript ?? content };
     }
   }
 
@@ -342,7 +412,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     };
   }
 
-  function buildOutput(target: MessagingToolTarget, type: "message" | "markdown" | "image", content: string): AgentOutput {
+  function buildOutput(target: MessagingToolTarget, type: SendType, content: string, transcript?: string): AgentOutput {
     return {
       id: createId("tool_out"),
       target: {
@@ -356,7 +426,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         ? { kind: "markdown", markdown: content }
         : type === "image"
           ? { kind: "image", assetId: content }
-          : { kind: "text", text: content },
+          : type === "voice"
+            ? { kind: "audio", assetId: content, transcript }
+            : { kind: "text", text: content },
       meta: {
         createdAt: time.now().iso,
         urgency: "normal",
@@ -389,11 +461,11 @@ const checkChatTool: ToolDefinition = {
 
 const sendChatTool: ToolDefinition = {
   name: "send_chat",
-  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条消息并间隔发送。飞书支持 message/markdown/image；微信 iLink 当前支持 message。",
+  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条消息并间隔发送；type=voice 会把 content 文本合成为语音并发送。",
   inputSchema: {
     type: "object",
     properties: {
-      type: { type: "string", enum: ["message", "markdown", "image"] },
+      type: { type: "string", enum: ["message", "markdown", "image", "voice"] },
       content: { type: "string" }
     },
     required: ["type", "content"],
@@ -618,9 +690,9 @@ function normalizeDirection(value: unknown): "forward" | "backward" {
   return text === "forward" || text === "从前到后" ? "forward" : "backward";
 }
 
-function normalizeSendType(value: unknown): "message" | "markdown" | "image" | undefined {
+function normalizeSendType(value: unknown): SendType | undefined {
   const text = stringValue(value) || "message";
-  if (text === "message" || text === "markdown" || text === "image") return text;
+  if (text === "message" || text === "markdown" || text === "image" || text === "voice") return text;
   return undefined;
 }
 
@@ -722,4 +794,117 @@ function delay(ms: number): Promise<void> {
 
 function toolError(call: ToolCall, error: string): ToolResult {
   return { callId: call.id, ok: false, error };
+}
+
+function createGenieTTSVoiceSynthesizer(input?: GenieTTSConfig): VoiceSynthesizer {
+  const config: GenieTTSConfig = input ?? {
+    genieBaseURL: "http://127.0.0.1:8000",
+    genieCharacterName: "alice",
+    genieModelDir: "assets/tts/models/alice",
+    genieLanguage: "zh",
+    genieReferenceAudio: "assets/tts/reference/reference.wav",
+    genieReferenceText: "assets/tts/reference/reference.txt",
+    genieOutputDir: "assets/generated/tts",
+    genieTimeoutMs: 120_000
+  };
+  let referenceLoaded = false;
+
+  return async ({ text, time }) => {
+    const modelDir = requireAssetPath(config.genieModelDir, "Genie TTS model directory was not found");
+    const referenceAudio = requireAssetPath(config.genieReferenceAudio, "Genie TTS reference audio was not found");
+    const referenceTextPath = requireAssetPath(config.genieReferenceText, "Genie TTS reference text was not found");
+    const referenceText = fs.readFileSync(referenceTextPath, "utf8").trim();
+    if (!referenceText) throw new Error("Genie TTS reference text is empty");
+
+    const outputDir = resolveAssetOutputDir(config.genieOutputDir);
+    fs.mkdirSync(outputDir.fullPath, { recursive: true });
+    const fileName = `voice_${formatFileDateTime(time.now().iso)}_${Math.random().toString(36).slice(2, 8)}.wav`;
+    const filePath = path.resolve(outputDir.fullPath, fileName);
+    const assetId = path.join(outputDir.relativePath, fileName);
+
+    if (!referenceLoaded) {
+      await postGenieJson(config, "/load_character", {
+        character_name: config.genieCharacterName,
+        onnx_model_dir: modelDir,
+        language: config.genieLanguage
+      });
+      await postGenieJson(config, "/set_reference_audio", {
+        character_name: config.genieCharacterName,
+        audio_path: referenceAudio,
+        audio_text: referenceText,
+        language: config.genieLanguage
+      });
+      referenceLoaded = true;
+    }
+
+    await postGenieJson(config, "/tts", {
+      character_name: config.genieCharacterName,
+      text,
+      split_sentence: false,
+      save_path: filePath
+    });
+
+    validateGeneratedVoice(filePath, outputDir.fullPath);
+    return { assetId, filePath };
+  };
+}
+
+async function postGenieJson(config: GenieTTSConfig, pathname: string, body: Record<string, unknown>): Promise<unknown> {
+  const response = await fetch(`${config.genieBaseURL}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    signal: AbortSignal.timeout(config.genieTimeoutMs),
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Genie TTS HTTP ${response.status}: ${text.slice(0, 500)}`);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json") && text) {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return { text };
+    }
+  }
+  return { text };
+}
+
+function requireAssetPath(assetId: string, error: string): string {
+  const assetRoot = path.resolve("assets");
+  const filePath = path.isAbsolute(assetId) ? assetId : path.resolve(assetRoot, assetId);
+  const relative = path.relative(assetRoot, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Genie TTS asset path is outside assets directory");
+  if (!fs.existsSync(filePath)) throw new Error(error);
+  return filePath;
+}
+
+function resolveAssetOutputDir(assetDir: string): { fullPath: string; relativePath: string } {
+  const assetRoot = path.resolve("assets");
+  const fullPath = path.isAbsolute(assetDir) ? assetDir : path.resolve(assetRoot, assetDir);
+  const relativePath = path.relative(assetRoot, fullPath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Genie TTS output directory must be inside assets");
+  }
+  return { fullPath, relativePath };
+}
+
+function validateGeneratedVoice(filePath: string, outputDir: string): void {
+  const relative = path.relative(outputDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Genie TTS output file is outside output directory");
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) throw new Error("Genie TTS output is not a file");
+  if (stat.size <= 0) throw new Error("Genie TTS output file is empty");
+}
+
+async function removeGeneratedVoice(filePath: string): Promise<void> {
+  try {
+    await fsp.unlink(filePath);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code !== "ENOENT") throw error;
+  }
+}
+
+function formatFileDateTime(value: string): string {
+  return value.replace(/[-:]/g, "").replace("T", "_").replace(/\.\d{3}.*/, "");
 }

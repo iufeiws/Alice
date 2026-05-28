@@ -210,6 +210,7 @@ const messagingTools = createMessagingTools({
   store,
   outputRouter,
   time: currentTime,
+  tts: config.tts,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getDefaultTarget() {

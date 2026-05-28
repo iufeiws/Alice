@@ -89,12 +89,13 @@ AgentCore exposes platform-neutral chat tool names to the LLM:
   - output is a plain string for the LLM. Adjacent messages follow WeChat-style time merging: messages less than five minutes apart share one `[local time]` header, followed by `user/Alice:{content}[reaction][已撤回]` lines.
   - no new messages returns `nothing new`.
 - `send_chat`
-  - args: `type: "message" | "markdown" | "image"`, `content`; provide `type` before `content`.
+  - args: `type: "message" | "markdown" | "image" | "voice"`, `content`; provide `type` before `content`.
   - in `message` mode, newline-separated content is split into multiple text messages.
+  - in `voice` mode, `content` text is synthesized by the configured Genie-TTS service and sent as one audio message.
   - split text messages are throttled by content length; the first send also accounts for time elapsed since the LLM call started.
   - a send attempt occupies the throttle window before the channel returns, so failed attempts still count as typed/sent time. Failed sends are marked `send_failed` and retried in the in-memory retry queue up to three times.
   - with streaming LLM responses, each decoded newline in `content` is sent immediately only after `type="message"` has appeared; omitted or late `type` waits for the final JSON tool arguments.
-  - `voice` is intentionally unsupported.
+  - `voice` is not streamed or split.
 
 ## Key Functions
 

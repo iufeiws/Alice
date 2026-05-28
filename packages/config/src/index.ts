@@ -72,6 +72,16 @@ export type AppConfig = {
     selfieImageApiTimeoutMs: number;
     selfieMaxBytes: number;
   };
+  tts: {
+    genieBaseURL: string;
+    genieCharacterName: string;
+    genieModelDir: string;
+    genieLanguage: string;
+    genieReferenceAudio: string;
+    genieReferenceText: string;
+    genieOutputDir: string;
+    genieTimeoutMs: number;
+  };
 };
 
 type Env = Record<string, string | undefined>;
@@ -180,6 +190,16 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieImageApiOutputCompression: numberValue(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45),
       selfieImageApiTimeoutMs: numberValue(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000),
       selfieMaxBytes: numberValue(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
+    },
+    tts: {
+      genieBaseURL: (env.GENIE_TTS_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, ""),
+      genieCharacterName: env.GENIE_TTS_CHARACTER_NAME ?? "alice",
+      genieModelDir: env.GENIE_TTS_MODEL_DIR ?? "assets/tts/models/alice",
+      genieLanguage: env.GENIE_TTS_LANGUAGE ?? "zh",
+      genieReferenceAudio: env.GENIE_TTS_REFERENCE_AUDIO ?? "assets/tts/reference/reference.wav",
+      genieReferenceText: env.GENIE_TTS_REFERENCE_TEXT ?? "assets/tts/reference/reference.txt",
+      genieOutputDir: env.GENIE_TTS_OUTPUT_DIR ?? "assets/generated/tts",
+      genieTimeoutMs: numberValue(env.GENIE_TTS_TIMEOUT_MS, 120_000)
     }
   };
 }

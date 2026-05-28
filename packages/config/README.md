@@ -57,6 +57,21 @@ Selfie image generation uses OpenAI Image API-compatible settings:
 
 `SELFIE_IMAGE_API_KEY` overrides `OPENAI_API_KEY` for the selfie tool. Generated images are written under `assets/generated/selfies/` by default.
 
+## TTS Config
+
+Genie-TTS voice mode uses a separately running Genie HTTP server and local assets:
+
+- `GENIE_TTS_BASE_URL`
+- `GENIE_TTS_CHARACTER_NAME`
+- `GENIE_TTS_MODEL_DIR`
+- `GENIE_TTS_LANGUAGE`
+- `GENIE_TTS_REFERENCE_AUDIO`
+- `GENIE_TTS_REFERENCE_TEXT`
+- `GENIE_TTS_OUTPUT_DIR`
+- `GENIE_TTS_TIMEOUT_MS`
+
+By default, the model directory is `assets/tts/models/alice`, reference files live under `assets/tts/reference/`, and generated voice files are written temporarily under `assets/generated/tts/`.
+
 ## Node Type Declarations
 
 `node-http.d.ts` and `globals.d.ts` provide lightweight declarations for Node APIs used by this prototype.

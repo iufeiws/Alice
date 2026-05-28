@@ -506,6 +506,160 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
 });
 
+test("send_chat voice synthesizes text, sends audio, and removes generated file", async () => {
+  const dir = makeTempDir("messaging-send-voice");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let generatedPath = "";
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    voiceSynthesizer: async ({ text }) => {
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        assert.equal(fs.existsSync(generatedPath), true);
+        return { messageId: "voice_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
+  assert.equal(fs.existsSync(generatedPath), false);
+  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].contentType, "audio");
+  assert.equal(stored[0].externalMessageId, "voice_1");
+});
+
+test("send_chat voice does not split newline text", async () => {
+  const dir = makeTempDir("messaging-send-voice-newline");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    voiceSynthesizer: async ({ text }) => {
+      const filePath = path.join(dir, "voice.wav");
+      fs.writeFileSync(filePath, text);
+      return { assetId: "generated/tts/voice.wav", filePath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: "voice_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_newline",
+    toolName: "send_chat",
+    input: { type: "voice", content: "第一句\n第二句" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].content.kind === "audio" ? sent[0].content.transcript : "", "第一句\n第二句");
+});
+
+test("send_chat voice returns tts failure without sending fallback text", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-voice-tts-failed"), "alice.sqlite"));
+  const logs: Array<{ status?: string; error?: string; summary: string }> = [];
+  let sendCalls = 0;
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    voiceSynthesizer: async () => {
+      throw new Error("tts unavailable");
+    },
+    outputRouter: {
+      async send() {
+        sendCalls += 1;
+        return { messageId: "should-not-send" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" }),
+    appendMessageLog(input) {
+      logs.push({ status: input.status, error: input.error, summary: input.summary });
+    }
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_failed",
+    toolName: "send_chat",
+    input: { type: "voice", content: "不要发文字" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "tts unavailable");
+  assert.equal(sendCalls, 0);
+  assert.equal(logs[0].status, "tts_failed");
+  assert.equal(logs[0].summary, "不要发文字");
+  assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound").length, 0);
+});
+
+test("send_chat voice send failure marks failed and removes generated file without retry", async () => {
+  const dir = makeTempDir("messaging-send-voice-send-failed");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const logs: Array<{ status?: string; error?: string; summary: string }> = [];
+  let attempts = 0;
+  let generatedPath = "";
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    voiceSynthesizer: async () => {
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, "voice");
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    outputRouter: {
+      async send() {
+        attempts += 1;
+        throw new Error("wechat audio failed");
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" }),
+    appendMessageLog(input) {
+      logs.push({ status: input.status, error: input.error, summary: input.summary });
+    }
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_send_failed",
+    toolName: "send_chat",
+    input: { type: "voice", content: "语音内容" }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "wechat audio failed");
+  assert.equal(attempts, 1);
+  assert.equal(fs.existsSync(generatedPath), false);
+  assert.equal(logs.filter((entry) => entry.status === "send_failed").length, 1);
+  assert.equal(logs.some((entry) => entry.status === "retry_failed"), false);
+  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].contentType, "audio");
+  assert.equal(stored[0].status, "send_failed");
+});
+
 test("send_chat normalizes prefixed feishu chat ids before sending", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-feishu-id"), "alice.sqlite"));
   const sent: AgentOutput[] = [];

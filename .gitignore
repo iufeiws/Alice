@@ -1,8 +1,11 @@
 node_modules/
 dist/
+open-source-tools/*
+!open-source-tools/AGENTS.md
 data/
 logs/
 assets/booksummaries.tar.gz
+assets/tts/models/
 assets/generated/
 memory-files/indexes/
 memory-files/llm-sessions/

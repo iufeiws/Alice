@@ -49,6 +49,7 @@ export type DailyShellStore = {
   render(date: Date, timeZone: string): string;
   getConfig(date: Date, timeZone: string): ShellConfig;
   listSwitchLogs(limit?: number): ShellSwitchLogEntry[];
+  switchOutfit(date: Date, timeZone: string, outfitId: string): DailyShell;
   saveOption(category: ShellCategory, option: ShellOption, previousId?: string): ShellOption;
   deleteOption(category: ShellCategory, id: string): void;
   getSettings(): ShellSettings;
@@ -143,6 +144,22 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
     },
     listSwitchLogs(limit = 200) {
       return readSwitchLogs(paths.switchLog, limit);
+    },
+    switchOutfit(date, timeZone, outfitId) {
+      const outfits = readOptions(paths.outfitsDir, defaultOutfits());
+      const outfit = findOption(outfits, outfitId);
+      if (!outfit) throw new Error("unknown_outfit");
+      const current = this.get(date, timeZone);
+      const daily: DailyShell = {
+        date: current.date,
+        createdAt: current.createdAt,
+        personality: current.personality,
+        relationship: current.relationship,
+        outfit
+      };
+      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
+      cached = daily;
+      return daily;
     },
     saveOption(category, option, previousId) {
       const normalized = normalizeOption(option);

@@ -35,6 +35,7 @@ export type SelfieExecutorInput = {
   fileName: string;
   prompt: string;
   referenceImages: string[];
+  referenceImagePrompt: string;
   aspectRatio: SelfieAspectRatio;
   timeoutMs: number;
   apiKey?: string;
@@ -151,8 +152,6 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     let tempDir: string | undefined;
     let codexResult: SelfieExecutorResult | undefined;
     try {
-      const prompt = buildSelfiePrompt(action, context);
-      const referenceImages = resolveReferenceImages(context);
       fs.mkdirSync(fullOutputDir, { recursive: true });
       tempDir = path.join(fullOutputDir, `.tmp_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}`);
       fs.mkdirSync(tempDir, { recursive: true });
@@ -163,20 +162,24 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       const assetId = path.join(relativeDir, fileName);
 
       await sendText(target, "-少女拍照中-", "system");
+      const prompt = buildSelfiePrompt(action, context);
+      const references = resolveReferenceImages(context);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
         `file=${fileName}`,
         `aspectRatio=${aspectRatio}`,
         `promptLength=${prompt.length}`,
-        `images=${referenceImages.map((image) => path.basename(image)).join(",")}`
+        `images=${references.images.map((image) => path.basename(image)).join(",")}`,
+        references.missingOutfitImage ? "missingOutfitImage=true" : ""
       ].join(" "));
       codexResult = await executor({
         command: codexCommand,
         workDir: tempDir,
         fileName,
         prompt,
-        referenceImages,
+        referenceImages: references.images,
+        referenceImagePrompt: references.prompt,
         aspectRatio,
         timeoutMs,
         apiKey: imageApiKey,
@@ -243,11 +246,22 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       .replaceAll("{{dress}}", formatNamedBlock(context.outfitName, context.outfitContent));
   }
 
-  function resolveReferenceImages(context: SelfieContext): string[] {
+  function resolveReferenceImages(context: SelfieContext): { images: string[]; prompt: string; missingOutfitImage: boolean } {
     const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), "selfie character reference image was not found");
-    const outfitImage = requireFile(resolveOutfitImage(context), "selfie outfit reference image was not found");
     const libraryImage = requireFile(path.resolve(referenceDir, libraryReferenceFileName), "selfie library reference image was not found");
-    return [characterImage, outfitImage, libraryImage];
+    const outfitImage = optionalFile(resolveOutfitImage(context));
+    if (outfitImage) {
+      return {
+        images: [characterImage, outfitImage, libraryImage],
+        prompt: "输入图片顺序: 图1为角色参考，图2为今日服装参考，图3为图书馆场景参考。",
+        missingOutfitImage: false
+      };
+    }
+    return {
+      images: [characterImage, libraryImage],
+      prompt: "输入图片顺序: 图1为角色参考，图2为图书馆场景参考。今日服装只使用文字描述，不提供服装参考图。",
+      missingOutfitImage: true
+    };
   }
 
   async function sendText(target: MediaToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
@@ -368,7 +382,7 @@ async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExec
     "",
     `画幅比例: ${input.aspectRatio}`,
     `API生成约束: 生成一张低质量快速草稿，尺寸目标 ${input.apiSize}，不要高清，不要高精细细节，不要多版本探索。`,
-    "输入图片顺序: 图1为角色参考，图2为今日外壳服装参考，图3为图书馆场景参考。"
+    input.referenceImagePrompt
   ].join("\n");
   const form = new FormData();
   form.append("model", input.apiModel);
@@ -436,6 +450,7 @@ async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promise<Self
     fileName: input.fileName,
     prompt: input.prompt,
     referenceImages: input.referenceImages,
+    referenceImagePrompt: input.referenceImagePrompt,
     aspectRatio: input.aspectRatio,
     apiBaseURL: input.apiBaseURL,
     apiModel: input.apiModel,
@@ -462,6 +477,7 @@ async function runCodexSelfie(input: SelfieExecutorInput): Promise<SelfieExecuto
     "",
     `画幅比例: ${input.aspectRatio}`,
     "速度优先：生成低质量草稿即可，不要高清，不要高精细细节，不要做多版本探索。",
+    input.referenceImagePrompt,
     "输出尺寸目标: 768x1024 像素附近，保持 3:4 竖图；文件尽量小。",
     "输出格式: JPEG/JPG。",
     `请将最终图片保存为当前工作目录下的 ${input.fileName}。`,
@@ -599,6 +615,15 @@ function requireFile(filePath: string, error: string): string {
   const stat = fs.statSync(filePath);
   if (!stat.isFile()) throw new Error(error);
   return filePath;
+}
+
+function optionalFile(filePath: string): string | undefined {
+  if (!fs.existsSync(filePath)) return undefined;
+  try {
+    return fs.statSync(filePath).isFile() ? filePath : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractCharacterFeatures(mainPrompt: string): string {

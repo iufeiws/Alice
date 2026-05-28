@@ -35,6 +35,7 @@ export type AdminRoutesContext = {
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
   mediaTools: ToolPlugin;
+  shellTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
@@ -459,7 +460,8 @@ function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: strin
   const profile = context.promptProfileStore.get();
   const plugins = [
     profile.visibleTools.feishu === false ? undefined : context.messagingTools,
-    profile.visibleTools.media === false ? undefined : context.mediaTools
+    profile.visibleTools.media === false ? undefined : context.mediaTools,
+    profile.visibleTools.shell === false ? undefined : context.shellTools
   ].filter((plugin): plugin is ToolPlugin => Boolean(plugin));
   return plugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
     name: tool.name,

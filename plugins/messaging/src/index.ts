@@ -125,7 +125,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
     }
 
-    const shellEvents = readShellSwitchContext(sinceDate);
+    const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
     if (!options.readonly) markViewedUserMessages(messages);
     return {
       callId,

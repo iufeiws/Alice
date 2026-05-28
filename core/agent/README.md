@@ -55,6 +55,7 @@ The current runtime exposes platform-neutral tool names to the LLM:
 
 - `check_chat()`: 查看聊天记录。同一 LLM 会话内首次调用返回最近 50 条消息；后续调用返回新未读用户消息之后的上下文。
 - `send_chat({ type, content })`: 发送消息到当前聊天会话。调用时应先提供 `type`，再提供 `content`。`message` 模式会把换行分隔内容拆成多条消息，并按内容字数节流发送；发送尝试会立即占用节流窗口，失败后进入内存重试队列。
+- `wardrobe({ action, name? })`: 查看或切换服装。`action="list"` 返回衣橱，可用 `name` 模糊过滤；`action="switch"` 按服装名切换服装，不写壳切换提示。
 
 Tool results are plain strings in the same compact format shown to the LLM. The tools are platform-neutral and route to the active messaging target.
 

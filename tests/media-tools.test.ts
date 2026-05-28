@@ -154,12 +154,13 @@ test("selfie default executor calls the fast runner", async () => {
   }
 });
 
-test("selfie fails before codex when the outfit reference image is missing", async () => {
+test("selfie falls back to text outfit when the outfit reference image is missing", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-outfit");
   const referenceRoot = makeTempDir("selfie-ref-missing-outfit");
   const store = createAliceStore(path.join(makeTempDir("selfie-missing-outfit-db"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
-  let called = false;
+  let referenceImages: string[] = [];
+  let referenceImagePrompt = "";
   writeReferenceFiles(referenceRoot);
 
   try {
@@ -167,8 +168,10 @@ test("selfie fails before codex when the outfit reference image is missing", asy
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
-      selfieExecutor: async () => {
-        called = true;
+      selfieExecutor: async (input) => {
+        referenceImages = input.referenceImages;
+        referenceImagePrompt = input.referenceImagePrompt;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), "generated-image");
       },
       outputRouter: {
         async send(output) {
@@ -185,14 +188,60 @@ test("selfie fails before codex when the outfit reference image is missing", asy
       input: { action: "看镜头" }
     });
 
-    assert.equal(result.ok, false);
-    assert.match(result.error ?? "", /outfit reference/);
-    assert.equal(called, false);
+    assert.equal(result.ok, true);
+    assert.equal(referenceImages.length, 2);
+    assert.deepEqual(referenceImages.map((image) => path.basename(image)), ["alice-character-reference.png", "magic-library-reference.png"]);
+    assert.match(referenceImagePrompt, /不提供服装参考图/);
     assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-大失败-");
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
+    assert.equal(sent[1].content.kind, "image");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
+test("selfie sends start notice before required reference failures", async () => {
+  const outputRoot = makeAssetTempDir("selfie-missing-character");
+  const referenceRoot = makeTempDir("selfie-ref-missing-character");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-missing-character"), "dress.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-missing-character-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  writeReferenceFiles(referenceRoot);
+  fs.rmSync(path.join(referenceRoot, "alice-character-reference.png"));
+  fs.writeFileSync(outfitImage, "dress-image");
+
+  try {
+    const tools = createMediaTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieExecutor: async () => {
+        throw new Error("executor should not run");
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_missing_character",
+      toolName: "selfie",
+      input: { action: "看镜头" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /character reference/);
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "-大失败-");
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
   }
 });
 

@@ -72,7 +72,7 @@ async function runToolMode(configPath) {
     "",
     `画幅比例: ${input.aspectRatio}`,
     `API生成约束: 生成一张低质量快速草稿，尺寸目标 ${input.apiSize}，不要高清，不要高精细细节，不要多版本探索。`,
-    "输入图片顺序: 图1为角色参考，图2为今日外壳服装参考，图3为图书馆场景参考。"
+    input.referenceImagePrompt ?? "输入图片顺序: 图1为角色参考，图2为今日服装参考，图3为图书馆场景参考。"
   ].join("\n");
 
   const form = new FormData();

@@ -108,6 +108,7 @@ export type ToolResult = {
   ok: boolean;
   output?: unknown;
   error?: string;
+  invalidateLLMSession?: boolean;
 };
 
 export interface ToolPlugin {

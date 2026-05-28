@@ -391,14 +391,51 @@ test("check_chat merges shell switch logs into chat context", async () => {
     getShellSwitchLogs: () => [{
       time: "2026-05-26T10:02:00.000Z",
       personalityName: "冷淡",
-      relationshipName: "同桌"
+      relationshipName: "同桌",
+      outfitName: "制服"
     }]
   });
 
   const result = await tools.execute({ id: "call_shell_switch", toolName: "check_chat", input: {} });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /user:hello\n-壳切换:切换为冷淡的同桌爱丽丝-/);
+  assert.doesNotMatch(String(result.output), /制服|服装/);
   assert.doesNotMatch(String(result.output), /system:/);
+});
+
+test("check_chat new scope does not return shell logs without unread messages", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch-no-new"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "hello",
+    createdAt: "2026-05-26T10:01:00.000"
+  });
+
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
+    getShellSwitchLogs: () => [
+      {
+        time: "2026-05-26T09:00:00.000",
+        personalityName: "冷淡",
+        relationshipName: "同桌"
+      }
+    ]
+  });
+
+  tools.noteLLMRequestStarted();
+  await tools.execute({ id: "call_recent", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_new", toolName: "check_chat", input: {} });
+
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
+  assert.doesNotMatch(String(result.output), /壳切换/);
 });
 
 test("search_messages uses persisted message FTS with default limits and context", async () => {

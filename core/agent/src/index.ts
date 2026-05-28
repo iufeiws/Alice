@@ -51,11 +51,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   let lastCompletedToolName: string | undefined;
   let nextAppendToolCallId = 1;
-  let activeLLMSession: {
+  type ActiveLLMSession = {
     messages: LLMChatInput["messages"];
     staticPromptFingerprint: string;
     requestTimestamps: number[];
-  } | undefined = deps.initialLLMSession?.staticPromptFingerprint
+  };
+  let activeLLMSession: ActiveLLMSession | undefined = deps.initialLLMSession?.staticPromptFingerprint
     ? {
         messages: deps.initialLLMSession.messages,
         staticPromptFingerprint: deps.initialLLMSession.staticPromptFingerprint,
@@ -133,33 +134,40 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               }
             : undefined;
         }
-        const promptContext = {
+        const makePromptContext = () => ({
           event,
           time,
           dailyShell: deps.getDailyShell?.()
+        });
+        const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
+          const promptContext = makePromptContext();
+          const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
+          if (activeLLMSession && activeLLMSession.staticPromptFingerprint !== fingerprint) {
+            deps.onLLMSessionCleared?.("prompt_static_changed");
+            activeLLMSession = undefined;
+          }
+          if (!activeLLMSession) {
+            const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, promptContext, (layer, call) => {
+              return runPromptToolRequest(layer, call, toolPlugins);
+            });
+            activeLLMSession = {
+              messages: promptMessages,
+              staticPromptFingerprint: fingerprint,
+              requestTimestamps: []
+            };
+            noteLLMSessionUpdated();
+          }
+          if (!activeLLMSession) throw new Error("llm_session_unavailable");
+          return activeLLMSession;
         };
-        const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
-        if (activeLLMSession && activeLLMSession.staticPromptFingerprint !== fingerprint) {
-          deps.onLLMSessionCleared?.("prompt_static_changed");
-          activeLLMSession = undefined;
-        }
-        if (!activeLLMSession) {
-          const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, promptContext, (layer, call) => {
-            return runPromptToolRequest(layer, call, toolPlugins);
-          });
-          activeLLMSession = {
-            messages: promptMessages,
-            staticPromptFingerprint: fingerprint,
-            requestTimestamps: []
-          };
-          noteLLMSessionUpdated();
-        }
-        if (activeLLMSession.messages.length === 0) {
+        await ensureActiveLLMSession();
+        if (!activeLLMSession || activeLLMSession.messages.length === 0) {
           return [];
         }
         deps.onLLMHeartbeatStarted?.();
         let sentMessage = false;
         try {
+          const promptContext = makePromptContext();
           const appendProfile = {
             ...promptProfile,
             appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
@@ -193,8 +201,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               }
             })))
           } satisfies LLMChatInput;
-          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession);
+          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession, ensureActiveLLMSession);
           sentMessage = llmResult.sentMessage;
+          if (llmResult.invalidateSession) {
+            deps.onLLMSessionCleared?.("prompt_static_changed");
+            activeLLMSession = undefined;
+          }
         } finally {
           deps.onLLMSessionCompleted?.({ sentMessage });
         }
@@ -210,8 +222,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     input: LLMChatInput,
     event: AgentEvent,
     toolPlugins: ToolPlugin[],
-    session: NonNullable<typeof activeLLMSession>
-  ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean }> {
+    session: ActiveLLMSession,
+    ensureSession: () => Promise<ActiveLLMSession>
+  ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean; invalidateSession?: boolean }> {
     const toolMap = new Map<string, ToolPlugin>();
     for (const plugin of toolPlugins) {
       for (const tool of plugin.listTools()) {
@@ -232,16 +245,24 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     let repeatedToolCallCount = 0;
     let sendChatCallCount = 0;
     let totalToolCallCount = 0;
+    let invalidateSession = false;
     let round = 0;
     const maxLLMRequests = 12;
     const maxTotalToolCalls = 20;
     while (true) {
+      const ensuredSession = await ensureSession();
+      if (ensuredSession !== session) {
+        session = ensuredSession;
+      }
+      if (session.messages.length === 0) {
+        return { message: { role: "assistant", content: "" }, sentMessage, invalidateSession };
+      }
       const requestTime = time.now().epochMs;
       session.requestTimestamps = session.requestTimestamps.filter((timestamp) => requestTime - timestamp < 60_000);
       if (session.requestTimestamps.length >= maxLLMRequestsPerMinute) {
         deps.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.model });
         noteLLMSessionUpdated();
-        return { message: session.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage };
+        return { message: session.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage, invalidateSession };
       }
       const requestInput = {
         ...input,
@@ -265,7 +286,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
         ];
         noteLLMSessionUpdated();
-        return { message: result.message, sentMessage };
+        return { message: result.message, sentMessage, invalidateSession };
       }
 
       const effectiveCalls = calls.some((call) => isSendChatToolName(call.function.name))
@@ -293,6 +314,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const streamedResult = streamingToolSender.resultFor(call.id);
         if (streamedResult) {
           sentMessage = sentMessage || isSendChatToolName(call.function.name) && streamedResult.ok;
+          invalidateSession = invalidateSession || streamedResult.invalidateLLMSession === true;
           lastCompletedToolName = call.function.name;
           return {
             role: "tool" as const,
@@ -334,6 +356,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
 
         sentMessage = sentMessage || isSendChatToolName(call.function.name) && toolResult.ok;
+        invalidateSession = invalidateSession || toolResult.invalidateLLMSession === true;
         lastCompletedToolName = call.function.name;
         return {
           role: "tool" as const,
@@ -355,7 +378,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           ...toolMessages
         ];
         noteLLMSessionUpdated();
-        return { message: result.message, sentMessage };
+        return { message: result.message, sentMessage, invalidateSession };
       }
 
       session.messages = [
@@ -521,6 +544,7 @@ function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPl
   return tools.filter((plugin) => {
     if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
     if (plugin.id === "media") return profile.visibleTools.media !== false;
+    if (plugin.id === "shell") return profile.visibleTools.shell !== false;
     return true;
   });
 }

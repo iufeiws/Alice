@@ -446,7 +446,8 @@ export function renderAdminHtmlV2(): string {
           <h2>Visible Tools</h2>
           <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
           <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
-          <p class="muted">check_chat · send_chat · selfie</p>
+          <label><input id="toolShellVisible" type="checkbox" \${promptProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
+          <p class="muted">check_chat · send_chat · wardrobe · selfie</p>
           <h2>Initial Layers</h2>
           <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
           <button type="button" id="prompt-add">Add Initial Layer</button>
@@ -459,6 +460,7 @@ export function renderAdminHtmlV2(): string {
         $("promptUserName").addEventListener("input", () => { promptProfile.userName = $("promptUserName").value; });
         $("toolFeishuVisible").addEventListener("change", () => { promptProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolMediaVisible").addEventListener("change", () => { promptProfile.visibleTools.media = $("toolMediaVisible").checked; });
+        $("toolShellVisible").addEventListener("change", () => { promptProfile.visibleTools.shell = $("toolShellVisible").checked; });
         layers.forEach((layer, index) => bindPromptLayer(layer, index, "layers"));
         appendLayers.forEach((layer, index) => bindPromptLayer(layer, index, "appendLayers"));
         $("prompt-add").addEventListener("click", () => {

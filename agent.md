@@ -34,6 +34,7 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 - `logs/message/message-logs.sqlite` stores append-only message event/debug logs.
 - `memory-files/llm-sessions/` stores LLM session transcript delta events.
 - `logs/system/` stores debug logs; retention is managed by the daily scheduler.
+- Log-class data, including `logs/message/`, `logs/system/`, and LLM session archives, does not enter LLM context and must not be deleted or edited when the user asks to delete or change message history. Treat such requests as applying only to Core-facing `messages` data unless the user explicitly names a log store.
 - `memory-files/indexes/feishu-paired-contacts.json` stores the single bound Feishu contact state.
 - Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). Persisted agent-facing timestamps must be saved as local wall-clock ISO strings in the configured timezone, for example `2026-05-25T08:00:00.000`. Do not save UTC `Z` timestamps or offset-suffixed forms such as `+08:00`; avoid direct `new Date().toISOString()` for records.
 

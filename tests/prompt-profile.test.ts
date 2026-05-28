@@ -266,6 +266,38 @@ test("daily shell remains stable when the active option is edited", () => {
   assert.equal(store.render(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai"), store.render(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai"));
 });
 
+test("daily shell can switch only the active outfit", () => {
+  const root = makeTempDir("daily-shell-switch-outfit");
+  const switchEvents: string[] = [];
+  const store = createDailyShellStore(root, {
+    onSwitch(entry) {
+      switchEvents.push(entry.outfitName);
+    }
+  });
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two" }
+  ]);
+
+  const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  const switchLogCount = store.listSwitchLogs().length;
+  const switchEventCount = switchEvents.length;
+  const switched = store.switchOutfit(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai", "o2");
+
+  assert.equal(switched.personality.id, first.personality.id);
+  assert.equal(switched.relationship.id, first.relationship.id);
+  assert.equal(switched.outfit.id, "o2");
+  assert.equal(switched.date, first.date);
+  assert.equal(switched.createdAt, first.createdAt);
+  assert.match(fs.readFileSync(path.join(root, "shell", "daily-shell.json"), "utf8"), /"outfitId": "o2"/);
+  assert.equal(store.listSwitchLogs().length, switchLogCount);
+  assert.equal(switchEvents.length, switchEventCount);
+  assert.throws(() => store.switchOutfit(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai", "missing"), /unknown_outfit/);
+  assert.equal(store.get(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
+});
+
 test("daily shell rolls over after the configured next-day hour", () => {
   const root = makeTempDir("daily-shell-rollover");
   const store = createDailyShellStore(root);

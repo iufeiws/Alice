@@ -13,6 +13,7 @@ import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createMediaTools } from "../../../plugins/media/src/index.js";
 import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyScheduler } from "../../../core/scheduler/src/index.js";
@@ -252,7 +253,17 @@ const mediaTools = createMediaTools({
   appendLog,
   appendMessageLog
 });
-const toolPlugins = [messagingTools, mediaTools];
+const shellTools = createShellTools({
+  dailyShellStore,
+  store,
+  outputRouter,
+  time: currentTime,
+  getDefaultTarget() {
+    return getDefaultMessagingTarget();
+  },
+  appendMessageLog
+});
+const toolPlugins = [messagingTools, mediaTools, shellTools];
 const core = createAgentCore({
   config,
   llm: activeLLM,
@@ -378,6 +389,7 @@ const server = http.createServer(createApiRequestHandler({
   agentState,
   messagingTools,
   mediaTools,
+  shellTools,
   feishu,
   wechat,
   wechatStateStore,
@@ -1105,6 +1117,7 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
     .filter((plugin) => {
       if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
       if (plugin.id === "media") return profile.visibleTools.media !== false;
+      if (plugin.id === "shell") return profile.visibleTools.shell !== false;
       return true;
     })
     .flatMap((plugin) => plugin.listTools().map((tool) => ({

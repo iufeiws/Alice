@@ -1174,6 +1174,77 @@ test("agent core clears only when static prompt fingerprint changes", async () =
   assert.equal(requests[2].messages.some((message) => message.content === "ok"), false);
 });
 
+test("agent core rechecks static prompt before each LLM request", async () => {
+  const requests: LLMChatInput[] = [];
+  const clears: string[] = [];
+  const sessionUpdates: LLMChatInput["messages"][] = [];
+  let dailyShell = "shell one";
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_wardrobe",
+              type: "function",
+              function: {
+                name: "wardrobe",
+                arguments: "{\"action\":\"switch\",\"name\":\"O Two\"}"
+              }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: `ok ${requests.length}` } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true, shell: true },
+      layers: [
+        { id: "static", title: "Static", role: "system", enabled: true, content: "{{daily_shell}}", order: 1 }
+      ]
+    }),
+    getDailyShell: () => dailyShell,
+    onLLMSessionCleared(reason) {
+      clears.push(reason);
+    },
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push(session.messages);
+    },
+    tools: [{
+      id: "shell",
+      listTools() {
+        return [{ name: "wardrobe", description: "wardrobe", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        dailyShell = "shell two";
+        return { callId: call.id, ok: true, output: "switched" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(clears, ["prompt_static_changed"]);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].messages.some((message) => message.content === "shell one"), true);
+  assert.equal(requests[1].messages.some((message) => message.content === "shell two"), true);
+  assert.equal(requests[1].messages.some((message) => message.content === "switched"), false);
+  assert.equal(sessionUpdates.some((messages) => messages.some((message) => message.role === "tool" && message.content === "switched")), true);
+  assert.equal(sessionUpdates.at(-1)?.some((message) => message.content === "switched"), false);
+});
+
 test("agent core stops after three consecutive identical tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];

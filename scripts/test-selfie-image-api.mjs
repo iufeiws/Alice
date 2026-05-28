@@ -121,6 +121,7 @@ function buildPrompt(actionText) {
   const personality = readShellPart("personalities", shell.personalityId);
   return [
     template
+      .replaceAll("{{time}}", formatPromptTime(new Date()))
       .replaceAll("{{action}}", actionText)
       .replaceAll("{{char}}", extractCharacterFeatures(renderProfilePrompt(profile)))
       .replaceAll("{{persenality}}", formatNamedBlock(personality.name, personality.content))
@@ -210,6 +211,24 @@ function formatDateTime(date) {
     return acc;
   }, {});
   return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
+}
+
+function formatPromptTime(date) {
+  const timeZone = process.env.AGENT_TIMEZONE ?? "Asia/Shanghai";
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${timeZone}`;
 }
 
 function loadDotEnv(filePath) {

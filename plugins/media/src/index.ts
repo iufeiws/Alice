@@ -238,7 +238,9 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error("selfie prompt template was not found");
     const template = fs.readFileSync(templatePath, "utf8");
+    const now = time.now();
     return template
+      .replaceAll("{{time}}", formatPromptTime(now.iso, now.timeZone))
       .replaceAll("{{action}}", action)
       .replaceAll("{{char}}", extractCharacterFeatures(context.mainPrompt))
       .replaceAll("{{persenality}}", formatNamedBlock(context.personalityName, context.personalityContent))
@@ -738,4 +740,9 @@ function formatFileDateTime(iso: string): string {
   if (!match) return String(Date.now());
   const [, year, month, day, hour, minute, second] = match;
   return `${year}${month}${day}_${hour}${minute}${second}`;
+}
+
+function formatPromptTime(iso: string, timeZone: string): string {
+  const value = iso.replace("T", " ").replace(/\.\d{3}$/, "");
+  return `${value} ${timeZone}`;
 }

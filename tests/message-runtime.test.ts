@@ -312,6 +312,7 @@ test("message runtime marks inbound core failed and does not retry the same batc
   const store = createAliceStore(path.join(makeTempDir("runtime-fail"), "alice.sqlite"));
   let coreCalls = 0;
   const logs: string[] = [];
+  const sent: AgentOutput[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     getHeartbeatIntervalMs: () => 10,
@@ -323,7 +324,9 @@ test("message runtime marks inbound core failed and does not retry the same batc
       }
     },
     outputRouter: {
-      async sendAll() {}
+      async sendAll(outputs) {
+        sent.push(...outputs);
+      }
     },
     appendLog(_level, message) {
       logs.push(message);
@@ -337,6 +340,8 @@ test("message runtime marks inbound core failed and does not retry the same batc
   await new Promise((resolve) => setTimeout(resolve, 60));
 
   assert.equal(coreCalls, 1);
+  assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-星界信号丢失-");
+  assert.equal(store.listMessagesForConversation("session-1", 10).at(-1)?.senderRole, "system");
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   assert.ok(store.listMessageLogs(20).some((entry) => entry.status === "core_failed" && entry.error === "llm failed"));
   assert.ok(logs.some((message) => message.includes("marked 1 inbound message(s) processed as failed")));
@@ -450,6 +455,45 @@ test("message runtime can recover pending sessions from storage", async () => {
 
   assert.equal(coreInputs[0].meta.replyTo, "om_1");
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
+test("message runtime recovers wechat user id from persisted conversation id", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-recover-wechat"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "wechat",
+    externalMessageId: "wx_1",
+    conversationId: "wechat:dm:wx-user",
+    senderId: "wx-user",
+    contentType: "text",
+    contentText: "recover wechat",
+    createdAt: "2026-05-24T00:00:00.000Z"
+  });
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 10,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.recoverPendingSessions();
+  await waitFor(() => coreInputs.length === 1);
+
+  assert.equal(coreInputs[0].source.plugin, "wechat");
+  assert.equal(coreInputs[0].source.channelId, "wx-user");
+  assert.equal(coreInputs[0].source.userId, "wx-user");
+  assert.equal(coreInputs[0].session.sessionId, "wechat:dm:wx-user");
 });
 
 test("message runtime records lifecycle events as message state updates without core handling", async () => {

@@ -330,8 +330,124 @@ function normalizeMessage(raw: unknown): WeChatTextMessage[] {
     contextToken,
     text,
     createdAt: firstString(raw, ["create_time", "created_at", "timestamp", "time"]),
+    quotedMessage: extractQuotedMessage(raw),
     raw
   }];
+}
+
+function extractQuotedMessage(raw: Record<string, unknown>): WeChatTextMessage["quotedMessage"] | undefined {
+  const direct = firstRecord(raw, [
+    "quoted_message",
+    "quotedMessage",
+    "quote_message",
+    "quoteMessage",
+    "quoted_msg",
+    "quotedMsg",
+    "quote_msg",
+    "quoteMsg",
+    "refer_msg",
+    "referMsg",
+    "reference_message",
+    "referenceMessage",
+    "referenced_message",
+    "referencedMessage",
+    "source_msg",
+    "sourceMsg",
+    "reply_to",
+    "replyTo",
+    "quote",
+    "refer"
+  ]);
+  const fromJsonField = firstParsedRecord(raw, [
+    "quoted_message",
+    "quotedMessage",
+    "quote_message",
+    "quoteMessage",
+    "quoted_msg",
+    "quotedMsg",
+    "quote_msg",
+    "quoteMsg",
+    "refer_msg",
+    "referMsg",
+    "reference_message",
+    "referenceMessage",
+    "referenced_message",
+    "referencedMessage",
+    "source_msg",
+    "sourceMsg",
+    "reply_to",
+    "replyTo",
+    "quote",
+    "refer"
+  ]);
+  const fromContent = parsedContentRecord(raw);
+  const nested = direct ?? fromJsonField ?? (fromContent ? extractQuotedMessageRecord(fromContent) : undefined);
+  if (!nested) return undefined;
+  const id = firstString(nested, [
+    "message_id",
+    "messageId",
+    "msg_id",
+    "msgId",
+    "id",
+    "client_msg_id",
+    "clientMsgId",
+    "source_msg_id",
+    "sourceMsgId",
+    "refer_msg_id",
+    "referMsgId",
+    "quoted_msg_id",
+    "quotedMsgId"
+  ]);
+  const fromUserId = firstString(nested, ["from_user_id", "fromUserId", "from_user", "sender_id", "senderId", "sender", "user_id", "userId", "openid", "open_id"]);
+  const text = extractText(nested);
+  if (!id && !fromUserId && !text) return undefined;
+  return { id, fromUserId, text };
+}
+
+function extractQuotedMessageRecord(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  return firstRecord(raw, [
+    "quoted_message",
+    "quotedMessage",
+    "quote_message",
+    "quoteMessage",
+    "quoted_msg",
+    "quotedMsg",
+    "quote_msg",
+    "quoteMsg",
+    "refer_msg",
+    "referMsg",
+    "reference_message",
+    "referenceMessage",
+    "referenced_message",
+    "referencedMessage",
+    "source_msg",
+    "sourceMsg",
+    "reply_to",
+    "replyTo",
+    "quote",
+    "refer"
+  ]) ?? firstParsedRecord(raw, [
+    "quoted_message",
+    "quotedMessage",
+    "quote_message",
+    "quoteMessage",
+    "quoted_msg",
+    "quotedMsg",
+    "quote_msg",
+    "quoteMsg",
+    "refer_msg",
+    "referMsg",
+    "reference_message",
+    "referenceMessage",
+    "referenced_message",
+    "referencedMessage",
+    "source_msg",
+    "sourceMsg",
+    "reply_to",
+    "replyTo",
+    "quote",
+    "refer"
+  ]);
 }
 
 function extractText(raw: Record<string, unknown>): string | undefined {
@@ -385,6 +501,34 @@ function findArray(value: unknown, keys: string[]): unknown[] {
 function firstRecord(value: Record<string, unknown>, keys: string[]): Record<string, unknown> | undefined {
   for (const key of keys) {
     if (isRecord(value[key])) return value[key];
+  }
+  return undefined;
+}
+
+function firstParsedRecord(value: Record<string, unknown>, keys: string[]): Record<string, unknown> | undefined {
+  for (const key of keys) {
+    const item = value[key];
+    if (typeof item !== "string" || !item) continue;
+    try {
+      const parsed = JSON.parse(item) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function parsedContentRecord(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  for (const key of ["content", "message", "msg_content"]) {
+    const item = value[key];
+    if (typeof item !== "string" || !item) continue;
+    try {
+      const parsed = JSON.parse(item) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      continue;
+    }
   }
   return undefined;
 }

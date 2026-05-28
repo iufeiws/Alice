@@ -20,10 +20,6 @@ Responsibilities:
 
 - Persist Core-facing conversation messages.
 - Persist append-only message event logs for debugging.
-- Persist lightweight memories.
-- Create SQLite FTS5 index for memory recall.
-- Capture text turns after AgentCore responses.
-- Recall relevant memories before AgentCore calls the LLM.
 
 Important methods:
 
@@ -36,9 +32,6 @@ Important methods:
 - `markMessageRead(plugin, externalMessageId, readAt)`
 - `markMessageRecalled(plugin, externalMessageId, recalledAt)`
 - `updateMessageReaction(input)`
-- `captureTurn(event, outputs)`
-- `recallForEvent(event, limit)`
-- `listMemories(limit)`
 
 ## Message Tables
 
@@ -52,6 +45,8 @@ SQLite state lives at:
 
 ```text
 data/alice.sqlite
+memory-files/message/messages.sqlite
+logs/message/message-logs.sqlite
 ```
 
 ## File Log Store

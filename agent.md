@@ -2,7 +2,7 @@
 
 ## Project Context
 
-Alice is a local-first personal agent runtime. The current scope is an agent core with placeholder agent behavior, an OpenAI-compatible `/v1` client surface for providers such as opencode and DeepSeek-compatible APIs, a Feishu channel plugin, a local admin console, SQLite-backed message and memory history, and file-backed system logs.
+Alice is a local-first personal agent runtime. The current scope is an agent core with placeholder agent behavior, an OpenAI-compatible `/v1` client surface for providers such as opencode and DeepSeek-compatible APIs, Feishu and WeChat channel plugins, a local admin console, SQLite-backed message history, JSONL LLM session archives, and file-backed system logs.
 
 ## Engineering Rules
 
@@ -24,12 +24,15 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 ## GitHub
 
 - Use SSH remotes by default for GitHub operations, for example `git@github.com:iufeiws/Alice.git`.
+- Commit messages must describe the actual change with useful context; avoid vague messages such as `update`, `changes`, or `update current workspace`.
 
 ## Runtime State
 
 - `.env` stores local credentials and runtime settings. Do not commit secrets.
 - Every setting changed from the admin console must be persisted to `.env` or another documented durable store, and the active process should apply it immediately when practical.
-- `data/alice.sqlite` stores message logs and memory records.
+- `memory-files/message/messages.sqlite` stores Core-facing message history.
+- `logs/message/message-logs.sqlite` stores append-only message event/debug logs.
+- `memory-files/llm-sessions/` stores LLM session transcript delta events.
 - `logs/system/` stores debug logs; retention is managed by the daily scheduler.
 - `memory-files/indexes/feishu-paired-contacts.json` stores the single bound Feishu contact state.
 - Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). Persisted agent-facing timestamps must be saved as local wall-clock ISO strings in the configured timezone, for example `2026-05-25T08:00:00.000`. Do not save UTC `Z` timestamps or offset-suffixed forms such as `+08:00`; avoid direct `new Date().toISOString()` for records.

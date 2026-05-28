@@ -16,7 +16,7 @@ The file is intentionally monolithic for the current prototype. It loads `.env`,
 - Serve JSON admin APIs.
 - Create `AgentCore`.
 - Create the Feishu channel plugin.
-- Persist Core-facing messages, message event logs, and memories through `packages/storage`.
+- Persist Core-facing messages and message event logs through `packages/storage`.
 - Persist system logs through file log storage.
 - Register the daily 04:00 cleanup task.
 
@@ -34,13 +34,12 @@ Admin config:
 - `PUT /admin/api/config/llm`
 - `PUT /admin/api/config/feishu`
 
-Admin logs and memory:
+Admin logs:
 
 - `GET /admin/api/llm-requests`
 - `GET /admin/api/logs`
 - `GET /admin/api/message-logs`
 - `GET /admin/api/message-event-logs`
-- `GET /admin/api/memories`
 
 Feishu:
 
@@ -54,8 +53,8 @@ Feishu:
 
 ## Helper Functions
 
-- `appendLog(level, message)`: writes system/debug logs to memory and local JSONL files.
-- `appendMessageLog(input)`: writes append-only message event/debug entries to memory and SQLite.
+- `appendLog(level, message)`: writes system/debug logs to in-process history and local JSONL files.
+- `appendMessageLog(input)`: writes append-only message event/debug entries to in-process history and SQLite.
 - `appendLLMRequestLog(input)`: records recent LLM chat payloads for the admin panel.
 - `createLLMClientFromConfig()`: chooses OpenAI-compatible or stub LLM client.
 - `resolveFeishuTestTarget(body)`: resolves admin send tests to the unique bound Feishu contact.
@@ -64,7 +63,7 @@ Feishu:
 
 ## Operational Notes
 
-System logs are debug artifacts and live under `logs/system`. Core-facing messages, message event logs, and memory live in `data/alice.sqlite`. The API process must be restarted after code changes because the runtime uses compiled files from `dist`.
+System logs are debug artifacts and live under `logs/system`. Core-facing messages live in `memory-files/message/messages.sqlite`, and message event logs live in `logs/message/message-logs.sqlite`. The API process must be restarted after code changes because the runtime uses compiled files from `dist`.
 
 ## Message Runtime
 

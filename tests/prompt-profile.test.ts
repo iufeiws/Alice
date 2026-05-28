@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildPromptMessages,
+  buildAppendPromptMessagesWithToolResults,
   buildPromptMessagesWithToolResults,
   createPromptProfileStore,
-  defaultPromptProfile
+  defaultPromptProfile,
+  staticPromptFingerprint
 } from "../core/agent/src/prompts.js";
 import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../core/agent/src/shells.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
@@ -40,6 +42,23 @@ test("prompt profile store creates defaults and persists edits", () => {
   const reopened = createPromptProfileStore(filePath).get();
   assert.equal(reopened.userName, "AliceUser");
   assert.equal(reopened.layers[0].content, "Hi {{user}} at {{time}}");
+});
+
+test("prompt profile persists append layers", () => {
+  const filePath = path.join(makeTempDir("prompt-store-append"), "prompt-profile.json");
+  const store = createPromptProfileStore(filePath);
+  const initial = store.get();
+  const saved = store.save({
+    ...initial,
+    appendLayers: [
+      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolName: "check_chat", toolArguments: "{}", order: 1 }
+    ]
+  });
+
+  assert.equal(saved.appendLayers?.[0].thinking, "look first");
+  const reopened = createPromptProfileStore(filePath).get();
+  assert.equal(reopened.appendLayers?.[0].role, "tool_request");
+  assert.equal(reopened.appendLayers?.[0].thinking, "look first");
 });
 
 test("prompt messages render variables and preserve unknown placeholders", () => {
@@ -105,6 +124,75 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.equal(messages[1].toolCallId, "call_prompt_1");
   assert.equal(messages[1].name, "check_chat");
   assert.match(messages[1].content, /小王:hello/);
+});
+
+test("append prompt messages pair tool request layers with actual tool results", async () => {
+  const profile = {
+    ...defaultPromptProfile(),
+    userName: "小王",
+    layers: [],
+    appendLayers: [
+      {
+        id: "append_request",
+        title: "Append Tool Request",
+        role: "tool_request" as const,
+        enabled: true,
+        content: "",
+        thinking: "append thinking for {{user}}",
+        toolName: "check_chat",
+        toolCallId: "call_append_1",
+        toolArguments: "{}",
+        order: 1
+      }
+    ]
+  };
+
+  const messages = await buildAppendPromptMessagesWithToolResults(profile, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
+  }, async (layer, call) => {
+    assert.equal(layer.id, "append_request");
+    assert.equal(call.toolName, "check_chat");
+    return {
+      callId: call.id,
+      ok: true,
+      output: "recent"
+    };
+  });
+
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].reasoningContent, "append thinking for 小王");
+  assert.equal(messages[1].role, "tool");
+  assert.equal(messages[1].content, "recent");
+});
+
+test("static prompt fingerprint ignores append layers but tracks initial layer changes", () => {
+  const time = createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"));
+  const context = { event: textEvent(), time };
+  const base = {
+    ...defaultPromptProfile(),
+    layers: [
+      { id: "static", title: "Static", role: "system" as const, enabled: true, content: "static", order: 1 }
+    ],
+    appendLayers: [
+      { id: "append", title: "Append", role: "user" as const, enabled: true, content: "append one", order: 1 }
+    ]
+  };
+  const changedAppend = {
+    ...base,
+    appendLayers: [
+      { ...base.appendLayers[0], content: "append two" }
+    ]
+  };
+  const changedStatic = {
+    ...base,
+    layers: [
+      { ...base.layers[0], content: "static changed" }
+    ]
+  };
+
+  assert.equal(staticPromptFingerprint(base, context), staticPromptFingerprint(changedAppend, context));
+  assert.notEqual(staticPromptFingerprint(base, context), staticPromptFingerprint(changedStatic, context));
 });
 
 test("daily shell store creates category files and reuses one shell per day", () => {

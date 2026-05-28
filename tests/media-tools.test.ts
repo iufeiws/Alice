@@ -76,12 +76,13 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     ]);
     assert.equal(fs.existsSync(executorInputs[0].workDir), false);
     assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "(少女拍照中...)");
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
     assert.equal(sent[1].content.kind, "image");
     assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal((result.output as { sent?: boolean; messageId?: string }).sent, true);
     assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
     assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
+    assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -188,7 +189,7 @@ test("selfie fails before codex when the outfit reference image is missing", asy
     assert.match(result.error ?? "", /outfit reference/);
     assert.equal(called, false);
     assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "(大失败...)");
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-大失败-");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -234,9 +235,9 @@ test("selfie cleans up temporary directory when codex does not create the reques
     assert.match(result.error ?? "", /I could not create/);
     assert.equal(fs.existsSync(workDir), false);
     assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "(少女拍照中...)");
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
     assert.equal(sent[1].content.kind, "text");
-    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "(大失败...)");
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "-大失败-");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

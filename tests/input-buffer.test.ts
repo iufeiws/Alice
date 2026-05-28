@@ -65,6 +65,10 @@ test("session dirty flagger separates sessions", async () => {
 test("agent inbound debounce config defaults to one second and can be overridden", () => {
   assert.equal(loadConfig({}).core.inboundDebounceMs, 1000);
   assert.equal(loadConfig({ AGENT_INBOUND_DEBOUNCE_MS: "2500" }).core.inboundDebounceMs, 2500);
+  assert.equal(loadConfig({}).core.defaultTargetPlugin, "auto");
+  assert.equal(loadConfig({ AGENT_DEFAULT_TARGET_PLUGIN: "wechat" }).core.defaultTargetPlugin, "wechat");
+  assert.equal(loadConfig({ AGENT_DEFAULT_TARGET_PLUGIN: "feishu" }).core.defaultTargetPlugin, "feishu");
+  assert.equal(loadConfig({ AGENT_DEFAULT_TARGET_PLUGIN: "bad" }).core.defaultTargetPlugin, "auto");
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

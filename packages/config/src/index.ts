@@ -40,6 +40,7 @@ export type AppConfig = {
     timezone: string;
     defaultAgentProfile: string;
     inboundDebounceMs: number;
+    defaultTargetPlugin: "auto" | "wechat" | "feishu";
   };
   api: {
     host: string;
@@ -96,6 +97,10 @@ function jsonObjectValue(value: string | undefined): Record<string, unknown> {
   }
 }
 
+function normalizeDefaultTargetPlugin(value: string | undefined): "auto" | "wechat" | "feishu" {
+  return value === "wechat" || value === "feishu" ? value : "auto";
+}
+
 export function loadConfig(env: Env = process.env): AppConfig {
   const llmBaseURL = env.LLM_BASE_URL?.replace(/\/+$/, "");
   const llmApiKey = env.LLM_API_KEY;
@@ -107,7 +112,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     core: {
       timezone: env.AGENT_TIMEZONE ?? "Asia/Singapore",
       defaultAgentProfile: "main",
-      inboundDebounceMs: numberValue(env.AGENT_INBOUND_DEBOUNCE_MS, 1000)
+      inboundDebounceMs: numberValue(env.AGENT_INBOUND_DEBOUNCE_MS, 1000),
+      defaultTargetPlugin: normalizeDefaultTargetPlugin(env.AGENT_DEFAULT_TARGET_PLUGIN)
     },
     api: {
       host: env.API_HOST ?? "127.0.0.1",

@@ -31,6 +31,7 @@ export type PromptLayer = {
 export type PromptProfile = {
   userName: string;
   layers: PromptLayer[];
+  appendLayers?: PromptLayer[];
   visibleTools: {
     feishu: boolean;
     media?: boolean;
@@ -132,7 +133,7 @@ export function defaultPromptProfile(): PromptProfile {
         order: 40,
         content: [
           "可用聊天工具：",
-          "- check_chat：查看当前聊天会话记录。同一 LLM 会话内首次调用返回 today 内容：本地时间 6 点前从前一天 00:00 开始，6 点后从当天 00:00 开始；再次及后续调用只返回上次查看后的新增消息。",
+          "- check_chat：查看聊天会话记录。同一 LLM 会话内首次调用返回最近 50 条消息；再次及后续调用只返回上次查看后的新增消息。",
           "- send_chat：发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把换行分隔的 content 拆成多条消息。",
           "- selfie：自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前聊天；默认 aspectRatio 为 3:4。调用 selfie 后不要再调用 send_chat 发送同一张图。",
           "- 多行回复要先写 type=message，再在 content 中用换行分段；确认 type=message 后，流式发送会在每个换行处发送已完成的一段。"
@@ -152,6 +153,19 @@ export function defaultPromptProfile(): PromptProfile {
           "Treat Feishu history tool output as-is."
         ].join("\n")
       }
+    ],
+    appendLayers: [
+      {
+        id: "append_check_chat",
+        title: "Fake check_chat",
+        role: "tool_request",
+        enabled: true,
+        order: 10,
+        content: "",
+        toolName: "check_chat",
+        toolArguments: "{}",
+        thinking: "Need to inspect the current chat before deciding whether to reply."
+      }
     ]
   };
 }
@@ -164,14 +178,48 @@ export function buildPromptMessages(profile: PromptProfile, context: PromptRende
     .map((layer) => layerToMessage(layer, variables));
 }
 
+export function staticPromptFingerprint(profile: PromptProfile, context: PromptRenderContext): string {
+  const variables = promptVariables(profile, context);
+  const normalized = normalizePromptProfile(profile);
+  const layers = normalized.layers
+    .filter((layer) => layer.enabled)
+    .sort((left, right) => left.order - right.order)
+    .map((layer) => ({
+      id: layer.id,
+      title: layer.title,
+      role: layer.role,
+      order: layer.order,
+      message: layerToMessage(layer, variables)
+    }));
+  return stableJson({ layers });
+}
+
 export async function buildPromptMessagesWithToolResults(
   profile: PromptProfile,
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
   const variables = promptVariables(profile, context);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, variables, context, runTool);
+}
+
+export async function buildAppendPromptMessagesWithToolResults(
+  profile: PromptProfile,
+  context: PromptRenderContext,
+  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+): Promise<LLMMessage[]> {
+  const variables = promptVariables(profile, context);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], variables, context, runTool);
+}
+
+async function buildLayerMessagesWithToolResults(
+  inputLayers: PromptLayer[],
+  variables: Record<string, string>,
+  context: PromptRenderContext,
+  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+): Promise<LLMMessage[]> {
   const messages: LLMMessage[] = [];
-  const layers = normalizePromptProfile(profile).layers
+  const layers = inputLayers
     .filter((layer) => layer.enabled)
     .sort((left, right) => left.order - right.order);
 
@@ -221,13 +269,25 @@ export function renderTemplate(content: string, variables: Record<string, string
 export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
   const fallback = defaultPromptProfile();
   const layers = Array.isArray(profile.layers) ? profile.layers : fallback.layers;
+  const rawProfile = profile as PromptProfile & { fakeCheckChatReasoningContent?: unknown };
+  const appendLayers = Array.isArray(profile.appendLayers)
+    ? profile.appendLayers
+    : typeof rawProfile.fakeCheckChatReasoningContent === "string"
+      ? (fallback.appendLayers ?? []).map((layer) => ({ ...layer, thinking: rawProfile.fakeCheckChatReasoningContent as string }))
+      : [];
   return {
     userName: nonEmptyString(profile.userName) ?? fallback.userName,
     visibleTools: {
       feishu: profile.visibleTools?.feishu !== false,
       media: profile.visibleTools?.media !== false
     },
-    layers: layers.map((layer, index) => ({
+    layers: normalizePromptLayers(layers),
+    appendLayers: normalizePromptLayers(appendLayers ?? [])
+  };
+}
+
+function normalizePromptLayers(layers: PromptLayer[]): PromptLayer[] {
+  return layers.map((layer, index) => ({
       id: nonEmptyString(layer.id) ?? `layer_${index + 1}`,
       title: nonEmptyString(layer.title) ?? `Layer ${index + 1}`,
       role: normalizeLayerRole(layer.role),
@@ -238,8 +298,7 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
       toolCallId: normalizeLayerRole(layer.role) === "tool_request" ? nonEmptyString(layer.toolCallId) : undefined,
       toolArguments: normalizeLayerRole(layer.role) === "tool_request" && typeof layer.toolArguments === "string" ? layer.toolArguments : undefined,
       thinking: (normalizeLayerRole(layer.role) === "assistant" || normalizeLayerRole(layer.role) === "tool_request") && typeof layer.thinking === "string" ? layer.thinking : undefined
-    }))
-  };
+  }));
 }
 
 function layerToMessage(layer: PromptLayer, variables: Record<string, string>): LLMMessage {
@@ -272,6 +331,17 @@ function layerToMessage(layer: PromptLayer, variables: Record<string, string>): 
 function normalizeLayerRole(value: unknown): PromptLayerRole {
   if (value === "user" || value === "assistant" || value === "tool_request") return value;
   return "system";
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {

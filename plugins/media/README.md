@@ -18,7 +18,7 @@ Media tools for AgentCore. The current implementation exposes one LLM tool:
 
 When invoked, the tool:
 
-1. Sends `(少女拍照中...)` to the current session.
+1. Sends `-少女拍照中-` to the current session.
 2. Builds the image prompt from:
    - Alice character features from the main prompt profile.
    - Current daily shell personality and outfit.

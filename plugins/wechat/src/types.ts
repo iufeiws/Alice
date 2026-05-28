@@ -24,6 +24,11 @@ export type WeChatTextMessage = {
   text: string;
   contextToken: string;
   createdAt?: string;
+  quotedMessage?: {
+    id?: string;
+    fromUserId?: string;
+    text?: string;
+  };
   raw: unknown;
 };
 

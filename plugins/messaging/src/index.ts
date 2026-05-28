@@ -25,8 +25,6 @@ export type MessagingToolsDeps = {
     | "listMessagesForConversation"
     | "listMessages"
     | "searchMessages"
-    | "getToolCursor"
-    | "setToolCursor"
     | "markMessagesReadAndCoreProcessed"
     | "insertOutboundMessage"
     | "markOutboundMessageSent"
@@ -63,6 +61,8 @@ const messageDelayMsPerCharacter = 480;
 const minMessageDelayMs = 500;
 const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
+const checkChatMessageLimit = 500;
+const recentCheckChatMessageCount = 50;
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
@@ -106,28 +106,25 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   function viewMessagesForScope(
     callId: string,
     target: MessagingToolTarget,
-    scope: "today" | "new",
+    scope: "recent" | "today" | "new",
     options: { readonly?: boolean } = {}
   ): ToolResult {
-    const all = deps.store.listMessages(500).filter((message) => message.plugin === target.plugin);
+    const all = deps.store.listMessages(checkChatMessageLimit);
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
-    if (scope === "new") {
-      const cursor = deps.store.getToolCursor(target.plugin, target.sessionId, "check_chat") ?? 0;
-      const cursorMessage = all.find((message) => message.id === cursor);
-      sinceDate = cursorMessage ? parseMessageTime(cursorMessage.createdAt, time.timeZone) : new Date(0);
-      messages = all.filter((message) => message.id > cursor);
-      const latest = all[all.length - 1];
-      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_chat", latest.id);
+    if (scope === "recent") {
+      messages = all.slice(-recentCheckChatMessageCount);
+      sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : new Date(0);
+    } else if (scope === "new") {
+      const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
+      sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
+      messages = firstUnread ? all.filter((message) => message.id >= firstUnread.id) : [];
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
-      const latest = all[all.length - 1];
-      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_chat", latest.id);
     }
 
-    const currentDate = time.now().date;
     const shellEvents = readShellSwitchContext(sinceDate);
     if (!options.readonly) markViewedUserMessages(messages);
     return {
@@ -135,18 +132,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       ok: true,
       output: appendCurrentTime(
         messages.length > 0 || shellEvents.length > 0
-          ? formatTimelineBlocks(messages, shellEvents, time.timeZone, userName(), currentDate)
+          ? formatTimelineBlocks(messages, shellEvents, time.timeZone, userName())
           : "nothing new",
         time.timeZone,
-        currentDate
+        time.now().date
       )
     };
   }
 
-  function resolveViewScope(): "today" | "new" {
-    if (!activeLLMSession) return "today";
+  function resolveViewScope(): "recent" | "new" {
+    if (!activeLLMSession) return "recent";
     checkChatCallsInLLMSession += 1;
-    return checkChatCallsInLLMSession === 1 ? "today" : "new";
+    return checkChatCallsInLLMSession === 1 ? "recent" : "new";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {
@@ -247,7 +244,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const failed = results.find((result) => !result.ok);
-    const view = viewMessagesForScope(call.id, target, "new");
+    const view = viewMessagesForScope(call.id, target, "recent");
     return failed ? { ...view, ok: false, error: failed.error } : view;
   }
 
@@ -382,7 +379,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 const checkChatTool: ToolDefinition = {
   name: "check_chat",
-  description: "查看当前聊天会话记录。连续调用首次调用返回今天的内容(6点前为从前一天00:00开始，6点后从当天00:00开始)；后续调用只返回新增消息。",
+  description: "查看聊天记录。首次调用返回最近50条消息；后续调用只返回新增消息。",
   inputSchema: {
     type: "object",
     properties: {},
@@ -439,8 +436,7 @@ function formatTimelineBlocks(
   messages: StoredConversationMessage[],
   shellEvents: ShellSwitchContextEntry[],
   timeZone: string,
-  userName: string,
-  now: Date
+  userName: string
 ): string {
   const entries: ChatContextEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, time: parseMessageTime(message.createdAt, timeZone), message })),
@@ -455,7 +451,7 @@ function formatTimelineBlocks(
     if (!currentTime || entry.time.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
       if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
       currentTime = entry.time;
-      currentLines = [`[${formatChatTime(entry.time, timeZone, now)}]`];
+      currentLines = [`[${formatLocalDateTime(entry.time, timeZone)}]`];
     }
     currentLines.push(formatContextEntryLine(entry, userName));
   }
@@ -474,7 +470,7 @@ function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: st
     if (!currentTime || messageTime.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
       if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
       currentTime = messageTime;
-      currentLines = [`[${formatChatTime(messageTime, timeZone, now)}]`];
+      currentLines = [`[${formatLocalDateTime(messageTime, timeZone)}]`];
     }
     currentLines.push(formatMessageContentLine(message, userName));
   }
@@ -485,7 +481,7 @@ function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: st
 
 function formatContextEntryLine(entry: ChatContextEntry, userName: string): string {
   if (entry.kind === "shell") {
-    return `(壳切换-切换为${entry.personalityName}的${entry.relationshipName}爱丽丝)`;
+    return `-壳切换:切换为${entry.personalityName}的${entry.relationshipName}爱丽丝-`;
   }
   return formatMessageContentLine(entry.message, userName);
 }
@@ -495,15 +491,67 @@ function appendCurrentTime(output: string, timeZone: string, date: Date): string
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
-  const speaker = message.direction === "outbound" || message.senderRole === "assistant" ? "Alice" : userName;
+  const isSystem = isSystemPromptMessage(message);
+  const speaker = message.direction === "outbound" || message.senderRole === "assistant"
+      ? "Alice"
+      : userName;
   const recalled = message.isRecalled ? "[已撤回]" : "";
-  const sendStatus = message.direction === "outbound" && message.status === "send_failed"
+  const sendStatus = !isSystem && message.direction === "outbound" && message.status === "send_failed"
     ? "[发送失败]"
-    : message.direction === "outbound" && message.status === "sending"
+    : !isSystem && message.direction === "outbound" && message.status === "sending"
       ? "[发送中]"
       : "";
   const reactions = summarizeReactions(message.reactionsJson);
-  return `${speaker}:${message.isRecalled ? "(message recalled)" : message.contentText}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
+  const content = `${message.isRecalled ? "(message recalled)" : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
+  if (isSystem) return content;
+  return isMediaActionMessage(message) ? `${speaker}${content}` : `${speaker}:${content}`;
+}
+
+function formatMessageContent(message: StoredConversationMessage): string {
+  const content = parseContentJson(message.contentJson);
+  if (message.contentType === "image" || content?.kind === "image") return "发送了一张图片";
+  if (message.contentType === "audio" || content?.kind === "audio") {
+    const transcript = optionalStringValue(content?.transcript) || message.contentText;
+    return `[语音]${transcript}`;
+  }
+  if (message.contentType === "file" || content?.kind === "file") {
+    const filePath = optionalStringValue(content?.filename) || optionalStringValue(content?.assetId) || message.contentText;
+    return `发送了文件[${filePath}]`;
+  }
+  return message.contentText;
+}
+
+function isMediaActionMessage(message: StoredConversationMessage): boolean {
+  const content = parseContentJson(message.contentJson);
+  return message.contentType === "image"
+    || content?.kind === "image"
+    || message.contentType === "file"
+    || content?.kind === "file";
+}
+
+function parseContentJson(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function isSystemPromptMessage(message: StoredConversationMessage): boolean {
+  if (message.senderRole === "system") return true;
+  return [
+    "-少女拍照中-",
+    "-大失败-",
+    "-星界信号丢失-",
+    "(少女拍照中...)",
+    "(大失败...)"
+  ].includes(message.contentText);
 }
 
 function summarizeReactions(raw: string): string {
@@ -527,22 +575,6 @@ function contextSlice(messages: StoredConversationMessage[], hitIndex: number, c
 function formatLocalDateTime(date: Date, timeZone: string): string {
   const values = localDateTimeParts(date, timeZone);
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
-}
-
-function formatChatTime(date: Date, timeZone: string, nowDate: Date): string {
-  const values = localDateTimeParts(date, timeZone);
-  const now = localDateTimeParts(nowDate, timeZone);
-  if (values.year === now.year && values.month === now.month && values.day === now.day) {
-    return `today ${values.hour}:${values.minute}`;
-  }
-  const yesterday = shiftLocalDateParts(now, -1);
-  if (values.year === yesterday.year && values.month === yesterday.month && values.day === yesterday.day) {
-    return `yesterday ${values.hour}:${values.minute}`;
-  }
-  if (values.year === now.year) {
-    return `${values.month}-${values.day} ${values.hour}:${values.minute}`;
-  }
-  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
 }
 
 type LocalDateTimeStringParts = {

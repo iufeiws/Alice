@@ -183,6 +183,12 @@ export function renderAdminHtmlV2(): string {
               <input id="inboundDebounceMs" name="inboundDebounceMs" inputmode="numeric" />
               <label for="timezone">Timezone</label>
               <input id="timezone" name="timezone" autocomplete="off" />
+              <label for="defaultTargetPlugin">Default Target Plugin</label>
+              <select id="defaultTargetPlugin" name="defaultTargetPlugin">
+                <option value="auto">auto</option>
+                <option value="wechat">wechat</option>
+                <option value="feishu">feishu</option>
+              </select>
               <button type="submit">Save</button>
               <p class="muted" id="agent-status"></p>
             </form>
@@ -273,6 +279,7 @@ export function renderAdminHtmlV2(): string {
         $("followupExtraParams").value = JSON.stringify(config.llm.followupExtraParams || {}, null, 2);
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
         $("timezone").value = config.core.timezone || "Asia/Singapore";
+        $("defaultTargetPlugin").value = config.core.defaultTargetPlugin || "auto";
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
@@ -314,8 +321,8 @@ export function renderAdminHtmlV2(): string {
           fetch("/admin/api/llm-requests").then((res) => res.json()),
           fetch("/admin/api/llm-responses").then((res) => res.json())
         ]);
-        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.requests || [], requestPayload.activeSession);
-        $("llmChainResponses").innerHTML = renderLLMResponseGroups(responsePayload.responses || [], requestPayload.activeSession);
+        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.requests || [], requestPayload.activeSession, requestPayload.clearedSessions || []);
+        $("llmChainResponses").innerHTML = renderLLMResponseGroups(responsePayload.responses || [], requestPayload.activeSession, requestPayload.clearedSessions || []);
         $("llmChainRequests").scrollTop = $("llmChainRequests").scrollHeight;
         $("llmChainResponses").scrollTop = $("llmChainResponses").scrollHeight;
       }
@@ -324,35 +331,37 @@ export function renderAdminHtmlV2(): string {
         return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml((session.requestIds || []).join(", "))}</div>\`;
       }
 
-      function renderLLMRequestGroups(requests, activeSession) {
-        const groups = groupLLMEntries(requests);
+      function renderLLMRequestGroups(requests, activeSession, clearedSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
-        if (!groups.length) return active + '<div class="log-line">No LLM request history yet.</div>';
-        return active + groups.map((group) => {
-          const open = activeSession && String(activeSession.id) === String(group.sessionId) ? " open" : "";
-          return \`<details class="log-line"\${open}><summary>Session \${escapeHtml(group.sessionId)} · \${escapeHtml(group.items.length)} request(s) · \${escapeHtml(group.startedAt || "")}</summary>\${group.items.map((entry, index) => renderLLMRequestItem(entry, index + 1)).join("")}</details>\`;
+        const activeRequests = activeSession ? entriesForActiveSession(requests, activeSession, "requestIds") : [];
+        const activeGroup = activeSession
+          ? \`<details class="log-line" open><summary>Active Session \${escapeHtml(activeSession.id || "")} · \${escapeHtml(activeRequests.length)} request(s) · \${escapeHtml(activeSession.startedAt || "")}</summary>\${activeRequests.length ? activeRequests.map((entry, index) => renderLLMRequestItem(entry, index + 1, activeRequests[index - 1])).join("") : "No active request history yet."}</details>\`
+          : "";
+        const archived = (clearedSessions || []).map((session) => {
+          const requests = session.requests || [];
+          return \`<details class="log-line"><summary>Saved Session \${escapeHtml(session.id || "")} · \${escapeHtml(requests.length)} request(s) · \${escapeHtml(session.startedAt || "")} · reason=\${escapeHtml(session.reason || "")}</summary>\${requests.map((entry, index) => renderLLMRequestItem(entry, index + 1, requests[index - 1])).join("")}<details><summary>Archived transcript</summary><pre>\${escapeHtml(JSON.stringify(session.messages || [], null, 2))}</pre></details></details>\`;
         }).join("");
+        return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
       }
 
-      function renderLLMResponseGroups(responses, activeSession) {
-        const groups = groupLLMEntries(responses);
+      function renderLLMResponseGroups(responses, activeSession, clearedSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
-        if (!groups.length) return active + '<div class="log-line">No LLM response history yet.</div>';
-        return active + groups.map((group) => {
-          const open = activeSession && String(activeSession.id) === String(group.sessionId) ? " open" : "";
-          return \`<details class="log-line"\${open}><summary>Session \${escapeHtml(group.sessionId)} · \${escapeHtml(group.items.length)} response(s) · \${escapeHtml(group.startedAt || "")}</summary>\${group.items.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("")}</details>\`;
+        const activeResponses = activeSession ? entriesForActiveSession(responses, activeSession, "responseIds") : [];
+        const activeGroup = activeSession
+          ? \`<details class="log-line" open><summary>Active Session \${escapeHtml(activeSession.id || "")} · \${escapeHtml(activeResponses.length)} response(s) · \${escapeHtml(activeSession.startedAt || "")}</summary>\${activeResponses.length ? activeResponses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("") : "No active response history yet."}</details>\`
+          : "";
+        const archived = (clearedSessions || []).map((session) => {
+          const responses = session.responses || [];
+          return \`<details class="log-line"><summary>Saved Session \${escapeHtml(session.id || "")} · \${escapeHtml(responses.length)} response(s) · \${escapeHtml(session.startedAt || "")} · reason=\${escapeHtml(session.reason || "")}</summary>\${responses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("")}</details>\`;
         }).join("");
+        return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
       }
 
-      function groupLLMEntries(entries) {
-        const ordered = [...entries].sort(compareLLMEntries).slice(-50);
-        const groups = new Map();
-        for (const entry of ordered) {
-          const sessionId = entry.sessionId ?? "legacy";
-          if (!groups.has(sessionId)) groups.set(sessionId, { sessionId, startedAt: entry.time || "", items: [] });
-          groups.get(sessionId).items.push(entry);
-        }
-        return [...groups.values()].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")));
+      function entriesForActiveSession(entries, activeSession, idField) {
+        const ids = new Set((activeSession[idField] || []).map((id) => String(id)));
+        return [...entries]
+          .filter((entry) => String(entry.sessionId || "") === String(activeSession.id || "") && ids.has(String(entry.id || "")))
+          .sort(compareLLMEntries);
       }
 
       function compareLLMEntries(left, right) {
@@ -363,8 +372,18 @@ export function renderAdminHtmlV2(): string {
         return Number(left.id || 0) - Number(right.id || 0);
       }
 
-      function renderLLMRequestItem(entry, index) {
-        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] request #\${index} global=\${escapeHtml(entry.id || "")} model=\${escapeHtml(entry.model || "")}</summary>\${(entry.messages || []).map((message, messageIndex) => \`#\${messageIndex + 1} [\${escapeHtml(message.role)}]\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}\`).join("\\n\\n")}\\nraw json\\n\${escapeHtml(JSON.stringify(entry.rawRequest || entry, null, 2))}</details>\`;
+      function renderLLMRequestItem(entry, index, previous) {
+        const summaryMessages = index === 1 ? (entry.messages || []) : newMessagesSince(previous?.messages || [], entry.messages || []);
+        const summary = summaryMessages.length
+          ? summaryMessages.map((message, messageIndex) => \`#\${messageIndex + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}\`).join("\\n\\n")
+          : "No newly appended messages.";
+        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] request #\${index} global=\${escapeHtml(entry.id || "")} model=\${escapeHtml(entry.model || "")}</summary>\${summary}\\n<details><summary>raw request/response context</summary><pre>\${escapeHtml(JSON.stringify(entry.rawRequest || entry, null, 2))}</pre></details></details>\`;
+      }
+
+      function newMessagesSince(previous, current) {
+        let index = 0;
+        while (index < previous.length && index < current.length && JSON.stringify(previous[index]) === JSON.stringify(current[index])) index += 1;
+        return current.slice(index);
       }
 
       function renderLLMResponseItem(entry, index) {
@@ -416,6 +435,8 @@ export function renderAdminHtmlV2(): string {
       function renderPromptProfile() {
         if (!promptProfile) return;
         const layers = [...promptProfile.layers].sort((a, b) => a.order - b.order);
+        if (!Array.isArray(promptProfile.appendLayers)) promptProfile.appendLayers = [];
+        const appendLayers = [...promptProfile.appendLayers].sort((a, b) => a.order - b.order);
         $("promptProfile").innerHTML = \`
           <h2>Prompt Profile</h2>
           <label for="promptUserName">User Name</label>
@@ -426,30 +447,40 @@ export function renderAdminHtmlV2(): string {
           <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
           <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
           <p class="muted">check_chat · send_chat · selfie</p>
-          <h2>Layers</h2>
-          <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length)).join("")}</div>
-          <button type="button" id="prompt-add">Add Layer</button>
+          <h2>Initial Layers</h2>
+          <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
+          <button type="button" id="prompt-add">Add Initial Layer</button>
+          <h2>Append Layers</h2>
+          <p class="muted">Append layers are rendered and appended before each heartbeat LLM request. Tool request layers run immediately and include their tool result.</p>
+          <div id="promptAppendLayers">\${appendLayers.map((layer, index) => renderPromptLayer(layer, index, appendLayers.length, "appendLayers")).join("")}</div>
+          <button type="button" id="prompt-append-add">Add Append Layer</button>
           <button type="button" id="prompt-save">Save Prompt Profile</button>
         \`;
         $("promptUserName").addEventListener("input", () => { promptProfile.userName = $("promptUserName").value; });
         $("toolFeishuVisible").addEventListener("change", () => { promptProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolMediaVisible").addEventListener("change", () => { promptProfile.visibleTools.media = $("toolMediaVisible").checked; });
-        layers.forEach((layer, index) => bindPromptLayer(layer, index));
+        layers.forEach((layer, index) => bindPromptLayer(layer, index, "layers"));
+        appendLayers.forEach((layer, index) => bindPromptLayer(layer, index, "appendLayers"));
         $("prompt-add").addEventListener("click", () => {
           const order = Math.max(0, ...promptProfile.layers.map((layer) => Number(layer.order) || 0)) + 10;
           promptProfile.layers.push({ id: "layer_" + Date.now(), title: "New Layer", role: "user", enabled: true, content: "", order });
           renderPromptProfile();
         });
+        $("prompt-append-add").addEventListener("click", () => {
+          const order = Math.max(0, ...promptProfile.appendLayers.map((layer) => Number(layer.order) || 0)) + 10;
+          promptProfile.appendLayers.push({ id: "append_layer_" + Date.now(), title: "New Append Layer", role: "tool_request", enabled: true, content: "", order, toolName: "check_chat", toolArguments: "{}" });
+          renderPromptProfile();
+        });
         $("prompt-save").addEventListener("click", savePromptProfile);
       }
 
-      function renderPromptLayer(layer, index, count) {
+      function renderPromptLayer(layer, index, count, collection) {
         const role = layer.role || "system";
         const isToolRequest = role === "tool_request";
         const showsThinking = role === "assistant" || isToolRequest;
         const showsContent = !isToolRequest;
         return \`
-          <details class="prompt-layer" data-layer-id="\${escapeAttr(layer.id)}" open>
+          <details class="prompt-layer" data-layer-id="\${escapeAttr(layer.id)}" data-layer-collection="\${escapeAttr(collection)}" open>
             <summary>\${escapeHtml(layer.title || "Untitled Layer")}<span>[\${escapeHtml(role)}]\${layer.enabled ? "" : " disabled"}</span></summary>
             <div class="row">
               <div>
@@ -500,8 +531,8 @@ export function renderAdminHtmlV2(): string {
         return allNames.map((name) => \`<option value="\${escapeAttr(name)}" \${current === name ? "selected" : ""}>\${escapeHtml(name)}</option>\`).join("");
       }
 
-      function bindPromptLayer(layer, index) {
-        const root = document.querySelector('[data-layer-id="' + cssEscape(layer.id) + '"]');
+      function bindPromptLayer(layer, index, collection) {
+        const root = document.querySelector('[data-layer-collection="' + cssEscape(collection) + '"][data-layer-id="' + cssEscape(layer.id) + '"]');
         if (!root) return;
         root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
         root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
@@ -521,15 +552,15 @@ export function renderAdminHtmlV2(): string {
         root.querySelector('[data-field="toolArguments"]')?.addEventListener("input", (event) => { layer.toolArguments = event.target.value; });
         root.querySelector('[data-field="content"]')?.addEventListener("input", (event) => { layer.content = event.target.value; });
         root.querySelector('[data-action="delete"]').addEventListener("click", () => {
-          promptProfile.layers = promptProfile.layers.filter((item) => item.id !== layer.id);
+          promptProfile[collection] = promptProfile[collection].filter((item) => item.id !== layer.id);
           renderPromptProfile();
         });
-        root.querySelector('[data-action="up"]').addEventListener("click", () => movePromptLayer(index, -1));
-        root.querySelector('[data-action="down"]').addEventListener("click", () => movePromptLayer(index, 1));
+        root.querySelector('[data-action="up"]').addEventListener("click", () => movePromptLayer(index, -1, collection));
+        root.querySelector('[data-action="down"]').addEventListener("click", () => movePromptLayer(index, 1, collection));
       }
 
-      function movePromptLayer(index, delta) {
-        const layers = [...promptProfile.layers].sort((a, b) => a.order - b.order);
+      function movePromptLayer(index, delta, collection) {
+        const layers = [...promptProfile[collection]].sort((a, b) => a.order - b.order);
         const nextIndex = index + delta;
         if (nextIndex < 0 || nextIndex >= layers.length) return;
         const currentOrder = layers[index].order;
@@ -1011,7 +1042,7 @@ export function renderAdminHtmlV2(): string {
       $("agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { inboundDebounceMs: form.get("inboundDebounceMs"), timezone: form.get("timezone") };
+        const body = { inboundDebounceMs: form.get("inboundDebounceMs"), timezone: form.get("timezone"), defaultTargetPlugin: form.get("defaultTargetPlugin") };
         const result = await fetch("/admin/api/config/agent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("agent-status").textContent = result.ok ? "Agent config saved." : "Failed to save agent config.";
         await refresh();

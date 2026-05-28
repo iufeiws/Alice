@@ -1,7 +1,7 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
-import { buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
 import { createDailyShellStore } from "../../../core/agent/src/shells.js";
 import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
@@ -99,9 +99,26 @@ type ActiveLLMSession = {
   id: number;
   startedAt: string;
   updatedAt: string;
+  archiveFilePath?: string;
   requestIds: number[];
+  responseIds: number[];
+  messages: LLMChatInput["messages"];
   latestRequest?: unknown;
+  staticPromptFingerprint?: string;
+  requestTimestamps: string[];
+  clearedAt?: string;
+  reason?: string;
+  requests?: LLMRequestLogEntry[];
+  responses?: LLMResponseLogEntry[];
 };
+
+type LLMSessionArchiveEvent =
+  | { recordType: "llm_session_event"; event: "session_started"; sessionId: number; time: string; startedAt: string }
+  | { recordType: "llm_session_event"; event: "messages_appended"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] }
+  | { recordType: "llm_session_event"; event: "messages_replaced"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] }
+  | { recordType: "llm_session_event"; event: "request_logged"; sessionId: number; time: string; requestId: number; request: LLMRequestLogEntry }
+  | { recordType: "llm_session_event"; event: "response_logged"; sessionId: number; time: string; responseId: number; response: LLMResponseLogEntry }
+  | { recordType: "llm_session_event"; event: "session_cleared"; sessionId: number; time: string; reason: "prompt_static_changed" | "admin_clear" | "shutdown" };
 
 const logs: LogEntry[] = [];
 const messageLogs: MessageLogEntry[] = [];
@@ -113,6 +130,7 @@ let nextMessageLogId = 1;
 let nextLLMRequestLogId = 1;
 let nextLLMResponseLogId = 1;
 let nextLLMSessionId = 1;
+let llmSessionBusy = false;
 let store: ReturnType<typeof createAliceStore> | undefined;
 let systemLogStore: ReturnType<typeof createFileLogStore> | undefined;
 const currentTime = createMutableCurrentTimeProvider("UTC");
@@ -135,7 +153,11 @@ const config = loadConfig();
 currentTime.setTimeZone(config.core.timezone);
 let llm = createLLMClientFromConfig();
 const activeLLM = createMutableLLMClient(llm);
-store = createAliceStore("data/alice.sqlite", { time: currentTime });
+store = createAliceStore("data/alice.sqlite", {
+  time: currentTime,
+  messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
+  messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
+});
 systemLogStore = createFileLogStore("logs/system", { getTimeZone: () => currentTime.timeZone });
 for (const entry of systemLogStore.listRecent(500)) {
   logs.push(entry);
@@ -145,6 +167,8 @@ for (const entry of store.listMessageLogs(500)) {
   messageLogs.push(entry);
   nextMessageLogId = Math.max(nextMessageLogId, entry.id + 1);
 }
+activeLLMSession = restorePersistedActiveLLMSession();
+if (activeLLMSession) appendLog("info", `llm active session restored: session=${activeLLMSession.id} file=${activeLLMSession.archiveFilePath ?? ""} requests=${activeLLMSession.requestIds.length}`);
 
 const outputRouter = createOutputRouter();
 const agentState = createAgentStateController({
@@ -188,17 +212,7 @@ const messagingTools = createMessagingTools({
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getDefaultTarget() {
-    const wechatTarget = config.plugins.wechat.enabled ? wechatStateStore.getDefaultTarget() : undefined;
-    if (wechatTarget) return wechatTarget;
-    const contact = feishuPairingStore.list()[0];
-    if (!contact) return undefined;
-    return {
-      plugin: "feishu",
-      accountId: "main",
-      channelId: contact.channelId,
-      userId: contact.channelId ? undefined : contact.userId,
-      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
-    };
+    return getDefaultMessagingTarget();
   },
   appendMessageLog
 });
@@ -233,15 +247,7 @@ const mediaTools = createMediaTools({
     };
   },
   getDefaultTarget() {
-    const contact = feishuPairingStore.list()[0];
-    if (!contact) return undefined;
-    return {
-      plugin: "feishu",
-      accountId: "main",
-      channelId: contact.channelId,
-      userId: contact.channelId ? undefined : contact.userId,
-      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
-    };
+    return getDefaultMessagingTarget();
   },
   appendLog,
   appendMessageLog
@@ -254,39 +260,40 @@ const core = createAgentCore({
   intentRouter: createIntentRouter(),
   sessionResolver: createSessionResolver(),
   policy: createAllowAllPolicy(),
-  memory: {
-    async recall(event) {
-      const memories = store?.recallForEvent(event, 5).map((item) => item.content) ?? [];
-      if (memories.length > 0) {
-        appendLog("info", `memory recall: ${memories.length} item(s)`);
-      }
-      return memories;
-    },
-    async capture(event, outputs) {
-      store?.captureTurn(event, outputs);
-    }
-  },
   tools: toolPlugins,
   getPromptProfile: () => promptProfileStore.get(),
   getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
   state: agentState,
   time: currentTime,
+  loadLLMSession: loadActiveLLMSessionTranscript,
   onLLMRequestPrepared: appendLLMRequestLog,
   onLLMResponseReceived: appendLLMResponseLog,
+  onLLMHeartbeatStarted() {
+    llmSessionBusy = true;
+    messagingTools.noteLLMRequestStarted();
+  },
+  onLLMSessionUpdated(session) {
+    updateActiveLLMSessionTranscript(session);
+  },
+  onLLMSessionCleared(reason) {
+    llmSessionBusy = false;
+    messagingTools.noteLLMSessionCompleted();
+    clearActiveLLMSession(reason);
+  },
   onLLMLog(event) {
     const mode = event.stream ? "stream" : "non-stream";
     if (event.kind === "call_start") {
-      messagingTools.noteLLMRequestStarted();
       appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
     }
+    if (event.kind === "rate_limited") appendLog("warn", `llm call skipped: active session reached 10 requests in 60s model=${event.model ?? config.llm.model}`);
     if (event.kind === "stream_start") appendLog("info", `llm stream start: round=${event.round} model=${event.model ?? config.llm.model}`);
     if (event.kind === "stream_end") appendLog("info", `llm stream end: round=${event.round} model=${event.model ?? config.llm.model}`);
     if (event.kind === "response_received") appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? config.llm.model}`);
   },
-  onLLMSessionCompleted(result) {
-    messagingTools.noteLLMSessionCompleted();
-    clearActiveLLMSession(result.sentMessage ? "send_chat" : "llm_turn_completed");
-  }
+  onLLMSessionCompleted(_result) {
+    llmSessionBusy = false;
+  },
+  initialLLMSession: activeLLMSession
 });
 
 const feishu = createFeishuPlugin(config.plugins.feishu, {
@@ -314,23 +321,13 @@ const messageRuntime = createMessageRuntime({
   getDelayMs: () => config.core.inboundDebounceMs,
   time: currentTime,
   getProcessNowTarget() {
-    const wechatTarget = config.plugins.wechat.enabled ? wechatStateStore.getDefaultTarget() : undefined;
-    if (wechatTarget) return wechatTarget;
-    const contact = feishuPairingStore.list()[0];
-    if (!contact) return undefined;
-    return {
-      plugin: "feishu",
-      accountId: "main",
-      channelId: contact.channelId,
-      userId: contact.channelId ? undefined : contact.userId,
-      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
-    };
+    return getDefaultMessagingTarget();
   },
   store,
   core,
   agentState,
   outputRouter,
-  isLLMSessionActive: () => Boolean(activeLLMSession),
+  isLLMSessionActive: () => llmSessionBusy,
   async setTypingIndicator(input) {
     if (input.plugin !== "wechat") return;
     await wechat.setTyping({
@@ -367,7 +364,8 @@ const server = http.createServer(createApiRequestHandler({
   messageLogs,
   llmRequestLogs,
   llmResponseLogs,
-  getActiveLLMSession: () => activeLLMSession,
+  getActiveLLMSession: () => getActiveLLMSessionSnapshot(),
+  getClearedLLMSessions,
   store,
   getLLMRequestPreview,
   getLLMRequestProfilePreview,
@@ -516,22 +514,6 @@ function appendLLMRequestLog(input: LLMChatInput): void {
   };
   llmRequestLogs.push(entry);
   noteActiveLLMRequest(entry);
-  if (diffFromPrevious) {
-    appendLog("info", diffFromPrevious.sameAsPrevious
-      ? `llm request diff: same as previous, common_prefix_chars=${diffFromPrevious.commonPrefixChars}`
-      : [
-          "llm request diff:",
-          `first_diff=${diffFromPrevious.firstDiffPath}`,
-          `common_prefix_chars=${diffFromPrevious.commonPrefixChars}`,
-          `rough_common_prefix_tokens=${formatTokenCount(diffFromPrevious.roughCommonPrefixTokens)}`,
-          `value_diff_index=${formatTokenCount(diffFromPrevious.valueDiffIndex)}`,
-          `rough_value_prefix_tokens=${formatTokenCount(diffFromPrevious.roughValuePrefixTokens)}`,
-          `previous=${formatDiffValue(diffFromPrevious.previousValue)}`,
-          `current=${formatDiffValue(diffFromPrevious.currentValue)}`,
-          `previous_excerpt=${JSON.stringify(diffFromPrevious.previousExcerpt ?? "")}`,
-          `current_excerpt=${JSON.stringify(diffFromPrevious.currentExcerpt ?? "")}`
-        ].join(" "));
-  }
   nextLLMRequestLogId += 1;
   if (llmRequestLogs.length > 50) {
     llmRequestLogs.splice(0, llmRequestLogs.length - 50);
@@ -637,7 +619,7 @@ function estimateDeepSeekTokens(text: string): number {
 
 function appendLLMResponseLog(result: LLMChatResult): void {
   appendLLMUsageLog(result);
-  llmResponseLogs.push({
+  const entry = {
     id: nextLLMResponseLogId,
     sessionId: activeLLMSession?.id,
     requestId: activeLLMSession?.requestIds.at(-1),
@@ -646,7 +628,9 @@ function appendLLMResponseLog(result: LLMChatResult): void {
     finishReason: result.finishReason,
     usage: result.usage,
     raw: result.raw
-  });
+  };
+  llmResponseLogs.push(entry);
+  noteActiveLLMResponse(entry);
   nextLLMResponseLogId += 1;
   if (llmResponseLogs.length > 50) {
     llmResponseLogs.splice(0, llmResponseLogs.length - 50);
@@ -688,7 +672,7 @@ function formatTokenCount(value: number | undefined): string {
 }
 
 function clearLLMChainCache(): void {
-  clearActiveLLMSession("admin_clear");
+  core.clearLLMSession("admin_clear");
 }
 
 function ensureActiveLLMSession(time: string): ActiveLLMSession {
@@ -697,27 +681,308 @@ function ensureActiveLLMSession(time: string): ActiveLLMSession {
       id: nextLLMSessionId,
       startedAt: time,
       updatedAt: time,
+      archiveFilePath: llmSessionFilePath(time),
       requestIds: [],
-      latestRequest: undefined
+      responseIds: [],
+      messages: [],
+      latestRequest: undefined,
+      requestTimestamps: []
     };
     nextLLMSessionId += 1;
+    appendLLMSessionArchiveEvent(activeLLMSession, {
+      recordType: "llm_session_event",
+      event: "session_started",
+      sessionId: activeLLMSession.id,
+      time,
+      startedAt: time
+    });
   }
   return activeLLMSession;
 }
 
 function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
   const session = ensureActiveLLMSession(entry.time);
+  entry.sessionId = session.id;
   session.updatedAt = entry.time;
   session.requestIds.push(entry.id);
   session.latestRequest = entry.rawRequest;
+  session.requests = [...(session.requests ?? []), archiveRequestEntry(entry)];
+  appendLLMSessionArchiveEvent(session, {
+    recordType: "llm_session_event",
+    event: "request_logged",
+    sessionId: session.id,
+    time: entry.time,
+    requestId: entry.id,
+    request: archiveRequestEntry(entry)
+  });
 }
 
-function clearActiveLLMSession(reason: string): void {
+function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
+  if (!activeLLMSession) return;
+  activeLLMSession.updatedAt = entry.time;
+  activeLLMSession.responseIds.push(entry.id);
+  activeLLMSession.responses = [...(activeLLMSession.responses ?? []), entry];
+  appendLLMSessionArchiveEvent(activeLLMSession, {
+    recordType: "llm_session_event",
+    event: "response_logged",
+    sessionId: activeLLMSession.id,
+    time: entry.time,
+    responseId: entry.id,
+    response: entry
+  });
+}
+
+function updateActiveLLMSessionTranscript(input: { messages: LLMChatInput["messages"]; staticPromptFingerprint: string; requestTimestamps: string[] }): void {
+  const now = currentTime.now().iso;
+  const session = ensureActiveLLMSession(now);
+  session.updatedAt = now;
+  const commonPrefix = commonMessagePrefixLength(session.messages, input.messages);
+  const isAppend = commonPrefix === session.messages.length;
+  const delta = input.messages.slice(commonPrefix);
+  session.messages = input.messages;
+  session.staticPromptFingerprint = input.staticPromptFingerprint;
+  session.requestTimestamps = input.requestTimestamps;
+  if (isAppend && delta.length === 0) return;
+  appendLLMSessionArchiveEvent(session, {
+    recordType: "llm_session_event",
+    event: isAppend ? "messages_appended" : "messages_replaced",
+    sessionId: session.id,
+    time: now,
+    messages: isAppend ? delta : input.messages,
+    staticPromptFingerprint: input.staticPromptFingerprint,
+    requestTimestamps: input.requestTimestamps
+  });
+}
+
+function clearActiveLLMSession(reason: "prompt_static_changed" | "admin_clear" | "shutdown"): void {
   if (!activeLLMSession) return;
   const sessionId = activeLLMSession.id;
   const requestCount = activeLLMSession.requestIds.length;
+  activeLLMSession.clearedAt = currentTime.now().iso;
+  activeLLMSession.reason = reason;
+  appendLLMSessionArchiveEvent(activeLLMSession, {
+    recordType: "llm_session_event",
+    event: "session_cleared",
+    sessionId: activeLLMSession.id,
+    time: activeLLMSession.clearedAt,
+    reason
+  });
   activeLLMSession = undefined;
   appendLog("info", `llm active session cleared: session=${sessionId} reason=${reason} requests=${requestCount}`);
+}
+
+function appendLLMSessionArchiveEvent(session: ActiveLLMSession, event: LLMSessionArchiveEvent): void {
+  const filePath = session.archiveFilePath ?? llmSessionFilePath(session.startedAt);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`);
+  session.archiveFilePath = filePath;
+}
+
+function getActiveLLMSessionSnapshot(): unknown {
+  if (!activeLLMSession) return undefined;
+  return readLatestLLMSessionSnapshot(activeLLMSession.id) ?? activeLLMSession;
+}
+
+function loadActiveLLMSessionTranscript(): { messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] } | undefined {
+  if (!activeLLMSession) return undefined;
+  const latest = readLatestLLMSessionSnapshot(activeLLMSession.id);
+  if (!latest || latest.clearedAt) return undefined;
+  return {
+    messages: latest.messages ?? [],
+    staticPromptFingerprint: latest.staticPromptFingerprint,
+    requestTimestamps: latest.requestTimestamps
+  };
+}
+
+function archiveRequestEntry(entry: LLMRequestLogEntry): LLMRequestLogEntry {
+  return {
+    ...entry,
+    messages: [],
+    rawRequest: undefined,
+    diffFromPrevious: undefined
+  };
+}
+
+function commonMessagePrefixLength(left: LLMChatInput["messages"], right: LLMChatInput["messages"]): number {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < length && stableStringify(left[index]) === stableStringify(right[index])) index += 1;
+  return index;
+}
+
+function llmSessionFilePath(time: string): string {
+  const date = String(time || currentTime.now().iso).slice(0, 10);
+  return path.join(config.memoryFiles.root, "llm-sessions", `${date}.sessions.jsonl`);
+}
+
+function readLatestLLMSessionSnapshot(id: number): ActiveLLMSession | undefined {
+  const latest = readAllLLMSessions().filter((session) => session.id === id).at(-1);
+  return latest?.clearedAt ? latest : latest;
+}
+
+function restorePersistedActiveLLMSession(): ActiveLLMSession | undefined {
+  const sessions = readAllLLMSessions();
+  const latestById = new Map<number, ActiveLLMSession>();
+  for (const session of sessions) {
+    latestById.set(session.id, session);
+    nextLLMSessionId = Math.max(nextLLMSessionId, session.id + 1);
+    for (const request of session.requests ?? []) {
+      if (!llmRequestLogs.some((entry) => entry.id === request.id)) {
+        llmRequestLogs.push(request);
+        nextLLMRequestLogId = Math.max(nextLLMRequestLogId, request.id + 1);
+      }
+    }
+    for (const response of session.responses ?? []) {
+      if (!llmResponseLogs.some((entry) => entry.id === response.id)) {
+        llmResponseLogs.push(response);
+        nextLLMResponseLogId = Math.max(nextLLMResponseLogId, response.id + 1);
+      }
+    }
+  }
+  llmRequestLogs.sort((left, right) => left.id - right.id);
+  llmResponseLogs.sort((left, right) => left.id - right.id);
+  const active = [...latestById.values()]
+    .filter((session) => !session.clearedAt && session.staticPromptFingerprint)
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+  if (!active) return undefined;
+  return {
+    ...active,
+    archiveFilePath: active.archiveFilePath ?? llmSessionFilePath(active.startedAt)
+  };
+}
+
+function readAllLLMSessions(): ActiveLLMSession[] {
+  const dir = path.join(config.memoryFiles.root, "llm-sessions");
+  if (!fs.existsSync(dir)) return [];
+  const sessions = new Map<number, ActiveLLMSession>();
+  for (const name of fs.readdirSync(dir).filter((item) => item.endsWith(".sessions.jsonl")).sort()) {
+    const filePath = path.join(dir, name);
+    for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        applyLLMSessionArchiveRecord(sessions, JSON.parse(line), filePath);
+      } catch {
+        appendLog("warn", `llm session archive parse failed: ${filePath}`);
+      }
+    }
+  }
+  return [...sessions.values()];
+}
+
+function applyLLMSessionArchiveRecord(sessions: Map<number, ActiveLLMSession>, record: unknown, filePath: string): void {
+  if (!record || typeof record !== "object") return;
+  const raw = record as Record<string, unknown>;
+  if (raw.recordType === "llm_session_event") {
+    applyLLMSessionArchiveEvent(sessions, raw as LLMSessionArchiveEvent, filePath);
+    return;
+  }
+  applyLegacyLLMSessionSnapshot(sessions, raw, filePath);
+}
+
+function applyLegacyLLMSessionSnapshot(sessions: Map<number, ActiveLLMSession>, raw: Record<string, unknown>, filePath: string): void {
+  if (typeof raw.id !== "number") return;
+  sessions.set(raw.id, {
+    id: raw.id,
+    startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
+    archiveFilePath: typeof raw.archiveFilePath === "string" ? raw.archiveFilePath : filePath,
+    requestIds: numberArray(raw.requestIds),
+    responseIds: numberArray(raw.responseIds),
+    messages: Array.isArray(raw.messages) ? raw.messages as LLMChatInput["messages"] : [],
+    latestRequest: raw.latestRequest,
+    staticPromptFingerprint: typeof raw.staticPromptFingerprint === "string" ? raw.staticPromptFingerprint : undefined,
+    requestTimestamps: stringArray(raw.requestTimestamps),
+    clearedAt: typeof raw.clearedAt === "string" ? raw.clearedAt : undefined,
+    reason: typeof raw.reason === "string" ? raw.reason : undefined,
+    requests: Array.isArray(raw.requests) ? raw.requests as LLMRequestLogEntry[] : [],
+    responses: Array.isArray(raw.responses) ? raw.responses as LLMResponseLogEntry[] : []
+  });
+}
+
+function applyLLMSessionArchiveEvent(sessions: Map<number, ActiveLLMSession>, event: LLMSessionArchiveEvent, filePath: string): void {
+  if (typeof event.sessionId !== "number") return;
+  const session = getOrCreateArchivedLLMSession(sessions, event.sessionId, event.time, filePath);
+  session.archiveFilePath = filePath;
+  session.updatedAt = event.time || session.updatedAt;
+  if (event.event === "session_started") {
+    session.startedAt = event.startedAt;
+    session.updatedAt = event.time;
+    return;
+  }
+  if (event.event === "messages_appended") {
+    session.messages = [...session.messages, ...cloneLLMMessages(event.messages)];
+    session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
+    session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    return;
+  }
+  if (event.event === "messages_replaced") {
+    session.messages = cloneLLMMessages(event.messages);
+    session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
+    session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    return;
+  }
+  if (event.event === "request_logged") {
+    if (!session.requestIds.includes(event.requestId)) session.requestIds.push(event.requestId);
+    const request = { ...event.request, sessionId: event.sessionId };
+    session.requests = [...(session.requests ?? []).filter((entry) => entry.id !== request.id), request];
+    session.latestRequest = request.rawRequest;
+    return;
+  }
+  if (event.event === "response_logged") {
+    if (!session.responseIds.includes(event.responseId)) session.responseIds.push(event.responseId);
+    const response = { ...event.response, sessionId: event.sessionId };
+    session.responses = [...(session.responses ?? []).filter((entry) => entry.id !== response.id), response];
+    return;
+  }
+  if (event.event === "session_cleared") {
+    session.clearedAt = event.time;
+    session.reason = event.reason;
+  }
+}
+
+function getOrCreateArchivedLLMSession(sessions: Map<number, ActiveLLMSession>, id: number, time: string, filePath: string): ActiveLLMSession {
+  const existing = sessions.get(id);
+  if (existing) return existing;
+  const session: ActiveLLMSession = {
+    id,
+    startedAt: time,
+    updatedAt: time,
+    archiveFilePath: filePath,
+    requestIds: [],
+    responseIds: [],
+    messages: [],
+    requestTimestamps: [],
+    requests: [],
+    responses: []
+  };
+  sessions.set(id, session);
+  return session;
+}
+
+function cloneLLMMessages(messages: LLMChatInput["messages"]): LLMChatInput["messages"] {
+  return messages.map((message) => ({
+    ...message,
+    toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
+  }));
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function getClearedLLMSessions(): unknown[] {
+  const latestById = new Map<number, ActiveLLMSession>();
+  for (const session of readAllLLMSessions()) {
+    latestById.set(session.id, session);
+  }
+  return [...latestById.values()]
+    .filter((session) => Boolean(session.clearedAt))
+    .sort((left, right) => String(right.startedAt || "").localeCompare(String(left.startedAt || "")))
+    .slice(0, 50);
 }
 
 async function getLLMRequestPreview(): Promise<LLMRequestPreview | undefined> {
@@ -738,15 +1003,18 @@ async function getLLMRequestProfilePreview(): Promise<LLMRequestPreview | undefi
 
 async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | undefined> {
   const profile = promptProfileStore.get();
+  const target = getDefaultMessagingTarget();
   const previewEvent = {
     id: "preview",
     source: {
-      plugin: "feishu",
-      channelId: "preview"
+      plugin: target?.plugin ?? "wechat",
+      accountId: target?.accountId,
+      channelId: target?.channelId ?? target?.userId ?? "preview",
+      userId: target?.userId
     },
     session: {
       scope: "dm",
-      sessionId: "preview"
+      sessionId: target?.sessionId ?? "preview"
     },
     type: "message.text",
     payload: { kind: "text", text: "" },
@@ -757,13 +1025,34 @@ async function buildLLMRequestPreviewFromProfile(): Promise<LLMRequestPreview | 
   return {
     id: 0,
     source: "preview",
-    conversationId: "preview",
+    conversationId: target?.sessionId ?? "preview",
     time: currentTime.now().iso,
     model: config.llm.model,
     temperature: config.llm.temperature,
     extraParams: config.llm.extraParams,
-    messages: await buildPromptPreviewMessages(profile, previewEvent),
+    messages: await buildPromptPreviewMessages(profile, previewEvent, true),
     tools: visibleToolSpecs(profile)
+  };
+}
+
+function getDefaultMessagingTarget() {
+  const mode = config.core.defaultTargetPlugin ?? "auto";
+  const wechatTarget = config.plugins.wechat.enabled ? wechatStateStore.getDefaultTarget() : undefined;
+  const feishuTarget = getDefaultFeishuTarget();
+  if (mode === "wechat") return wechatTarget;
+  if (mode === "feishu") return feishuTarget;
+  return wechatTarget ?? feishuTarget;
+}
+
+function getDefaultFeishuTarget() {
+  const contact = feishuPairingStore.list()[0];
+  if (!contact) return undefined;
+  return {
+    plugin: "feishu",
+    accountId: "main",
+    channelId: contact.channelId,
+    userId: contact.channelId ? undefined : contact.userId,
+    sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
   };
 }
 
@@ -806,7 +1095,7 @@ async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview |
     model: config.llm.model,
     temperature: config.llm.temperature,
     extraParams: config.llm.extraParams,
-    messages: await buildPromptPreviewMessages(profile, previewEvent),
+    messages: await buildPromptPreviewMessages(profile, previewEvent, true),
     tools: visibleToolSpecs(profile)
   };
 }
@@ -830,13 +1119,15 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
 
 async function buildPromptPreviewMessages(
   profile: ReturnType<typeof promptProfileStore.get>,
-  event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"]
+  event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"],
+  includeFakeCheckChat = false
 ): Promise<LLMChatInput["messages"]> {
-  return buildPromptMessagesWithToolResults(profile, {
+  const context = {
     event,
     time: currentTime,
     dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone)
-  }, async (layer, call) => {
+  };
+  const runPreviewTool = async (layer: Parameters<typeof buildPromptMessagesWithToolResults>[2] extends (layer: infer T, call: any) => any ? T : never, call: Parameters<Parameters<typeof buildPromptMessagesWithToolResults>[2]>[1]) => {
     if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {
       return {
         callId: call.id,
@@ -856,7 +1147,14 @@ async function buildPromptPreviewMessages(
         error: error instanceof Error ? error.message : String(error)
       };
     }
-  });
+  };
+  const messages = await buildPromptMessagesWithToolResults(profile, context, runPreviewTool);
+  if (!includeFakeCheckChat) return messages;
+  const appendMessages = await buildAppendPromptMessagesWithToolResults(profile, context, runPreviewTool);
+  return [
+    ...messages,
+    ...appendMessages
+  ];
 }
 
 function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {
@@ -896,6 +1194,18 @@ function formatPreviewContextLine(entry: StoredConversationMessage): string {
   const read = entry.isRead ? " [read]" : "";
   const reactions = summarizePreviewReactions(entry.reactionsJson);
   return `${speaker}${recalled}${read}${reactions ? ` [reactions: ${reactions}]` : ""}: ${entry.isRecalled ? "(message recalled)" : entry.contentText}`;
+}
+
+function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }): string {
+  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
+  if (typeof result.output === "string") return result.output;
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  try {
+    return JSON.stringify(result.output);
+  } catch {
+    return String(result.output);
+  }
 }
 
 function summarizePreviewReactions(raw: string): string {

@@ -11,7 +11,7 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
 - AgentCore runtime boundary:
   - standardized `AgentEvent` and `AgentOutput`
   - in-memory event/session/output routing
-  - editable prompt profile with memory recall/capture hooks
+  - editable prompt profile and append prompt layers
 - Internal OpenAI-compatible `/v1` LLM client:
   - supports configurable `LLM_BASE_URL`
   - works with OpenAI, DeepSeek, opencode, and similar `/v1/chat/completions` providers
@@ -28,8 +28,10 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
   - sends a short in-progress message before image generation
   - rejects consecutive `selfie` tool calls
 - Local persistence:
-- SQLite message logs and memory
-- SQLite FTS5 search over persisted messages
+  - SQLite Core-facing message history
+  - SQLite append-only message event logs
+  - SQLite FTS5 search over persisted messages
+  - JSONL active LLM session archives
 
 ## WeChat iLink
 
@@ -87,8 +89,11 @@ See `plugins/media/README.md` for detailed media tool configuration and the stan
 .env
 data/alice.sqlite
 logs/system/*.log.jsonl
+logs/message/message-logs.sqlite
+memory-files/message/messages.sqlite
+memory-files/llm-sessions/*.sessions.jsonl
 memory-files/indexes/feishu-paired-contacts.json
 memory-files/config/prompt-profile.json
 ```
 
-`data/`, `logs/`, `.env`, `dist/`, and `node_modules/` are ignored by git.
+`data/`, `logs/`, selected runtime `memory-files/` directories, `.env`, `dist/`, and `node_modules/` are ignored by git.

@@ -6,6 +6,7 @@ import type { WeChatTextMessage } from "../plugins/wechat/src/types.js";
 import { createMessageRuntime } from "../apps/api/src/message-runtime.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import { createMessagingTools } from "../plugins/messaging/src/index.js";
+import type { AgentEvent } from "../packages/types/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -137,6 +138,73 @@ test("wechat iLink client parses iLink msg item_list text payloads", async () =>
   assert.equal(updates.messages[0].fromUserId, "wx-user");
   assert.equal(updates.messages[0].contextToken, "ctx-1");
   assert.equal(updates.messages[0].text, "hello from item_list");
+});
+
+test("wechat iLink client parses quoted text messages", async () => {
+  const client = createWeChatILinkClient({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test/ilink/bot",
+    pollTimeoutMs: 35_000
+  }, {
+    fetch: async () => new Response(JSON.stringify({
+      ret: 0,
+      get_updates_buf: "cursor-2",
+      messages: [{
+        message_id: "msg-2",
+        from_user_id: "wx-user",
+        context_token: "ctx-2",
+        content: JSON.stringify({
+          text: "replying to this",
+          quote_message: {
+            message_id: "msg-1",
+            from_user_id: "friend",
+            content: JSON.stringify({ text: "quoted hello" })
+          }
+        })
+      }]
+    }), { status: 200 })
+  });
+
+  const updates = await client.getUpdates("cursor-1");
+
+  assert.equal(updates.messages[0].id, "msg-2");
+  assert.equal(updates.messages[0].text, "replying to this");
+  assert.deepEqual(updates.messages[0].quotedMessage, {
+    id: "msg-1",
+    fromUserId: "friend",
+    text: "quoted hello"
+  });
+});
+
+test("wechat plugin forwards quoted message metadata", async () => {
+  const dir = path.join("/tmp", `alice-wechat-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
+  const events: AgentEvent[] = [];
+  const plugin = createWeChatPlugin({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test",
+    pollTimeoutMs: 35_000
+  }, {
+    stateStore,
+    async onEvent(event) {
+      events.push(event);
+    },
+    fetch: async () => new Response(JSON.stringify({ ret: 0, message_id: "unused" }), { status: 200 })
+  });
+
+  await plugin.ingestTextMessage({
+    ...rawWechatText("msg-2", "wx-user", "ctx-2", "replying to this"),
+    quotedMessage: { id: "msg-1", fromUserId: "friend", text: "quoted hello" }
+  });
+
+  assert.deepEqual(events[0].meta.quotedMessage, {
+    rawMessageId: "msg-1",
+    senderId: "friend",
+    text: "quoted hello"
+  });
 });
 
 test("wechat plugin writes inbound context and sends text with cached context_token", async () => {
@@ -443,6 +511,64 @@ test("wechat inbound messages are persisted through message runtime logs", async
   assert.equal(logs[0].plugin, "wechat");
   assert.equal(logs[0].summary, "hello log");
   assert.equal(logs[0].rawMessageId, "msg-1");
+});
+
+test("wechat quoted inbound messages are visible in persisted chat context", async () => {
+  const dir = path.join("/tmp", `alice-wechat-runtime-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 60_000,
+    getHeartbeatIntervalMs: () => 60_000,
+    store,
+    core: {
+      async handleEvent() {
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {
+        return [];
+      }
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({
+        time: new Date("2026-05-28T00:00:00.000Z").toISOString(),
+        ...input
+      });
+    }
+  });
+  const plugin = createWeChatPlugin({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test",
+    pollTimeoutMs: 35_000
+  }, {
+    stateStore,
+    async onEvent(event) {
+      runtime.ingestEvent(event);
+    },
+    fetch: async () => new Response(JSON.stringify({ ret: 0, message_id: "unused" }), { status: 200 })
+  });
+
+  await plugin.ingestTextMessage({
+    ...rawWechatText("msg-2", "wx-user", "ctx-2", "replying to this"),
+    quotedMessage: { id: "msg-1", fromUserId: "friend", text: "quoted hello" }
+  });
+  await runtime.flushAll();
+
+  const messages = store.listMessages(10);
+  assert.equal(messages[0].contentText, "-引用:from friend #msg-1 quoted hello-\nreplying to this");
+
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", channelId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+  const result = await tools.execute({ id: "call_quote_context", toolName: "check_chat", input: {} });
+  assert.match(String(result.output), /user:-引用:from friend #msg-1 quoted hello-\nreplying to this/);
 });
 
 test("send_chat messaging tool routes outbound text to wechat channel", async () => {

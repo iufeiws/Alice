@@ -127,6 +127,13 @@ export function createWeChatPlugin(config: WeChatConfig, deps: WeChatPluginDeps)
       meta: {
         receivedAt,
         replyTo: message.id,
+        quotedMessage: message.quotedMessage
+          ? {
+              rawMessageId: message.quotedMessage.id,
+              senderId: message.quotedMessage.fromUserId,
+              text: message.quotedMessage.text
+            }
+          : undefined,
         raw: message.raw
       }
     };

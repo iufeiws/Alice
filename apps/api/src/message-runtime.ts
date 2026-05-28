@@ -105,6 +105,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const processingSessions = new Set<string>();
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
+  const llmFailureNotice = "-星界信号丢失-";
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatPaused = false;
   const unsubscribeState = deps.agentState?.onChange(() => scheduleHeartbeat(0));
@@ -113,6 +114,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   return {
     ingestEvent(event) {
       deps.agentState?.noteInboundMessage();
+      const contentText = summarizeEventPayload(event);
       deps.appendMessageLog({
         direction: "inbound",
         plugin: event.source.plugin,
@@ -123,7 +125,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         externalEventId: event.id,
         status: "received",
         rawJson: safeJson(event.meta.raw),
-        summary: summarizePayload(event.payload)
+        summary: contentText
       });
       const receivedAt = event.meta.receivedAt;
       deps.store.upsertInboundMessage({
@@ -133,8 +135,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         senderId: event.source.userId,
         senderRole: "user",
         contentType: event.payload.kind,
-        contentText: summarizePayload(event.payload),
-        contentJson: safeJson(event.payload),
+        contentText,
+        contentJson: safeJson({ ...event.payload, quotedMessage: event.meta.quotedMessage }),
         createdAt: receivedAt,
         lastEventAt: receivedAt,
         coreProcessedAt: event.payload.kind === "text" ? undefined : receivedAt
@@ -179,9 +181,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       }
     },
     recoverPendingSessions() {
-      for (const session of deps.store.listPendingCoreConversations()) {
-        markPending(session.conversationId);
-      }
+      recoverPendingSessionsFromStore();
     },
     pauseHeartbeat() {
       heartbeatPaused = true;
@@ -194,6 +194,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       scheduleHeartbeat(0);
     },
     async processNow() {
+      recoverPendingSessionsFromStore();
       const processed = await runHeartbeat({ force: true });
       if (processed === 0) await runManualSession();
     },
@@ -214,6 +215,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   function markPending(sessionId: string): void {
     pendingSessions.add(sessionId);
     scheduleHeartbeat(0);
+  }
+
+  function recoverPendingSessionsFromStore(): void {
+    for (const session of deps.store.listPendingCoreConversations()) {
+      markPending(session.conversationId);
+    }
   }
 
   function scheduleHeartbeat(delayMs = deps.getHeartbeatIntervalMs?.() ?? 1000): void {
@@ -277,7 +284,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.appendLog("warn", "process now skipped: no default messaging target");
       return;
     }
-    if (processingSessions.has(target.sessionId)) return;
+    if (processingSessions.has(target.sessionId)) {
+      deps.appendLog("warn", `manual process now skipped: session already processing ${target.sessionId}`);
+      return;
+    }
     processingSessions.add(target.sessionId);
     try {
       await setTypingIndicator({ ...target, typing: true });
@@ -321,6 +331,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       }
       deps.appendLog("info", `manual process now session handled: ${outputs.length} output(s)`);
     } catch (error) {
+      await sendSystemNotice({
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId,
+        sessionId: target.sessionId
+      }, llmFailureNotice);
       deps.appendLog("error", `manual process now failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       await setTypingIndicator({ ...target, typing: false });
@@ -356,6 +373,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       try {
         outputs = await deps.core.handleEvent(agentEvent);
       } catch (error) {
+        await sendSystemNotice(typingTargetFromPending(sessionId, pending, agentEvent, false), llmFailureNotice);
         markPendingCoreFailed(pending, error);
         throw error;
       }
@@ -434,6 +452,65 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
   }
 
+  async function sendSystemNotice(target: {
+    plugin: string;
+    accountId?: string;
+    channelId?: string;
+    userId?: string;
+    sessionId: string;
+  }, text: string): Promise<void> {
+    const output: AgentOutput = {
+      id: createId("out"),
+      target,
+      content: { kind: "text", text },
+      meta: {
+        createdAt: time.now().iso,
+        urgency: "normal",
+        allowStreaming: false
+      }
+    };
+    const stored = deps.store.insertOutboundMessage({
+      plugin: output.target.plugin,
+      conversationId: output.target.sessionId,
+      senderRole: "system",
+      contentType: output.content.kind,
+      contentText: summarizeOutput(output.content),
+      contentJson: safeJson(output.content),
+      createdAt: output.meta.createdAt
+    });
+    try {
+      const sendResults = await deps.outputRouter.sendAll([output]);
+      const resultList = Array.isArray(sendResults) ? sendResults : [];
+      const sentAt = time.now().iso;
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(resultList[0]), sentAt);
+      deps.appendMessageLog({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "sent",
+        summary: summarizeOutput(output.content)
+      });
+    } catch (error) {
+      const failedAt = time.now().iso;
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.store.markOutboundMessageFailed(stored.id, failedAt, reason);
+      deps.appendMessageLog({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "send_failed",
+        processedAt: failedAt,
+        processedBatchId: "send_failed",
+        error: reason,
+        summary: summarizeOutput(output.content)
+      });
+    }
+  }
+
   function typingTargetFromPending(sessionId: string, pending: StoredConversationMessage[], event: AgentEvent, typing: boolean) {
     const latest = pending[pending.length - 1];
     return {
@@ -501,7 +578,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       id: createId("evt"),
       source: {
         plugin: latestLog.plugin,
-        channelId: latestLog.conversationId,
+        channelId: channelIdFromRecoveredMessage(latestLog),
+        userId: userIdFromRecoveredMessage(latestLog),
         rawMessageId: latestLog.externalMessageId
       },
       session: {
@@ -548,10 +626,36 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       }
     };
   }
+
+  function channelIdFromRecoveredMessage(message: StoredConversationMessage): string {
+    if (message.plugin === "wechat") return userIdFromWechatConversationId(message.conversationId);
+    return message.conversationId;
+  }
+
+  function userIdFromRecoveredMessage(message: StoredConversationMessage): string | undefined {
+    if (message.plugin === "wechat") return userIdFromWechatConversationId(message.conversationId);
+    return message.senderId;
+  }
+
+  function userIdFromWechatConversationId(conversationId: string): string {
+    return conversationId.startsWith("wechat:dm:") ? conversationId.slice("wechat:dm:".length) : conversationId;
+  }
 }
 
 export function summarizePayload(payload: { kind: string; text?: string; markdown?: string; assetId?: string; url?: string; filename?: string }): string {
   return payload.text ?? payload.markdown ?? payload.assetId ?? payload.url ?? payload.filename ?? payload.kind;
+}
+
+function summarizeEventPayload(event: AgentEvent): string {
+  const content = summarizePayload(event.payload);
+  const quote = event.meta.quotedMessage;
+  if (!quote) return content;
+  const parts = [
+    quote.senderId ? `from ${quote.senderId}` : undefined,
+    quote.rawMessageId ? `#${quote.rawMessageId}` : undefined,
+    quote.text
+  ].filter((part): part is string => Boolean(part));
+  return `-引用:${parts.join(" ")}-\n${content}`;
 }
 
 export function summarizeOutput(content: { kind: string; text?: string; markdown?: string; assetId?: string; filename?: string }): string {

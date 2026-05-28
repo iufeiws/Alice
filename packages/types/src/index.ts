@@ -41,6 +41,11 @@ export type AgentEvent = {
     timezone?: string;
     mentionsBot?: boolean;
     replyTo?: string;
+    quotedMessage?: {
+      rawMessageId?: string;
+      senderId?: string;
+      text?: string;
+    };
     raw?: unknown;
   };
 };

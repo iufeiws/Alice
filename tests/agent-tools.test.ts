@@ -422,6 +422,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
   await core.handleEvent(textEvent());
 
   assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0].id, "call_prompt_history");
   assert.equal(toolCalls[0].toolName, "check_chat");
   assert.deepEqual(toolCalls[0].input, {});
   assert.equal(requests[0].messages[0].role, "assistant");
@@ -1019,6 +1020,160 @@ test("agent core uses first-call and follow-up extra params", async () => {
   ]);
 });
 
+test("agent core retries transient llm failures", async () => {
+  const attempts: string[] = [];
+  const retryLogs: Array<{ attempt?: number; delayMs?: number }> = [];
+  const llm: LLMClient = {
+    async chat() {
+      throw new Error("chat should not be called");
+    },
+    async chatStream() {
+      attempts.push("stream");
+      if (attempts.length < 3) throw new Error("LLM request failed: 503 Service Unavailable service is too busy");
+      return { message: { role: "assistant", content: "ok" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    onLLMLog(event) {
+      if (event.kind === "retry") retryLogs.push({ attempt: event.attempt, delayMs: event.delayMs });
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(attempts.length, 3);
+  assert.deepEqual(retryLogs, [
+    { attempt: 1, delayMs: 1000 },
+    { attempt: 2, delayMs: 1000 }
+  ]);
+});
+
+test("agent core does not retry non-transient llm failures", async () => {
+  let attempts = 0;
+  const llm: LLMClient = {
+    async chat() {
+      attempts += 1;
+      throw new Error("LLM request failed: 400 Bad Request invalid tool_call");
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy()
+  });
+
+  await assert.rejects(() => core.handleEvent(textEvent()), /400 Bad Request/);
+  assert.equal(attempts, 1);
+});
+
+test("agent core keeps an active transcript and appends fake check_chat on the next heartbeat", async () => {
+  const requests: LLMChatInput[] = [];
+  let appendCheckCount = 0;
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: `final ${requests.length}` } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "fake reason", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        appendCheckCount += 1;
+        return { callId: call.id, ok: true, output: appendCheckCount === 1 ? "recent" : "new" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
+  assert.equal(requests[0].messages.at(-2)?.reasoningContent, "fake reason");
+  assert.equal(requests[0].messages.at(-1)?.content, "recent");
+  assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
+  assert.equal(requests[1].messages.at(-1)?.content, "new");
+});
+
+test("agent core clears only when static prompt fingerprint changes", async () => {
+  const requests: LLMChatInput[] = [];
+  const clears: string[] = [];
+  let appendContent = "append one";
+  let staticContent = "static one";
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "ok" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [
+        { id: "static", title: "Static", role: "system", enabled: true, content: staticContent, order: 1 }
+      ],
+      appendLayers: [
+        { id: "append", title: "Append", role: "user", enabled: true, content: appendContent, order: 1 }
+      ]
+    }),
+    onLLMSessionCleared(reason) {
+      clears.push(reason);
+    },
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "history" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  appendContent = "append two";
+  await core.handleEvent(textEvent());
+  staticContent = "static two";
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(clears, ["prompt_static_changed"]);
+  assert.equal(requests[1].messages.some((message) => message.content === "ok"), true);
+  assert.equal(requests[1].messages.some((message) => message.content === "append two"), true);
+  assert.equal(requests[2].messages.some((message) => message.content === "ok"), false);
+});
+
 test("agent core stops after three consecutive identical tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
@@ -1062,7 +1217,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
 
   await core.handleEvent(textEvent());
   assert.equal(requests.length, 3);
-  assert.deepEqual(calls, ["tool_view_1", "tool_view_2", "tool_view_3"]);
+  assert.deepEqual(calls.filter((id) => !id.startsWith("append_append_check_chat_")), ["tool_view_1", "tool_view_2", "tool_view_3"]);
 });
 
 test("agent core falls back after max llm requests when tool calls alternate", async () => {
@@ -1111,8 +1266,8 @@ test("agent core falls back after max llm requests when tool calls alternate", a
   });
 
   await core.handleEvent(textEvent());
-  assert.equal(requests.length, 12);
-  assert.equal(calls.length, 12);
+  assert.equal(requests.length, 10);
+  assert.equal(calls.filter((name, index) => !(index === 0 && name === "check_chat")).length, 10);
 });
 
 test("agent core stops after three consecutive identical send_chat calls", async () => {
@@ -1222,7 +1377,7 @@ test("agent core skips non-send tools when send_chat appears in the same round",
   const calls: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
-      if (input.messages.some((message) => message.role === "tool")) {
+      if (input.messages.some((message) => message.role === "tool" && message.toolCallId === "tool_send")) {
         return { message: { role: "assistant", content: "done" } };
       }
       return {
@@ -1274,7 +1429,7 @@ test("agent core skips non-send tools when send_chat appears in the same round",
   });
 
   await core.handleEvent(textEvent());
-  assert.deepEqual(calls, ["send_chat"]);
+  assert.deepEqual(calls.filter((name, index) => !(index === 0 && name === "check_chat")), ["send_chat"]);
 });
 
 test("agent core does not stream send_chat when non-message type is explicit", async () => {

@@ -22,7 +22,8 @@ export type AdminRoutesContext = {
   llmRequestLogs: unknown[];
   llmResponseLogs: unknown[];
   getActiveLLMSession(): unknown;
-  store: { listMemories(limit: number): unknown[]; listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
+  getClearedLLMSessions(): unknown[];
+  store: { listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(): unknown | Promise<unknown>;
   clearLLMChainCache(): void;
@@ -190,6 +191,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         writeJson(response, 200, {
           requests: context.llmRequestLogs,
           activeSession: context.getActiveLLMSession(),
+          clearedSessions: context.getClearedLLMSessions(),
           profilePreview: await context.getLLMRequestProfilePreview(),
           messagePreview: await context.getLLMRequestPreview(),
           actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
@@ -221,11 +223,6 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin/api/message-event-logs") {
         writeJson(response, 200, { logs: context.store?.listMessageLogs?.(500) ?? context.messageLogs });
-        return;
-      }
-
-      if (request.method === "GET" && request.url === "/admin/api/memories") {
-        writeJson(response, 200, { memories: context.store?.listMemories(200) ?? [] });
         return;
       }
 
@@ -407,20 +404,21 @@ async function savePromptProfile(context: AdminRoutesContext, request: any, resp
 }
 
 function getPromptVariablePreview(context: AdminRoutesContext): Record<string, string> {
-  const contact = context.feishuPairingStore.list()[0];
+  const target = resolvePromptPreviewTarget(context);
   return promptVariables(context.promptProfileStore.get(), {
     time: context.time,
     dailyShell: context.getDailyShell(),
     event: {
       id: "preview",
       source: {
-        plugin: "feishu",
-        channelId: contact?.channelId,
-        userId: contact?.userId
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId
       },
       session: {
         scope: "dm",
-        sessionId: contact?.sessionId ?? contact?.channelId ?? contact?.userId ?? "preview"
+        sessionId: target.sessionId
       },
       type: "message.text",
       payload: { kind: "text", text: "" },
@@ -429,6 +427,32 @@ function getPromptVariablePreview(context: AdminRoutesContext): Record<string, s
       }
     }
   });
+}
+
+function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string } {
+  if (context.config.plugins.wechat.enabled) {
+    const contact = context.wechatStateStore.listContacts()[0];
+    if (contact) {
+      return {
+        plugin: "wechat",
+        accountId: "main",
+        channelId: contact.userId,
+        userId: contact.userId,
+        sessionId: contact.sessionId
+      };
+    }
+  }
+  const contact = context.feishuPairingStore.list()[0];
+  if (contact) {
+    return {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: contact.channelId,
+      userId: contact.channelId ? undefined : contact.userId,
+      sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "preview"
+    };
+  }
+  return { plugin: "wechat", accountId: "main", channelId: "preview", userId: "preview", sessionId: "preview" };
 }
 
 function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: string; description?: string }> {
@@ -830,6 +854,7 @@ async function saveAgentConfig(context: AdminRoutesContext, request: any, respon
   const body = await readJsonBody(request);
   const inboundDebounceMs = numberFromUnknown(body.inboundDebounceMs, context.config.core.inboundDebounceMs);
   const timezone = requiredString(body.timezone) || context.config.core.timezone;
+  const defaultTargetPlugin = normalizeDefaultTargetPlugin(body.defaultTargetPlugin, context.config.core.defaultTargetPlugin);
   if (inboundDebounceMs < 0 || inboundDebounceMs > 10_000) {
     writeJson(response, 400, { ok: false, error: "invalid_inbound_debounce_ms" });
     return;
@@ -840,13 +865,19 @@ async function saveAgentConfig(context: AdminRoutesContext, request: any, respon
   }
   updateEnvFile(".env", {
     AGENT_INBOUND_DEBOUNCE_MS: String(inboundDebounceMs),
-    AGENT_TIMEZONE: timezone
+    AGENT_TIMEZONE: timezone,
+    AGENT_DEFAULT_TARGET_PLUGIN: defaultTargetPlugin
   });
   context.config.core.inboundDebounceMs = inboundDebounceMs;
   context.config.core.timezone = timezone;
+  context.config.core.defaultTargetPlugin = defaultTargetPlugin;
   context.setTimeZone(timezone);
-  context.appendLog("info", `agent config saved: inboundDebounceMs=${inboundDebounceMs} timezone=${timezone}`);
+  context.appendLog("info", `agent config saved: inboundDebounceMs=${inboundDebounceMs} timezone=${timezone} defaultTargetPlugin=${defaultTargetPlugin}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
+}
+
+function normalizeDefaultTargetPlugin(value: unknown, fallback: "auto" | "wechat" | "feishu"): "auto" | "wechat" | "feishu" {
+  return value === "auto" || value === "wechat" || value === "feishu" ? value : fallback;
 }
 
 async function saveAgentState(context: AdminRoutesContext, request: any, response: any): Promise<void> {

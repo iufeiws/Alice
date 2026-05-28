@@ -162,7 +162,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       const finalFilePath = path.resolve(fullOutputDir, fileName);
       const assetId = path.join(relativeDir, fileName);
 
-      await sendText(target, "(少女拍照中...)");
+      await sendText(target, "-少女拍照中-", "system");
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -250,7 +250,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     return [characterImage, outfitImage, libraryImage];
   }
 
-  async function sendText(target: MediaToolTarget, text: string): Promise<unknown> {
+  async function sendText(target: MediaToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
     return sendOutput({
       id: createId("tool_out"),
       target: {
@@ -266,7 +266,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
         urgency: "normal",
         allowStreaming: false
       }
-    });
+    }, senderRole);
   }
 
   async function sendImage(target: MediaToolTarget, assetId: string): Promise<unknown> {
@@ -290,14 +290,14 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
 
   async function sendSelfieFailureNotice(target: MediaToolTarget): Promise<void> {
     try {
-      await sendText(target, "(大失败...)");
+      await sendText(target, "-大失败-", "system");
     } catch (error) {
       deps.appendLog?.("warn", `selfie failure notice failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async function sendOutput(output: AgentOutput): Promise<unknown> {
-    const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
+  async function sendOutput(output: AgentOutput, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
+    const stored = deps.store.insertOutboundMessage(toStoredOutbound(output, senderRole));
     try {
       const sent = await deps.outputRouter.send(output);
       deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().iso);
@@ -668,11 +668,11 @@ function unwrapFeishuInternalId(value: string | undefined): { id: string; prefix
   return match ? { id: match[1], prefixed: true } : { id: value, prefixed: false };
 }
 
-function toStoredOutbound(output: AgentOutput): InsertOutboundMessageInput {
+function toStoredOutbound(output: AgentOutput, senderRole: "assistant" | "system" = "assistant"): InsertOutboundMessageInput {
   return {
     plugin: output.target.plugin,
     conversationId: output.target.sessionId,
-    senderRole: "assistant",
+    senderRole,
     contentType: output.content.kind,
     contentText: summarizeOutput(output),
     contentJson: JSON.stringify(output.content),

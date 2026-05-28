@@ -7,10 +7,12 @@ import type { SessionResolver } from "../../session/src/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
-import { buildPromptMessagesWithToolResults, defaultPromptProfile, type PromptLayer, type PromptProfile } from "./prompts.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptLayer, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
 
 const sendChatToolName = "send_chat";
+const maxLLMRequestsPerMinute = 10;
+const maxLLMRetryAttempts = 3;
 
 export type AgentCoreDeps = {
   config: AppConfig;
@@ -19,10 +21,6 @@ export type AgentCoreDeps = {
   sessionResolver: SessionResolver;
   policy: PolicyEngine;
   outputRouter: OutputRouter;
-  memory?: {
-    recall(event: AgentEvent): Promise<string[]>;
-    capture(event: AgentEvent, outputs: AgentOutput[]): Promise<void>;
-  };
   tools?: ToolPlugin[];
   getPromptProfile?: () => PromptProfile;
   getDailyShell?: () => string;
@@ -30,8 +28,13 @@ export type AgentCoreDeps = {
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
   onLLMResponseReceived?(result: LLMChatResult): void;
-  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received"; round: number; stream: boolean; model?: string }): void;
+  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
+  onLLMHeartbeatStarted?(): void;
+  onLLMSessionUpdated?(session: { messages: LLMChatInput["messages"]; staticPromptFingerprint: string; requestTimestamps: string[] }): void;
+  onLLMSessionCleared?(reason: "prompt_static_changed" | "admin_clear" | "shutdown"): void;
   onLLMSessionCompleted?(result: { sentMessage: boolean }): void;
+  initialLLMSession?: { messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] };
+  loadLLMSession?(): { messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] } | undefined;
 };
 
 export interface AgentCore {
@@ -40,12 +43,27 @@ export interface AgentCore {
   handleEvent(event: AgentEvent): Promise<AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
+  clearLLMSession(reason: "admin_clear" | "shutdown"): void;
 }
 
 export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const channels: ChannelPlugin[] = [];
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   let lastCompletedToolName: string | undefined;
+  let nextAppendToolCallId = 1;
+  let activeLLMSession: {
+    messages: LLMChatInput["messages"];
+    staticPromptFingerprint: string;
+    requestTimestamps: number[];
+  } | undefined = deps.initialLLMSession?.staticPromptFingerprint
+    ? {
+        messages: deps.initialLLMSession.messages,
+        staticPromptFingerprint: deps.initialLLMSession.staticPromptFingerprint,
+        requestTimestamps: (deps.initialLLMSession.requestTimestamps ?? [])
+          .map((timestamp) => Date.parse(timestamp))
+          .filter((timestamp) => Number.isFinite(timestamp))
+      }
+    : undefined;
 
   return {
     async start() {
@@ -62,6 +80,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     registerChannel(plugin) {
       channels.push(plugin);
       deps.outputRouter.register(plugin);
+    },
+    clearLLMSession(reason) {
+      if (!activeLLMSession) return;
+      activeLLMSession = undefined;
+      deps.onLLMSessionCleared?.(reason);
     },
     async handleEvent(event) {
       const decision = await deps.policy.check(event);
@@ -98,34 +121,79 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
         const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
         const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
-        const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, {
+        if (deps.loadLLMSession) {
+          const persistedSession = deps.loadLLMSession();
+          activeLLMSession = persistedSession?.staticPromptFingerprint
+            ? {
+                messages: persistedSession.messages,
+                staticPromptFingerprint: persistedSession.staticPromptFingerprint,
+                requestTimestamps: (persistedSession.requestTimestamps ?? [])
+                  .map((timestamp) => Date.parse(timestamp))
+                  .filter((timestamp) => Number.isFinite(timestamp))
+              }
+            : undefined;
+        }
+        const promptContext = {
           event,
           time,
           dailyShell: deps.getDailyShell?.()
-        }, (layer, call) => {
-          return runPromptToolRequest(layer, call, toolPlugins);
-        });
-        if (promptMessages.length === 0) {
+        };
+        const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
+        if (activeLLMSession && activeLLMSession.staticPromptFingerprint !== fingerprint) {
+          deps.onLLMSessionCleared?.("prompt_static_changed");
+          activeLLMSession = undefined;
+        }
+        if (!activeLLMSession) {
+          const promptMessages = await buildPromptMessagesWithToolResults(promptProfile, promptContext, (layer, call) => {
+            return runPromptToolRequest(layer, call, toolPlugins);
+          });
+          activeLLMSession = {
+            messages: promptMessages,
+            staticPromptFingerprint: fingerprint,
+            requestTimestamps: []
+          };
+          noteLLMSessionUpdated();
+        }
+        if (activeLLMSession.messages.length === 0) {
           return [];
         }
-        const llmInput = {
-          messages: [
-            ...promptMessages
-          ],
-          model: deps.config.llm.model,
-          temperature: deps.config.llm.temperature,
-          tools: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
-            type: "function" as const,
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.inputSchema
-            }
-          })))
-        } satisfies LLMChatInput;
+        deps.onLLMHeartbeatStarted?.();
         let sentMessage = false;
         try {
-          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins);
+          const appendProfile = {
+            ...promptProfile,
+            appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
+              layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
+            )).map((layer) => (
+              layer.role === "tool_request" && !layer.toolCallId
+                ? { ...layer, toolCallId: `append_${layer.id}_${nextAppendToolCallId++}` }
+                : layer
+            ))
+          };
+          const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
+            return runPromptToolRequest(layer, call, toolPlugins);
+          });
+          if (appendMessages.length > 0) {
+            activeLLMSession.messages = [
+              ...activeLLMSession.messages,
+              ...appendMessages
+            ];
+            noteLLMSessionUpdated();
+          }
+          const llmInput = {
+            messages: activeLLMSession.messages,
+            model: deps.config.llm.model,
+            temperature: deps.config.llm.temperature,
+            tools: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
+              type: "function" as const,
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.inputSchema
+              }
+            })))
+          } satisfies LLMChatInput;
+          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession);
           sentMessage = llmResult.sentMessage;
         } finally {
           deps.onLLMSessionCompleted?.({ sentMessage });
@@ -141,7 +209,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   async function runLLMTurnWithTools(
     input: LLMChatInput,
     event: AgentEvent,
-    toolPlugins: ToolPlugin[]
+    toolPlugins: ToolPlugin[],
+    session: NonNullable<typeof activeLLMSession>
   ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean }> {
     const toolMap = new Map<string, ToolPlugin>();
     for (const plugin of toolPlugins) {
@@ -158,7 +227,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
     }
 
-    let nextInput = input;
     let sentMessage = false;
     let previousToolCallSignature: string | undefined;
     let repeatedToolCallCount = 0;
@@ -168,34 +236,37 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     const maxLLMRequests = 12;
     const maxTotalToolCalls = 20;
     while (true) {
+      const requestTime = time.now().epochMs;
+      session.requestTimestamps = session.requestTimestamps.filter((timestamp) => requestTime - timestamp < 60_000);
+      if (session.requestTimestamps.length >= maxLLMRequestsPerMinute) {
+        deps.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.model });
+        noteLLMSessionUpdated();
+        return { message: session.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage };
+      }
       const requestInput = {
-        ...nextInput,
+        ...input,
+        messages: session.messages,
         extraParams: round === 0 ? deps.config.llm.extraParams : deps.config.llm.followupExtraParams
       };
       deps.onLLMRequestPrepared?.(requestInput);
-      const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
-      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: requestInput.model });
-      const streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
-      let result: LLMChatResult;
-      if (useStream && deps.llm.chatStream) {
-        deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: requestInput.model });
-        try {
-          result = await deps.llm.chatStream(requestInput, {
-            onToolCallDelta(delta) {
-              return streamingToolSender.onToolCallDelta(delta);
-            }
-          });
-        } finally {
-          deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: requestInput.model });
-        }
-      } else {
-        result = await deps.llm.chat(requestInput);
-        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: requestInput.model });
-      }
+      session.requestTimestamps.push(requestTime);
+      noteLLMSessionUpdated();
+      const { result, streamingToolSender } = await callLLMWithRetry(requestInput, event, toolMap, round);
       await streamingToolSender.finish();
       deps.onLLMResponseReceived?.(result);
       const calls = result.message.toolCalls ?? [];
-      if (calls.length === 0) return { message: result.message, sentMessage };
+      if (calls.length === 0) {
+        session.messages = [
+          ...session.messages,
+          {
+            role: "assistant",
+            content: result.message.content,
+            reasoningContent: result.message.reasoningContent
+          }
+        ];
+        noteLLMSessionUpdated();
+        return { message: result.message, sentMessage };
+      }
 
       const effectiveCalls = calls.some((call) => isSendChatToolName(call.function.name))
         ? calls.filter((call) => isSendChatToolName(call.function.name))
@@ -273,13 +344,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }));
 
       if (reachedToolCallLimit || round + 1 >= maxLLMRequests) {
-        return { message: result.message, sentMessage };
-      }
-
-      nextInput = {
-        ...nextInput,
-        messages: [
-          ...nextInput.messages,
+        session.messages = [
+          ...session.messages,
           {
             role: "assistant",
             content: result.message.content,
@@ -287,10 +353,71 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             toolCalls: effectiveCalls
           },
           ...toolMessages
-        ]
-      };
+        ];
+        noteLLMSessionUpdated();
+        return { message: result.message, sentMessage };
+      }
+
+      session.messages = [
+        ...session.messages,
+        {
+          role: "assistant",
+          content: result.message.content,
+          reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, effectiveCalls.length),
+          toolCalls: effectiveCalls
+        },
+        ...toolMessages
+      ];
+      noteLLMSessionUpdated();
       round += 1;
     }
+  }
+
+  async function callLLMWithRetry(
+    requestInput: LLMChatInput,
+    event: AgentEvent,
+    toolMap: Map<string, ToolPlugin>,
+    round: number
+  ): Promise<{ result: LLMChatResult; streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> }> {
+    const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
+      const streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
+      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: requestInput.model, attempt });
+      try {
+        if (useStream && deps.llm.chatStream) {
+          deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: requestInput.model, attempt });
+          try {
+            const result = await deps.llm.chatStream(requestInput, {
+              onToolCallDelta(delta) {
+                return streamingToolSender.onToolCallDelta(delta);
+              }
+            });
+            return { result, streamingToolSender };
+          } finally {
+            deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: requestInput.model, attempt });
+          }
+        }
+        const result = await deps.llm.chat(requestInput);
+        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: requestInput.model, attempt });
+        return { result, streamingToolSender };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
+        const delayMs = llmRetryDelayMs(attempt);
+        deps.onLLMLog?.({
+          kind: "retry",
+          round,
+          stream: useStream,
+          model: requestInput.model,
+          attempt,
+          error: error instanceof Error ? error.message : String(error),
+          delayMs
+        });
+        await sleep(delayMs);
+      }
+    }
+    throw lastError;
   }
 
   function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
@@ -379,6 +506,15 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       };
     }
   }
+
+  function noteLLMSessionUpdated(): void {
+    if (!activeLLMSession) return;
+    deps.onLLMSessionUpdated?.({
+      messages: activeLLMSession.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
+      staticPromptFingerprint: activeLLMSession.staticPromptFingerprint,
+      requestTimestamps: activeLLMSession.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString())
+    });
+  }
 }
 
 function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
@@ -433,6 +569,20 @@ function formatToolResultForLLM(result: ToolResult): string {
   } catch {
     return String(result.output);
   }
+}
+
+function isRetryableLLMError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|500|502|503|504)\b/.test(message)
+    || /service[_ ]unavailable|too busy|temporarily|timeout|timed out|fetch failed|ECONNRESET|ETIMEDOUT/i.test(message);
+}
+
+function llmRetryDelayMs(attempt: number): number {
+  return 1_000;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function sendStreamingLine(

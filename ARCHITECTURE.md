@@ -1,6 +1,6 @@
 # Alice Architecture
 
-Alice is a local-first personal companion agent runtime. The current implementation is a single Node.js/TypeScript process that combines the API host, admin UI, AgentCore runtime, Feishu channel plugin, LLM adapter, message persistence, memory recall, and scheduler.
+Alice is a local-first personal companion agent runtime. The current implementation is a single Node.js/TypeScript process that combines the API host, admin UI, AgentCore runtime, Feishu channel plugin, WeChat iLink plugin, LLM adapter, message persistence, and scheduler.
 
 The older `agent_core_plugin_architecture.md` describes the broader target architecture. This document describes what the current code actually implements.
 
@@ -17,7 +17,7 @@ AgentCore
   LLM call
   Tool-call execution
   Editable prompt profile rendering
-  memory recall/capture hooks
+  append prompt layer rendering
     |
     | sends AgentOutput through
     v
@@ -47,10 +47,8 @@ Feishu WS event
   -> message event log append
   -> MessageRuntime dirty conversation debounce
   -> AgentCore.handleEvent() with context from messages
-  -> memory recall from SQLite
   -> OpenAI-compatible /v1/chat/completions call
   -> optional platform-neutral messaging tool calls
-  -> memory capture into SQLite
   -> AgentOutput inserted as messages.status=sending
   -> OutputRouter
   -> Feishu send API
@@ -82,10 +80,19 @@ Admin UI
   Runtime config and secrets. Not committed.
 
 data/alice.sqlite
-  Message logs and memory records. Not committed.
+  Legacy root SQLite path. Not committed.
 
 logs/system/YYYY-MM-DD.log.jsonl
   Debug/system logs. Not committed. Retained for seven days.
+
+logs/message/message-logs.sqlite
+  Append-only message event/debug log. Not committed.
+
+memory-files/message/messages.sqlite
+  Core-facing conversation history and message FTS index. Not committed.
+
+memory-files/llm-sessions/*.sessions.jsonl
+  Delta event archive for active and cleared LLM sessions. Not committed.
 
 memory-files/indexes/feishu-paired-contacts.json
   Unique Feishu binding for the one allowed user/contact.
@@ -109,25 +116,21 @@ The shared internal protocol lives in `packages/types`.
 
 AgentCore only consumes `AgentEvent` and emits `AgentOutput`; platform-specific details stay in plugins.
 
-## Persistence And Memory
+## Persistence
 
 Alice follows the same broad split used by local-first agent systems such as OpenClaw and Harness-style agents:
 
 - Message/session history is stored as structured local state.
 - System logs are local debug artifacts with retention.
-- Memory is indexed separately and recalled before an agent turn.
+- Long-term historical memory is not implemented yet.
 
 Current implementation:
 
 - SQLite table `message_logs` persists user-visible message events.
 - SQLite table `messages` stores user-facing conversation history and is indexed by `messages_fts` for persisted message search tools.
-- SQLite table `tool_cursors` stores per-conversation cursors for `view_messages(scope="new")`.
-- SQLite table `memories` stores lightweight episodic memories.
-- SQLite FTS5 table `memories_fts` supports keyword recall.
-- `AgentCoreDeps.memory.recall()` injects relevant memory as an additional system message.
-- `AgentCoreDeps.memory.capture()` stores user and assistant text after each turn.
+- JSONL session archives persist active and recently cleared LLM transcript deltas for continuity and admin inspection.
 
-This is intentionally simple. There is no quality gate, summarizer, embedding model, vector search, or memory editing UI yet.
+There is no quality gate, summarizer, embedding model, vector memory, or memory editing UI yet.
 
 ## Scheduler
 

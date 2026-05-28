@@ -10,6 +10,7 @@ const path = await import("node:path");
 test("message runtime sends one LLM request for pending inbound logs and marks them processed", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
+  const typingEvents: Array<{ plugin: string; sessionId: string; typing: boolean }> = [];
   const outputs: AgentOutput[] = [textOutput("session-1", "ok")];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
@@ -22,6 +23,9 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
     },
     outputRouter: {
       async sendAll() {}
+    },
+    async setTypingIndicator(input) {
+      typingEvents.push({ plugin: input.plugin, sessionId: input.sessionId, typing: input.typing });
     },
     appendLog() {},
     appendMessageLog(input) {
@@ -36,11 +40,15 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
   assert.equal(coreInputs[0].payload.kind, "text");
   assert.ok(coreInputs[0].payload.kind === "text");
   if (coreInputs[0].payload.kind === "text") {
-    assert.equal(coreInputs[0].payload.text, "A Feishu message event was received. Use messaging tools to inspect conversation history before replying.");
+    assert.equal(coreInputs[0].payload.text, "A chat message event was received. Use messaging tools to inspect conversation history before replying.");
     assert.doesNotMatch(coreInputs[0].payload.text, /hello|world/);
   }
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   assert.equal(store.listMessagesForConversation("session-1", 10).filter((entry) => entry.direction === "outbound").length, 1);
+  assert.deepEqual(typingEvents, [
+    { plugin: "feishu", sessionId: "session-1", typing: true },
+    { plugin: "feishu", sessionId: "session-1", typing: false }
+  ]);
 });
 
 test("message runtime uses agent state delay and records inbound activity", async () => {

@@ -224,6 +224,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
         codexResult?.events ? `generator events: ${excerpt(codexResult.events, 1500)}` : ""
       ].filter(Boolean).join("\n");
       deps.appendLog?.("warn", `selfie generation failed: ${reason}${tempDir ? ` files=${listDirForLog(tempDir)}` : ""}`);
+      await sendSelfieFailureNotice(target);
       return toolError(call, reason);
     } finally {
       if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -287,6 +288,14 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     });
   }
 
+  async function sendSelfieFailureNotice(target: MediaToolTarget): Promise<void> {
+    try {
+      await sendText(target, "(大失败...)");
+    } catch (error) {
+      deps.appendLog?.("warn", `selfie failure notice failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async function sendOutput(output: AgentOutput): Promise<unknown> {
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
     try {
@@ -336,7 +345,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
 
 const selfieTool: ToolDefinition = {
   name: "selfie",
-  description: "自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前飞书聊天；默认 aspectRatio 为 3:4。调用后不要再用 send_feishu 发送同一张图。",
+  description: "自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前聊天；默认 aspectRatio 为 3:4。调用后不要再用 send_chat 发送同一张图。",
   inputSchema: {
     type: "object",
     properties: {

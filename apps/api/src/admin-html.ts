@@ -19,9 +19,12 @@ export function renderAdminHtmlV2(): string {
       .main-tabs { padding: 0 0 14px; }
       .tab { border: 1px solid #c8d0da; background: #fff; color: #17202a; border-radius: 6px; padding: 8px 10px; font-weight: 700; cursor: pointer; }
       .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+      .subtabs { display: flex; gap: 8px; margin: 0 0 14px; }
       .panel-body { padding: 14px 16px 20px; }
       .pane { display: none; }
       .pane.active { display: block; }
+      .qr-box { width: 220px; min-height: 220px; border: 1px solid #d7dce3; border-radius: 8px; display: grid; place-items: center; background: #f8fafc; margin-top: 10px; overflow: hidden; }
+      .qr-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
       section { background: #fff; border: 1px solid #d7dce3; border-radius: 8px; padding: 16px; }
       h2 { font-size: 15px; margin: 0 0 14px; }
       label { display: block; font-size: 12px; font-weight: 700; margin: 12px 0 6px; }
@@ -72,7 +75,7 @@ export function renderAdminHtmlV2(): string {
         </div>
         <div class="tabbar">
           <button class="tab active" data-left-tab="llm" type="button">LLM Settings</button>
-          <button class="tab" data-left-tab="feishu" type="button">Feishu Settings</button>
+          <button class="tab" data-left-tab="feishu" type="button">Channel Settings</button>
           <button class="tab" data-left-tab="agent" type="button">Agent Settings</button>
         </div>
         <div class="panel-body">
@@ -102,22 +105,27 @@ export function renderAdminHtmlV2(): string {
             <pre id="config">Loading...</pre>
           </div>
           <div id="left-feishu" class="pane">
-            <h2>Feishu</h2>
-            <form id="feishu-form">
-              <label><input id="feishuEnabled" name="enabled" type="checkbox" /> Enabled</label>
-              <label for="feishuConnectionMode">Connection Mode</label>
-              <input id="feishuConnectionMode" name="connectionMode" autocomplete="off" />
-              <label for="feishuAppId">App ID</label>
-              <input id="feishuAppId" name="appId" autocomplete="off" />
-              <label for="feishuAppSecret">App Secret</label>
-              <input id="feishuAppSecret" name="appSecret" type="password" placeholder="Leave blank to keep unchanged" autocomplete="new-password" />
-              <label><input id="feishuRequireMention" name="requireMention" type="checkbox" /> Require mention in groups</label>
-              <button type="submit">Save</button>
-              <button type="button" id="feishu-start">Start</button>
-              <button type="button" id="feishu-stop" class="secondary">Stop</button>
-              <p class="muted" id="feishu-status"></p>
-            </form>
-            <h2>Send Test</h2>
+            <div class="subtabs">
+              <button class="tab active" data-channel-tab="feishu" type="button">Feishu</button>
+              <button class="tab" data-channel-tab="wechat" type="button">WeChat</button>
+            </div>
+            <div id="channel-feishu" class="pane active">
+              <h2>Feishu</h2>
+              <form id="feishu-form">
+                <label><input id="feishuEnabled" name="enabled" type="checkbox" /> Enabled</label>
+                <label for="feishuConnectionMode">Connection Mode</label>
+                <input id="feishuConnectionMode" name="connectionMode" autocomplete="off" />
+                <label for="feishuAppId">App ID</label>
+                <input id="feishuAppId" name="appId" autocomplete="off" />
+                <label for="feishuAppSecret">App Secret</label>
+                <input id="feishuAppSecret" name="appSecret" type="password" placeholder="Leave blank to keep unchanged" autocomplete="new-password" />
+                <label><input id="feishuRequireMention" name="requireMention" type="checkbox" /> Require mention in groups</label>
+                <button type="submit">Save</button>
+                <button type="button" id="feishu-start">Start</button>
+                <button type="button" id="feishu-stop" class="secondary">Stop</button>
+                <p class="muted" id="feishu-status"></p>
+              </form>
+              <h2>Send Test</h2>
             <label for="testMarkdown">Markdown</label>
             <textarea id="testMarkdown" rows="5">**Alice markdown test**
 
@@ -125,14 +133,33 @@ export function renderAdminHtmlV2(): string {
 - item two
 
 \`code\`</textarea>
-            <button type="button" id="send-test-markdown">Send Markdown</button>
-            <label for="testImagePath">Image Local Path</label>
-            <input id="testImagePath" autocomplete="off" value="/home/wyf98/Alice/assets/test.png" />
-            <button type="button" id="send-test-image">Send Image</button>
-            <label for="testAudioPath">Audio Local Path</label>
-            <input id="testAudioPath" autocomplete="off" value="/home/wyf98/Alice/assets/test.opus" />
-            <button type="button" id="send-test-audio">Send Audio</button>
-            <p class="muted" id="send-test-status"></p>
+              <button type="button" id="send-test-markdown">Send Markdown</button>
+              <label for="testImagePath">Image Local Path</label>
+              <input id="testImagePath" autocomplete="off" value="/home/wyf98/Alice/assets/test.png" />
+              <button type="button" id="send-test-image">Send Image</button>
+              <label for="testAudioPath">Audio Local Path</label>
+              <input id="testAudioPath" autocomplete="off" value="/home/wyf98/Alice/assets/test.opus" />
+              <button type="button" id="send-test-audio">Send Audio</button>
+              <p class="muted" id="send-test-status"></p>
+            </div>
+            <div id="channel-wechat" class="pane">
+              <h2>WeChat</h2>
+              <form id="wechat-form">
+                <label><input id="wechatEnabled" name="enabled" type="checkbox" /> Enabled</label>
+                <label for="wechatBaseURL">iLink Base URL</label>
+                <input id="wechatBaseURL" name="baseURL" autocomplete="off" />
+                <label for="wechatPollTimeoutMs">Poll Timeout Ms</label>
+                <input id="wechatPollTimeoutMs" name="pollTimeoutMs" inputmode="numeric" />
+                <button type="submit">Save</button>
+                <button type="button" id="wechat-login">Get Login QR</button>
+                <button type="button" id="wechat-start">Start</button>
+                <button type="button" id="wechat-stop" class="secondary">Stop</button>
+                <p class="muted" id="wechat-status"></p>
+              </form>
+              <div id="wechat-qr" class="qr-box"><span class="muted">No QR code</span></div>
+              <p class="muted" id="wechat-login-status"></p>
+              <pre id="wechat-contacts">[]</pre>
+            </div>
             <h2>Messaging Tools</h2>
             <button type="button" id="tool-view">View Messages</button>
             <label for="toolSearchContent">Search Content</label>
@@ -221,6 +248,11 @@ export function renderAdminHtmlV2(): string {
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
+      document.querySelectorAll("[data-channel-tab]").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll("[data-channel-tab]").forEach((tab) => tab.classList.toggle("active", tab === button));
+        document.querySelectorAll("#channel-feishu,#channel-wechat").forEach((pane) => pane.classList.remove("active"));
+        $("channel-" + button.dataset.channelTab).classList.add("active");
+      }));
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
@@ -247,6 +279,15 @@ export function renderAdminHtmlV2(): string {
         $("feishuAppId").value = config.plugins.feishu.appId || "";
         $("feishuRequireMention").checked = Boolean(config.plugins.feishu.requireMention);
         $("feishu-status").textContent = config.plugins.feishu.runtimeStarted ? "Feishu runtime started." : "Feishu runtime stopped.";
+        $("wechatEnabled").checked = Boolean(config.plugins.wechat && config.plugins.wechat.enabled);
+        $("wechatBaseURL").value = (config.plugins.wechat && config.plugins.wechat.baseURL) || "https://ilinkai.weixin.qq.com";
+        $("wechatPollTimeoutMs").value = String((config.plugins.wechat && config.plugins.wechat.pollTimeoutMs) || 35000);
+        $("wechat-status").textContent = config.plugins.wechat && config.plugins.wechat.runtimeStarted
+          ? "WeChat runtime started."
+          : config.plugins.wechat && config.plugins.wechat.loggedIn
+            ? "WeChat logged in, runtime stopped."
+            : "WeChat not logged in.";
+        $("wechat-contacts").textContent = JSON.stringify((config.plugins.wechat && config.plugins.wechat.contacts) || [], null, 2);
 
         await refreshPromptProfile();
         await refreshShellEditor();
@@ -384,7 +425,7 @@ export function renderAdminHtmlV2(): string {
           <h2>Visible Tools</h2>
           <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
           <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
-          <p class="muted">check_feishu · send_feishu · selfie</p>
+          <p class="muted">check_chat · send_chat · selfie</p>
           <h2>Layers</h2>
           <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length)).join("")}</div>
           <button type="button" id="prompt-add">Add Layer</button>
@@ -454,7 +495,7 @@ export function renderAdminHtmlV2(): string {
 
       function renderToolOptions(selected) {
         const names = promptTools.map((tool) => tool.name);
-        const current = selected || names[0] || "check_feishu";
+        const current = selected || names[0] || "check_chat";
         const allNames = names.includes(current) ? names : [current, ...names];
         return allNames.map((name) => \`<option value="\${escapeAttr(name)}" \${current === name ? "selected" : ""}>\${escapeHtml(name)}</option>\`).join("");
       }
@@ -958,6 +999,15 @@ export function renderAdminHtmlV2(): string {
         await refresh();
       });
 
+      $("wechat-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        const body = { enabled: $("wechatEnabled").checked, baseURL: form.get("baseURL"), pollTimeoutMs: form.get("pollTimeoutMs") };
+        const result = await fetch("/admin/api/config/wechat", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
+        $("wechat-status").textContent = result.ok ? "WeChat config saved." : "Failed to save WeChat config.";
+        await refresh();
+      });
+
       $("agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
@@ -999,12 +1049,56 @@ export function renderAdminHtmlV2(): string {
 
       $("feishu-start").addEventListener("click", async () => { const r = await fetch("/admin/api/plugins/feishu/start", { method: "POST" }).then((res) => res.json()); $("feishu-status").textContent = r.ok ? "Feishu runtime started." : "Cannot start Feishu: " + (r.error || "unknown error"); await refresh(); });
       $("feishu-stop").addEventListener("click", async () => { const r = await fetch("/admin/api/plugins/feishu/stop", { method: "POST" }).then((res) => res.json()); $("feishu-status").textContent = r.ok ? "Feishu runtime stopped." : "Cannot stop Feishu."; await refresh(); });
+      let wechatLoginTimer;
+      $("wechat-login").addEventListener("click", async () => {
+        clearInterval(wechatLoginTimer);
+        $("wechat-login-status").textContent = "Requesting QR code...";
+        const r = await fetch("/admin/api/plugins/wechat/login/qrcode", { method: "POST" }).then((res) => res.json());
+        if (!r.ok) {
+          $("wechat-login-status").textContent = "Cannot get QR: " + (r.error || "unknown error");
+          return;
+        }
+        if (r.qrcodeSvg) {
+          $("wechat-qr").innerHTML = r.qrcodeSvg;
+        } else if (r.qrcodeBase64) {
+          const src = r.qrcodeBase64.startsWith("data:") ? r.qrcodeBase64 : "data:image/png;base64," + r.qrcodeBase64;
+          $("wechat-qr").innerHTML = \`<img alt="WeChat login QR" src="\${escapeAttr(src)}" />\`;
+        } else if (r.qrcodeUrl) {
+          $("wechat-qr").innerHTML = \`<img alt="WeChat login QR" src="\${escapeAttr(r.qrcodeUrl)}" />\`;
+        } else if (r.qrcodeContent) {
+          $("wechat-qr").innerHTML = \`<pre>\${escapeHtml(r.qrcodeContent)}</pre>\`;
+        } else {
+          $("wechat-qr").innerHTML = \`<pre>\${escapeHtml(r.qrcode)}</pre>\`;
+        }
+        $("wechat-login-status").textContent = "Scan QR in WeChat, then confirm login on phone.";
+        wechatLoginTimer = setInterval(async () => {
+          const status = await fetch("/admin/api/plugins/wechat/login/status?qrcode=" + encodeURIComponent(r.qrcode)).then((res) => res.json());
+          if (!status.ok) {
+            $("wechat-login-status").textContent = "Login poll failed: " + (status.error || "unknown error");
+            return;
+          }
+          $("wechat-login-status").textContent = "Login status: " + status.status;
+          if (status.status === "confirmed" || status.status === "expired") {
+            clearInterval(wechatLoginTimer);
+            if (status.status === "confirmed") {
+              $("wechat-status").textContent = "WeChat logged in and started.";
+              await refresh();
+            }
+          }
+        }, 2000);
+      });
+      $("wechat-start").addEventListener("click", async () => { const r = await fetch("/admin/api/plugins/wechat/start", { method: "POST" }).then((res) => res.json()); $("wechat-status").textContent = r.ok ? "WeChat runtime started." : "Cannot start WeChat: " + (r.error || "unknown error"); await refresh(); });
+      $("wechat-stop").addEventListener("click", async () => { const r = await fetch("/admin/api/plugins/wechat/stop", { method: "POST" }).then((res) => res.json()); $("wechat-status").textContent = r.ok ? "WeChat runtime stopped." : "Cannot stop WeChat."; await refresh(); });
       $("send-test-markdown").addEventListener("click", async () => sendTest("test-markdown", { markdown: $("testMarkdown").value }, "Markdown"));
       $("send-test-image").addEventListener("click", async () => sendTest("test-image", { assetId: $("testImagePath").value }, "Image"));
       $("send-test-audio").addEventListener("click", async () => sendTest("test-audio", { assetId: $("testAudioPath").value }, "Audio"));
-      $("tool-view").addEventListener("click", async () => runMessagingTool("view", {}));
-      $("tool-search").addEventListener("click", async () => runMessagingTool("search", { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
-      $("tool-send").addEventListener("click", async () => runMessagingTool("send", { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));
+      $("tool-view").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("view"), {}));
+      $("tool-search").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("search"), { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
+      $("tool-send").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("send"), { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));
+      function activeMessagingToolPath(action) {
+        const active = document.querySelector("[data-channel-tab].active")?.dataset.channelTab;
+        return active === "wechat" ? "wechat-" + action : action;
+      }
       async function sendTest(path, body, label) {
         const result = await fetch("/admin/api/plugins/feishu/" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("send-test-status").textContent = result.ok ? label + " test sent." : label + " test failed: " + (result.error || "unknown error");

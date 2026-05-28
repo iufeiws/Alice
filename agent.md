@@ -8,6 +8,7 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 
 - Prefer small, focused changes.
 - Do not introduce new dependencies without justification.
+- When mature, maintained dependencies exist for well-scoped standard problems, use them instead of building custom implementations.
 - All API behavior changes require tests.
 - For backend changes, check authorization and data validation.
 - For database migrations, check backward compatibility and rollback safety.
@@ -19,6 +20,10 @@ Alice is a local-first personal agent runtime. The current scope is an agent cor
 - `npm run typecheck`: run TypeScript without emit.
 - `npm run dev:api`: build and start the single API/admin process.
 - `npm test`: run Node test files.
+
+## GitHub
+
+- Use SSH remotes by default for GitHub operations, for example `git@github.com:iufeiws/Alice.git`.
 
 ## Runtime State
 

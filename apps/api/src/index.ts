@@ -10,6 +10,7 @@ import { createIntentRouter } from "../../../core/router/src/index.js";
 import { createSessionResolver } from "../../../core/session/src/index.js";
 import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
+import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createMediaTools } from "../../../plugins/media/src/index.js";
 import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
@@ -162,6 +163,18 @@ const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu
     fs.writeFileSync(filePath, content);
   }
 }, { time: currentTime });
+const wechatStateStore = createWeChatStateStore(path.join(config.memoryFiles.root, "indexes", "wechat-ilink-state.json"));
+const wechatCredentials = wechatStateStore.getCredentials();
+if (wechatCredentials) {
+  config.plugins.wechat.botToken = wechatCredentials.botToken;
+  config.plugins.wechat.baseURL = wechatCredentials.baseURL;
+} else if (config.plugins.wechat.botToken) {
+  wechatStateStore.saveCredentials({
+    botToken: config.plugins.wechat.botToken,
+    baseURL: config.plugins.wechat.baseURL,
+    loggedInAt: currentTime.now().iso
+  });
+}
 const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
 const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
   onSwitch(entry) {
@@ -175,6 +188,8 @@ const messagingTools = createMessagingTools({
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getDefaultTarget() {
+    const wechatTarget = config.plugins.wechat.enabled ? wechatStateStore.getDefaultTarget() : undefined;
+    if (wechatTarget) return wechatTarget;
     const contact = feishuPairingStore.list()[0];
     if (!contact) return undefined;
     return {
@@ -270,7 +285,7 @@ const core = createAgentCore({
   },
   onLLMSessionCompleted(result) {
     messagingTools.noteLLMSessionCompleted();
-    clearActiveLLMSession(result.sentMessage ? "send_feishu" : "llm_turn_completed");
+    clearActiveLLMSession(result.sentMessage ? "send_chat" : "llm_turn_completed");
   }
 });
 
@@ -286,10 +301,21 @@ const feishu = createFeishuPlugin(config.plugins.feishu, {
   }
 });
 
+const wechat = createWeChatPlugin(config.plugins.wechat, {
+  log: appendLog,
+  stateStore: wechatStateStore,
+  time: currentTime,
+  async onEvent(event) {
+    messageRuntime.ingestEvent(event);
+  }
+});
+
 const messageRuntime = createMessageRuntime({
   getDelayMs: () => config.core.inboundDebounceMs,
   time: currentTime,
   getProcessNowTarget() {
+    const wechatTarget = config.plugins.wechat.enabled ? wechatStateStore.getDefaultTarget() : undefined;
+    if (wechatTarget) return wechatTarget;
     const contact = feishuPairingStore.list()[0];
     if (!contact) return undefined;
     return {
@@ -305,6 +331,14 @@ const messageRuntime = createMessageRuntime({
   agentState,
   outputRouter,
   isLLMSessionActive: () => Boolean(activeLLMSession),
+  async setTypingIndicator(input) {
+    if (input.plugin !== "wechat") return;
+    await wechat.setTyping({
+      userId: input.userId ?? input.channelId,
+      sessionId: input.sessionId,
+      typing: input.typing
+    });
+  },
   onHeartbeatTick() {
     dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
   },
@@ -313,6 +347,7 @@ const messageRuntime = createMessageRuntime({
 });
 
 core.registerChannel(feishu);
+core.registerChannel(wechat);
 const scheduler = createDailyScheduler([
   {
     id: "system-log-retention",
@@ -325,7 +360,7 @@ const scheduler = createDailyScheduler([
   }
 ]);
 
-const runtimeState = { feishuStarted: false };
+const runtimeState = { feishuStarted: false, wechatStarted: false };
 const server = http.createServer(createApiRequestHandler({
   config,
   logs,
@@ -346,6 +381,8 @@ const server = http.createServer(createApiRequestHandler({
   messagingTools,
   mediaTools,
   feishu,
+  wechat,
+  wechatStateStore,
   runtime: runtimeState,
   messageRuntime,
   getLLM: () => llm,
@@ -365,7 +402,8 @@ await core.start();
 scheduler.start();
 messageRuntime.recoverPendingSessions();
 runtimeState.feishuStarted = config.plugins.feishu.enabled && Object.keys(config.plugins.feishu.accounts).length > 0;
-appendLog("info", `agent core started: llm=${config.llm.provider} feishu=${runtimeState.feishuStarted ? "started" : "stopped"}`);
+runtimeState.wechatStarted = config.plugins.wechat.enabled && Boolean(config.plugins.wechat.botToken);
+appendLog("info", `agent core started: llm=${config.llm.provider} feishu=${runtimeState.feishuStarted ? "started" : "stopped"} wechat=${runtimeState.wechatStarted ? "started" : "stopped"}`);
 
 server.listen(config.api.port, config.api.host, () => {
   console.log(`[api] listening on http://${config.api.host}:${config.api.port}`);
@@ -799,11 +837,11 @@ async function buildPromptPreviewMessages(
     time: currentTime,
     dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone)
   }, async (layer, call) => {
-    if (call.toolName === "send_feishu") {
+    if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {
       return {
         callId: call.id,
         ok: false,
-        error: "send_feishu cannot run from request preview"
+        error: "send_chat cannot run from request preview"
       };
     }
     try {

@@ -28,8 +28,24 @@ For the current implemented architecture, see `ARCHITECTURE.md`.
   - sends a short in-progress message before image generation
   - rejects consecutive `selfie` tool calls
 - Local persistence:
-  - SQLite message logs and memory
-  - SQLite FTS5 search over persisted messages
+- SQLite message logs and memory
+- SQLite FTS5 search over persisted messages
+
+## WeChat iLink
+
+WeChat iLink can be enabled alongside Feishu and uses the same Core-facing `messages` and append-only `message_logs` storage.
+
+Configure the base options in `.env` or from the admin panel:
+
+```env
+WECHAT_ENABLED=true
+WECHAT_ILINK_BASE_URL=https://ilinkai.weixin.qq.com
+WECHAT_ILINK_POLL_TIMEOUT_MS=35000
+```
+
+In the admin UI, open `Channel Settings`, switch to the `WeChat` tab, click `Get Login QR`, scan the QR code in WeChat, and confirm on the phone. The confirmed `bot_token` and account-specific `baseurl` are saved under `memory-files/indexes/wechat-ilink-state.json` and reused after restart.
+
+The WeChat plugin long-polls `getupdates`, writes inbound text messages into the current message log/runtime, caches each sender's latest `context_token`, and sends outbound text messages through `sendmessage`. Proactive sends require a cached token from a prior inbound message for that WeChat user.
   - file-based system logs with seven-day retention
 - Admin UI at `http://127.0.0.1:3030/admin`.
 

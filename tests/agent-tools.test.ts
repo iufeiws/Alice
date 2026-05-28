@@ -24,7 +24,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
               id: "tool_1",
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             }]
@@ -45,7 +45,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
       id: "test-tools",
       listTools() {
         return [{
-          name: "check_feishu",
+          name: "check_chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -59,8 +59,8 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
 
   const outputs = await core.handleEvent(textEvent());
   assert.deepEqual(outputs, []);
-  assert.equal(requests[0].tools?.[0].function.name, "check_feishu");
-  assert.equal(toolCalls[0].toolName, "check_feishu");
+  assert.equal(requests[0].tools?.[0].function.name, "check_chat");
+  assert.equal(toolCalls[0].toolName, "check_chat");
   assert.equal(toolCalls[0].session?.sessionId, "session-1");
   assert.equal(requests[1].messages.at(-1)?.role, "tool");
   assert.equal(requests[1].messages.at(-1)?.content, "history");
@@ -81,7 +81,7 @@ test("agent core appends assistant tool call and tool result before the next llm
               id: "tool_1",
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             }]
@@ -103,7 +103,7 @@ test("agent core appends assistant tool call and tool result before the next llm
       id: "test-tools",
       listTools() {
         return [{
-          name: "check_feishu",
+          name: "check_chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -120,7 +120,7 @@ test("agent core appends assistant tool call and tool result before the next llm
   assert.equal(requests[1].messages.at(-2)?.role, "assistant");
   assert.equal(requests[1].messages.at(-2)?.content, "checking history");
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "I should inspect messages first.");
-  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "check_feishu");
+  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
   assert.equal(requests[1].messages.at(-1)?.role, "tool");
   assert.equal(requests[1].messages.at(-1)?.toolCallId, "tool_1");
   assert.equal(requests[1].messages.at(-1)?.content, "history result");
@@ -195,7 +195,7 @@ test("agent core adds fallback reasoning content for tool requests when missing"
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             }]
@@ -215,7 +215,7 @@ test("agent core adds fallback reasoning content for tool requests when missing"
     tools: [{
       id: "test-tools",
       listTools() {
-        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history result" };
@@ -253,7 +253,7 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
       id: "messaging",
       listTools() {
         return [{
-          name: "check_feishu",
+          name: "check_chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -291,7 +291,7 @@ test("agent core filters media tools when media visibility is disabled", async (
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history" };
@@ -308,7 +308,7 @@ test("agent core filters media tools when media visibility is disabled", async (
   });
 
   await core.handleEvent(textEvent());
-  assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_feishu"]);
+  assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_chat"]);
 });
 
 test("agent core skips llm calls when prompt profile has no enabled messages", async () => {
@@ -397,7 +397,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
         enabled: true,
         content: "",
         thinking: "need history",
-        toolName: "check_feishu",
+        toolName: "check_chat",
         toolCallId: "call_prompt_history",
         toolArguments: "{}",
         order: 1
@@ -407,7 +407,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
       id: "messaging",
       listTools() {
         return [{
-          name: "check_feishu",
+          name: "check_chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -422,7 +422,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
   await core.handleEvent(textEvent());
 
   assert.equal(toolCalls.length, 1);
-  assert.equal(toolCalls[0].toolName, "check_feishu");
+  assert.equal(toolCalls[0].toolName, "check_chat");
   assert.deepEqual(toolCalls[0].input, {});
   assert.equal(requests[0].messages[0].role, "assistant");
   assert.equal(requests[0].messages[0].toolCalls?.[0].id, "call_prompt_history");
@@ -430,7 +430,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
   assert.equal(requests[0].messages[1].content, "actual history");
 });
 
-test("agent core streams send_feishu message content on newlines before final tool JSON", async () => {
+test("agent core streams send_chat message content on newlines before final tool JSON", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const completed: Array<{ sentMessage: boolean }> = [];
@@ -446,7 +446,7 @@ test("agent core streams send_feishu message content on newlines before final to
           id: "tool_send",
           type: "function",
           function: {
-            name: "send_feishu",
+            name: "send_chat",
             arguments: "{\"type\":\"message\",\"content\":\"one\\n"
           }
         });
@@ -466,7 +466,7 @@ test("agent core streams send_feishu message content on newlines before final to
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_feishu",
+                name: "send_chat",
                 arguments: "{\"type\":\"message\",\"content\":\"one\\ntwo\\nthree\"}"
               }
             }]
@@ -490,7 +490,7 @@ test("agent core streams send_feishu message content on newlines before final to
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -509,7 +509,7 @@ test("agent core streams send_feishu message content on newlines before final to
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("agent core waits for final send_feishu JSON when type is omitted", async () => {
+test("agent core waits for final send_chat JSON when type is omitted", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -524,7 +524,7 @@ test("agent core waits for final send_feishu JSON when type is omitted", async (
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_feishu",
+          name: "send_chat",
           arguments: "{\"content\":\"one\\n"
         }
       });
@@ -543,7 +543,7 @@ test("agent core waits for final send_feishu JSON when type is omitted", async (
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"content\":\"one\\ntwo\"}"
             }
           }]
@@ -562,7 +562,7 @@ test("agent core waits for final send_feishu JSON when type is omitted", async (
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -578,7 +578,7 @@ test("agent core waits for final send_feishu JSON when type is omitted", async (
   assert.deepEqual(sentLines, ["one", "two"]);
 });
 
-test("agent core keeps streamed send_feishu lines when tool metadata arrives after arguments", async () => {
+test("agent core keeps streamed send_chat lines when tool metadata arrives after arguments", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -600,7 +600,7 @@ test("agent core keeps streamed send_feishu lines when tool metadata arrives aft
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_feishu"
+          name: "send_chat"
         }
       });
       return {
@@ -611,7 +611,7 @@ test("agent core keeps streamed send_feishu lines when tool metadata arrives aft
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
             }
           }]
@@ -630,7 +630,7 @@ test("agent core keeps streamed send_feishu lines when tool metadata arrives aft
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -650,7 +650,7 @@ test("agent core keeps streamed send_feishu lines when tool metadata arrives aft
   ]);
 });
 
-test("agent core does not stream send_feishu before type is known", async () => {
+test("agent core does not stream send_chat before type is known", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -665,7 +665,7 @@ test("agent core does not stream send_feishu before type is known", async () => 
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_feishu",
+          name: "send_chat",
           arguments: "{\"content\":\"should not stream\\n"
         }
       });
@@ -685,7 +685,7 @@ test("agent core does not stream send_feishu before type is known", async () => 
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"content\":\"should not stream\\n\",\"type\":\"markdown\"}"
             }
           }]
@@ -704,7 +704,7 @@ test("agent core does not stream send_feishu before type is known", async () => 
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -720,7 +720,7 @@ test("agent core does not stream send_feishu before type is known", async () => 
   assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
 });
 
-test("agent core merges streamed send_feishu chat outputs into one tool message", async () => {
+test("agent core merges streamed send_chat chat outputs into one tool message", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -736,7 +736,7 @@ test("agent core merges streamed send_feishu chat outputs into one tool message"
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_feishu",
+          name: "send_chat",
           arguments: "{\"content\":\"one\\n"
         }
       });
@@ -754,7 +754,7 @@ test("agent core merges streamed send_feishu chat outputs into one tool message"
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"content\":\"one\\ntwo\"}"
             }
           }]
@@ -772,13 +772,13 @@ test("agent core merges streamed send_feishu chat outputs into one tool message"
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return {
           callId: call.id,
           ok: true,
-          output: `<chat>\n[22:48]\nAlice:${String(call.input.content)}\n</chat>\nCurrent time is [2026-05-27 22:48:53]`
+          output: `<chat-log>\n[today 22:48]\nAlice:${String(call.input.content)}\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>`
         };
       }
     }]
@@ -786,7 +786,7 @@ test("agent core merges streamed send_feishu chat outputs into one tool message"
 
   await core.handleEvent(textEvent());
   const toolMessage = requests[1].messages.find((message) => message.role === "tool");
-  assert.equal(toolMessage?.content, "<chat>\n[22:48]\nAlice:one\n[22:48]\nAlice:two\n</chat>\nCurrent time is [2026-05-27 22:48:53]");
+  assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\n[today 22:48]\nAlice:two\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
 });
 
 test("agent core can disable LLM streaming from config", async () => {
@@ -806,7 +806,7 @@ test("agent core can disable LLM streaming from config", async () => {
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"type\":\"message\",\"content\":\"one\\ntwo\"}"
             }
           }]
@@ -828,7 +828,7 @@ test("agent core can disable LLM streaming from config", async () => {
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -893,7 +893,7 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
   assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
 });
 
-test("agent core continues after send_feishu until the next response has no tool calls", async () => {
+test("agent core continues after send_chat until the next response has no tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -908,7 +908,7 @@ test("agent core continues after send_feishu until the next response has no tool
               id: `tool_view_${requests.length}`,
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             }]
@@ -924,7 +924,7 @@ test("agent core continues after send_feishu until the next response has no tool
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_feishu",
+                name: "send_chat",
                 arguments: "{\"type\":\"message\",\"content\":\"final\"}"
               }
             }]
@@ -950,13 +950,13 @@ test("agent core continues after send_feishu until the next response has no tool
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_feishu", description: "view", inputSchema: { type: "object" } },
-          { name: "send_feishu", description: "send", inputSchema: { type: "object" } }
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+          { name: "send_chat", description: "send", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
-        if (call.toolName === "send_feishu") sent.push(String(call.input.content));
-        return { callId: call.id, ok: true, output: call.toolName === "send_feishu" ? "sent" : "history" };
+        if (call.toolName === "send_chat") sent.push(String(call.input.content));
+        return { callId: call.id, ok: true, output: call.toolName === "send_chat" ? "sent" : "history" };
       }
     }]
   });
@@ -980,7 +980,7 @@ test("agent core uses first-call and follow-up extra params", async () => {
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             }]
@@ -1004,7 +1004,7 @@ test("agent core uses first-call and follow-up extra params", async () => {
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history" };
@@ -1033,7 +1033,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
             id: `tool_view_${requests.length}`,
             type: "function",
             function: {
-              name: "check_feishu",
+              name: "check_chat",
               arguments: "{}"
             }
           }]
@@ -1051,7 +1051,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_feishu", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         calls.push(call.id);
@@ -1080,7 +1080,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
             id: `tool_${requests.length}`,
             type: "function",
             function: {
-              name: useSearch ? "search_messages" : "check_feishu",
+              name: useSearch ? "search_messages" : "check_chat",
               arguments: useSearch ? "{\"content\":\"loop\"}" : "{}"
             }
           }]
@@ -1099,7 +1099,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_feishu", description: "view", inputSchema: { type: "object" } },
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
           { name: "search_messages", description: "search", inputSchema: { type: "object" } }
         ];
       },
@@ -1115,7 +1115,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
   assert.equal(calls.length, 12);
 });
 
-test("agent core stops after three consecutive identical send_feishu calls", async () => {
+test("agent core stops after three consecutive identical send_chat calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -1129,7 +1129,7 @@ test("agent core stops after three consecutive identical send_feishu calls", asy
             id: `tool_send_${requests.length}`,
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"type\":\"message\",\"content\":\"same\"}"
             }
           }]
@@ -1147,7 +1147,7 @@ test("agent core stops after three consecutive identical send_feishu calls", asy
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         sent.push(`${call.id}:${String(call.input.content)}`);
@@ -1165,7 +1165,7 @@ test("agent core stops after three consecutive identical send_feishu calls", asy
   ]);
 });
 
-test("agent core stops after five total send_feishu calls even when not consecutive identical", async () => {
+test("agent core stops after five total send_chat calls even when not consecutive identical", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -1180,7 +1180,7 @@ test("agent core stops after five total send_feishu calls even when not consecut
             id: `tool_send_${requests.length}`,
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: `{"type":"message","content":"${content}"}`
             }
           }]
@@ -1198,7 +1198,7 @@ test("agent core stops after five total send_feishu calls even when not consecut
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_feishu", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         sent.push(`${call.id}:${String(call.input.content)}`);
@@ -1218,7 +1218,7 @@ test("agent core stops after five total send_feishu calls even when not consecut
   ]);
 });
 
-test("agent core skips non-send tools when send_feishu appears in the same round", async () => {
+test("agent core skips non-send tools when send_chat appears in the same round", async () => {
   const calls: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1234,7 +1234,7 @@ test("agent core skips non-send tools when send_feishu appears in the same round
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_feishu",
+                name: "check_chat",
                 arguments: "{}"
               }
             },
@@ -1242,7 +1242,7 @@ test("agent core skips non-send tools when send_feishu appears in the same round
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_feishu",
+                name: "send_chat",
                 arguments: "{\"type\":\"message\",\"content\":\"done\"}"
               }
             }
@@ -1262,8 +1262,8 @@ test("agent core skips non-send tools when send_feishu appears in the same round
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_feishu", description: "view", inputSchema: { type: "object" } },
-          { name: "send_feishu", description: "send", inputSchema: { type: "object" } }
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+          { name: "send_chat", description: "send", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -1274,10 +1274,10 @@ test("agent core skips non-send tools when send_feishu appears in the same round
   });
 
   await core.handleEvent(textEvent());
-  assert.deepEqual(calls, ["send_feishu"]);
+  assert.deepEqual(calls, ["send_chat"]);
 });
 
-test("agent core does not stream send_feishu when non-message type is explicit", async () => {
+test("agent core does not stream send_chat when non-message type is explicit", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1292,7 +1292,7 @@ test("agent core does not stream send_feishu when non-message type is explicit",
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_feishu",
+          name: "send_chat",
           arguments: "{\"type\":\"markdown\",\"content\":\"should not send\\n"
         }
       });
@@ -1311,7 +1311,7 @@ test("agent core does not stream send_feishu when non-message type is explicit",
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_feishu",
+              name: "send_chat",
               arguments: "{\"type\":\"markdown\",\"content\":\"should not send\\n\"}"
             }
           }]
@@ -1330,7 +1330,7 @@ test("agent core does not stream send_feishu when non-message type is explicit",
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_feishu",
+          name: "send_chat",
           description: "send",
           inputSchema: { type: "object" }
         }];

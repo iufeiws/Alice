@@ -27,7 +27,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
         [
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"think "}}]}',
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"more"}}]}',
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_feishu","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_chat","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
         ].join("\n\n")
       ));
       controller.close();
@@ -48,12 +48,12 @@ test("openai stream client processes a final SSE frame without trailing newline"
       tools: [{
         type: "function",
         function: {
-          name: "check_feishu",
+          name: "check_chat",
           parameters: { type: "object" }
         }
       }]
     });
-    assert.equal(result?.message.toolCalls?.[0].function.name, "check_feishu");
+    assert.equal(result?.message.toolCalls?.[0].function.name, "check_chat");
     assert.equal(result?.message.toolCalls?.[0].function.arguments, "{}");
     assert.equal(result?.message.reasoningContent, "think more");
     assert.equal(requestBody.messages[0].reasoning_content, "prior thinking");
@@ -86,7 +86,7 @@ test("openai-compatible client adds fallback reasoning content for tool request 
             id: "call_missing",
             type: "function",
             function: {
-              name: "check_feishu",
+              name: "check_chat",
               arguments: "{}"
             }
           }]

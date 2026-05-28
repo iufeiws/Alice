@@ -187,7 +187,8 @@ test("selfie fails before codex when the outfit reference image is missing", asy
     assert.equal(result.ok, false);
     assert.match(result.error ?? "", /outfit reference/);
     assert.equal(called, false);
-    assert.deepEqual(sent, []);
+    assert.equal(sent[0].content.kind, "text");
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "(大失败...)");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -234,6 +235,8 @@ test("selfie cleans up temporary directory when codex does not create the reques
     assert.equal(fs.existsSync(workDir), false);
     assert.equal(sent[0].content.kind, "text");
     assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "(少女拍照中...)");
+    assert.equal(sent[1].content.kind, "text");
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "(大失败...)");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

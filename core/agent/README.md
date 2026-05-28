@@ -55,11 +55,11 @@ Unknown variables are preserved as written.
 
 The current runtime exposes platform-neutral tool names to the LLM:
 
-- `check_feishu({ scope = "today" })`: 查看当前一对一飞书聊天记录。`scope="new"` 返回上次查看后的新增飞书消息。
-- `send_feishu({ type, content })`: 发送飞书消息到当前一对一聊天。调用时应先提供 `type`，再提供 `content`。`message` 模式会把换行分隔内容拆成多条飞书消息，并按内容字数节流发送；发送尝试会立即占用节流窗口，失败后进入内存重试队列。
+- `check_chat({ scope = "today" })`: 查看当前聊天会话记录。`scope="new"` 返回上次查看后的新增消息。
+- `send_chat({ type, content })`: 发送消息到当前聊天会话。调用时应先提供 `type`，再提供 `content`。`message` 模式会把换行分隔内容拆成多条消息，并按内容字数节流发送；发送尝试会立即占用节流窗口，失败后进入内存重试队列。
 
-Tool results are plain strings in the same compact format shown to the LLM. The first adapter behind these tools is Feishu, but the LLM-facing names intentionally do not include Feishu.
+Tool results are plain strings in the same compact format shown to the LLM. The tools are platform-neutral and route to the active messaging target.
 
-When the configured LLM adapter supports streaming, AgentCore watches `send_feishu` tool-call argument deltas. After `type="message"` has appeared, every decoded newline in `content` immediately sends the completed line, so long multi-message replies do not wait for the final JSON arguments object. If `type` is omitted or arrives after `content`, AgentCore waits until the final JSON arguments are available before sending.
+When the configured LLM adapter supports streaming, AgentCore watches `send_chat` tool-call argument deltas. After `type="message"` has appeared, every decoded newline in `content` immediately sends the completed line, so long multi-message replies do not wait for the final JSON arguments object. If `type` is omitted or arrives after `content`, AgentCore waits until the final JSON arguments are available before sending.
 
-If `send_feishu` appears in a tool-call response, AgentCore treats it as the terminal action for that inbound event. It executes only `send_feishu` calls from that response, skips any mixed read/search calls, and does not feed the send result back into another LLM round. This rule is intentional so future prompt/tool policy updates do not reintroduce repeated read/send loops.
+If `send_chat` appears in a tool-call response, AgentCore treats it as the terminal action for that inbound event. It executes only `send_chat` calls from that response, skips any mixed read/search calls, and does not feed the send result back into another LLM round. This rule is intentional so future prompt/tool policy updates do not reintroduce repeated read/send loops.

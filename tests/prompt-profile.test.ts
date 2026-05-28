@@ -74,7 +74,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
         enabled: true,
         content: "",
         thinking: "thinking for {{user}}",
-        toolName: "check_feishu",
+        toolName: "check_chat",
         toolCallId: "call_prompt_1",
         toolArguments: "{}",
         order: 1
@@ -87,7 +87,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
   }, async (layer, call) => {
     assert.equal(layer.id, "request");
-    assert.equal(call.toolName, "check_feishu");
+    assert.equal(call.toolName, "check_chat");
     assert.deepEqual(call.input, {});
     return {
       callId: call.id,
@@ -100,10 +100,10 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.equal(messages[0].content, "");
   assert.equal(messages[0].reasoningContent, "thinking for 小王");
   assert.equal(messages[0].toolCalls?.[0].id, "call_prompt_1");
-  assert.equal(messages[0].toolCalls?.[0].function.name, "check_feishu");
+  assert.equal(messages[0].toolCalls?.[0].function.name, "check_chat");
   assert.equal(messages[1].role, "tool");
   assert.equal(messages[1].toolCallId, "call_prompt_1");
-  assert.equal(messages[1].name, "check_feishu");
+  assert.equal(messages[1].name, "check_chat");
   assert.match(messages[1].content, /小王:hello/);
 });
 

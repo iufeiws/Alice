@@ -9,6 +9,8 @@ import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } 
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
+import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
+import QRCode from "qrcode";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -37,7 +39,18 @@ export type AdminRoutesContext = {
     stop(): Promise<void>;
     send(output: any): Promise<unknown>;
   };
-  runtime: { feishuStarted: boolean };
+  wechat: {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    send(output: any): Promise<unknown>;
+  };
+  wechatStateStore: {
+    listContacts(): Array<{ userId: string; sessionId: string; lastSeenAt: string }>;
+    getCredentials(): { botToken: string; baseURL: string; loggedInAt: string } | undefined;
+    saveCredentials(credentials: { botToken: string; baseURL: string; loggedInAt: string }): void;
+    clearCredentials(): void;
+  };
+  runtime: { feishuStarted: boolean; wechatStarted: boolean };
   messageRuntime: {
     pauseHeartbeat(): void;
     resumeHeartbeat(): void;
@@ -224,6 +237,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       if (request.method === "GET" && request.url === "/admin/api/runtime/status") {
         writeJson(response, 200, {
           feishu: getFeishuRuntimeStatus(context),
+          wechat: getWeChatRuntimeStatus(context),
           messages: context.messageRuntime.getStatus()
         });
         return;
@@ -234,18 +248,38 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/admin/api/plugins/wechat/contacts") {
+        writeJson(response, 200, { contacts: context.wechatStateStore.listContacts() });
+        return;
+      }
+
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/view") {
-        await executeMessagingTool(context, request, response, "check_feishu");
+        await executeMessagingTool(context, request, response, "check_chat", "feishu");
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/search") {
-        await executeMessagingTool(context, request, response, "search_messages");
+        await executeMessagingTool(context, request, response, "search_messages", "feishu");
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/send") {
-        await executeMessagingTool(context, request, response, "send_feishu");
+        await executeMessagingTool(context, request, response, "send_chat", "feishu");
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-view") {
+        await executeMessagingTool(context, request, response, "check_chat", "wechat");
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-search") {
+        await executeMessagingTool(context, request, response, "search_messages", "wechat");
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-send") {
+        await executeMessagingTool(context, request, response, "send_chat", "wechat");
         return;
       }
 
@@ -271,6 +305,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "PUT" && request.url === "/admin/api/config/feishu") {
         await saveFeishuConfig(context, request, response);
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/config/wechat") {
+        await saveWeChatConfig(context, request, response);
         return;
       }
 
@@ -314,6 +353,31 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin/api/plugins/feishu/status") {
         writeJson(response, 200, getFeishuRuntimeStatus(context));
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/plugins/wechat/start") {
+        await startWeChat(context, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/plugins/wechat/login/qrcode") {
+        await getWeChatLoginQRCode(context, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url?.startsWith("/admin/api/plugins/wechat/login/status")) {
+        await getWeChatLoginStatus(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/plugins/wechat/stop") {
+        await stopWeChat(context, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/plugins/wechat/status") {
+        writeJson(response, 200, getWeChatRuntimeStatus(context));
         return;
       }
 
@@ -557,20 +621,51 @@ async function executeMessagingTool(
   context: AdminRoutesContext,
   request: any,
   response: any,
-  toolName: "check_feishu" | "search_messages" | "send_feishu"
+  toolName: "check_chat" | "search_messages" | "send_chat",
+  plugin?: "feishu" | "wechat"
 ): Promise<void> {
   const body = await readJsonBody(request);
+  const target = plugin ? resolveAdminMessagingTarget(context, plugin) : undefined;
+  if (plugin && !target) {
+    writeJson(response, 400, { ok: false, error: `missing_${plugin}_target` });
+    return;
+  }
   const result = await context.messagingTools.execute({
     id: `admin_${toolName}_${Date.now()}`,
     toolName,
-    input: body
+    input: body,
+    requester: target ? {
+      plugin: target.plugin,
+      accountId: target.accountId,
+      channelId: target.channelId,
+      userId: target.userId
+    } : undefined,
+    session: target ? {
+      scope: "dm",
+      sessionId: target.sessionId
+    } : undefined
   });
-  context.appendLog(result.ok ? "info" : "warn", `messaging tool ${toolName}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+  context.appendLog(result.ok ? "info" : "warn", `messaging tool ${toolName}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
   writeJson(response, result.ok ? 200 : 400, {
     ok: result.ok,
     content: formatToolResultForLLM(result),
     error: result.error
   });
+}
+
+function resolveAdminMessagingTarget(context: AdminRoutesContext, plugin: "feishu" | "wechat") {
+  if (plugin === "wechat") {
+    const contact = context.wechatStateStore.listContacts()[0];
+    if (!contact) return undefined;
+    return {
+      plugin: "wechat",
+      accountId: "main",
+      channelId: contact.userId,
+      userId: contact.userId,
+      sessionId: contact.sessionId
+    };
+  }
+  return resolveFeishuTestTarget(context, {});
 }
 
 function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }): string {
@@ -710,6 +805,27 @@ async function saveFeishuConfig(context: AdminRoutesContext, request: any, respo
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
+async function saveWeChatConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const enabled = booleanFromUnknown(body.enabled);
+  const baseURL = requiredString(body.baseURL) || context.config.plugins.wechat.baseURL || "https://ilinkai.weixin.qq.com";
+  const pollTimeoutMs = numberFromUnknown(body.pollTimeoutMs, context.config.plugins.wechat.pollTimeoutMs);
+  if (pollTimeoutMs < 5000 || pollTimeoutMs > 120_000) {
+    writeJson(response, 400, { ok: false, error: "invalid_poll_timeout_ms" });
+    return;
+  }
+  updateEnvFile(".env", {
+    WECHAT_ENABLED: String(enabled),
+    WECHAT_ILINK_BASE_URL: baseURL,
+    WECHAT_ILINK_POLL_TIMEOUT_MS: String(pollTimeoutMs)
+  });
+  context.config.plugins.wechat.enabled = enabled;
+  context.config.plugins.wechat.baseURL = baseURL.replace(/\/+$/, "");
+  context.config.plugins.wechat.pollTimeoutMs = pollTimeoutMs;
+  context.appendLog("info", `wechat config saved: enabled=${enabled} baseURL=${context.config.plugins.wechat.baseURL}`);
+  writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
+}
+
 async function saveAgentConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const inboundDebounceMs = numberFromUnknown(body.inboundDebounceMs, context.config.core.inboundDebounceMs);
@@ -770,6 +886,102 @@ async function stopFeishu(context: AdminRoutesContext, response: any): Promise<v
   writeJson(response, 200, { ok: true, status: getFeishuRuntimeStatus(context) });
 }
 
+async function startWeChat(context: AdminRoutesContext, response: any): Promise<void> {
+  const credentials = context.wechatStateStore.getCredentials();
+  if (!credentials?.botToken) {
+    context.appendLog("warn", "wechat start rejected: not logged in");
+    writeJson(response, 400, { ok: false, error: "wechat_not_logged_in" });
+    return;
+  }
+  context.config.plugins.wechat.botToken = credentials.botToken;
+  context.config.plugins.wechat.baseURL = credentials.baseURL;
+  context.config.plugins.wechat.enabled = true;
+  updateEnvFile(".env", { WECHAT_ENABLED: "true" });
+  if (!context.runtime.wechatStarted) await context.wechat.start();
+  context.runtime.wechatStarted = true;
+  context.appendLog("info", "wechat runtime started");
+  writeJson(response, 200, { ok: true, status: getWeChatRuntimeStatus(context) });
+}
+
+async function getWeChatLoginQRCode(context: AdminRoutesContext, response: any): Promise<void> {
+  try {
+    const client = createWeChatILinkClient(context.config.plugins.wechat);
+    const result = await client.getLoginQRCode();
+    context.appendLog("info", "wechat login qrcode requested");
+    writeJson(response, 200, {
+      ok: true,
+      qrcode: result.qrcode,
+      qrcodeUrl: result.qrcodeUrl,
+      qrcodeContent: result.qrcodeContent,
+      qrcodeBase64: result.qrcodeBase64,
+      qrcodeSvg: result.qrcodeContent ? await QRCode.toString(result.qrcodeContent, {
+        type: "svg",
+        errorCorrectionLevel: "M",
+        margin: 2
+      }) : undefined,
+      status: result.status ?? "wait"
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    context.appendLog("error", `wechat login qrcode failed: ${reason}`);
+    writeJson(response, 502, { ok: false, error: reason });
+  }
+}
+
+async function getWeChatLoginStatus(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const url = new URL(request.url, "http://localhost");
+  const qrcode = url.searchParams.get("qrcode") ?? "";
+  if (!qrcode) {
+    writeJson(response, 400, { ok: false, error: "missing_qrcode" });
+    return;
+  }
+  let result;
+  try {
+    const client = createWeChatILinkClient(context.config.plugins.wechat);
+    result = await client.getQRCodeStatus(qrcode);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    context.appendLog("error", `wechat login status failed: ${reason}`);
+    writeJson(response, 502, { ok: false, error: reason });
+    return;
+  }
+  if (result.status === "confirmed" && result.botToken) {
+    const baseURL = (result.baseURL ?? context.config.plugins.wechat.baseURL).replace(/\/+$/, "");
+    context.wechatStateStore.saveCredentials({
+      botToken: result.botToken,
+      baseURL,
+      loggedInAt: context.time.now().iso
+    });
+    context.config.plugins.wechat.botToken = result.botToken;
+    context.config.plugins.wechat.baseURL = baseURL;
+    context.config.plugins.wechat.enabled = true;
+    updateEnvFile(".env", {
+      WECHAT_ENABLED: "true",
+      WECHAT_ILINK_BASE_URL: baseURL
+    });
+    if (!context.runtime.wechatStarted) await context.wechat.start();
+    context.runtime.wechatStarted = true;
+    context.appendLog("info", `wechat login confirmed baseURL=${baseURL}`);
+  }
+  writeJson(response, 200, {
+    ok: true,
+    status: result.status,
+    configured: Boolean(context.wechatStateStore.getCredentials()),
+    runtimeStarted: context.runtime.wechatStarted,
+    baseURL: context.config.plugins.wechat.baseURL
+  });
+}
+
+async function stopWeChat(context: AdminRoutesContext, response: any): Promise<void> {
+  await context.wechat.stop();
+  context.runtime.wechatStarted = false;
+  context.config.plugins.wechat.enabled = false;
+  context.config.plugins.wechat.botToken = context.wechatStateStore.getCredentials()?.botToken;
+  updateEnvFile(".env", { WECHAT_ENABLED: "false" });
+  context.appendLog("info", "wechat runtime stopped");
+  writeJson(response, 200, { ok: true, status: getWeChatRuntimeStatus(context) });
+}
+
 function getAdminConfig(context: AdminRoutesContext): unknown {
   return {
     core: context.config.core,
@@ -796,6 +1008,15 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
         dmPolicy: context.config.plugins.feishu.dmPolicy,
         groupPolicy: context.config.plugins.feishu.groupPolicy,
         requireMention: context.config.plugins.feishu.requireMention
+      },
+      wechat: {
+        enabled: context.config.plugins.wechat.enabled,
+        baseURL: context.config.plugins.wechat.baseURL,
+        loggedIn: Boolean(context.wechatStateStore.getCredentials()),
+        runtimeStarted: context.runtime.wechatStarted,
+        pollTimeoutMs: context.config.plugins.wechat.pollTimeoutMs,
+        credentials: maskWeChatCredentials(context.wechatStateStore.getCredentials()),
+        contacts: context.wechatStateStore.listContacts()
       }
     }
   };
@@ -809,6 +1030,29 @@ function getFeishuRuntimeStatus(context: AdminRoutesContext): unknown {
     connectionMode: context.config.plugins.feishu.connectionMode,
     accountIds: Object.keys(context.config.plugins.feishu.accounts),
     requireMention: context.config.plugins.feishu.requireMention
+  };
+}
+
+function getWeChatRuntimeStatus(context: AdminRoutesContext): unknown {
+  const credentials = context.wechatStateStore.getCredentials();
+  return {
+    enabled: context.config.plugins.wechat.enabled,
+    configured: Boolean(credentials),
+    loggedIn: Boolean(credentials),
+    runtimeStarted: context.runtime.wechatStarted,
+    baseURL: context.config.plugins.wechat.baseURL,
+    pollTimeoutMs: context.config.plugins.wechat.pollTimeoutMs,
+    credentials: maskWeChatCredentials(credentials),
+    contacts: context.wechatStateStore.listContacts()
+  };
+}
+
+function maskWeChatCredentials(credentials: { botToken: string; baseURL: string; loggedInAt: string } | undefined): unknown {
+  if (!credentials) return undefined;
+  return {
+    baseURL: credentials.baseURL,
+    loggedInAt: credentials.loggedInAt,
+    botToken: maskValue(credentials.botToken)
   };
 }
 

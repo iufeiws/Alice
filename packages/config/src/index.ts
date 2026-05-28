@@ -28,6 +28,13 @@ export type FeishuConfig = {
   };
 };
 
+export type WeChatConfig = {
+  enabled: boolean;
+  botToken?: string;
+  baseURL: string;
+  pollTimeoutMs: number;
+};
+
 export type AppConfig = {
   core: {
     timezone: string;
@@ -41,6 +48,7 @@ export type AppConfig = {
   llm: LLMConfig;
   plugins: {
     feishu: FeishuConfig;
+    wechat: WeChatConfig;
   };
   memoryFiles: {
     root: string;
@@ -93,6 +101,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const llmApiKey = env.LLM_API_KEY;
   const feishuAppId = env.FEISHU_APP_ID;
   const feishuAppSecret = env.FEISHU_APP_SECRET;
+  const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
 
   return {
     core: {
@@ -137,6 +146,12 @@ export function loadConfig(env: Env = process.env): AppConfig {
           allowedChats: [],
           requireExplicitCommand: true
         }
+      },
+      wechat: {
+        enabled: bool(env.WECHAT_ENABLED, false),
+        botToken: env.WECHAT_ILINK_BOT_TOKEN,
+        baseURL: wechatBaseURL,
+        pollTimeoutMs: numberValue(env.WECHAT_ILINK_POLL_TIMEOUT_MS, 35_000)
       }
     },
     memoryFiles: {

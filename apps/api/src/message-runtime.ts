@@ -15,6 +15,14 @@ export type MessageRuntimeDeps = {
   getHeartbeatIntervalMs?: () => number;
   onHeartbeatTick?: () => void;
   isLLMSessionActive?: () => boolean;
+  setTypingIndicator?(input: {
+    plugin: string;
+    accountId?: string;
+    channelId?: string;
+    userId?: string;
+    sessionId: string;
+    typing: boolean;
+  }): Promise<void>;
   getProcessNowTarget?(): {
     plugin: string;
     accountId?: string;
@@ -272,6 +280,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     if (processingSessions.has(target.sessionId)) return;
     processingSessions.add(target.sessionId);
     try {
+      await setTypingIndicator({ ...target, typing: true });
       const event = buildManualProcessEvent(target);
       deps.appendLog("info", `manual process now session started: ${target.sessionId}`);
       const outputs = await deps.core.handleEvent(event);
@@ -314,6 +323,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     } catch (error) {
       deps.appendLog("error", `manual process now failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      await setTypingIndicator({ ...target, typing: false });
       processingSessions.delete(target.sessionId);
     }
   }
@@ -338,36 +348,54 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
 
     const agentEvent = buildAgentEventFromMessageLog(sessionId, pending);
-    deps.appendLog("info", `feishu session processing from message log: ${sessionId} pending=${pending.length}`);
+    deps.appendLog("info", `chat session processing from message log: ${sessionId} pending=${pending.length}`);
 
-    let outputs: AgentOutput[];
+    await setTypingIndicator(typingTargetFromPending(sessionId, pending, agentEvent, true));
     try {
-      outputs = await deps.core.handleEvent(agentEvent);
-    } catch (error) {
-      markPendingCoreFailed(pending, error);
-      throw error;
-    }
-    const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
-      plugin: output.target.plugin,
-      conversationId: output.target.sessionId,
-      senderRole: "assistant",
-      contentType: output.content.kind,
-      contentText: summarizeOutput(output.content),
-      contentJson: safeJson(output.content),
-      createdAt: output.meta.createdAt
-    }));
-    try {
-      const sendResults = await deps.outputRouter.sendAll(outputs);
-      const sentAt = time.now().iso;
-      const resultList = Array.isArray(sendResults) ? sendResults : [];
-      for (const [index, message] of outboundMessages.entries()) {
-        deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+      let outputs: AgentOutput[];
+      try {
+        outputs = await deps.core.handleEvent(agentEvent);
+      } catch (error) {
+        markPendingCoreFailed(pending, error);
+        throw error;
       }
-    } catch (error) {
-      const failedAt = time.now().iso;
-      const reason = error instanceof Error ? error.message : String(error);
-      for (const message of outboundMessages) {
-        deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+      const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
+        plugin: output.target.plugin,
+        conversationId: output.target.sessionId,
+        senderRole: "assistant",
+        contentType: output.content.kind,
+        contentText: summarizeOutput(output.content),
+        contentJson: safeJson(output.content),
+        createdAt: output.meta.createdAt
+      }));
+      try {
+        const sendResults = await deps.outputRouter.sendAll(outputs);
+        const sentAt = time.now().iso;
+        const resultList = Array.isArray(sendResults) ? sendResults : [];
+        for (const [index, message] of outboundMessages.entries()) {
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+        }
+      } catch (error) {
+        const failedAt = time.now().iso;
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const message of outboundMessages) {
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+        }
+        for (const output of outputs) {
+          deps.appendMessageLog({
+            direction: "outbound",
+            plugin: output.target.plugin,
+            kind: output.content.kind,
+            target: output.target.channelId ?? output.target.userId,
+            sessionId: output.target.sessionId,
+            status: "send_failed",
+            processedAt: failedAt,
+            processedBatchId: "send_failed",
+            error: reason,
+            summary: summarizeOutput(output.content)
+          });
+        }
+        throw error;
       }
       for (const output of outputs) {
         deps.appendMessageLog({
@@ -376,31 +404,46 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
           kind: output.content.kind,
           target: output.target.channelId ?? output.target.userId,
           sessionId: output.target.sessionId,
-          status: "send_failed",
-          processedAt: failedAt,
-          processedBatchId: "send_failed",
-          error: reason,
+          status: "sent",
           summary: summarizeOutput(output.content)
         });
       }
-      throw error;
-    }
-    for (const output of outputs) {
-      deps.appendMessageLog({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "sent",
-        summary: summarizeOutput(output.content)
-      });
-    }
 
-    const processedAt = time.now().iso;
-    const batchId = createId("batch");
-    deps.store.markMessagesCoreProcessed(pending.map((entry) => entry.id), processedAt, batchId);
-    deps.appendLog("info", `feishu session handled: ${outputs.length} output(s), batch=${batchId}`);
+      const processedAt = time.now().iso;
+      const batchId = createId("batch");
+      deps.store.markMessagesCoreProcessed(pending.map((entry) => entry.id), processedAt, batchId);
+      deps.appendLog("info", `chat session handled: ${outputs.length} output(s), batch=${batchId}`);
+    } finally {
+      await setTypingIndicator(typingTargetFromPending(sessionId, pending, agentEvent, false));
+    }
+  }
+
+  async function setTypingIndicator(input: {
+    plugin: string;
+    accountId?: string;
+    channelId?: string;
+    userId?: string;
+    sessionId: string;
+    typing: boolean;
+  }): Promise<void> {
+    if (!deps.setTypingIndicator) return;
+    try {
+      await deps.setTypingIndicator(input);
+    } catch (error) {
+      deps.appendLog("warn", `typing indicator ${input.typing ? "start" : "stop"} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function typingTargetFromPending(sessionId: string, pending: StoredConversationMessage[], event: AgentEvent, typing: boolean) {
+    const latest = pending[pending.length - 1];
+    return {
+      plugin: latest.plugin,
+      accountId: event.source.accountId,
+      channelId: event.source.channelId,
+      userId: event.source.userId,
+      sessionId,
+      typing
+    };
   }
 
   function markPendingCoreFailed(pending: StoredConversationMessage[], error: unknown): void {
@@ -430,7 +473,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     const latestLog = pending[pending.length - 1];
     const latestEvent = latestSessionEvents.get(sessionId);
     const allSessionLogs = deps.store.listMessagesForConversation(sessionId, 30);
-    const text = "A Feishu message event was received. Use messaging tools to inspect conversation history before replying.";
+    const text = "A chat message event was received. Use messaging tools to inspect conversation history before replying.";
 
     if (latestEvent) {
       return {

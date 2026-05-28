@@ -70,7 +70,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const sleep = deps.sleep ?? delay;
   let lastMessageTimestampMs: number | undefined;
   let activeLLMSession = false;
-  let checkFeishuCallsInLLMSession = 0;
+  let checkChatCallsInLLMSession = 0;
   let retryQueue = Promise.resolve();
 
   return {
@@ -78,20 +78,20 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     noteLLMRequestStarted() {
       if (!activeLLMSession) {
         activeLLMSession = true;
-        checkFeishuCallsInLLMSession = 0;
+        checkChatCallsInLLMSession = 0;
       }
       lastMessageTimestampMs = time.now().epochMs;
     },
     noteLLMSessionCompleted() {
       activeLLMSession = false;
-      checkFeishuCallsInLLMSession = 0;
+      checkChatCallsInLLMSession = 0;
     },
     listTools() {
-      return [checkFeishuTool, sendFeishuTool];
+      return [checkChatTool, sendChatTool, searchMessagesTool];
     },
     async execute(call) {
-      if (call.toolName === "check_feishu" || call.toolName === "view_messages") return viewMessages(call);
-      if (call.toolName === "send_feishu" || call.toolName === "send_message") return sendMessage(call);
+      if (call.toolName === "check_chat" || call.toolName === "check_feishu" || call.toolName === "check_wechat" || call.toolName === "view_messages") return viewMessages(call);
+      if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat" || call.toolName === "send_message") return sendMessage(call);
       if (call.toolName === "search_messages") return searchMessages(call);
       return { callId: call.id, ok: false, error: `Unknown messaging tool: ${call.toolName}` };
     }
@@ -113,18 +113,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
     if (scope === "new") {
-      const cursor = deps.store.getToolCursor(target.plugin, target.sessionId, "check_feishu") ?? 0;
+      const cursor = deps.store.getToolCursor(target.plugin, target.sessionId, "check_chat") ?? 0;
       const cursorMessage = all.find((message) => message.id === cursor);
       sinceDate = cursorMessage ? parseMessageTime(cursorMessage.createdAt, time.timeZone) : new Date(0);
       messages = all.filter((message) => message.id > cursor);
       const latest = all[all.length - 1];
-      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
+      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_chat", latest.id);
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
       const latest = all[all.length - 1];
-      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_feishu", latest.id);
+      if (latest && !options.readonly) deps.store.setToolCursor(target.plugin, target.sessionId, "check_chat", latest.id);
     }
 
     const currentDate = time.now().date;
@@ -145,8 +145,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   function resolveViewScope(): "today" | "new" {
     if (!activeLLMSession) return "today";
-    checkFeishuCallsInLLMSession += 1;
-    return checkFeishuCallsInLLMSession === 1 ? "today" : "new";
+    checkChatCallsInLLMSession += 1;
+    return checkChatCallsInLLMSession === 1 ? "today" : "new";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {
@@ -380,9 +380,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 }
 
-const checkFeishuTool: ToolDefinition = {
-  name: "check_feishu",
-  description: "查看与<user>的聊天记录。连续调用首次调用返回今天的内容(6点前为从前一天00:00开始，6点后从当天00:00开始)；后续调用只返回新增的飞书消息。",
+const checkChatTool: ToolDefinition = {
+  name: "check_chat",
+  description: "查看当前聊天会话记录。连续调用首次调用返回今天的内容(6点前为从前一天00:00开始，6点后从当天00:00开始)；后续调用只返回新增消息。",
   inputSchema: {
     type: "object",
     properties: {},
@@ -390,9 +390,9 @@ const checkFeishuTool: ToolDefinition = {
   }
 };
 
-const sendFeishuTool: ToolDefinition = {
-  name: "send_feishu",
-  description: "发送消息给<user>。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条飞书消息并间隔发送。发送成功后自动查询并返回与<user>的聊天记录。",
+const sendChatTool: ToolDefinition = {
+  name: "send_chat",
+  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条消息并间隔发送。飞书支持 message/markdown/image；微信 iLink 当前支持 message。",
   inputSchema: {
     type: "object",
     properties: {
@@ -491,7 +491,7 @@ function formatContextEntryLine(entry: ChatContextEntry, userName: string): stri
 }
 
 function appendCurrentTime(output: string, timeZone: string, date: Date): string {
-  return `<chat>\n${output}\n</chat>\nCurrent time is [${formatLocalDateTime(date, timeZone)}]`;
+  return `<chat-log>\n${output}\n</chat-log>\n<time>${formatLocalDateTime(date, timeZone)}<\\time>`;
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
@@ -533,7 +533,7 @@ function formatChatTime(date: Date, timeZone: string, nowDate: Date): string {
   const values = localDateTimeParts(date, timeZone);
   const now = localDateTimeParts(nowDate, timeZone);
   if (values.year === now.year && values.month === now.month && values.day === now.day) {
-    return `${values.hour}:${values.minute}`;
+    return `today ${values.hour}:${values.minute}`;
   }
   const yesterday = shiftLocalDateParts(now, -1);
   if (values.year === yesterday.year && values.month === yesterday.month && values.day === yesterday.day) {

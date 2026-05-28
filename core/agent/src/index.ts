@@ -10,6 +10,8 @@ import { createId } from "../../../packages/types/src/index.js";
 import { buildPromptMessagesWithToolResults, defaultPromptProfile, type PromptLayer, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
 
+const sendChatToolName = "send_chat";
+
 export type AgentCoreDeps = {
   config: AppConfig;
   llm: LLMClient;
@@ -146,13 +148,21 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       for (const tool of plugin.listTools()) {
         toolMap.set(tool.name, plugin);
       }
+      if (plugin.id === "messaging" && toolMap.has(sendChatToolName)) {
+        toolMap.set("check_feishu", plugin);
+        toolMap.set("check_wechat", plugin);
+        toolMap.set("view_messages", plugin);
+        toolMap.set("send_feishu", plugin);
+        toolMap.set("send_wechat", plugin);
+        toolMap.set("send_message", plugin);
+      }
     }
 
     let nextInput = input;
     let sentMessage = false;
     let previousToolCallSignature: string | undefined;
     let repeatedToolCallCount = 0;
-    let sendFeishuCallCount = 0;
+    let sendChatCallCount = 0;
     let totalToolCallCount = 0;
     let round = 0;
     const maxLLMRequests = 12;
@@ -187,8 +197,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const calls = result.message.toolCalls ?? [];
       if (calls.length === 0) return { message: result.message, sentMessage };
 
-      const effectiveCalls = calls.some((call) => call.function.name === "send_feishu")
-        ? calls.filter((call) => call.function.name === "send_feishu")
+      const effectiveCalls = calls.some((call) => isSendChatToolName(call.function.name))
+        ? calls.filter((call) => isSendChatToolName(call.function.name))
         : calls;
       let reachedToolCallLimit = false;
       let previousToolNameForConsecutiveCheck = lastCompletedToolName;
@@ -205,13 +215,13 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           repeatedToolCallCount = 1;
         }
         if (repeatedToolCallCount >= 3) reachedToolCallLimit = true;
-        if (call.function.name === "send_feishu") {
-          sendFeishuCallCount += 1;
-          if (sendFeishuCallCount >= 5) reachedToolCallLimit = true;
+        if (isSendChatToolName(call.function.name)) {
+          sendChatCallCount += 1;
+          if (sendChatCallCount >= 5) reachedToolCallLimit = true;
         }
         const streamedResult = streamingToolSender.resultFor(call.id);
         if (streamedResult) {
-          sentMessage = sentMessage || call.function.name === "send_feishu" && streamedResult.ok;
+          sentMessage = sentMessage || isSendChatToolName(call.function.name) && streamedResult.ok;
           lastCompletedToolName = call.function.name;
           return {
             role: "tool" as const,
@@ -252,7 +262,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
         }
 
-        sentMessage = sentMessage || call.function.name === "send_feishu" && toolResult.ok;
+        sentMessage = sentMessage || isSendChatToolName(call.function.name) && toolResult.ok;
         lastCompletedToolName = call.function.name;
         return {
           role: "tool" as const,
@@ -297,8 +307,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const lines = state.canStreamNow() ? readyLines : [];
         if (lines.length === 0) return;
         const callId = state.callId;
-        const plugin = toolMap.get("send_feishu");
-        if (!callId || !plugin || state.toolName !== "send_feishu") {
+        const plugin = toolMap.get(sendChatToolName);
+        if (!callId || !plugin || !isSendChatToolName(state.toolName)) {
           state.restoreReadyLines(lines);
           return;
         }
@@ -315,8 +325,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         for (const state of states.values()) {
           const lines = state.finish();
           const callId = state.callId;
-          const plugin = toolMap.get("send_feishu");
-          if (!callId || !plugin || state.toolName !== "send_feishu" || !state.shouldSendAsMessage()) continue;
+          const plugin = toolMap.get(sendChatToolName);
+          if (!callId || !plugin || !isSendChatToolName(state.toolName) || !state.shouldSendAsMessage()) continue;
           sendChain = sendChain.then(async () => {
             for (const line of lines) {
               const sentCount = sentCounts.get(callId) ?? 0;
@@ -344,11 +354,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     },
     toolPlugins: ToolPlugin[]
   ): Promise<ToolResult> {
-    if (call.toolName === "send_feishu") {
+    if (isSendChatToolName(call.toolName)) {
       return {
         callId: call.id,
         ok: false,
-        error: "send_feishu cannot run from prompt prebuild"
+        error: "send_chat cannot run from prompt prebuild"
       };
     }
     const plugin = findToolPlugin(toolPlugins, call.toolName);
@@ -437,7 +447,7 @@ async function sendStreamingLine(
   try {
     const result = await plugin.execute({
       id: `${callId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      toolName: "send_feishu",
+      toolName: sendChatToolName,
       input: { type: "message", content: line },
       requester: event.source,
       session: event.session
@@ -460,17 +470,21 @@ async function sendStreamingLine(
   }
 }
 
+function isSendChatToolName(toolName: string | undefined): boolean {
+  return toolName === sendChatToolName || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message";
+}
+
 function mergeToolOutputs(previousOutput: string, nextOutput: string): string {
   if (!previousOutput) return nextOutput;
   if (!nextOutput) return previousOutput;
   const previousChat = parseChatToolOutput(previousOutput);
   const nextChat = parseChatToolOutput(nextOutput);
   if (!previousChat || !nextChat) return [previousOutput, nextOutput].filter(Boolean).join("\n");
-  return `<chat>\n${[previousChat.body, nextChat.body].filter(Boolean).join("\n")}\n</chat>\nCurrent time is [${nextChat.currentTime}]`;
+  return `<chat-log>\n${[previousChat.body, nextChat.body].filter(Boolean).join("\n")}\n</chat-log>\n<time>${nextChat.currentTime}<\\time>`;
 }
 
 function parseChatToolOutput(output: string): { body: string; currentTime: string } | undefined {
-  const match = /^<chat>\n([\s\S]*)\n<\/chat>\nCurrent time is \[([^\]]+)\]$/.exec(output.trim());
+  const match = /^<chat-log>\n([\s\S]*)\n<\/chat-log>\n<time>([\s\S]*?)<\\time>$/.exec(output.trim());
   if (!match) return undefined;
   return { body: match[1], currentTime: match[2] };
 }

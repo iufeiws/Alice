@@ -8,7 +8,24 @@ import type { AgentOutput } from "../packages/types/src/index.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("check_feishu defaults to today outside llm sessions", async () => {
+test("messaging tools expose merged check_chat and send_chat tools", () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-tools"), "alice.sqlite"));
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const names = tools.listTools().map((tool) => tool.name);
+  assert.ok(names.includes("check_chat"));
+  assert.ok(!names.includes("check_feishu"));
+  assert.ok(!names.includes("check_wechat"));
+  assert.ok(names.includes("send_chat"));
+  assert.ok(!names.includes("send_feishu"));
+  assert.ok(!names.includes("send_wechat"));
+});
+
+test("check_chat defaults to today outside llm sessions", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view"), "alice.sqlite"));
   const baseTime = Date.now();
   store.upsertInboundMessage({
@@ -44,18 +61,18 @@ test("check_feishu defaults to today outside llm sessions", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const today = await tools.execute({ id: "call_1", toolName: "check_feishu", input: {} });
+  const today = await tools.execute({ id: "call_1", toolName: "check_chat", input: {} });
   assert.equal(today.ok, true);
   assert.match(String(today.output), /hello today/);
   assert.match(String(today.output), /hello from old session/);
   assert.match(String(today.output), /小王:hello today/);
   assert.match(String(today.output), /Alice:hello back/);
-  assert.match(String(today.output), /^\[(?:\d{2}:\d{2}|\d{2}-\d{2} \d{2}:\d{2}|\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\n小王:hello today\nAlice:hello back/m);
+  assert.match(String(today.output), /^\[(?:today \d{2}:\d{2}|\d{2}-\d{2} \d{2}:\d{2}|\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\n小王:hello today\nAlice:hello back/m);
   assert.doesNotMatch(String(today.output), /^\[.*:\d{2}:\d{2}\]/m);
   assert.equal((String(today.output).match(/^\[/gm) ?? []).length, 2);
   assert.doesNotMatch(String(today.output), /\.\d{3}Z/);
-  assert.match(String(today.output), /^<chat>\n/);
-  assert.match(String(today.output), /\n<\/chat>\nCurrent time is \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$/);
+  assert.match(String(today.output), /^<chat-log>\n/);
+  assert.match(String(today.output), /\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
   const readMessages = store.listMessages(10).filter((message) => message.direction === "inbound");
   assert.equal(readMessages.length, 2);
   assert.deepEqual(readMessages.map((message) => Boolean(message.isRead)), [true, true]);
@@ -73,13 +90,13 @@ test("check_feishu defaults to today outside llm sessions", async () => {
     createdAt: new Date(baseTime + 7 * 60 * 1000).toISOString()
   });
 
-  const todayAgain = await tools.execute({ id: "call_2", toolName: "check_feishu", input: {} });
+  const todayAgain = await tools.execute({ id: "call_2", toolName: "check_chat", input: {} });
   assert.equal(todayAgain.ok, true);
   assert.match(String(todayAgain.output), /hello today/);
   assert.match(String(todayAgain.output), /after today check/);
 });
 
-test("check_feishu defaults to new after first call in the same llm session", async () => {
+test("check_chat defaults to new after first call in the same llm session", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-llm-session"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -99,7 +116,7 @@ test("check_feishu defaults to new after first call in the same llm session", as
   });
 
   tools.noteLLMRequestStarted();
-  const first = await tools.execute({ id: "call_1", toolName: "check_feishu", input: {} });
+  const first = await tools.execute({ id: "call_1", toolName: "check_chat", input: {} });
   assert.equal(first.ok, true);
   assert.match(String(first.output), /initial today/);
 
@@ -114,23 +131,23 @@ test("check_feishu defaults to new after first call in the same llm session", as
   });
 
   tools.noteLLMRequestStarted();
-  const second = await tools.execute({ id: "call_2", toolName: "check_feishu", input: {} });
+  const second = await tools.execute({ id: "call_2", toolName: "check_chat", input: {} });
   assert.equal(second.ok, true);
   assert.doesNotMatch(String(second.output), /initial today/);
   assert.match(String(second.output), /after first default check/);
 
-  const third = await tools.execute({ id: "call_3", toolName: "check_feishu", input: {} });
+  const third = await tools.execute({ id: "call_3", toolName: "check_chat", input: {} });
   assert.equal(third.ok, true);
-  assert.match(String(third.output), /^<chat>\nnothing new\n<\/chat>\nCurrent time is \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$/);
+  assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
 
   tools.noteLLMSessionCompleted();
   tools.noteLLMRequestStarted();
-  const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "check_feishu", input: {} });
+  const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "check_chat", input: {} });
   assert.equal(nextSessionFirst.ok, true);
   assert.match(String(nextSessionFirst.output), /initial today/);
 });
 
-test("check_feishu preview does not mark messages read or advance cursor", async () => {
+test("check_chat preview does not mark messages read or advance cursor", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-preview"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -151,7 +168,7 @@ test("check_feishu preview does not mark messages read or advance cursor", async
 
   const preview = await tools.execute({
     id: "call_preview",
-    toolName: "check_feishu",
+    toolName: "check_chat",
     input: { __preview: true }
   });
   assert.equal(preview.ok, true);
@@ -161,11 +178,11 @@ test("check_feishu preview does not mark messages read or advance cursor", async
   assert.equal(Boolean(stored.isRead), false);
   assert.equal(stored.readAt ?? undefined, undefined);
   assert.equal(stored.coreProcessedAt ?? undefined, undefined);
-  assert.equal(store.getToolCursor("feishu", "session-1", "check_feishu"), undefined);
+  assert.equal(store.getToolCursor("feishu", "session-1", "check_chat"), undefined);
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "session-1");
 });
 
-test("check_feishu today starts at previous midnight before 6am and current midnight after 6am", async () => {
+test("check_chat today starts at previous midnight before 6am and current midnight after 6am", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-today-anchor"), "alice.sqlite"));
   for (const [externalMessageId, contentText, createdAt] of [
     ["om_prev_evening", "prev evening", "2026-05-25T23:00:00.000"],
@@ -188,7 +205,7 @@ test("check_feishu today starts at previous midnight before 6am and current midn
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "check_feishu", input: {} });
+  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "check_chat", input: {} });
   assert.match(String(beforeResult.output), /prev evening/);
   assert.match(String(beforeResult.output), /today early/);
 
@@ -198,12 +215,12 @@ test("check_feishu today starts at previous midnight before 6am and current midn
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const afterResult = await afterSix.execute({ id: "call_after", toolName: "check_feishu", input: {} });
+  const afterResult = await afterSix.execute({ id: "call_after", toolName: "check_chat", input: {} });
   assert.doesNotMatch(String(afterResult.output), /prev evening/);
   assert.match(String(afterResult.output), /today early/);
 });
 
-test("check_feishu chat labels use the injected current time", async () => {
+test("check_chat chat labels use the injected current time", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-injected-now"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -222,11 +239,11 @@ test("check_feishu chat labels use the injected current time", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_time_label", toolName: "check_feishu", input: {} });
+  const result = await tools.execute({ id: "call_time_label", toolName: "check_chat", input: {} });
   assert.match(String(result.output), /\[yesterday 23:30\]\nuser:late yesterday/);
 });
 
-test("check_feishu merges shell switch logs into chat context", async () => {
+test("check_chat merges shell switch logs into chat context", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -250,7 +267,7 @@ test("check_feishu merges shell switch logs into chat context", async () => {
     }]
   });
 
-  const result = await tools.execute({ id: "call_shell_switch", toolName: "check_feishu", input: {} });
+  const result = await tools.execute({ id: "call_shell_switch", toolName: "check_chat", input: {} });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /\(壳切换-切换为冷淡的同桌爱丽丝\)\nuser:hello/);
 });
@@ -284,7 +301,7 @@ test("search_messages uses persisted message FTS with default limits and context
   assert.match(String(result.output), /project alpha decision/);
 });
 
-test("send_feishu defaults to message and splits newline text into multiple sends", async () => {
+test("send_chat defaults to message and splits newline text into multiple sends", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
@@ -301,15 +318,15 @@ test("send_feishu defaults to message and splits newline text into multiple send
   });
 
   tools.noteLLMRequestStarted();
-  await tools.execute({ id: "call_check_today", toolName: "check_feishu", input: {} });
+  await tools.execute({ id: "call_check_today", toolName: "check_chat", input: {} });
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_feishu",
+    toolName: "send_chat",
     input: { content: "one\n\ntwo" }
   });
 
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /^<chat>\n/);
+  assert.match(String(result.output), /^<chat-log>\n/);
   assert.match(String(result.output), /Alice:one/);
   assert.match(String(result.output), /Alice:two/);
   assert.equal(sent.length, 2);
@@ -318,12 +335,12 @@ test("send_feishu defaults to message and splits newline text into multiple send
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
 
-  const noNew = await tools.execute({ id: "call_check_new", toolName: "check_feishu", input: {} });
+  const noNew = await tools.execute({ id: "call_check_new", toolName: "check_chat", input: {} });
   assert.equal(noNew.ok, true);
-  assert.match(String(noNew.output), /^<chat>\nnothing new\n<\/chat>\nCurrent time is \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$/);
+  assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
 });
 
-test("send_feishu normalizes prefixed feishu chat ids before sending", async () => {
+test("send_chat normalizes prefixed feishu chat ids before sending", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-feishu-id"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
@@ -345,7 +362,7 @@ test("send_feishu normalizes prefixed feishu chat ids before sending", async () 
 
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_feishu",
+    toolName: "send_chat",
     input: { content: "test" }
   });
 
@@ -354,7 +371,7 @@ test("send_feishu normalizes prefixed feishu chat ids before sending", async () 
   assert.equal(sent[0].target.sessionId, "feishu:dm:oc_018825f465c5e6a00e32739f76f47271");
 });
 
-test("send_feishu returns failed outbound messages as chat records", async () => {
+test("send_chat returns failed outbound messages as chat records", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-failed"), "alice.sqlite"));
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   const tools = createMessagingTools({
@@ -384,14 +401,14 @@ test("send_feishu returns failed outbound messages as chat records", async () =>
 
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_feishu",
+    toolName: "send_chat",
     input: { content: "test" }
   });
 
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(result.ok, false);
-  assert.match(String(result.output), /^<chat>\n/);
+  assert.match(String(result.output), /^<chat-log>\n/);
   assert.match(String(result.output), /Alice:test\[发送失败\]/);
   assert.doesNotMatch(String(result.output), /#1 message failed/);
   assert.equal(logs[0].status, "send_failed");

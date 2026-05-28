@@ -1,5 +1,5 @@
-# Scheduler Worker
+# Scheduler Worker 说明
 
-Reserved for a future standalone scheduler worker.
+预留给未来独立的调度 worker。
 
-Current scheduling is process-local in `core/scheduler` and started by `apps/api`.
+当前调度是 `core/scheduler` 中的进程内能力，并由 `apps/api` 启动。

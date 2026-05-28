@@ -1,5 +1,5 @@
-# Codex Worker
+# Codex Worker 说明
 
-Reserved for future Codex CLI job execution.
+预留给未来 Codex CLI 任务执行。
 
-Current `/codex` command handling is only an intent-router placeholder and does not spawn Codex.
+当前 `/codex` 命令处理只是 intent-router 占位逻辑，不会启动 Codex。

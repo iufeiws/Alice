@@ -1,8 +1,8 @@
-# Intent Router
+# Intent Router 说明
 
-`core/router` maps normalized `AgentEvent` objects into simple internal intents.
+`core/router` 把规范化后的 `AgentEvent` 映射为简单内部 intent。
 
-## Public Interface
+## 公共接口
 
 ```ts
 type Intent =
@@ -15,16 +15,16 @@ interface IntentRouter {
 }
 ```
 
-## Factory
+## 工厂函数
 
 ```ts
 createIntentRouter(): IntentRouter
 ```
 
-## Current Rules
+## 当前规则
 
-- Non-text payloads return `unsupported`.
-- Text starting with `/codex` returns `codex`.
-- Any other text returns `chat`.
+- 非文本 payload 返回 `unsupported`。
+- 以 `/codex` 开头的文本返回 `codex`。
+- 其他文本返回 `chat`。
 
-The Codex path is a placeholder; no Codex worker is implemented yet.
+Codex 路径目前只是占位；还没有实现 Codex worker。

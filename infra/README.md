@@ -1,14 +1,14 @@
-# Infra
+# Infra 说明
 
-Deployment and local runtime helpers will live here.
+部署与本地运行辅助文件会放在这里。
 
-Current status:
+当前状态：
 
-- No Docker Compose implementation.
-- No systemd unit implementation.
-- No operational scripts beyond npm commands.
+- 尚无 Docker Compose 实现。
+- 尚无 systemd unit 实现。
+- 除 npm 命令外，尚无额外运维脚本。
 
-The active local run path is:
+当前本地运行路径：
 
 ```bash
 npm run dev:api

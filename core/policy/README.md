@@ -1,8 +1,8 @@
-# Core Policy
+# Core Policy 说明
 
-`core/policy` defines the platform-independent policy interface.
+`core/policy` 定义平台无关的策略接口。
 
-## Public Interface
+## 公共接口
 
 ```ts
 type PolicyDecision = {
@@ -15,10 +15,10 @@ interface PolicyEngine {
 }
 ```
 
-## Current Implementation
+## 当前实现
 
 ```ts
 createAllowAllPolicy(): PolicyEngine
 ```
 
-AgentCore currently uses allow-all policy. Feishu-specific access control, including pairing and group mention requirements, lives in `plugins/feishu`.
+AgentCore 当前使用 allow-all policy。飞书特定访问控制，包括绑定和群聊 mention 要求，位于 `plugins/feishu`。

@@ -1,3 +1,3 @@
-# Builtin Skills
+# Builtin Skills 说明
 
-Reserved for future built-in skills such as summarization, todo extraction, and follow-up scheduling.
+预留给未来内置 skills，例如摘要、todo 提取与后续事项调度。

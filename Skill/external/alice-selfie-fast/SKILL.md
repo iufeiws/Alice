@@ -1,33 +1,32 @@
 ---
 name: alice-selfie-fast
-description: Use this skill when an external agent needs to generate an Alice selfie quickly through Alice's current selfie flow, or finish Alice selfie generation within 5 minutes. On trigger, immediately run the fast command without inspecting the repo first unless the command fails.
+description: 当外部 agent 需要通过 Alice 当前自拍流程快速生成 Alice 自拍，或需要在 5 分钟内完成 Alice 自拍生成时使用。触发后立即运行快速命令；除非命令失败，否则不要先检查仓库。
 ---
 
-# Alice Selfie Fast
+# Alice 快速自拍
 
-## Immediate Action
+## 立即执行
 
-Do not explore the repo, read logs, inspect prompts, or plan first. Immediately run one low-quality API selfie:
+不要先浏览仓库、读取日志、检查 prompt 或制定计划。立即运行一次低质量 API 自拍：
 
 ```bash
 node Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "<short action>"
 ```
 
-If the user did not provide an action, use:
+如果用户没有提供动作，使用：
 
 ```bash
 node Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "lean close to the camera, tilt her head slightly, with a shy expression"
 ```
 
-Normal success response: report only the output file path and elapsed time from the command.
+正常成功响应：只报告命令输出的文件路径和耗时。
 
-## Fixed Settings
+## 固定设置
 
-The runner already forces one image, `gpt-image-2`, `768x1024`, `low`, `jpeg`, compression `45`, and a 120 second API timeout. Do not override these for normal fast selfie requests.
+runner 已经强制使用一张图、`gpt-image-2`、`768x1024`、`low`、`jpeg`、compression `45` 和 120 秒 API timeout。普通快速自拍请求不要覆盖这些设置。
 
-## Only If It Fails
+## 仅在失败时
 
-- Missing key: ask for `OPENAI_API_KEY` or `SELFIE_IMAGE_API_KEY` in `/home/wyf98/Alice/.env`.
-- API error: report the HTTP status and first useful error line.
-- Timeout: report that the API did not return in the fast budget.
-- Missing reference: report the missing path.
+- API error：报告 HTTP status 和第一行有用错误。
+- Timeout：报告 API 没有在快速预算内返回。
+- Missing reference：报告缺失路径。

@@ -1,8 +1,8 @@
-# Event Bus
+# Event Bus 说明
 
-`core/event-bus` provides a small in-memory pub/sub abstraction.
+`core/event-bus` 提供一个小型内存 pub/sub 抽象。
 
-## Public Interface
+## 公共接口
 
 ```ts
 type EventHandler = (event: AgentEvent) => Promise<void> | void;
@@ -13,12 +13,12 @@ interface EventBus {
 }
 ```
 
-## Factory
+## 工厂函数
 
 ```ts
 createInMemoryEventBus(): EventBus
 ```
 
-## Current Status
+## 当前状态
 
-The event bus is available but not central to the current API process. The Feishu plugin calls AgentCore directly through `deps.onEvent`.
+Event bus 已可用，但当前 API 进程还没有把它作为中心路径。飞书插件现在通过 `deps.onEvent` 直接调用 AgentCore。

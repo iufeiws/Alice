@@ -1,29 +1,29 @@
-# Feishu Source Modules
+# Feishu 源码模块
 
-This directory contains the Feishu channel plugin implementation.
+此目录包含飞书 Channel Plugin 的实现。
 
-## Module Map
+## 模块地图
 
-- `index.ts`: plugin factory and message-runtime bridge.
-- `client.ts`: Feishu/Lark SDK wrapper for WebSocket events and outbound messages.
-- `monitor.ts`: lifecycle facade over the client.
-- `handlers/message.ts`: text message normalization.
-- `handlers/lifecycle.ts`: reaction/read/recall normalization.
-- `renderer.ts`: `AgentOutput` to Feishu send plan.
-- `policy.ts`: Feishu-specific access policy.
-- `pairing.ts`: unique binding store.
-- `bindings.ts`: chat/thread/user to session id mapping.
-- `config.ts`: Feishu config helpers.
-- `outbound.ts`: console outbound test sender.
-- `types.ts`: Feishu plugin local types.
+- `index.ts`：plugin factory 与 message-runtime bridge。
+- `client.ts`：飞书/Lark SDK wrapper，负责 WebSocket events 与出站消息。
+- `monitor.ts`：client 上的生命周期 facade。
+- `handlers/message.ts`：文本消息规范化。
+- `handlers/lifecycle.ts`：reaction/read/recall 规范化。
+- `renderer.ts`：`AgentOutput` 到飞书发送计划。
+- `policy.ts`：飞书特定访问策略。
+- `pairing.ts`：唯一绑定存储。
+- `bindings.ts`：chat/thread/user 到 session id 的映射。
+- `config.ts`：飞书配置辅助函数。
+- `outbound.ts`：console outbound 测试发送器。
+- `types.ts`：飞书插件本地类型。
 
-## Receive Interfaces
+## 接收接口
 
 ```ts
 textMessageEventToAgentEvent(raw, bindings, accountId?): Promise<AgentEvent>
 ```
 
-Parses Feishu text event content, resolves a session id, strips mention keys, and returns a standard `AgentEvent`.
+解析飞书文本事件内容，解析 session id，去除 mention keys，并返回标准 `AgentEvent`。
 
 ```ts
 reactionEventToLifecycleEvent(raw, kind): FeishuMessageLifecycleEvent
@@ -31,33 +31,33 @@ readEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
 recalledEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
 ```
 
-Parses Feishu lifecycle callbacks into message-state updates. These updates target an existing message by Feishu `message_id`; they are stored for debug and update the Core-facing message row, but they do not become independent Core messages.
+把飞书生命周期回调解析为消息状态更新。这些更新以飞书 `message_id` 为目标，存储为调试记录并更新 Core 侧消息行，但不会成为独立 Core 消息。
 
 ```ts
 createInMemoryFeishuBindingStore(): FeishuBindingStore
 ```
 
-Creates a process-local session binding store. The current binding key format is:
+创建进程本地 session binding store。当前 binding key 格式：
 
 ```text
 feishu:{dm|group}:{threadId|chatId|userId}
 ```
 
-## Outbound Interfaces
+## 出站接口
 
 ```ts
 renderForFeishu(output): FeishuSendPlan
 ```
 
-Supports text, markdown, card, image, audio, and file content.
+支持 text、markdown、card、image、audio 与 file content。
 
 ```ts
 createFeishuClient(config, deps): FeishuClient
 ```
 
-Starts the Feishu WebSocket client and sends Feishu messages through `client.im.v1.message.create`.
+启动飞书 WebSocket client，并通过 `client.im.v1.message.create` 发送飞书消息。
 
-Subscribed event callbacks:
+订阅的事件回调：
 
 - `im.message.receive_v1`
 - `im.message.reaction.created_v1`
@@ -65,22 +65,22 @@ Subscribed event callbacks:
 - `im.message.message_read_v1`
 - `im.message.recalled_v1`
 
-Media behavior:
+媒体行为：
 
-- image: `im.v1.image.create` then `msg_type=image`
-- audio: `im.v1.file.create(file_type=opus)` then `msg_type=audio`
-- file: `im.v1.file.create(file_type=stream)` then `msg_type=file`
+- image：`im.v1.image.create` 后发送 `msg_type=image`
+- audio：`im.v1.file.create(file_type=opus)` 后发送 `msg_type=audio`
+- file：`im.v1.file.create(file_type=stream)` 后发送 `msg_type=file`
 
-## Pairing
+## 绑定
 
 ```ts
 createFeishuPairingStore(path, io): FeishuPairingStore
 ```
 
-Only one contact can be bound. `pairFromEvent()` accepts the first contact, refreshes the same contact, and rejects all other contacts.
+只允许绑定一个联系人。`pairFromEvent()` 接受第一个联系人，刷新同一联系人，并拒绝所有其他联系人。
 
 ```ts
 isPairingCommand(event, config): boolean
 ```
 
-Current command is read from `FEISHU_PAIRING_COMMAND` or defaults to `/pair alice`.
+当前命令从 `FEISHU_PAIRING_COMMAND` 读取，默认 `/pair alice`。

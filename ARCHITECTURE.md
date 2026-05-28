@@ -1,175 +1,199 @@
-# Alice Architecture
+# Alice 架构
 
-Alice is a local-first personal companion agent runtime. The current implementation is a single Node.js/TypeScript process that combines the API host, admin UI, AgentCore runtime, Feishu channel plugin, WeChat iLink plugin, LLM adapter, message persistence, and scheduler.
+Alice 是一个本地优先的个人陪伴型 Agent 运行时。当前实现是单进程 Node.js/TypeScript 应用，在同一个 API 进程内组合了 HTTP 服务、管理后台、AgentCore、飞书 Channel Plugin、微信 iLink Channel Plugin、LLM 适配器、消息持久化与调度器。
 
-The older `agent_core_plugin_architecture.md` describes the broader target architecture. This document describes what the current code actually implements.
+较早的 [agent_core_plugin_architecture.md](/home/wyf98/Alice/agent_core_plugin_architecture.md) 描述的是更完整的目标架构；本文档描述当前代码已经实现的结构。
 
-## Runtime Shape
+## 运行时形态
 
 ```text
 apps/api
-  HTTP API + Admin UI + process bootstrap
+  HTTP API + 管理后台 + 进程启动入口
     |
-    | creates
+    | 创建
     v
 AgentCore
-  Intent routing
-  LLM call
-  Tool-call execution
-  Editable prompt profile rendering
-  append prompt layer rendering
+  意图路由
+  LLM 调用
+  工具调用执行
+  可编辑 prompt profile 渲染
+  附加 prompt 层渲染
+  每日 shell prompt 注入
     |
-    | sends AgentOutput through
+    | 通过 AgentOutput 交给
     v
 OutputRouter
     |
     v
-Feishu Channel Plugin
-  WebSocket event subscription
-  text normalization
-  reaction/read/recall lifecycle normalization
-  unique user pairing
-  markdown/image/audio/file sending
+Channel Plugin
+  飞书：WebSocket 事件订阅、文本规范化、生命周期事件、唯一用户绑定、Markdown/图片/音频/文件发送
+  微信 iLink：长轮询、文本规范化、扫码登录状态、基于 context_token 的文本/图片/音频发送与 typing
 ```
 
-The process also starts a daily scheduler. The first scheduled task runs at 04:00 local process time and deletes system log files older than seven days.
+进程还会启动每日调度器。当前注册的任务在本地进程时间 04:00 运行，删除超过 7 天的系统日志文件。
 
-## Data Flow
+## 数据流
 
-### Feishu Message Turn
+### 飞书消息回合
 
 ```text
-Feishu WS event
+Feishu WebSocket event
   -> plugins/feishu client
   -> textMessageEventToAgentEvent()
-  -> pairing and Feishu policy checks
-  -> messages table upsert
-  -> message event log append
-  -> MessageRuntime dirty conversation debounce
-  -> AgentCore.handleEvent() with context from messages
-  -> OpenAI-compatible /v1/chat/completions call
-  -> optional platform-neutral messaging tool calls
-  -> AgentOutput inserted as messages.status=sending
+  -> pairing 与飞书策略检查
+  -> messages 表 upsert
+  -> message event log 追加
+  -> MessageRuntime 脏会话防抖
+  -> AgentCore.handleEvent()，使用 messages 构造上下文
+  -> OpenAI 兼容 /v1/chat/completions 调用
+  -> 可选的平台无关 messaging/media/shell tool calls
+  -> AgentOutput 以 messages.status=sending 写入
   -> OutputRouter
-  -> Feishu send API
-  -> messages.status=sent or send_failed
+  -> 飞书发送 API
+  -> messages.status=sent 或 send_failed
 ```
 
-Inbound and outbound user-facing messages are persisted in the Core-facing `messages` table in SQLite. Feishu callbacks and send attempts are also written to append-only `message_logs` event/debug entries. System/debug logs are written to local JSONL files.
+入站与出站的用户可见消息会持久化到 SQLite 的 Core 侧 `messages` 表。飞书回调和发送尝试同时写入追加式 `message_logs` 事件/调试日志。系统调试日志写入本地 JSONL 文件。
 
-Feishu lifecycle callbacks are message-state updates, not standalone Core messages:
+飞书生命周期回调是消息状态更新，不会作为独立 Core 消息处理：
 
-- `im.message.reaction.created_v1` and `im.message.reaction.deleted_v1` update `messages.reactions_json`.
-- `im.message.message_read_v1` updates `messages.is_read/read_at`.
-- `im.message.recalled_v1` updates `messages.is_recalled/recalled_at`.
+- `im.message.reaction.created_v1` 与 `im.message.reaction.deleted_v1` 更新 `messages.reactions_json`。
+- `im.message.message_read_v1` 更新 `messages.is_read/read_at`。
+- `im.message.recalled_v1` 更新 `messages.is_recalled/recalled_at`。
 
-### Admin Send Test
+### 微信 iLink 消息回合
+
+```text
+getupdates 长轮询
+  -> plugins/wechat client
+  -> 文本消息规范化
+  -> messages 表 upsert
+  -> message event log 追加
+  -> MessageRuntime 脏会话防抖
+  -> AgentCore.handleEvent()
+  -> AgentOutput
+  -> OutputRouter
+  -> sendmessage，使用缓存的 context_token
+```
+
+微信登录状态保存在 `memory-files/indexes/wechat-ilink-state.json`。主动发送依赖入站消息产生的 `context_token`，因此只能发送给此前发过消息的微信用户。
+微信发送图片和音频时，插件只接受项目 `assets/` 目录内的本地文件路径，并先走 iLink/CDN 上传。
+
+### 管理后台发送测试
 
 ```text
 Admin UI
   -> /admin/api/plugins/feishu/test-*
-  -> first unique bound Feishu contact
-  -> Feishu markdown/image/audio send path
+  -> 第一个唯一绑定的飞书联系人
+  -> 飞书 markdown/image/audio 发送路径
   -> message log + system log
 ```
 
-## State Locations
+## 状态位置
 
 ```text
 .env
-  Runtime config and secrets. Not committed.
+  运行时配置与密钥，不提交。
 
 data/alice.sqlite
-  Legacy root SQLite path. Not committed.
+  旧的根目录 SQLite 路径，不提交。
 
 logs/system/YYYY-MM-DD.log.jsonl
-  Debug/system logs. Not committed. Retained for seven days.
+  调试/系统日志，不提交，保留 7 天。
 
 logs/message/message-logs.sqlite
-  Append-only message event/debug log. Not committed.
+  追加式消息事件/调试日志，不提交。
 
 memory-files/message/messages.sqlite
-  Core-facing conversation history and message FTS index. Not committed.
+  Core 侧会话历史与消息 FTS 索引，不提交。
 
 memory-files/llm-sessions/*.sessions.jsonl
-  Delta event archive for active and cleared LLM sessions. Not committed.
+  活跃和已清理 LLM 会话的 delta 事件归档，不提交。
 
 memory-files/indexes/feishu-paired-contacts.json
-  Unique Feishu binding for the one allowed user/contact.
+  唯一飞书用户/联系人绑定。
+
+memory-files/indexes/wechat-ilink-state.json
+  微信 iLink 登录态、账号 baseurl 与 token 缓存。
 
 memory-files/config/prompt-profile.json
-  Editable prompt layers, user name, variables, and visible tool groups.
+  可编辑 prompt 层、用户名、变量与可见工具组。
+
+memory-files/shell/
+  每日 shell、shell 配置、prompt 模板和服装图片索引。
 
 assets/
-  Local test assets, currently including generated image/audio test files.
+  本地测试资产，包括生成的图片和音频测试文件。
 ```
 
-## Public Protocols
+## 公共协议
 
-The shared internal protocol lives in `packages/types`.
+共享内部协议定义在 `packages/types`：
 
-- `AgentEvent`: normalized inbound event from any channel.
-- `AgentPayload`: normalized message payload.
-- `AgentOutput`: normalized outbound message.
-- `ChannelPlugin`: channel lifecycle and send interface.
-- `ToolPlugin`: platform-neutral function tools executable by AgentCore.
+- `AgentEvent`：任意渠道规范化后的入站事件。
+- `AgentPayload`：规范化消息负载。
+- `AgentOutput`：规范化出站消息。
+- `ChannelPlugin`：渠道生命周期与发送接口。
+- `ToolPlugin`：AgentCore 可执行的平台无关 function tools。
 
-AgentCore only consumes `AgentEvent` and emits `AgentOutput`; platform-specific details stay in plugins.
+AgentCore 只消费 `AgentEvent` 并产出 `AgentOutput`。消息发送通常通过 `messaging` tool 写入存储后交给 `OutputRouter`，平台细节留在 plugin 内部。
 
-## Persistence
+## 持久化
 
-Alice follows the same broad split used by local-first agent systems such as OpenClaw and Harness-style agents:
+Alice 按本地优先 Agent 系统常见方式拆分状态：
 
-- Message/session history is stored as structured local state.
-- System logs are local debug artifacts with retention.
-- Long-term historical memory is not implemented yet.
+- 消息和会话历史保存为结构化本地状态。
+- 系统日志是带保留期的本地调试产物。
+- 长期历史记忆尚未实现。
 
-Current implementation:
+当前实现：
 
-- SQLite table `message_logs` persists user-visible message events.
-- SQLite table `messages` stores user-facing conversation history and is indexed by `messages_fts` for persisted message search tools.
-- JSONL session archives persist active and recently cleared LLM transcript deltas for continuity and admin inspection.
+- SQLite 表 `message_logs` 持久化用户可见消息事件和调试条目。
+- SQLite 表 `messages` 保存用户可见会话历史，并通过 `messages_fts` 支持持久消息搜索工具。
+- JSONL 会话归档保存活跃和近期清理的 LLM transcript delta，用于连续性和后台检查。
+- `memory-files/shell/` 保存每日 shell、可编辑 shell 配置、prompt 模板和服装图片。
 
-There is no quality gate, summarizer, embedding model, vector memory, or memory editing UI yet.
+目前还没有质量门禁、摘要器、embedding 模型、向量记忆或记忆编辑 UI。
 
-## Scheduler
+## 调度器
 
-`core/scheduler` provides a process-local daily scheduler:
+`core/scheduler` 提供进程内每日调度器：
 
 - `createDailyScheduler(tasks)`
 - `delayUntilNext(hour, minute, from)`
 
-The API process registers one task:
+API 进程注册了一个任务：
 
 ```text
-04:00 daily -> cleanup system log files older than 7 days
+每日 04:00 -> 清理超过 7 天的系统日志文件
 ```
 
-This scheduler is not distributed. If the process is down at 04:00, the task will not run until the next scheduled time after restart.
+该调度器不是分布式的。如果进程在 04:00 停止，任务不会补跑，只会等重启后的下一个计划时间。
 
-## Admin UI
+## 管理后台
 
-`/admin` is a single HTML page served by `apps/api`.
+`/admin` 是由 `apps/api` 直接服务的单页 HTML。
 
-Layout:
+布局：
 
-- Left collapsible panel:
+- 左侧可折叠面板：
   - LLM Settings
-  - Feishu Settings, including send tests, messaging tool trials, and unique binding info
-- Right panel:
+  - Channel Settings，包括飞书/微信配置、发送测试、messaging tool 试用和绑定信息。
+- 右侧面板：
   - Prompt
   - Message Log
   - System Log
 
-The UI uses the JSON endpoints in `apps/api/src/index.ts`; there is no separate frontend build.
+UI 使用 `apps/api/src/index.ts` 中的 JSON 端点，没有独立前端构建。
 
-## Current Limitations
+## 当前限制
 
-- Only one Feishu user/contact can be bound.
-- Agent behavior is still a placeholder prompt.
-- Agent prompt behavior is editable in the admin UI, but there is only one active local profile.
-- Memory extraction is heuristic and text-only.
-- Core-facing messages persist, but older in-memory-only logs from before SQLite migration cannot be recovered.
-- Feishu receive path currently normalizes text messages plus reaction/read/recall lifecycle updates.
-- Feishu send path supports markdown card, image, audio, and file, but media must be provided as local file paths.
-- Codex, skills, workers, desktop pet, and full web admin are still placeholders.
+- 飞书只允许绑定一个用户/联系人。
+- Agent 行为仍以 prompt 和工具协议为主，还不是完整人格系统。
+- 管理后台可编辑 prompt profile，但当前只有一个本地活跃 profile。
+- 记忆提取仍是文本启发式。
+- Core 侧消息已持久化，但迁移到 SQLite 之前仅存在内存里的旧日志无法恢复。
+- 飞书接收路径目前规范化文本消息，以及 reaction/read/recall 生命周期更新。
+- 飞书发送路径支持 Markdown card、图片、音频和文件，但媒体必须来自本地文件路径。
+- 微信 iLink 接收路径当前规范化文本消息；发送路径支持文本、图片和音频，主动发送依赖已缓存的 `context_token`。
+- Codex、skills、workers、桌宠和完整 Web 管理端仍是占位或规划中能力。

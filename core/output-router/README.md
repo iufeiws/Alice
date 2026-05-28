@@ -1,8 +1,8 @@
-# Output Router
+# Output Router 说明
 
-`core/output-router` owns channel plugin registration and routes `AgentOutput` to the correct channel plugin.
+`core/output-router` 负责注册 Channel Plugin，并把 `AgentOutput` 路由到正确的渠道插件。
 
-## Public Interface
+## 公共接口
 
 ```ts
 interface OutputRouter {
@@ -13,12 +13,12 @@ interface OutputRouter {
 }
 ```
 
-## Factory
+## 工厂函数
 
 ```ts
 createOutputRouter(): OutputRouter
 ```
 
-## Behavior
+## 行为
 
-The target plugin is read from `output.target.plugin`. If no matching channel is registered, `send()` throws. Channel send results are returned to the caller so the message runtime can persist platform ids after successful sends.
+目标插件来自 `output.target.plugin`。如果没有匹配渠道，`send()` 会抛错。渠道发送结果会返回给调用方，方便消息运行时在发送成功后持久化平台消息 id。

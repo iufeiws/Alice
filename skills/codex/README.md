@@ -1,3 +1,3 @@
-# Codex Skills
+# Codex Skills 说明
 
-Reserved for future Codex skills such as inspect repo, review diff, run tests, and apply change.
+预留给未来 Codex skills，例如检查仓库、评审 diff、运行测试与应用代码变更。

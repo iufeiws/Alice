@@ -1,52 +1,52 @@
-# Agent Working Notes
+# Agent 工作说明
 
-## Project Context
+## 项目上下文
 
-Alice is a local-first personal agent runtime. The current scope is an agent core with placeholder agent behavior, an OpenAI-compatible `/v1` client surface for providers such as opencode and DeepSeek-compatible APIs, Feishu and WeChat channel plugins, a local admin console, SQLite-backed message history, JSONL LLM session archives, and file-backed system logs.
+Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentCore、占位式 Agent 行为、OpenAI 兼容 `/v1` 客户端、飞书与微信渠道插件、本地管理后台、SQLite 消息历史、JSONL LLM 会话归档，以及文件化系统日志。
 
-## Engineering Rules
+## 工程规则
 
-- Prefer small, focused changes.
-- Do not introduce new dependencies without justification.
-- When mature, maintained dependencies exist for well-scoped standard problems, use them instead of building custom implementations.
-- All API behavior changes require tests.
-- For backend changes, check authorization and data validation.
-- For database migrations, check backward compatibility and rollback safety.
-- Use existing project patterns before introducing new abstractions.
+- 优先做小而聚焦的变更。
+- 不在没有充分理由时引入新依赖。
+- 对于边界清晰且已有成熟方案的问题，优先使用维护良好的依赖，不重复造轮子。
+- 所有 API 行为变更都需要测试。
+- 后端变更需要检查授权和数据校验。
+- 数据库迁移需要检查向后兼容和回滚安全。
+- 引入新抽象前，先使用项目已有模式。
 
-## Runtime Commands
+## 运行命令
 
-- `npm run build`: compile TypeScript into `dist/`.
-- `npm run typecheck`: run TypeScript without emit.
-- `npm run dev:api`: build and start the single API/admin process.
-- `npm test`: run Node test files.
+- `npm run build`：编译 TypeScript 到 `dist/`。
+- `npm run typecheck`：运行 TypeScript 类型检查，不输出文件。
+- `npm run dev:api`：构建并启动单进程 API/管理后台。
+- `npm test`：运行 Node 测试文件。
 
 ## GitHub
 
-- Use SSH remotes by default for GitHub operations, for example `git@github.com:iufeiws/Alice.git`.
-- Commit messages must describe the actual change with useful context; avoid vague messages such as `update`, `changes`, or `update current workspace`.
+- GitHub 操作默认使用 SSH remote，例如 `git@github.com:iufeiws/Alice.git`。
+- Commit message 必须描述实际变更并提供有用上下文，避免 `update`、`changes`、`update current workspace` 这类含糊信息。
 
-## Runtime State
+## 运行时状态
 
-- `.env` stores local credentials and runtime settings. Do not commit secrets.
-- Every setting changed from the admin console must be persisted to `.env` or another documented durable store, and the active process should apply it immediately when practical.
-- `memory-files/message/messages.sqlite` stores Core-facing message history.
-- `logs/message/message-logs.sqlite` stores append-only message event/debug logs.
-- `memory-files/llm-sessions/` stores LLM session transcript delta events.
-- `logs/system/` stores debug logs; retention is managed by the daily scheduler.
-- Log-class data, including `logs/message/`, `logs/system/`, and LLM session archives, does not enter LLM context and must not be deleted or edited when the user asks to delete or change message history. Treat such requests as applying only to Core-facing `messages` data unless the user explicitly names a log store.
-- `memory-files/indexes/feishu-paired-contacts.json` stores the single bound Feishu contact state.
-- Runtime code that needs "now" should use the global current-time provider in `core/time/src/index.ts`, configured from `config.core.timezone` (`AGENT_TIMEZONE`, default `Asia/Singapore`). Persisted agent-facing timestamps must be saved as local wall-clock ISO strings in the configured timezone, for example `2026-05-25T08:00:00.000`. Do not save UTC `Z` timestamps or offset-suffixed forms such as `+08:00`; avoid direct `new Date().toISOString()` for records.
+- `.env` 保存本地凭据和运行时配置，不要提交密钥。
+- 管理后台改动的设置必须持久化到 `.env` 或其他已记录的持久存储；可行时，当前进程应立即应用这些设置。
+- `memory-files/message/messages.sqlite` 保存 Core 侧消息历史。
+- `logs/message/message-logs.sqlite` 保存追加式消息事件/调试日志。
+- `memory-files/llm-sessions/` 保存 LLM 会话 transcript delta 事件。
+- `logs/system/` 保存调试日志，保留期由每日调度器管理。
+- 日志类数据，包括 `logs/message/`、`logs/system/` 和 LLM 会话归档，不进入 LLM 上下文。用户要求删除或修改消息历史时，不要删除或编辑这些日志；除非用户明确点名日志存储，否则这类请求只适用于 Core 侧 `messages` 数据。
+- `memory-files/indexes/feishu-paired-contacts.json` 保存唯一飞书联系人绑定。
+- 运行时代码需要“当前时间”时，应使用 `core/time/src/index.ts` 的全局时间提供器；时区来自 `config.core.timezone`（`AGENT_TIMEZONE`，默认 `Asia/Singapore`）。保存给 Agent 使用的时间戳时，必须使用配置时区下的本地 wall-clock ISO 字符串，例如 `2026-05-25T08:00:00.000`。不要保存 UTC `Z` 时间戳或带 `+08:00` 的 offset 形式；避免直接用 `new Date().toISOString()` 写记录。
 
-## Agent State Notes
+## Agent 状态说明
 
-- Current expected behavior: messages received during `away`, `sleeping`, or `working` still count elapsed wall-clock time toward the saved `responseDelayMs`; when the state later allows replies, old pending messages may be handled immediately if their elapsed time already exceeds the delay.
-- Current expected behavior: AgentCore is treated as a single non-concurrent worker. `working` is not designed for concurrent or nested `handleEvent()` calls yet.
+- 当前预期行为：在 `away`、`sleeping` 或 `working` 状态收到的消息，仍会把经过的 wall-clock 时间计入已保存的 `responseDelayMs`；当状态稍后允许回复时，如果旧待处理消息的等待时间已经超过延迟，就可能立刻处理。
+- 当前预期行为：AgentCore 被视为单一非并发 worker。`working` 状态尚未为并发或嵌套 `handleEvent()` 调用设计。
 
 ## Review Checklist
 
-- Admin APIs must validate inputs and return JSON errors instead of throwing.
-- Any endpoint that can send messages, update credentials, read local files, or expose logs must have an explicit authorization story.
-- Feishu runtime start/stop should be idempotent and should not create duplicate websocket clients.
-- LLM configuration changes must affect the active agent runtime, not only future restarts.
-- SQLite schema changes need a migration/versioning path before production use.
+- Admin API 必须校验输入，并返回 JSON 错误，而不是直接抛异常。
+- 任何能发送消息、更新凭据、读取本地文件或暴露日志的端点，都必须有明确授权方案。
+- 飞书运行时 start/stop 必须幂等，不能创建重复 WebSocket client。
+- LLM 配置变更必须影响活跃 Agent 运行时，而不仅是未来重启。
+- SQLite schema 变更在生产使用前需要迁移/版本路径。

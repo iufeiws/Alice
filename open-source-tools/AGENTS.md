@@ -1,12 +1,10 @@
-# Agent Instructions
+# 开源工具目录说明
 
-This directory is reserved for third-party open-source tools downloaded from GitHub or similar upstream repositories.
+此目录用于记录或放置与项目相关的开源工具集成说明。
 
-Rules for agents working in this directory:
+当前没有稳定的运行时代码依赖这里的文件。新增内容时请遵守以下规则：
 
-- Do not modify, refactor, format, patch, or delete code inside downloaded third-party tool directories.
-- Do not vendor local changes into third-party source code.
-- If a tool needs changes, document the required change outside this directory or ask the user to fork/patch upstream explicitly.
-- You may read files in this directory for reference.
-- You may add a new downloaded tool directory here when the user explicitly asks for it.
-- Keep downloaded tool source out of this repository's Git history.
+- 优先写清工具用途、来源、许可证和接入方式。
+- 不要提交第三方密钥、token、cookie 或个人账号数据。
+- 如果引入可执行脚本，需要在文档里写明运行前置条件和影响范围。
+- 若工具会访问网络、写入本地状态或调用外部服务，需要明确说明默认路径与配置项。

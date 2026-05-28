@@ -1,57 +1,46 @@
 # Alice
 
-Personal companion agent framework based on the AgentCore / Plugin architecture in
-`agent_core_plugin_architecture.md`.
+Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 `AgentCore / Plugin` 架构。目标架构见 [agent_core_plugin_architecture.md](/home/wyf98/Alice/agent_core_plugin_architecture.md)，当前代码实际实现见 [ARCHITECTURE.md](/home/wyf98/Alice/ARCHITECTURE.md)。
 
-For the current implemented architecture, see `ARCHITECTURE.md`.
+## 当前实现
 
-## Current Implementation
+- TypeScript monorepo 骨架，使用 pnpm workspace 元数据。
+- AgentCore 运行时边界：
+  - 标准化 `AgentEvent` 与 `AgentOutput`。
+  - 会话解析、输出路由、工具调用循环与 LLM 会话归档。
+  - 可编辑 prompt profile、附加 prompt 层和每日 shell prompt。
+- 内部 OpenAI 兼容 `/v1` LLM 客户端：
+  - 支持配置 `LLM_BASE_URL`。
+  - 可接入 OpenAI、DeepSeek、opencode 以及类似 `/v1/chat/completions` 的服务。
+  - 支持 OpenAI 风格 function tool calls，由 AgentCore 执行工具。
+  - 支持 streaming tool-call delta，用于 `send_chat(type="message")` 的逐行提前发送。
+  - 未配置 API key 或 base URL 时会使用本地 stub 客户端。
+- 飞书 Channel Plugin：
+  - 通过飞书/Lark SDK 使用 WebSocket 事件订阅。
+  - 将文本消息规范化为 `AgentEvent`。
+  - 通过 `/pair alice` 绑定唯一用户。
+  - 支持发送文本、Markdown、图片、音频与文件。
+- 微信 iLink Channel Plugin：
+  - 通过 `getupdates` 长轮询接收文本消息。
+  - 支持发送文本、图片和音频，支持 typing 状态。
+  - 复用 Core 侧 `messages` 与追加式 `message_logs` 存储。
+  - 缓存 `context_token`，用于向曾经来信的微信用户主动发送消息。
+- Media Tool Plugin：
+  - 提供 `selfie` 工具，用 Image API 生成 Alice 自拍照。
+  - 默认经 `Skill/external/alice-selfie-fast` runner 调用 `/v1/images/edits`。
+  - 使用角色、图书馆参考图；如果当前服装参考图存在，会作为第三张参考图，否则降级为文字服装描述。
+  - 生成前先发送简短进行中提示。
+  - 阻止连续两次调用 `selfie`。
+- 本地持久化：
+  - SQLite Core 侧消息历史。
+  - SQLite 追加式消息事件日志。
+  - SQLite FTS5 持久消息搜索。
+  - JSONL 活跃 LLM 会话归档。
+  - 文件化系统日志，保留 7 天。
+- 管理后台：`http://127.0.0.1:3030/admin`。
+  - 端口来自 `API_PORT`，默认 `3030`。
 
-- TypeScript monorepo skeleton with pnpm workspace metadata.
-- AgentCore runtime boundary:
-  - standardized `AgentEvent` and `AgentOutput`
-  - in-memory event/session/output routing
-  - editable prompt profile and append prompt layers
-- Internal OpenAI-compatible `/v1` LLM client:
-  - supports configurable `LLM_BASE_URL`
-  - works with OpenAI, DeepSeek, opencode, and similar `/v1/chat/completions` providers
-  - supports OpenAI-style function tool calls executed by AgentCore
-  - falls back to a stub client when no API key/base URL is configured
-- Feishu channel plugin:
-  - WebSocket event subscription via Feishu/Lark SDK
-  - text message normalization into `AgentEvent`
-  - unique user pairing with `/pair alice`
-  - text, markdown, image, audio, and file sending
-- Media tool plugin:
-  - `selfie` tool for Image API-generated Alice photos
-  - uses character, outfit, and library reference images
-  - sends a short in-progress message before image generation
-  - rejects consecutive `selfie` tool calls
-- Local persistence:
-  - SQLite Core-facing message history
-  - SQLite append-only message event logs
-  - SQLite FTS5 search over persisted messages
-  - JSONL active LLM session archives
-
-## WeChat iLink
-
-WeChat iLink can be enabled alongside Feishu and uses the same Core-facing `messages` and append-only `message_logs` storage.
-
-Configure the base options in `.env` or from the admin panel:
-
-```env
-WECHAT_ENABLED=true
-WECHAT_ILINK_BASE_URL=https://ilinkai.weixin.qq.com
-WECHAT_ILINK_POLL_TIMEOUT_MS=35000
-```
-
-In the admin UI, open `Channel Settings`, switch to the `WeChat` tab, click `Get Login QR`, scan the QR code in WeChat, and confirm on the phone. The confirmed `bot_token` and account-specific `baseurl` are saved under `memory-files/indexes/wechat-ilink-state.json` and reused after restart.
-
-The WeChat plugin long-polls `getupdates`, writes inbound text messages into the current message log/runtime, caches each sender's latest `context_token`, and sends outbound text messages through `sendmessage`. Proactive sends require a cached token from a prior inbound message for that WeChat user.
-  - file-based system logs with seven-day retention
-- Admin UI at `http://127.0.0.1:3030/admin`.
-
-## Commands
+## 运行命令
 
 ```bash
 npm install
@@ -59,13 +48,13 @@ npm run typecheck
 npm run dev:api
 ```
 
-The preferred package manager metadata is pnpm, but npm can run the current scripts.
+仓库保留 pnpm workspace 元数据，但当前脚本也可以用 npm 执行。
 
-`npm run dev:api` builds TypeScript and starts the compiled API process.
+`npm run dev:api` 会先构建 TypeScript，再启动编译后的 API 进程。
 
-## Environment
+## 环境配置
 
-Copy `.env.example` and set provider-specific values:
+复制 `.env.example`，然后按使用的模型服务设置变量：
 
 ```bash
 LLM_BASE_URL=https://api.deepseek.com/v1
@@ -73,17 +62,36 @@ LLM_API_KEY=...
 LLM_MODEL=deepseek-chat
 ```
 
-For a local opencode-compatible endpoint, point `LLM_BASE_URL` at its `/v1` base URL.
+如果使用本地 opencode 兼容端点，把 `LLM_BASE_URL` 指向它的 `/v1` base URL。
 
-For the selfie image tool, set an OpenAI Image API key:
+自拍图片工具需要 OpenAI Image API key：
 
 ```bash
 OPENAI_API_KEY=...
 ```
 
-See `plugins/media/README.md` for detailed media tool configuration and the standalone speed test command.
+详细媒体工具配置和独立测速命令见 [plugins/media/README.md](/home/wyf98/Alice/plugins/media/README.md)。
 
-## Important Local State
+## 微信 iLink
+
+微信 iLink 可以和飞书同时启用。基础配置可写入 `.env`，也可在管理后台修改：
+
+```env
+WECHAT_ENABLED=true
+WECHAT_ILINK_BASE_URL=https://ilinkai.weixin.qq.com
+WECHAT_ILINK_POLL_TIMEOUT_MS=35000
+```
+
+在管理后台打开 `Channel Settings`，切换到 `WeChat` 标签，点击 `Get Login QR`，用微信扫码并在手机上确认。确认后的 `bot_token` 和账号专属 `baseurl` 会保存到：
+
+```text
+memory-files/indexes/wechat-ilink-state.json
+```
+
+微信插件会长轮询 `getupdates`，把入站文本写入当前消息日志和运行时，缓存每个发送者最近的 `context_token`，并通过 `sendmessage` 发送出站文本。主动发送需要该微信用户此前发过消息，以便复用缓存的 token。
+图片和音频发送会先通过 iLink/CDN 上传本地 `assets/` 内文件，再随 `sendmessage` 发出。
+
+## 重要本地状态
 
 ```text
 .env
@@ -93,7 +101,9 @@ logs/message/message-logs.sqlite
 memory-files/message/messages.sqlite
 memory-files/llm-sessions/*.sessions.jsonl
 memory-files/indexes/feishu-paired-contacts.json
+memory-files/indexes/wechat-ilink-state.json
 memory-files/config/prompt-profile.json
+memory-files/shell/
 ```
 
-`data/`, `logs/`, selected runtime `memory-files/` directories, `.env`, `dist/`, and `node_modules/` are ignored by git.
+`data/`、`logs/`、部分运行时 `memory-files/` 目录、`.env`、`dist/` 和 `node_modules/` 已被 git 忽略。

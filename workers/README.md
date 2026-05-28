@@ -1,10 +1,10 @@
-# Workers
+# Workers 说明
 
-Worker process root. No separate worker process is currently implemented.
+Worker 进程根目录。当前还没有独立 worker 进程。
 
-Current runtime is a single API process. The process-local daily scheduler lives in `core/scheduler` and is started by `apps/api`.
+当前运行时是单个 API 进程。进程内每日调度器位于 `core/scheduler`，由 `apps/api` 启动。
 
-Reserved future workers:
+预留的未来 worker：
 
 - `agent-worker`
 - `codex-worker`

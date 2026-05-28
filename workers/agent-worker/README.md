@@ -1,5 +1,5 @@
-# Agent Worker
+# Agent Worker 说明
 
-Reserved for a future separate AgentCore worker process.
+预留给未来独立的 AgentCore worker 进程。
 
-Current AgentCore runs inside `apps/api`.
+当前 AgentCore 运行在 `apps/api` 内部。

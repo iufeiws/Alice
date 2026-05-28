@@ -1,8 +1,8 @@
-# Scheduler
+# Scheduler 说明
 
-`core/scheduler` contains a process-local daily scheduler.
+`core/scheduler` 包含进程内每日调度器。
 
-## Public Types
+## 公共类型
 
 ```ts
 type ScheduledTask = {
@@ -18,17 +18,17 @@ type Scheduler = {
 };
 ```
 
-## Functions
+## 函数
 
-- `createDailyScheduler(tasks, now?)`: schedules each task once per day.
-- `delayUntilNext(hour, minute, from)`: returns the delay in milliseconds until the next run.
+- `createDailyScheduler(tasks, now?)`：为每个任务每天调度一次。
+- `delayUntilNext(hour, minute, from)`：返回距离下一次运行的毫秒数。
 
-## Current Use
+## 当前用途
 
-`apps/api` registers one task:
+`apps/api` 注册了一个任务：
 
 ```text
-04:00 daily -> delete system log files older than seven days
+每日 04:00 -> 删除超过 7 天的系统日志文件
 ```
 
-The scheduler is not persisted or distributed. Missed executions are not replayed.
+调度器不持久化，也不是分布式的。错过的执行不会补跑。

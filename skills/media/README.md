@@ -1,3 +1,3 @@
-# Media Skills
+# Media Skills 说明
 
-Reserved for future media skills such as image understanding, ASR, and TTS.
+预留给未来媒体 skills，例如图片理解、ASR 与 TTS。

@@ -1,5 +1,5 @@
-# Media Worker
+# Media Worker 说明
 
-Reserved for future media processing such as ASR, TTS, image understanding, and file conversion.
+预留给未来媒体处理任务，例如 ASR、TTS、图片理解和文件转换。
 
-Current media support only sends local image/audio/file paths through Feishu.
+当前媒体能力主要是通过飞书发送本地图片、音频与文件路径。

@@ -1,3 +1,3 @@
-# Custom Skills
+# Custom Skills 说明
 
-Reserved for user-defined local skills.
+预留给用户自定义本地 skills。

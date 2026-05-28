@@ -1,5 +1,7 @@
 # AgentCore / Plugin 解耦架构方案
 
+> 本文是目标架构方案，不是当前代码已经全部实现的行为说明。当前实现以单进程 `apps/api` 为主，实际运行结构见 [ARCHITECTURE.md](/home/wyf98/Alice/ARCHITECTURE.md)。
+
 ## 0. 目标
 
 构建一个可扩展的个人 agent 系统，核心运行在 WSL2 中，飞书作为第一阶段 IM 入口，Codex CLI 作为代码代理能力，后续可扩展桌宠客户端。
@@ -1533,4 +1535,3 @@ DesktopPet Plugin
 核心思想：
 
 > AgentCore 只处理标准事件和标准输出；Plugin 负责外部协议；MemoryFiles 负责可读长期上下文；Skills 负责可调用能力。飞书采用 OpenClaw 风格的长连接 Channel Plugin，Codex 采用独立 Worker Plugin，通过 session binding 与飞书会话解耦连接。
-

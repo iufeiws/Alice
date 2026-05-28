@@ -392,6 +392,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         ...toolMessages
       ];
       noteLLMSessionUpdated();
+      if (invalidateSession) {
+        return { message: result.message, sentMessage, invalidateSession };
+      }
       round += 1;
     }
   }

@@ -14,6 +14,7 @@ import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wec
 import { createMediaTools } from "../../../plugins/media/src/index.js";
 import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createShellTools } from "../../../plugins/shell/src/index.js";
+import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyScheduler } from "../../../core/scheduler/src/index.js";
@@ -264,7 +265,8 @@ const shellTools = createShellTools({
   },
   appendMessageLog
 });
-const toolPlugins = [messagingTools, mediaTools, shellTools];
+const bookcaseTools = createBookcaseTools();
+const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools];
 const core = createAgentCore({
   config,
   llm: activeLLM,

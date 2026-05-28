@@ -126,6 +126,73 @@ test("agent core appends assistant tool call and tool result before the next llm
   assert.equal(requests[1].messages.at(-1)?.content, "history result");
 });
 
+test("agent core stops before another llm request when a tool invalidates the session", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: LLMChatInput["messages"][] = [];
+  const clearedReasons: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length > 1) {
+        throw new Error("unexpected follow-up llm request");
+      }
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_return",
+            type: "function",
+            function: {
+              name: "bookcase",
+              arguments: "{\"action\":\"return\"}"
+            }
+          }]
+        },
+        finishReason: "tool_calls"
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "bookcase",
+      listTools() {
+        return [{ name: "bookcase", description: "bookcase", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return {
+          callId: call.id,
+          ok: true,
+          invalidateLLMSession: true,
+          output: { action: "return" }
+        };
+      }
+    }],
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push(session.messages);
+    },
+    onLLMSessionCleared(reason) {
+      clearedReasons.push(reason);
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 1);
+  assert.equal(clearedReasons.at(-1), "prompt_static_changed");
+  const latestMessages = sessionUpdates.at(-1) ?? [];
+  assert.equal(latestMessages.at(-2)?.role, "assistant");
+  assert.equal(latestMessages.at(-2)?.toolCalls?.[0].function.name, "bookcase");
+  assert.equal(latestMessages.at(-1)?.role, "tool");
+  assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
+});
+
 test("agent core rejects two consecutive selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];

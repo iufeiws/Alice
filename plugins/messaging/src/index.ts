@@ -277,7 +277,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const content = stringValue(call.input.content);
     if (!content.trim()) return toolError(call, "content is required");
     const parts = type === "message" || type === "voice"
-      ? content.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)
+      ? splitSendContentParts(content)
       : [content];
     if (parts.length === 0) return toolError(call, "content is required");
 
@@ -764,6 +764,13 @@ function normalizeSendType(value: unknown): SendType | undefined {
   const text = stringValue(value) || "message";
   if (text === "message" || text === "markdown" || text === "image" || text === "voice") return text;
   return undefined;
+}
+
+function splitSendContentParts(content: string): string[] {
+  return content
+    .split(/\r?\n|\\r\\n|\\n/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {

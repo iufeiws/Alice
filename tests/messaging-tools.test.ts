@@ -836,7 +836,7 @@ test("configured voice synthesizer falls back to moss when explicit genie servic
   await fsp.unlink(secondResult.filePath);
 });
 
-test("send_chat voice splits newline text into multiple audio messages", async () => {
+test("send_chat voice splits newline and escaped newline text into multiple audio messages", async () => {
   const dir = makeTempDir("messaging-send-voice-newline");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
@@ -866,16 +866,17 @@ test("send_chat voice splits newline text into multiple audio messages", async (
   const result = await tools.execute({
     id: "call_send_voice_newline",
     toolName: "send_chat",
-    input: { type: "voice", content: "第一句\n第二句" }
+    input: { type: "voice", content: "第一句\n第二句\\n第三句" }
   });
 
   assert.equal(result.ok, true);
-  assert.equal(sent.length, 2);
-  assert.deepEqual(synthesizedTexts, ["第一句", "第二句"]);
-  assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句", "第二句"]);
+  assert.equal(sent.length, 3);
+  assert.deepEqual(synthesizedTexts, ["第一句", "第二句", "第三句"]);
+  assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句", "第二句", "第三句"]);
   assert.deepEqual(logs, [
     { status: "sent", summary: "[语音]第一句" },
-    { status: "sent", summary: "[语音]第二句" }
+    { status: "sent", summary: "[语音]第二句" },
+    { status: "sent", summary: "[语音]第三句" }
   ]);
 });
 

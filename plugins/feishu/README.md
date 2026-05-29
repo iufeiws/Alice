@@ -95,11 +95,11 @@ AgentCore 向 LLM 暴露平台无关的聊天工具名：
   - 当前按目标 plugin 搜索消息，不按具体飞书会话过滤。
 - `send_chat`
   - 参数：`type: "message" | "markdown" | "image" | "voice"` 与 `content`；应先提供 `type`，再提供 `content`。
-  - `message` 模式会把换行分隔内容拆成多条文本消息。
-  - `voice` 模式会把换行分隔内容拆成多条语音消息，每段通过默认 TTS 后端合成为一条 opus 音频消息。
+  - `message` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条文本消息。
+  - `voice` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条语音消息，每段通过默认 TTS 后端合成为一条 opus 音频消息。
   - 拆分文本会按内容长度节流；第一次发送也会计入 LLM 调用开始后已经经过的时间。
   - 发送尝试会先占用节流窗口，再等待渠道返回，因此失败尝试也会计入打字/发送时间。失败发送会标记为 `send_failed`，并在内存 retry queue 中最多重试 3 次。
-  - 对于 streaming LLM response，只有在 `type="message"` 或 `type="voice"` 出现后，`content` 里每个成功解码的换行才会立即发送；省略或较晚到达的 `type` 会等待最终 tool arguments。
+  - 对于 streaming LLM response，只有在 `type="message"` 或 `type="voice"` 出现后，`content` 里每个成功解码的真实换行或字面量 `\n` 才会立即发送；省略或较晚到达的 `type` 会等待最终 tool arguments。
 
 ## 关键函数
 

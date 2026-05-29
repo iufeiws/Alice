@@ -850,6 +850,12 @@ class StreamingSendMessageState {
   }
 
   private pushDecoded(char: string): void {
+    if ((char === "n" || char === "r") && this.pendingLine.endsWith("\\")) {
+      this.pendingLine = this.pendingLine.slice(0, -1);
+      if (char === "r") return;
+      this.pushDecoded("\n");
+      return;
+    }
     if (char === "\n") {
       const line = this.pendingLine.trim();
       if (line) {

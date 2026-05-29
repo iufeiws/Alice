@@ -593,14 +593,14 @@ test("agent core streams send_chat voice content on newlines before final tool J
         type: "function",
         function: {
           name: "send_chat",
-          arguments: "{\"type\":\"voice\",\"content\":\"第一句\\n"
+          arguments: "{\"type\":\"voice\",\"content\":\"第一句\\\\n"
         }
       });
       assert.deepEqual(sentLines, ["voice:第一句"]);
       await handlers?.onToolCallDelta?.({
         index: 0,
         function: {
-          arguments: "第二句\\n第三句\"}"
+          arguments: "第二句\\\\n第三句\"}"
         }
       });
       assert.deepEqual(sentLines, ["voice:第一句"]);
@@ -613,7 +613,7 @@ test("agent core streams send_chat voice content on newlines before final tool J
             type: "function",
             function: {
               name: "send_chat",
-              arguments: "{\"type\":\"voice\",\"content\":\"第一句\\n第二句\\n第三句\"}"
+              arguments: "{\"type\":\"voice\",\"content\":\"第一句\\\\n第二句\\\\n第三句\"}"
             }
           }]
         }

@@ -32,6 +32,10 @@ assets/tts/references/alice/reference.txt
 
 Use the admin Voice Sample form to upload both the audio and the exact spoken text. If `reference.txt` is missing or empty, Alice falls back to MOSS.
 
+## Synthesis behavior
+
+Alice disables Genie-TTS internal sentence splitting and performs its own split on `。`, `.`, `？`, and `?`. The punctuation is preserved in each segment, each segment is synthesized separately, and the WAV parts are concatenated before the normal loudness check and opus conversion.
+
 For manual debugging:
 
 ```bash

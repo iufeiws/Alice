@@ -859,7 +859,7 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     baseURLExplicit: input.mossBaseURLExplicit ?? Boolean(input.mossBaseURL),
     host: input.mossHost ?? "127.0.0.1",
     port: input.mossPort ?? 8765,
-    pythonCommand: input.mossPythonCommand ?? "python3",
+    pythonCommand: input.mossPythonCommand ?? ".conda-moss/bin/python",
     serviceScript: input.mossServiceScript ?? "scripts/moss_tts_onnx/service.py",
     modelDir: input.mossModelDir ?? "assets/tts/moss-onnx/models",
     referenceAudio: input.mossReferenceAudio ?? "assets/tts/references/alice/reference.wav",

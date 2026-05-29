@@ -8,6 +8,7 @@ test("tts config defaults to moss onnx backend", () => {
   assert.equal(config.tts.backend, "moss-onnx");
   assert.equal(config.tts.mossBaseURL, "http://127.0.0.1:8765");
   assert.equal(config.tts.mossBaseURLExplicit, false);
+  assert.equal(config.tts.mossPythonCommand, ".conda-moss/bin/python");
   assert.equal(config.tts.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
   assert.equal(config.tts.mossIdleShutdownMs, 15 * 60 * 1000);
   assert.equal(config.tts.mossFfmpegCommand, "ffmpeg-static");
@@ -20,6 +21,7 @@ test("tts config reads moss onnx settings", () => {
     MOSS_TTS_MODEL_DIR: "assets/tts/custom-models",
     MOSS_TTS_REFERENCE_AUDIO: "assets/tts/references/alice/reference.wav",
     MOSS_TTS_OUTPUT_DIR: "assets/generated/moss",
+    MOSS_TTS_PYTHON_COMMAND: "/opt/moss/bin/python",
     MOSS_TTS_IDLE_SHUTDOWN_MS: "12345",
     MOSS_TTS_TIMEOUT_MS: "23456",
     MOSS_TTS_FFMPEG_COMMAND: "/usr/local/bin/ffmpeg"
@@ -29,6 +31,7 @@ test("tts config reads moss onnx settings", () => {
   assert.equal(config.tts.mossBaseURL, "http://127.0.0.2:8766");
   assert.equal(config.tts.mossBaseURLExplicit, false);
   assert.equal(config.tts.mossModelDir, "assets/tts/custom-models");
+  assert.equal(config.tts.mossPythonCommand, "/opt/moss/bin/python");
   assert.equal(config.tts.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
   assert.equal(config.tts.mossOutputDir, "assets/generated/moss");
   assert.equal(config.tts.mossIdleShutdownMs, 12345);

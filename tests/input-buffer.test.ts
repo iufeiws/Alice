@@ -77,6 +77,7 @@ test("moss tts config has asset defaults and env overrides", () => {
   assert.equal(defaults.mossBaseURL, "http://127.0.0.1:8765");
   assert.equal(defaults.mossBaseURLExplicit, false);
   assert.equal(defaults.mossModelDir, "assets/tts/moss-onnx/models");
+  assert.equal(defaults.mossPythonCommand, ".conda-moss/bin/python");
   assert.equal(defaults.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
   assert.equal(defaults.mossOutputDir, "assets/generated/tts");
   assert.equal(defaults.mossTimeoutMs, 120000);
@@ -84,6 +85,7 @@ test("moss tts config has asset defaults and env overrides", () => {
   const custom = loadConfig({
     MOSS_TTS_BASE_URL: "http://localhost:9000/",
     MOSS_TTS_MODEL_DIR: "assets/tts/models/custom",
+    MOSS_TTS_PYTHON_COMMAND: "/opt/moss/bin/python",
     MOSS_TTS_REFERENCE_AUDIO: "assets/tts/references/custom/reference.wav",
     MOSS_TTS_OUTPUT_DIR: "assets/generated/custom-tts",
     MOSS_TTS_TIMEOUT_MS: "5000"
@@ -91,6 +93,7 @@ test("moss tts config has asset defaults and env overrides", () => {
   assert.equal(custom.mossBaseURL, "http://localhost:9000");
   assert.equal(custom.mossBaseURLExplicit, true);
   assert.equal(custom.mossModelDir, "assets/tts/models/custom");
+  assert.equal(custom.mossPythonCommand, "/opt/moss/bin/python");
   assert.equal(custom.mossReferenceAudio, "assets/tts/references/custom/reference.wav");
   assert.equal(custom.mossOutputDir, "assets/generated/custom-tts");
   assert.equal(custom.mossTimeoutMs, 5000);

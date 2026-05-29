@@ -203,7 +203,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       mossBaseURLExplicit: Boolean(env.MOSS_TTS_BASE_URL),
       mossHost: env.MOSS_TTS_HOST ?? "127.0.0.1",
       mossPort: numberValue(env.MOSS_TTS_PORT, 8765),
-      mossPythonCommand: env.MOSS_TTS_PYTHON_COMMAND ?? "python3",
+      mossPythonCommand: env.MOSS_TTS_PYTHON_COMMAND ?? ".conda-moss/bin/python",
       mossServiceScript: env.MOSS_TTS_SERVICE_SCRIPT ?? "scripts/moss_tts_onnx/service.py",
       mossModelDir: env.MOSS_TTS_MODEL_DIR ?? "assets/tts/moss-onnx/models",
       mossReferenceAudio: env.MOSS_TTS_REFERENCE_AUDIO ?? "assets/tts/references/alice/reference.wav",

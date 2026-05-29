@@ -335,8 +335,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       synthesized = await voiceSynthesizer({ text, time });
       const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
       if (target.plugin !== "feishu" || !audioResult.ok) return [audioResult];
-      const transcriptResult = await sendOutputPart(target, "message", `[${text}]`, { retry: true, skipWait: true });
-      return [audioResult, transcriptResult];
+      await sendFeishuVoiceTranscript(target, text);
+      return [audioResult];
     } catch (error) {
       const reason = normalizeSendError(error);
       if (!synthesized) {
@@ -397,6 +397,21 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       if (options.retry) enqueueSendRetry({ output, storedId: stored.id, content });
       return { ok: false, error: reason, content: options.transcript ?? content, storedId: stored.id };
     }
+  }
+
+  async function sendFeishuVoiceTranscript(target: MessagingToolTarget, text: string): Promise<void> {
+    const output = buildOutput(target, "message", `[${text}]`);
+    let lastReason = "";
+    for (let attempt = 1; attempt <= maxSendRetryAttempts; attempt += 1) {
+      try {
+        await deps.outputRouter.send(output);
+        return;
+      } catch (error) {
+        lastReason = normalizeSendError(error);
+        if (attempt < maxSendRetryAttempts) await sleep(Math.min(1000, attempt * 100));
+      }
+    }
+    deps.appendLog?.("warn", `feishu voice transcript send failed: ${lastReason || "unknown error"}`);
   }
 
   function markMessageAttemptedNow(): void {

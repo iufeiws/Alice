@@ -32,6 +32,7 @@ export type AdminRoutesContext = {
   llmResponseLogs: unknown[];
   getActiveLLMSession(): unknown;
   getClearedLLMSessions(): unknown[];
+  getLLMSession(id: number): unknown;
   store: { listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(): unknown | Promise<unknown>;
@@ -212,13 +213,23 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
         writeJson(response, 200, {
-          requests: context.llmRequestLogs,
           activeSession: context.getActiveLLMSession(),
           clearedSessions: context.getClearedLLMSessions(),
           profilePreview: await context.getLLMRequestProfilePreview(),
           messagePreview: await context.getLLMRequestPreview(),
           actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
         });
+        return;
+      }
+
+      if (request.method === "GET" && request.url?.startsWith("/admin/api/llm-chain/session")) {
+        const url = new URL(request.url, "http://localhost");
+        const id = Number(url.searchParams.get("id"));
+        if (!Number.isFinite(id)) {
+          writeJson(response, 400, { ok: false, error: "invalid_session_id" });
+          return;
+        }
+        writeJson(response, 200, { session: context.getLLMSession(id) });
         return;
       }
 

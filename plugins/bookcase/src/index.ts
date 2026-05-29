@@ -1,14 +1,40 @@
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import type { OutputRouter } from "../../../core/output-router/src/index.js";
+import type { AliceStore } from "../../../packages/storage/src/sqlite-store.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import { createId } from "../../../packages/types/src/index.js";
 import { renderLLMText } from "../../../core/text-renderer/src/index.js";
+import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 
 const sqlite = await import("node:sqlite");
 const path = await import("node:path");
 
 type DatabaseSync = any;
 
+export type BookcaseToolTarget = {
+  plugin: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+  sessionId: string;
+};
+
 export type BookcaseToolsDeps = {
   dbPath?: string;
   getUserName?: () => string;
+  time?: CurrentTimeProvider;
+  store?: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
+  outputRouter?: Pick<OutputRouter, "send">;
+  getDefaultTarget?(): BookcaseToolTarget | undefined;
+  appendMessageLog?(input: {
+    direction: "outbound";
+    plugin: string;
+    kind: string;
+    target?: string;
+    sessionId?: string;
+    status?: string;
+    summary: string;
+    error?: string;
+  }): unknown;
 };
 
 type SelectedBook = {
@@ -80,11 +106,17 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
 
       const selectedId = chooseId(ids, call.input);
       const book = fetchBook(db, selectedId);
-      return {
+      const output = formatBookAsXml(book, getUserName(), localTimeText());
+      const result: ToolResult = {
         callId: call.id,
         ok: true,
-        output: formatBookAsXml(book, getUserName())
+        resetLLMSession: true,
+        llmSessionMode: "storyteller",
+        llmSessionStaticMessages: staticMessagesForCall(call, output),
+        output
       };
+      await sendBookcaseNotice(call, "-少女已取书-");
+      return result;
     } catch (error) {
       return toolError(call, error instanceof Error ? error.message : String(error));
     } finally {
@@ -93,12 +125,108 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
   }
 
   async function returnBookcaseBook(call: ToolCall): Promise<ToolResult> {
-    return {
+    const result: ToolResult = {
       callId: call.id,
       ok: true,
+      resetLLMSession: true,
+      llmSessionMode: "normal",
+      llmSessionStaticMessages: [],
       invalidateLLMSession: true,
       output: formatReturnAsXml("书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。")
     };
+    await sendBookcaseNotice(call, "-少女已还书-");
+    return result;
+  }
+
+  function localTimeText(): string {
+    if (deps.time) return deps.time.now().iso.slice(0, 19).replace("T", " ");
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).formatToParts(now);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+  }
+
+  async function sendBookcaseNotice(call: ToolCall, text: string): Promise<void> {
+    const target = resolveTarget(call);
+    if (!target || !deps.store || !deps.outputRouter) return;
+    const output: AgentOutput = {
+      id: createId("tool_out"),
+      target: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId,
+        sessionId: target.sessionId
+      },
+      content: { kind: "text", text },
+      meta: {
+        createdAt: localIso(),
+        urgency: "normal",
+        allowStreaming: false
+      }
+    };
+    const stored = deps.store.insertOutboundMessage({
+      plugin: output.target.plugin,
+      conversationId: output.target.sessionId,
+      senderRole: "system",
+      contentType: output.content.kind,
+      contentText: text,
+      contentJson: JSON.stringify(output.content),
+      createdAt: output.meta.createdAt
+    });
+    try {
+      const sent = await deps.outputRouter.send(output);
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), localIso());
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "sent",
+        summary: text
+      });
+      return;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.store.markOutboundMessageFailed(stored.id, localIso(), reason);
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "send_failed",
+        summary: text,
+        error: reason
+      });
+      return;
+    }
+  }
+
+  function resolveTarget(call: ToolCall): BookcaseToolTarget | undefined {
+    if (call.requester?.plugin && call.session?.sessionId) {
+      return {
+        plugin: call.requester.plugin,
+        accountId: call.requester.accountId,
+        channelId: call.requester.channelId,
+        userId: call.requester.userId,
+        sessionId: call.session.sessionId
+      };
+    }
+    return deps.getDefaultTarget?.();
+  }
+
+  function localIso(): string {
+    return deps.time?.now().iso ?? new Date().toISOString();
   }
 }
 
@@ -176,7 +304,7 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function formatBookAsXml(book: SelectedBook, userName: string): string {
+function formatBookAsXml(book: SelectedBook, userName: string, timeText: string): string {
   const template = [
     "<book>",
     "  <source>",
@@ -196,9 +324,33 @@ function formatBookAsXml(book: SelectedBook, userName: string): string {
     "    - 在故事的最后说出故事的引用来源",
     "    - 讲完故事必须使用toolcall action = return 归还书籍, 如果弄丢了{{user}}会生气 ",
     "  </instructions>",
-    "</book>"
+    "</book>",
+    `<time>${escapeXml(timeText)}<\\time>`
   ].join("\n");
   return renderLLMText(template, { user: escapeXml(userName.trim() || "user") });
+}
+
+function staticMessagesForCall(call: ToolCall, output: string): NonNullable<ToolResult["llmSessionStaticMessages"]> {
+  return [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: call.id,
+        type: "function",
+        function: {
+          name: call.toolName,
+          arguments: JSON.stringify(call.input)
+        }
+      }]
+    },
+    {
+      role: "tool",
+      name: call.toolName,
+      toolCallId: call.id,
+      content: output
+    }
+  ];
 }
 
 function formatReturnAsXml(message: string): string {
@@ -217,6 +369,14 @@ function escapeXml(value: string): string {
     '"': "&quot;",
     "'": "&apos;"
   }[char] ?? char));
+}
+
+function extractSentMessageId(value: unknown): string | undefined {
+  if (value && typeof value === "object" && "messageId" in value) {
+    const messageId = (value as { messageId?: unknown }).messageId;
+    return typeof messageId === "string" ? messageId : undefined;
+  }
+  return undefined;
 }
 
 function randomFromSeed(seed: number): number {

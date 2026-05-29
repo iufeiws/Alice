@@ -8,6 +8,7 @@ import { createOutputRouter } from "../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../core/policy/src/index.js";
 import { createIntentRouter } from "../core/router/src/index.js";
 import { createSessionResolver } from "../core/session/src/index.js";
+import { createCurrentTimeProvider } from "../core/time/src/index.js";
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
@@ -191,6 +192,376 @@ test("agent core stops before another llm request when a tool invalidates the se
   assert.equal(latestMessages.at(-2)?.toolCalls?.[0].function.name, "bookcase");
   assert.equal(latestMessages.at(-1)?.role, "tool");
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
+});
+
+test("agent core rebuilds storyteller session immediately after bookcase draw", async () => {
+  const requests: LLMChatInput[] = [];
+  let checkChatCallsInSession = 0;
+  let activeArchiveSessionId: number | undefined;
+  let nextArchiveSessionId = 1;
+  const sessionUpdates: Array<{ id: number; mode?: string; messages: LLMChatInput["messages"] }> = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "old context marker",
+            toolCalls: [{
+              id: "tool_draw",
+              type: "function",
+              function: {
+                name: "bookcase",
+                arguments: "{\"action\":\"draw\"}"
+              }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "story starts" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [
+          { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } }
+        ];
+      },
+      async execute(call) {
+        if (call.toolName === "bookcase") {
+          return {
+            callId: call.id,
+            ok: true,
+            resetLLMSession: true,
+            llmSessionMode: "storyteller",
+            llmSessionStaticMessages: [
+              {
+                role: "assistant",
+                content: "",
+                toolCalls: [{
+                  id: call.id,
+                  type: "function",
+                  function: { name: "bookcase", arguments: JSON.stringify(call.input) }
+                }]
+              },
+              { role: "tool", name: "bookcase", toolCallId: call.id, content: "<book>static story</book>" }
+            ],
+            output: "<book>static story</book>"
+          };
+        }
+        if (call.input.__scope === "recent") {
+          return { callId: call.id, ok: true, output: "recent chat" };
+        }
+        checkChatCallsInSession += 1;
+        return {
+          callId: call.id,
+          ok: true,
+          output: checkChatCallsInSession === 1 ? "recent chat" : "nothing new"
+        };
+      }
+    }],
+    onLLMSessionUpdated(session) {
+      activeArchiveSessionId ??= nextArchiveSessionId++;
+      sessionUpdates.push({ id: activeArchiveSessionId, mode: session.mode, messages: session.messages });
+    },
+    onLLMSessionRebuilt() {
+      activeArchiveSessionId = undefined;
+      checkChatCallsInSession = 0;
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 2);
+  const secondMessages = requests[1].messages;
+  assert.equal(secondMessages.some((message) => message.content === "old context marker"), false);
+  const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  const checkChatIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  assert.ok(bookcaseIndex > 0);
+  assert.ok(checkChatIndex > bookcaseIndex);
+  assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
+  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
+  assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
+  assert.equal(checkChatCallsInSession, 1);
+  assert.deepEqual([...new Set(sessionUpdates.map((update) => update.id))], [1, 2]);
+  assert.equal(sessionUpdates.at(-1)?.id, 2);
+  assert.equal(sessionUpdates.at(-1)?.mode, "storyteller");
+});
+
+test("agent core keeps storyteller static messages when token pressure rebuilds the session", async () => {
+  let capturedSession: LLMSessionSnapshot | undefined;
+  const promptProfile = {
+    userName: "user",
+    visibleTools: { feishu: true },
+    layers: [{ id: "static", title: "Static", role: "system" as const, enabled: true, content: "static prompt", order: 1 }],
+    appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+  };
+  const primerCore = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm: { async chat() { return { message: { role: "assistant", content: "primer" } }; } },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => promptProfile,
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "recent" };
+      }
+    }],
+    onLLMSessionUpdated(session) {
+      capturedSession = session;
+    }
+  });
+  await primerCore.handleEvent(textEvent());
+  assert.ok(capturedSession?.staticPromptFingerprint);
+
+  const storytellerStatic: LLMChatInput["messages"] = [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: "tool_draw",
+        type: "function",
+        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+      }]
+    },
+    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>persistent story</book>" }
+  ];
+  const requests: LLMChatInput[] = [];
+  const clearedReasons: string[] = [];
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "after rebuild" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => promptProfile,
+    initialLLMSession: {
+      ...capturedSession,
+      messages: [
+        ...(capturedSession?.messages ?? []),
+        { role: "assistant", content: "old session marker" }
+      ],
+      lastTotalTokens: 10_000,
+      mode: "storyteller",
+      modeStaticMessages: storytellerStatic,
+      modeStaticTokenEstimate: 100
+    },
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "recent" };
+      }
+    }],
+    onLLMSessionCleared(reason) {
+      clearedReasons.push(reason);
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(clearedReasons, ["token_pressure"]);
+  assert.equal(requests.length, 1);
+  const messages = requests[0].messages;
+  assert.equal(messages.some((message) => message.content === "old session marker"), false);
+  const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  assert.ok(bookcaseIndex > 0);
+  assert.ok(checkChatIndex > bookcaseIndex);
+  assert.equal(messages[bookcaseIndex + 1]?.content, "<book>persistent story</book>");
+  assert.equal(messages[checkChatIndex + 1]?.content, "recent");
+});
+
+test("agent core restores storyteller static messages from an initial session snapshot", async () => {
+  const storytellerStatic: LLMChatInput["messages"] = [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: "tool_draw",
+        type: "function",
+        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+      }]
+    },
+    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>restored story</book>" }
+  ];
+  const requests: LLMChatInput[] = [];
+  const clearedReasons: string[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  const modeStartedAt = "2026-05-30T00:00:00.000Z";
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "restored" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    initialLLMSession: {
+      messages: [
+        { role: "system", content: "old static prompt" },
+        ...storytellerStatic,
+        { role: "assistant", content: "old live context" }
+      ],
+      staticPromptFingerprint: "old-fingerprint",
+      requestTimestamps: [],
+      mode: "storyteller",
+      modeStaticMessages: storytellerStatic,
+      modeStaticTokenEstimate: 50,
+      modeStartedAt
+    },
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "fresh chat after restore" };
+      }
+    }],
+    onLLMSessionCleared(reason) {
+      clearedReasons.push(reason);
+    },
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push(session);
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(clearedReasons, ["prompt_static_changed"]);
+  assert.equal(requests.length, 1);
+  const messages = requests[0].messages;
+  assert.equal(messages.some((message) => message.content === "old live context"), false);
+  assert.equal(messages.some((message) => message.content === "old static prompt"), false);
+  const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  assert.ok(bookcaseIndex > 0);
+  assert.ok(checkChatIndex > bookcaseIndex);
+  assert.equal(messages[bookcaseIndex + 1]?.content, "<book>restored story</book>");
+  assert.equal(messages[checkChatIndex + 1]?.content, "fresh chat after restore");
+  assert.equal(sessionUpdates.at(-1)?.mode, "storyteller");
+  assert.equal(sessionUpdates.at(-1)?.modeStartedAt, modeStartedAt);
+});
+
+test("agent core exits expired storyteller mode on the next request", async () => {
+  const storytellerStatic: LLMChatInput["messages"] = [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: "tool_draw",
+        type: "function",
+        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+      }]
+    },
+    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>expired story</book>" }
+  ];
+  const requests: LLMChatInput[] = [];
+  const clearedReasons: string[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T02:01:00.000Z")),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "normal again" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    initialLLMSession: {
+      messages: [
+        { role: "system", content: "old static prompt" },
+        ...storytellerStatic,
+        { role: "assistant", content: "old live context" }
+      ],
+      staticPromptFingerprint: "old-fingerprint",
+      requestTimestamps: [],
+      mode: "storyteller",
+      modeStaticMessages: storytellerStatic,
+      modeStaticTokenEstimate: 50,
+      modeStartedAt: "2026-05-30T00:00:00.000Z"
+    },
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "fresh normal chat" };
+      }
+    }],
+    onLLMSessionCleared(reason) {
+      clearedReasons.push(reason);
+    },
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push(session);
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(clearedReasons, ["mode_timeout"]);
+  assert.equal(requests.length, 1);
+  const messages = requests[0].messages;
+  assert.equal(messages.some((message) => message.content === "old live context"), false);
+  assert.equal(messages.some((message) => message.content === "<book>expired story</book>"), false);
+  assert.equal(messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase"), false);
+  assert.equal(messages.at(-1)?.content, "fresh normal chat");
+  assert.equal(sessionUpdates.at(-1)?.mode, "normal");
+  assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
 test("agent core rejects two consecutive selfie tool calls", async () => {

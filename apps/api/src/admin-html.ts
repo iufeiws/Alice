@@ -380,56 +380,78 @@ export function renderAdminHtmlV2(): string {
       }
 
       async function refreshLLMChain() {
-        const [requestPayload, responsePayload] = await Promise.all([
-          fetch("/admin/api/llm-requests").then((res) => res.json()),
-          fetch("/admin/api/llm-responses").then((res) => res.json())
-        ]);
-        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.requests || [], requestPayload.activeSession, requestPayload.clearedSessions || []);
-        $("llmChainResponses").innerHTML = renderLLMResponseGroups(responsePayload.responses || [], requestPayload.activeSession, requestPayload.clearedSessions || []);
+        const requestPayload = await fetch("/admin/api/llm-requests").then((res) => res.json());
+        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
+        $("llmChainResponses").innerHTML = renderLLMResponseGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
+        bindLLMSessionDetails("llmChainRequests", "request");
+        bindLLMSessionDetails("llmChainResponses", "response");
         $("llmChainRequests").scrollTop = $("llmChainRequests").scrollHeight;
         $("llmChainResponses").scrollTop = $("llmChainResponses").scrollHeight;
       }
 
       function renderActiveLLMSession(session) {
-        return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml((session.requestIds || []).join(", "))}</div>\`;
+        return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml(session.requestCount ?? (session.requestIds || []).length)}</div>\`;
       }
 
-      function renderLLMRequestGroups(requests, activeSession, clearedSessions) {
+      function renderLLMRequestGroups(activeSession, clearedSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
-        const activeRequests = activeSession ? entriesForActiveSession(requests, activeSession, "requestIds") : [];
         const activeGroup = activeSession
-          ? \`<details class="log-line" open><summary>Active Session \${escapeHtml(activeSession.id || "")} · \${escapeHtml(activeRequests.length)} request(s) · \${escapeHtml(activeSession.startedAt || "")}</summary>\${activeRequests.length ? activeRequests.map((entry, index) => renderLLMRequestItem(entry, index + 1, activeRequests[index - 1])).join("") : "No active request history yet."}</details>\`
+          ? renderLLMSessionShell(activeSession, "request", "Active Session", activeSession.requestCount ?? (activeSession.requestIds || []).length)
           : "";
-        const archived = (clearedSessions || []).map((session) => {
-          const requests = session.requests || [];
-          return \`<details class="log-line"><summary>Saved Session \${escapeHtml(session.id || "")} · \${escapeHtml(requests.length)} request(s) · \${escapeHtml(session.startedAt || "")} · reason=\${escapeHtml(session.reason || "")}</summary>\${requests.map((entry, index) => renderLLMRequestItem(entry, index + 1, requests[index - 1])).join("")}<details><summary>Archived transcript</summary><pre>\${escapeHtml(JSON.stringify(session.messages || [], null, 2))}</pre></details></details>\`;
-        }).join("");
+        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "request", "Saved Session", session.requestCount ?? (session.requestIds || []).length)).join("");
         return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
       }
 
-      function renderLLMResponseGroups(responses, activeSession, clearedSessions) {
+      function renderLLMResponseGroups(activeSession, clearedSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
-        const activeResponses = activeSession ? entriesForActiveSession(responses, activeSession, "responseIds") : [];
         const activeGroup = activeSession
-          ? \`<details class="log-line" open><summary>Active Session \${escapeHtml(activeSession.id || "")} · \${escapeHtml(activeResponses.length)} response(s) · \${escapeHtml(activeSession.startedAt || "")}</summary>\${activeResponses.length ? activeResponses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("") : "No active response history yet."}</details>\`
+          ? renderLLMSessionShell(activeSession, "response", "Active Session", activeSession.responseCount ?? (activeSession.responseIds || []).length)
           : "";
-        const archived = (clearedSessions || []).map((session) => {
-          const responses = session.responses || [];
-          return \`<details class="log-line"><summary>Saved Session \${escapeHtml(session.id || "")} · \${escapeHtml(responses.length)} response(s) · \${escapeHtml(session.startedAt || "")} · reason=\${escapeHtml(session.reason || "")}</summary>\${responses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("")}</details>\`;
-        }).join("");
+        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "response", "Saved Session", session.responseCount ?? (session.responseIds || []).length)).join("");
         return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
       }
 
-      function entriesForActiveSession(entries, activeSession, idField) {
-        const ids = new Set((activeSession[idField] || []).map((id) => String(id)));
-        return [...entries]
-          .filter((entry) => String(entry.sessionId || "") === String(activeSession.id || "") && ids.has(String(entry.id || "")))
-          .sort(compareLLMEntries);
+      function sortedLLMSessions(sessions) {
+        return [...(sessions || [])].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")) || Number(left.id || 0) - Number(right.id || 0));
+      }
+
+      function renderLLMSessionShell(session, kind, title, count) {
+        const unit = kind === "request" ? "request" : "response";
+        const reason = session.reason ? \` · reason=\${escapeHtml(session.reason)}\` : "";
+        return \`<details class="log-line llm-session-detail" data-session-id="\${escapeAttr(session.id || "")}" data-kind="\${escapeAttr(kind)}"><summary>\${escapeHtml(title)} \${escapeHtml(session.id || "")} · \${escapeHtml(count)} \${unit}(s) · mode=\${escapeHtml(session.mode || "normal")} · \${escapeHtml(session.startedAt || "")}\${reason}</summary><div class="llm-session-body">Expand to load.</div></details>\`;
+      }
+
+      function bindLLMSessionDetails(containerId, kind) {
+        document.querySelectorAll(\`#\${containerId} details.llm-session-detail[data-kind="\${kind}"]\`).forEach((detail) => {
+          detail.addEventListener("toggle", async () => {
+            if (!detail.open || detail.dataset.loaded === "true") return;
+            const body = detail.querySelector(".llm-session-body");
+            body.textContent = "Loading...";
+            const payload = await fetch(\`/admin/api/llm-chain/session?id=\${encodeURIComponent(detail.dataset.sessionId || "")}\`).then((res) => res.json());
+            const session = payload.session;
+            if (!session) {
+              body.textContent = "Session not found.";
+              detail.dataset.loaded = "true";
+              return;
+            }
+            body.innerHTML = kind === "request" ? renderLLMRequestSession(session) : renderLLMResponseSession(session);
+            detail.dataset.loaded = "true";
+          });
+        });
+      }
+
+      function renderLLMRequestSession(session) {
+        const requests = [...(session.requests || [])].sort(compareLLMEntries);
+        const transcript = \`<details><summary>Archived transcript</summary><pre>\${escapeHtml(JSON.stringify(session.messages || [], null, 2))}</pre></details>\`;
+        return (requests.length ? requests.map((entry, index) => renderLLMRequestItem(entry, index + 1, requests[index - 1])).join("") : "No request history yet.") + transcript;
+      }
+
+      function renderLLMResponseSession(session) {
+        const responses = [...(session.responses || [])].sort(compareLLMEntries);
+        return responses.length ? responses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("") : "No response history yet.";
       }
 
       function compareLLMEntries(left, right) {
-        const bySession = Number(left.sessionId ?? 0) - Number(right.sessionId ?? 0);
-        if (bySession) return bySession;
         const byTime = String(left.time || "").localeCompare(String(right.time || ""));
         if (byTime) return byTime;
         return Number(left.id || 0) - Number(right.id || 0);

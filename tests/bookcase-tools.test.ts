@@ -18,6 +18,12 @@ test("bookcase tool draws a book and includes retelling instructions", async () 
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.resetLLMSession, true);
+  assert.equal(result.llmSessionMode, "storyteller");
+  assert.equal(result.llmSessionStaticMessages?.length, 2);
+  assert.equal(result.llmSessionStaticMessages?.[0]?.role, "assistant");
+  assert.equal(result.llmSessionStaticMessages?.[0]?.toolCalls?.[0]?.function.name, "bookcase");
+  assert.equal(result.llmSessionStaticMessages?.[1]?.role, "tool");
   const output = String(result.output);
   assert.match(output, /^<book>/);
   assert.match(output, /<title>Moon Gate<\/title>/);
@@ -27,6 +33,7 @@ test("bookcase tool draws a book and includes retelling instructions", async () 
   assert.match(output, /为YY讲述这个故事/);
   assert.doesNotMatch(output, /\{\{user\}\}/);
   assert.match(output, /toolcall action = return/);
+  assert.match(output, /<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>/);
   assert.doesNotMatch(output, /summary_chars/);
   assert.doesNotMatch(output, /source_line/);
   assert.doesNotMatch(output, /name_bank/);
@@ -56,10 +63,125 @@ test("bookcase tool returns a book and invalidates the LLM session", async () =>
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.resetLLMSession, true);
+  assert.equal(result.llmSessionMode, "normal");
+  assert.deepEqual(result.llmSessionStaticMessages, []);
   assert.equal(result.invalidateLLMSession, true);
   const output = String(result.output);
   assert.match(output, /<bookcase action="return" invalidate_llm_session="true">/);
   assert.match(output, /<message>.*重开.*<\/message>/);
+});
+
+test("bookcase tool sends system notices when drawing and returning books", async () => {
+  const sent: string[] = [];
+  const stored: Array<{ contentText: string; senderRole?: string }> = [];
+  const logs: Array<{ status?: string; summary: string }> = [];
+  const store = {
+    insertOutboundMessage(input: any) {
+      stored.push({ contentText: input.contentText, senderRole: input.senderRole });
+      return { id: stored.length, ...input };
+    },
+    markOutboundMessageSent() {},
+    markOutboundMessageFailed() {}
+  };
+  const tools = createBookcaseTools({
+    dbPath: createFixtureDb(),
+    store,
+    outputRouter: {
+      async send(output) {
+        sent.push(output.content.kind === "text" ? output.content.text : "");
+        return { messageId: `notice_${sent.length}` };
+      }
+    },
+    appendMessageLog(input) {
+      logs.push({ status: input.status, summary: input.summary });
+    }
+  });
+  const baseCall = {
+    requester: { plugin: "feishu", channelId: "chat-1" },
+    session: { scope: "dm" as const, sessionId: "session-1" }
+  };
+
+  await tools.execute({
+    ...baseCall,
+    id: "call_bookcase_draw_notice",
+    toolName: "bookcase",
+    input: { action: "draw", seed: 1, minSummaryChars: 10 }
+  });
+  await tools.execute({
+    ...baseCall,
+    id: "call_bookcase_return_notice",
+    toolName: "bookcase",
+    input: { action: "return" }
+  });
+
+  assert.deepEqual(sent, ["-少女已取书-", "-少女已还书-"]);
+  assert.deepEqual(stored, [
+    { contentText: "-少女已取书-", senderRole: "system" },
+    { contentText: "-少女已还书-", senderRole: "system" }
+  ]);
+  assert.deepEqual(logs, [
+    { status: "sent", summary: "-少女已取书-" },
+    { status: "sent", summary: "-少女已还书-" }
+  ]);
+});
+
+test("bookcase notice failures do not block draw or return transitions", async () => {
+  const failed: Array<{ id: number; reason?: string }> = [];
+  const logs: Array<{ status?: string; summary: string; error?: string }> = [];
+  const store = {
+    insertOutboundMessage(input: any) {
+      return { id: input.contentText === "-少女已取书-" ? 1 : 2, ...input };
+    },
+    markOutboundMessageSent() {},
+    markOutboundMessageFailed(id: number, _time: string, reason: string) {
+      failed.push({ id, reason });
+    }
+  };
+  const tools = createBookcaseTools({
+    dbPath: createFixtureDb(),
+    store,
+    outputRouter: {
+      async send() {
+        throw new Error("notice offline");
+      }
+    },
+    appendMessageLog(input) {
+      logs.push({ status: input.status, summary: input.summary, error: input.error });
+    }
+  });
+  const baseCall = {
+    requester: { plugin: "feishu", channelId: "chat-1" },
+    session: { scope: "dm" as const, sessionId: "session-1" }
+  };
+
+  const draw = await tools.execute({
+    ...baseCall,
+    id: "call_bookcase_draw_notice_failed",
+    toolName: "bookcase",
+    input: { action: "draw", seed: 1, minSummaryChars: 10 }
+  });
+  const returned = await tools.execute({
+    ...baseCall,
+    id: "call_bookcase_return_notice_failed",
+    toolName: "bookcase",
+    input: { action: "return" }
+  });
+
+  assert.equal(draw.ok, true);
+  assert.equal(draw.resetLLMSession, true);
+  assert.equal(draw.llmSessionMode, "storyteller");
+  assert.equal(returned.ok, true);
+  assert.equal(returned.resetLLMSession, true);
+  assert.equal(returned.llmSessionMode, "normal");
+  assert.deepEqual(failed, [
+    { id: 1, reason: "notice offline" },
+    { id: 2, reason: "notice offline" }
+  ]);
+  assert.deepEqual(logs, [
+    { status: "send_failed", summary: "-少女已取书-", error: "notice offline" },
+    { status: "send_failed", summary: "-少女已还书-", error: "notice offline" }
+  ]);
 });
 
 function createFixtureDb(): string {

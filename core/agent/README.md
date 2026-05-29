@@ -55,6 +55,17 @@ Prompt 层支持运行时变量：
 
 未知变量会按原样保留。
 
+## LLM Session Mode
+
+AgentCore 的 active LLM session 有一个可扩展的 `mode`。Mode 是会话构筑策略，不只是状态标签；它决定静态 prompt 之后、动态 `check_chat` 之前是否插入额外的固定上下文。
+
+当前 mode：
+
+- `normal`：默认结构，按 prompt profile 构筑静态 prompt，再追加 `check_chat`。
+- `storyteller`：书橱讲故事结构，构筑为 `[静态 prompt][modeStaticMessages][check_chat]`。`modeStaticMessages` 保存抽书时的 bookcase tool call 和 result，`modeStartedAt` 保存进入时间；二者重启后都会恢复，直到还书退出或下一次请求发现已持续 2 小时。
+
+未来新增 mode 应复用同一套字段：`mode`、`modeStaticMessages`、`modeStaticTokenEstimate`、`modeStartedAt`，并通过 tool result 的 session transition 进入或退出。token-pressure 刷新会话时会扣除 `modeStaticTokenEstimate`，避免固定上下文本身触发误刷新。
+
 ## Messaging Tools 说明
 
 当前运行时向 LLM 暴露平台无关的聊天工具名：

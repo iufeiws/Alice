@@ -596,6 +596,7 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   const dir = makeTempDir("messaging-send-voice-feishu-transcript");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
+  const logs: Array<{ status?: string; summary: string }> = [];
   let generatedPath = "";
   const tools = createMessagingTools({
     store,
@@ -612,6 +613,9 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
         return { messageId: `sent_${sent.length}` };
       }
     },
+    appendMessageLog(input) {
+      logs.push({ status: input.status, summary: input.summary });
+    },
     getDefaultTarget: () => ({ plugin: "feishu", channelId: "oc_1", sessionId: "feishu:dm:oc_1" })
   });
 
@@ -627,10 +631,65 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   assert.deepEqual(sent[1].content, { kind: "text", text: "[晚点见]" });
   assert.equal(fs.existsSync(generatedPath), false);
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
-  assert.match(String(result.output), /Alice:\[晚点见\]/);
+  assert.doesNotMatch(String(result.output), /Alice:\[晚点见\]/);
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
-  assert.equal(stored.length, 2);
-  assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见", "[晚点见]"]);
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见"]);
+  assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
+});
+
+test("send_chat voice retries feishu transcript without storing it", async () => {
+  const dir = makeTempDir("messaging-send-voice-feishu-transcript-retry");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const logs: Array<{ status?: string; summary: string }> = [];
+  const warnings: string[] = [];
+  let generatedPath = "";
+  let transcriptAttempts = 0;
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    voiceSynthesizer: async ({ text }) => {
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        if (output.content.kind === "text") {
+          transcriptAttempts += 1;
+          if (transcriptAttempts === 1) throw new Error("temporary feishu failure");
+        }
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    appendMessageLog(input) {
+      logs.push({ status: input.status, summary: input.summary });
+    },
+    appendLog(level, message) {
+      if (level === "warn") warnings.push(message);
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "oc_1", sessionId: "feishu:dm:oc_1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_feishu_transcript_retry",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(transcriptAttempts, 2);
+  assert.equal(sent.length, 3);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["audio", "text", "text"]);
+  assert.equal(fs.existsSync(generatedPath), false);
+  const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见"]);
+  assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
+  assert.deepEqual(warnings, []);
 });
 
 test("moss onnx voice synthesizer calls service and returns opus asset", async () => {

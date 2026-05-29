@@ -1,21 +1,22 @@
 # Bookcase Plugin
 
-Bookcase 是 AgentCore 的书橱工具，用于从本地书籍剧情语料库抽取一本书作为讲故事母版。
+`bookcase` 提供讲故事用的书橱工具。
 
-当前暴露给 LLM 的工具名是 `bookcase`，参数只包括 schema 中声明的字段：
+## Tool
 
-```json
-{
-  "action": "draw"
-}
-```
+- `bookcase({ action: "draw", ...filters })`：抽取一本书，返回 `<book>` 母版、讲述要求和固定时间块。
+- `bookcase({ action: "return" })`：归还书本，退出书橱讲故事模式。
 
-`action=draw` 抽取一本书并返回剧情母版、改写规则、名字池和来源行。`action=return` 归还书本，并通过 `invalidateLLMSession` 请求重开会话，避免书本母版继续占用上下文。
+## Storyteller Mode
 
-`title` 可用于按书名模糊取特定书，不再另设 `name` 参数。
-
-语料库位于：
+`draw` 会触发 AgentCore 进入 `storyteller` LLM session mode。进入时会丢弃 draw 前的长会话上下文，重建为：
 
 ```text
-plugins/bookcase/assets/booksummaries.sqlite
+[静态 prompt][bookcase draw tool call + result][check_chat]
 ```
+
+其中 bookcase draw 的 tool call/result 会作为 `modeStaticMessages` 持久化，不会在每次重建时重新抽书。`return` 会切回 `normal` mode 并清空这些静态书橱消息。
+
+进入 storyteller 时会记录 `modeStartedAt`，重启后继续保留。若下一次 LLM 请求发现 storyteller 已持续 2 小时，AgentCore 会自动回到 `normal` mode。
+
+`storyteller` mode 是全局 active LLM session 级别；当前不按聊天 sessionId 分开。

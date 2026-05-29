@@ -109,6 +109,25 @@ export type ToolResult = {
   output?: unknown;
   error?: string;
   invalidateLLMSession?: boolean;
+  resetLLMSession?: boolean;
+  llmSessionMode?: string;
+  llmSessionStaticMessages?: ToolResultLLMMessage[];
+};
+
+export type ToolResultLLMMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  reasoningContent?: string;
+  name?: string;
+  toolCallId?: string;
+  toolCalls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
 };
 
 export interface ToolPlugin {

@@ -58,6 +58,8 @@ memory-files/message/messages.sqlite
 logs/message/message-logs.sqlite
 ```
 
+`logs/message/message-logs.sqlite` 属于 `logs/` 下的系统/运行日志。清理聊天历史时只处理 `memory-files/message/messages.sqlite`，不要修改 `logs/`，除非明确是在清系统日志。
+
 ## File Log Store 说明
 
 文件：

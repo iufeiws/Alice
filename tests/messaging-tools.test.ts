@@ -652,6 +652,7 @@ test("send_chat voice does not split newline text", async () => {
   const dir = makeTempDir("messaging-send-voice-newline");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
+  const logs: Array<{ status?: string; summary: string }> = [];
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
@@ -666,6 +667,9 @@ test("send_chat voice does not split newline text", async () => {
         return { messageId: "voice_1" };
       }
     },
+    appendMessageLog(input) {
+      logs.push({ status: input.status, summary: input.summary });
+    },
     getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
   });
 
@@ -678,6 +682,7 @@ test("send_chat voice does not split newline text", async () => {
   assert.equal(result.ok, true);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].content.kind === "audio" ? sent[0].content.transcript : "", "第一句\n第二句");
+  assert.deepEqual(logs, [{ status: "sent", summary: "[语音]第一句\n第二句" }]);
 });
 
 test("send_chat voice returns tts failure without sending fallback text", async () => {

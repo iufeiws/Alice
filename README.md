@@ -106,4 +106,6 @@ memory-files/config/prompt-profile.json
 memory-files/shell/
 ```
 
+所有 `logs/` 下的文件都按系统/运行日志处理；清理聊天历史时只清 `memory-files/message/messages.sqlite`，不要清 `logs/message/message-logs.sqlite`，除非明确是在清系统日志。
+
 `data/`、`logs/`、部分运行时 `memory-files/` 目录、`.env`、`dist/` 和 `node_modules/` 已被 git 忽略。

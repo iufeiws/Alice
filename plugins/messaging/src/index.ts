@@ -781,7 +781,8 @@ function summarizeOutput(output: AgentOutput): string {
   const content = output.content;
   if (content.kind === "text") return content.text;
   if (content.kind === "markdown") return content.markdown;
-  if (content.kind === "image" || content.kind === "audio") return content.assetId;
+  if (content.kind === "audio") return content.transcript ? `[语音]${content.transcript}` : content.assetId;
+  if (content.kind === "image") return content.assetId;
   if (content.kind === "file") return content.filename || content.assetId;
   if (content.kind === "card") return content.card.title;
   return content.kind;

@@ -642,7 +642,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 }
 
-export function summarizePayload(payload: { kind: string; text?: string; markdown?: string; assetId?: string; url?: string; filename?: string }): string {
+export function summarizePayload(payload: { kind: string; text?: string; markdown?: string; assetId?: string; url?: string; filename?: string; transcript?: string }): string {
+  if (payload.kind === "audio" && payload.transcript) return `[语音]${payload.transcript}`;
   return payload.text ?? payload.markdown ?? payload.assetId ?? payload.url ?? payload.filename ?? payload.kind;
 }
 
@@ -658,7 +659,8 @@ function summarizeEventPayload(event: AgentEvent): string {
   return `-引用:${parts.join(" ")}-\n${content}`;
 }
 
-export function summarizeOutput(content: { kind: string; text?: string; markdown?: string; assetId?: string; filename?: string }): string {
+export function summarizeOutput(content: { kind: string; text?: string; markdown?: string; assetId?: string; filename?: string; transcript?: string }): string {
+  if (content.kind === "audio" && content.transcript) return `[语音]${content.transcript}`;
   return content.text ?? content.markdown ?? content.assetId ?? content.filename ?? content.kind;
 }
 

@@ -259,9 +259,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
     const results = [];
     for (const part of parts) {
-      results.push(type === "voice"
-        ? await sendVoicePart(target, part)
-        : await sendOutputPart(target, type, part, { retry: true }));
+      if (type === "voice") {
+        results.push(...await sendVoicePart(target, part));
+      } else {
+        results.push(await sendOutputPart(target, type, part, { retry: true }));
+      }
     }
 
     const failed = results.find((result) => !result.ok);
@@ -301,13 +303,16 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
   }
 
-  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<SendPartResult> {
+  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<SendPartResult[]> {
     await waitForMessageSendSlot(text);
     let synthesized: VoiceSynthesisResult | undefined;
     try {
       deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);
       synthesized = await voiceSynthesizer({ text, time });
-      return await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
+      const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
+      if (target.plugin !== "feishu" || !audioResult.ok) return [audioResult];
+      const transcriptResult = await sendOutputPart(target, "message", `[${text}]`, { retry: true, skipWait: true });
+      return [audioResult, transcriptResult];
     } catch (error) {
       const reason = normalizeSendError(error);
       if (!synthesized) {
@@ -322,7 +327,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
           error: reason
         });
       }
-      return { ok: false, error: reason, content: text };
+      return [{ ok: false, error: reason, content: text }];
     } finally {
       if (synthesized) await removeGeneratedVoice(synthesized.filePath);
     }

@@ -559,6 +559,47 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   assert.equal(stored[0].externalMessageId, "voice_1");
 });
 
+test("send_chat voice sends bracketed transcript text on feishu", async () => {
+  const dir = makeTempDir("messaging-send-voice-feishu-transcript");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let generatedPath = "";
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    voiceSynthesizer: async ({ text }) => {
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "oc_1", sessionId: "feishu:dm:oc_1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_feishu_transcript",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
+  assert.deepEqual(sent[1].content, { kind: "text", text: "[晚点见]" });
+  assert.equal(fs.existsSync(generatedPath), false);
+  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+  assert.match(String(result.output), /Alice:\[晚点见\]/);
+  const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 2);
+  assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见", "[晚点见]"]);
+});
+
 test("moss onnx voice synthesizer calls service and returns opus asset", async () => {
   const calls: string[] = [];
   const dir = makeTempDir("moss-onnx-voice");

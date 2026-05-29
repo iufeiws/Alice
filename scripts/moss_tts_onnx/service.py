@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -208,14 +209,10 @@ def load_reference_wav(path_value: str | Path, *, target_sample_rate: int, targe
 
 
 def prepare_text(text: str) -> str:
-    normalized = str(text or "").strip().replace("\r", " ").replace("\n", " ")
-    while "  " in normalized:
-        normalized = normalized.replace("  ", " ")
+    normalized = normalize_tts_text(text)
     if not normalized:
         raise ValueError("text cannot be empty")
     if contains_cjk(normalized):
-        if normalized[-1] not in SENTENCE_END_PUNCTUATION:
-            normalized += "。"
         return normalized
     if normalized[:1].islower():
         normalized = normalized[:1].upper() + normalized[1:]
@@ -223,6 +220,19 @@ def prepare_text(text: str) -> str:
         normalized += "."
     if len([item for item in normalized.split() if item]) < 5:
         normalized = f"        {normalized}"
+    return normalized
+
+
+def normalize_tts_text(text: str) -> str:
+    normalized = str(text or "").strip().replace("\r", " ").replace("\n", " ")
+    normalized = re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"(?:…+|\.{3,})", "，", normalized)
+    normalized = normalized.replace("、", "，")
+    normalized = re.sub(r"[，,]+", "，", normalized)
+    normalized = re.sub(r"，[。！？!?]", lambda match: match.group(0)[1:], normalized)
+    normalized = re.sub(r"([。！？!?])\1+", r"\1", normalized)
+    normalized = re.sub(r"\s*([，。！？!?])\s*", r"\1", normalized)
+    normalized = normalized.strip(" ，,、")
     return normalized
 
 

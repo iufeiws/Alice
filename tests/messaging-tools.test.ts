@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import { createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
 
@@ -518,6 +518,26 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
 });
 
+test("messaging tools prepare voice synthesizer when llm request starts", async () => {
+  let prepareCalls = 0;
+  const tools = createMessagingTools({
+    store: createAliceStore(path.join(makeTempDir("messaging-tts-prepare"), "alice.sqlite")),
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("not used");
+    }, {
+      async prepare() {
+        prepareCalls += 1;
+      }
+    })
+  });
+
+  tools.noteLLMRequestStarted();
+  await Promise.resolve();
+  assert.equal(prepareCalls, 1);
+});
+
 test("send_chat voice synthesizes text, sends audio, and removes generated file", async () => {
   const dir = makeTempDir("messaging-send-voice");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
@@ -656,7 +676,7 @@ test("moss onnx voice synthesizer calls service and returns opus asset", async (
 
   const result = await synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
 
-  assert.match(result.assetId, /^generated\/tts\/voice_20260526_000000_[a-z0-9]+\.opus$/);
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
   assert.equal(fs.existsSync(result.filePath), true);
   assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
   assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
@@ -687,6 +707,116 @@ test("moss onnx voice synthesizer does not spawn when explicit base url is unhea
     /custom MOSS_TTS_BASE_URL disables local auto-start/
   );
   assert.equal(spawnCalls, 0);
+});
+
+test("configured voice synthesizer falls back to moss when genie model is missing", async () => {
+  const calls: string[] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (pathname === "/synthesize") {
+      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
+      fs.writeFileSync(body.outputPath, "wav");
+      return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const synthesize = createConfiguredVoiceSynthesizer({
+    backend: "genie-tts",
+    genieModelDir: "assets/tts/genie/models/not-found",
+    mossBaseURL: "http://127.0.0.1:9876",
+    mossReferenceAudio: "test.opus",
+    mossOutputDir: "generated/tts",
+    mossIdleShutdownMs: 0,
+    mossFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  const result = await synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
+
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+  assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
+  await fsp.unlink(result.filePath);
+});
+
+test("genie tts voice synthesizer calls service and returns opus asset", async () => {
+  const calls: string[] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") return new Response(JSON.stringify({ ok: true, ready: true }), { status: 200 });
+    if (pathname === "/synthesize") {
+      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
+      fs.writeFileSync(body.outputPath, "wav");
+      return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieOutputDir: "generated/tts",
+    genieIdleShutdownMs: 0,
+    genieFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  const result = await synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
+
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+  assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
+  assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
+  await fsp.unlink(result.filePath);
+});
+
+test("configured voice synthesizer falls back to moss when explicit genie service is unhealthy", async () => {
+  let spawnCalls = 0;
+  const calls: string[] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${parsed.port} ${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.port === "8767") return new Response(JSON.stringify({ ok: false }), { status: 503 });
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/synthesize") {
+      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
+      fs.writeFileSync(body.outputPath, "wav");
+      return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const spawn = ((command: string, args: readonly string[]) => {
+    if (command !== "ffmpeg") spawnCalls += 1;
+    return fakeFfmpegSpawn()(command, args);
+  }) as any;
+  const synthesize = createConfiguredVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    mossBaseURL: "http://127.0.0.1:9876",
+    mossReferenceAudio: "test.opus",
+    mossOutputDir: "generated/tts",
+    mossIdleShutdownMs: 0,
+    mossFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn });
+
+  const time = createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"));
+  const result = await synthesize({ text: "晚点见", time });
+  const secondResult = await synthesize({ text: "再试一次", time });
+
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+  assert.match(secondResult.assetId, /^generated\/tts\/20260526_000000_000_2\.opus$/);
+  assert.equal(spawnCalls, 0);
+  assert.deepEqual(calls, [
+    "8767 GET /health",
+    "9876 GET /health",
+    "9876 POST /synthesize",
+    "9876 GET /health",
+    "9876 POST /synthesize"
+  ]);
+  await fsp.unlink(result.filePath);
+  await fsp.unlink(secondResult.filePath);
 });
 
 test("send_chat voice does not split newline text", async () => {
@@ -1047,4 +1177,29 @@ function makeTempDir(name: string): string {
   const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function fakeFfmpegSpawn(): any {
+  return ((command: string, args: readonly string[]) => {
+    const child = new events.EventEmitter() as any;
+    child.stdout = new events.EventEmitter();
+    child.stderr = new events.EventEmitter();
+    child.exitCode = null;
+    process.nextTick(() => {
+      if (command === "ffmpeg") {
+        if (args.includes("-f") && args.includes("s16le") && String(args[args.length - 1]) === "-") {
+          const pcm = new Uint8Array(2000);
+          for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+            pcm[offset] = 0xff;
+            pcm[offset + 1] = 0x3f;
+          }
+          child.stdout.emit("data", pcm);
+        } else {
+          fs.writeFileSync(String(args[args.length - 1]), "opus");
+        }
+      }
+      child.emit("exit", 0, null);
+    });
+    return child;
+  }) as any;
 }

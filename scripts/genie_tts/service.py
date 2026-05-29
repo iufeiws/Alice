@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import signal
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+os.environ.setdefault("GENIE_DATA_DIR", "assets/tts/genie/GenieData")
+
+import genie_tts as genie
+
+
+class GenieRuntime:
+    def __init__(
+        self,
+        *,
+        character_name: str,
+        model_dir: str | Path,
+        language: str,
+        reference_audio: str | Path,
+        reference_text: str | Path,
+    ) -> None:
+        self.character_name = character_name
+        self.model_dir = Path(model_dir).expanduser().resolve()
+        self.language = language
+        self.reference_audio = Path(reference_audio).expanduser().resolve()
+        self.reference_text = Path(reference_text).expanduser().resolve()
+        self._load()
+
+    def _load(self) -> None:
+        if not self.model_dir.is_dir():
+            raise FileNotFoundError(f"Genie model directory was not found: {self.model_dir}")
+        if not self.reference_audio.is_file():
+            raise FileNotFoundError(f"Genie reference audio was not found: {self.reference_audio}")
+        if not self.reference_text.is_file():
+            raise FileNotFoundError(f"Genie reference text was not found: {self.reference_text}")
+        audio_text = self.reference_text.read_text(encoding="utf-8").strip()
+        if not audio_text:
+            raise ValueError(f"Genie reference text is empty: {self.reference_text}")
+        genie.load_character(
+            character_name=self.character_name,
+            onnx_model_dir=str(self.model_dir),
+            language=self.language,
+        )
+        genie.set_reference_audio(
+            character_name=self.character_name,
+            audio_path=str(self.reference_audio),
+            audio_text=audio_text,
+            language=self.language,
+        )
+
+    def synthesize(self, *, text: str, output_path: str | Path) -> dict[str, Any]:
+        normalized = str(text or "").strip()
+        if not normalized:
+            raise ValueError("text cannot be empty")
+        started_at = time.perf_counter()
+        target = Path(output_path).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        genie.tts(
+            character_name=self.character_name,
+            text=normalized,
+            play=False,
+            save_path=str(target),
+        )
+        if not target.is_file() or target.stat().st_size <= 0:
+            raise RuntimeError(f"Genie TTS did not create output audio: {target}")
+        return {
+            "audioPath": str(target),
+            "durationSeconds": None,
+            "elapsedSeconds": time.perf_counter() - started_at,
+        }
+
+
+class GenieHandler(BaseHTTPRequestHandler):
+    runtime: GenieRuntime
+    shutdown_event: threading.Event
+
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self.write_json(200, {"ok": True, "ready": True})
+            return
+        self.write_json(404, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:
+        if self.path == "/shutdown":
+            self.write_json(200, {"ok": True})
+            self.shutdown_event.set()
+            return
+        if self.path != "/synthesize":
+            self.write_json(404, {"ok": False, "error": "not found"})
+            return
+        try:
+            body = self.read_json_body()
+            result = self.runtime.synthesize(
+                text=required_string(body, "text"),
+                output_path=required_string(body, "outputPath"),
+            )
+            self.write_json(200, {"ok": True, **result})
+        except Exception as error:
+            logging.exception("synthesize failed")
+            self.write_json(500, {"ok": False, "error": str(error)})
+
+    def log_message(self, format_value: str, *args: Any) -> None:
+        logging.info("%s - %s", self.address_string(), format_value % args)
+
+    def read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("content-length") or "0")
+        if length <= 0:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def write_json(self, status: int, body: dict[str, Any]) -> None:
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def required_string(body: dict[str, Any], key: str) -> str:
+    value = body.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} is required")
+    return value
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Alice Genie-TTS HTTP service")
+    parser.add_argument("--host", default=os.environ.get("GENIE_TTS_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("GENIE_TTS_PORT", "8767")))
+    parser.add_argument("--model-dir", default=os.environ.get("GENIE_TTS_MODEL_DIR", "assets/tts/genie/models/alice"))
+    parser.add_argument("--output-dir", default=os.environ.get("GENIE_TTS_OUTPUT_DIR", "assets/generated/tts"))
+    parser.add_argument("--character-name", default=os.environ.get("GENIE_TTS_CHARACTER_NAME", "alice"))
+    parser.add_argument("--language", default=os.environ.get("GENIE_TTS_LANGUAGE", "zh"))
+    parser.add_argument("--reference-audio", default=os.environ.get("GENIE_TTS_REFERENCE_AUDIO", "assets/tts/references/alice/reference.wav"))
+    parser.add_argument("--reference-text", default=os.environ.get("GENIE_TTS_REFERENCE_TEXT", "assets/tts/references/alice/reference.txt"))
+    return parser.parse_args()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="[genie-tts] %(asctime)s %(levelname)s %(message)s")
+    args = parse_args()
+    Path(args.output_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
+    runtime = GenieRuntime(
+        character_name=args.character_name,
+        model_dir=args.model_dir,
+        language=args.language,
+        reference_audio=args.reference_audio,
+        reference_text=args.reference_text,
+    )
+    shutdown_event = threading.Event()
+    GenieHandler.runtime = runtime
+    GenieHandler.shutdown_event = shutdown_event
+    server = ThreadingHTTPServer((args.host, args.port), GenieHandler)
+
+    def request_shutdown(_signum: int, _frame: Any) -> None:
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    logging.info("ready host=%s port=%s model_dir=%s character=%s", args.host, args.port, Path(args.model_dir).resolve(), args.character_name)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    shutdown_event.wait()
+    server.shutdown()
+    server.server_close()
+    logging.info("stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

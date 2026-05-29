@@ -73,7 +73,23 @@ export type AppConfig = {
     selfieMaxBytes: number;
   };
   tts: {
-    backend: "moss-onnx";
+    backend: "genie-tts" | "moss-onnx";
+    genieBaseURL: string;
+    genieBaseURLExplicit: boolean;
+    genieHost: string;
+    geniePort: number;
+    geniePythonCommand: string;
+    genieServiceScript: string;
+    genieDataDir: string;
+    genieModelDir: string;
+    genieCharacterName: string;
+    genieLanguage: string;
+    genieReferenceAudio: string;
+    genieReferenceText: string;
+    genieOutputDir: string;
+    genieTimeoutMs: number;
+    genieIdleShutdownMs: number;
+    genieFfmpegCommand: string;
     mossBaseURL: string;
     mossBaseURLExplicit: boolean;
     mossHost: string;
@@ -115,6 +131,14 @@ function jsonObjectValue(value: string | undefined): Record<string, unknown> {
 
 function normalizeDefaultTargetPlugin(value: string | undefined): "auto" | "wechat" | "feishu" {
   return value === "wechat" || value === "feishu" ? value : "auto";
+}
+
+function normalizeTTSBackend(value: string | undefined): "genie-tts" | "moss-onnx" {
+  return value === "moss-onnx" ? "moss-onnx" : "genie-tts";
+}
+
+function referenceTextPath(referenceAudio: string): string {
+  return referenceAudio.replace(/\.[^./\\]+$/, "") + ".txt";
 }
 
 export function loadConfig(env: Env = process.env): AppConfig {
@@ -198,7 +222,23 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieMaxBytes: numberValue(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
     },
     tts: {
-      backend: "moss-onnx",
+      backend: normalizeTTSBackend(env.TTS_BACKEND),
+      genieBaseURL: (env.GENIE_TTS_BASE_URL ?? `http://${env.GENIE_TTS_HOST ?? "127.0.0.1"}:${numberValue(env.GENIE_TTS_PORT, 8767)}`).replace(/\/+$/, ""),
+      genieBaseURLExplicit: Boolean(env.GENIE_TTS_BASE_URL),
+      genieHost: env.GENIE_TTS_HOST ?? "127.0.0.1",
+      geniePort: numberValue(env.GENIE_TTS_PORT, 8767),
+      geniePythonCommand: env.GENIE_TTS_PYTHON_COMMAND ?? ".conda-moss/bin/python",
+      genieServiceScript: env.GENIE_TTS_SERVICE_SCRIPT ?? "scripts/genie_tts/service.py",
+      genieDataDir: env.GENIE_TTS_DATA_DIR ?? "assets/tts/genie/GenieData",
+      genieModelDir: env.GENIE_TTS_MODEL_DIR ?? "assets/tts/genie/models/alice",
+      genieCharacterName: env.GENIE_TTS_CHARACTER_NAME ?? "alice",
+      genieLanguage: env.GENIE_TTS_LANGUAGE ?? "zh",
+      genieReferenceAudio: env.GENIE_TTS_REFERENCE_AUDIO ?? env.MOSS_TTS_REFERENCE_AUDIO ?? "assets/tts/references/alice/reference.wav",
+      genieReferenceText: env.GENIE_TTS_REFERENCE_TEXT ?? referenceTextPath(env.GENIE_TTS_REFERENCE_AUDIO ?? env.MOSS_TTS_REFERENCE_AUDIO ?? "assets/tts/references/alice/reference.wav"),
+      genieOutputDir: env.GENIE_TTS_OUTPUT_DIR ?? env.MOSS_TTS_OUTPUT_DIR ?? "assets/generated/tts",
+      genieTimeoutMs: numberValue(env.GENIE_TTS_TIMEOUT_MS ?? env.MOSS_TTS_TIMEOUT_MS, 120_000),
+      genieIdleShutdownMs: numberValue(env.GENIE_TTS_IDLE_SHUTDOWN_MS ?? env.MOSS_TTS_IDLE_SHUTDOWN_MS, 15 * 60 * 1000),
+      genieFfmpegCommand: env.GENIE_TTS_FFMPEG_COMMAND ?? env.MOSS_TTS_FFMPEG_COMMAND ?? "ffmpeg-static",
       mossBaseURL: (env.MOSS_TTS_BASE_URL ?? `http://${env.MOSS_TTS_HOST ?? "127.0.0.1"}:${numberValue(env.MOSS_TTS_PORT, 8765)}`).replace(/\/+$/, ""),
       mossBaseURLExplicit: Boolean(env.MOSS_TTS_BASE_URL),
       mossHost: env.MOSS_TTS_HOST ?? "127.0.0.1",

@@ -19,7 +19,7 @@ import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
-import { createDailyScheduler } from "../../../core/scheduler/src/index.js";
+import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
 import { createMutableCurrentTimeProvider } from "../../../core/time/src/index.js";
 import { createMessageRuntime, summarizePayload } from "./message-runtime.js";
 import { createApiRequestHandler } from "./admin-routes.js";
@@ -369,17 +369,12 @@ const messageRuntime = createMessageRuntime({
 
 core.registerChannel(feishu);
 core.registerChannel(wechat);
-const scheduler = createDailyScheduler([
-  {
-    id: "system-log-retention",
-    hour: 4,
-    minute: 0,
-    run() {
-      const removed = systemLogStore?.cleanupOlderThan(7) ?? 0;
-      appendLog("info", `daily cleanup: removed ${removed} system log file(s) older than 7 days`);
-    }
-  }
-]);
+const scheduler = createDailyScheduler(createDailyMaintenanceTasks({
+  systemLogStore,
+  ttsOutputDirs: [config.tts.genieOutputDir, config.tts.mossOutputDir],
+  nowIso: () => currentTime.now().iso,
+  log: appendLog
+}));
 
 const runtimeState = { feishuStarted: false, wechatStarted: false };
 const server = http.createServer(createApiRequestHandler({

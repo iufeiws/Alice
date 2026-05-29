@@ -12,7 +12,7 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { createMossOnnxVoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
@@ -792,14 +792,23 @@ async function uploadTtsReferenceAudio(context: AdminRoutesContext, request: any
     writeJson(response, 400, { ok: false, error: "empty_upload" });
     return;
   }
+  const referenceText = decodeHeaderFileName(optionalString(request.headers?.["x-reference-text"]) ?? "").trim();
+  if (!referenceText) {
+    writeJson(response, 400, { ok: false, error: "reference_text_required" });
+    return;
+  }
   const fileName = decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? "");
   const extension = path.extname(fileName).toLowerCase();
   if (![".wav", ".mp3", ".m4a"].includes(extension)) {
     writeJson(response, 400, { ok: false, error: "unsupported_reference_audio_type" });
     return;
   }
-  const referencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+  const referencePath = resolveTtsAssetPath(context.config.tts.genieReferenceAudio);
+  const mossReferencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+  const referenceTextPath = resolveTtsAssetPath(context.config.tts.genieReferenceText);
   fs.mkdirSync(path.dirname(referencePath), { recursive: true });
+  fs.mkdirSync(path.dirname(mossReferencePath), { recursive: true });
+  fs.mkdirSync(path.dirname(referenceTextPath), { recursive: true });
   const tempDir = path.join(path.dirname(referencePath), `.alice-tts-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   const inputPath = path.join(tempDir, `source${extension}`);
@@ -809,11 +818,17 @@ async function uploadTtsReferenceAudio(context: AdminRoutesContext, request: any
     const codecConfig = readMossCodecConfig(context);
     await convertReferenceAudio(inputPath, convertedPath, context.config.tts.mossFfmpegCommand, codecConfig);
     fs.renameSync(convertedPath, referencePath);
+    if (path.resolve(mossReferencePath) !== path.resolve(referencePath)) {
+      fs.writeFileSync(mossReferencePath, fs.readFileSync(referencePath));
+    }
+    fs.writeFileSync(referenceTextPath, Buffer.from(`${referenceText}\n`, "utf8"));
     const stat = fs.statSync(referencePath);
     context.appendLog("info", `tts reference audio converted: ${fileName || "upload"} -> ${referencePath} ${codecConfig.sampleRate}Hz/${codecConfig.channels}ch max=${maxTtsReferenceDurationSeconds}s`);
     writeJson(response, 200, {
       ok: true,
-      referenceAudio: context.config.tts.mossReferenceAudio,
+      referenceAudio: context.config.tts.genieReferenceAudio,
+      mossReferenceAudio: context.config.tts.mossReferenceAudio,
+      referenceText: context.config.tts.genieReferenceText,
       sourceFileName: fileName,
       sourceSize: body.length,
       size: stat.size,
@@ -846,7 +861,7 @@ async function generateTtsPreview(context: AdminRoutesContext, request: any, res
     writeJson(response, 400, { ok: false, error: message });
     return;
   }
-  const synthesizer = createMossOnnxVoiceSynthesizer(context.config.tts, {
+  const synthesizer = createConfiguredVoiceSynthesizer(context.config.tts, {
     appendLog: context.appendLog
   });
   try {
@@ -909,8 +924,8 @@ function readMossCodecConfig(context: AdminRoutesContext): { sampleRate: number;
 }
 
 async function ensureTtsReferenceWithinLimit(context: AdminRoutesContext): Promise<void> {
-  const referencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
-  if (!fs.existsSync(referencePath)) throw new Error("MOSS TTS reference audio was not found");
+  const referencePath = resolveTtsAssetPath(context.config.tts.genieReferenceAudio);
+  if (!fs.existsSync(referencePath)) throw new Error("TTS reference audio was not found");
   const codecConfig = readMossCodecConfig(context);
   const maxBytes = maxTtsReferencePcmBytes(codecConfig);
   const stat = fs.statSync(referencePath);
@@ -921,6 +936,11 @@ async function ensureTtsReferenceWithinLimit(context: AdminRoutesContext): Promi
   try {
     await convertReferenceAudio(referencePath, trimmedPath, context.config.tts.mossFfmpegCommand, codecConfig);
     fs.renameSync(trimmedPath, referencePath);
+    const mossReferencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+    if (path.resolve(mossReferencePath) !== path.resolve(referencePath)) {
+      fs.mkdirSync(path.dirname(mossReferencePath), { recursive: true });
+      fs.writeFileSync(mossReferencePath, fs.readFileSync(referencePath));
+    }
     context.appendLog("warn", `tts reference audio was too large and has been trimmed to ${maxTtsReferenceDurationSeconds}s`);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1437,6 +1457,16 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
     },
     tts: {
       backend: context.config.tts.backend,
+      genieBaseURL: context.config.tts.genieBaseURL,
+      genieDataDir: context.config.tts.genieDataDir,
+      genieModelDir: context.config.tts.genieModelDir,
+      genieCharacterName: context.config.tts.genieCharacterName,
+      genieLanguage: context.config.tts.genieLanguage,
+      genieReferenceAudio: context.config.tts.genieReferenceAudio,
+      genieReferenceText: context.config.tts.genieReferenceText,
+      genieModelAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieModelDir)),
+      genieReferenceAudioAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieReferenceAudio)),
+      genieReferenceTextAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieReferenceText)),
       mossBaseURL: context.config.tts.mossBaseURL,
       mossReferenceAudio: context.config.tts.mossReferenceAudio,
       mossOutputDir: context.config.tts.mossOutputDir,

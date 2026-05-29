@@ -192,6 +192,8 @@ export function renderAdminHtmlV2(): string {
             <p class="muted" id="tts-reference-status">Loading...</p>
             <label for="ttsReferenceAudio">Reference Audio</label>
             <input id="ttsReferenceAudio" type="file" accept="audio/wav,audio/mpeg,audio/mp4,.wav,.mp3,.m4a" />
+            <label for="ttsReferenceText">Reference Text</label>
+            <textarea id="ttsReferenceText" rows="3" placeholder="输入参考音频对应的原文"></textarea>
             <button type="button" id="tts-upload-reference">Upload Voice Sample</button>
             <label for="ttsPreviewText">Preview Text</label>
             <textarea id="ttsPreviewText" rows="3">你好，我是 Alice。今天也想听你多说一点。</textarea>
@@ -336,7 +338,11 @@ export function renderAdminHtmlV2(): string {
         $("coreProfilePreview").textContent = JSON.stringify({
           appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || ""
         }, null, 2);
-        $("tts-reference-status").textContent = "Current reference: " + ((config.tts && config.tts.mossReferenceAudio) || "assets/tts/references/alice/reference.wav");
+        const tts = config.tts || {};
+        $("tts-reference-status").textContent = "Backend: " + (tts.backend || "genie-tts")
+          + " · Genie model: " + (tts.genieModelDir || "assets/tts/genie/models/alice") + (tts.genieModelAvailable ? " (found)" : " (missing, fallback to MOSS)")
+          + " · Reference: " + (tts.genieReferenceAudio || tts.mossReferenceAudio || "assets/tts/references/alice/reference.wav")
+          + " · Text: " + (tts.genieReferenceText || "assets/tts/references/alice/reference.txt") + (tts.genieReferenceTextAvailable ? " (found)" : " (missing)");
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
@@ -1110,12 +1116,18 @@ export function renderAdminHtmlV2(): string {
           $("tts-preview-status").textContent = "Choose a WAV, MP3, or M4A voice sample first.";
           return;
         }
+        const referenceText = $("ttsReferenceText").value.trim();
+        if (!referenceText) {
+          $("tts-preview-status").textContent = "Enter the text spoken in the reference audio first.";
+          return;
+        }
         $("tts-preview-status").textContent = "Uploading voice sample...";
         const result = await fetch("/admin/api/tts/reference-audio", {
           method: "POST",
           headers: {
             "content-type": file.type || "application/octet-stream",
-            "x-file-name": encodeURIComponent(file.name || "reference.wav")
+            "x-file-name": encodeURIComponent(file.name || "reference.wav"),
+            "x-reference-text": encodeURIComponent(referenceText)
           },
           body: file
         }).then((res) => res.json());
@@ -1123,7 +1135,7 @@ export function renderAdminHtmlV2(): string {
           $("tts-preview-status").textContent = "Voice sample upload failed: " + (result.error || "unknown error");
           return;
         }
-        $("tts-reference-status").textContent = "Current reference: " + result.referenceAudio + " (" + Math.round((result.size || 0) / 1024) + " KB)";
+        $("tts-reference-status").textContent = "Current reference: " + result.referenceAudio + " + " + result.referenceText + " (" + Math.round((result.size || 0) / 1024) + " KB)";
         $("tts-preview-status").textContent = "Voice sample converted to " + result.sampleRate + " Hz / " + result.channels + " ch PCM WAV, first " + result.maxDurationSeconds + "s kept.";
         await refreshLogs();
       }

@@ -27,7 +27,23 @@ export type MessagingToolTarget = {
 };
 
 export type TTSConfig = {
-  backend?: "moss-onnx";
+  backend?: "genie-tts" | "moss-onnx";
+  genieBaseURL?: string;
+  genieBaseURLExplicit?: boolean;
+  genieHost?: string;
+  geniePort?: number;
+  geniePythonCommand?: string;
+  genieServiceScript?: string;
+  genieDataDir?: string;
+  genieModelDir?: string;
+  genieCharacterName?: string;
+  genieLanguage?: string;
+  genieReferenceAudio?: string;
+  genieReferenceText?: string;
+  genieOutputDir?: string;
+  genieTimeoutMs?: number;
+  genieIdleShutdownMs?: number;
+  genieFfmpegCommand?: string;
   mossBaseURL?: string;
   mossBaseURLExplicit?: boolean;
   mossHost?: string;
@@ -55,6 +71,7 @@ export type VoiceSynthesisResult = {
 
 export type VoiceSynthesizer = ((input: VoiceSynthesisInput) => Promise<VoiceSynthesisResult>) & {
   noteActivity?(): void;
+  prepare?(): Promise<void>;
   shutdown?(): Promise<void>;
 };
 
@@ -119,6 +136,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const userName = () => deps.getUserName?.() || "user";
   const sleep = deps.sleep ?? delay;
   const voiceSynthesizer = deps.voiceSynthesizer ?? createConfiguredVoiceSynthesizer(deps.tts, { appendLog: deps.appendLog });
+  const shouldPrepareVoiceSynthesizer = Boolean(deps.tts || deps.voiceSynthesizer);
   let lastMessageTimestampMs: number | undefined;
   let activeLLMSession = false;
   let checkChatCallsInLLMSession = 0;
@@ -133,6 +151,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       }
       lastMessageTimestampMs = time.now().epochMs;
       voiceSynthesizer.noteActivity?.();
+      if (shouldPrepareVoiceSynthesizer) {
+        voiceSynthesizer.prepare?.().catch((error) => {
+          deps.appendLog?.("warn", `voice tts prepare failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
     },
     noteLLMSessionCompleted() {
       activeLLMSession = false;
@@ -843,8 +866,108 @@ function toolError(call: ToolCall, error: string): ToolResult {
   return { callId: call.id, ok: false, error };
 }
 
-function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: { appendLog?(level: "info" | "warn" | "error", message: string): void } = {}): VoiceSynthesizer {
-  return createMossOnnxVoiceSynthesizer(input ?? { backend: "moss-onnx" }, deps);
+export type ConfiguredVoiceSynthesizerDeps = MossOnnxVoiceSynthesizerDeps;
+
+export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: ConfiguredVoiceSynthesizerDeps = {}): VoiceSynthesizer {
+  const config = input ?? { backend: "genie-tts" as const };
+  const moss = createMossOnnxVoiceSynthesizer({ ...config, backend: "moss-onnx" }, deps);
+  if (config.backend === "moss-onnx") return moss;
+  const genieReadinessError = getGenieReadinessError(config);
+  if (genieReadinessError) {
+    deps.appendLog?.("warn", `genie tts unavailable; falling back to moss: ${genieReadinessError}`);
+    return moss;
+  }
+  const genie = createGenieTtsVoiceSynthesizer(config, deps);
+  let genieHasSynthesized = false;
+  let useMossFallback = false;
+  const synthesize = (async (request) => {
+    if (useMossFallback) return moss(request);
+    try {
+      const result = await genie(request);
+      genieHasSynthesized = true;
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!genieHasSynthesized && isGenieStartupFallbackError(message)) {
+        useMossFallback = true;
+        deps.appendLog?.("warn", `genie tts startup failed; falling back to moss: ${message}`);
+        return moss(request);
+      }
+      throw error;
+    }
+  }) as VoiceSynthesizer;
+  synthesize.noteActivity = () => {
+    if (!useMossFallback) genie.noteActivity?.();
+    moss.noteActivity?.();
+  };
+  synthesize.prepare = async () => {
+    if (useMossFallback) {
+      await moss.prepare?.();
+      return;
+    }
+    try {
+      await genie.prepare?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isGenieStartupFallbackError(message)) {
+        useMossFallback = true;
+        deps.appendLog?.("warn", `genie tts prepare failed; falling back to moss: ${message}`);
+        await moss.prepare?.();
+        return;
+      }
+      throw error;
+    }
+  };
+  synthesize.shutdown = async () => {
+    await genie.shutdown?.();
+    await moss.shutdown?.();
+  };
+  return synthesize;
+}
+
+function getGenieReadinessError(input: TTSConfig): string | undefined {
+  if (input.genieBaseURLExplicit) return undefined;
+  const dataDir = input.genieDataDir ?? "assets/tts/genie/GenieData";
+  const modelDir = input.genieModelDir ?? "assets/tts/genie/models/alice";
+  const referenceAudio = input.genieReferenceAudio ?? input.mossReferenceAudio ?? "assets/tts/references/alice/reference.wav";
+  const referenceText = input.genieReferenceText ?? referenceTextPath(referenceAudio);
+  const modelPath = resolveAssetScopedPath(modelDir);
+  try {
+    requireAssetDirectory(dataDir, "Genie TTS data directory was not found");
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (!fs.existsSync(modelPath)) return `Genie model directory was not found: ${modelPath}`;
+  if (!containsFileWithExtension(modelPath, ".onnx")) return `Genie model directory has no ONNX files: ${modelPath}`;
+  try {
+    requireAssetPath(referenceAudio, "Genie TTS reference audio was not found");
+    requireAssetPath(referenceText, "Genie TTS reference text was not found");
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return undefined;
+}
+
+function containsFileWithExtension(dir: string, extension: string): boolean {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const fullPath = path.join(dir, name);
+      const stat = fs.statSync(fullPath);
+      if (stat.isFile() && path.extname(name).toLowerCase() === extension) return true;
+      if (!stat.isFile() && containsFileWithExtension(fullPath, extension)) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function referenceTextPath(referenceAudio: string): string {
+  return referenceAudio.replace(/\.[^./\\]+$/, "") + ".txt";
+}
+
+function isGenieStartupFallbackError(message: string): boolean {
+  return /load|reference|not healthy|did not become healthy|exited before ready|model directory|reference text|reference audio/i.test(message);
 }
 
 export type MossOnnxVoiceSynthesizerDeps = {
@@ -884,7 +1007,7 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     noteActivity();
     const outputDir = resolveAssetOutputDir(config.outputDir);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
-    const baseName = `voice_${formatFileDateTime(time.now().iso)}_${Math.random().toString(36).slice(2, 8)}`;
+    const baseName = uniqueVoiceBaseName(outputDir.fullPath, time.now().iso);
     const wavPath = path.resolve(outputDir.fullPath, `${baseName}.wav`);
     const opusPath = path.resolve(outputDir.fullPath, `${baseName}.opus`);
     const opusAssetId = path.join(outputDir.relativePath, `${baseName}.opus`);
@@ -913,6 +1036,10 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   }) as VoiceSynthesizer;
 
   synthesize.noteActivity = noteActivity;
+  synthesize.prepare = async () => {
+    noteActivity();
+    await ensureMossService();
+  };
   synthesize.shutdown = shutdownOwnedService;
   return synthesize;
 
@@ -1017,7 +1144,182 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   }
 }
 
-async function postJson(url: string, body: Record<string, unknown>, timeoutMs: number, fetchImpl: typeof fetch): Promise<unknown> {
+export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxVoiceSynthesizerDeps = {}): VoiceSynthesizer {
+  const fetchImpl = deps.fetch ?? fetch;
+  const spawnImpl = deps.spawn ?? childProcess.spawn;
+  const setTimer = deps.setTimeout ?? setTimeout;
+  const clearTimer = deps.clearTimeout ?? clearTimeout;
+  const referenceAudioConfig = input.genieReferenceAudio ?? input.mossReferenceAudio ?? "assets/tts/references/alice/reference.wav";
+  const config = {
+    baseURL: (input.genieBaseURL ?? `http://${input.genieHost ?? "127.0.0.1"}:${input.geniePort ?? 8767}`).replace(/\/+$/, ""),
+    baseURLExplicit: input.genieBaseURLExplicit ?? Boolean(input.genieBaseURL),
+    host: input.genieHost ?? "127.0.0.1",
+    port: input.geniePort ?? 8767,
+    pythonCommand: input.geniePythonCommand ?? input.mossPythonCommand ?? ".conda-moss/bin/python",
+    serviceScript: input.genieServiceScript ?? "scripts/genie_tts/service.py",
+    dataDir: input.genieDataDir ?? "assets/tts/genie/GenieData",
+    modelDir: input.genieModelDir ?? "assets/tts/genie/models/alice",
+    characterName: input.genieCharacterName ?? "alice",
+    language: input.genieLanguage ?? "zh",
+    referenceAudio: referenceAudioConfig,
+    referenceText: input.genieReferenceText ?? referenceTextPath(referenceAudioConfig),
+    outputDir: input.genieOutputDir ?? input.mossOutputDir ?? "assets/generated/tts",
+    timeoutMs: input.genieTimeoutMs ?? input.mossTimeoutMs ?? 120_000,
+    idleShutdownMs: input.genieIdleShutdownMs ?? input.mossIdleShutdownMs ?? 15 * 60 * 1000,
+    ffmpegCommand: input.genieFfmpegCommand ?? input.mossFfmpegCommand ?? "ffmpeg-static"
+  };
+  let ownedProcess: ReturnType<typeof childProcess.spawn> | undefined;
+  let starting: Promise<void> | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let serviceWasExternal = false;
+
+  const synthesize = (async ({ text, time }) => {
+    noteActivity();
+    const outputDir = resolveAssetOutputDir(config.outputDir);
+    fs.mkdirSync(outputDir.fullPath, { recursive: true });
+    const baseName = uniqueVoiceBaseName(outputDir.fullPath, time.now().iso);
+    const wavPath = path.resolve(outputDir.fullPath, `${baseName}.wav`);
+    const opusPath = path.resolve(outputDir.fullPath, `${baseName}.opus`);
+    const opusAssetId = path.join(outputDir.relativePath, `${baseName}.opus`);
+    await ensureGenieService();
+    try {
+      const response = await postJson(`${config.baseURL}/synthesize`, {
+        text,
+        outputPath: wavPath
+      }, config.timeoutMs, fetchImpl, "Genie TTS");
+      if (!isRecord(response) || response.ok === false) {
+        throw new Error(isRecord(response) ? optionalStringValue(response.error) || "Genie TTS synthesize failed" : "Genie TTS synthesize failed");
+      }
+      validateGeneratedVoice(wavPath, outputDir.fullPath);
+      await validateVoiceLoudness(wavPath, config.ffmpegCommand, spawnImpl);
+      await convertWavToOpus(wavPath, opusPath, config.ffmpegCommand, spawnImpl);
+      validateGeneratedVoice(opusPath, outputDir.fullPath);
+      await validateVoiceLoudness(opusPath, config.ffmpegCommand, spawnImpl);
+      noteActivity();
+      return { assetId: opusAssetId, filePath: opusPath };
+    } finally {
+      await removeGeneratedVoice(wavPath);
+    }
+  }) as VoiceSynthesizer;
+
+  synthesize.noteActivity = noteActivity;
+  synthesize.prepare = async () => {
+    noteActivity();
+    await ensureGenieService();
+  };
+  synthesize.shutdown = shutdownOwnedService;
+  return synthesize;
+
+  function noteActivity(): void {
+    if (idleTimer) clearTimer(idleTimer);
+    if (config.idleShutdownMs <= 0) return;
+    idleTimer = setTimer(() => {
+      idleTimer = undefined;
+      shutdownOwnedService().catch((error) => {
+        deps.appendLog?.("warn", `genie tts idle shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }, config.idleShutdownMs);
+    idleTimer.unref?.();
+  }
+
+  async function ensureGenieService(): Promise<void> {
+    if (await isHealthy()) {
+      serviceWasExternal = ownedProcess === undefined;
+      return;
+    }
+    if (config.baseURLExplicit) {
+      throw new Error(`Genie TTS service is not healthy at ${config.baseURL}; custom GENIE_TTS_BASE_URL disables local auto-start`);
+    }
+    if (starting) {
+      await starting;
+      return;
+    }
+    starting = startOwnedService().finally(() => {
+      starting = undefined;
+    });
+    await starting;
+  }
+
+  async function startOwnedService(): Promise<void> {
+    const scriptPath = path.resolve(config.serviceScript);
+    if (!fs.existsSync(scriptPath)) throw new Error(`Genie TTS service script was not found: ${scriptPath}`);
+    const dataDir = requireAssetDirectory(config.dataDir, "Genie TTS data directory was not found");
+    const modelDir = requireAssetDirectory(config.modelDir, "Genie TTS model directory was not found");
+    const referenceAudio = requireAssetPath(config.referenceAudio, "Genie TTS reference audio was not found");
+    const referenceText = requireAssetPath(config.referenceText, "Genie TTS reference text was not found");
+    const outputDir = resolveAssetOutputDir(config.outputDir);
+    fs.mkdirSync(outputDir.fullPath, { recursive: true });
+    deps.appendLog?.("info", `genie tts service starting: ${config.pythonCommand} ${scriptPath}`);
+    ownedProcess = spawnImpl(config.pythonCommand, [
+      scriptPath,
+      "--host", config.host,
+      "--port", String(config.port),
+      "--model-dir", modelDir,
+      "--output-dir", outputDir.fullPath,
+      "--character-name", config.characterName,
+      "--language", config.language,
+      "--reference-audio", referenceAudio,
+      "--reference-text", referenceText
+    ], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GENIE_DATA_DIR: dataDir }
+    });
+    serviceWasExternal = false;
+    ownedProcess.stdout?.on("data", (chunk: Buffer) => deps.appendLog?.("info", `genie tts: ${String(chunk).trim()}`));
+    ownedProcess.stderr?.on("data", (chunk: Buffer) => deps.appendLog?.("warn", `genie tts: ${String(chunk).trim()}`));
+    ownedProcess.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+      deps.appendLog?.("info", `genie tts service exited: code=${code ?? ""} signal=${signal ?? ""}`);
+      ownedProcess = undefined;
+    });
+    await waitForHealthy();
+  }
+
+  async function waitForHealthy(): Promise<void> {
+    const deadline = Date.now() + config.timeoutMs;
+    let lastError = "not ready";
+    while (Date.now() < deadline) {
+      if (ownedProcess?.exitCode !== null && ownedProcess?.exitCode !== undefined) {
+        throw new Error(`Genie TTS service exited before ready: ${ownedProcess.exitCode}`);
+      }
+      try {
+        if (await isHealthy()) return;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+      await delay(500);
+    }
+    throw new Error(`Genie TTS service did not become healthy: ${lastError}`);
+  }
+
+  async function isHealthy(): Promise<boolean> {
+    try {
+      const response = await fetchImpl(`${config.baseURL}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(Math.min(2_000, config.timeoutMs))
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async function shutdownOwnedService(): Promise<void> {
+    if (idleTimer) {
+      clearTimer(idleTimer);
+      idleTimer = undefined;
+    }
+    if (!ownedProcess || serviceWasExternal) return;
+    const processToStop = ownedProcess;
+    try {
+      await postJson(`${config.baseURL}/shutdown`, {}, 2_000, fetchImpl, "Genie TTS");
+    } catch {
+      processToStop.kill("SIGTERM");
+    }
+  }
+}
+
+async function postJson(url: string, body: Record<string, unknown>, timeoutMs: number, fetchImpl: typeof fetch, label = "MOSS TTS"): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1035,7 +1337,7 @@ async function postJson(url: string, body: Record<string, unknown>, timeoutMs: n
   }
   if (!response.ok) {
     const message = isRecord(parsed) ? optionalStringValue(parsed.error) || optionalStringValue(parsed.text) : undefined;
-    throw new Error(`MOSS TTS HTTP ${response.status}: ${(message ?? text).slice(0, 500)}`);
+    throw new Error(`${label} HTTP ${response.status}: ${(message ?? text).slice(0, 500)}`);
   }
   return parsed ?? {};
 }
@@ -1156,6 +1458,12 @@ function requireAssetPath(assetId: string, error: string): string {
   return filePath;
 }
 
+function requireAssetDirectory(assetId: string, error: string): string {
+  const dirPath = requireAssetPath(assetId, error);
+  if (fs.statSync(dirPath).isFile()) throw new Error(error);
+  return dirPath;
+}
+
 function resolveAssetOutputDir(assetDir: string): { fullPath: string; relativePath: string } {
   const assetRoot = path.resolve("assets");
   const fullPath = resolveAssetScopedPath(assetDir);
@@ -1183,6 +1491,17 @@ function validateGeneratedVoice(filePath: string, outputDir: string): void {
   if (stat.size <= 0) throw new Error("TTS output file is empty");
 }
 
+function uniqueVoiceBaseName(outputDir: string, iso: string): string {
+  const baseName = formatFileDateTime(iso);
+  let candidate = baseName;
+  let suffix = 2;
+  while (fs.existsSync(path.join(outputDir, `${candidate}.wav`)) || fs.existsSync(path.join(outputDir, `${candidate}.opus`))) {
+    candidate = `${baseName}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
 async function removeGeneratedVoice(filePath: string): Promise<void> {
   try {
     await fsp.unlink(filePath);
@@ -1193,5 +1512,5 @@ async function removeGeneratedVoice(filePath: string): Promise<void> {
 }
 
 function formatFileDateTime(value: string): string {
-  return value.replace(/[-:]/g, "").replace("T", "_").replace(/\.\d{3}.*/, "");
+  return value.replace(/[-:]/g, "").replace("T", "_").replace(".", "_");
 }

@@ -5,11 +5,13 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && node node_modules/typescript/bin/tsc -p tsconfig.build.json",
     "dev:api": "npm run build && node dist/apps/api/src/index.js",
     "tts:moss:conda": ".miniconda/_conda create -y -p .conda-moss python=3.11 pip",
     "tts:moss:install": "npm run tts:moss:conda && .conda-moss/bin/python -m pip install -r scripts/moss_tts_onnx/requirements.txt",
     "tts:moss:start": ".conda-moss/bin/python scripts/moss_tts_onnx/service.py",
+    "tts:genie:install": "npm run tts:moss:conda && .conda-moss/bin/python -m pip install -r scripts/genie_tts/requirements.txt",
+    "tts:genie:start": ".conda-moss/bin/python scripts/genie_tts/service.py",
     "test:selfie-api": "node scripts/test-selfie-image-api.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "npm run build && node --test \"dist/tests/**/*.test.js\""

@@ -71,9 +71,14 @@ test("agent inbound debounce config defaults to one second and can be overridden
   assert.equal(loadConfig({ AGENT_DEFAULT_TARGET_PLUGIN: "bad" }).core.defaultTargetPlugin, "auto");
 });
 
-test("moss tts config has asset defaults and env overrides", () => {
+test("tts config has genie defaults and moss env overrides", () => {
   const defaults = loadConfig({}).tts;
-  assert.equal(defaults.backend, "moss-onnx");
+  assert.equal(defaults.backend, "genie-tts");
+  assert.equal(defaults.genieBaseURL, "http://127.0.0.1:8767");
+  assert.equal(defaults.genieDataDir, "assets/tts/genie/GenieData");
+  assert.equal(defaults.genieModelDir, "assets/tts/genie/models/alice");
+  assert.equal(defaults.genieReferenceAudio, "assets/tts/references/alice/reference.wav");
+  assert.equal(defaults.genieReferenceText, "assets/tts/references/alice/reference.txt");
   assert.equal(defaults.mossBaseURL, "http://127.0.0.1:8765");
   assert.equal(defaults.mossBaseURLExplicit, false);
   assert.equal(defaults.mossModelDir, "assets/tts/moss-onnx/models");

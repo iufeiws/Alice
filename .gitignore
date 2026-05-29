@@ -11,6 +11,9 @@ logs/
 assets/booksummaries.tar.gz
 assets/tts/models/
 assets/tts/moss-onnx/models/
+assets/tts/genie/models/
+assets/tts/genie/GenieData/
+assets/tts/genie/.cache/
 assets/tts/references/
 assets/voice_ref.wav
 assets/generated/

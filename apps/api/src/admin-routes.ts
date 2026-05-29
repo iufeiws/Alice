@@ -12,10 +12,17 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
+import { createMossOnnxVoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+const childProcess = await import("node:child_process");
+const moduleApi = await import("node:module");
+const require = moduleApi.createRequire(import.meta.url);
+const maxTtsReferenceDurationSeconds = 20;
+const maxTtsReferenceUploadBytes = 15 * 1024 * 1024;
+const ttsReferenceConvertTimeoutMs = 60_000;
 
 export type AdminRoutesContext = {
   config: AppConfig;
@@ -104,6 +111,12 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       if (request.method === "GET" && request.url?.startsWith("/admin/assets/shell/")) {
         const assetPath = request.url.slice("/admin/assets/shell/".length).split(/[?#]/, 1)[0];
         serveShellAsset(context, assetPath, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url?.startsWith("/admin/assets/tts/")) {
+        const assetPath = request.url.slice("/admin/assets/tts/".length).split(/[?#]/, 1)[0];
+        serveTtsAsset(context, assetPath, response);
         return;
       }
 
@@ -238,6 +251,16 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin/api/agent-state") {
         writeJson(response, 200, { state: context.agentState.getSnapshot(), states: AGENT_STATES });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tts/reference-audio") {
+        await uploadTtsReferenceAudio(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tts/generate") {
+        await generateTtsPreview(context, request, response);
         return;
       }
 
@@ -736,6 +759,243 @@ function serveShellAsset(context: AdminRoutesContext, rawName: string, response:
   fs.createReadStream(fullPath).pipe(response);
 }
 
+function serveTtsAsset(context: AdminRoutesContext, rawName: string, response: any): void {
+  const normalized = path.normalize(decodeHeaderFileName(rawName));
+  const outputDir = resolveTtsOutputDir(context);
+  const fullPath = path.resolve(outputDir, normalized);
+  const relative = path.relative(outputDir, fullPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+    response.end("invalid asset path");
+    return;
+  }
+  if (!fs.existsSync(fullPath)) {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("not found");
+    return;
+  }
+  const extension = path.extname(fullPath).toLowerCase();
+  const contentType = extension === ".opus"
+    ? "audio/ogg"
+    : extension === ".wav"
+      ? "audio/wav"
+      : extension === ".mp3"
+        ? "audio/mpeg"
+        : "application/octet-stream";
+  response.writeHead(200, { "content-type": contentType, "cache-control": "no-store" });
+  fs.createReadStream(fullPath).pipe(response);
+}
+
+async function uploadTtsReferenceAudio(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readRawBody(request, { maxBytes: maxTtsReferenceUploadBytes });
+  if (body.length === 0) {
+    writeJson(response, 400, { ok: false, error: "empty_upload" });
+    return;
+  }
+  const fileName = decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? "");
+  const extension = path.extname(fileName).toLowerCase();
+  if (![".wav", ".mp3", ".m4a"].includes(extension)) {
+    writeJson(response, 400, { ok: false, error: "unsupported_reference_audio_type" });
+    return;
+  }
+  const referencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+  fs.mkdirSync(path.dirname(referencePath), { recursive: true });
+  const tempDir = path.join(path.dirname(referencePath), `.alice-tts-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+  const inputPath = path.join(tempDir, `source${extension}`);
+  const convertedPath = path.join(tempDir, "reference.wav");
+  try {
+    fs.writeFileSync(inputPath, body);
+    const codecConfig = readMossCodecConfig(context);
+    await convertReferenceAudio(inputPath, convertedPath, context.config.tts.mossFfmpegCommand, codecConfig);
+    fs.renameSync(convertedPath, referencePath);
+    const stat = fs.statSync(referencePath);
+    context.appendLog("info", `tts reference audio converted: ${fileName || "upload"} -> ${referencePath} ${codecConfig.sampleRate}Hz/${codecConfig.channels}ch max=${maxTtsReferenceDurationSeconds}s`);
+    writeJson(response, 200, {
+      ok: true,
+      referenceAudio: context.config.tts.mossReferenceAudio,
+      sourceFileName: fileName,
+      sourceSize: body.length,
+      size: stat.size,
+      sampleRate: codecConfig.sampleRate,
+      channels: codecConfig.channels,
+      format: "pcm_s16le_wav",
+      maxDurationSeconds: maxTtsReferenceDurationSeconds
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.appendLog("warn", `tts reference audio convert failed: ${message}`);
+    writeJson(response, 400, { ok: false, error: message });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function generateTtsPreview(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const text = requiredString(body.text) || "你好，我是 Alice。";
+  if (Array.from(text).length > 240) {
+    writeJson(response, 400, { ok: false, error: "text_too_long" });
+    return;
+  }
+  try {
+    await ensureTtsReferenceWithinLimit(context);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.appendLog("warn", `tts reference audio guard failed: ${message}`);
+    writeJson(response, 400, { ok: false, error: message });
+    return;
+  }
+  const synthesizer = createMossOnnxVoiceSynthesizer(context.config.tts, {
+    appendLog: context.appendLog
+  });
+  try {
+    const result = await synthesizer({ text, time: context.time });
+    const audioUrl = ttsAudioUrl(context, result.filePath);
+    context.appendLog("info", `tts preview generated: ${result.assetId}`);
+    writeJson(response, 200, {
+      ok: true,
+      text,
+      assetId: result.assetId,
+      filePath: result.filePath,
+      audioUrl
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.appendLog("warn", `tts preview failed: ${message}`);
+    writeJson(response, 500, { ok: false, error: message });
+  }
+}
+
+function resolveTtsOutputDir(context: AdminRoutesContext): string {
+  return resolveTtsAssetPath(context.config.tts.mossOutputDir);
+}
+
+function resolveTtsAssetPath(assetPath: string): string {
+  const assetRoot = path.resolve("assets");
+  const fullPath = path.isAbsolute(assetPath)
+    ? assetPath
+    : path.normalize(assetPath) === "assets" || path.normalize(assetPath).startsWith(`assets${path.sep}`)
+      ? path.resolve(assetPath)
+      : path.resolve("assets", assetPath);
+  const relative = path.relative(assetRoot, fullPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new HttpJsonError(400, "tts_asset_path_outside_assets");
+  }
+  return fullPath;
+}
+
+function ttsAudioUrl(context: AdminRoutesContext, filePath: string): string {
+  const outputDir = resolveTtsOutputDir(context);
+  const relative = path.relative(outputDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("generated tts file is outside output directory");
+  return `/admin/assets/tts/${relative.split(path.sep).map(encodeURIComponent).join("/")}`;
+}
+
+function readMossCodecConfig(context: AdminRoutesContext): { sampleRate: number; channels: number } {
+  const fallback = { sampleRate: 48_000, channels: 2 };
+  const metaPath = path.join(resolveTtsAssetPath(context.config.tts.mossModelDir), "MOSS-Audio-Tokenizer-Nano-ONNX", "codec_browser_onnx_meta.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(metaPath, "utf8")) as { codec_config?: { sample_rate?: unknown; channels?: unknown } };
+    const sampleRate = Number(parsed.codec_config?.sample_rate);
+    const channels = Number(parsed.codec_config?.channels);
+    if (Number.isInteger(sampleRate) && sampleRate > 0 && Number.isInteger(channels) && channels > 0) {
+      return { sampleRate, channels };
+    }
+  } catch {
+    // Use the current MOSS Nano defaults when metadata is not available.
+  }
+  return fallback;
+}
+
+async function ensureTtsReferenceWithinLimit(context: AdminRoutesContext): Promise<void> {
+  const referencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+  if (!fs.existsSync(referencePath)) throw new Error("MOSS TTS reference audio was not found");
+  const codecConfig = readMossCodecConfig(context);
+  const maxBytes = maxTtsReferencePcmBytes(codecConfig);
+  const stat = fs.statSync(referencePath);
+  if (stat.size <= maxBytes) return;
+  const tempDir = path.join(path.dirname(referencePath), `.alice-tts-reference-guard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+  const trimmedPath = path.join(tempDir, "reference.wav");
+  try {
+    await convertReferenceAudio(referencePath, trimmedPath, context.config.tts.mossFfmpegCommand, codecConfig);
+    fs.renameSync(trimmedPath, referencePath);
+    context.appendLog("warn", `tts reference audio was too large and has been trimmed to ${maxTtsReferenceDurationSeconds}s`);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function maxTtsReferencePcmBytes(codecConfig: { sampleRate: number; channels: number }): number {
+  const wavHeaderAndSlack = 128 * 1024;
+  return (codecConfig.sampleRate * codecConfig.channels * 2 * maxTtsReferenceDurationSeconds) + wavHeaderAndSlack;
+}
+
+async function convertReferenceAudio(
+  inputPath: string,
+  outputPath: string,
+  ffmpegCommand: string,
+  codecConfig: { sampleRate: number; channels: number }
+): Promise<void> {
+  const resolvedFfmpegCommand = resolveFfmpegCommand(ffmpegCommand);
+  await new Promise<void>((resolve, reject) => {
+    const child = childProcess.spawn(resolvedFfmpegCommand, [
+      "-y",
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", inputPath,
+      "-vn",
+      "-t", String(maxTtsReferenceDurationSeconds),
+      "-acodec", "pcm_s16le",
+      "-ar", String(codecConfig.sampleRate),
+      "-ac", String(codecConfig.channels),
+      outputPath
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, ttsReferenceConvertTimeoutMs);
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      const code = typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined;
+      reject(new Error(code === "ENOENT"
+        ? "ffmpeg was not found; install ffmpeg-static or set MOSS_TTS_FFMPEG_COMMAND"
+        : error.message));
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`ffmpeg reference audio conversion timed out after ${ttsReferenceConvertTimeoutMs}ms`));
+        return;
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`ffmpeg reference audio conversion failed: ${stderr.slice(0, 500) || `exit ${code ?? "unknown"}`}`));
+    });
+  });
+  const stat = fs.statSync(outputPath);
+  if (!stat.isFile() || stat.size <= 0) throw new Error("converted reference audio is empty");
+}
+
+function resolveFfmpegCommand(ffmpegCommand: string): string {
+  if (ffmpegCommand !== "ffmpeg-static") return ffmpegCommand;
+  try {
+    const resolved = require("ffmpeg-static") as unknown;
+    if (typeof resolved === "string" && resolved) return resolved;
+  } catch {
+    // Fall through to a clear error below.
+  }
+  throw new Error("ffmpeg-static is not installed or did not expose an ffmpeg binary path");
+}
+
 async function uploadShellOutfitImage(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readRawBody(request, { maxBytes: 10 * 1024 * 1024 });
   if (body.length === 0) {
@@ -1174,6 +1434,14 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       extraParams: context.config.llm.extraParams,
       followupExtraParams: context.config.llm.followupExtraParams,
       apiKeyConfigured: Boolean(context.config.llm.apiKey)
+    },
+    tts: {
+      backend: context.config.tts.backend,
+      mossBaseURL: context.config.tts.mossBaseURL,
+      mossReferenceAudio: context.config.tts.mossReferenceAudio,
+      mossOutputDir: context.config.tts.mossOutputDir,
+      mossTimeoutMs: context.config.tts.mossTimeoutMs,
+      mossVoiceCloneMaxTextTokens: context.config.tts.mossVoiceCloneMaxTextTokens
     },
     plugins: {
       feishu: {

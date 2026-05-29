@@ -30,6 +30,7 @@ export function renderAdminHtmlV2(): string {
       label { display: block; font-size: 12px; font-weight: 700; margin: 12px 0 6px; }
       input, textarea, select { box-sizing: border-box; width: 100%; border: 1px solid #c4cad2; border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; color: #17202a; }
       textarea { resize: vertical; }
+      audio { width: 100%; margin-top: 10px; }
       button { border: 0; border-radius: 6px; background: #2563eb; color: #fff; padding: 9px 12px; font-weight: 700; cursor: pointer; margin: 10px 8px 0 0; }
       button.secondary { background: #475467; }
       pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f1f3f5; border-radius: 6px; padding: 12px; font-size: 12px; }
@@ -187,6 +188,16 @@ export function renderAdminHtmlV2(): string {
               <button type="submit">Save Core Profile</button>
               <p class="muted" id="core-profile-status"></p>
             </form>
+            <h2>Voice Sample</h2>
+            <p class="muted" id="tts-reference-status">Loading...</p>
+            <label for="ttsReferenceAudio">Reference Audio</label>
+            <input id="ttsReferenceAudio" type="file" accept="audio/wav,audio/mpeg,audio/mp4,.wav,.mp3,.m4a" />
+            <button type="button" id="tts-upload-reference">Upload Voice Sample</button>
+            <label for="ttsPreviewText">Preview Text</label>
+            <textarea id="ttsPreviewText" rows="3">你好，我是 Alice。今天也想听你多说一点。</textarea>
+            <button type="button" id="tts-generate-preview">Generate Preview</button>
+            <audio id="ttsPreviewAudio" controls></audio>
+            <p class="muted" id="tts-preview-status"></p>
             <h2>Variables</h2>
             <pre id="coreProfilePreview">Loading...</pre>
           </div>
@@ -325,6 +336,7 @@ export function renderAdminHtmlV2(): string {
         $("coreProfilePreview").textContent = JSON.stringify({
           appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || ""
         }, null, 2);
+        $("tts-reference-status").textContent = "Current reference: " + ((config.tts && config.tts.mossReferenceAudio) || "assets/tts/references/alice/reference.wav");
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
@@ -1092,6 +1104,47 @@ export function renderAdminHtmlV2(): string {
         });
       }
 
+      async function uploadTtsReferenceAudio() {
+        const file = $("ttsReferenceAudio").files?.[0];
+        if (!file) {
+          $("tts-preview-status").textContent = "Choose a WAV, MP3, or M4A voice sample first.";
+          return;
+        }
+        $("tts-preview-status").textContent = "Uploading voice sample...";
+        const result = await fetch("/admin/api/tts/reference-audio", {
+          method: "POST",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            "x-file-name": encodeURIComponent(file.name || "reference.wav")
+          },
+          body: file
+        }).then((res) => res.json());
+        if (!result.ok) {
+          $("tts-preview-status").textContent = "Voice sample upload failed: " + (result.error || "unknown error");
+          return;
+        }
+        $("tts-reference-status").textContent = "Current reference: " + result.referenceAudio + " (" + Math.round((result.size || 0) / 1024) + " KB)";
+        $("tts-preview-status").textContent = "Voice sample converted to " + result.sampleRate + " Hz / " + result.channels + " ch PCM WAV, first " + result.maxDurationSeconds + "s kept.";
+        await refreshLogs();
+      }
+
+      async function generateTtsPreview() {
+        $("tts-preview-status").textContent = "Generating preview...";
+        $("ttsPreviewAudio").removeAttribute("src");
+        const result = await fetch("/admin/api/tts/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: $("ttsPreviewText").value })
+        }).then((res) => res.json());
+        if (!result.ok) {
+          $("tts-preview-status").textContent = "Preview failed: " + (result.error || "unknown error");
+          return;
+        }
+        $("ttsPreviewAudio").src = result.audioUrl + (result.audioUrl.includes("?") ? "&" : "?") + "v=" + Date.now();
+        $("tts-preview-status").textContent = "Preview generated: " + result.assetId;
+        await refreshLogs();
+      }
+
       async function refreshLogs() {
         const system = await fetch("/admin/api/logs").then((res) => res.json());
         $("logs").innerHTML = system.logs.map((entry) => \`<div class="log-line log-\${entry.level}">[\${entry.time}] [\${entry.level.toUpperCase()}] \${escapeHtml(entry.message)}</div>\`).join("");
@@ -1246,6 +1299,8 @@ export function renderAdminHtmlV2(): string {
       $("send-test-markdown").addEventListener("click", async () => sendTest("test-markdown", { markdown: $("testMarkdown").value }, "Markdown"));
       $("send-test-image").addEventListener("click", async () => sendTest("test-image", { assetId: $("testImagePath").value }, "Image"));
       $("send-test-audio").addEventListener("click", async () => sendTest("test-audio", { assetId: $("testAudioPath").value }, "Audio"));
+      $("tts-upload-reference").addEventListener("click", uploadTtsReferenceAudio);
+      $("tts-generate-preview").addEventListener("click", generateTtsPreview);
       $("toolPreviewSelect").addEventListener("change", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-reset").addEventListener("click", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-run").addEventListener("click", runToolPreview);

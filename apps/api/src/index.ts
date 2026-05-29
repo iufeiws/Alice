@@ -18,6 +18,7 @@ import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
+import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
 import { createMutableCurrentTimeProvider } from "../../../core/time/src/index.js";
@@ -141,6 +142,7 @@ let nextLLMResponseLogId = 1;
 let nextLLMSessionId = 1;
 let llmSessionBusy = false;
 let store: ReturnType<typeof createAliceStore> | undefined;
+let tokenUsageStore: ReturnType<typeof createTokenUsageStore> | undefined;
 let systemLogStore: ReturnType<typeof createFileLogStore> | undefined;
 const currentTime = createMutableCurrentTimeProvider("UTC");
 
@@ -167,6 +169,7 @@ store = createAliceStore("data/alice.sqlite", {
   messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
+tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"));
 systemLogStore = createFileLogStore("logs/system", { getTimeZone: () => currentTime.timeZone });
 for (const entry of systemLogStore.listRecent(500)) {
   logs.push(entry);
@@ -403,6 +406,7 @@ const server = http.createServer(createApiRequestHandler({
   store,
   getLLMRequestPreview,
   getLLMRequestProfilePreview,
+  getTokenUsageReport,
   clearLLMChainCache,
   outputRouter,
   feishuPairingStore,
@@ -656,11 +660,12 @@ function estimateDeepSeekTokens(text: string): number {
 
 function appendLLMResponseLog(result: LLMChatResult): void {
   appendLLMUsageLog(result);
+  const now = currentTime.now().iso;
   const entry = {
     id: nextLLMResponseLogId,
     sessionId: activeLLMSession?.id,
     requestId: activeLLMSession?.requestIds.at(-1),
-    time: currentTime.now().iso,
+    time: now,
     message: { ...result.message },
     finishReason: result.finishReason,
     usage: result.usage,
@@ -668,9 +673,33 @@ function appendLLMResponseLog(result: LLMChatResult): void {
   };
   llmResponseLogs.push(entry);
   noteActiveLLMResponse(entry);
+  recordTokenUsage(entry, result);
   nextLLMResponseLogId += 1;
   if (llmResponseLogs.length > 50) {
     llmResponseLogs.splice(0, llmResponseLogs.length - 50);
+  }
+}
+
+function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult): void {
+  const usage = result.usage;
+  try {
+    tokenUsageStore?.insert({
+      createdAt: entry.time,
+      agentId: "core",
+      model: result.model ?? config.llm.model,
+      sessionId: entry.sessionId,
+      requestId: entry.requestId,
+      responseId: entry.id,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      totalTokens: usage?.totalTokens,
+      cacheHitTokens: usage?.cacheHitTokens,
+      cacheMissTokens: usage?.cacheMissTokens,
+      finishReason: result.finishReason,
+      rawUsageJson: extractRawUsageJson(result.raw)
+    });
+  } catch (error) {
+    appendLog("warn", `token usage persist failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -704,8 +733,36 @@ function extractRawUsage(raw: unknown): string {
   }
 }
 
+function extractRawUsageJson(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const usage = (raw as { usage?: unknown }).usage;
+  if (usage === undefined) return undefined;
+  try {
+    return JSON.stringify(usage);
+  } catch {
+    return String(usage);
+  }
+}
+
 function formatTokenCount(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "?";
+}
+
+function getTokenUsageReport(query: TokenUsageQuery) {
+  return tokenUsageStore?.report(query) ?? {
+    summary: {
+      requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheHitTokens: 0,
+      cacheMissTokens: 0
+    },
+    buckets: [],
+    byModel: [],
+    byModelBucket: [],
+    latest: []
+  };
 }
 
 function clearLLMChainCache(): void {

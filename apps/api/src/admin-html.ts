@@ -62,11 +62,39 @@ export function renderAdminHtmlV2(): string {
       .llm-window { min-height: 0; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
       .llm-window h2 { margin: 0; }
       .llm-window .logs { max-height: none; min-height: 0; }
+      .usage-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }
+      .usage-controls label { margin: 0; min-width: 120px; }
+      .usage-grid { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; margin-bottom: 14px; }
+      .usage-metric { border: 1px solid #d7dce3; border-radius: 8px; padding: 10px; background: #f8fafc; }
+      .usage-metric strong { display: block; font-size: 18px; margin-top: 4px; }
+      .usage-chart { display: grid; gap: 18px; }
+      .usage-model-panel { border-bottom: 1px solid #d7dce3; padding: 4px 0 18px; }
+      .usage-model-panel:last-child { border-bottom: 0; }
+      .usage-model-head { display: flex; align-items: baseline; gap: 18px; margin-bottom: 8px; }
+      .usage-model-head h2 { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+      .usage-model-stat { color: #667085; font-size: 13px; font-weight: 700; }
+      .usage-model-charts { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1fr); gap: 28px; align-items: start; overflow-x: auto; }
+      .usage-mini-title { font-size: 13px; font-weight: 800; color: #17202a; margin: 0 0 6px; }
+      .usage-line-chart { min-width: 280px; height: 160px; position: relative; border-bottom: 1px solid #d4dce8; background: repeating-linear-gradient(to bottom, transparent 0, transparent 52px, #e7ebf2 53px); }
+      .usage-line-chart svg { width: 100%; height: 140px; display: block; overflow: visible; }
+      .usage-axis-row { display: flex; justify-content: space-between; color: #667085; font-size: 11px; margin-top: 4px; }
+      .usage-token-bars { min-width: 320px; height: 160px; display: flex; align-items: end; gap: 8px; border-bottom: 1px solid #d4dce8; padding-bottom: 1px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 52px, #e7ebf2 53px); }
+      .usage-bar-wrap { flex: 0 0 18px; height: 140px; display: flex; align-items: end; position: relative; }
+      .usage-bar { width: 100%; display: flex; flex-direction: column-reverse; min-height: 2px; border-radius: 4px 4px 0 0; overflow: hidden; background: #e5e7eb; }
+      .usage-hit { background: rgba(159, 219, 255, 0.82); }
+      .usage-miss { background: rgba(89, 169, 255, 0.72); }
+      .usage-output { background: rgba(22, 119, 255, 0.90); }
+      .usage-legend { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 0; color: #667085; font-size: 12px; }
+      .usage-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+      .usage-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
+      .usage-table th, .usage-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
+      .usage-table th { color: #667085; font-weight: 800; }
       .tool-preview-grid { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 14px; align-items: start; }
       .tool-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts { grid-template-columns: 1fr; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     </style>
   </head>
   <body>
@@ -242,6 +270,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab" data-main-tab="shells" type="button">Shell</button>
           <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Request</button>
+          <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
           <button class="tab" data-main-tab="events" type="button">Event Log</button>
@@ -268,6 +297,34 @@ export function renderAdminHtmlV2(): string {
               <div id="llmChainResponses" class="logs">No LLM response yet.</div>
             </div>
           </div>
+        </section>
+        <section id="main-token-usage" class="pane">
+          <div class="usage-controls">
+            <label for="tokenUsageRange">Range
+              <select id="tokenUsageRange">
+                <option value="24h">24h</option>
+                <option value="7d">7d</option>
+                <option value="30d">30d</option>
+              </select>
+            </label>
+            <label for="tokenUsageBucket">Bucket
+              <select id="tokenUsageBucket">
+                <option value="hour">Hour</option>
+                <option value="day">Day</option>
+              </select>
+            </label>
+            <label for="tokenUsageModel">Model
+              <select id="tokenUsageModel"><option value="all">all</option></select>
+            </label>
+            <label for="tokenUsageAgent">Agent
+              <select id="tokenUsageAgent"><option value="all">all</option><option value="core">core</option></select>
+            </label>
+            <button type="button" id="tokenUsageRefresh">Refresh</button>
+          </div>
+          <div id="tokenUsageMetrics" class="usage-grid"></div>
+          <div id="tokenUsageChart" class="usage-chart">Loading...</div>
+          <div id="tokenUsageModels"></div>
+          <div id="tokenUsageLatest"></div>
         </section>
         <section id="main-tool-preview" class="pane">
           <div class="tool-preview-grid">
@@ -303,7 +360,7 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
@@ -317,6 +374,7 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
         if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
+        if (button.dataset.mainTab === "token-usage") await refreshTokenUsage();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
@@ -365,6 +423,7 @@ export function renderAdminHtmlV2(): string {
         const pairings = await fetch("/admin/api/plugins/feishu/pairings").then((res) => res.json());
         $("pairings").textContent = JSON.stringify(pairings.contacts, null, 2);
         await refreshLLMRequests();
+        await refreshTokenUsage();
         await refreshLogs();
       }
 
@@ -387,6 +446,169 @@ export function renderAdminHtmlV2(): string {
         bindLLMSessionDetails("llmChainResponses", "response");
         $("llmChainRequests").scrollTop = $("llmChainRequests").scrollHeight;
         $("llmChainResponses").scrollTop = $("llmChainResponses").scrollHeight;
+      }
+
+      async function refreshTokenUsage() {
+        const params = new URLSearchParams({
+          range: $("tokenUsageRange").value,
+          bucket: $("tokenUsageBucket").value,
+          agent: $("tokenUsageAgent").value,
+          model: $("tokenUsageModel").value
+        });
+        const payload = await fetch("/admin/api/token-usage?" + params.toString()).then((res) => res.json());
+        renderTokenUsage(payload);
+      }
+
+      function renderTokenUsage(payload) {
+        const summary = payload.summary || {};
+        $("tokenUsageMetrics").innerHTML = [
+          renderUsageMetric("Cache Hit Rate", formatPercent(summary.cacheHitRate)),
+          renderUsageMetric("Total Tokens", formatNumber(summary.totalTokens)),
+          renderUsageMetric("Actual Cost", formatNumber(actualTokenCost(summary))),
+          renderUsageMetric("Cache Hit", formatNumber(summary.cacheHitTokens)),
+          renderUsageMetric("Cache Miss", formatNumber(summary.cacheMissTokens)),
+          renderUsageMetric("Output", formatNumber(summary.outputTokens))
+        ].join("");
+        renderTokenUsageModelOptions(payload.byModel || [], payload.model || "all");
+        $("tokenUsageChart").innerHTML = renderTokenUsageChart(payload.buckets || []);
+        $("tokenUsageModels").innerHTML = renderTokenUsageModels(payload.byModel || []);
+        $("tokenUsageLatest").innerHTML = renderTokenUsageLatest(payload.latest || []);
+      }
+
+      function renderTokenUsageMetricRows(rows) {
+        return rows.map((row) => \`
+          <tr>
+            <td>\${escapeHtml(row.model || row.createdAt || "")}</td>
+            <td>\${escapeHtml(row.agentId || "")}</td>
+            <td>\${formatNumber(row.requests || row.totalTokens)}</td>
+            <td>\${formatNumber(row.cacheHitTokens)}</td>
+            <td>\${formatNumber(row.cacheMissTokens)}</td>
+            <td>\${formatPercent(row.cacheHitRate)}</td>
+          </tr>
+        \`).join("");
+      }
+
+      function renderUsageMetric(label, value) {
+        return \`<div class="usage-metric"><span class="muted">\${escapeHtml(label)}</span><strong>\${escapeHtml(value)}</strong></div>\`;
+      }
+
+      function renderTokenUsageChart(buckets) {
+        if (!buckets.length) return "No token usage recorded for this range.";
+        const requestTotal = buckets.reduce((sum, bucket) => sum + Number(bucket.requests || 0), 0);
+        const tokenTotal = buckets.reduce((sum, bucket) => sum + Number(bucket.totalTokens || 0), 0);
+        return \`
+          <div class="usage-model-panel">
+            <div class="usage-model-charts">
+              <div>
+                <p class="usage-mini-title">API Requests <span class="usage-model-stat">\${formatNumber(requestTotal)}</span></p>
+                \${renderRequestLineChart(buckets)}
+              </div>
+              <div>
+                <p class="usage-mini-title">Tokens <span class="usage-model-stat">\${formatNumber(tokenTotal)}</span></p>
+                \${renderTokenBars(buckets)}
+              </div>
+            </div>
+            <div class="usage-legend">
+              <span><span class="usage-swatch usage-output"></span>output</span>
+              <span><span class="usage-swatch usage-miss"></span>cache miss</span>
+              <span><span class="usage-swatch usage-hit"></span>cache hit</span>
+            </div>
+          </div>
+        \`;
+      }
+
+      function renderRequestLineChart(buckets) {
+        const maxRequests = Math.max(1, ...buckets.map((bucket) => Number(bucket.requests || 0)));
+        const width = Math.max(320, buckets.length * 28);
+        const height = 140;
+        const points = buckets.map((bucket, index) => {
+          const x = buckets.length === 1 ? width / 2 : (index / (buckets.length - 1)) * width;
+          const y = height - (Number(bucket.requests || 0) / maxRequests) * (height - 10);
+          return { x, y, bucket };
+        });
+        const path = points.map((point, index) => \`\${index === 0 ? "M" : "L"} \${point.x.toFixed(2)} \${point.y.toFixed(2)}\`).join(" ");
+        const area = \`\${path} L \${points.at(-1)?.x.toFixed(2) || 0} \${height} L \${points[0]?.x.toFixed(2) || 0} \${height} Z\`;
+        return \`
+          <div class="usage-line-chart">
+            <svg viewBox="0 0 \${width} \${height}" preserveAspectRatio="none">
+              <path d="\${escapeAttr(area)}" fill="rgba(22, 119, 255, 0.42)"></path>
+              <path d="\${escapeAttr(path)}" fill="none" stroke="#1677ff" stroke-width="3"></path>
+              \${points.map((point) => \`<circle cx="\${point.x.toFixed(2)}" cy="\${point.y.toFixed(2)}" r="3" fill="#1677ff"><title>\${escapeHtml(point.bucket.bucket + " requests=" + point.bucket.requests)}</title></circle>\`).join("")}
+            </svg>
+          </div>
+          <div class="usage-axis-row"><span>\${escapeHtml(shortBucketLabel(buckets[0]?.bucket))}</span><span>\${escapeHtml(shortBucketLabel(buckets.at(-1)?.bucket))}</span></div>
+        \`;
+      }
+
+      function renderTokenBars(buckets) {
+        const maxValue = Math.max(1, ...buckets.map((bucket) => Number(bucket.cacheHitTokens || 0) + Number(bucket.cacheMissTokens || 0) + Number(bucket.outputTokens || 0)));
+        const bars = buckets.map((bucket) => {
+          const hit = Number(bucket.cacheHitTokens || 0);
+          const miss = Number(bucket.cacheMissTokens || 0);
+          const output = Number(bucket.outputTokens || 0);
+          const total = Math.max(1, hit + miss + output);
+          const height = Math.max(2, Math.round((total / maxValue) * 140));
+          return \`
+            <div class="usage-bar-wrap" title="\${escapeAttr(bucket.bucket + " hit=" + hit + " miss=" + miss + " output=" + output + " rate=" + formatPercent(bucket.cacheHitRate))}">
+              <div class="usage-bar" style="height:\${height}px">
+                <div class="usage-output" style="height:\${Math.round((output / total) * 100)}%"></div>
+                <div class="usage-miss" style="height:\${Math.round((miss / total) * 100)}%"></div>
+                <div class="usage-hit" style="height:\${Math.round((hit / total) * 100)}%"></div>
+              </div>
+            </div>
+          \`;
+        }).join("");
+        return \`
+          <div class="usage-token-bars">\${bars}</div>
+          <div class="usage-axis-row"><span>\${escapeHtml(shortBucketLabel(buckets[0]?.bucket))}</span><span>\${escapeHtml(shortBucketLabel(buckets.at(-1)?.bucket))}</span></div>
+        \`;
+      }
+
+      function renderTokenUsageModels(rows) {
+        if (!rows.length) return "";
+        return \`
+          <h2>By Model</h2>
+          <table class="usage-table">
+            <thead><tr><th>Model</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th></tr></thead>
+            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, agentId: "all" })))}</tbody>
+          </table>
+        \`;
+      }
+
+      function renderTokenUsageLatest(rows) {
+        if (!rows.length) return "";
+        return \`
+          <h2>Latest Events</h2>
+          <table class="usage-table">
+            <thead><tr><th>Time</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th></tr></thead>
+            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, model: row.createdAt })))}</tbody>
+          </table>
+        \`;
+      }
+
+      function renderTokenUsageModelOptions(rows, selected) {
+        const models = ["all", ...rows.map((row) => row.model).filter(Boolean).filter((value, index, list) => list.indexOf(value) === index)];
+        $("tokenUsageModel").innerHTML = models.map((model) => \`<option value="\${escapeAttr(model)}" \${model === selected ? "selected" : ""}>\${escapeHtml(model)}</option>\`).join("");
+      }
+
+      function shortBucketLabel(value) {
+        return String(value || "").replace(/^\\d{4}-/, "").replace("T", " ");
+      }
+
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString("en-US");
+      }
+
+      function actualTokenCost(summary) {
+        return Math.round(
+          Number(summary.cacheHitTokens || 0) * 0.1
+          + Number(summary.cacheMissTokens || 0)
+          + Number(summary.outputTokens || 0)
+        );
+      }
+
+      function formatPercent(value) {
+        return typeof value === "number" && Number.isFinite(value) ? Math.round(value * 1000) / 10 + "%" : "unknown";
       }
 
       function renderActiveLLMSession(session) {
@@ -1338,6 +1560,11 @@ export function renderAdminHtmlV2(): string {
       $("toolPreviewSelect").addEventListener("change", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-reset").addEventListener("click", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-run").addEventListener("click", runToolPreview);
+      $("tokenUsageRange").addEventListener("change", refreshTokenUsage);
+      $("tokenUsageBucket").addEventListener("change", refreshTokenUsage);
+      $("tokenUsageModel").addEventListener("change", refreshTokenUsage);
+      $("tokenUsageAgent").addEventListener("change", refreshTokenUsage);
+      $("tokenUsageRefresh").addEventListener("click", refreshTokenUsage);
       $("tool-view").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("view"), {}));
       $("tool-search").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("search"), { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
       $("tool-send").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("send"), { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));

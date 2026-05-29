@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../core/llm/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
+import { createTokenUsageStore } from "../packages/storage/src/token-usage-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -291,6 +292,81 @@ test("openai-compatible client reads OpenAI-style cached token details", async (
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("token usage store records events and aggregates cache hit rate by hour", () => {
+  const dir = makeTempDir("token-usage");
+  const store = createTokenUsageStore(path.join(dir, "logs", "token_usage", "token-usage.sqlite"));
+  store.insert({
+    createdAt: "2026-05-30T10:05:00.000",
+    agentId: "core",
+    model: "deepseek-chat",
+    sessionId: 1,
+    requestId: 1,
+    responseId: 1,
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 120,
+    cacheHitTokens: 60,
+    cacheMissTokens: 40,
+    rawUsageJson: "{\"prompt_tokens\":100}"
+  });
+  store.insert({
+    createdAt: "2026-05-30T10:35:00.000",
+    agentId: "core",
+    model: "deepseek-chat",
+    inputTokens: 50,
+    outputTokens: 10,
+    totalTokens: 60,
+    cacheHitTokens: 25
+  });
+  store.insert({
+    createdAt: "2026-05-30T11:00:00.000",
+    agentId: "side",
+    model: "other",
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15
+  });
+
+  const report = store.report({
+    since: "2026-05-30T10:00:00.000",
+    bucket: "hour",
+    agentId: "core",
+    model: "deepseek-chat"
+  });
+  assert.equal(report.summary.requests, 2);
+  assert.equal(report.summary.totalTokens, 180);
+  assert.equal(report.summary.cacheHitTokens, 85);
+  assert.equal(report.summary.cacheMissTokens, 40);
+  assert.equal(Math.round((report.summary.cacheHitRate ?? 0) * 1000) / 1000, 0.68);
+  assert.deepEqual(report.buckets.map((bucket) => bucket.bucket), ["2026-05-30T10:00"]);
+  assert.equal(report.byModel[0].model, "deepseek-chat");
+  assert.equal(report.latest.length, 2);
+});
+
+test("token usage store aggregates by day and keeps unknown usage rows", () => {
+  const dir = makeTempDir("token-usage-empty");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.insert({
+    createdAt: "2026-05-29T23:59:00.000",
+    agentId: "core",
+    model: "unknown-usage",
+    finishReason: "stop"
+  });
+  store.insert({
+    createdAt: "2026-05-30T00:01:00.000",
+    agentId: "core",
+    model: "unknown-usage",
+    outputTokens: 3
+  });
+
+  const report = store.report({ bucket: "day" });
+  assert.deepEqual(report.buckets.map((bucket) => bucket.bucket), ["2026-05-29", "2026-05-30"]);
+  assert.equal(report.summary.requests, 2);
+  assert.equal(report.summary.outputTokens, 3);
+  assert.equal(report.summary.cacheHitRate, undefined);
+  assert.equal(report.latest[0].model, "unknown-usage");
 });
 
 test("sqlite store initializes schema version without losing existing logs", () => {

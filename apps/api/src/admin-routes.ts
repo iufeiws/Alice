@@ -1,7 +1,8 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMClient } from "../../../core/llm/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { formatZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
+import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
 import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
@@ -36,6 +37,7 @@ export type AdminRoutesContext = {
   store: { listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(): unknown | Promise<unknown>;
+  getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
@@ -235,6 +237,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin/api/llm-responses") {
         writeJson(response, 200, { responses: context.llmResponseLogs });
+        return;
+      }
+
+      if (request.method === "GET" && request.url?.startsWith("/admin/api/token-usage")) {
+        writeJson(response, 200, getTokenUsagePayload(context, request.url));
         return;
       }
 
@@ -439,6 +446,30 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       handleHttpError(context, response, error);
     }
   };
+}
+
+function getTokenUsagePayload(context: AdminRoutesContext, requestUrl: string): unknown {
+  const url = new URL(requestUrl, "http://localhost");
+  const range = url.searchParams.get("range") ?? "24h";
+  const bucketParam = url.searchParams.get("bucket");
+  const bucket = bucketParam === "day" ? "day" : "hour";
+  const since = tokenUsageSince(context, range);
+  const agentId = url.searchParams.get("agent") || "all";
+  const model = url.searchParams.get("model") || "all";
+  const report = context.getTokenUsageReport({ since, bucket, agentId, model }) as Record<string, unknown>;
+  return {
+    range,
+    bucket,
+    agentId,
+    model,
+    timeZone: context.time.timeZone,
+    ...report
+  };
+}
+
+function tokenUsageSince(context: AdminRoutesContext, range: string): string {
+  const hours = range === "30d" ? 24 * 30 : range === "7d" ? 24 * 7 : 24;
+  return formatZonedIso(new Date(context.time.now().date.getTime() - hours * 60 * 60 * 1000), context.time.timeZone);
 }
 
 async function savePromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {

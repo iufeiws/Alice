@@ -14,6 +14,8 @@ from typing import Any
 os.environ.setdefault("GENIE_DATA_DIR", "assets/tts/genie/GenieData")
 
 import genie_tts as genie
+import numpy as np
+import soundfile as sf
 
 
 class GenieRuntime:
@@ -62,12 +64,23 @@ class GenieRuntime:
         started_at = time.perf_counter()
         target = Path(output_path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        genie.tts(
-            character_name=self.character_name,
-            text=normalized,
-            play=False,
-            save_path=str(target),
-        )
+        parts = split_sentence_by_period(normalized)
+        part_paths: list[Path] = []
+        if len(parts) == 1:
+            self._synthesize_part(parts[0], target)
+        else:
+            try:
+                for index, part in enumerate(parts):
+                    part_path = target.with_name(f"{target.stem}.part{index:03d}{target.suffix}")
+                    self._synthesize_part(part, part_path)
+                    part_paths.append(part_path)
+                concatenate_audio(part_paths, target)
+            finally:
+                for part_path in part_paths:
+                    try:
+                        part_path.unlink(missing_ok=True)
+                    except Exception:
+                        logging.warning("failed to remove temporary Genie TTS part: %s", part_path)
         if not target.is_file() or target.stat().st_size <= 0:
             raise RuntimeError(f"Genie TTS did not create output audio: {target}")
         return {
@@ -75,6 +88,49 @@ class GenieRuntime:
             "durationSeconds": None,
             "elapsedSeconds": time.perf_counter() - started_at,
         }
+
+    def _synthesize_part(self, text: str, target: Path) -> None:
+        genie.tts(
+            character_name=self.character_name,
+            text=text,
+            play=False,
+            split_sentence=False,
+            save_path=str(target),
+        )
+        if not target.is_file() or target.stat().st_size <= 0:
+            raise RuntimeError(f"Genie TTS did not create output audio: {target}")
+
+
+def split_sentence_by_period(text: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    for char in text:
+        current.append(char)
+        if char in {"。", ".", "？", "?"}:
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts or [text]
+
+
+def concatenate_audio(paths: list[Path], output_path: Path) -> None:
+    if not paths:
+        raise ValueError("no Genie TTS audio parts to concatenate")
+    sample_rate: int | None = None
+    chunks: list[np.ndarray] = []
+    for path in paths:
+        data, current_sample_rate = sf.read(path, always_2d=True)
+        if sample_rate is None:
+            sample_rate = int(current_sample_rate)
+        elif sample_rate != int(current_sample_rate):
+            raise RuntimeError(f"Genie TTS audio parts have different sample rates: {sample_rate} vs {current_sample_rate}")
+        chunks.append(data)
+    combined = np.concatenate(chunks, axis=0)
+    sf.write(output_path, combined, sample_rate or 32_000)
 
 
 class GenieHandler(BaseHTTPRequestHandler):

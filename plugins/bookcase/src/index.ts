@@ -1,4 +1,5 @@
 import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import { renderLLMText } from "../../../core/text-renderer/src/index.js";
 
 const sqlite = await import("node:sqlite");
 const path = await import("node:path");
@@ -7,6 +8,7 @@ type DatabaseSync = any;
 
 export type BookcaseToolsDeps = {
   dbPath?: string;
+  getUserName?: () => string;
 };
 
 type SelectedBook = {
@@ -21,13 +23,6 @@ type SelectedBook = {
   genres: string[];
   summary_chars: number;
   summary: string;
-  instructions: string[];
-  name_bank: {
-    people: string[];
-    nonhuman: string[];
-    places: string[];
-  };
-  source_line: string;
 };
 
 const defaultDbPath = path.resolve("plugins/bookcase/assets/booksummaries.sqlite");
@@ -35,9 +30,9 @@ const defaultDbPath = path.resolve("plugins/bookcase/assets/booksummaries.sqlite
 const bookcaseTool: ToolDefinition = {
   name: "bookcase",
   description: [
-    "书橱工具：管理本地书籍剧情母版。",
-    "action=draw 从书橱抽取一本书作为讲故事母版，返回剧情母版、改写规则、可用替换名和必须保留的来源行。",
-    "action=return 归还当前书籍并重开 LLM 会话，用于故事写完后释放书本内容占用的上下文。"
+    "里面装着用于讲故事的书",
+    "action=draw 从书橱抽取一本书来讲故事",
+    "action=return 讲完之后必须把书还回去。"
   ].join(""),
   inputSchema: {
     type: "object",
@@ -56,6 +51,7 @@ const bookcaseTool: ToolDefinition = {
 
 export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
   const dbPath = deps.dbPath ?? defaultDbPath;
+  const getUserName = deps.getUserName ?? (() => "user");
 
   return {
     id: "bookcase",
@@ -87,7 +83,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       return {
         callId: call.id,
         ok: true,
-        output: book
+        output: formatBookAsXml(book, getUserName())
       };
     } catch (error) {
       return toolError(call, error instanceof Error ? error.message : String(error));
@@ -101,10 +97,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       callId: call.id,
       ok: true,
       invalidateLLMSession: true,
-      output: {
-        action: "return",
-        message: "书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。"
-      }
+      output: formatReturnAsXml("书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。")
     };
   }
 }
@@ -163,27 +156,11 @@ function fetchBook(db: DatabaseSync, id: number): SelectedBook {
     origin: "Wikipedia plot summary" as const,
     license: "Creative Commons Attribution-ShareAlike" as const
   };
-  const sourceLine = `来源：改写自《${source.title}》（${source.author}，${source.publication_date}），CMU Book Summary Corpus / Wikipedia plot summary，CC BY-SA。`;
-
   return {
     source,
     genres,
     summary_chars: numberValue(row.summary_chars, stringValue(row.summary).length),
-    summary: stringValue(row.summary),
-    instructions: [
-      "全程第一人称叙述；从母版中选择一个核心角色作为“我”，没有明确主角时使用亲历者口吻。",
-      "将主要人名和地名替换成童话风名字，并保持一致；不要输出替换表。",
-      "写成完整故事，不要写成摘要；保留关键冲突、转折和结局，但不要照抄母版措辞。",
-      "语言跟随用户；未指定时使用用户的语言。",
-      "最后一行必须原样输出 source_line。",
-      "故事完成且不再需要母版后，可调用 bookcase action=return 归还书本，释放上下文。"
-    ],
-    name_bank: {
-      people: ["Liora", "Cedric", "Mira", "Rowan", "Elowen", "Bram", "Seraphina", "Pip", "Tilda", "Florian", "Ysabel", "Alaric", "Nella", "Corwin", "Briar", "Maribel"],
-      nonhuman: ["Thistle", "Brindle", "Mosscap", "Silverpaw", "Candlewick", "Honeythorn", "Bracken", "Moonwhisker"],
-      places: ["Moonlit Hollow", "Briarbridge", "Starfall Farm", "Thornwick", "Glasshill", "Emberfen", "Willowmere", "Kingfisher Gate"]
-    },
-    source_line: sourceLine
+    summary: stringValue(row.summary)
   };
 }
 
@@ -197,6 +174,49 @@ function numberValue(value: unknown, fallback: number): number {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatBookAsXml(book: SelectedBook, userName: string): string {
+  const template = [
+    "<book>",
+    "  <source>",
+    `    <title>${escapeXml(book.source.title)}</title>`,
+    `    <author>${escapeXml(book.source.author)}</author>`,
+    `    <publication_date>${escapeXml(book.source.publication_date)}</publication_date>`,
+    "  </source>",
+    "  <genres>",
+    ...book.genres.map((genre) => `    - ${escapeXml(genre)}`),
+    "  </genres>",
+    "  <summary>",
+    escapeXml(book.summary),
+    "  </summary>",
+    "  <instructions>",
+    "    - 用第一人称视角为{{user}}讲述这个故事；从梗概中选择一个主角作为爱丽丝，另一个与主角有紧密关系的角色作为{{user}}, 保持外壳设定的称呼。",
+    "    - 语言使用中文。",
+    "    - 在故事的最后说出故事的引用来源",
+    "    - 讲完故事必须使用toolcall action = return 归还书籍, 如果弄丢了{{user}}会生气 ",
+    "  </instructions>",
+    "</book>"
+  ].join("\n");
+  return renderLLMText(template, { user: escapeXml(userName.trim() || "user") });
+}
+
+function formatReturnAsXml(message: string): string {
+  return [
+    '<bookcase action="return" invalidate_llm_session="true">',
+    `  <message>${escapeXml(message)}</message>`,
+    "</bookcase>"
+  ].join("\n");
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[<>&"']/g, (char) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    '"': "&quot;",
+    "'": "&apos;"
+  }[char] ?? char));
 }
 
 function randomFromSeed(seed: number): number {

@@ -94,6 +94,13 @@ const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
 type SendType = "message" | "markdown" | "image" | "voice";
+type SendPartResult = {
+  ok: boolean;
+  messageId?: string;
+  error?: string;
+  content: string;
+  storedId?: number;
+};
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
@@ -245,8 +252,29 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const failed = results.find((result) => !result.ok);
-    const view = viewMessagesForScope(call.id, target, "recent");
+    const view = viewSentMessageResults(call.id, target, results);
     return failed ? { ...view, ok: false, error: failed.error } : view;
+  }
+
+  function viewSentMessageResults(callId: string, target: MessagingToolTarget, results: SendPartResult[]): ToolResult {
+    const ids = new Set(results.map((result) => result.storedId).filter((id): id is number => typeof id === "number"));
+    const messages = ids.size > 0
+      ? deps.store.listMessagesForConversation(target.sessionId, Math.max(ids.size + 10, 20))
+        .filter((message) => ids.has(message.id))
+        .sort((left, right) => left.id - right.id)
+      : [];
+    const fallback = results
+      .filter((result) => !result.storedId)
+      .map((result) => `Alice:${result.content}${result.ok ? "" : "[发送失败]"}`);
+    const output = [
+      messages.length > 0 ? formatTimelineBlocks(messages, [], time.timeZone, userName()) : "",
+      ...fallback
+    ].filter(Boolean).join("\n");
+    return {
+      callId,
+      ok: true,
+      output: appendCurrentTime(output || "nothing new", time.timeZone, time.now().date)
+    };
   }
 
   async function waitForMessageSendSlot(content: string): Promise<void> {
@@ -260,7 +288,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
   }
 
-  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<{ ok: boolean; messageId?: string; error?: string; content: string }> {
+  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<SendPartResult> {
     await waitForMessageSendSlot(text);
     let synthesized: VoiceSynthesisResult | undefined;
     try {
@@ -292,7 +320,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     type: SendType,
     content: string,
     options: { transcript?: string; retry: boolean; skipWait?: boolean }
-  ): Promise<{ ok: boolean; messageId?: string; error?: string; content: string }> {
+  ): Promise<SendPartResult> {
     if (!options.skipWait) await waitForMessageSendSlot(options.transcript ?? content);
     const output = buildOutput(target, type, content, options.transcript);
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
@@ -310,7 +338,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         status: "sent",
         summary: summarizeOutput(output)
       });
-      return { ok: true, messageId: extractSentMessageId(sent), content: options.transcript ?? content };
+      return { ok: true, messageId: extractSentMessageId(sent), content: options.transcript ?? content, storedId: stored.id };
     } catch (error) {
       const reason = normalizeSendError(error);
       deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
@@ -325,7 +353,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         error: reason
       });
       if (options.retry) enqueueSendRetry({ output, storedId: stored.id, content });
-      return { ok: false, error: reason, content: options.transcript ?? content };
+      return { ok: false, error: reason, content: options.transcript ?? content, storedId: stored.id };
     }
   }
 

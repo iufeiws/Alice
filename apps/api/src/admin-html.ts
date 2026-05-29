@@ -61,9 +61,11 @@ export function renderAdminHtmlV2(): string {
       .llm-window { min-height: 0; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
       .llm-window h2 { margin: 0; }
       .llm-window .logs { max-height: none; min-height: 0; }
+      .tool-preview-grid { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 14px; align-items: start; }
+      .tool-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -76,6 +78,7 @@ export function renderAdminHtmlV2(): string {
         <div class="tabbar">
           <button class="tab active" data-left-tab="llm" type="button">LLM Settings</button>
           <button class="tab" data-left-tab="feishu" type="button">Channel Settings</button>
+          <button class="tab" data-left-tab="core" type="button">Alice Core</button>
           <button class="tab" data-left-tab="agent" type="button">Agent Settings</button>
         </div>
         <div class="panel-body">
@@ -176,6 +179,17 @@ export function renderAdminHtmlV2(): string {
             <h2>Unique Bound Contact</h2>
             <pre id="pairings">Loading...</pre>
           </div>
+          <div id="left-core" class="pane">
+            <h2>Alice Core</h2>
+            <form id="core-profile-form">
+              <label for="appearanceDescription">Appearance Description</label>
+              <textarea id="appearanceDescription" name="appearanceDescription" rows="12" spellcheck="false"></textarea>
+              <button type="submit">Save Core Profile</button>
+              <p class="muted" id="core-profile-status"></p>
+            </form>
+            <h2>Variables</h2>
+            <pre id="coreProfilePreview">Loading...</pre>
+          </div>
           <div id="left-agent" class="pane">
             <h2>Agent</h2>
             <form id="agent-form">
@@ -215,6 +229,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab" data-main-tab="shells" type="button">Shell</button>
           <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Request</button>
+          <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
           <button class="tab" data-main-tab="events" type="button">Event Log</button>
           <button class="tab" data-main-tab="system" type="button">System Log</button>
@@ -241,6 +256,31 @@ export function renderAdminHtmlV2(): string {
             </div>
           </div>
         </section>
+        <section id="main-tool-preview" class="pane">
+          <div class="tool-preview-grid">
+            <div>
+              <h2>Tool Return Preview</h2>
+              <label for="toolPreviewSelect">Tool</label>
+              <select id="toolPreviewSelect"></select>
+              <label for="toolPreviewTarget">Target</label>
+              <select id="toolPreviewTarget">
+                <option value="feishu">Feishu</option>
+                <option value="wechat">WeChat</option>
+              </select>
+              <label for="toolPreviewInput">Arguments JSON</label>
+              <textarea id="toolPreviewInput" rows="12" spellcheck="false">{}</textarea>
+              <div class="tool-preview-actions">
+                <button type="button" id="tool-preview-run">Preview Return</button>
+                <button type="button" id="tool-preview-reset" class="secondary">Reset Args</button>
+              </div>
+              <p class="muted" id="tool-preview-status"></p>
+            </div>
+            <div>
+              <h2>Result</h2>
+              <div id="toolPreviewResult" class="logs">Choose a tool and preview its return.</div>
+            </div>
+          </div>
+        </section>
         <section id="main-messages" class="pane"><div id="messageLogs" class="logs">Loading...</div></section>
         <section id="main-events" class="pane"><div id="eventLogs" class="logs">Loading...</div></section>
         <section id="main-system" class="pane"><div id="logs" class="logs">Loading...</div></section>
@@ -250,7 +290,7 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
@@ -264,6 +304,7 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
         if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
+        if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
 
@@ -280,6 +321,10 @@ export function renderAdminHtmlV2(): string {
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
         $("timezone").value = config.core.timezone || "Asia/Singapore";
         $("defaultTargetPlugin").value = config.core.defaultTargetPlugin || "auto";
+        $("appearanceDescription").value = (config.coreProfile && config.coreProfile.appearanceDescription) || "";
+        $("coreProfilePreview").textContent = JSON.stringify({
+          appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || ""
+        }, null, 2);
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
@@ -424,6 +469,7 @@ export function renderAdminHtmlV2(): string {
       let promptProfile = null;
       let promptVariables = {};
       let promptTools = [];
+      let toolPreviewTools = [];
       async function refreshPromptProfile() {
         const payload = await fetch("/admin/api/prompt-profile").then((res) => res.json());
         promptProfile = payload.profile;
@@ -442,7 +488,7 @@ export function renderAdminHtmlV2(): string {
           <label for="promptUserName">User Name</label>
           <input id="promptUserName" autocomplete="off" value="\${escapeAttr(promptProfile.userName || "user")}" />
           <h2>Variables</h2>
-          <pre>\${escapeHtml(Object.entries(promptVariables).map(([key, value]) => "{{" + key + "}} = " + value).join("\\n"))}</pre>
+          <pre>\${escapeHtml(JSON.stringify(promptVariables, null, 2))}</pre>
           <h2>Visible Tools</h2>
           <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
           <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
@@ -474,6 +520,95 @@ export function renderAdminHtmlV2(): string {
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);
+      }
+
+      async function refreshToolPreviewTools() {
+        const payload = await fetch("/admin/api/tools").then((res) => res.json());
+        toolPreviewTools = payload.tools || [];
+        const select = $("toolPreviewSelect");
+        const previous = select.value;
+        select.innerHTML = toolPreviewTools.map((tool) => \`<option value="\${escapeAttr(tool.pluginId + ":" + tool.name)}">\${escapeHtml(tool.pluginId)} / \${escapeHtml(tool.name)}</option>\`).join("");
+        if (previous && [...select.options].some((option) => option.value === previous)) select.value = previous;
+        if (!select.value && select.options.length) select.selectedIndex = 0;
+        renderToolPreviewDefaultInput(false);
+      }
+
+      function currentToolPreviewTool() {
+        const [pluginId, name] = $("toolPreviewSelect").value.split(":");
+        return toolPreviewTools.find((tool) => tool.pluginId === pluginId && tool.name === name);
+      }
+
+      function renderToolPreviewDefaultInput(force) {
+        const tool = currentToolPreviewTool();
+        if (!tool) {
+          $("toolPreviewInput").value = "{}";
+          return;
+        }
+        if (!force && $("toolPreviewInput").value.trim() && $("toolPreviewInput").value.trim() !== "{}") return;
+        $("toolPreviewInput").value = JSON.stringify(defaultInputFromSchema(tool.inputSchema), null, 2);
+        $("tool-preview-status").textContent = "";
+      }
+
+      function defaultInputFromSchema(schema) {
+        const properties = schema && typeof schema === "object" ? schema.properties || {} : {};
+        const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+        const result = {};
+        Object.entries(properties).forEach(([key, spec]) => {
+          if (!required.has(key) && spec.default === undefined) return;
+          if (spec.default !== undefined) {
+            result[key] = spec.default;
+          } else if (Array.isArray(spec.enum) && spec.enum.length) {
+            result[key] = spec.enum[0];
+          } else if (spec.type === "number" || spec.type === "integer") {
+            result[key] = 0;
+          } else if (spec.type === "boolean") {
+            result[key] = false;
+          } else if (spec.type === "array") {
+            result[key] = [];
+          } else if (spec.type === "object") {
+            result[key] = {};
+          } else {
+            result[key] = "";
+          }
+        });
+        return result;
+      }
+
+      async function runToolPreview() {
+        const tool = currentToolPreviewTool();
+        if (!tool) return;
+        let input;
+        try {
+          input = JSON.parse($("toolPreviewInput").value || "{}");
+          if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Arguments must be a JSON object.");
+        } catch (error) {
+          $("tool-preview-status").textContent = "Invalid JSON: " + (error?.message || "parse failed");
+          return;
+        }
+        $("tool-preview-status").textContent = "Running preview...";
+        const result = await fetch("/admin/api/tools/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            pluginId: tool.pluginId,
+            toolName: tool.name,
+            targetPlugin: $("toolPreviewTarget").value,
+            input
+          })
+        }).then(async (res) => ({ status: res.status, body: await res.json() }));
+        $("tool-preview-status").textContent = result.body.ok ? "Preview complete." : "Preview failed.";
+        $("toolPreviewResult").innerHTML = renderToolPreviewResult(result.body, result.status);
+        $("toolPreviewResult").scrollTop = 0;
+        await refreshLogs();
+        await refreshLLMRequests();
+      }
+
+      function renderToolPreviewResult(payload, status) {
+        return \`
+          <div class="log-line">HTTP \${escapeHtml(status)} · \${escapeHtml(payload.pluginId || "")}/\${escapeHtml(payload.toolName || "")} · ok=\${escapeHtml(payload.ok)}</div>
+          <div class="log-line">LLM content\\n\${escapeHtml(payload.content || payload.error || "")}</div>
+          <div class="log-line">raw json\\n\${escapeHtml(JSON.stringify(payload.result || payload, null, 2))}</div>
+        \`;
       }
 
       function renderPromptLayer(layer, index, count, collection) {
@@ -613,19 +748,13 @@ export function renderAdminHtmlV2(): string {
           <details class="prompt-layer">
             <summary>Today<span>\${escapeHtml(shellData.daily?.date || "")}</span></summary>
             <p class="muted">Created at: \${escapeHtml(shellData.daily?.createdAt || "")}</p>
-            <pre>\${escapeHtml(shellData.rendered || "")}</pre>
+            <pre>\${escapeHtml(JSON.stringify(shellData.todayVariables || {}, null, 2))}</pre>
           </details>
           <details class="prompt-layer">
             <summary>Shell Settings<span>daily refresh clock</span></summary>
             <label for="shellRolloverHour">Daily Refresh Clock (0-23)</label>
             <input id="shellRolloverHour" inputmode="numeric" value="\${escapeAttr(shellData.settings?.rolloverHour ?? 4)}" />
             <button type="button" id="shell-settings-save">Save Shell Settings</button>
-          </details>
-          <details class="prompt-layer">
-            <summary>Shell Prompt<span>template</span></summary>
-            <p class="muted">Variables: {{personality_name}}, {{personality_content}}, {{relationship_name}}, {{relationship_content}}, {{outfit_name}}, {{outfit_content}}, {{date}}</p>
-            <textarea id="shellPromptTemplate" rows="12">\${escapeHtml(shellData.promptTemplate || "")}</textarea>
-            <button type="button" id="shell-prompt-save">Save Shell Prompt</button>
           </details>
           <details class="prompt-layer" open>
             <summary>语气 / 称呼<span>top</span></summary>
@@ -640,7 +769,6 @@ export function renderAdminHtmlV2(): string {
         \`;
         $("shell-reroll").addEventListener("click", rerollShell);
         $("shell-settings-save").addEventListener("click", saveShellSettings);
-        $("shell-prompt-save").addEventListener("click", saveShellPromptTemplate);
         shellCategories.forEach((category) => bindShellCategory(category.key));
       }
 
@@ -886,26 +1014,11 @@ export function renderAdminHtmlV2(): string {
 
       async function rerollShell() {
         const result = await fetch("/admin/api/shell/reroll", { method: "POST" }).then((res) => res.json());
-        $("shell-status").textContent = result.rendered ? "Daily shell rerolled." : "Daily shell reroll failed.";
+        $("shell-status").textContent = result.todayVariables ? "Daily shell rerolled." : "Daily shell reroll failed.";
         shellData = result;
         renderShellEditor();
         await refreshPromptProfile();
         await refreshLLMRequests();
-      }
-
-      async function saveShellPromptTemplate() {
-        const result = await fetch("/admin/api/shell-prompt", {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ promptTemplate: $("shellPromptTemplate").value })
-        }).then((res) => res.json());
-        $("shell-status").textContent = result.ok ? "Shell prompt saved." : "Shell prompt save failed: " + (result.error || "unknown error");
-        if (result.ok) {
-          shellData = result;
-          renderShellEditor();
-          await refreshPromptProfile();
-          await refreshLLMRequests();
-        }
       }
 
       async function saveShellSettings() {
@@ -1049,6 +1162,14 @@ export function renderAdminHtmlV2(): string {
         $("agent-status").textContent = result.ok ? "Agent config saved." : "Failed to save agent config.";
         await refresh();
       });
+      $("core-profile-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        const body = { appearanceDescription: form.get("appearanceDescription") };
+        const result = await fetch("/admin/api/core-profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
+        $("core-profile-status").textContent = result.ok ? "Core profile saved." : "Failed to save core profile.";
+        await refresh();
+      });
       $("agent-state-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const body = { state: $("agentStateSelect").value, intimacy: $("agentIntimacy").value };
@@ -1125,6 +1246,9 @@ export function renderAdminHtmlV2(): string {
       $("send-test-markdown").addEventListener("click", async () => sendTest("test-markdown", { markdown: $("testMarkdown").value }, "Markdown"));
       $("send-test-image").addEventListener("click", async () => sendTest("test-image", { assetId: $("testImagePath").value }, "Image"));
       $("send-test-audio").addEventListener("click", async () => sendTest("test-audio", { assetId: $("testAudioPath").value }, "Audio"));
+      $("toolPreviewSelect").addEventListener("change", () => renderToolPreviewDefaultInput(true));
+      $("tool-preview-reset").addEventListener("click", () => renderToolPreviewDefaultInput(true));
+      $("tool-preview-run").addEventListener("click", runToolPreview);
       $("tool-view").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("view"), {}));
       $("tool-search").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("search"), { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
       $("tool-send").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("send"), { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));

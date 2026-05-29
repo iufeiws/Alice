@@ -469,6 +469,15 @@ test("search_messages uses persisted message FTS with default limits and context
 
 test("send_chat defaults to message and splits newline text into multiple sends", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "old_1",
+    conversationId: "session-1",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "old context should not come back from send_chat",
+    createdAt: "2026-05-25T23:59:00.000Z"
+  });
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
     store,
@@ -495,6 +504,7 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   assert.match(String(result.output), /^<chat-log>\n/);
   assert.match(String(result.output), /Alice:one/);
   assert.match(String(result.output), /Alice:two/);
+  assert.doesNotMatch(String(result.output), /old context should not come back from send_chat/);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");

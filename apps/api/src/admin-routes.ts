@@ -3,7 +3,9 @@ import type { LLMClient } from "../../../core/llm/src/index.js";
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
+import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
+import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
 import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } from "./http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
@@ -29,6 +31,7 @@ export type AdminRoutesContext = {
   clearLLMChainCache(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
+  coreProfileStore: CoreProfileStore;
   promptProfileStore: PromptProfileStore;
   getDailyShell(): string;
   dailyShellStore: DailyShellStore;
@@ -36,6 +39,7 @@ export type AdminRoutesContext = {
   messagingTools: ToolPlugin;
   mediaTools: ToolPlugin;
   shellTools: ToolPlugin;
+  bookcaseTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
@@ -136,6 +140,16 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/admin/api/tools") {
+        writeJson(response, 200, { tools: getAdminTools(context) });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/tools/preview") {
+        await previewToolResult(context, request, response);
+        return;
+      }
+
       if (request.method === "PUT" && request.url === "/admin/api/prompt-profile") {
         await savePromptProfile(context, request, response);
         return;
@@ -153,11 +167,6 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "PUT" && request.url === "/admin/api/shell-ui/order") {
         await saveShellUiOrder(request, response);
-        return;
-      }
-
-      if (request.method === "PUT" && request.url === "/admin/api/shell-prompt") {
-        await saveShellPromptTemplate(context, request, response);
         return;
       }
 
@@ -316,6 +325,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "PUT" && request.url === "/admin/api/core-profile") {
+        await saveCoreProfile(context, request, response);
+        return;
+      }
+
       if (request.method === "PUT" && request.url === "/admin/api/agent-state") {
         await saveAgentState(context, request, response);
         return;
@@ -404,11 +418,13 @@ async function savePromptProfile(context: AdminRoutesContext, request: any, resp
   });
 }
 
-function getPromptVariablePreview(context: AdminRoutesContext): Record<string, string> {
+function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables {
   const target = resolvePromptPreviewTarget(context);
   return promptVariables(context.promptProfileStore.get(), {
     time: context.time,
     dailyShell: context.getDailyShell(),
+    dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
+    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
     event: {
       id: "preview",
       source: {
@@ -469,8 +485,115 @@ function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: strin
   })));
 }
 
+function getAdminTools(context: AdminRoutesContext): Array<{
+  pluginId: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}> {
+  const variables = getAdminTextVariables(context, resolvePromptPreviewTarget(context));
+  return getAdminToolPlugins(context).flatMap((plugin) => plugin.listTools().map((tool) => ({
+    pluginId: plugin.id,
+    name: tool.name,
+    description: String(renderLLMValue(tool.description, variables)),
+    inputSchema: renderLLMValue(tool.inputSchema, variables) as Record<string, unknown>
+  })));
+}
+
+async function previewToolResult(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const toolName = requiredString(body.toolName);
+  const pluginId = optionalString(body.pluginId);
+  const input = body.input && typeof body.input === "object" && !Array.isArray(body.input)
+    ? body.input as Record<string, unknown>
+    : {};
+  const plugin = getAdminToolPlugins(context)
+    .find((candidate) => (!pluginId || candidate.id === pluginId) && candidate.listTools().some((tool) => tool.name === toolName));
+  if (!toolName || !plugin) {
+    writeJson(response, 400, { ok: false, error: "unknown_tool" });
+    return;
+  }
+
+  const unsafeReason = unsafePreviewReason(toolName, input);
+  if (unsafeReason) {
+    writeJson(response, 400, {
+      ok: false,
+      toolName,
+      pluginId: plugin.id,
+      error: unsafeReason,
+      content: `error: ${unsafeReason}`
+    });
+    return;
+  }
+
+  const targetPlugin = body.targetPlugin === "wechat" ? "wechat" : "feishu";
+  const target = resolveAdminMessagingTarget(context, targetPlugin) ?? resolvePromptPreviewTarget(context);
+  try {
+    const result = await plugin.execute({
+      id: `admin_preview_${toolName}_${Date.now()}`,
+      toolName,
+      input: { ...input, __preview: true },
+      requester: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId
+      },
+      session: {
+        scope: "dm",
+        sessionId: target.sessionId
+      }
+    });
+    context.appendLog(result.ok ? "info" : "warn", `tool preview ${plugin.id}/${toolName}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+    writeJson(response, result.ok ? 200 : 400, {
+      ok: result.ok,
+      pluginId: plugin.id,
+      toolName,
+      targetPlugin: target.plugin,
+      content: formatToolResultForLLM(result, getAdminTextVariables(context, target)),
+      result
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    context.appendLog("warn", `tool preview ${plugin.id}/${toolName} failed: ${reason}`);
+    writeJson(response, 500, {
+      ok: false,
+      pluginId: plugin.id,
+      toolName,
+      error: reason,
+      content: `error: ${reason}`
+    });
+  }
+}
+
+function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
+  return [context.messagingTools, context.mediaTools, context.shellTools, context.bookcaseTools];
+}
+
+function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {
+  if (toolName === "send_chat" || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message") {
+    return "send_chat cannot run from tool preview";
+  }
+  if (toolName === "selfie") return "selfie cannot run from tool preview";
+  if (toolName === "wardrobe" && input.action === "switch") return "wardrobe switch cannot run from tool preview";
+  return undefined;
+}
+
 function getShellConfig(context: AdminRoutesContext): unknown {
-  return context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
+  const config = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
+  const variables = buildLLMTextVariables({
+    userName: context.promptProfileStore.get().userName,
+    time: context.time,
+    dailyShellRaw: config.daily,
+    appearanceDescription: context.coreProfileStore.get().appearanceDescription
+  });
+  return {
+    ...config,
+    todayVariables: {
+      dailyShell: variables.dailyShell,
+      outfit: variables.outfit
+    }
+  };
 }
 
 type ShellUiOrder = Record<ShellCategory, string[]>;
@@ -515,14 +638,6 @@ function normalizeIdList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((id): id is string => typeof id === "string" && id.length > 0).filter((id, index, ids) => ids.indexOf(id) === index)
     : [];
-}
-
-async function saveShellPromptTemplate(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const content = requiredString(body.promptTemplate);
-  context.dailyShellStore.savePromptTemplate(content);
-  context.appendLog("info", "shell prompt template saved");
-  writeJson(response, 200, { ok: true, ...context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone) });
 }
 
 async function saveShellSettings(context: AdminRoutesContext, request: any, response: any): Promise<void> {
@@ -674,8 +789,37 @@ async function executeMessagingTool(
   context.appendLog(result.ok ? "info" : "warn", `messaging tool ${toolName}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
   writeJson(response, result.ok ? 200 : 400, {
     ok: result.ok,
-    content: formatToolResultForLLM(result),
+    content: formatToolResultForLLM(result, target ? getAdminTextVariables(context, target) : undefined),
     error: result.error
+  });
+}
+
+function getAdminTextVariables(
+  context: AdminRoutesContext,
+  target: { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string }
+): LLMTextVariables {
+  return buildLLMTextVariables({
+    userName: context.promptProfileStore.get().userName,
+    time: context.time,
+    dailyShell: context.getDailyShell(),
+    dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
+    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
+    event: {
+      id: "admin_tool_preview",
+      source: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId
+      },
+      session: {
+        scope: "dm",
+        sessionId: target.sessionId
+      },
+      type: "message.text",
+      payload: { kind: "text", text: "" },
+      meta: { receivedAt: context.time.now().iso }
+    }
   });
 }
 
@@ -694,16 +838,8 @@ function resolveAdminMessagingTarget(context: AdminRoutesContext, plugin: "feish
   return resolveFeishuTestTarget(context, {});
 }
 
-function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }): string {
-  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
-  if (typeof result.output === "string") return result.output;
-  if (result.output === undefined || result.output === null) return "ok";
-  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
-  try {
-    return JSON.stringify(result.output);
-  } catch {
-    return String(result.output);
-  }
+function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }, variables: LLMTextVariables = {}): string {
+  return renderToolResultForLLM(result, variables);
 }
 
 async function sendFeishuTest(context: AdminRoutesContext, request: any, response: any, kind: "markdown" | "image" | "audio"): Promise<void> {
@@ -878,6 +1014,14 @@ async function saveAgentConfig(context: AdminRoutesContext, request: any, respon
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
+async function saveCoreProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const appearanceDescription = typeof body.appearanceDescription === "string" ? body.appearanceDescription : "";
+  const profile = context.coreProfileStore.save({ appearanceDescription });
+  context.appendLog("info", `core profile saved: appearanceChars=${profile.appearanceDescription.length}`);
+  writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
+}
+
 function normalizeDefaultTargetPlugin(value: unknown, fallback: "auto" | "wechat" | "feishu"): "auto" | "wechat" | "feishu" {
   return value === "auto" || value === "wechat" || value === "feishu" ? value : fallback;
 }
@@ -1018,6 +1162,7 @@ async function stopWeChat(context: AdminRoutesContext, response: any): Promise<v
 function getAdminConfig(context: AdminRoutesContext): unknown {
   return {
     core: context.config.core,
+    coreProfile: context.coreProfileStore.get(),
     api: context.config.api,
     llm: {
       provider: context.config.llm.provider,

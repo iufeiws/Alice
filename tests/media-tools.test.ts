@@ -53,6 +53,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
         }
       },
       getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getAppearanceDescription: () => "发色: 低饱和浅金色\n眼睛: 浅金色",
       getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
     });
 
@@ -65,11 +66,11 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     assert.equal(result.ok, true);
     assert.equal(executorInputs[0].aspectRatio, "3:4");
     assert.equal(executorInputs[0].fileName, "selfie_20260526_120000.jpg");
-    assert.match(executorInputs[0].prompt, /当前时间:\n2026-05-26 12:00:00 UTC/);
+    assert.match(executorInputs[0].prompt, /当前时间:\n2026-05-26 12:00:00/);
     assert.match(executorInputs[0].prompt, /角色动作:\n踮脚靠近镜头/);
     assert.match(executorInputs[0].prompt, /发色: 低饱和浅金色/);
-    assert.match(executorInputs[0].prompt, /弱气/);
-    assert.match(executorInputs[0].prompt, /黑色哥特洛丽塔/);
+    assert.match(executorInputs[0].prompt, /说话声音很小/);
+    assert.match(executorInputs[0].prompt, /黑色薄纱短袖高领上衣/);
     assert.deepEqual(executorInputs[0].referenceImages, [
       path.resolve(referenceRoot, "alice-character-reference.png"),
       path.resolve(outfitImage),
@@ -349,14 +350,14 @@ function writeReferenceFiles(root: string): void {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "selfie-prompt.txt"), [
     "当前时间:",
-    "{{time}}",
+    "{{date_time}}",
     "角色动作:",
     "{{action}}",
     "角色特征:",
-    "{{char}}",
-    "{{persenality}}",
+    "{{appearance}}",
+    "{{dailyShell/persona/content}}",
     "服装特征:",
-    "{{dress}}"
+    "{{outfit/content}}"
   ].join("\n"));
   fs.writeFileSync(path.join(root, "alice-character-reference.png"), "alice-image");
   fs.writeFileSync(path.join(root, "magic-library-reference.png"), "library-image");

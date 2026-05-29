@@ -9,6 +9,8 @@ import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } f
 import { createId } from "../../../packages/types/src/index.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptLayer, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
+import type { DailyShell } from "./shells.js";
+import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../text-renderer/src/index.js";
 
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
@@ -24,6 +26,8 @@ export type AgentCoreDeps = {
   tools?: ToolPlugin[];
   getPromptProfile?: () => PromptProfile;
   getDailyShell?: () => string;
+  getDailyShellRaw?: () => DailyShell;
+  getAppearanceDescription?: () => string;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
@@ -137,7 +141,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const makePromptContext = () => ({
           event,
           time,
-          dailyShell: deps.getDailyShell?.()
+          dailyShell: deps.getDailyShell?.(),
+          dailyShellRaw: deps.getDailyShellRaw?.(),
+          appearanceDescription: deps.getAppearanceDescription?.()
         });
         const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
           const promptContext = makePromptContext();
@@ -188,6 +194,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             ];
             noteLLMSessionUpdated();
           }
+          const textVariables = buildTurnTextVariables(event);
           const llmInput = {
             messages: activeLLMSession.messages,
             model: deps.config.llm.model,
@@ -196,8 +203,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               type: "function" as const,
               function: {
                 name: tool.name,
-                description: tool.description,
-                parameters: tool.inputSchema
+                description: renderLLMTextValue(tool.description, textVariables),
+                parameters: renderLLMValue(tool.inputSchema, textVariables) as Record<string, unknown>
               }
             })))
           } satisfies LLMChatInput;
@@ -295,6 +302,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       let reachedToolCallLimit = false;
       let previousToolNameForConsecutiveCheck = lastCompletedToolName;
       const toolMessages = await Promise.all(effectiveCalls.map(async (call) => {
+        const textVariables = buildTurnTextVariables(event);
         totalToolCallCount += 1;
         if (totalToolCallCount >= maxTotalToolCalls) reachedToolCallLimit = true;
         const isConsecutiveSelfie = call.function.name === "selfie" && previousToolNameForConsecutiveCheck === "selfie";
@@ -320,7 +328,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             role: "tool" as const,
             toolCallId: call.id,
             name: call.function.name,
-            content: formatToolResultForLLM(streamedResult)
+            content: formatToolResultForLLM(streamedResult, textVariables)
           };
         }
         const plugin = toolMap.get(call.function.name);
@@ -362,7 +370,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           role: "tool" as const,
           toolCallId: call.id,
           name: call.function.name,
-          content: formatToolResultForLLM(toolResult)
+          content: formatToolResultForLLM(toolResult, textVariables)
         };
       }));
 
@@ -397,6 +405,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
       round += 1;
     }
+  }
+
+  function buildTurnTextVariables(event: AgentEvent): LLMTextVariables {
+    return buildLLMTextVariables({
+      userName: (deps.getPromptProfile?.() ?? defaultPromptProfile()).userName,
+      time,
+      event,
+      dailyShell: deps.getDailyShell?.(),
+      dailyShellRaw: deps.getDailyShellRaw?.(),
+      appearanceDescription: deps.getAppearanceDescription?.()
+    });
   }
 
   async function callLLMWithRetry(
@@ -585,17 +604,12 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function formatToolResultForLLM(result: ToolResult): string {
-  if (!result.ok && typeof result.output === "string") return result.output;
-  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
-  if (typeof result.output === "string") return result.output;
-  if (result.output === undefined || result.output === null) return "ok";
-  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
-  try {
-    return JSON.stringify(result.output);
-  } catch {
-    return String(result.output);
-  }
+function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
+  return renderToolResultForLLM(result, variables);
+}
+
+function renderLLMTextValue(value: string, variables: LLMTextVariables): string {
+  return String(renderLLMValue(value, variables));
 }
 
 function isRetryableLLMError(error: unknown): boolean {

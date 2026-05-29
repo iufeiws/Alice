@@ -1,6 +1,8 @@
 import type { LLMMessage } from "../../llm/src/index.js";
 import type { CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../packages/types/src/index.js";
+import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables } from "../../text-renderer/src/index.js";
+import type { DailyShell } from "./shells.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -43,6 +45,8 @@ export type PromptRenderContext = {
   event: AgentEvent;
   time: CurrentTimeProvider;
   dailyShell?: string;
+  dailyShellRaw?: DailyShell;
+  appearanceDescription?: string;
 };
 
 export type PromptProfileStore = {
@@ -113,7 +117,7 @@ export function defaultPromptProfile(): PromptProfile {
         order: 20,
         content: [
           "You are Alice's agent runtime.",
-          "Current time: {{time}}",
+          "Current time: {{date_time}}",
           "User: {{user}}"
         ].join("\n")
       },
@@ -149,7 +153,9 @@ export function defaultPromptProfile(): PromptProfile {
         enabled: true,
         order: 50,
         content: [
-          "{{daily_shell}}",
+          "Persona: {{dailyShell/persona/content}}",
+          "Relationship: {{dailyShell/relationship/content}}",
+          "Outfit: {{outfit/content}}",
           "",
           "Stay immersed in the Alice role while preserving tool accuracy.",
           "Do not mention platform-specific implementation names unless the user asks.",
@@ -217,7 +223,7 @@ export async function buildAppendPromptMessagesWithToolResults(
 
 async function buildLayerMessagesWithToolResults(
   inputLayers: PromptLayer[],
-  variables: Record<string, string>,
+  variables: LLMTextVariables,
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
@@ -244,29 +250,26 @@ async function buildLayerMessagesWithToolResults(
       role: "tool",
       name: toolCall.function.name,
       toolCallId: toolCall.id,
-      content: formatPromptToolResult(result)
+      content: formatPromptToolResult(result, variables)
     });
   }
 
   return messages;
 }
 
-export function promptVariables(profile: PromptProfile, context: PromptRenderContext): Record<string, string> {
-  const now = context.time.now();
-  const date = formatLocalDate(now.date, context.time.timeZone);
-  return {
-    time: formatLocalDateTime(now.date, context.time.timeZone),
-    date,
-    timezone: context.time.timeZone,
-    daily_shell: context.dailyShell ?? "",
-    user: profile.userName,
-    session: context.event.session.sessionId,
-    channel: context.event.source.channelId ?? context.event.source.userId ?? context.event.session.sessionId
-  };
+export function promptVariables(profile: PromptProfile, context: PromptRenderContext): LLMTextVariables {
+  return buildLLMTextVariables({
+    userName: profile.userName,
+    time: context.time,
+    event: context.event,
+    dailyShell: context.dailyShell ?? "",
+    dailyShellRaw: context.dailyShellRaw,
+    appearanceDescription: context.appearanceDescription
+  });
 }
 
-export function renderTemplate(content: string, variables: Record<string, string>): string {
-  return content.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, key: string) => variables[key] ?? match);
+export function renderTemplate(content: string, variables: LLMTextVariables): string {
+  return renderLLMText(content, variables);
 }
 
 export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
@@ -305,7 +308,7 @@ function normalizePromptLayers(layers: PromptLayer[]): PromptLayer[] {
   }));
 }
 
-function layerToMessage(layer: PromptLayer, variables: Record<string, string>): LLMMessage {
+function layerToMessage(layer: PromptLayer, variables: LLMTextVariables): LLMMessage {
   if (layer.role === "tool_request") {
     const toolName = layer.toolName || "check_chat";
     const toolCallId = layer.toolCallId || `prompt_${layer.id}`;
@@ -357,16 +360,8 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-function formatPromptToolResult(result: ToolResult): string {
-  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
-  if (typeof result.output === "string") return result.output;
-  if (result.output === undefined || result.output === null) return "ok";
-  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
-  try {
-    return JSON.stringify(result.output);
-  } catch {
-    return String(result.output);
-  }
+function formatPromptToolResult(result: ToolResult, variables: LLMTextVariables): string {
+  return formatToolResultForLLM(result, variables);
 }
 
 export function getPromptContent(id: string): string {
@@ -398,30 +393,4 @@ function cloneProfile(profile: PromptProfile): PromptProfile {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function formatLocalDateTime(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
-}
-
-function formatLocalDate(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
 }

@@ -33,7 +33,7 @@ test("prompt profile store creates defaults and persists edits", () => {
     userName: "AliceUser",
     visibleTools: { feishu: false },
     layers: [
-      { id: "custom", title: "Custom", role: "system", enabled: true, content: "Hi {{user}} at {{time}}", order: 1 }
+      { id: "custom", title: "Custom", role: "system", enabled: true, content: "Hi {{user}} at {{date_time}}", order: 1 }
     ]
   });
   assert.equal(saved.userName, "AliceUser");
@@ -41,7 +41,7 @@ test("prompt profile store creates defaults and persists edits", () => {
 
   const reopened = createPromptProfileStore(filePath).get();
   assert.equal(reopened.userName, "AliceUser");
-  assert.equal(reopened.layers[0].content, "Hi {{user}} at {{time}}");
+  assert.equal(reopened.layers[0].content, "Hi {{user}} at {{date_time}}");
 });
 
 test("prompt profile persists append layers", () => {

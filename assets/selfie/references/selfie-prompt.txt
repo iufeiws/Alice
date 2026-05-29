@@ -11,17 +11,17 @@
 小红书美图, iphone5s质感, 现实照片质感, 低清晰度, 修图后的真人照片, 现实场景
 
 当前时间:
-{{time}}
+{{date_time}}
 
 角色动作:
 {{action}}
 
 角色特征:
-{{char}}
-{{persenality}}
+{{appearance}}
+{{dailyShell/persona/content}}
 
 服装特征:
-{{dress}}
+{{outfit/content}}
 
 
 确保sfw

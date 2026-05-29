@@ -4,6 +4,7 @@ import type { OutputRouter } from "../../../core/output-router/src/index.js";
 import type { AliceStore, InsertOutboundMessageInput } from "../../../packages/storage/src/sqlite-store.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
+import { buildLLMTextVariables, renderLLMText } from "../../../core/text-renderer/src/index.js";
 
 const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
@@ -21,6 +22,7 @@ export type MediaToolTarget = {
 
 export type SelfieContext = {
   mainPrompt: string;
+  appearanceDescription?: string;
   personalityName: string;
   personalityContent: string;
   outfitId: string;
@@ -77,6 +79,8 @@ export type MediaToolsDeps = {
   selfieMaxBytes?: number;
   selfieExecutor?: SelfieExecutor;
   getSelfieContext?(): SelfieContext;
+  getUserName?: () => string;
+  getAppearanceDescription?: () => string;
   getDefaultTarget?(): MediaToolTarget | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog?(input: {
@@ -238,14 +242,35 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error("selfie prompt template was not found");
     const template = fs.readFileSync(templatePath, "utf8");
-    const now = time.now();
-    return template
-      .replaceAll("{{time}}", formatPromptTime(now.iso, now.timeZone))
-      .replaceAll("{{action}}", action)
-      .replaceAll("{{char}}", extractCharacterFeatures(context.mainPrompt))
-      .replaceAll("{{persenality}}", formatNamedBlock(context.personalityName, context.personalityContent))
-      .replaceAll("{{personality}}", formatNamedBlock(context.personalityName, context.personalityContent))
-      .replaceAll("{{dress}}", formatNamedBlock(context.outfitName, context.outfitContent));
+    return renderLLMText(template, {
+      ...buildLLMTextVariables({
+        userName: deps.getUserName?.() || "user",
+        time,
+        appearanceDescription: deps.getAppearanceDescription?.() ?? context.appearanceDescription ?? "",
+        dailyShellRaw: {
+          date: time.now().date.toISOString(),
+          createdAt: time.now().iso,
+          personality: {
+            id: context.personalityName,
+            name: context.personalityName,
+            content: context.personalityContent
+          },
+          relationship: {
+            id: "",
+            name: "",
+            content: ""
+          },
+          outfit: {
+            id: context.outfitId,
+            name: context.outfitName,
+            content: context.outfitContent,
+            ...(context.outfitImageUrl ? { imageUrl: context.outfitImageUrl } : {})
+          }
+        }
+      }),
+      user: deps.getUserName?.() || "user",
+      action,
+    });
   }
 
   function resolveReferenceImages(context: SelfieContext): { images: string[]; prompt: string; missingOutfitImage: boolean } {

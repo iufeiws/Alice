@@ -1,8 +1,10 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
+import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
 import { createDailyShellStore } from "../../../core/agent/src/shells.js";
+import { buildLLMTextVariables, renderLLMValue } from "../../../core/text-renderer/src/index.js";
 import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../core/policy/src/index.js";
@@ -202,6 +204,7 @@ if (wechatCredentials) {
   });
 }
 const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
+const coreProfileStore = createCoreProfileStore(path.join(config.memoryFiles.root, "config", "core-profile.json"));
 const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
   onSwitch(entry) {
     appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
@@ -249,6 +252,8 @@ const mediaTools = createMediaTools({
       outfitImageUrl: daily.outfit.imageUrl
     };
   },
+  getUserName: () => promptProfileStore.get().userName,
+  getAppearanceDescription: () => coreProfileStore.get().appearanceDescription,
   getDefaultTarget() {
     return getDefaultMessagingTarget();
   },
@@ -265,7 +270,9 @@ const shellTools = createShellTools({
   },
   appendMessageLog
 });
-const bookcaseTools = createBookcaseTools();
+const bookcaseTools = createBookcaseTools({
+  getUserName: () => promptProfileStore.get().userName
+});
 const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools];
 const core = createAgentCore({
   config,
@@ -277,6 +284,8 @@ const core = createAgentCore({
   tools: toolPlugins,
   getPromptProfile: () => promptProfileStore.get(),
   getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+  getDailyShellRaw: () => dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
+  getAppearanceDescription: () => coreProfileStore.get().appearanceDescription,
   state: agentState,
   time: currentTime,
   loadLLMSession: loadActiveLLMSessionTranscript,
@@ -386,6 +395,7 @@ const server = http.createServer(createApiRequestHandler({
   clearLLMChainCache,
   outputRouter,
   feishuPairingStore,
+  coreProfileStore,
   promptProfileStore,
   getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
   dailyShellStore,
@@ -393,6 +403,7 @@ const server = http.createServer(createApiRequestHandler({
   messagingTools,
   mediaTools,
   shellTools,
+  bookcaseTools,
   feishu,
   wechat,
   wechatStateStore,
@@ -812,9 +823,9 @@ function loadActiveLLMSessionTranscript(): { messages: LLMChatInput["messages"];
 function archiveRequestEntry(entry: LLMRequestLogEntry): LLMRequestLogEntry {
   return {
     ...entry,
-    messages: [],
-    rawRequest: undefined,
-    diffFromPrevious: undefined
+    messages: cloneLLMMessages(entry.messages),
+    tools: cloneLLMTools(entry.tools),
+    rawRequest: entry.rawRequest ?? buildRawLLMRequest(entry)
   };
 }
 
@@ -928,17 +939,26 @@ function applyLLMSessionArchiveEvent(sessions: Map<number, ActiveLLMSession>, ev
     session.messages = [...session.messages, ...cloneLLMMessages(event.messages)];
     session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
     session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    hydrateLatestEmptyRequestFromTranscript(session);
     return;
   }
   if (event.event === "messages_replaced") {
     session.messages = cloneLLMMessages(event.messages);
     session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
     session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    hydrateLatestEmptyRequestFromTranscript(session);
     return;
   }
   if (event.event === "request_logged") {
     if (!session.requestIds.includes(event.requestId)) session.requestIds.push(event.requestId);
-    const request = { ...event.request, sessionId: event.sessionId };
+    const messages = event.request.messages?.length ? cloneLLMMessages(event.request.messages) : cloneLLMMessages(session.messages);
+    const request = {
+      ...event.request,
+      sessionId: event.sessionId,
+      messages,
+      tools: cloneLLMTools(event.request.tools),
+      rawRequest: event.request.rawRequest ?? (messages.length ? buildRawLLMRequest({ ...event.request, messages }) : undefined)
+    };
     session.requests = [...(session.requests ?? []).filter((entry) => entry.id !== request.id), request];
     session.latestRequest = request.rawRequest;
     return;
@@ -979,6 +999,39 @@ function cloneLLMMessages(messages: LLMChatInput["messages"]): LLMChatInput["mes
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
   }));
+}
+
+function cloneLLMTools(tools: LLMChatInput["tools"] | undefined): LLMChatInput["tools"] | undefined {
+  return tools?.map((tool) => ({
+    ...tool,
+    function: {
+      ...tool.function,
+      parameters: cloneJsonObject(tool.function.parameters)
+    }
+  }));
+}
+
+function cloneJsonObject<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  const text = JSON.stringify(value);
+  return text === undefined ? value : JSON.parse(text) as T;
+}
+
+function hydrateLatestEmptyRequestFromTranscript(session: ActiveLLMSession): void {
+  if (session.responseIds.length > 0 || session.messages.length === 0) return;
+  const latestRequestId = session.requestIds.at(-1);
+  if (latestRequestId === undefined || !session.requests) return;
+  session.requests = session.requests.map((request) => {
+    if (request.id !== latestRequestId || request.messages.length > 0) return request;
+    const messages = cloneLLMMessages(session.messages);
+    return {
+      ...request,
+      messages,
+      rawRequest: request.rawRequest ?? buildRawLLMRequest({ ...request, messages })
+    };
+  });
+  const latestRequest = session.requests.find((request) => request.id === latestRequestId);
+  if (latestRequest) session.latestRequest = latestRequest.rawRequest;
 }
 
 function numberArray(value: unknown): number[] {
@@ -1116,6 +1169,13 @@ async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview |
 }
 
 function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): LLMChatInput["tools"] {
+  const variables = buildLLMTextVariables({
+    userName: profile.userName,
+    time: currentTime,
+    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+    dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
+    appearanceDescription: coreProfileStore.get().appearanceDescription
+  });
   return toolPlugins
     .filter((plugin) => {
       if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
@@ -1127,8 +1187,8 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
       type: "function" as const,
       function: {
         name: tool.name,
-        description: tool.description,
-        parameters: tool.inputSchema
+        description: String(renderLLMValue(tool.description, variables)),
+        parameters: renderLLMValue(tool.inputSchema, variables) as Record<string, unknown>
       }
     })));
 }
@@ -1141,7 +1201,9 @@ async function buildPromptPreviewMessages(
   const context = {
     event,
     time: currentTime,
-    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone)
+    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+    dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
+    appearanceDescription: coreProfileStore.get().appearanceDescription
   };
   const runPreviewTool = async (layer: Parameters<typeof buildPromptMessagesWithToolResults>[2] extends (layer: infer T, call: any) => any ? T : never, call: Parameters<Parameters<typeof buildPromptMessagesWithToolResults>[2]>[1]) => {
     if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {

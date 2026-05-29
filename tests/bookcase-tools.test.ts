@@ -9,7 +9,7 @@ const sqlite = await import("node:sqlite");
 
 test("bookcase tool draws a book and includes retelling instructions", async () => {
   const dbPath = createFixtureDb();
-  const tools = createBookcaseTools({ dbPath });
+  const tools = createBookcaseTools({ dbPath, getUserName: () => "YY" });
 
   const result = await tools.execute({
     id: "call_bookcase",
@@ -18,12 +18,18 @@ test("bookcase tool draws a book and includes retelling instructions", async () 
   });
 
   assert.equal(result.ok, true);
-  const output = result.output as any;
-  assert.equal(output.source.title, "Moon Gate");
-  assert.deepEqual(output.genres, ["Fantasy", "Fiction"]);
-  assert.match(output.summary, /hidden moon gate/);
-  assert.match(output.instructions.join("\n"), /第一人称/);
-  assert.match(output.source_line, /来源：改写自《Moon Gate》/);
+  const output = String(result.output);
+  assert.match(output, /^<book>/);
+  assert.match(output, /<title>Moon Gate<\/title>/);
+  assert.match(output, /- Fantasy/);
+  assert.match(output, /- Fiction/);
+  assert.match(output, /hidden moon gate/);
+  assert.match(output, /为YY讲述这个故事/);
+  assert.doesNotMatch(output, /\{\{user\}\}/);
+  assert.match(output, /toolcall action = return/);
+  assert.doesNotMatch(output, /summary_chars/);
+  assert.doesNotMatch(output, /source_line/);
+  assert.doesNotMatch(output, /name_bank/);
 });
 
 test("bookcase tool reports no matching summaries", async () => {
@@ -51,8 +57,9 @@ test("bookcase tool returns a book and invalidates the LLM session", async () =>
 
   assert.equal(result.ok, true);
   assert.equal(result.invalidateLLMSession, true);
-  assert.equal((result.output as any).action, "return");
-  assert.match((result.output as any).message, /重开/);
+  const output = String(result.output);
+  assert.match(output, /<bookcase action="return" invalidate_llm_session="true">/);
+  assert.match(output, /<message>.*重开.*<\/message>/);
 });
 
 function createFixtureDb(): string {

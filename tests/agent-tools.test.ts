@@ -1246,6 +1246,13 @@ test("agent core rechecks static prompt before each LLM request", async () => {
   const clears: string[] = [];
   const sessionUpdates: LLMChatInput["messages"][] = [];
   let dailyShell = "shell one";
+  let dailyShellRaw = {
+    date: "2026-05-29",
+    createdAt: "2026-05-29T12:00:00.000",
+    personality: { id: "p1", name: "P One", content: "shell one" },
+    relationship: { id: "r1", name: "R One", content: "relationship one" },
+    outfit: { id: "o1", name: "O One", content: "outfit one" }
+  };
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -1279,10 +1286,11 @@ test("agent core rechecks static prompt before each LLM request", async () => {
       userName: "user",
       visibleTools: { feishu: true, shell: true },
       layers: [
-        { id: "static", title: "Static", role: "system", enabled: true, content: "{{daily_shell}}", order: 1 }
+        { id: "static", title: "Static", role: "system", enabled: true, content: "{{dailyShell/persona/content}}", order: 1 }
       ]
     }),
     getDailyShell: () => dailyShell,
+    getDailyShellRaw: () => dailyShellRaw,
     onLLMSessionCleared(reason) {
       clears.push(reason);
     },
@@ -1296,6 +1304,10 @@ test("agent core rechecks static prompt before each LLM request", async () => {
       },
       async execute(call) {
         dailyShell = "shell two";
+        dailyShellRaw = {
+          ...dailyShellRaw,
+          personality: { ...dailyShellRaw.personality, content: "shell two" }
+        };
         return { callId: call.id, ok: true, output: "switched" };
       }
     }]

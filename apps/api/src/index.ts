@@ -1,5 +1,5 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
-import { createAgentCore } from "../../../core/agent/src/index.js";
+import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables } from "../../../core/agent/src/prompts.js";
@@ -110,6 +110,7 @@ type ActiveLLMSession = {
   latestRequest?: unknown;
   staticPromptFingerprint?: string;
   requestTimestamps: string[];
+  lastTotalTokens?: number;
   clearedAt?: string;
   reason?: string;
   requests?: LLMRequestLogEntry[];
@@ -118,11 +119,11 @@ type ActiveLLMSession = {
 
 type LLMSessionArchiveEvent =
   | { recordType: "llm_session_event"; event: "session_started"; sessionId: number; time: string; startedAt: string }
-  | { recordType: "llm_session_event"; event: "messages_appended"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] }
-  | { recordType: "llm_session_event"; event: "messages_replaced"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] }
+  | { recordType: "llm_session_event"; event: "messages_appended"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[]; lastTotalTokens?: number }
+  | { recordType: "llm_session_event"; event: "messages_replaced"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[]; lastTotalTokens?: number }
   | { recordType: "llm_session_event"; event: "request_logged"; sessionId: number; time: string; requestId: number; request: LLMRequestLogEntry }
   | { recordType: "llm_session_event"; event: "response_logged"; sessionId: number; time: string; responseId: number; response: LLMResponseLogEntry }
-  | { recordType: "llm_session_event"; event: "session_cleared"; sessionId: number; time: string; reason: "prompt_static_changed" | "admin_clear" | "shutdown" };
+  | { recordType: "llm_session_event"; event: "session_cleared"; sessionId: number; time: string; reason: LLMSessionClearReason };
 
 const logs: LogEntry[] = [];
 const messageLogs: MessageLogEntry[] = [];
@@ -754,17 +755,19 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
   });
 }
 
-function updateActiveLLMSessionTranscript(input: { messages: LLMChatInput["messages"]; staticPromptFingerprint: string; requestTimestamps: string[] }): void {
+function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {
   const now = currentTime.now().iso;
   const session = ensureActiveLLMSession(now);
   session.updatedAt = now;
   const commonPrefix = commonMessagePrefixLength(session.messages, input.messages);
   const isAppend = commonPrefix === session.messages.length;
   const delta = input.messages.slice(commonPrefix);
+  const tokenUsageChanged = session.lastTotalTokens !== input.lastTotalTokens;
   session.messages = input.messages;
   session.staticPromptFingerprint = input.staticPromptFingerprint;
   session.requestTimestamps = input.requestTimestamps;
-  if (isAppend && delta.length === 0) return;
+  session.lastTotalTokens = input.lastTotalTokens;
+  if (isAppend && delta.length === 0 && !tokenUsageChanged) return;
   appendLLMSessionArchiveEvent(session, {
     recordType: "llm_session_event",
     event: isAppend ? "messages_appended" : "messages_replaced",
@@ -772,11 +775,12 @@ function updateActiveLLMSessionTranscript(input: { messages: LLMChatInput["messa
     time: now,
     messages: isAppend ? delta : input.messages,
     staticPromptFingerprint: input.staticPromptFingerprint,
-    requestTimestamps: input.requestTimestamps
+    requestTimestamps: input.requestTimestamps,
+    lastTotalTokens: input.lastTotalTokens
   });
 }
 
-function clearActiveLLMSession(reason: "prompt_static_changed" | "admin_clear" | "shutdown"): void {
+function clearActiveLLMSession(reason: LLMSessionClearReason): void {
   if (!activeLLMSession) return;
   const sessionId = activeLLMSession.id;
   const requestCount = activeLLMSession.requestIds.length;
@@ -805,14 +809,15 @@ function getActiveLLMSessionSnapshot(): unknown {
   return readLatestLLMSessionSnapshot(activeLLMSession.id) ?? activeLLMSession;
 }
 
-function loadActiveLLMSessionTranscript(): { messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[] } | undefined {
+function loadActiveLLMSessionTranscript(): LLMSessionSnapshot | undefined {
   if (!activeLLMSession) return undefined;
   const latest = readLatestLLMSessionSnapshot(activeLLMSession.id);
   if (!latest || latest.clearedAt) return undefined;
   return {
     messages: latest.messages ?? [],
     staticPromptFingerprint: latest.staticPromptFingerprint,
-    requestTimestamps: latest.requestTimestamps
+    requestTimestamps: latest.requestTimestamps,
+    lastTotalTokens: latest.lastTotalTokens
   };
 }
 
@@ -914,6 +919,7 @@ function applyLegacyLLMSessionSnapshot(sessions: Map<number, ActiveLLMSession>, 
     latestRequest: raw.latestRequest,
     staticPromptFingerprint: typeof raw.staticPromptFingerprint === "string" ? raw.staticPromptFingerprint : undefined,
     requestTimestamps: stringArray(raw.requestTimestamps),
+    lastTotalTokens: typeof raw.lastTotalTokens === "number" && Number.isFinite(raw.lastTotalTokens) ? raw.lastTotalTokens : undefined,
     clearedAt: typeof raw.clearedAt === "string" ? raw.clearedAt : undefined,
     reason: typeof raw.reason === "string" ? raw.reason : undefined,
     requests: Array.isArray(raw.requests) ? raw.requests as LLMRequestLogEntry[] : [],
@@ -935,6 +941,7 @@ function applyLLMSessionArchiveEvent(sessions: Map<number, ActiveLLMSession>, ev
     session.messages = [...session.messages, ...cloneLLMMessages(event.messages)];
     session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
     session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    session.lastTotalTokens = event.lastTotalTokens ?? session.lastTotalTokens;
     hydrateLatestEmptyRequestFromTranscript(session);
     return;
   }
@@ -942,6 +949,7 @@ function applyLLMSessionArchiveEvent(sessions: Map<number, ActiveLLMSession>, ev
     session.messages = cloneLLMMessages(event.messages);
     session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
     session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
+    session.lastTotalTokens = event.lastTotalTokens ?? session.lastTotalTokens;
     hydrateLatestEmptyRequestFromTranscript(session);
     return;
   }

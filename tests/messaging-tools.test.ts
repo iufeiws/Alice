@@ -309,6 +309,19 @@ test("check_chat preview does not mark messages read or advance cursor", async (
   assert.equal(stored.readAt ?? undefined, undefined);
   assert.equal(stored.coreProcessedAt ?? undefined, undefined);
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "session-1");
+
+  tools.noteLLMRequestStarted();
+  await tools.execute({ id: "call_first", toolName: "check_chat", input: {} });
+  const recentPreview = await tools.execute({
+    id: "call_recent_preview",
+    toolName: "check_chat",
+    input: { __preview: true, __scope: "recent" }
+  });
+  assert.equal(recentPreview.ok, true);
+  assert.match(String(recentPreview.output), /preview should not consume/);
+  const next = await tools.execute({ id: "call_next", toolName: "check_chat", input: {} });
+  assert.equal(next.ok, true);
+  assert.doesNotMatch(String(next.output), /preview should not consume/);
 });
 
 test("check_chat recent is independent of the 6am today anchor", async () => {
@@ -742,12 +755,14 @@ test("configured voice synthesizer falls back to moss when genie model is missin
 
 test("genie tts voice synthesizer calls service and returns opus asset", async () => {
   const calls: string[] = [];
+  const requestedTexts: string[] = [];
   const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
     const pathname = new URL(String(url)).pathname;
     calls.push(`${init?.method ?? "GET"} ${pathname}`);
     if (pathname === "/health") return new Response(JSON.stringify({ ok: true, ready: true }), { status: 200 });
     if (pathname === "/synthesize") {
-      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      const body = JSON.parse(String(init?.body)) as { text: string; outputPath: string };
+      requestedTexts.push(body.text);
       fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
       fs.writeFileSync(body.outputPath, "wav");
       return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath }), { status: 200 });
@@ -762,11 +777,13 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
     genieFfmpegCommand: "ffmpeg"
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
-  const result = await synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
+  const text = "啊……\n等等、、、可以吗？？";
+  const result = await synthesize({ text, time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
 
   assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
   assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
   assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
+  assert.deepEqual(requestedTexts, [text]);
   await fsp.unlink(result.filePath);
 });
 
@@ -819,15 +836,17 @@ test("configured voice synthesizer falls back to moss when explicit genie servic
   await fsp.unlink(secondResult.filePath);
 });
 
-test("send_chat voice does not split newline text", async () => {
+test("send_chat voice splits newline text into multiple audio messages", async () => {
   const dir = makeTempDir("messaging-send-voice-newline");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const logs: Array<{ status?: string; summary: string }> = [];
+  const synthesizedTexts: string[] = [];
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
     voiceSynthesizer: async ({ text }) => {
+      synthesizedTexts.push(text);
       const filePath = path.join(dir, "voice.wav");
       fs.writeFileSync(filePath, text);
       return { assetId: "generated/tts/voice.wav", filePath };
@@ -835,7 +854,7 @@ test("send_chat voice does not split newline text", async () => {
     outputRouter: {
       async send(output) {
         sent.push(output);
-        return { messageId: "voice_1" };
+        return { messageId: `voice_${sent.length}` };
       }
     },
     appendMessageLog(input) {
@@ -851,9 +870,13 @@ test("send_chat voice does not split newline text", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].content.kind === "audio" ? sent[0].content.transcript : "", "第一句\n第二句");
-  assert.deepEqual(logs, [{ status: "sent", summary: "[语音]第一句\n第二句" }]);
+  assert.equal(sent.length, 2);
+  assert.deepEqual(synthesizedTexts, ["第一句", "第二句"]);
+  assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句", "第二句"]);
+  assert.deepEqual(logs, [
+    { status: "sent", summary: "[语音]第一句" },
+    { status: "sent", summary: "[语音]第二句" }
+  ]);
 });
 
 test("send_chat voice returns tts failure without sending fallback text", async () => {

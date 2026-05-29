@@ -140,10 +140,10 @@ export function defaultPromptProfile(): PromptProfile {
         content: [
           "可用聊天工具：",
           "- check_chat：查看聊天会话记录。同一 LLM 会话内首次调用返回最近 50 条消息；再次及后续调用只返回上次查看后的新增消息。",
-          "- send_chat：发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把换行分隔的 content 拆成多条消息；type=voice 会把 content 文字转换为语音发送，不要把文件路径放进 content。",
+          "- send_chat：发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 和 type=voice 会把换行分隔的 content 拆成多条消息；type=voice 会把每段文字转换为语音发送，不要把文件路径放进 content。",
           "- wardrobe：查看和切换爱丽丝的服装。先用 action=list 查看衣橱，可带 name 模糊过滤；需要换装时用 action=switch 和服装 name。",
           "- selfie：自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前聊天；默认 aspectRatio 为 3:4。调用 selfie 后不要再调用 send_chat 发送同一张图。",
-          "- 多行文字回复要先写 type=message，再在 content 中用换行分段；确认 type=message 后，流式发送会在每个换行处发送已完成的一段。语音回复用 type=voice，一次发送整段文字。"
+          "- 多行回复要先写 type=message 或 type=voice，再在 content 中用换行分段；确认 type 后，流式发送会在每个换行处发送已完成的一段。"
         ].join("\n")
       },
       {

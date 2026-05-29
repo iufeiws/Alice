@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAgentCore } from "../core/agent/src/index.js";
+import { createAgentCore, type LLMSessionSnapshot } from "../core/agent/src/index.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import type { AgentEvent, ToolCall } from "../packages/types/src/index.js";
 import { loadConfig } from "../packages/config/src/index.js";
@@ -575,6 +575,76 @@ test("agent core streams send_chat message content on newlines before final tool
   assert.deepEqual(sentLines, ["one", "two", "three"]);
   assert.equal(requests.length, 2);
   assert.deepEqual(completed, [{ sentMessage: true }]);
+});
+
+test("agent core streams send_chat voice content on newlines before final tool JSON", async () => {
+  const sentLines: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
+    },
+    async chatStream(input, handlers) {
+      if (input.messages.some((message) => message.role === "tool")) {
+        return { message: { role: "assistant", content: "done" } };
+      }
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        id: "tool_send",
+        type: "function",
+        function: {
+          name: "send_chat",
+          arguments: "{\"type\":\"voice\",\"content\":\"第一句\\n"
+        }
+      });
+      assert.deepEqual(sentLines, ["voice:第一句"]);
+      await handlers?.onToolCallDelta?.({
+        index: 0,
+        function: {
+          arguments: "第二句\\n第三句\"}"
+        }
+      });
+      assert.deepEqual(sentLines, ["voice:第一句"]);
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_send",
+            type: "function",
+            function: {
+              name: "send_chat",
+              arguments: "{\"type\":\"voice\",\"content\":\"第一句\\n第二句\\n第三句\"}"
+            }
+          }]
+        }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{
+          name: "send_chat",
+          description: "send",
+          inputSchema: { type: "object" }
+        }];
+      },
+      async execute(call) {
+        sentLines.push(`${String(call.input.type)}:${String(call.input.content)}`);
+        return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(sentLines, ["voice:第一句", "voice:第二句", "voice:第三句"]);
 });
 
 test("agent core waits for final send_chat JSON when type is omitted", async () => {
@@ -1185,6 +1255,92 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
   assert.equal(requests[0].messages.at(-1)?.content, "recent");
   assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
   assert.equal(requests[1].messages.at(-1)?.content, "new");
+});
+
+test("agent core clears session before the next request when previous final usage greatly exceeds recent preview cost", async () => {
+  const requests: LLMChatInput[] = [];
+  const events: string[] = [];
+  const previewCalls: Array<Record<string, unknown>> = [];
+  const normalCheckCalls: Array<Record<string, unknown>> = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_check",
+              type: "function",
+              function: { name: "check_chat", arguments: "{}" }
+            }]
+          },
+          usage: { totalTokens: 999 }
+        };
+      }
+      return {
+        message: { role: "assistant", content: `final ${requests.length}` },
+        usage: { totalTokens: requests.length === 2 ? 37 : 10 }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }]
+    }),
+    onLLMSessionCompleted() {
+      events.push("completed");
+    },
+    onLLMSessionUpdated(session) {
+      persistedSession = {
+        messages: session.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
+        staticPromptFingerprint: session.staticPromptFingerprint,
+        requestTimestamps: [...session.requestTimestamps],
+        lastTotalTokens: session.lastTotalTokens
+      };
+    },
+    loadLLMSession() {
+      return persistedSession;
+    },
+    onLLMSessionCleared(reason) {
+      events.push(`cleared:${reason}`);
+      persistedSession = undefined;
+    },
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        if (call.input.__preview === true) previewCalls.push(call.input);
+        else normalCheckCalls.push(call.input);
+        return { callId: call.id, ok: true, output: "0123456789" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(events, ["completed"]);
+  assert.deepEqual(normalCheckCalls, [{}]);
+  assert.deepEqual(previewCalls, []);
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(events, ["completed", "cleared:token_pressure", "completed"]);
+  assert.deepEqual(previewCalls, [{ __preview: true, __scope: "recent" }]);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0].messages.some((message) => message.content === "final 2"), false);
+  assert.equal(requests[2].messages.some((message) => message.content === "final 2"), false);
 });
 
 test("agent core clears only when static prompt fingerprint changes", async () => {

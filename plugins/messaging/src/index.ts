@@ -175,7 +175,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
     if (!target) return toolError(call, "No current messaging session is available");
-    return viewMessagesForScope(call.id, target, resolveViewScope(), { readonly: call.input.__preview === true });
+    return viewMessagesForScope(call.id, target, resolveViewScope(call.input.__scope), { readonly: call.input.__preview === true });
   }
 
   function viewMessagesForScope(
@@ -215,7 +215,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     };
   }
 
-  function resolveViewScope(): "recent" | "new" {
+  function resolveViewScope(scopeHint?: unknown): "recent" | "new" {
+    if (scopeHint === "recent") return "recent";
     if (!activeLLMSession) return "recent";
     checkChatCallsInLLMSession += 1;
     return checkChatCallsInLLMSession === 1 ? "recent" : "new";
@@ -275,7 +276,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (!type) return toolError(call, "unsupported message type");
     const content = stringValue(call.input.content);
     if (!content.trim()) return toolError(call, "content is required");
-    const parts = type === "message"
+    const parts = type === "message" || type === "voice"
       ? content.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)
       : [content];
     if (parts.length === 0) return toolError(call, "content is required");
@@ -530,7 +531,7 @@ const checkChatTool: ToolDefinition = {
 
 const sendChatTool: ToolDefinition = {
   name: "send_chat",
-  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 会把 content 中的换行拆成多条消息并间隔发送；type=voice 会把 content 文本合成为语音并发送。",
+  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 和 type=voice 会把 content 中的换行拆成多条消息并间隔发送；type=voice 会把每段文本合成为语音并发送。",
   inputSchema: {
     type: "object",
     properties: {

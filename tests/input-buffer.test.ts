@@ -71,35 +71,29 @@ test("agent inbound debounce config defaults to one second and can be overridden
   assert.equal(loadConfig({ AGENT_DEFAULT_TARGET_PLUGIN: "bad" }).core.defaultTargetPlugin, "auto");
 });
 
-test("genie tts config has asset defaults and env overrides", () => {
+test("moss tts config has asset defaults and env overrides", () => {
   const defaults = loadConfig({}).tts;
-  assert.equal(defaults.genieBaseURL, "http://127.0.0.1:8000");
-  assert.equal(defaults.genieCharacterName, "alice");
-  assert.equal(defaults.genieModelDir, "assets/tts/models/alice");
-  assert.equal(defaults.genieLanguage, "zh");
-  assert.equal(defaults.genieReferenceAudio, "assets/tts/reference/reference.wav");
-  assert.equal(defaults.genieReferenceText, "assets/tts/reference/reference.txt");
-  assert.equal(defaults.genieOutputDir, "assets/generated/tts");
-  assert.equal(defaults.genieTimeoutMs, 120000);
+  assert.equal(defaults.backend, "moss-onnx");
+  assert.equal(defaults.mossBaseURL, "http://127.0.0.1:8765");
+  assert.equal(defaults.mossBaseURLExplicit, false);
+  assert.equal(defaults.mossModelDir, "assets/tts/moss-onnx/models");
+  assert.equal(defaults.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
+  assert.equal(defaults.mossOutputDir, "assets/generated/tts");
+  assert.equal(defaults.mossTimeoutMs, 120000);
 
   const custom = loadConfig({
-    GENIE_TTS_BASE_URL: "http://localhost:9000/",
-    GENIE_TTS_CHARACTER_NAME: "custom",
-    GENIE_TTS_MODEL_DIR: "assets/tts/models/custom",
-    GENIE_TTS_LANGUAGE: "jp",
-    GENIE_TTS_REFERENCE_AUDIO: "assets/tts/reference/custom.wav",
-    GENIE_TTS_REFERENCE_TEXT: "assets/tts/reference/custom.txt",
-    GENIE_TTS_OUTPUT_DIR: "assets/generated/custom-tts",
-    GENIE_TTS_TIMEOUT_MS: "5000"
+    MOSS_TTS_BASE_URL: "http://localhost:9000/",
+    MOSS_TTS_MODEL_DIR: "assets/tts/models/custom",
+    MOSS_TTS_REFERENCE_AUDIO: "assets/tts/references/custom/reference.wav",
+    MOSS_TTS_OUTPUT_DIR: "assets/generated/custom-tts",
+    MOSS_TTS_TIMEOUT_MS: "5000"
   }).tts;
-  assert.equal(custom.genieBaseURL, "http://localhost:9000");
-  assert.equal(custom.genieCharacterName, "custom");
-  assert.equal(custom.genieModelDir, "assets/tts/models/custom");
-  assert.equal(custom.genieLanguage, "jp");
-  assert.equal(custom.genieReferenceAudio, "assets/tts/reference/custom.wav");
-  assert.equal(custom.genieReferenceText, "assets/tts/reference/custom.txt");
-  assert.equal(custom.genieOutputDir, "assets/generated/custom-tts");
-  assert.equal(custom.genieTimeoutMs, 5000);
+  assert.equal(custom.mossBaseURL, "http://localhost:9000");
+  assert.equal(custom.mossBaseURLExplicit, true);
+  assert.equal(custom.mossModelDir, "assets/tts/models/custom");
+  assert.equal(custom.mossReferenceAudio, "assets/tts/references/custom/reference.wav");
+  assert.equal(custom.mossOutputDir, "assets/generated/custom-tts");
+  assert.equal(custom.mossTimeoutMs, 5000);
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

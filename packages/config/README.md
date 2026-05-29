@@ -93,18 +93,22 @@ loadConfig(env = process.env): AppConfig
 
 ## TTS 配置
 
-Genie-TTS voice 模式依赖一个单独运行的 Genie HTTP 服务和本地资产：
+voice 模式使用本地 MOSS-TTS-Nano ONNX 小服务。默认第一次发送语音时自动启动服务，15 分钟空闲后关闭自己启动的进程：
 
-- `GENIE_TTS_BASE_URL`
-- `GENIE_TTS_CHARACTER_NAME`
-- `GENIE_TTS_MODEL_DIR`
-- `GENIE_TTS_LANGUAGE`
-- `GENIE_TTS_REFERENCE_AUDIO`
-- `GENIE_TTS_REFERENCE_TEXT`
-- `GENIE_TTS_OUTPUT_DIR`
-- `GENIE_TTS_TIMEOUT_MS`
+- `MOSS_TTS_HOST`
+- `MOSS_TTS_PORT`
+- `MOSS_TTS_BASE_URL`
+- `MOSS_TTS_PYTHON_COMMAND`
+- `MOSS_TTS_SERVICE_SCRIPT`
+- `MOSS_TTS_MODEL_DIR`
+- `MOSS_TTS_REFERENCE_AUDIO`
+- `MOSS_TTS_OUTPUT_DIR`
+- `MOSS_TTS_TIMEOUT_MS`
+- `MOSS_TTS_IDLE_SHUTDOWN_MS`
+- `MOSS_TTS_FFMPEG_COMMAND`
+- `MOSS_TTS_VOICE_CLONE_MAX_TEXT_TOKENS`
 
-默认情况下，模型目录是 `assets/tts/models/alice`，参考文件位于 `assets/tts/reference/`，生成语音临时写入 `assets/generated/tts/`。
+默认情况下，模型目录是 `assets/tts/moss-onnx/models`，参考音频是 `assets/tts/references/alice/reference.wav`，生成语音临时写入 `assets/generated/tts/`。如果设置了 `MOSS_TTS_BASE_URL`，Alice 会把它视为外部服务地址，不再自动 spawn 本地服务。
 
 ## Node 类型声明
 

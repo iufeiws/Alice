@@ -73,14 +73,20 @@ export type AppConfig = {
     selfieMaxBytes: number;
   };
   tts: {
-    genieBaseURL: string;
-    genieCharacterName: string;
-    genieModelDir: string;
-    genieLanguage: string;
-    genieReferenceAudio: string;
-    genieReferenceText: string;
-    genieOutputDir: string;
-    genieTimeoutMs: number;
+    backend: "moss-onnx";
+    mossBaseURL: string;
+    mossBaseURLExplicit: boolean;
+    mossHost: string;
+    mossPort: number;
+    mossPythonCommand: string;
+    mossServiceScript: string;
+    mossModelDir: string;
+    mossReferenceAudio: string;
+    mossOutputDir: string;
+    mossTimeoutMs: number;
+    mossIdleShutdownMs: number;
+    mossFfmpegCommand: string;
+    mossVoiceCloneMaxTextTokens: number;
   };
 };
 
@@ -192,14 +198,20 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieMaxBytes: numberValue(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
     },
     tts: {
-      genieBaseURL: (env.GENIE_TTS_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, ""),
-      genieCharacterName: env.GENIE_TTS_CHARACTER_NAME ?? "alice",
-      genieModelDir: env.GENIE_TTS_MODEL_DIR ?? "assets/tts/models/alice",
-      genieLanguage: env.GENIE_TTS_LANGUAGE ?? "zh",
-      genieReferenceAudio: env.GENIE_TTS_REFERENCE_AUDIO ?? "assets/tts/reference/reference.wav",
-      genieReferenceText: env.GENIE_TTS_REFERENCE_TEXT ?? "assets/tts/reference/reference.txt",
-      genieOutputDir: env.GENIE_TTS_OUTPUT_DIR ?? "assets/generated/tts",
-      genieTimeoutMs: numberValue(env.GENIE_TTS_TIMEOUT_MS, 120_000)
+      backend: "moss-onnx",
+      mossBaseURL: (env.MOSS_TTS_BASE_URL ?? `http://${env.MOSS_TTS_HOST ?? "127.0.0.1"}:${numberValue(env.MOSS_TTS_PORT, 8765)}`).replace(/\/+$/, ""),
+      mossBaseURLExplicit: Boolean(env.MOSS_TTS_BASE_URL),
+      mossHost: env.MOSS_TTS_HOST ?? "127.0.0.1",
+      mossPort: numberValue(env.MOSS_TTS_PORT, 8765),
+      mossPythonCommand: env.MOSS_TTS_PYTHON_COMMAND ?? "python3",
+      mossServiceScript: env.MOSS_TTS_SERVICE_SCRIPT ?? "scripts/moss_tts_onnx/service.py",
+      mossModelDir: env.MOSS_TTS_MODEL_DIR ?? "assets/tts/moss-onnx/models",
+      mossReferenceAudio: env.MOSS_TTS_REFERENCE_AUDIO ?? "assets/tts/references/alice/reference.wav",
+      mossOutputDir: env.MOSS_TTS_OUTPUT_DIR ?? "assets/generated/tts",
+      mossTimeoutMs: numberValue(env.MOSS_TTS_TIMEOUT_MS, 120_000),
+      mossIdleShutdownMs: numberValue(env.MOSS_TTS_IDLE_SHUTDOWN_MS, 15 * 60 * 1000),
+      mossFfmpegCommand: env.MOSS_TTS_FFMPEG_COMMAND ?? "ffmpeg-static",
+      mossVoiceCloneMaxTextTokens: numberValue(env.MOSS_TTS_VOICE_CLONE_MAX_TEXT_TOKENS, 75)
     }
   };
 }

@@ -140,6 +140,33 @@ test("wechat iLink client parses iLink msg item_list text payloads", async () =>
   assert.equal(updates.messages[0].text, "hello from item_list");
 });
 
+test("wechat iLink client accepts getupdates payloads without ret code", async () => {
+  const client = createWeChatILinkClient({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test/ilink/bot",
+    pollTimeoutMs: 35_000
+  }, {
+    fetch: async () => new Response(JSON.stringify({
+      get_updates_buf: "cursor-2",
+      msgs: [{
+        msg_id: "msg-1",
+        from_user_id: "wx-user",
+        context_token: "ctx-1",
+        item_list: [
+          { type: 1, text_item: { text: "hello without ret" } }
+        ]
+      }]
+    }), { status: 200 })
+  });
+
+  const updates = await client.getUpdates("cursor-1");
+
+  assert.equal(updates.nextCursor, "cursor-2");
+  assert.equal(updates.messages.length, 1);
+  assert.equal(updates.messages[0].text, "hello without ret");
+});
+
 test("wechat iLink client parses quoted text messages", async () => {
   const client = createWeChatILinkClient({
     enabled: true,
@@ -341,7 +368,8 @@ test("wechat plugin uploads and sends image with cached context_token", async ()
 test("wechat plugin uploads and sends audio with cached context_token", async () => {
   const dir = path.join("/tmp", `alice-wechat-audio-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
-  const projectAssetPath = path.join(process.cwd(), "assets", "test.opus");
+  const projectAssetPath = path.join(process.cwd(), "assets", "generated", "test-wechat-audio.wav");
+  writeSilentWav(projectAssetPath);
   const audioSize = fs.statSync(projectAssetPath).size;
   const encryptedAudioSize = Math.ceil((audioSize + 1) / 16) * 16;
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
@@ -401,18 +429,21 @@ test("wechat plugin uploads and sends audio with cached context_token", async ()
   assert.equal(urls[2], "https://ilink.example.test/ilink/bot/sendmessage");
   assert.equal(uploadRequestBody.media_type, 4);
   assert.equal(uploadRequestBody.to_user_id, "wx-user");
-  assert.equal(uploadRequestBody.rawsize, audioSize);
-  assert.equal(uploadRequestBody.filesize, encryptedAudioSize);
-  assert.equal(uploadBodyLength, encryptedAudioSize);
+  assert.ok(uploadRequestBody.rawsize > 0);
+  assert.ok(uploadRequestBody.filesize >= uploadRequestBody.rawsize);
+  assert.equal(uploadBodyLength, uploadRequestBody.filesize);
   assert.equal(sendBody.msg.context_token, "ctx-1");
   assert.equal(sendBody.msg.item_list[0].type, 3);
   assert.equal(sendBody.msg.item_list[0].voice_item.media.encrypt_query_param, "download-param-audio");
   assert.equal(sendBody.msg.item_list[0].voice_item.media.encrypt_type, 1);
   assert.equal(typeof sendBody.msg.item_list[0].voice_item.media.aes_key, "string");
   assert.equal(sendBody.msg.item_list[0].voice_item.encode_type, 6);
-  assert.equal(sendBody.msg.item_list[0].voice_item.playtime, 0);
+  assert.ok(sendBody.msg.item_list[0].voice_item.playtime > 0);
+  assert.equal(sendBody.msg.item_list[0].voice_item.sample_rate, 24000);
+  assert.equal(sendBody.msg.item_list[0].voice_item.bits_per_sample, 16);
   assert.equal(sendBody.msg.item_list[0].voice_item.text, "voice transcript");
   assert.equal(result.messageId, "audio-out-1");
+  fs.rmSync(projectAssetPath, { force: true });
 });
 
 test("wechat plugin starts and stops typing with cached ticket", async () => {
@@ -626,4 +657,33 @@ function rawWechatText(id: string, fromUserId: string, contextToken: string, tex
     createdAt: "1770000000000",
     raw: { id, fromUserId, contextToken, text }
   };
+}
+
+function writeSilentWav(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const sampleRate = 24_000;
+  const samples = sampleRate;
+  const dataSize = samples * 2;
+  const buffer = new Uint8Array(44 + dataSize);
+  const view = new DataView(buffer.buffer);
+  writeAscii(buffer, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(buffer, 8, "WAVE");
+  writeAscii(buffer, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(buffer, 36, "data");
+  view.setUint32(40, dataSize, true);
+  fs.writeFileSync(filePath, buffer);
+}
+
+function writeAscii(buffer: Uint8Array, offset: number, text: string): void {
+  for (let index = 0; index < text.length; index += 1) {
+    buffer[offset + index] = text.charCodeAt(index);
+  }
 }

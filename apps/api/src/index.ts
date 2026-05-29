@@ -220,7 +220,8 @@ const messagingTools = createMessagingTools({
   getDefaultTarget() {
     return getDefaultMessagingTarget();
   },
-  appendMessageLog
+  appendMessageLog,
+  appendLog
 });
 const mediaTools = createMediaTools({
   store,

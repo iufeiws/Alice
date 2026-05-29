@@ -1,8 +1,12 @@
 import type { WeChatConfig, WeChatLoginQRCode, WeChatQRCodeStatus, WeChatTextMessage, WeChatUpdates } from "./types.js";
 
 const crypto: any = await import("node:crypto");
+const childProcess = await import("node:child_process");
 const fs: any = await import("node:fs/promises");
+const moduleApi = await import("node:module");
+const os = await import("node:os");
 const path = await import("node:path");
+const require = moduleApi.createRequire(import.meta.url);
 
 export type WeChatILinkClient = {
   getLoginQRCode(): Promise<WeChatLoginQRCode>;
@@ -52,7 +56,7 @@ export function createWeChatILinkClient(config: WeChatConfig, options: { fetch?:
         get_updates_buf: cursor,
         longpolling_timeout_ms: config.pollTimeoutMs
       }, config.pollTimeoutMs);
-      assertRetOk(raw, "getupdates");
+      assertRetOk(raw, "getupdates", { allowMissingRet: hasUpdatePayload(raw) });
       return {
         nextCursor: firstString(raw, ["get_updates_buf", "next_cursor", "cursor"]),
         messages: extractMessages(raw)
@@ -78,7 +82,7 @@ export function createWeChatILinkClient(config: WeChatConfig, options: { fetch?:
         },
         base_info: { channel_version: "1.0.3" }
       });
-      assertRetOk(raw, "sendmessage");
+      assertRetOk(raw, "sendmessage", { allowMissingRet: true });
       return {
         messageId: firstString(raw, ["message_id", "msg_id", "client_msg_id"]),
         raw
@@ -116,7 +120,7 @@ export function createWeChatILinkClient(config: WeChatConfig, options: { fetch?:
         },
         base_info: { channel_version: "1.0.3" }
       });
-      assertRetOk(raw, "sendmessage");
+      assertRetOk(raw, "sendmessage", { allowMissingRet: true });
       return {
         messageId: firstString(raw, ["message_id", "msg_id", "client_msg_id"]),
         raw
@@ -124,42 +128,50 @@ export function createWeChatILinkClient(config: WeChatConfig, options: { fetch?:
     },
     async sendAudio(input) {
       const audioPath = await resolveAssetPath(input.assetId);
+      const prepared = await prepareVoiceAudioForWeChat(audioPath);
+      const uploadPath = prepared.path;
       const uploaded = await uploadMedia(fetchImpl, config, {
         toUserId: input.toUserId,
-        mediaPath: audioPath,
+        mediaPath: uploadPath,
         mediaType: 4
       });
-      const raw = await postJson(fetchImpl, config, "/sendmessage", {
-        msg: {
-          from_user_id: "",
-          to_user_id: input.toUserId,
-          client_id: `alice-wechat:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`,
-          message_type: 2,
-          message_state: 2,
-          context_token: input.contextToken,
-          item_list: [
-            {
-              type: 3,
-              voice_item: {
-                media: {
-                  encrypt_query_param: uploaded.downloadParam,
-                  aes_key: encodeIlinkMediaAesKey(uploaded.aesKey),
-                  encrypt_type: 1
-                },
-                encode_type: 6,
-                playtime: 0,
-                text: input.transcript
+      try {
+        const raw = await postJson(fetchImpl, config, "/sendmessage", {
+          msg: {
+            from_user_id: "",
+            to_user_id: input.toUserId,
+            client_id: `alice-wechat:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`,
+            message_type: 2,
+            message_state: 2,
+            context_token: input.contextToken,
+            item_list: [
+              {
+                type: 3,
+                voice_item: {
+                  media: {
+                    encrypt_query_param: uploaded.downloadParam,
+                    aes_key: encodeIlinkMediaAesKey(uploaded.aesKey),
+                    encrypt_type: 1
+                  },
+                  encode_type: prepared.encodeType,
+                  playtime: prepared.playtimeMs,
+                  sample_rate: prepared.sampleRate,
+                  bits_per_sample: 16,
+                  text: input.transcript
+                }
               }
-            }
-          ]
-        },
-        base_info: { channel_version: "1.0.3" }
-      });
-      assertRetOk(raw, "sendmessage");
-      return {
-        messageId: firstString(raw, ["message_id", "msg_id", "client_msg_id"]),
-        raw
-      };
+            ]
+          },
+          base_info: { channel_version: "1.0.3" }
+        });
+        assertRetOk(raw, "sendmessage", { allowMissingRet: true });
+        return {
+          messageId: firstString(raw, ["message_id", "msg_id", "client_msg_id"]),
+          raw
+        };
+      } finally {
+        if (prepared.cleanupPath) await removeFileIfExists(prepared.cleanupPath);
+      }
     },
     async getTypingTicket(input) {
       const raw = await postJson(fetchImpl, config, "/getconfig", {
@@ -211,12 +223,89 @@ async function uploadMedia(fetchImpl: typeof fetch, config: WeChatConfig, input:
     aeskey: aesKey.toString("hex"),
     base_info: { channel_version: "1.0.3" }
   });
-  assertRetOk(uploadUrlResp, "getuploadurl");
   const uploadParam = firstString(uploadUrlResp, ["upload_param", "uploadParam"]);
   if (!uploadParam) throw new Error("WeChat iLink getuploadurl returned no upload_param");
+  assertRetOk(uploadUrlResp, "getuploadurl", { allowMissingRet: true });
   const ciphertext = encryptAesEcb(plaintext, aesKey);
   const downloadParam = await uploadEncryptedMedia(fetchImpl, uploadParam, filekey, ciphertext);
   return { downloadParam, aesKey, encryptedSize };
+}
+
+async function prepareVoiceAudioForWeChat(audioPath: string): Promise<{
+  path: string;
+  cleanupPath?: string;
+  encodeType: 6;
+  playtimeMs: number;
+  sampleRate: number;
+}> {
+  const sampleRate = 24_000;
+  const basePath = path.join(os.tmpdir(), `alice-wechat-voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const pcmPath = `${basePath}.pcm`;
+  const silkPath = `${basePath}.silk`;
+  await transcodeAudio(audioPath, pcmPath, [
+    "-y",
+    "-hide_banner",
+    "-loglevel", "error",
+    "-i", audioPath,
+    "-vn",
+    "-ac", "1",
+    "-ar", String(sampleRate),
+    "-f", "s16le",
+    pcmPath
+  ]);
+  try {
+    const { encode } = await import("silk-wasm");
+    const pcm = await fs.readFile(pcmPath);
+    const encoded = await encode(pcm, sampleRate);
+    await fs.writeFile(silkPath, encoded.data);
+    return {
+      path: silkPath,
+      cleanupPath: silkPath,
+      encodeType: 6,
+      playtimeMs: Math.max(1, Math.round(encoded.duration)),
+      sampleRate
+    };
+  } finally {
+    await removeFileIfExists(pcmPath);
+  }
+}
+
+async function transcodeAudio(inputPath: string, outputPath: string, args: string[]): Promise<void> {
+  const ffmpeg = resolveFfmpegCommand();
+  await new Promise<void>((resolve, reject) => {
+    const child = childProcess.spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`ffmpeg failed to prepare WeChat voice audio from ${inputPath} to ${outputPath}: ${stderr.slice(0, 500)}`));
+    });
+  });
+}
+
+function resolveFfmpegCommand(): string {
+  try {
+    const resolved = require("ffmpeg-static") as unknown;
+    if (typeof resolved === "string" && resolved) return resolved;
+  } catch {
+    // Fall through to system ffmpeg for development environments.
+  }
+  return "ffmpeg";
+}
+
+async function removeFileIfExists(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code !== "ENOENT") throw error;
+  }
 }
 
 async function resolveAssetPath(assetId: string): Promise<string> {
@@ -297,13 +386,21 @@ function postJson(fetchImpl: typeof fetch, config: WeChatConfig, pathname: strin
   });
 }
 
-function assertRetOk(raw: unknown, action: string): void {
+function assertRetOk(raw: unknown, action: string, options: { allowMissingRet?: boolean } = {}): void {
   const record = isRecord(raw) ? raw : {};
   const ret = record.ret ?? record.errcode ?? record.code;
-  if (ret === undefined || ret === 0 || ret === "0") return;
+  if (ret === 0 || ret === "0") return;
+  if (ret === undefined && options.allowMissingRet) return;
+  if (ret === undefined) throw new Error(`WeChat iLink ${action} returned no ret/code: ${JSON.stringify(raw)}`);
   if (ret === -14 || ret === "-14") throw new Error(`WeChat iLink session expired during ${action}`);
   const message = firstString(record, ["errmsg", "msg", "message"]) ?? JSON.stringify(raw);
   throw new Error(`WeChat iLink ${action} failed: ${String(ret)} ${message}`);
+}
+
+function hasUpdatePayload(raw: unknown): boolean {
+  if (!isRecord(raw)) return false;
+  if (firstString(raw, ["get_updates_buf", "next_cursor", "cursor"]) !== undefined) return true;
+  return findArray(raw, ["messages", "msgs", "msg_list", "updates", "items", "data"]).length > 0;
 }
 
 function extractMessages(raw: unknown): WeChatTextMessage[] {

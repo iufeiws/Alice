@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import { createMessagingTools } from "../plugins/messaging/src/index.js";
+import { createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
 
 const fs = await import("node:fs");
+const fsp = await import("node:fs/promises");
 const path = await import("node:path");
+const events = await import("node:events");
 
 test("messaging tools expose merged check_chat and send_chat tools", () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-tools"), "alice.sqlite"));
@@ -555,6 +557,95 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   assert.equal(stored.length, 1);
   assert.equal(stored[0].contentType, "audio");
   assert.equal(stored[0].externalMessageId, "voice_1");
+});
+
+test("moss onnx voice synthesizer calls service and returns opus asset", async () => {
+  const calls: string[] = [];
+  const dir = makeTempDir("moss-onnx-voice");
+  const outputDir = "generated/tts";
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") {
+      return new Response(JSON.stringify({ ok: true, ready: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (pathname === "/synthesize") {
+      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
+      fs.writeFileSync(body.outputPath, "wav");
+      return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath, sampleRate: 48000, durationSeconds: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const fakeSpawn = ((command: string, args: readonly string[]) => {
+    const child = new events.EventEmitter() as any;
+    child.stdout = new events.EventEmitter();
+    child.stderr = new events.EventEmitter();
+    child.exitCode = null;
+    process.nextTick(() => {
+      if (command === "ffmpeg") {
+        if (args.includes("-f") && args.includes("s16le") && String(args[args.length - 1]) === "-") {
+          const pcm = new Uint8Array(2000);
+          for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+            pcm[offset] = 0xff;
+            pcm[offset + 1] = 0x3f;
+          }
+          child.stdout.emit("data", pcm);
+        } else {
+          const outputPath = String(args[args.length - 1]);
+          fs.writeFileSync(outputPath, "opus");
+        }
+      }
+      child.emit("exit", 0, null);
+    });
+    return child;
+  }) as any;
+  const synthesize = createMossOnnxVoiceSynthesizer({
+    backend: "moss-onnx",
+    mossBaseURL: "http://127.0.0.1:9876",
+    mossReferenceAudio: "test.opus",
+    mossOutputDir: outputDir,
+    mossTimeoutMs: 1_000,
+    mossIdleShutdownMs: 0,
+    mossFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeSpawn });
+
+  const result = await synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
+
+  assert.match(result.assetId, /^generated\/tts\/voice_20260526_000000_[a-z0-9]+\.opus$/);
+  assert.equal(fs.existsSync(result.filePath), true);
+  assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
+  assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
+  await fsp.unlink(result.filePath);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("moss onnx voice synthesizer does not spawn when explicit base url is unhealthy", async () => {
+  let spawnCalls = 0;
+  const fakeFetch = async (): Promise<Response> => new Response(JSON.stringify({ ok: false }), { status: 503 });
+  const fakeSpawn = (() => {
+    spawnCalls += 1;
+    throw new Error("spawn should not be called");
+  }) as any;
+  const synthesize = createMossOnnxVoiceSynthesizer({
+    backend: "moss-onnx",
+    mossBaseURL: "http://127.0.0.1:9876",
+    mossBaseURLExplicit: true,
+    mossReferenceAudio: "test.opus",
+    mossOutputDir: "generated/tts",
+    mossTimeoutMs: 1_000,
+    mossIdleShutdownMs: 0,
+    mossFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeSpawn });
+
+  await assert.rejects(
+    synthesize({ text: "晚点见", time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) }),
+    /custom MOSS_TTS_BASE_URL disables local auto-start/
+  );
+  assert.equal(spawnCalls, 0);
 });
 
 test("send_chat voice does not split newline text", async () => {

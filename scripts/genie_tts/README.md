@@ -34,7 +34,7 @@ Use the admin Voice Sample form to upload both the audio and the exact spoken te
 
 ## Synthesis behavior
 
-Alice disables Genie-TTS internal sentence splitting and performs its own split on `。`, `.`, `？`, and `?`. The punctuation is preserved in each segment, each segment is synthesized separately, and the WAV parts are concatenated before the normal loudness check and opus conversion.
+Alice disables Genie-TTS internal sentence splitting and performs its own split on Unicode punctuation and symbol characters. The punctuation is preserved in each small piece, adjacent pieces are batched until the batched text is longer than 15 characters, a final short tail under 15 characters is folded into the previous batch, each batch is synthesized separately, and the WAV parts are concatenated with 1/3 second of silence between adjacent parts before the normal loudness check and opus conversion.
 
 For manual debugging:
 

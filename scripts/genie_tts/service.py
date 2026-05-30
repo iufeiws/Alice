@@ -7,6 +7,7 @@ import os
 import signal
 import threading
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,23 @@ os.environ.setdefault("GENIE_DATA_DIR", "assets/tts/genie/GenieData")
 import genie_tts as genie
 import numpy as np
 import soundfile as sf
+
+GENIE_TTS_PART_SILENCE_SECONDS = 1 / 3
+
+
+def disable_genie_audio_playback() -> None:
+    try:
+        from genie_tts.Core.TTSPlayer import tts_player
+    except Exception:
+        return
+
+    def skip_playback_worker_loop() -> None:
+        tts_player._playback_done_event.set()
+
+    tts_player._playback_worker_loop = skip_playback_worker_loop
+
+
+disable_genie_audio_playback()
 
 
 class GenieRuntime:
@@ -64,7 +82,7 @@ class GenieRuntime:
         started_at = time.perf_counter()
         target = Path(output_path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        parts = split_sentence_by_period(normalized)
+        parts = split_text_for_tts(normalized)
         part_paths: list[Path] = []
         if len(parts) == 1:
             self._synthesize_part(parts[0], target)
@@ -101,20 +119,44 @@ class GenieRuntime:
             raise RuntimeError(f"Genie TTS did not create output audio: {target}")
 
 
-def split_sentence_by_period(text: str) -> list[str]:
+def split_text_for_tts(text: str, max_chars: int = 15) -> list[str]:
+    pieces = split_text_by_symbols(text)
+    if not pieces:
+        return [text]
     parts: list[str] = []
+    current = ""
+    for piece in pieces:
+        current = f"{current}{piece}".strip()
+        if len(current) > max_chars:
+            parts.append(current)
+            current = ""
+    if current:
+        if len(current) < max_chars and parts:
+            parts[-1] = f"{parts[-1]}{current}".strip()
+        else:
+            parts.append(current)
+    return parts or [text]
+
+
+def split_text_by_symbols(text: str) -> list[str]:
+    pieces: list[str] = []
     current: list[str] = []
     for char in text:
         current.append(char)
-        if char in {"。", ".", "？", "?"}:
+        if is_split_symbol(char):
             part = "".join(current).strip()
             if part:
-                parts.append(part)
+                pieces.append(part)
             current = []
     tail = "".join(current).strip()
     if tail:
-        parts.append(tail)
-    return parts or [text]
+        pieces.append(tail)
+    return pieces
+
+
+def is_split_symbol(char: str) -> bool:
+    category = unicodedata.category(char)
+    return category.startswith("P") or category.startswith("S")
 
 
 def concatenate_audio(paths: list[Path], output_path: Path) -> None:
@@ -122,12 +164,15 @@ def concatenate_audio(paths: list[Path], output_path: Path) -> None:
         raise ValueError("no Genie TTS audio parts to concatenate")
     sample_rate: int | None = None
     chunks: list[np.ndarray] = []
-    for path in paths:
+    for index, path in enumerate(paths):
         data, current_sample_rate = sf.read(path, always_2d=True)
         if sample_rate is None:
             sample_rate = int(current_sample_rate)
         elif sample_rate != int(current_sample_rate):
             raise RuntimeError(f"Genie TTS audio parts have different sample rates: {sample_rate} vs {current_sample_rate}")
+        if index > 0:
+            silence_frames = max(1, round((sample_rate or 32_000) * GENIE_TTS_PART_SILENCE_SECONDS))
+            chunks.append(np.zeros((silence_frames, data.shape[1]), dtype=data.dtype))
         chunks.append(data)
     combined = np.concatenate(chunks, axis=0)
     sf.write(output_path, combined, sample_rate or 32_000)

@@ -274,7 +274,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (!target) return toolError(call, "No current messaging session is available");
     const type = normalizeSendType(call.input.type);
     if (!type) return toolError(call, "unsupported message type");
-    const content = stringValue(call.input.content);
+    const rawContent = stringValue(call.input.content);
+    const content = type === "message" || type === "voice"
+      ? filterParentheticalSendContent(rawContent)
+      : rawContent;
     if (!content.trim()) return toolError(call, "content is required");
     const parts = type === "message" || type === "voice"
       ? splitSendContentParts(content)
@@ -786,6 +789,15 @@ function splitSendContentParts(content: string): string[] {
     .split(/\r?\n|\\r\\n|\\n/g)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function filterParentheticalSendContent(content: string): string {
+  return content
+    .replace(/[ \t]*\([^()\r\n]*\)[ \t]*/g, " ")
+    .replace(/[ \t]*（[^（）\r\n]*）[ \t]*/g, " ")
+    .split(/\r?\n|\\r\\n|\\n/g)
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .join("\n");
 }
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {

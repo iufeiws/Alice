@@ -9,6 +9,7 @@ open-source-tools/*
 data/
 logs/
 assets/booksummaries.tar.gz
+assets/tts/
 assets/tts/models/
 assets/tts/moss-onnx/models/
 assets/tts/genie/models/

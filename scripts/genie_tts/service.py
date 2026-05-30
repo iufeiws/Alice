@@ -18,7 +18,7 @@ import genie_tts as genie
 import numpy as np
 import soundfile as sf
 
-GENIE_TTS_PART_SILENCE_SECONDS = 1 / 3
+GENIE_TTS_PART_SILENCE_SECONDS = 2 / 3
 
 
 def disable_genie_audio_playback() -> None:
@@ -119,7 +119,7 @@ class GenieRuntime:
             raise RuntimeError(f"Genie TTS did not create output audio: {target}")
 
 
-def split_text_for_tts(text: str, max_chars: int = 15) -> list[str]:
+def split_text_for_tts(text: str, max_chars: int = 10) -> list[str]:
     pieces = split_text_by_symbols(text)
     if not pieces:
         return [text]

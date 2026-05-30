@@ -1,3 +1,5 @@
+import { deepSeekPricesCnyPer1M } from "../../../packages/config/src/token-pricing.js";
+
 export function renderAdminHtmlV2(): string {
   return `<!doctype html>
 <html lang="en">
@@ -56,6 +58,8 @@ export function renderAdminHtmlV2(): string {
       .shell-option textarea { min-height: 110px; }
       .shell-image-preview { margin-top: 10px; max-width: 220px; max-height: 160px; border: 1px solid #d7dce3; border-radius: 6px; object-fit: contain; background: #f8fafc; display: block; }
       .shell-image-preview.hidden { display: none; }
+      .shell-image-drop { border: 1px dashed #98a2b3; border-radius: 6px; padding: 10px; background: #f8fafc; transition: border-color 120ms ease, background 120ms ease; }
+      .shell-image-drop.dragging { border-color: #2563eb; background: #eff6ff; }
       .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .logs { max-height: calc(100vh - 150px); overflow: auto; background: #111827; color: #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
       .llm-split { display: grid; grid-template-rows: minmax(280px, 1fr) minmax(280px, 1fr); gap: 12px; height: calc(100vh - 145px); }
@@ -269,7 +273,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab active" data-main-tab="prompts" type="button">Prompt</button>
           <button class="tab" data-main-tab="shells" type="button">Shell</button>
           <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
-          <button class="tab" data-main-tab="llm-chain" type="button">LLM Request</button>
+          <button class="tab" data-main-tab="llm-chain" type="button">LLM Sessions</button>
           <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
@@ -287,15 +291,9 @@ export function renderAdminHtmlV2(): string {
         <section id="main-llm-request" class="pane"><div id="llmRequests" class="logs">No LLM request yet.</div></section>
         <section id="main-llm-chain" class="pane">
           <button type="button" id="llm-chain-clear" class="secondary">Clear Active Session</button>
-          <div class="llm-split">
-            <div class="llm-window">
-              <h2>Requests</h2>
-              <div id="llmChainRequests" class="logs">No LLM request yet.</div>
-            </div>
-            <div class="llm-window">
-              <h2>Responses</h2>
-              <div id="llmChainResponses" class="logs">No LLM response yet.</div>
-            </div>
+          <div class="llm-window">
+            <h2>Sessions</h2>
+            <div id="llmChainSessions" class="logs">No LLM session yet.</div>
           </div>
         </section>
         <section id="main-token-usage" class="pane">
@@ -440,12 +438,9 @@ export function renderAdminHtmlV2(): string {
 
       async function refreshLLMChain() {
         const requestPayload = await fetch("/admin/api/llm-requests").then((res) => res.json());
-        $("llmChainRequests").innerHTML = renderLLMRequestGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
-        $("llmChainResponses").innerHTML = renderLLMResponseGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
-        bindLLMSessionDetails("llmChainRequests", "request");
-        bindLLMSessionDetails("llmChainResponses", "response");
-        $("llmChainRequests").scrollTop = $("llmChainRequests").scrollHeight;
-        $("llmChainResponses").scrollTop = $("llmChainResponses").scrollHeight;
+        $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
+        bindLLMSessionDetails("llmChainSessions");
+        $("llmChainSessions").scrollTop = $("llmChainSessions").scrollHeight;
       }
 
       async function refreshTokenUsage() {
@@ -459,12 +454,14 @@ export function renderAdminHtmlV2(): string {
         renderTokenUsage(payload);
       }
 
+      const deepSeekPricesCnyPer1M = ${JSON.stringify(deepSeekPricesCnyPer1M)};
+
       function renderTokenUsage(payload) {
         const summary = payload.summary || {};
         $("tokenUsageMetrics").innerHTML = [
           renderUsageMetric("Cache Hit Rate", formatPercent(summary.cacheHitRate)),
           renderUsageMetric("Total Tokens", formatNumber(summary.totalTokens)),
-          renderUsageMetric("Actual Cost", formatNumber(actualTokenCost(summary))),
+          renderUsageMetric("Cost (CNY)", formatCny(actualCnyCost(payload))),
           renderUsageMetric("Cache Hit", formatNumber(summary.cacheHitTokens)),
           renderUsageMetric("Cache Miss", formatNumber(summary.cacheMissTokens)),
           renderUsageMetric("Output", formatNumber(summary.outputTokens))
@@ -599,12 +596,29 @@ export function renderAdminHtmlV2(): string {
         return Number(value || 0).toLocaleString("en-US");
       }
 
-      function actualTokenCost(summary) {
-        return Math.round(
-          Number(summary.cacheHitTokens || 0) * 0.1
-          + Number(summary.cacheMissTokens || 0)
-          + Number(summary.outputTokens || 0)
-        );
+      function actualCnyCost(payload) {
+        const rows = Array.isArray(payload.byModel) && payload.byModel.length
+          ? payload.byModel
+          : [{ ...(payload.summary || {}), model: payload.model || $("model").value || "deepseek-chat" }];
+        return rows.reduce((sum, row) => {
+          const price = deepSeekPriceForModel(row.model || "");
+          return sum
+            + Number(row.cacheHitTokens || 0) * price.hit / 1_000_000
+            + Number(row.cacheMissTokens || 0) * price.miss / 1_000_000
+            + Number(row.outputTokens || 0) * price.output / 1_000_000;
+        }, 0);
+      }
+
+      function deepSeekPriceForModel(model) {
+        return deepSeekPricesCnyPer1M.find((price) => new RegExp(price.pattern, "i").test(String(model || ""))) || deepSeekPricesCnyPer1M.at(-1);
+      }
+
+      function formatCny(value) {
+        const digits = value > 0 && value < 1 ? 6 : 2;
+        return "¥" + Number(value || 0).toLocaleString("en-US", {
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits
+        });
       }
 
       function formatPercent(value) {
@@ -612,24 +626,15 @@ export function renderAdminHtmlV2(): string {
       }
 
       function renderActiveLLMSession(session) {
-        return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} requests=\${escapeHtml(session.requestCount ?? (session.requestIds || []).length)}</div>\`;
+        return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} rounds=\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} messages=\${escapeHtml(session.messageCount ?? 0)}</div>\`;
       }
 
-      function renderLLMRequestGroups(activeSession, clearedSessions) {
+      function renderLLMSessionGroups(activeSession, clearedSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
         const activeGroup = activeSession
-          ? renderLLMSessionShell(activeSession, "request", "Active Session", activeSession.requestCount ?? (activeSession.requestIds || []).length)
+          ? renderLLMSessionShell(activeSession, "Active Session")
           : "";
-        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "request", "Saved Session", session.requestCount ?? (session.requestIds || []).length)).join("");
-        return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
-      }
-
-      function renderLLMResponseGroups(activeSession, clearedSessions) {
-        const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
-        const activeGroup = activeSession
-          ? renderLLMSessionShell(activeSession, "response", "Active Session", activeSession.responseCount ?? (activeSession.responseIds || []).length)
-          : "";
-        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "response", "Saved Session", session.responseCount ?? (session.responseIds || []).length)).join("");
+        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Saved Session")).join("");
         return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
       }
 
@@ -637,14 +642,14 @@ export function renderAdminHtmlV2(): string {
         return [...(sessions || [])].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")) || Number(left.id || 0) - Number(right.id || 0));
       }
 
-      function renderLLMSessionShell(session, kind, title, count) {
-        const unit = kind === "request" ? "request" : "response";
+      function renderLLMSessionShell(session, title) {
         const reason = session.reason ? \` · reason=\${escapeHtml(session.reason)}\` : "";
-        return \`<details class="log-line llm-session-detail" data-session-id="\${escapeAttr(session.id || "")}" data-kind="\${escapeAttr(kind)}"><summary>\${escapeHtml(title)} \${escapeHtml(session.id || "")} · \${escapeHtml(count)} \${unit}(s) · mode=\${escapeHtml(session.mode || "normal")} · \${escapeHtml(session.startedAt || "")}\${reason}</summary><div class="llm-session-body">Expand to load.</div></details>\`;
+        const counts = \`\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} round(s) · \${escapeHtml(session.messageCount ?? 0)} message(s)\`;
+        return \`<details class="log-line llm-session-detail" data-session-id="\${escapeAttr(session.id || "")}"><summary>\${escapeHtml(title)} \${escapeHtml(session.id || "")} · \${counts} · mode=\${escapeHtml(session.mode || "normal")} · \${escapeHtml(session.startedAt || "")}\${reason}</summary><div class="llm-session-body">Expand to load.</div></details>\`;
       }
 
-      function bindLLMSessionDetails(containerId, kind) {
-        document.querySelectorAll(\`#\${containerId} details.llm-session-detail[data-kind="\${kind}"]\`).forEach((detail) => {
+      function bindLLMSessionDetails(containerId) {
+        document.querySelectorAll(\`#\${containerId} details.llm-session-detail\`).forEach((detail) => {
           detail.addEventListener("toggle", async () => {
             if (!detail.open || detail.dataset.loaded === "true") return;
             const body = detail.querySelector(".llm-session-body");
@@ -656,45 +661,65 @@ export function renderAdminHtmlV2(): string {
               detail.dataset.loaded = "true";
               return;
             }
-            body.innerHTML = kind === "request" ? renderLLMRequestSession(session) : renderLLMResponseSession(session);
+            body.innerHTML = renderLLMSession(session);
             detail.dataset.loaded = "true";
           });
         });
       }
 
-      function renderLLMRequestSession(session) {
-        const requests = [...(session.requests || [])].sort(compareLLMEntries);
-        const transcript = \`<details><summary>Archived transcript</summary><pre>\${escapeHtml(JSON.stringify(session.messages || [], null, 2))}</pre></details>\`;
-        return (requests.length ? requests.map((entry, index) => renderLLMRequestItem(entry, index + 1, requests[index - 1])).join("") : "No request history yet.") + transcript;
+      function renderLLMSession(session) {
+        const metadata = {
+          id: session.id,
+          startedAt: session.startedAt,
+          updatedAt: session.updatedAt,
+          mode: session.mode,
+          modeStartedAt: session.modeStartedAt,
+          modeExpiresAt: session.modeExpiresAt,
+          fixedPrefixKind: session.fixedPrefixKind,
+          fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+          currentRound: session.currentRound,
+          latestRequest: session.latestRequest,
+          latestResponse: session.latestResponse,
+          clearedAt: session.clearedAt,
+          reason: session.reason,
+          archiveFilePath: session.archiveFilePath
+        };
+        const turns = Array.isArray(session.turns) && session.turns.length
+          ? session.turns.map((turn, index) => renderLLMSessionTurn(turn, index + 1)).join("")
+          : '<div class="log-line">No round metadata yet.</div>';
+        const transcript = \`<details><summary>Message transcript</summary>\${renderLLMTranscript(session.messages || [])}</details>\`;
+        return \`<details open><summary>Session metadata</summary><pre>\${escapeHtml(JSON.stringify(metadata, null, 2))}</pre></details>\${turns}\${transcript}\`;
       }
 
-      function renderLLMResponseSession(session) {
-        const responses = [...(session.responses || [])].sort(compareLLMEntries);
-        return responses.length ? responses.map((entry, index) => renderLLMResponseItem(entry, index + 1)).join("") : "No response history yet.";
+      function renderLLMSessionTurn(turn, index) {
+        const request = turn.request || turn.latestRequest || {};
+        const response = turn.response || turn.latestResponse || {};
+        const title = [
+          \`round #\${index}\`,
+          request.time ? \`request=\${request.time}\` : "",
+          request.model ? \`model=\${request.model}\` : "",
+          response.time ? \`response=\${response.time}\` : "",
+          response.finishReason ? \`finish=\${response.finishReason}\` : ""
+        ].filter(Boolean).join(" · ");
+        const requestRaw = turn.request?.rawRequest || turn.latestRequest || null;
+        const responseRaw = turn.response ? {
+          message: turn.response.message,
+          finishReason: turn.response.finishReason,
+          usage: turn.response.usage,
+          raw: turn.response.raw
+        } : turn.latestResponse || null;
+        return \`
+          <details class="log-line">
+            <summary>\${escapeHtml(title)}</summary>
+            \${renderLLMTranscript(turn.messages || [])}
+            <details><summary>round request metadata</summary><pre>\${escapeHtml(JSON.stringify(requestRaw, null, 2))}</pre></details>
+            <details><summary>round response metadata</summary><pre>\${escapeHtml(JSON.stringify(responseRaw, null, 2))}</pre></details>
+          </details>
+        \`;
       }
 
-      function compareLLMEntries(left, right) {
-        const byTime = String(left.time || "").localeCompare(String(right.time || ""));
-        if (byTime) return byTime;
-        return Number(left.id || 0) - Number(right.id || 0);
-      }
-
-      function renderLLMRequestItem(entry, index, previous) {
-        const summaryMessages = index === 1 ? (entry.messages || []) : newMessagesSince(previous?.messages || [], entry.messages || []);
-        const summary = summaryMessages.length
-          ? summaryMessages.map((message, messageIndex) => \`#\${messageIndex + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}\`).join("\\n\\n")
-          : "No newly appended messages.";
-        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] request #\${index} global=\${escapeHtml(entry.id || "")} model=\${escapeHtml(entry.model || "")}</summary>\${summary}\\n<details><summary>raw request/response context</summary><pre>\${escapeHtml(JSON.stringify(entry.rawRequest || entry, null, 2))}</pre></details></details>\`;
-      }
-
-      function newMessagesSince(previous, current) {
-        let index = 0;
-        while (index < previous.length && index < current.length && JSON.stringify(previous[index]) === JSON.stringify(current[index])) index += 1;
-        return current.slice(index);
-      }
-
-      function renderLLMResponseItem(entry, index) {
-        return \`<details class="log-line"><summary>[\${escapeHtml(entry.time || "")}] response #\${index} global=\${escapeHtml(entry.id || "")} request=\${escapeHtml(entry.requestId || "")} finish=\${escapeHtml(entry.finishReason || "")}</summary><div># [\${escapeHtml(entry.message?.role || "")}]\\n\${escapeHtml(entry.message?.content || "")}\${entry.message?.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(entry.message.reasoningContent) : ""}\${entry.message?.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(entry.message.toolCalls, null, 2)) : ""}\\nraw json\\n\${escapeHtml(JSON.stringify({ message: entry.message, finishReason: entry.finishReason, usage: entry.usage, raw: entry.raw }, null, 2))}</div></details>\`;
+      function renderLLMTranscript(messages) {
+        return (messages || []).map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}</div>\`).join("") || '<div class="log-line">No messages archived.</div>';
       }
 
       function renderLLMRequestBlock(title, current) {
@@ -1097,9 +1122,10 @@ export function renderAdminHtmlV2(): string {
             <input data-field="group" value="\${escapeAttr(option.group || "")}" placeholder="root / 原神 / ..." />
             \${category === "outfits" ? \`
               <label>Image</label>
-              <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
-              <input data-field="imageUpload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-              <button type="button" data-action="upload-image">Upload Image</button>
+              <div class="shell-image-drop" data-field="imageDrop">
+                <span class="muted">拖入图片自动上传</span>
+                <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
+              </div>
             \` : ""}
             <label>Content</label>
             <textarea data-field="content" rows="6">\${escapeHtml(option.content || "")}</textarea>
@@ -1122,7 +1148,7 @@ export function renderAdminHtmlV2(): string {
           optionRoot.querySelector('[data-field="id"]').addEventListener("input", (event) => { option.id = event.target.value; markShellOption(optionRoot, "dirty"); });
           optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
           optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
-          optionRoot.querySelector('[data-action="upload-image"]')?.addEventListener("click", () => uploadShellOutfitImage(optionRoot, option, category, index));
+          bindShellImageDrop(optionRoot, option, category, index);
           optionRoot.querySelector('[data-field="content"]').addEventListener("input", (event) => { option.content = event.target.value; markShellOption(optionRoot, "dirty"); });
           optionRoot.querySelector('[data-action="save-one"]').addEventListener("click", async (event) => {
             event.preventDefault();
@@ -1296,12 +1322,16 @@ export function renderAdminHtmlV2(): string {
         }
       }
 
-      async function uploadShellOutfitImage(optionRoot, option, category, index) {
-        const file = optionRoot.querySelector('[data-field="imageUpload"]')?.files?.[0];
+      async function uploadShellOutfitImage(optionRoot, option, category, index, file) {
         if (!file) {
-          $("shell-status").textContent = "Choose an outfit image first.";
+          $("shell-status").textContent = "Drop an image file.";
           return;
         }
+        if (!String(file.type || "").startsWith("image/")) {
+          $("shell-status").textContent = "Drop an image file.";
+          return;
+        }
+        $("shell-status").textContent = "Uploading image...";
         const imageBlob = await convertImageToJpeg(file);
         const result = await fetch("/admin/api/shell/outfit-image", {
           method: "POST",
@@ -1322,6 +1352,39 @@ export function renderAdminHtmlV2(): string {
         optionRootLabel(category, index, saved.option);
         markShellOption(optionRoot, "saved");
         $("shell-status").textContent = "Image uploaded and saved: " + (saved.option.name || saved.option.id || "outfit");
+      }
+
+      function bindShellImageDrop(optionRoot, option, category, index) {
+        const drop = optionRoot.querySelector('[data-field="imageDrop"]');
+        if (!drop) return;
+        ["dragenter", "dragover"].forEach((name) => {
+          drop.addEventListener(name, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            drop.classList.add("dragging");
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+          });
+        });
+        ["dragleave", "dragend"].forEach((name) => {
+          drop.addEventListener(name, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            drop.classList.remove("dragging");
+          });
+        });
+        drop.addEventListener("drop", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          drop.classList.remove("dragging");
+          const file = [...(event.dataTransfer?.files || [])].find((item) => String(item.type || "").startsWith("image/"));
+          if (!file) {
+            $("shell-status").textContent = "Drop an image file.";
+            return;
+          }
+          uploadShellOutfitImage(optionRoot, option, category, index, file).catch((error) => {
+            $("shell-status").textContent = "Image upload failed: " + (error?.message || "unknown error");
+          });
+        });
       }
 
       function convertImageToJpeg(file) {
@@ -1505,7 +1568,7 @@ export function renderAdminHtmlV2(): string {
       });
       $("llm-chain-clear").addEventListener("click", async () => {
         const result = await fetch("/admin/api/llm-chain/clear", { method: "POST" }).then((res) => res.json());
-        $("llmChainRequests").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
+        $("llmChainSessions").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
         await refreshLLMRequests();
         await refreshLLMChain();
       });

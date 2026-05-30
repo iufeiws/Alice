@@ -118,13 +118,14 @@ test("agent core appends assistant tool call and tool result before the next llm
   await core.handleEvent(textEvent());
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].messages.at(-2)?.role, "assistant");
-  assert.equal(requests[1].messages.at(-2)?.content, "checking history");
-  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "I should inspect messages first.");
-  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
-  assert.equal(requests[1].messages.at(-1)?.role, "tool");
-  assert.equal(requests[1].messages.at(-1)?.toolCallId, "tool_1");
-  assert.equal(requests[1].messages.at(-1)?.content, "history result");
+  const toolCallIndex = requests[1].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === "tool_1");
+  assert.ok(toolCallIndex >= 0);
+  assert.equal(requests[1].messages[toolCallIndex]?.content, "checking history");
+  assert.equal(requests[1].messages[toolCallIndex]?.reasoningContent, "I should inspect messages first.");
+  assert.equal(requests[1].messages[toolCallIndex]?.toolCalls?.[0].function.name, "check_chat");
+  assert.equal(requests[1].messages[toolCallIndex + 1]?.role, "tool");
+  assert.equal(requests[1].messages[toolCallIndex + 1]?.toolCallId, "tool_1");
+  assert.equal(requests[1].messages[toolCallIndex + 1]?.content, "history result");
 });
 
 test("agent core stops before another llm request when a tool invalidates the session", async () => {
@@ -194,8 +195,9 @@ test("agent core stops before another llm request when a tool invalidates the se
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
 });
 
-test("agent core rebuilds storyteller session immediately after bookcase draw", async () => {
+test("agent core rebuilds fixed prefix session immediately after bookcase draw", async () => {
   const requests: LLMChatInput[] = [];
+  const checkChatInputs: Record<string, unknown>[] = [];
   let checkChatCallsInSession = 0;
   let activeArchiveSessionId: number | undefined;
   let nextArchiveSessionId = 1;
@@ -250,30 +252,20 @@ test("agent core rebuilds storyteller session immediately after bookcase draw", 
             callId: call.id,
             ok: true,
             resetLLMSession: true,
-            llmSessionMode: "storyteller",
-            llmSessionStaticMessages: [
-              {
-                role: "assistant",
-                content: "",
-                toolCalls: [{
-                  id: call.id,
-                  type: "function",
-                  function: { name: "bookcase", arguments: JSON.stringify(call.input) }
-                }]
-              },
-              { role: "tool", name: "bookcase", toolCallId: call.id, content: "<book>static story</book>" }
-            ],
+            fixedPrefixKind: "bookcase",
             output: "<book>static story</book>"
           };
         }
         if (call.input.__scope === "recent") {
           return { callId: call.id, ok: true, output: "recent chat" };
         }
+        if (call.toolName === "check_chat") checkChatInputs.push(call.input);
         checkChatCallsInSession += 1;
         return {
           callId: call.id,
           ok: true,
-          output: checkChatCallsInSession === 1 ? "recent chat" : "nothing new"
+          messageCursorId: 42,
+          output: checkChatCallsInSession === 1 ? "recent chat" : "fresh chat after fixed prefix"
         };
       }
     }],
@@ -291,21 +283,139 @@ test("agent core rebuilds storyteller session immediately after bookcase draw", 
 
   assert.equal(requests.length, 2);
   const secondMessages = requests[1].messages;
-  assert.equal(secondMessages.some((message) => message.content === "old context marker"), false);
+  assert.equal(secondMessages.some((message) => message.content === "old context marker"), true);
   const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
-  const checkChatIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
-  assert.ok(bookcaseIndex > 0);
+  const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
+  assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
-  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
+  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"scope\":\"from_prefix\"}");
   assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
+  assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 42);
   assert.equal(checkChatCallsInSession, 1);
   assert.deepEqual([...new Set(sessionUpdates.map((update) => update.id))], [1, 2]);
   assert.equal(sessionUpdates.at(-1)?.id, 2);
-  assert.equal(sessionUpdates.at(-1)?.mode, "storyteller");
+  assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 3);
+  const thirdMessages = requests[2].messages;
+  const thirdCheckChatIndex = thirdMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
+  assert.ok(thirdCheckChatIndex > bookcaseIndex);
+  assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"scope\":\"from_prefix\"}");
+  assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
+  const fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
+  assert.equal(fromPrefixInputs.length, 2);
+  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [42, 42]);
 });
 
-test("agent core keeps storyteller static messages when token pressure rebuilds the session", async () => {
+test("agent core appends sleep cocoon goodnight instruction from heartbeat event", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: Array<{ mode?: string; messages: LLMChatInput["messages"] }> = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "晚安" } };
+    }
+  };
+  const event = {
+    ...textEvent(),
+    type: "system.heartbeat" as const,
+    meta: {
+      receivedAt: "2026-05-26T00:00:00.000Z",
+      raw: { sleepCocoonGoodnight: true }
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "sleep_cocoon",
+      listTools() {
+        return [{ name: "sleep_cocoon", description: "sleep", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "ok" };
+      }
+    }],
+    getPromptProfile: () => ({
+      userName: "YY",
+      visibleTools: { feishu: true },
+      layers: [{
+        id: "base",
+        title: "Base",
+        role: "system",
+        enabled: true,
+        order: 1,
+        content: "base prompt"
+      }],
+      appendLayers: []
+    }),
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push({ mode: session.mode, messages: session.messages });
+    }
+  });
+
+  await core.handleEvent(event);
+
+  assert.equal(requests.length, 1);
+  assert.equal(sessionUpdates.at(-1)?.mode, "normal");
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("对YY说晚安")), true);
+  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), true);
+});
+
+test("agent core appends sleep cocoon morning instruction from heartbeat event", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "早安" } };
+    }
+  };
+  const event = {
+    ...textEvent(),
+    type: "system.heartbeat" as const,
+    meta: {
+      receivedAt: "2026-05-26T08:00:00.000Z",
+      raw: { sleepCocoonMorning: true }
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [],
+    getPromptProfile: () => ({
+      userName: "YY",
+      visibleTools: { feishu: true },
+      layers: [{
+        id: "base",
+        title: "Base",
+        role: "system",
+        enabled: true,
+        order: 1,
+        content: "base prompt"
+      }],
+      appendLayers: []
+    })
+  });
+
+  await core.handleEvent(event);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("早安")), true);
+  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), false);
+});
+
+test("agent core keeps fixed prefix static messages when token pressure rebuilds the session", async () => {
   let capturedSession: LLMSessionSnapshot | undefined;
   const promptProfile = {
     userName: "user",
@@ -337,7 +447,7 @@ test("agent core keeps storyteller static messages when token pressure rebuilds 
   await primerCore.handleEvent(textEvent());
   assert.ok(capturedSession?.staticPromptFingerprint);
 
-  const storytellerStatic: LLMChatInput["messages"] = [
+  const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
       content: "",
@@ -353,6 +463,7 @@ test("agent core keeps storyteller static messages when token pressure rebuilds 
   const clearedReasons: string[] = [];
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
     llm: {
       async chat(input) {
         requests.push(input);
@@ -371,9 +482,13 @@ test("agent core keeps storyteller static messages when token pressure rebuilds 
         { role: "assistant", content: "old session marker" }
       ],
       lastTotalTokens: 10_000,
-      mode: "storyteller",
-      modeStaticMessages: storytellerStatic,
-      modeStaticTokenEstimate: 100
+      mode: "fixed_prefix",
+      modeStaticMessages: fixedPrefixStatic,
+      modeStaticTokenEstimate: 100,
+      modeStartedAt: "2026-05-30T00:00:00.000Z",
+      modeExpiresAt: "2026-05-30T03:00:00.000Z",
+      fixedPrefixKind: "bookcase",
+      fixedPrefixCursorMessageId: 12
     },
     tools: [{
       id: "messaging",
@@ -391,20 +506,20 @@ test("agent core keeps storyteller static messages when token pressure rebuilds 
 
   await core.handleEvent(textEvent());
 
-  assert.deepEqual(clearedReasons, ["token_pressure"]);
+  assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => message.content === "old session marker"), false);
   const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
-  assert.ok(bookcaseIndex > 0);
+  assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(messages[bookcaseIndex + 1]?.content, "<book>persistent story</book>");
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
 });
 
-test("agent core restores storyteller static messages from an initial session snapshot", async () => {
-  const storytellerStatic: LLMChatInput["messages"] = [
+test("agent core restores fixed prefix static messages from an initial session snapshot", async () => {
+  const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
       content: "",
@@ -442,15 +557,18 @@ test("agent core restores storyteller static messages from an initial session sn
     initialLLMSession: {
       messages: [
         { role: "system", content: "old static prompt" },
-        ...storytellerStatic,
+        ...fixedPrefixStatic,
         { role: "assistant", content: "old live context" }
       ],
       staticPromptFingerprint: "old-fingerprint",
       requestTimestamps: [],
-      mode: "storyteller",
-      modeStaticMessages: storytellerStatic,
+      mode: "fixed_prefix",
+      modeStaticMessages: fixedPrefixStatic,
       modeStaticTokenEstimate: 50,
-      modeStartedAt
+      modeStartedAt,
+      modeExpiresAt: "2026-05-30T03:00:00.000Z",
+      fixedPrefixKind: "bookcase",
+      fixedPrefixCursorMessageId: 12
     },
     tools: [{
       id: "messaging",
@@ -471,23 +589,24 @@ test("agent core restores storyteller static messages from an initial session sn
 
   await core.handleEvent(textEvent());
 
-  assert.deepEqual(clearedReasons, ["prompt_static_changed"]);
+  assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => message.content === "old live context"), false);
   assert.equal(messages.some((message) => message.content === "old static prompt"), false);
   const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
-  assert.ok(bookcaseIndex > 0);
+  assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(messages[bookcaseIndex + 1]?.content, "<book>restored story</book>");
   assert.equal(messages[checkChatIndex + 1]?.content, "fresh chat after restore");
-  assert.equal(sessionUpdates.at(-1)?.mode, "storyteller");
+  assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, modeStartedAt);
+  assert.equal(sessionUpdates.at(-1)?.fixedPrefixKind, "bookcase");
 });
 
-test("agent core exits expired storyteller mode on the next request", async () => {
-  const storytellerStatic: LLMChatInput["messages"] = [
+test("agent core exits expired fixed prefix mode on the next request", async () => {
+  const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
       content: "",
@@ -524,15 +643,18 @@ test("agent core exits expired storyteller mode on the next request", async () =
     initialLLMSession: {
       messages: [
         { role: "system", content: "old static prompt" },
-        ...storytellerStatic,
+        ...fixedPrefixStatic,
         { role: "assistant", content: "old live context" }
       ],
       staticPromptFingerprint: "old-fingerprint",
       requestTimestamps: [],
-      mode: "storyteller",
-      modeStaticMessages: storytellerStatic,
+      mode: "fixed_prefix",
+      modeStaticMessages: fixedPrefixStatic,
       modeStaticTokenEstimate: 50,
-      modeStartedAt: "2026-05-30T00:00:00.000Z"
+      modeStartedAt: "2026-05-30T00:00:00.000Z",
+      modeExpiresAt: "2026-05-30T02:00:00.000Z",
+      fixedPrefixKind: "bookcase",
+      fixedPrefixCursorMessageId: 12
     },
     tools: [{
       id: "messaging",
@@ -1628,7 +1750,7 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
   assert.equal(requests[1].messages.at(-1)?.content, "new");
 });
 
-test("agent core clears session before the next request when previous final usage greatly exceeds recent preview cost", async () => {
+test("agent core clears session before the next request when cached input cost exceeds check chat miss cost", async () => {
   const requests: LLMChatInput[] = [];
   const events: string[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
@@ -1648,12 +1770,12 @@ test("agent core clears session before the next request when previous final usag
               function: { name: "check_chat", arguments: "{}" }
             }]
           },
-          usage: { totalTokens: 999 }
+          usage: { inputTokens: 999, totalTokens: 999 }
         };
       }
       return {
         message: { role: "assistant", content: `final ${requests.length}` },
-        usage: { totalTokens: requests.length === 2 ? 37 : 10 }
+        usage: { inputTokens: 999, totalTokens: 999 }
       };
     }
   };
@@ -1677,7 +1799,10 @@ test("agent core clears session before the next request when previous final usag
         messages: session.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
         staticPromptFingerprint: session.staticPromptFingerprint,
         requestTimestamps: [...session.requestTimestamps],
-        lastTotalTokens: session.lastTotalTokens
+        lastTotalTokens: session.lastTotalTokens,
+        lastInputTokens: session.lastInputTokens,
+        lastUsageModel: session.lastUsageModel,
+        tokenPressurePreviewBaselines: { ...(session.tokenPressurePreviewBaselines ?? {}) }
       };
     },
     loadLLMSession() {
@@ -1708,10 +1833,223 @@ test("agent core clears session before the next request when previous final usag
   await core.handleEvent(textEvent());
 
   assert.deepEqual(events, ["completed", "cleared:token_pressure", "completed"]);
-  assert.deepEqual(previewCalls, [{ __preview: true, __scope: "recent" }]);
+  assert.deepEqual(previewCalls, [
+    { __preview: true, __scope: "today" },
+    { __preview: true, __scope: "today" }
+  ]);
   assert.equal(requests.length, 3);
-  assert.equal(requests[0].messages.some((message) => message.content === "final 2"), false);
   assert.equal(requests[2].messages.some((message) => message.content === "final 2"), false);
+});
+
+test("agent core restores token pressure baseline from persisted session snapshot", async () => {
+  const requests: LLMChatInput[] = [];
+  const events: string[] = [];
+  const previewCalls: Array<Record<string, unknown>> = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return {
+        message: { role: "assistant", content: `final ${requests.length}` },
+        model: "deepseek-v4-flash",
+        usage: { inputTokens: 101, totalTokens: 101 }
+      };
+    }
+  };
+  const baseDeps = {
+    config: loadConfig({ LLM_MODEL: "deepseek-v4-flash" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "one", title: "One", role: "system" as const, enabled: true, content: "system", order: 1 }]
+    }),
+    onLLMSessionUpdated(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }) {
+      persistedSession = {
+        messages: session.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
+        staticPromptFingerprint: session.staticPromptFingerprint,
+        requestTimestamps: [...session.requestTimestamps],
+        lastTotalTokens: session.lastTotalTokens,
+        lastInputTokens: session.lastInputTokens,
+        lastUsageModel: session.lastUsageModel,
+        tokenPressurePreviewBaselines: { ...(session.tokenPressurePreviewBaselines ?? {}) }
+      };
+    },
+    loadLLMSession() {
+      return persistedSession;
+    },
+    onLLMSessionCleared(reason: string) {
+      events.push(`cleared:${reason}`);
+      persistedSession = undefined;
+    },
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call: ToolCall) {
+        if (call.input.__preview === true) previewCalls.push(call.input);
+        return { callId: call.id, ok: true, output: "abcdef" };
+      }
+    }]
+  };
+  const firstCore = createAgentCore(baseDeps);
+
+  await firstCore.handleEvent(textEvent());
+  assert.ok(persistedSession);
+  persistedSession = {
+    ...persistedSession,
+    lastInputTokens: 101,
+    lastUsageModel: "deepseek-v4-flash",
+    tokenPressurePreviewBaselines: { "deepseek-v4-flash|normal|today|": 1 }
+  };
+
+  const restartedCore = createAgentCore(baseDeps);
+  await restartedCore.handleEvent(textEvent());
+
+  assert.deepEqual(previewCalls, [{ __preview: true, __scope: "today" }]);
+  assert.deepEqual(events, ["cleared:token_pressure"]);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].messages.some((message) => message.content === "final 1"), false);
+});
+
+test("agent core uses fixed prefix check chat preview scope for token pressure baseline", async () => {
+  const requests: LLMChatInput[] = [];
+  const previewCalls: Array<Record<string, unknown>> = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "draw",
+            toolCalls: [{
+              id: "tool_draw",
+              type: "function",
+              function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+            }]
+          },
+          model: "deepseek-chat",
+          usage: { inputTokens: 200, totalTokens: 200 }
+        };
+      }
+      return {
+        message: { role: "assistant", content: `final ${requests.length}` },
+        model: "deepseek-chat",
+        usage: { inputTokens: 200, totalTokens: 200 }
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "deepseek-chat", LLM_STREAM_ENABLED: "false" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [
+          { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } }
+        ];
+      },
+      async execute(call) {
+        if (call.toolName === "bookcase") {
+          return {
+            callId: call.id,
+            ok: true,
+            resetLLMSession: true,
+            fixedPrefixKind: "bookcase",
+            output: "<book>static story</book>"
+          };
+        }
+        if (call.input.__preview === true) previewCalls.push(call.input);
+        return { callId: call.id, ok: true, messageCursorId: 42, output: "abc" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(previewCalls.at(0), { __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
+});
+
+test("agent core token pressure comparison uses model-specific prices", async () => {
+  async function run(model: string): Promise<string[]> {
+    const events: string[] = [];
+    let persistedSession: LLMSessionSnapshot | undefined;
+    const llm: LLMClient = {
+      async chat() {
+        return {
+          message: { role: "assistant", content: "final" },
+          model,
+          usage: { inputTokens: 101, totalTokens: 101 }
+        };
+      }
+    };
+    const core = createAgentCore({
+      config: loadConfig({ LLM_MODEL: model }),
+      llm,
+      outputRouter: createOutputRouter(),
+      intentRouter: createIntentRouter(),
+      sessionResolver: createSessionResolver(),
+      policy: createAllowAllPolicy(),
+      getPromptProfile: () => ({
+        userName: "user",
+        visibleTools: { feishu: true },
+        layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }]
+      }),
+      initialLLMSession: undefined,
+      loadLLMSession() {
+        return persistedSession;
+      },
+      onLLMSessionUpdated(session) {
+        persistedSession = {
+          messages: session.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
+          staticPromptFingerprint: session.staticPromptFingerprint,
+          requestTimestamps: [...session.requestTimestamps],
+          lastTotalTokens: 101,
+          lastInputTokens: 101,
+          lastUsageModel: model,
+          tokenPressurePreviewBaselines: { [`${model}|normal|today|`]: 1 }
+        };
+      },
+      onLLMSessionCleared(reason) {
+        events.push(reason);
+        persistedSession = undefined;
+      },
+      tools: [{
+        id: "messaging-test",
+        listTools() {
+          return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        },
+        async execute(call) {
+          return { callId: call.id, ok: true, output: "abcdef" };
+        }
+      }]
+    });
+
+    await core.handleEvent(textEvent());
+    await core.handleEvent(textEvent());
+    return events;
+  }
+
+  assert.deepEqual(await run("deepseek-v4-flash"), ["token_pressure"]);
+  assert.deepEqual(await run("deepseek-v4-pro"), []);
 });
 
 test("agent core clears only when static prompt fingerprint changes", async () => {

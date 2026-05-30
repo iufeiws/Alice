@@ -598,7 +598,7 @@ test("wechat quoted inbound messages are visible in persisted chat context", asy
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", channelId: "wx-user", sessionId: "wechat:dm:wx-user" })
   });
-  const result = await tools.execute({ id: "call_quote_context", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_quote_context", toolName: "check_chat", input: { scope: "recent" } });
   assert.match(String(result.output), /user:-引用:from friend #msg-1 quoted hello-\nreplying to this/);
 });
 

@@ -112,6 +112,10 @@ export type ToolResult = {
   resetLLMSession?: boolean;
   llmSessionMode?: string;
   llmSessionStaticMessages?: ToolResultLLMMessage[];
+  fixedPrefixKind?: string;
+  fixedPrefixTtlMs?: number;
+  clearFixedPrefix?: boolean;
+  messageCursorId?: number;
 };
 
 export type ToolResultLLMMessage = {

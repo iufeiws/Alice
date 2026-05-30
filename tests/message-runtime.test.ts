@@ -542,6 +542,206 @@ test("message runtime records lifecycle events as message state updates without 
   assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
 });
 
+test("message runtime handles force wake without calling core", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-force-wake"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const states: string[] = [];
+  const clearedReasons: string[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    agentState: {
+      canReplyToInbound: () => true,
+      canRunHeartbeat: () => true,
+      tick() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      getInboundDelayMs: () => 0,
+      onChange: () => () => {},
+      noteInboundMessage() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      setState(state, options) {
+        states.push(`${state}:${options?.reason ?? ""}:${options?.clearSleepCocoon === true ? "clear" : "keep"}`);
+        return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      }
+    },
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    clearLLMSession(reason) {
+      clearedReasons.push(reason);
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEvent("session-1", "om_force", "/force_wake"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.deepEqual(states, ["waiting:force_wake:clear"]);
+  assert.deepEqual(clearedReasons, ["force_wake"]);
+  assert.equal(coreInputs.length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
+test("message runtime can run sleep cocoon morning event on heartbeat", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-morning"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    getSleepCocoonMorningEvent: () => ({
+      ...textEvent("session-1", "sleep_cocoon_morning", "morning"),
+      type: "system.heartbeat",
+      meta: {
+        receivedAt: "2026-05-24T08:00:00.000Z",
+        raw: { sleepCocoonMorning: true }
+      }
+    }),
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await waitFor(() => coreInputs.length === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs[0].type, "system.heartbeat");
+  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonMorning: true });
+});
+
+test("message runtime can run sleep cocoon goodnight event on heartbeat", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-goodnight"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    getSleepCocoonGoodnightEvent: () => ({
+      ...textEvent("session-1", "sleep_cocoon_goodnight", "goodnight"),
+      type: "system.heartbeat",
+      meta: {
+        receivedAt: "2026-05-24T00:00:00.000Z",
+        raw: { sleepCocoonGoodnight: true }
+      }
+    }),
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await waitFor(() => coreInputs.length === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs[0].type, "system.heartbeat");
+  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonGoodnight: true });
+});
+
+test("message runtime does not count sleep cocoon goodnight when generated session fails", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-goodnight-fail"), "alice.sqlite"));
+  let attempts = 0;
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    getSleepCocoonGoodnightEvent: () => attempts === 0 ? {
+      ...textEvent("session-1", "sleep_cocoon_goodnight", "goodnight"),
+      type: "system.heartbeat",
+      meta: {
+        receivedAt: "2026-05-24T00:00:00.000Z",
+        raw: { sleepCocoonGoodnight: true }
+      }
+    } : undefined,
+    store,
+    core: {
+      async handleEvent() {
+        attempts += 1;
+        throw new Error("llm down");
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await waitFor(() => attempts === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(attempts, 1);
+});
+
+test("message runtime does not run sleep cocoon goodnight while user messages are pending", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-goodnight-pending"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let goodnightChecks = 0;
+  let armed = false;
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 60_000,
+    getHeartbeatIntervalMs: () => 10,
+    now: () => new Date("2026-05-24T00:00:00.000Z"),
+    getSleepCocoonGoodnightEvent: () => {
+      if (!armed) return undefined;
+      goodnightChecks += 1;
+      return {
+        ...textEvent("session-1", "sleep_cocoon_goodnight", "goodnight"),
+        type: "system.heartbeat",
+        meta: {
+          receivedAt: "2026-05-24T00:00:00.000Z",
+          raw: { sleepCocoonGoodnight: true }
+        }
+      };
+    },
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+  runtime.pauseHeartbeat();
+  armed = true;
+
+  runtime.ingestEvent(textEvent("session-1", "om_pending", "new message"));
+  runtime.resumeHeartbeat();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  runtime.pauseHeartbeat();
+
+  assert.equal(goodnightChecks, 0);
+  assert.equal(coreInputs.length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
+});
+
 function textEvent(sessionId: string, rawMessageId: string, text: string): AgentEvent {
   return textEventAt(sessionId, rawMessageId, text, "2026-05-24T00:00:00.000Z");
 }

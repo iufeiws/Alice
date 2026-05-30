@@ -98,6 +98,7 @@ export type MessagingToolsDeps = {
     personalityName: string;
     relationshipName: string;
   }>;
+  getSleepCocoonEnteredAt?(): string | undefined;
   appendMessageLog?(input: {
     direction: "inbound" | "outbound";
     plugin: string;
@@ -175,29 +176,42 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
     if (!target) return toolError(call, "No current messaging session is available");
-    return viewMessagesForScope(call.id, target, resolveViewScope(call.input.__scope), { readonly: call.input.__preview === true });
+    return viewMessagesForScope(call.id, target, resolveViewScope(call.input.scope ?? call.input.__scope), {
+      readonly: call.input.__preview === true,
+      fromPrefixAfterMessageId: integerValue(call.input.__fromPrefixAfterMessageId)
+    });
   }
 
   function viewMessagesForScope(
     callId: string,
     target: MessagingToolTarget,
-    scope: "recent" | "today" | "new",
-    options: { readonly?: boolean } = {}
+    scope: "recent" | "today" | "todayold" | "new" | "from_prefix",
+    options: { readonly?: boolean; fromPrefixAfterMessageId?: number } = {}
   ): ToolResult {
     const all = deps.store.listMessages(checkChatMessageLimit);
+    const cursorMessageId = all.reduce((max, message) => Math.max(max, message.id), 0);
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
     if (scope === "recent") {
       messages = all.slice(-recentCheckChatMessageCount);
       sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : new Date(0);
+    } else if (scope === "from_prefix") {
+      const afterId = options.fromPrefixAfterMessageId ?? 0;
+      messages = all.filter((message) => message.id > afterId);
+      sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : time.now().date;
     } else if (scope === "new") {
       const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
       sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
       messages = firstUnread ? all.filter((message) => message.id >= firstUnread.id) : [];
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
-      sinceDate = new Date(after);
+      const sleepCocoonEnteredAt = scope === "today" ? deps.getSleepCocoonEnteredAt?.() : undefined;
+      const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
+      sinceDate = sleepCocoonDate ?? new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
+      if (sleepCocoonDate) {
+        messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonDate.getTime());
+      }
     }
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
@@ -205,6 +219,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return {
       callId,
       ok: true,
+      messageCursorId: cursorMessageId,
       output: appendCurrentTime(
         messages.length > 0 || shellEvents.length > 0
           ? formatTimelineBlocks(messages, shellEvents, time.timeZone, userName())
@@ -215,11 +230,15 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     };
   }
 
-  function resolveViewScope(scopeHint?: unknown): "recent" | "new" {
+  function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "from_prefix" {
     if (scopeHint === "recent") return "recent";
-    if (!activeLLMSession) return "recent";
+    if (scopeHint === "today") return "today";
+    if (scopeHint === "todayold") return "todayold";
+    if (scopeHint === "new") return "new";
+    if (scopeHint === "from_prefix") return "from_prefix";
+    if (!activeLLMSession) return "today";
     checkChatCallsInLLMSession += 1;
-    return checkChatCallsInLLMSession === 1 ? "recent" : "new";
+    return checkChatCallsInLLMSession === 1 ? "today" : "new";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {
@@ -539,10 +558,12 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 const checkChatTool: ToolDefinition = {
   name: "check_chat",
-  description: "查看聊天记录。首次调用返回最近50条消息；后续调用只返回新增消息。",
+  description: "查看聊天记录。首次调用默认返回从最近一次 sleep_cocoon in 之后开始的消息；后续调用只返回新增消息。scope=todayold 可使用旧的当天范围；scope=from_prefix 由系统用于固定前缀后的新增消息。",
   inputSchema: {
     type: "object",
-    properties: {},
+    properties: {
+      scope: { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix"] }
+    },
     additionalProperties: false
   }
 };
@@ -1516,6 +1537,11 @@ function resolveAssetScopedPath(assetPath: string): string {
     return path.resolve(normalized);
   }
   return path.resolve("assets", normalized);
+}
+
+function integerValue(value: unknown): number | undefined {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isInteger(numeric) ? numeric : undefined;
 }
 
 function validateGeneratedVoice(filePath: string, outputDir: string): void {

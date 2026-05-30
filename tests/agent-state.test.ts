@@ -159,6 +159,80 @@ test("test mode switches through working and returns to test", () => {
   assert.equal(controller.getSnapshot().responseDelayMs, 8_000);
 });
 
+test("work finish does not override state changed by a tool", () => {
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    random: () => 0
+  });
+
+  controller.noteWorkStarted();
+  assert.equal(controller.getSnapshot().state, "working");
+
+  controller.setState("going_to_sleep", { reason: "sleep_cocoon_in" });
+  controller.noteWorkFinished();
+  assert.equal(controller.getSnapshot().state, "going_to_sleep");
+  assert.equal(controller.getSnapshot().reason, "sleep_cocoon_in");
+});
+
+test("sleeping transition uses persisted sleep cocoon duration", () => {
+  let current = new Date("2026-05-25T00:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 0
+  });
+
+  controller.setState("going_to_sleep", {
+    durationMs: 1,
+    sleepCocoonEnteredAt: "2026-05-25T00:00:00.000",
+    sleepDurationMs: 90 * 60 * 1000
+  });
+  current = new Date("2026-05-25T00:00:00.001Z");
+  controller.tick();
+
+  assert.equal(controller.getSnapshot().state, "sleeping");
+  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T01:30:00.001");
+});
+
+test("agent state restores sleep cocoon fields", () => {
+  const initial = JSON.stringify({
+    state: "waiting",
+    intimacy: 50,
+    updatedAt: "2026-05-25T00:00:00.000",
+    responseDelayMs: 1000,
+    sleepCocoonEnteredAt: "2026-05-24T23:00:00.000",
+    sleepDurationMs: 27_000_000,
+    sleepCocoonAutoCheckedAt: "2026-05-25T21:00:00.000"
+  });
+  const controller = createAgentStateController({
+    store: memoryStore(initial)
+  });
+
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-24T23:00:00.000");
+  assert.equal(controller.getSnapshot().sleepDurationMs, 27_000_000);
+  assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, "2026-05-25T21:00:00.000");
+});
+
+test("clearSleepCocoon removes sleep cocoon pointers", () => {
+  const controller = createAgentStateController({
+    store: memoryStore(JSON.stringify({
+      state: "going_to_sleep",
+      intimacy: 50,
+      updatedAt: "2026-05-25T00:00:00.000",
+      responseDelayMs: 1000,
+      sleepCocoonEnteredAt: "2026-05-25T00:00:00.000",
+      sleepDurationMs: 27_000_000,
+      sleepCocoonAutoCheckedAt: "2026-05-25T22:00:00.000"
+    }))
+  });
+
+  controller.setState("waiting", { reason: "force_wake", clearSleepCocoon: true });
+
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, undefined);
+  assert.equal(controller.getSnapshot().sleepDurationMs, undefined);
+  assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, undefined);
+});
+
 function memoryStore(initial?: string): AgentStateStore & { content?: string } {
   return {
     content: initial,

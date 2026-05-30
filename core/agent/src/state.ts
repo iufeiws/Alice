@@ -23,6 +23,9 @@ export type AgentStateSnapshot = {
   previousState?: AgentBehaviorState;
   reason?: string;
   responseDelayMs: number;
+  sleepCocoonEnteredAt?: string;
+  sleepDurationMs?: number;
+  sleepCocoonAutoCheckedAt?: string;
 };
 
 export type AgentStateStore = {
@@ -34,7 +37,8 @@ export type AgentStateController = {
   start(): void;
   stop(): void;
   getSnapshot(): AgentStateSnapshot;
-  setState(state: AgentBehaviorState, options?: { reason?: string; durationMs?: number }): AgentStateSnapshot;
+  setState(state: AgentBehaviorState, options?: { reason?: string; durationMs?: number; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean }): AgentStateSnapshot;
+  noteSleepCocoonAutoChecked(): AgentStateSnapshot;
   setIntimacy(value: number): AgentStateSnapshot;
   tick(): AgentStateSnapshot;
   noteInboundMessage(): AgentStateSnapshot;
@@ -103,7 +107,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
 
   function transition(
     state: AgentBehaviorState,
-    opts: { reason?: string; durationMs?: number; previousState?: AgentBehaviorState } = {}
+    opts: { reason?: string; durationMs?: number; previousState?: AgentBehaviorState; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean } = {}
   ): AgentStateSnapshot {
     const updatedAt = currentIso();
     const next: AgentStateSnapshot = {
@@ -113,7 +117,10 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       lastInboundAt: snapshot.lastInboundAt,
       previousState: opts.previousState,
       reason: opts.reason,
-      responseDelayMs: responseDelayFor(state, random)
+      responseDelayMs: responseDelayFor(state, random),
+      sleepCocoonEnteredAt: opts.clearSleepCocoon ? undefined : opts.sleepCocoonEnteredAt ?? snapshot.sleepCocoonEnteredAt,
+      sleepDurationMs: opts.clearSleepCocoon ? undefined : opts.sleepDurationMs ?? snapshot.sleepDurationMs,
+      sleepCocoonAutoCheckedAt: opts.clearSleepCocoon || opts.resetSleepCocoonAuto ? undefined : snapshot.sleepCocoonAutoCheckedAt
     };
 
     if (state === "idle") {
@@ -123,7 +130,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
     } else if (state === "away") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(5 * MINUTE, 30 * MINUTE, random));
     } else if (state === "sleeping") {
-      next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(6 * HOUR, 10 * HOUR, random));
+      next.nextTransitionAt = addMsIso(opts.durationMs ?? next.sleepDurationMs ?? randomRange(6 * HOUR, 10 * HOUR, random));
     }
 
     return commit(next);
@@ -187,6 +194,14 @@ export function createAgentStateController(options: AgentStateControllerOptions)
     setState(state, opts = {}) {
       return transition(state, opts);
     },
+    noteSleepCocoonAutoChecked() {
+      const checkedAt = currentIso();
+      return commit({
+        ...snapshot,
+        updatedAt: checkedAt,
+        sleepCocoonAutoCheckedAt: checkedAt
+      });
+    },
     setIntimacy(value) {
       return commit({
         ...snapshot,
@@ -214,6 +229,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       return transition("working", { reason: opts.serious ? "serious_task" : "task", previousState: baseline });
     },
     noteWorkFinished() {
+      if (snapshot.state !== "working") return clone(snapshot);
       const baseline = snapshot.previousState === "serious" ? "serious" : snapshot.previousState === "test" ? "test" : "waiting";
       return transition(baseline, { reason: "task_finished" });
     },
@@ -264,7 +280,10 @@ function normalizeSnapshot(raw: unknown, time: CurrentTimeProvider, random: () =
     nextTransitionAt: validIso(value.nextTransitionAt) ?? validIso(value.deadlineAt) ?? validIso(value.sleepUntil),
     previousState: state === rawState ? previousState : undefined,
     reason: typeof value.reason === "string" ? value.reason : undefined,
-    responseDelayMs: positiveNumber(value.responseDelayMs) ?? responseDelayFor(state, random)
+    responseDelayMs: positiveNumber(value.responseDelayMs) ?? responseDelayFor(state, random),
+    sleepCocoonEnteredAt: validIso(value.sleepCocoonEnteredAt),
+    sleepDurationMs: positiveNumber(value.sleepDurationMs),
+    sleepCocoonAutoCheckedAt: validIso(value.sleepCocoonAutoCheckedAt)
   };
 }
 

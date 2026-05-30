@@ -19,11 +19,8 @@ test("bookcase tool draws a book and includes retelling instructions", async () 
 
   assert.equal(result.ok, true);
   assert.equal(result.resetLLMSession, true);
-  assert.equal(result.llmSessionMode, "storyteller");
-  assert.equal(result.llmSessionStaticMessages?.length, 2);
-  assert.equal(result.llmSessionStaticMessages?.[0]?.role, "assistant");
-  assert.equal(result.llmSessionStaticMessages?.[0]?.toolCalls?.[0]?.function.name, "bookcase");
-  assert.equal(result.llmSessionStaticMessages?.[1]?.role, "tool");
+  assert.equal(result.fixedPrefixKind, "bookcase");
+  assert.equal(result.fixedPrefixTtlMs, 2 * 60 * 60 * 1000);
   const output = String(result.output);
   assert.match(output, /^<book>/);
   assert.match(output, /<title>Moon Gate<\/title>/);
@@ -64,8 +61,7 @@ test("bookcase tool returns a book and invalidates the LLM session", async () =>
 
   assert.equal(result.ok, true);
   assert.equal(result.resetLLMSession, true);
-  assert.equal(result.llmSessionMode, "normal");
-  assert.deepEqual(result.llmSessionStaticMessages, []);
+  assert.equal(result.clearFixedPrefix, true);
   assert.equal(result.invalidateLLMSession, true);
   const output = String(result.output);
   assert.match(output, /<bookcase action="return" invalidate_llm_session="true">/);
@@ -170,10 +166,10 @@ test("bookcase notice failures do not block draw or return transitions", async (
 
   assert.equal(draw.ok, true);
   assert.equal(draw.resetLLMSession, true);
-  assert.equal(draw.llmSessionMode, "storyteller");
+  assert.equal(draw.fixedPrefixKind, "bookcase");
   assert.equal(returned.ok, true);
   assert.equal(returned.resetLLMSession, true);
-  assert.equal(returned.llmSessionMode, "normal");
+  assert.equal(returned.clearFixedPrefix, true);
   assert.deepEqual(failed, [
     { id: 1, reason: "notice offline" },
     { id: 2, reason: "notice offline" }

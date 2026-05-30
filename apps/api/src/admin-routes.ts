@@ -50,6 +50,7 @@ export type AdminRoutesContext = {
   mediaTools: ToolPlugin;
   shellTools: ToolPlugin;
   bookcaseTools: ToolPlugin;
+  sleepCocoonTools: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;
@@ -542,7 +543,8 @@ function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: strin
   const plugins = [
     profile.visibleTools.feishu === false ? undefined : context.messagingTools,
     profile.visibleTools.media === false ? undefined : context.mediaTools,
-    profile.visibleTools.shell === false ? undefined : context.shellTools
+    profile.visibleTools.shell === false ? undefined : context.shellTools,
+    context.sleepCocoonTools
   ].filter((plugin): plugin is ToolPlugin => Boolean(plugin));
   return plugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
     name: tool.name,
@@ -632,7 +634,7 @@ async function previewToolResult(context: AdminRoutesContext, request: any, resp
 }
 
 function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
-  return [context.messagingTools, context.mediaTools, context.shellTools, context.bookcaseTools];
+  return [context.messagingTools, context.mediaTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools];
 }
 
 function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {

@@ -111,8 +111,8 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
         callId: call.id,
         ok: true,
         resetLLMSession: true,
-        llmSessionMode: "storyteller",
-        llmSessionStaticMessages: staticMessagesForCall(call, output),
+        fixedPrefixKind: "bookcase",
+        fixedPrefixTtlMs: 2 * 60 * 60 * 1000,
         output
       };
       await sendBookcaseNotice(call, "-少女已取书-");
@@ -129,8 +129,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       callId: call.id,
       ok: true,
       resetLLMSession: true,
-      llmSessionMode: "normal",
-      llmSessionStaticMessages: [],
+      clearFixedPrefix: true,
       invalidateLLMSession: true,
       output: formatReturnAsXml("书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。")
     };

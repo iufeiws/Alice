@@ -108,6 +108,83 @@ test("check_chat defaults to recent outside llm sessions", async () => {
   assert.match(String(recentAgain.output), /after today check/);
 });
 
+test("check_chat today starts at sleep cocoon pointer and todayold keeps old anchor", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_old_anchor",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "after old today anchor",
+    createdAt: "2026-05-25T08:00:00.000"
+  });
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_after_sleep",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "after sleep cocoon",
+    createdAt: "2026-05-25T12:30:00.000"
+  });
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
+    getSleepCocoonEnteredAt: () => "2026-05-25T12:00:00.000",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const today = await tools.execute({ id: "call_today", toolName: "check_chat", input: { scope: "today" } });
+  assert.doesNotMatch(String(today.output), /after old today anchor/);
+  assert.match(String(today.output), /after sleep cocoon/);
+
+  const todayOld = await tools.execute({ id: "call_todayold", toolName: "check_chat", input: { scope: "todayold" } });
+  assert.match(String(todayOld.output), /after old today anchor/);
+  assert.match(String(todayOld.output), /after sleep cocoon/);
+});
+
+test("check_chat from_prefix reads messages after injected cursor", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-from-prefix"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "m_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "before fixed prefix",
+    createdAt: "2026-05-25T00:00:00.000Z"
+  });
+  const cursorMessageId = store.listMessages(10).at(-1)?.id ?? 0;
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "m_2",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "after fixed prefix",
+    createdAt: "2026-05-25T00:01:00.000Z"
+  });
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T00:02:00.000Z")),
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_from_prefix",
+    toolName: "check_chat",
+    input: { scope: "from_prefix", __fromPrefixAfterMessageId: cursorMessageId }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.messageCursorId, cursorMessageId + 1);
+  assert.doesNotMatch(String(result.output), /before fixed prefix/);
+  assert.match(String(result.output), /after fixed prefix/);
+});
+
 test("check_chat defaults to new after first recent call in the same llm session", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-llm-session"), "alice.sqlite"));
   store.upsertInboundMessage({
@@ -268,7 +345,7 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const recent = await tools.execute({ id: "call_recent", toolName: "check_chat", input: {} });
+  const recent = await tools.execute({ id: "call_recent", toolName: "check_chat", input: { scope: "recent" } });
   assert.equal(recent.ok, true);
   assert.doesNotMatch(String(recent.output), /msg 60\b/);
   assert.doesNotMatch(String(recent.output), /msg 510\b/);
@@ -347,7 +424,7 @@ test("check_chat recent is independent of the 6am today anchor", async () => {
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "check_chat", input: {} });
+  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "check_chat", input: { scope: "recent" } });
   assert.match(String(beforeResult.output), /prev evening/);
   assert.match(String(beforeResult.output), /today early/);
 
@@ -357,7 +434,7 @@ test("check_chat recent is independent of the 6am today anchor", async () => {
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const afterResult = await afterSix.execute({ id: "call_after", toolName: "check_chat", input: {} });
+  const afterResult = await afterSix.execute({ id: "call_after", toolName: "check_chat", input: { scope: "recent" } });
   assert.match(String(afterResult.output), /prev evening/);
   assert.match(String(afterResult.output), /today early/);
 });

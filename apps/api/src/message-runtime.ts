@@ -14,6 +14,9 @@ export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
   onHeartbeatTick?: () => void;
+  getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
+  getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
+  clearLLMSession?(reason: string): void;
   isLLMSessionActive?: () => boolean;
   setTypingIndicator?(input: {
     plugin: string;
@@ -52,7 +55,7 @@ export type MessageRuntimeDeps = {
   agentState?: Pick<
     AgentStateController,
     "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "noteInboundMessage" | "onChange" | "tick"
-  >;
+  > & Partial<Pick<AgentStateController, "setState">>;
   outputRouter: {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };
@@ -127,6 +130,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         rawJson: safeJson(event.meta.raw),
         summary: contentText
       });
+      if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
+        deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
+        deps.clearLLMSession?.("force_wake");
+        deps.appendLog("info", `force wake command handled: ${event.session.sessionId}`);
+        return;
+      }
       const receivedAt = event.meta.receivedAt;
       deps.store.upsertInboundMessage({
         plugin: event.source.plugin,
@@ -248,6 +257,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     if (canRunHeartbeat()) deps.onHeartbeatTick?.();
     let processed = 0;
+    const sleepCocoonMorningEvent = !force && canRunHeartbeat()
+      ? deps.getSleepCocoonMorningEvent?.()
+      : undefined;
+    if (sleepCocoonMorningEvent) {
+      const handled = await runGeneratedSession(sleepCocoonMorningEvent, "sleep cocoon morning");
+      if (handled) processed += 1;
+    }
+    const sleepCocoonGoodnightEvent = !force && canRunHeartbeat() && !hasPendingUserMessages()
+      ? deps.getSleepCocoonGoodnightEvent?.()
+      : undefined;
+    if (sleepCocoonGoodnightEvent) {
+      const handled = await runGeneratedSession(sleepCocoonGoodnightEvent, "sleep cocoon goodnight");
+      if (handled) processed += 1;
+    }
     const sessionIds = [...pendingSessions];
     for (const sessionId of sessionIds) {
       if (processingSessions.has(sessionId)) continue;
@@ -345,9 +368,68 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
   }
 
+  async function runGeneratedSession(event: AgentEvent, label: string): Promise<boolean> {
+    if (processingSessions.has(event.session.sessionId)) return false;
+    processingSessions.add(event.session.sessionId);
+    try {
+      await setTypingIndicator({ ...event.source, sessionId: event.session.sessionId, typing: true });
+      deps.appendLog("info", `${label} session started: ${event.session.sessionId}`);
+      const outputs = await deps.core.handleEvent(event);
+      const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
+        plugin: output.target.plugin,
+        conversationId: output.target.sessionId,
+        senderRole: "assistant",
+        contentType: output.content.kind,
+        contentText: summarizeOutput(output.content),
+        contentJson: safeJson(output.content),
+        createdAt: output.meta.createdAt
+      }));
+      try {
+        const sendResults = await deps.outputRouter.sendAll(outputs);
+        const sentAt = time.now().iso;
+        const resultList = Array.isArray(sendResults) ? sendResults : [];
+        for (const [index, message] of outboundMessages.entries()) {
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+        }
+      } catch (error) {
+        const failedAt = time.now().iso;
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const message of outboundMessages) {
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+        }
+        throw error;
+      }
+      for (const output of outputs) {
+        deps.appendMessageLog({
+          direction: "outbound",
+          plugin: output.target.plugin,
+          kind: output.content.kind,
+          target: output.target.channelId ?? output.target.userId,
+          sessionId: output.target.sessionId,
+          status: "sent",
+          summary: summarizeOutput(output.content)
+        });
+      }
+      deps.appendLog("info", `${label} session handled: ${outputs.length} output(s)`);
+      return true;
+    } catch (error) {
+      deps.appendLog("error", `${label} session failed: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    } finally {
+      await setTypingIndicator({ ...event.source, sessionId: event.session.sessionId, typing: false });
+      processingSessions.delete(event.session.sessionId);
+    }
+  }
+
   function canRunHeartbeat(): boolean {
     if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
+  }
+
+  function hasPendingUserMessages(): boolean {
+    return pendingSessions.size > 0
+      || processingSessions.size > 0
+      || deps.store.listPendingCoreConversations().length > 0;
   }
 
   function shouldProcessPending(pending: StoredConversationMessage[]): boolean {

@@ -17,13 +17,16 @@ import { createMediaTools } from "../../../plugins/media/src/index.js";
 import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
+import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
 import { createMutableCurrentTimeProvider } from "../../../core/time/src/index.js";
+import { parseZonedIso } from "../../../core/time/src/index.js";
 import { createMessageRuntime, summarizePayload } from "./message-runtime.js";
 import { createApiRequestHandler } from "./admin-routes.js";
+import { createId } from "../../../packages/types/src/index.js";
 
 const http = await import("node:http");
 const fs = await import("node:fs");
@@ -100,6 +103,15 @@ type LLMResponseLogEntry = {
   raw?: unknown;
 };
 
+type LLMSessionTurn = {
+  round: number;
+  request?: LLMRequestLogEntry;
+  response?: LLMResponseLogEntry;
+  latestRequest?: LLMSessionRequestInfo;
+  latestResponse?: LLMSessionResponseInfo;
+  messages: LLMChatInput["messages"];
+};
+
 type ActiveLLMSession = {
   id: number;
   startedAt: string;
@@ -112,23 +124,53 @@ type ActiveLLMSession = {
   staticPromptFingerprint?: string;
   requestTimestamps: string[];
   lastTotalTokens?: number;
+  lastInputTokens?: number;
+  lastUsageModel?: string;
+  tokenPressurePreviewBaselines?: Record<string, number>;
   mode?: string;
   modeStaticMessages?: LLMChatInput["messages"];
   modeStaticTokenEstimate?: number;
   modeStartedAt?: string;
+  modeExpiresAt?: string;
+  fixedPrefixKind?: string;
+  fixedPrefixCursorMessageId?: number;
+  currentRound?: LLMSessionRoundInfo;
+  latestRequestInfo?: LLMSessionRequestInfo;
+  latestResponseInfo?: LLMSessionResponseInfo;
   clearedAt?: string;
   reason?: string;
   requests?: LLMRequestLogEntry[];
   responses?: LLMResponseLogEntry[];
 };
 
-type LLMSessionArchiveEvent =
-  | { recordType: "llm_session_event"; event: "session_started"; sessionId: number; time: string; startedAt: string }
-  | { recordType: "llm_session_event"; event: "messages_appended"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[]; lastTotalTokens?: number; mode?: string; modeStaticMessages?: LLMChatInput["messages"]; modeStaticTokenEstimate?: number; modeStartedAt?: string }
-  | { recordType: "llm_session_event"; event: "messages_replaced"; sessionId: number; time: string; messages: LLMChatInput["messages"]; staticPromptFingerprint?: string; requestTimestamps?: string[]; lastTotalTokens?: number; mode?: string; modeStaticMessages?: LLMChatInput["messages"]; modeStaticTokenEstimate?: number; modeStartedAt?: string }
-  | { recordType: "llm_session_event"; event: "request_logged"; sessionId: number; time: string; requestId: number; request: LLMRequestLogEntry }
-  | { recordType: "llm_session_event"; event: "response_logged"; sessionId: number; time: string; responseId: number; response: LLMResponseLogEntry }
-  | { recordType: "llm_session_event"; event: "session_cleared"; sessionId: number; time: string; reason: LLMSessionClearReason };
+type LLMSessionRoundInfo = {
+  status: "running" | "finished" | "interrupted";
+  round: number;
+  startedAt: string;
+  finishedAt?: string;
+  model?: string;
+  temperature?: number;
+  tools?: LLMChatInput["tools"];
+  extraParams?: Record<string, unknown>;
+};
+
+type LLMSessionRequestInfo = {
+  time: string;
+  round: number;
+  model?: string;
+  temperature?: number;
+  tools?: LLMChatInput["tools"];
+  extraParams?: Record<string, unknown>;
+  messageCount: number;
+};
+
+type LLMSessionResponseInfo = {
+  time: string;
+  round: number;
+  finishReason?: string;
+  usage?: LLMChatResult["usage"];
+  toolCallCount: number;
+};
 
 const logs: LogEntry[] = [];
 const messageLogs: MessageLogEntry[] = [];
@@ -190,6 +232,18 @@ const agentState = createAgentStateController({
     appendLog("warn", `agent state persist failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
+let previousAgentBehaviorState = agentState.getSnapshot().state;
+let pendingSleepCocoonMorningEvent: ReturnType<typeof buildSleepCocoonGeneratedEvent> | undefined;
+agentState.onChange((snapshot) => {
+  if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
+    core.clearLLMSession("mode_transition");
+    if (snapshot.reason === "sleep_started") void sendSystemNoticeToDefaultTarget("-少女已入眠-");
+  }
+  if (previousAgentBehaviorState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
+    pendingSleepCocoonMorningEvent = buildSleepCocoonGeneratedEvent("sleep_cocoon_morning", { sleepCocoonMorning: true });
+  }
+  previousAgentBehaviorState = snapshot.state;
+});
 const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu-paired-contacts.json", {
   read(filePath) {
     return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : undefined;
@@ -225,6 +279,7 @@ const messagingTools = createMessagingTools({
   tts: config.tts,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
+  getSleepCocoonEnteredAt: () => agentState.getSnapshot().sleepCocoonEnteredAt,
   getDefaultTarget() {
     return getDefaultMessagingTarget();
   },
@@ -286,7 +341,8 @@ const bookcaseTools = createBookcaseTools({
   outputRouter,
   appendMessageLog
 });
-const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools];
+const sleepCocoonTools = createSleepCocoonTools({ agentState, time: currentTime });
+const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools, sleepCocoonTools];
 const core = createAgentCore({
   config,
   llm: activeLLM,
@@ -380,6 +436,17 @@ const messageRuntime = createMessageRuntime({
   onHeartbeatTick() {
     dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
   },
+  getSleepCocoonGoodnightEvent() {
+    return maybeBuildSleepCocoonGoodnightEvent();
+  },
+  getSleepCocoonMorningEvent() {
+    const event = pendingSleepCocoonMorningEvent;
+    pendingSleepCocoonMorningEvent = undefined;
+    return event;
+  },
+  clearLLMSession(reason) {
+    core.clearLLMSession("mode_transition");
+  },
   appendLog,
   appendMessageLog
 });
@@ -419,6 +486,7 @@ const server = http.createServer(createApiRequestHandler({
   mediaTools,
   shellTools,
   bookcaseTools,
+  sleepCocoonTools,
   feishu,
   wechat,
   wechatStateStore,
@@ -775,7 +843,7 @@ function ensureActiveLLMSession(time: string): ActiveLLMSession {
       id: nextLLMSessionId,
       startedAt: time,
       updatedAt: time,
-      archiveFilePath: llmSessionFilePath(time),
+      archiveFilePath: createLLMSessionFilePath(time),
       requestIds: [],
       responseIds: [],
       messages: [],
@@ -783,13 +851,8 @@ function ensureActiveLLMSession(time: string): ActiveLLMSession {
       requestTimestamps: []
     };
     nextLLMSessionId += 1;
-    appendLLMSessionArchiveEvent(activeLLMSession, {
-      recordType: "llm_session_event",
-      event: "session_started",
-      sessionId: activeLLMSession.id,
-      time,
-      startedAt: time
-    });
+    writeLLMSessionFile(activeLLMSession);
+    writeCurrentLLMSessionPointer(activeLLMSession);
   }
   return activeLLMSession;
 }
@@ -801,14 +864,26 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
   session.requestIds.push(entry.id);
   session.latestRequest = entry.rawRequest;
   session.requests = [...(session.requests ?? []), archiveRequestEntry(entry)];
-  appendLLMSessionArchiveEvent(session, {
-    recordType: "llm_session_event",
-    event: "request_logged",
-    sessionId: session.id,
+  const round = session.requestIds.length - 1;
+  session.currentRound = {
+    status: "running",
+    round,
+    startedAt: entry.time,
+    model: entry.model,
+    temperature: entry.temperature,
+    tools: cloneLLMTools(entry.tools),
+    extraParams: cloneJsonObject(entry.extraParams)
+  };
+  session.latestRequestInfo = {
     time: entry.time,
-    requestId: entry.id,
-    request: archiveRequestEntry(entry)
-  });
+    round,
+    model: entry.model,
+    temperature: entry.temperature,
+    tools: cloneLLMTools(entry.tools),
+    extraParams: cloneJsonObject(entry.extraParams),
+    messageCount: entry.messages.length
+  };
+  writeLLMSessionMetadata(session);
 }
 
 function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
@@ -816,14 +891,21 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
   activeLLMSession.updatedAt = entry.time;
   activeLLMSession.responseIds.push(entry.id);
   activeLLMSession.responses = [...(activeLLMSession.responses ?? []), entry];
-  appendLLMSessionArchiveEvent(activeLLMSession, {
-    recordType: "llm_session_event",
-    event: "response_logged",
-    sessionId: activeLLMSession.id,
+  const round = activeLLMSession.currentRound?.round ?? Math.max(0, activeLLMSession.requestIds.length - 1);
+  activeLLMSession.currentRound = {
+    ...(activeLLMSession.currentRound ?? { round, startedAt: entry.time }),
+    status: "finished",
+    round,
+    finishedAt: entry.time
+  };
+  activeLLMSession.latestResponseInfo = {
     time: entry.time,
-    responseId: entry.id,
-    response: entry
-  });
+    round,
+    finishReason: entry.finishReason,
+    usage: entry.usage,
+    toolCallCount: entry.message.toolCalls?.length ?? 0
+  };
+  writeLLMSessionMetadata(activeLLMSession);
 }
 
 function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {
@@ -837,58 +919,61 @@ function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPr
   const nextModeStaticMessages = input.modeStaticMessages ?? [];
   const nextModeStaticTokenEstimate = input.modeStaticTokenEstimate ?? 0;
   const nextModeStartedAt = nextMode === "normal" ? undefined : input.modeStartedAt;
-  const tokenUsageChanged = session.lastTotalTokens !== input.lastTotalTokens;
+  const nextModeExpiresAt = nextMode === "fixed_prefix" ? input.modeExpiresAt : undefined;
+  const nextFixedPrefixKind = nextMode === "fixed_prefix" ? input.fixedPrefixKind : undefined;
+  const nextFixedPrefixCursorMessageId = nextMode === "fixed_prefix" ? input.fixedPrefixCursorMessageId : undefined;
+  const nextTokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(input.tokenPressurePreviewBaselines);
+  const tokenUsageChanged = session.lastTotalTokens !== input.lastTotalTokens
+    || session.lastInputTokens !== input.lastInputTokens
+    || session.lastUsageModel !== input.lastUsageModel
+    || stableStringify(session.tokenPressurePreviewBaselines ?? {}) !== stableStringify(nextTokenPressurePreviewBaselines);
   const modeChanged = session.mode !== nextMode
     || session.modeStaticTokenEstimate !== nextModeStaticTokenEstimate
     || session.modeStartedAt !== nextModeStartedAt
+    || session.modeExpiresAt !== nextModeExpiresAt
+    || session.fixedPrefixKind !== nextFixedPrefixKind
+    || session.fixedPrefixCursorMessageId !== nextFixedPrefixCursorMessageId
     || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
+  if (!isAppend) {
+    session.clearedAt = now;
+    session.reason = "transcript_replaced";
+    writeLLMSessionMetadata(session);
+    clearCurrentLLMSessionPointer();
+    activeLLMSession = undefined;
+    appendLog("warn", `llm active session archived without transcript rewrite: session=${session.id} common_prefix=${commonPrefix} next_messages=${input.messages.length}`);
+    return;
+  }
   session.messages = input.messages;
   session.staticPromptFingerprint = input.staticPromptFingerprint;
   session.requestTimestamps = input.requestTimestamps;
   session.lastTotalTokens = input.lastTotalTokens;
+  session.lastInputTokens = input.lastInputTokens;
+  session.lastUsageModel = input.lastUsageModel;
+  session.tokenPressurePreviewBaselines = nextTokenPressurePreviewBaselines;
   session.mode = nextMode;
   session.modeStaticMessages = nextModeStaticMessages;
   session.modeStaticTokenEstimate = nextModeStaticTokenEstimate;
   session.modeStartedAt = nextModeStartedAt;
-  if (isAppend && delta.length === 0 && !tokenUsageChanged && !modeChanged) return;
-  appendLLMSessionArchiveEvent(session, {
-    recordType: "llm_session_event",
-    event: isAppend ? "messages_appended" : "messages_replaced",
-    sessionId: session.id,
-    time: now,
-    messages: isAppend ? delta : input.messages,
-    staticPromptFingerprint: input.staticPromptFingerprint,
-    requestTimestamps: input.requestTimestamps,
-    lastTotalTokens: input.lastTotalTokens,
-    mode: session.mode,
-    modeStaticMessages: session.modeStaticMessages,
-    modeStaticTokenEstimate: session.modeStaticTokenEstimate,
-    modeStartedAt: session.modeStartedAt
-  });
+  session.modeExpiresAt = nextModeExpiresAt;
+  session.fixedPrefixKind = nextFixedPrefixKind;
+  session.fixedPrefixCursorMessageId = nextFixedPrefixCursorMessageId;
+  if (delta.length > 0) appendLLMSessionMessages(session, delta);
+  if (delta.length > 0 || tokenUsageChanged || modeChanged) writeLLMSessionMetadata(session);
 }
 
 function clearActiveLLMSession(reason: LLMSessionClearReason): void {
-  if (!activeLLMSession) return;
+  if (!activeLLMSession) {
+    clearCurrentLLMSessionPointer();
+    return;
+  }
   const sessionId = activeLLMSession.id;
   const requestCount = activeLLMSession.requestIds.length;
   activeLLMSession.clearedAt = currentTime.now().iso;
   activeLLMSession.reason = reason;
-  appendLLMSessionArchiveEvent(activeLLMSession, {
-    recordType: "llm_session_event",
-    event: "session_cleared",
-    sessionId: activeLLMSession.id,
-    time: activeLLMSession.clearedAt,
-    reason
-  });
+  writeLLMSessionMetadata(activeLLMSession);
+  clearCurrentLLMSessionPointer();
   activeLLMSession = undefined;
   appendLog("info", `llm active session cleared: session=${sessionId} reason=${reason} requests=${requestCount}`);
-}
-
-function appendLLMSessionArchiveEvent(session: ActiveLLMSession, event: LLMSessionArchiveEvent): void {
-  const filePath = session.archiveFilePath ?? llmSessionFilePath(session.startedAt);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`);
-  session.archiveFilePath = filePath;
 }
 
 function getActiveLLMSessionSnapshot(): unknown {
@@ -905,10 +990,16 @@ function loadActiveLLMSessionTranscript(): LLMSessionSnapshot | undefined {
     staticPromptFingerprint: latest.staticPromptFingerprint,
     requestTimestamps: latest.requestTimestamps,
     lastTotalTokens: latest.lastTotalTokens,
+    lastInputTokens: latest.lastInputTokens,
+    lastUsageModel: latest.lastUsageModel,
+    tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(latest.tokenPressurePreviewBaselines),
     mode: latest.mode ?? "normal",
     modeStaticMessages: latest.modeStaticMessages ?? [],
     modeStaticTokenEstimate: latest.modeStaticTokenEstimate ?? 0,
-    modeStartedAt: latest.modeStartedAt
+    modeStartedAt: latest.modeStartedAt,
+    modeExpiresAt: latest.modeExpiresAt,
+    fixedPrefixKind: latest.fixedPrefixKind,
+    fixedPrefixCursorMessageId: latest.fixedPrefixCursorMessageId
   };
 }
 
@@ -928,180 +1019,256 @@ function commonMessagePrefixLength(left: LLMChatInput["messages"], right: LLMCha
   return index;
 }
 
-function llmSessionFilePath(time: string): string {
+function llmSessionsRoot(): string {
+  return path.join(config.memoryFiles.root, "llm-sessions");
+}
+
+function currentLLMSessionPointerPath(): string {
+  return path.join(llmSessionsRoot(), "current.json");
+}
+
+function createLLMSessionFilePath(time: string): string {
   const date = String(time || currentTime.now().iso).slice(0, 10);
-  return path.join(config.memoryFiles.root, "llm-sessions", `${date}.sessions.jsonl`);
+  const clock = String(time || currentTime.now().iso).slice(11, 19).replace(/:/g, "-") || "00-00-00";
+  const dir = path.join(llmSessionsRoot(), date);
+  fs.mkdirSync(dir, { recursive: true });
+  let filePath = path.join(dir, `${clock}.sessions.jsonl`);
+  let suffix = 2;
+  while (fs.existsSync(filePath)) {
+    filePath = path.join(dir, `${clock}-${suffix}.sessions.jsonl`);
+    suffix += 1;
+  }
+  return filePath;
+}
+
+function relativeLLMSessionPath(filePath: string): string {
+  return path.relative(llmSessionsRoot(), filePath).replace(/\\/g, "/");
+}
+
+function absoluteLLMSessionPath(relativePath: string): string {
+  const root = llmSessionsRoot();
+  const resolved = path.resolve(root, relativePath);
+  const relative = path.relative(path.resolve(root), resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("llm session pointer outside root");
+  return resolved;
+}
+
+function writeCurrentLLMSessionPointer(session: ActiveLLMSession): void {
+  if (!session.archiveFilePath) return;
+  fs.mkdirSync(llmSessionsRoot(), { recursive: true });
+  fs.writeFileSync(currentLLMSessionPointerPath(), `${JSON.stringify({
+    path: relativeLLMSessionPath(session.archiveFilePath),
+    sessionId: session.id
+  }, null, 2)}\n`);
+}
+
+function clearCurrentLLMSessionPointer(): void {
+  try {
+    fs.rmSync(currentLLMSessionPointerPath(), { force: true });
+  } catch {
+    // Ignore pointer cleanup errors; the archived session metadata is still written.
+  }
+}
+
+function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
+  const last = session.messages.at(-1);
+  return {
+    type: "llm_session",
+    schemaVersion: 1,
+    sessionId: session.id,
+    startedAt: session.startedAt,
+    updatedAt: session.updatedAt,
+    staticPromptFingerprint: session.staticPromptFingerprint,
+    requestTimestamps: session.requestTimestamps,
+    lastTotalTokens: session.lastTotalTokens,
+    lastInputTokens: session.lastInputTokens,
+    lastUsageModel: session.lastUsageModel,
+    tokenPressurePreviewBaselines: session.tokenPressurePreviewBaselines ?? {},
+    mode: session.mode ?? "normal",
+    modeStartedAt: session.modeStartedAt,
+    modeExpiresAt: session.modeExpiresAt,
+    modeStaticMessages: session.modeStaticMessages,
+    modeStaticTokenEstimate: session.modeStaticTokenEstimate ?? 0,
+    fixedPrefixKind: session.fixedPrefixKind,
+    fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+    currentRound: session.currentRound,
+    latestRequest: session.latestRequestInfo,
+    latestResponse: session.latestResponseInfo,
+    messageCount: session.messages.length,
+    lastMessageRole: last?.role,
+    lastMessageAt: session.updatedAt,
+    clearedAt: session.clearedAt,
+    clearReason: session.reason
+  };
+}
+
+function writeLLMSessionFile(session: ActiveLLMSession): void {
+  const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAt);
+  session.archiveFilePath = filePath;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const lines = [
+    JSON.stringify(sessionMetadata(session)),
+    ...session.messages.map((message) => JSON.stringify(message))
+  ];
+  fs.writeFileSync(filePath, `${lines.join("\n")}\n`);
+}
+
+function writeLLMSessionMetadata(session: ActiveLLMSession): void {
+  if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
+    writeLLMSessionFile(session);
+    return;
+  }
+  const lines = fs.readFileSync(session.archiveFilePath, "utf8").split(/\r?\n/);
+  const rest = lines.slice(1).filter((line) => line.length > 0);
+  fs.writeFileSync(session.archiveFilePath, `${[JSON.stringify(sessionMetadata(session)), ...rest].join("\n")}\n`);
+}
+
+function appendLLMSessionMessages(session: ActiveLLMSession, messages: LLMChatInput["messages"]): void {
+  if (messages.length === 0) return;
+  if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
+    writeLLMSessionFile(session);
+    return;
+  }
+  fs.appendFileSync(session.archiveFilePath, messages.map((message) => JSON.stringify(message)).join("\n") + "\n");
 }
 
 function readLatestLLMSessionSnapshot(id: number): ActiveLLMSession | undefined {
-  const latest = readAllLLMSessions().filter((session) => session.id === id).at(-1);
-  return latest?.clearedAt ? latest : latest;
+  if (activeLLMSession?.id === id) return activeLLMSession;
+  return readAllLLMSessions().find((session) => session.id === id);
 }
 
 function restorePersistedActiveLLMSession(): ActiveLLMSession | undefined {
-  const sessions = readAllLLMSessions();
-  const latestById = new Map<number, ActiveLLMSession>();
-  for (const session of sessions) {
-    latestById.set(session.id, session);
+  const pointerPath = currentLLMSessionPointerPath();
+  if (!fs.existsSync(pointerPath)) return undefined;
+  try {
+    const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf8")) as { path?: unknown; sessionId?: unknown };
+    if (typeof pointer.path !== "string") return undefined;
+    const filePath = absoluteLLMSessionPath(pointer.path);
+    const session = readLLMSessionFile(filePath);
+    if (!session || session.clearedAt || !session.staticPromptFingerprint) return undefined;
+    if (session.currentRound?.status === "running") {
+      session.currentRound = {
+        ...session.currentRound,
+        status: "interrupted",
+        finishedAt: currentTime.now().iso
+      };
+      writeLLMSessionMetadata(session);
+    }
     nextLLMSessionId = Math.max(nextLLMSessionId, session.id + 1);
-    for (const request of session.requests ?? []) {
-      if (!llmRequestLogs.some((entry) => entry.id === request.id)) {
-        llmRequestLogs.push(request);
-        nextLLMRequestLogId = Math.max(nextLLMRequestLogId, request.id + 1);
-      }
-    }
-    for (const response of session.responses ?? []) {
-      if (!llmResponseLogs.some((entry) => entry.id === response.id)) {
-        llmResponseLogs.push(response);
-        nextLLMResponseLogId = Math.max(nextLLMResponseLogId, response.id + 1);
-      }
-    }
+    return session;
+  } catch (error) {
+    appendLog("warn", `llm session pointer restore failed: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
   }
-  llmRequestLogs.sort((left, right) => left.id - right.id);
-  llmResponseLogs.sort((left, right) => left.id - right.id);
-  const active = [...latestById.values()]
-    .filter((session) => !session.clearedAt && session.staticPromptFingerprint)
-    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
-  if (!active) return undefined;
-  return {
-    ...active,
-    archiveFilePath: active.archiveFilePath ?? llmSessionFilePath(active.startedAt)
-  };
 }
 
 function readAllLLMSessions(): ActiveLLMSession[] {
-  const dir = path.join(config.memoryFiles.root, "llm-sessions");
-  if (!fs.existsSync(dir)) return [];
-  const sessions = new Map<number, ActiveLLMSession>();
-  for (const name of fs.readdirSync(dir).filter((item) => item.endsWith(".sessions.jsonl")).sort()) {
-    const filePath = path.join(dir, name);
-    for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        applyLLMSessionArchiveRecord(sessions, JSON.parse(line), filePath);
-      } catch {
-        appendLog("warn", `llm session archive parse failed: ${filePath}`);
-      }
+  const root = llmSessionsRoot();
+  if (!fs.existsSync(root)) return [];
+  const files: string[] = [];
+  collectLLMSessionFiles(root, files);
+  return files
+    .map((filePath) => readLLMSessionFile(filePath))
+    .filter((session): session is ActiveLLMSession => Boolean(session));
+}
+
+function collectLLMSessionFiles(dir: string, files: string[]): void {
+  for (const entry of (fs.readdirSync as any)(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectLLMSessionFiles(fullPath, files);
+    } else if (entry.isFile() && entry.name.endsWith(".sessions.jsonl")) {
+      files.push(fullPath);
     }
   }
-  return [...sessions.values()];
 }
 
-function applyLLMSessionArchiveRecord(sessions: Map<number, ActiveLLMSession>, record: unknown, filePath: string): void {
-  if (!record || typeof record !== "object") return;
-  const raw = record as Record<string, unknown>;
-  if (raw.recordType === "llm_session_event") {
-    applyLLMSessionArchiveEvent(sessions, raw as LLMSessionArchiveEvent, filePath);
-    return;
-  }
-  applyLegacyLLMSessionSnapshot(sessions, raw, filePath);
-}
-
-function applyLegacyLLMSessionSnapshot(sessions: Map<number, ActiveLLMSession>, raw: Record<string, unknown>, filePath: string): void {
-  if (typeof raw.id !== "number") return;
-  sessions.set(raw.id, {
-    id: raw.id,
-    startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
-    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
-    archiveFilePath: typeof raw.archiveFilePath === "string" ? raw.archiveFilePath : filePath,
-    requestIds: numberArray(raw.requestIds),
-    responseIds: numberArray(raw.responseIds),
-    messages: Array.isArray(raw.messages) ? raw.messages as LLMChatInput["messages"] : [],
-    latestRequest: raw.latestRequest,
-    staticPromptFingerprint: typeof raw.staticPromptFingerprint === "string" ? raw.staticPromptFingerprint : undefined,
-    requestTimestamps: stringArray(raw.requestTimestamps),
-    lastTotalTokens: typeof raw.lastTotalTokens === "number" && Number.isFinite(raw.lastTotalTokens) ? raw.lastTotalTokens : undefined,
-    mode: typeof raw.mode === "string" ? raw.mode : "normal",
-    modeStaticMessages: Array.isArray(raw.modeStaticMessages) ? raw.modeStaticMessages as LLMChatInput["messages"] : [],
-    modeStaticTokenEstimate: typeof raw.modeStaticTokenEstimate === "number" && Number.isFinite(raw.modeStaticTokenEstimate) ? raw.modeStaticTokenEstimate : 0,
-    modeStartedAt: typeof raw.modeStartedAt === "string" ? raw.modeStartedAt : undefined,
-    clearedAt: typeof raw.clearedAt === "string" ? raw.clearedAt : undefined,
-    reason: typeof raw.reason === "string" ? raw.reason : undefined,
-    requests: Array.isArray(raw.requests) ? raw.requests as LLMRequestLogEntry[] : [],
-    responses: Array.isArray(raw.responses) ? raw.responses as LLMResponseLogEntry[] : []
-  });
-}
-
-function applyLLMSessionArchiveEvent(sessions: Map<number, ActiveLLMSession>, event: LLMSessionArchiveEvent, filePath: string): void {
-  if (typeof event.sessionId !== "number") return;
-  const session = getOrCreateArchivedLLMSession(sessions, event.sessionId, event.time, filePath);
-  session.archiveFilePath = filePath;
-  session.updatedAt = event.time || session.updatedAt;
-  if (event.event === "session_started") {
-    session.startedAt = event.startedAt;
-    session.updatedAt = event.time;
-    return;
-  }
-  if (event.event === "messages_appended") {
-    session.messages = [...session.messages, ...cloneLLMMessages(event.messages)];
-    session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
-    session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
-    session.lastTotalTokens = event.lastTotalTokens ?? session.lastTotalTokens;
-    session.mode = event.mode ?? session.mode ?? "normal";
-    session.modeStaticMessages = event.modeStaticMessages ? cloneLLMMessages(event.modeStaticMessages) : session.modeStaticMessages ?? [];
-    session.modeStaticTokenEstimate = event.modeStaticTokenEstimate ?? session.modeStaticTokenEstimate ?? 0;
-    session.modeStartedAt = event.mode === "normal" ? undefined : event.modeStartedAt ?? session.modeStartedAt;
-    hydrateLatestEmptyRequestFromTranscript(session);
-    return;
-  }
-  if (event.event === "messages_replaced") {
-    session.messages = cloneLLMMessages(event.messages);
-    session.staticPromptFingerprint = event.staticPromptFingerprint ?? session.staticPromptFingerprint;
-    session.requestTimestamps = event.requestTimestamps ?? session.requestTimestamps;
-    session.lastTotalTokens = event.lastTotalTokens ?? session.lastTotalTokens;
-    session.mode = event.mode ?? session.mode ?? "normal";
-    session.modeStaticMessages = event.modeStaticMessages ? cloneLLMMessages(event.modeStaticMessages) : session.modeStaticMessages ?? [];
-    session.modeStaticTokenEstimate = event.modeStaticTokenEstimate ?? session.modeStaticTokenEstimate ?? 0;
-    session.modeStartedAt = event.mode === "normal" ? undefined : event.modeStartedAt ?? session.modeStartedAt;
-    hydrateLatestEmptyRequestFromTranscript(session);
-    return;
-  }
-  if (event.event === "request_logged") {
-    if (!session.requestIds.includes(event.requestId)) session.requestIds.push(event.requestId);
-    const messages = event.request.messages?.length ? cloneLLMMessages(event.request.messages) : cloneLLMMessages(session.messages);
-    const request = {
-      ...event.request,
-      sessionId: event.sessionId,
-      messages,
-      tools: cloneLLMTools(event.request.tools),
-      rawRequest: event.request.rawRequest ?? (messages.length ? buildRawLLMRequest({ ...event.request, messages }) : undefined)
+function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
+  try {
+    const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length === 0) return undefined;
+    const metadata = JSON.parse(lines[0]) as Record<string, unknown>;
+    if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
+    const messages = lines.slice(1).map((line) => JSON.parse(line)) as LLMChatInput["messages"];
+    return {
+      id: metadata.sessionId,
+      startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
+      updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
+      archiveFilePath: filePath,
+      requestIds: [],
+      responseIds: [],
+      messages: cloneLLMMessages(messages),
+      latestRequest: undefined,
+      staticPromptFingerprint: typeof metadata.staticPromptFingerprint === "string" ? metadata.staticPromptFingerprint : undefined,
+      requestTimestamps: stringArray(metadata.requestTimestamps),
+      lastTotalTokens: typeof metadata.lastTotalTokens === "number" && Number.isFinite(metadata.lastTotalTokens) ? metadata.lastTotalTokens : undefined,
+      lastInputTokens: typeof metadata.lastInputTokens === "number" && Number.isFinite(metadata.lastInputTokens) ? metadata.lastInputTokens : undefined,
+      lastUsageModel: typeof metadata.lastUsageModel === "string" ? metadata.lastUsageModel : undefined,
+      tokenPressurePreviewBaselines: parseNumberRecord(metadata.tokenPressurePreviewBaselines),
+      mode: typeof metadata.mode === "string" ? metadata.mode : "normal",
+      modeStaticMessages: Array.isArray(metadata.modeStaticMessages) ? metadata.modeStaticMessages as LLMChatInput["messages"] : [],
+      modeStaticTokenEstimate: typeof metadata.modeStaticTokenEstimate === "number" && Number.isFinite(metadata.modeStaticTokenEstimate) ? metadata.modeStaticTokenEstimate : 0,
+      modeStartedAt: typeof metadata.modeStartedAt === "string" ? metadata.modeStartedAt : undefined,
+      modeExpiresAt: typeof metadata.modeExpiresAt === "string" ? metadata.modeExpiresAt : undefined,
+      fixedPrefixKind: typeof metadata.fixedPrefixKind === "string" ? metadata.fixedPrefixKind : undefined,
+      fixedPrefixCursorMessageId: typeof metadata.fixedPrefixCursorMessageId === "number" && Number.isFinite(metadata.fixedPrefixCursorMessageId) ? metadata.fixedPrefixCursorMessageId : undefined,
+      currentRound: parseRoundInfo(metadata.currentRound),
+      latestRequestInfo: parseRequestInfo(metadata.latestRequest),
+      latestResponseInfo: parseResponseInfo(metadata.latestResponse),
+      clearedAt: typeof metadata.clearedAt === "string" ? metadata.clearedAt : undefined,
+      reason: typeof metadata.clearReason === "string" ? metadata.clearReason : undefined,
+      requests: [],
+      responses: []
     };
-    session.requests = [...(session.requests ?? []).filter((entry) => entry.id !== request.id), request];
-    session.latestRequest = request.rawRequest;
-    return;
-  }
-  if (event.event === "response_logged") {
-    if (!session.responseIds.includes(event.responseId)) session.responseIds.push(event.responseId);
-    const response = { ...event.response, sessionId: event.sessionId };
-    session.responses = [...(session.responses ?? []).filter((entry) => entry.id !== response.id), response];
-    return;
-  }
-  if (event.event === "session_cleared") {
-    session.clearedAt = event.time;
-    session.reason = event.reason;
+  } catch {
+    appendLog("warn", `llm session file parse failed: ${filePath}`);
+    return undefined;
   }
 }
 
-function getOrCreateArchivedLLMSession(sessions: Map<number, ActiveLLMSession>, id: number, time: string, filePath: string): ActiveLLMSession {
-  const existing = sessions.get(id);
-  if (existing) return existing;
-  const session: ActiveLLMSession = {
-    id,
-    startedAt: time,
-    updatedAt: time,
-    archiveFilePath: filePath,
-    requestIds: [],
-    responseIds: [],
-    messages: [],
-    requestTimestamps: [],
-    mode: "normal",
-    modeStaticMessages: [],
-    modeStaticTokenEstimate: 0,
-    requests: [],
-    responses: []
+function parseRoundInfo(value: unknown): LLMSessionRoundInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const status = raw.status === "running" || raw.status === "finished" || raw.status === "interrupted" ? raw.status : undefined;
+  if (!status || typeof raw.round !== "number" || typeof raw.startedAt !== "string") return undefined;
+  return {
+    status,
+    round: raw.round,
+    startedAt: raw.startedAt,
+    finishedAt: typeof raw.finishedAt === "string" ? raw.finishedAt : undefined,
+    model: typeof raw.model === "string" ? raw.model : undefined,
+    temperature: typeof raw.temperature === "number" ? raw.temperature : undefined,
+    tools: Array.isArray(raw.tools) ? raw.tools as LLMChatInput["tools"] : undefined,
+    extraParams: raw.extraParams && typeof raw.extraParams === "object" ? raw.extraParams as Record<string, unknown> : undefined
   };
-  sessions.set(id, session);
-  return session;
+}
+
+function parseRequestInfo(value: unknown): LLMSessionRequestInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.time !== "string" || typeof raw.round !== "number" || typeof raw.messageCount !== "number") return undefined;
+  return {
+    time: raw.time,
+    round: raw.round,
+    model: typeof raw.model === "string" ? raw.model : undefined,
+    temperature: typeof raw.temperature === "number" ? raw.temperature : undefined,
+    tools: Array.isArray(raw.tools) ? raw.tools as LLMChatInput["tools"] : undefined,
+    extraParams: raw.extraParams && typeof raw.extraParams === "object" ? raw.extraParams as Record<string, unknown> : undefined,
+    messageCount: raw.messageCount
+  };
+}
+
+function parseResponseInfo(value: unknown): LLMSessionResponseInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.time !== "string" || typeof raw.round !== "number" || typeof raw.toolCallCount !== "number") return undefined;
+  return {
+    time: raw.time,
+    round: raw.round,
+    finishReason: typeof raw.finishReason === "string" ? raw.finishReason : undefined,
+    usage: raw.usage && typeof raw.usage === "object" ? raw.usage as LLMChatResult["usage"] : undefined,
+    toolCallCount: raw.toolCallCount
+  };
 }
 
 function cloneLLMMessages(messages: LLMChatInput["messages"]): LLMChatInput["messages"] {
@@ -1125,6 +1292,10 @@ function cloneJsonObject<T>(value: T): T {
   if (!value || typeof value !== "object") return value;
   const text = JSON.stringify(value);
   return text === undefined ? value : JSON.parse(text) as T;
+}
+
+function cloneTokenPressurePreviewBaselines(value: Record<string, number> | undefined): Record<string, number> {
+  return parseNumberRecord(value);
 }
 
 function hydrateLatestEmptyRequestFromTranscript(session: ActiveLLMSession): void {
@@ -1152,6 +1323,15 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function parseNumberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "number" && Number.isFinite(entry)) result[key] = entry;
+  }
+  return result;
+}
+
 function getClearedLLMSessions(): unknown[] {
   const latestById = new Map<number, ActiveLLMSession>();
   for (const session of readAllLLMSessions()) {
@@ -1169,11 +1349,13 @@ function getLLMSession(id: number): unknown {
   return session ? {
     ...session,
     requests: (session.requests ?? []).sort(compareLLMLogEntries),
-    responses: (session.responses ?? []).sort(compareLLMLogEntries)
+    responses: (session.responses ?? []).sort(compareLLMLogEntries),
+    turns: buildLLMSessionTurns(session)
   } : undefined;
 }
 
 function summarizeLLMSession(session: ActiveLLMSession): unknown {
+  const roundCount = llmSessionRoundCount(session);
   return {
     id: session.id,
     startedAt: session.startedAt,
@@ -1182,14 +1364,70 @@ function summarizeLLMSession(session: ActiveLLMSession): unknown {
     responseIds: session.responseIds,
     requestCount: session.requests?.length ?? session.requestIds.length,
     responseCount: session.responses?.length ?? session.responseIds.length,
+    roundCount,
+    messageCount: session.messages.length,
+    currentRound: session.currentRound,
+    latestRequest: session.latestRequestInfo,
+    latestResponse: session.latestResponseInfo,
     staticPromptFingerprint: session.staticPromptFingerprint,
     mode: session.mode ?? "normal",
     modeStaticTokenEstimate: session.modeStaticTokenEstimate ?? 0,
     modeStartedAt: session.modeStartedAt,
+    modeExpiresAt: session.modeExpiresAt,
+    fixedPrefixKind: session.fixedPrefixKind,
+    fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
     clearedAt: session.clearedAt,
     reason: session.reason,
     archiveFilePath: session.archiveFilePath
   };
+}
+
+function llmSessionRoundCount(session: ActiveLLMSession): number {
+  const rounds = [
+    session.requests?.length ?? 0,
+    session.responses?.length ?? 0,
+    session.requestIds.length,
+    session.responseIds.length,
+    typeof session.currentRound?.round === "number" ? session.currentRound.round + 1 : 0,
+    typeof session.latestRequestInfo?.round === "number" ? session.latestRequestInfo.round + 1 : 0,
+    typeof session.latestResponseInfo?.round === "number" ? session.latestResponseInfo.round + 1 : 0
+  ];
+  return Math.max(0, ...rounds);
+}
+
+function buildLLMSessionTurns(session: ActiveLLMSession): LLMSessionTurn[] {
+  const requests = [...(session.requests ?? [])].sort(compareLLMLogEntries);
+  const responses = [...(session.responses ?? [])].sort(compareLLMLogEntries);
+  const count = Math.max(llmSessionRoundCount(session), 1);
+  const turns: LLMSessionTurn[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const request = requests[index];
+    const response = responses.find((entry) => entry.requestId === request?.id) ?? responses[index];
+    const latestRequest = session.latestRequestInfo?.round === index ? session.latestRequestInfo : undefined;
+    const latestResponse = session.latestResponseInfo?.round === index ? session.latestResponseInfo : undefined;
+    turns.push({
+      round: index,
+      request,
+      response,
+      latestRequest,
+      latestResponse,
+      messages: messagesForLLMSessionTurn(session, index, request, response, latestRequest)
+    });
+  }
+  return turns;
+}
+
+function messagesForLLMSessionTurn(
+  session: ActiveLLMSession,
+  index: number,
+  request: LLMRequestLogEntry | undefined,
+  response: LLMResponseLogEntry | undefined,
+  latestRequest: LLMSessionRequestInfo | undefined
+): LLMChatInput["messages"] {
+  if (request?.messages?.length) return cloneLLMMessages(request.messages);
+  if (latestRequest?.messageCount) return cloneLLMMessages(session.messages.slice(0, latestRequest.messageCount));
+  if (index === llmSessionRoundCount(session) - 1) return cloneLLMMessages(session.messages);
+  return response ? [{ ...response.message }] : [];
 }
 
 function compareLLMLogEntries(left: { time?: string; id?: number }, right: { time?: string; id?: number }): number {
@@ -1267,6 +1505,141 @@ function getDefaultFeishuTarget() {
     userId: contact.channelId ? undefined : contact.userId,
     sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"
   };
+}
+
+function maybeBuildSleepCocoonGoodnightEvent() {
+  const snapshot = agentState.getSnapshot();
+  if (!snapshot.sleepCocoonEnteredAt) return undefined;
+  if (snapshot.state === "going_to_sleep" || snapshot.state === "sleeping") return undefined;
+  if (!agentState.canRunHeartbeat()) return undefined;
+  const enteredAt = parseZonedIso(snapshot.sleepCocoonEnteredAt, currentTime.timeZone).getTime();
+  const nowMs = currentTime.now().epochMs;
+  const elapsedHours = (nowMs - enteredAt) / (60 * 60 * 1000);
+  if (elapsedHours < 22) return undefined;
+  const target = getDefaultMessagingTarget();
+  if (!target) return undefined;
+
+  const previousCheckHours = snapshot.sleepCocoonAutoCheckedAt
+    ? Math.max(22, (parseZonedIso(snapshot.sleepCocoonAutoCheckedAt, currentTime.timeZone).getTime() - enteredAt) / (60 * 60 * 1000))
+    : 22;
+  const currentHours = Math.max(previousCheckHours, elapsedHours);
+  const probability = sleepCocoonHazardProbability(previousCheckHours, currentHours);
+  const triggered = Math.random() < probability;
+  agentState.noteSleepCocoonAutoChecked();
+  if (!triggered) return undefined;
+  return buildSleepCocoonGeneratedEvent("sleep_cocoon_goodnight", { sleepCocoonGoodnight: true });
+}
+
+function buildSleepCocoonGeneratedEvent(idPrefix: string, raw: Record<string, unknown>) {
+  const target = getDefaultMessagingTarget();
+  if (!target) return undefined;
+  const receivedAt = currentTime.now().iso;
+  return {
+    id: createId(idPrefix),
+    source: {
+      plugin: target.plugin,
+      accountId: target.accountId,
+      channelId: target.channelId,
+      userId: target.userId
+    },
+    session: {
+      scope: "dm" as const,
+      sessionId: target.sessionId
+    },
+    type: "system.heartbeat" as const,
+    payload: {
+      kind: "text" as const,
+      text: `${idPrefix} mode should run now.`
+    },
+    meta: {
+      receivedAt,
+      raw
+    }
+  };
+}
+
+function sleepCocoonHazardProbability(previousHours: number, currentHours: number): number {
+  if (currentHours <= previousHours) return 0;
+  const previousCdf = normalCdf(previousHours, 24, 1);
+  const currentCdf = normalCdf(currentHours, 24, 1);
+  const remaining = Math.max(1e-9, 1 - previousCdf);
+  return Math.max(0, Math.min(1, (currentCdf - previousCdf) / remaining));
+}
+
+function normalCdf(value: number, mean: number, standardDeviation: number): number {
+  return 0.5 * (1 + erf((value - mean) / (standardDeviation * Math.SQRT2)));
+}
+
+function erf(value: number): number {
+  const sign = value < 0 ? -1 : 1;
+  const x = Math.abs(value);
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+
+async function sendSystemNoticeToDefaultTarget(text: string): Promise<void> {
+  const target = getDefaultMessagingTarget();
+  if (!target || !store) return;
+  const output = {
+    id: createId("sleep_notice"),
+    target,
+    content: { kind: "text" as const, text },
+    meta: {
+      createdAt: currentTime.now().iso,
+      urgency: "normal" as const,
+      allowStreaming: false
+    }
+  };
+  const stored = store.insertOutboundMessage({
+    plugin: output.target.plugin,
+    conversationId: output.target.sessionId,
+    senderRole: "system",
+    contentType: output.content.kind,
+    contentText: text,
+    contentJson: JSON.stringify(output.content),
+    createdAt: output.meta.createdAt
+  });
+  try {
+    const sent = await outputRouter.send(output);
+    store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), currentTime.now().iso);
+    appendMessageLog({
+      direction: "outbound",
+      plugin: output.target.plugin,
+      kind: output.content.kind,
+      target: output.target.channelId ?? output.target.userId,
+      sessionId: output.target.sessionId,
+      status: "sent",
+      summary: text
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    store.markOutboundMessageFailed(stored.id, currentTime.now().iso, reason);
+    appendMessageLog({
+      direction: "outbound",
+      plugin: output.target.plugin,
+      kind: output.content.kind,
+      target: output.target.channelId ?? output.target.userId,
+      sessionId: output.target.sessionId,
+      status: "send_failed",
+      summary: text,
+      error: reason
+    });
+  }
+}
+
+function extractSentMessageId(value: unknown): string | undefined {
+  if (value && typeof value === "object" && "messageId" in value) {
+    const messageId = (value as { messageId?: unknown }).messageId;
+    return typeof messageId === "string" ? messageId : undefined;
+  }
+  return undefined;
 }
 
 async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview | undefined> {

@@ -64,6 +64,25 @@ LLM_MODEL=deepseek-chat
 
 如果使用本地 opencode 兼容端点，把 `LLM_BASE_URL` 指向它的 `/v1` base URL。
 
+睡眠 Memorize 使用独立模型配置，不复用 Core 对话模型：
+
+```bash
+MEMORY_SUMMARY_ENABLED=true
+MEMORY_SUMMARY_BASE_URL=https://api.deepseek.com
+MEMORY_SUMMARY_API_KEY=...
+MEMORY_SUMMARY_MODEL=deepseek-v4-pro
+MEMORY_SUMMARY_TEMPERATURE=0.8
+MEMORY_SUMMARY_TIMEOUT_MS=120000
+MEMORY_SUMMARY_EXTRA_PARAMS={"thinking":{"type":"enabled"},"reasoning_effort":"high"}
+```
+
+也可以只设置 `DEEPSEEK_API_KEY`，或复用 `LLM_BASE_URL` / `LLM_API_KEY` 作为 API 授权与端点；Memorize 不复用 Core 的模型和温度，默认仍是 `deepseek-v4-pro` / `0.8`。长期记忆保存在 `memory-files/long-term-memory/`，该目录是 git 仓库；agent 日记保存在 `memory-files/diary/diary.sqlite`。一次性历史回填命令：
+
+```bash
+npm run build
+node dist/scripts/backfill-sleep-memory.js
+```
+
 自拍图片工具需要 OpenAI Image API key：
 
 ```bash

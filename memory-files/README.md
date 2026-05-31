@@ -4,6 +4,40 @@
 
 ## 当前用途
 
+Memorize 使用长期记忆 git 仓库和日记 SQLite：
+
+```text
+memory-files/long-term-memory/persistent-memory.md
+memory-files/long-term-memory/user-preferences.md
+memory-files/diary/diary.sqlite
+```
+
+- `long-term-memory/persistent-memory.md`：长期事实、关系连续性和稳定背景，最多 100 行且不超过 10 KiB（10240 字节）。
+- `long-term-memory/user-preferences.md`：用户稳定偏好、互动风格和约束，最多 80 行且不超过 8 KiB（8192 字节）。
+- `diary/diary.sqlite`：agent 每日日记；最新日记会作为 `{{memory/yesterdaySummary/content}}` 注入 prompt，单条最多 20 行且不超过 2 KiB（2048 字节）。
+
+`long-term-memory/` 是独立 git 仓库。每次 Memorize 写入持久记忆或用户偏好后，会直接提交一次 git 历史；这些修订历史不进入 SQLite。
+
+睡眠 Memorize 与 `sleep_cocoon` 工具解耦：系统监听 Agent 状态切换，当状态进入 `sleeping` 时，先记录当前归纳时间戳，再读取上一个归纳时间戳到当前时间戳之间的聊天记录并归纳。归纳状态保存到：
+
+```text
+memory-files/state/sleep-memory-state.json
+```
+
+如果归纳失败，已经成功写入的目标保持不变，`lastInductionAt` 不前进，下一次进入睡眠时会重试同一窗口。应急回填从管理后台 Memory 标签按日期一天一天运行。
+
+Memorize prompt 配置保存到：
+
+```text
+memory-files/config/memorize-prompts.json
+```
+
+Memorize 的原始 LLM 会话逐次保存为 JSONL，和 Core 会话分开：
+
+```text
+memory-files/llm-sessions/memorize/YYYY-MM-DD/*.sessions.jsonl
+```
+
 唯一飞书绑定保存到：
 
 ```text
@@ -44,4 +78,4 @@ memory-files/shell/
 
 ## 当前未使用部分
 
-Markdown 形式的长期 profile、session、topic 文件尚未实现。
+Markdown 形式的 session、topic 文件尚未实现。

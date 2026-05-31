@@ -25,6 +25,7 @@ memory-files/state/
 memory-files/config/
 memory-files/shell/
 memory-files/diary/*.sqlite*
+memory-files/diary/tmp/
 memory-files/long-term-memory/
 .env
 .DS_Store

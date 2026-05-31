@@ -10,8 +10,10 @@ import { createId } from "../../../packages/types/src/index.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptLayer, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
 import type { DailyShell } from "./shells.js";
+import type { MemorySnapshot } from "./memory.js";
 import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
+import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
 
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
@@ -22,6 +24,7 @@ export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "s
 export type LLMSessionSnapshot = {
   messages: LLMChatInput["messages"];
   staticPromptFingerprint?: string;
+  staticPromptMessageCount?: number;
   requestTimestamps?: string[];
   lastTotalTokens?: number;
   lastInputTokens?: number;
@@ -40,10 +43,32 @@ type ModeState = {
   mode: string;
   modeStaticMessages: LLMChatInput["messages"];
   modeStaticTokenEstimate: number;
+  tokenPressurePreviewBaselines: Record<string, number>;
   modeStartedAt?: number;
   modeExpiresAt?: number;
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
+};
+
+type CoreLLMTurnInput = {
+  messages: LLMChatInput["messages"];
+  client?: LLMClient;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  extraParams?: Record<string, unknown>;
+  followupExtraParams?: Record<string, unknown>;
+  stream?: boolean;
+  toolNames: string[];
+};
+
+type CoreLLMRuntimeConfig = {
+  client?: LLMClient;
+  model?: string;
+  temperature?: number;
+  extraParams?: Record<string, unknown>;
+  followupExtraParams?: Record<string, unknown>;
+  stream?: boolean;
 };
 
 export type AgentCoreDeps = {
@@ -58,10 +83,13 @@ export type AgentCoreDeps = {
   getDailyShell?: () => string;
   getDailyShellRaw?: () => DailyShell;
   getAppearanceDescription?: () => string;
+  getMemorySnapshot?: () => MemorySnapshot;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
   onLLMResponseReceived?(result: LLMChatResult): void;
+  llmRequestSender?: LLMRequestSender;
+  getLLMConfig?: () => CoreLLMRuntimeConfig;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
@@ -89,6 +117,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   type ActiveLLMSession = {
     messages: LLMChatInput["messages"];
     staticPromptFingerprint: string;
+    staticPromptMessageCount: number;
     requestTimestamps: number[];
     lastTotalTokens?: number;
     lastInputTokens?: number;
@@ -177,7 +206,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           time,
           dailyShell: deps.getDailyShell?.(),
           dailyShellRaw: deps.getDailyShellRaw?.(),
-          appearanceDescription: deps.getAppearanceDescription?.()
+          appearanceDescription: deps.getAppearanceDescription?.(),
+          memory: deps.getMemorySnapshot?.()
         });
         const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
           const promptContext = makePromptContext();
@@ -228,8 +258,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             activeLLMSession = {
               messages: promptMessages,
               staticPromptFingerprint: fingerprint,
+              staticPromptMessageCount: promptMessages.length,
               requestTimestamps: [],
-              tokenPressurePreviewBaselines: {},
+              tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
               mode: mode.mode,
               modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
               modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
@@ -289,20 +320,24 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             noteLLMSessionUpdated();
           };
           await appendSessionContext(activeLLMSession);
-          const textVariables = buildTurnTextVariables(event);
-          const llmInput = {
-            messages: activeLLMSession.messages,
+          const llmConfig = deps.getLLMConfig?.() ?? {
+            client: deps.llm,
             model: deps.config.llm.model,
             temperature: deps.config.llm.temperature,
-            tools: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => ({
-              type: "function" as const,
-              function: {
-                name: tool.name,
-                description: renderLLMTextValue(tool.description, textVariables),
-                parameters: renderLLMValue(tool.inputSchema, textVariables) as Record<string, unknown>
-              }
-            })))
-          } satisfies LLMChatInput;
+            extraParams: deps.config.llm.extraParams,
+            followupExtraParams: deps.config.llm.followupExtraParams,
+            stream: deps.config.llm.stream
+          };
+          const llmInput: CoreLLMTurnInput = {
+            messages: activeLLMSession.messages,
+            client: llmConfig.client,
+            model: llmConfig.model,
+            temperature: llmConfig.temperature,
+            extraParams: llmConfig.extraParams,
+            followupExtraParams: llmConfig.followupExtraParams,
+            stream: llmConfig.stream,
+            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
+          };
           const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession, ensureActiveLLMSession, appendSessionContext);
           sentMessage = llmResult.sentMessage;
           if (llmResult.invalidateSession) {
@@ -333,7 +368,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   };
 
   async function runLLMTurnWithTools(
-    input: LLMChatInput,
+    input: CoreLLMTurnInput,
     event: AgentEvent,
     toolPlugins: ToolPlugin[],
     session: ActiveLLMSession,
@@ -341,6 +376,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     appendSessionContext: (session: ActiveLLMSession) => Promise<void>
   ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean; invalidateSession?: boolean; finalResult?: LLMChatResult }> {
     const toolMap = new Map<string, ToolPlugin>();
+    const visibleToolNames = input.toolNames;
     for (const plugin of toolPlugins) {
       for (const tool of plugin.listTools()) {
         toolMap.set(tool.name, plugin);
@@ -355,96 +391,83 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
     }
 
-    let sentMessage = false;
-    let previousToolCallSignature: string | undefined;
-    let repeatedToolCallCount = 0;
     let sendChatCallCount = 0;
-    let totalToolCallCount = 0;
-    let invalidateSession = false;
-    let round = 0;
-    const maxLLMRequests = 12;
-    const maxTotalToolCalls = 20;
-    while (true) {
-      const ensuredSession = await ensureSession();
-      if (ensuredSession !== session) {
-        session = ensuredSession;
-        await appendSessionContext(session);
-      }
-      if (session.messages.length === 0) {
-        return { message: { role: "assistant", content: "" }, sentMessage, invalidateSession };
-      }
-      const requestTime = time.now().epochMs;
-      session.requestTimestamps = session.requestTimestamps.filter((timestamp) => requestTime - timestamp < 60_000);
-      if (session.requestTimestamps.length >= maxLLMRequestsPerMinute) {
-        deps.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.model });
-        noteLLMSessionUpdated();
-        return { message: session.messages.at(-1) ?? { role: "assistant", content: "" }, sentMessage, invalidateSession };
-      }
-      const requestInput = {
-        ...input,
-        messages: session.messages,
-        extraParams: round === 0 ? deps.config.llm.extraParams : deps.config.llm.followupExtraParams
-      };
-      deps.onLLMRequestPrepared?.(requestInput);
-      session.requestTimestamps.push(requestTime);
-      noteLLMSessionUpdated();
-      const { result, streamingToolSender } = await callLLMWithRetry(requestInput, event, toolMap, round);
-      await streamingToolSender.finish();
-      deps.onLLMResponseReceived?.(result);
-      const calls = result.message.toolCalls ?? [];
-      if (calls.length === 0) {
-        session.messages = [
-          ...session.messages,
-          {
-            role: "assistant",
-            content: result.message.content,
-            reasoningContent: result.message.reasoningContent
-          }
-        ];
-        noteLLMSessionUpdated();
-        return { message: result.message, sentMessage, invalidateSession, finalResult: result };
-      }
-
-      const effectiveCalls = calls.some((call) => isSendChatToolName(call.function.name))
-        ? calls.filter((call) => isSendChatToolName(call.function.name))
-        : calls;
-      let reachedToolCallLimit = false;
-      let previousToolNameForConsecutiveCheck = lastCompletedToolName;
-      let resetSessionAfterTools = false;
-      let continueAfterReset = false;
-      const toolMessages: LLMChatInput["messages"] = [];
-      for (const call of effectiveCalls) {
-        const textVariables = buildTurnTextVariables(event);
-        totalToolCallCount += 1;
-        if (totalToolCallCount >= maxTotalToolCalls) reachedToolCallLimit = true;
-        const isConsecutiveSelfie = call.function.name === "selfie" && previousToolNameForConsecutiveCheck === "selfie";
-        previousToolNameForConsecutiveCheck = call.function.name;
-        const currentToolCallSignature = toolCallSignature(call.function.name, call.function.arguments);
-        if (currentToolCallSignature === previousToolCallSignature) {
-          repeatedToolCallCount += 1;
-        } else {
-          previousToolCallSignature = currentToolCallSignature;
-          repeatedToolCallCount = 1;
+    let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
+    const loopResult = await runLLMToolLoop({
+      initialMessages: session.messages,
+      limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
+      async beforeRound({ round }) {
+        const ensuredSession = await ensureSession();
+        if (ensuredSession !== session) {
+          session = ensuredSession;
+          await appendSessionContext(session);
         }
-        if (repeatedToolCallCount >= 3) reachedToolCallLimit = true;
+        if (session.messages.length === 0) return { stop: true, messages: session.messages };
+        const requestTime = time.now().epochMs;
+        session.requestTimestamps = session.requestTimestamps.filter((timestamp) => requestTime - timestamp < 60_000);
+        if (session.requestTimestamps.length >= maxLLMRequestsPerMinute) {
+          deps.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.model });
+          noteLLMSessionUpdated();
+          return { stop: true, messages: session.messages };
+        }
+        session.requestTimestamps.push(requestTime);
+        noteLLMSessionUpdated();
+        return { messages: session.messages };
+      },
+      buildRequest({ round, messages }) {
+        streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
+        return {
+          agentId: "core",
+          client: input.client ?? deps.llm,
+          messages,
+          model: input.model,
+          temperature: input.temperature,
+          maxTokens: input.maxTokens,
+          extraParams: round === 0 ? input.extraParams : input.followupExtraParams,
+          toolNames: visibleToolNames,
+          toolVariables: buildTurnTextVariables(event),
+          stream: input.stream !== false && Boolean((input.client ?? deps.llm).chatStream),
+          streamHandlers: {
+            onToolCallDelta(delta) {
+              return streamingToolSender?.onToolCallDelta(delta);
+            }
+          }
+        };
+      },
+      sendRequest: deps.llmRequestSender ?? createLocalLLMRequestSender(toolPlugins),
+      async afterRequest() {
+        await streamingToolSender?.finish();
+      },
+      selectToolCalls(calls) {
+        return calls.some((call) => isSendChatToolName(call.function.name))
+          ? calls.filter((call) => isSendChatToolName(call.function.name))
+          : calls;
+      },
+      async executeTool(call, { result }): Promise<LLMToolLoopExecution> {
+        const textVariables = buildTurnTextVariables(event);
+        const isConsecutiveSelfie = call.function.name === "selfie" && lastCompletedToolName === "selfie";
+        let reachedToolCallLimit = false;
         if (isSendChatToolName(call.function.name)) {
           sendChatCallCount += 1;
           if (sendChatCallCount >= 5) reachedToolCallLimit = true;
         }
-        const streamedResult = streamingToolSender.resultFor(call.id);
+        const streamedResult = streamingToolSender?.resultFor(call.id);
         if (streamedResult) {
-          sentMessage = sentMessage || isSendChatToolName(call.function.name) && streamedResult.ok;
-          invalidateSession = invalidateSession || streamedResult.invalidateLLMSession === true;
           session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, streamedResult) ?? session.lastCheckChatCursorMessageId;
           lastCompletedToolName = call.function.name;
-          const toolMessage = {
-            role: "tool" as const,
-            toolCallId: call.id,
-            name: call.function.name,
-            content: formatToolResultForLLM(streamedResult, textVariables)
+          return {
+            message: {
+              role: "tool" as const,
+              toolCallId: call.id,
+              name: call.function.name,
+              content: formatToolResultForLLM(streamedResult, textVariables)
+            },
+            control: {
+              sentMessage: isSendChatToolName(call.function.name) && streamedResult.ok,
+              invalidateSession: streamedResult.invalidateLLMSession === true,
+              reachedToolCallLimit
+            }
           };
-          toolMessages.push(toolMessage);
-          continue;
         }
         const plugin = toolMap.get(call.function.name);
         let toolResult: ToolResult;
@@ -478,8 +501,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
         }
 
-        sentMessage = sentMessage || isSendChatToolName(call.function.name) && toolResult.ok;
-        invalidateSession = invalidateSession || toolResult.invalidateLLMSession === true;
         session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, toolResult) ?? session.lastCheckChatCursorMessageId;
         lastCompletedToolName = call.function.name;
         const toolMessage = {
@@ -488,15 +509,18 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           name: call.function.name,
           content: formatToolResultForLLM(toolResult, textVariables)
         };
-        toolMessages.push(toolMessage);
+        const control = {
+          sentMessage: isSendChatToolName(call.function.name) && toolResult.ok,
+          invalidateSession: toolResult.invalidateLLMSession === true,
+          reachedToolCallLimit,
+          resetSession: false,
+          continueAfterReset: false
+        };
         if (toolResult.resetLLMSession) {
           if (toolResult.clearFixedPrefix) {
             applyModeStateToNewSession = defaultModeState();
             activeLLMSession = undefined;
-            resetSessionAfterTools = true;
-            continueAfterReset = false;
-            invalidateSession = true;
-            break;
+            return { message: toolMessage, control: { ...control, resetSession: true, continueAfterReset: false, invalidateSession: true } };
           }
           const fixedPrefixKind = typeof toolResult.fixedPrefixKind === "string" && toolResult.fixedPrefixKind
             ? toolResult.fixedPrefixKind
@@ -530,60 +554,41 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             mode,
             modeStaticMessages,
             modeStaticTokenEstimate: estimateMessagesTokens(modeStaticMessages),
+            tokenPressurePreviewBaselines: {},
             modeStartedAt,
             modeExpiresAt: mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined,
             fixedPrefixKind,
             fixedPrefixCursorMessageId: mode === "fixed_prefix" ? session.lastCheckChatCursorMessageId : undefined
           };
           activeLLMSession = undefined;
-          resetSessionAfterTools = true;
-          continueAfterReset = mode === "fixed_prefix" || mode !== "normal";
-          invalidateSession = invalidateSession || mode === "normal";
-          break;
+          const shouldContinueAfterReset = mode === "fixed_prefix" || mode !== "normal";
+          if (shouldContinueAfterReset) deps.onLLMSessionRebuilt?.();
+          return {
+            message: toolMessage,
+            control: {
+              ...control,
+              resetSession: true,
+              continueAfterReset: shouldContinueAfterReset,
+              invalidateSession: control.invalidateSession || mode === "normal"
+            }
+          };
         }
-      }
-
-      if (resetSessionAfterTools) {
-        if (continueAfterReset && !reachedToolCallLimit && round + 1 < maxLLMRequests) {
-          deps.onLLMSessionRebuilt?.();
-          round += 1;
-          continue;
-        }
+        return { message: toolMessage, control };
+      },
+      async onMessagesChanged({ messages }) {
+        session.messages = messages;
         noteLLMSessionUpdated();
-        return { message: result.message, sentMessage, invalidateSession, finalResult: result };
       }
-
-      if (reachedToolCallLimit || round + 1 >= maxLLMRequests) {
-        session.messages = [
-          ...session.messages,
-          {
-            role: "assistant",
-            content: result.message.content,
-            reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, effectiveCalls.length),
-            toolCalls: effectiveCalls
-          },
-          ...toolMessages
-        ];
-        noteLLMSessionUpdated();
-        return { message: result.message, sentMessage, invalidateSession, finalResult: result };
-      }
-
-      session.messages = [
-        ...session.messages,
-        {
-          role: "assistant",
-          content: result.message.content,
-          reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, effectiveCalls.length),
-          toolCalls: effectiveCalls
-        },
-        ...toolMessages
-      ];
+    });
+    if (loopResult.stopReason === "reset") {
       noteLLMSessionUpdated();
-      if (invalidateSession) {
-        return { message: result.message, sentMessage, invalidateSession, finalResult: result };
-      }
-      round += 1;
     }
+    return {
+      message: loopResult.finalMessage,
+      sentMessage: loopResult.sentMessage,
+      invalidateSession: loopResult.invalidateSession,
+      finalResult: loopResult.finalResult
+    };
   }
 
   function buildTurnTextVariables(event: AgentEvent): LLMTextVariables {
@@ -593,55 +598,82 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       event,
       dailyShell: deps.getDailyShell?.(),
       dailyShellRaw: deps.getDailyShellRaw?.(),
-      appearanceDescription: deps.getAppearanceDescription?.()
+      appearanceDescription: deps.getAppearanceDescription?.(),
+      memory: deps.getMemorySnapshot?.()
     });
   }
 
-  async function callLLMWithRetry(
-    requestInput: LLMChatInput,
-    event: AgentEvent,
-    toolMap: Map<string, ToolPlugin>,
-    round: number
-  ): Promise<{ result: LLMChatResult; streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> }> {
-    const useStream = deps.config.llm.stream !== false && Boolean(deps.llm.chatStream);
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
-      const streamingToolSender = createStreamingSendMessageHandler(event, toolMap);
-      deps.onLLMLog?.({ kind: "call_start", round, stream: useStream, model: requestInput.model, attempt });
-      try {
-        if (useStream && deps.llm.chatStream) {
-          deps.onLLMLog?.({ kind: "stream_start", round, stream: true, model: requestInput.model, attempt });
-          try {
-            const result = await deps.llm.chatStream(requestInput, {
-              onToolCallDelta(delta) {
-                return streamingToolSender.onToolCallDelta(delta);
-              }
-            });
-            return { result, streamingToolSender };
-          } finally {
-            deps.onLLMLog?.({ kind: "stream_end", round, stream: true, model: requestInput.model, attempt });
+  function createLocalLLMRequestSender(toolPlugins: ToolPlugin[]): LLMRequestSender {
+    return async (input) => {
+      const client = input.client ?? deps.llm;
+      const requestInput: LLMChatInput = {
+        messages: input.messages,
+        model: input.model,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+        extraParams: input.extraParams,
+        tools: buildLocalToolSpecs(toolPlugins, input.toolNames, input.toolVariables as LLMTextVariables | undefined)
+      };
+      deps.onLLMRequestPrepared?.(requestInput);
+      const useStream = input.stream === true && Boolean(client.chatStream);
+      let lastError: unknown;
+      let result: LLMChatResult | undefined;
+      for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
+        deps.onLLMLog?.({ kind: "call_start", round: input.round, stream: useStream, model: requestInput.model, attempt });
+        try {
+          if (useStream && client.chatStream) {
+            deps.onLLMLog?.({ kind: "stream_start", round: input.round, stream: true, model: requestInput.model, attempt });
+            try {
+              result = await client.chatStream(requestInput, input.streamHandlers);
+            } finally {
+              deps.onLLMLog?.({ kind: "stream_end", round: input.round, stream: true, model: requestInput.model, attempt });
+            }
+          } else {
+            result = await client.chat(requestInput);
+            deps.onLLMLog?.({ kind: "response_received", round: input.round, stream: false, model: requestInput.model, attempt });
           }
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
+          const delayMs = llmRetryDelayMs(attempt);
+          deps.onLLMLog?.({
+            kind: "retry",
+            round: input.round,
+            stream: useStream,
+            model: requestInput.model,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+            delayMs
+          });
+          await sleep(delayMs);
         }
-        const result = await deps.llm.chat(requestInput);
-        deps.onLLMLog?.({ kind: "response_received", round, stream: false, model: requestInput.model, attempt });
-        return { result, streamingToolSender };
-      } catch (error) {
-        lastError = error;
-        if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
-        const delayMs = llmRetryDelayMs(attempt);
-        deps.onLLMLog?.({
-          kind: "retry",
-          round,
-          stream: useStream,
-          model: requestInput.model,
-          attempt,
-          error: error instanceof Error ? error.message : String(error),
-          delayMs
-        });
-        await sleep(delayMs);
       }
+      if (!result) throw lastError;
+      deps.onLLMResponseReceived?.(result);
+      return result;
+    };
+  }
+
+  function buildLocalToolSpecs(toolPlugins: ToolPlugin[], toolNames: string[], variables?: LLMTextVariables): LLMChatInput["tools"] {
+    const seen = new Set<string>();
+    const specs: LLMChatInput["tools"] = [];
+    for (const name of toolNames) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const plugin = findToolPlugin(toolPlugins, name);
+      const tool = plugin?.listTools().find((entry) => entry.name === name);
+      if (!tool) throw new Error(`unknown LLM tool: ${name}`);
+      specs.push({
+        type: "function",
+        function: {
+          name: tool.name,
+          description: renderLLMTextValue(tool.description, variables ?? {}),
+          parameters: renderLLMValue(tool.inputSchema, variables ?? {}) as Record<string, unknown>
+        }
+      });
     }
-    throw lastError;
+    return specs;
   }
 
   function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
@@ -809,8 +841,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
       const price = deepSeekPriceForModel(session.lastUsageModel ?? deps.config.llm.model);
       const continuedHitTokens = Math.max(0, inputTokens - baseline);
-      const rebuildMissTokens = Math.max(0, currentPreviewTokens - baseline);
-      return continuedHitTokens * price.hit > rebuildMissTokens * price.miss;
+      const rebuildMissTokens = Math.max(50, currentPreviewTokens - baseline);
+      const shouldReset = continuedHitTokens * price.hit > rebuildMissTokens * price.miss;
+      if (shouldReset) session.tokenPressurePreviewBaselines[baselineKey] = currentPreviewTokens;
+      return shouldReset;
     } catch {
       return false;
     }
@@ -844,6 +878,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return {
       messages: cloneLLMMessages(snapshot.messages),
       staticPromptFingerprint: snapshot.staticPromptFingerprint ?? "",
+      staticPromptMessageCount: typeof snapshot.staticPromptMessageCount === "number" && Number.isFinite(snapshot.staticPromptMessageCount)
+        ? Math.max(0, Math.floor(snapshot.staticPromptMessageCount))
+        : 0,
       requestTimestamps: (snapshot.requestTimestamps ?? [])
         .map((timestamp) => Date.parse(timestamp))
         .filter((timestamp) => Number.isFinite(timestamp)),
@@ -874,7 +911,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   }
 
   function defaultModeState(): ModeState {
-    return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0 };
+    return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0, tokenPressurePreviewBaselines: {} };
   }
 
   function modeStateFromSession(session: ActiveLLMSession): ModeState {
@@ -882,6 +919,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       mode: session.mode || "normal",
       modeStaticMessages: cloneLLMMessages(session.modeStaticMessages),
       modeStaticTokenEstimate: session.modeStaticTokenEstimate,
+      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(session.tokenPressurePreviewBaselines),
       modeStartedAt: session.modeStartedAt,
       modeExpiresAt: session.modeExpiresAt,
       fixedPrefixKind: session.fixedPrefixKind,
@@ -915,6 +953,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     deps.onLLMSessionUpdated?.({
       messages: cloneLLMMessages(activeLLMSession.messages),
       staticPromptFingerprint: activeLLMSession.staticPromptFingerprint,
+      staticPromptMessageCount: activeLLMSession.staticPromptMessageCount,
       requestTimestamps: activeLLMSession.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
       lastTotalTokens: activeLLMSession.lastTotalTokens,
       lastInputTokens: activeLLMSession.lastInputTokens,

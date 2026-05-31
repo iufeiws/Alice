@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentCore, type LLMSessionSnapshot } from "../core/agent/src/index.js";
+import type { LLMRequestSenderInput } from "../core/agent/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import type { AgentEvent, ToolCall } from "../packages/types/src/index.js";
 import { loadConfig } from "../packages/config/src/index.js";
@@ -65,6 +66,47 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.equal(toolCalls[0].session?.sessionId, "session-1");
   assert.equal(requests[1].messages.at(-1)?.role, "tool");
   assert.equal(requests[1].messages.at(-1)?.content, "history");
+});
+
+test("agent core sends tool names to injected LLM sender without rendering schemas", async () => {
+  const senderInputs: LLMRequestSenderInput[] = [];
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm: {
+      async chat() {
+        throw new Error("direct llm client should not be called");
+      }
+    },
+    llmRequestSender: async (input) => {
+      senderInputs.push(input);
+      return { message: { role: "assistant", content: "done" } };
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [{
+          name: "check_chat",
+          get description(): string {
+            throw new Error("tool description should be rendered by LLMRequests");
+          },
+          get inputSchema(): Record<string, unknown> {
+            throw new Error("tool schema should be rendered by LLMRequests");
+          }
+        }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "history" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(senderInputs[0].toolNames, ["check_chat"]);
 });
 
 test("agent core appends assistant tool call and tool result before the next llm request", async () => {
@@ -1756,6 +1798,7 @@ test("agent core clears session before the next request when cached input cost e
   const previewCalls: Array<Record<string, unknown>> = [];
   const normalCheckCalls: Array<Record<string, unknown>> = [];
   let persistedSession: LLMSessionSnapshot | undefined;
+  let previewCount = 0;
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -1770,12 +1813,12 @@ test("agent core clears session before the next request when cached input cost e
               function: { name: "check_chat", arguments: "{}" }
             }]
           },
-          usage: { inputTokens: 999, totalTokens: 999 }
+          usage: { inputTokens: 4000, totalTokens: 4000 }
         };
       }
       return {
         message: { role: "assistant", content: `final ${requests.length}` },
-        usage: { inputTokens: 999, totalTokens: 999 }
+        usage: { inputTokens: 4000, totalTokens: 4000 }
       };
     }
   };
@@ -1818,8 +1861,12 @@ test("agent core clears session before the next request when cached input cost e
         return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
-        if (call.input.__preview === true) previewCalls.push(call.input);
-        else normalCheckCalls.push(call.input);
+        if (call.input.__preview === true) {
+          previewCalls.push(call.input);
+          previewCount += 1;
+          return { callId: call.id, ok: true, output: previewCount === 1 ? "0123456789" : "x".repeat(200) };
+        }
+        normalCheckCalls.push(call.input);
         return { callId: call.id, ok: true, output: "0123456789" };
       }
     }]
@@ -1839,6 +1886,7 @@ test("agent core clears session before the next request when cached input cost e
   ]);
   assert.equal(requests.length, 3);
   assert.equal(requests[2].messages.some((message) => message.content === "final 2"), false);
+  assert.equal(persistedSession?.tokenPressurePreviewBaselines?.["test-model|normal|today|"], 60);
 });
 
 test("agent core restores token pressure baseline from persisted session snapshot", async () => {
@@ -1852,7 +1900,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
       return {
         message: { role: "assistant", content: `final ${requests.length}` },
         model: "deepseek-v4-flash",
-        usage: { inputTokens: 101, totalTokens: 101 }
+        usage: { inputTokens: 3001, totalTokens: 3001 }
       };
     }
   };
@@ -1903,7 +1951,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
   assert.ok(persistedSession);
   persistedSession = {
     ...persistedSession,
-    lastInputTokens: 101,
+    lastInputTokens: 3001,
     lastUsageModel: "deepseek-v4-flash",
     tokenPressurePreviewBaselines: { "deepseek-v4-flash|normal|today|": 1 }
   };
@@ -1997,7 +2045,7 @@ test("agent core token pressure comparison uses model-specific prices", async ()
         return {
           message: { role: "assistant", content: "final" },
           model,
-          usage: { inputTokens: 101, totalTokens: 101 }
+          usage: { inputTokens: 3001, totalTokens: 3001 }
         };
       }
     };
@@ -2022,8 +2070,8 @@ test("agent core token pressure comparison uses model-specific prices", async ()
           messages: session.messages.map((message) => ({ ...message, toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } })) })),
           staticPromptFingerprint: session.staticPromptFingerprint,
           requestTimestamps: [...session.requestTimestamps],
-          lastTotalTokens: 101,
-          lastInputTokens: 101,
+          lastTotalTokens: 3001,
+          lastInputTokens: 3001,
           lastUsageModel: model,
           tokenPressurePreviewBaselines: { [`${model}|normal|today|`]: 1 }
         };

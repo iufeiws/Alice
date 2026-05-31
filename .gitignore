@@ -24,6 +24,8 @@ memory-files/message/
 memory-files/state/
 memory-files/config/
 memory-files/shell/
+memory-files/diary/*.sqlite*
+memory-files/long-term-memory/.git/
 .env
 .DS_Store
 npm-debug.log*

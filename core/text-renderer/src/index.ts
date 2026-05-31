@@ -29,11 +29,58 @@ export type LLMTextContextInput = {
   dailyShell?: string;
   dailyShellRaw?: LLMTextDailyShell;
   appearanceDescription?: string;
+  memory?: {
+    persistent?: string;
+    userPreferences?: string;
+    yesterdaySummary?: string;
+  };
   extra?: LLMTextVariables;
 };
 
 export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextVariables {
-  const variables: LLMTextVariables = {};
+  const emptyOption = optionVariable({ id: "", name: "", content: "" });
+  const emptyMemoryLimit = { lines: 0, bytes: 0, kib: 0 };
+  const memoryNode = (content: string | undefined) => ({
+    content: content ?? "",
+    limit: { ...emptyMemoryLimit }
+  });
+  const variables: LLMTextVariables = {
+    date_time: "",
+    time: "",
+    date: "",
+    timezone: "",
+    session: "",
+    channel: "",
+    dailyShell: {
+      date: "",
+      createdAt: "",
+      persona: emptyOption,
+      relationship: emptyOption
+    },
+    outfit: emptyOption,
+    memorize: {
+      target: {
+        key: "",
+        title: "",
+        fileName: "",
+        currentContent: ""
+      },
+      limit: {
+        lines: 0,
+        bytes: 0,
+        kib: 0
+      },
+      window: {
+        startAt: "",
+        endAt: ""
+      },
+      timezone: "",
+      messages: {
+        count: 0,
+        content: ""
+      }
+    }
+  };
   if (input.time) {
     const now = input.time.now();
     variables.date_time = formatLocalDateTime(now.date, input.time.timeZone);
@@ -43,6 +90,11 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   }
   variables.user = input.userName?.trim() || "user";
   variables.appearance = input.appearanceDescription?.trim() || "";
+  variables.memory = {
+    persistent: memoryNode(input.memory?.persistent),
+    userPreferences: memoryNode(input.memory?.userPreferences),
+    yesterdaySummary: memoryNode(input.memory?.yesterdaySummary)
+  };
   if (input.dailyShellRaw) {
     variables.dailyShell = {
       date: input.dailyShellRaw.date,

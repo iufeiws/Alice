@@ -63,6 +63,8 @@ export type AliceStore = {
   upsertInboundMessage(input: UpsertInboundMessageInput): StoredConversationMessage;
   insertOutboundMessage(input: InsertOutboundMessageInput): StoredConversationMessage;
   listMessages(limit: number): StoredConversationMessage[];
+  listMessagesChronological(limit?: number): StoredConversationMessage[];
+  listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string, limit?: number): StoredConversationMessage[];
   listMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
   searchMessages(input: SearchMessagesInput): StoredConversationMessage[];
   listPendingCoreConversations(): Array<{ conversationId: string; latestMessageId: number; latestTime: string }>;
@@ -324,6 +326,18 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return messageDb.prepare(conversationMessageSelect("ORDER BY id DESC LIMIT ?"))
         .all(limit)
         .reverse();
+    },
+    listMessagesChronological(limit = 10_000) {
+      return messageDb.prepare(conversationMessageSelect("ORDER BY created_at ASC, id ASC LIMIT ?"))
+        .all(limit);
+    },
+    listMessagesByCreatedAtRange(startAt, endAt, limit = 10_000) {
+      const where = startAt
+        ? "WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?"
+        : "WHERE created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?";
+      return startAt
+        ? messageDb.prepare(conversationMessageSelect(where)).all(startAt, endAt, limit)
+        : messageDb.prepare(conversationMessageSelect(where)).all(endAt, limit);
     },
     listMessagesForConversation(conversationId, limit) {
       return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? ORDER BY id DESC LIMIT ?"))

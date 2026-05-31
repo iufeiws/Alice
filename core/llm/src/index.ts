@@ -307,14 +307,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
 
   return {
     async chat(input) {
-      const body = {
+      const body: Record<string, unknown> = {
         ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
-        temperature: input.temperature ?? config.temperature ?? 0.2,
-        tools: input.tools,
-        max_tokens: input.maxTokens
+        temperature: input.temperature ?? config.temperature ?? 0.2
       };
+      if (input.tools !== undefined) body.tools = input.tools;
+      if (input.maxTokens !== undefined) body.max_tokens = input.maxTokens;
 
       const json = await request<OpenAIChatCompletionResponse>("/chat/completions", {
         method: "POST",
@@ -337,14 +337,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       };
     },
     async chatStream(input, handlers) {
-      const body = {
+      const body: Record<string, unknown> = {
         ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
         messages: input.messages.map(toOpenAIMessage),
-        temperature: input.temperature ?? config.temperature ?? 0.2,
-        tools: input.tools,
-        max_tokens: input.maxTokens
+        temperature: input.temperature ?? config.temperature ?? 0.2
       };
+      if (input.tools !== undefined) body.tools = input.tools;
+      if (input.maxTokens !== undefined) body.max_tokens = input.maxTokens;
       return requestStream("/chat/completions", body, handlers);
     },
     async listModels() {

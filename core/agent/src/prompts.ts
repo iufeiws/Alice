@@ -3,9 +3,14 @@ import type { CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../packages/types/src/index.js";
 import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import type { DailyShell } from "./shells.js";
+import type { MemorySnapshot } from "./memory.js";
+import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "./prompt-layer-parser.js";
+
+export type { PromptLayer, PromptLayerRole } from "./prompt-layer-parser.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+const crypto = await import("node:crypto");
 
 export type PromptDefinition = {
   id: string;
@@ -13,21 +18,6 @@ export type PromptDefinition = {
   scope: "agent" | "router" | "tool" | "renderer";
   description: string;
   content: string;
-};
-
-export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
-
-export type PromptLayer = {
-  id: string;
-  title: string;
-  role: PromptLayerRole;
-  enabled: boolean;
-  content: string;
-  order: number;
-  toolName?: string;
-  toolCallId?: string;
-  toolArguments?: string;
-  thinking?: string;
 };
 
 export type PromptProfile = {
@@ -47,6 +37,7 @@ export type PromptRenderContext = {
   dailyShell?: string;
   dailyShellRaw?: DailyShell;
   appearanceDescription?: string;
+  memory?: MemorySnapshot;
 };
 
 export type PromptProfileStore = {
@@ -148,6 +139,23 @@ export function defaultPromptProfile(): PromptProfile {
         ].join("\n")
       },
       {
+        id: "memory_context",
+        title: "记忆",
+        role: "user",
+        enabled: true,
+        order: 45,
+        content: [
+          "Persistent memory:",
+          "{{memory/persistent/content}}",
+          "",
+          "User preferences:",
+          "{{memory/userPreferences/content}}",
+          "",
+          "Latest diary:",
+          "{{memory/yesterdaySummary/content}}"
+        ].join("\n")
+      },
+      {
         id: "shell_deepseek_role_immersion",
         title: "壳设定 + DeepSeek Role Immersion",
         role: "user",
@@ -185,23 +193,19 @@ export function buildPromptMessages(profile: PromptProfile, context: PromptRende
   return normalizePromptProfile(profile).layers
     .filter((layer) => layer.enabled)
     .sort((left, right) => left.order - right.order)
-    .map((layer) => layerToMessage(layer, variables));
+    .map((layer) => promptLayerToMessage(layer, variables));
 }
 
 export function staticPromptFingerprint(profile: PromptProfile, context: PromptRenderContext): string {
-  const variables = promptVariables(profile, context);
-  const normalized = normalizePromptProfile(profile);
-  const layers = normalized.layers
-    .filter((layer) => layer.enabled)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => ({
-      id: layer.id,
-      title: layer.title,
-      role: layer.role,
-      order: layer.order,
-      message: layerToMessage(layer, variables)
-    }));
-  return stableJson({ layers });
+  return staticPromptFingerprintForMessages(buildPromptMessages(profile, context));
+}
+
+export function staticPromptFingerprintForMessages(messages: LLMMessage[]): string {
+  return staticPromptFingerprintForText(stableJson(messages));
+}
+
+export function staticPromptFingerprintForText(text: string): string {
+  return `sha256:${crypto.createHash("sha256").update(text).digest("hex")}`;
 }
 
 export async function buildPromptMessagesWithToolResults(
@@ -234,7 +238,7 @@ async function buildLayerMessagesWithToolResults(
     .sort((left, right) => left.order - right.order);
 
   for (const layer of layers) {
-    const message = layerToMessage(layer, variables);
+    const message = promptLayerToMessage(layer, variables);
     messages.push(message);
     if (layer.role !== "tool_request") continue;
 
@@ -243,7 +247,7 @@ async function buildLayerMessagesWithToolResults(
     const result = await runTool(layer, {
       id: toolCall.id,
       toolName: toolCall.function.name,
-      input: parseToolArguments(toolCall.function.arguments),
+      input: parsePromptToolArguments(toolCall.function.arguments),
       requester: context.event.source,
       session: context.event.session
     });
@@ -265,7 +269,8 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     event: context.event,
     dailyShell: context.dailyShell ?? "",
     dailyShellRaw: context.dailyShellRaw,
-    appearanceDescription: context.appearanceDescription
+    appearanceDescription: context.appearanceDescription,
+    memory: context.memory
   });
 }
 
@@ -294,53 +299,6 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
   };
 }
 
-function normalizePromptLayers(layers: PromptLayer[]): PromptLayer[] {
-  return layers.map((layer, index) => ({
-      id: nonEmptyString(layer.id) ?? `layer_${index + 1}`,
-      title: nonEmptyString(layer.title) ?? `Layer ${index + 1}`,
-      role: normalizeLayerRole(layer.role),
-      enabled: layer.enabled !== false,
-      content: typeof layer.content === "string" ? layer.content : "",
-      order: Number.isFinite(Number(layer.order)) ? Number(layer.order) : (index + 1) * 10,
-      toolName: normalizeLayerRole(layer.role) === "tool_request" ? nonEmptyString(layer.toolName) : undefined,
-      toolCallId: normalizeLayerRole(layer.role) === "tool_request" ? nonEmptyString(layer.toolCallId) : undefined,
-      toolArguments: normalizeLayerRole(layer.role) === "tool_request" && typeof layer.toolArguments === "string" ? layer.toolArguments : undefined,
-      thinking: (normalizeLayerRole(layer.role) === "assistant" || normalizeLayerRole(layer.role) === "tool_request") && typeof layer.thinking === "string" ? layer.thinking : undefined
-  }));
-}
-
-function layerToMessage(layer: PromptLayer, variables: LLMTextVariables): LLMMessage {
-  if (layer.role === "tool_request") {
-    const toolName = layer.toolName || "check_chat";
-    const toolCallId = layer.toolCallId || `prompt_${layer.id}`;
-    const thinking = renderTemplate(layer.thinking ?? layer.content, variables);
-    const args = renderTemplate(layer.toolArguments || "{}", variables);
-    return {
-      role: "assistant",
-      content: renderTemplate(layer.content || "", variables),
-      reasoningContent: thinking,
-      toolCalls: [{
-        id: toolCallId,
-        type: "function",
-        function: {
-          name: toolName,
-          arguments: args
-        }
-      }]
-    };
-  }
-  return {
-    role: layer.role,
-    content: renderTemplate(layer.content, variables),
-    reasoningContent: layer.role === "assistant" && layer.thinking ? renderTemplate(layer.thinking, variables) : undefined
-  };
-}
-
-function normalizeLayerRole(value: unknown): PromptLayerRole {
-  if (value === "user" || value === "assistant" || value === "tool_request") return value;
-  return "system";
-}
-
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -350,15 +308,6 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function parseToolArguments(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
 }
 
 function formatPromptToolResult(result: ToolResult, variables: LLMTextVariables): string {

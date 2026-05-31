@@ -19,6 +19,19 @@ test("buildLLMTextVariables exposes date_time and time-only values", () => {
   assert.equal(variables.time, "12:34:56");
 });
 
+test("buildLLMTextVariables exposes memory limit placeholders", () => {
+  const variables = buildLLMTextVariables({
+    memory: {
+      persistent: "p",
+      userPreferences: "u",
+      yesterdaySummary: "y"
+    }
+  });
+  assert.equal(renderLLMText("{{memory/persistent/content}} {{memory/persistent/limit/lines}}/{{memory/persistent/limit/bytes}}/{{memory/persistent/limit/kib}}", variables), "p 0/0/0");
+  assert.equal(renderLLMText("{{memory/userPreferences/content}} {{memory/userPreferences/limit/lines}}/{{memory/userPreferences/limit/bytes}}/{{memory/userPreferences/limit/kib}}", variables), "u 0/0/0");
+  assert.equal(renderLLMText("{{memory/yesterdaySummary/content}} {{memory/yesterdaySummary/limit/lines}}/{{memory/yesterdaySummary/limit/bytes}}/{{memory/yesterdaySummary/limit/kib}}", variables), "y 0/0/0");
+});
+
 test("formatToolResultForLLM renders placeholders in string tool output", () => {
   assert.equal(formatToolResultForLLM({
     ok: true,

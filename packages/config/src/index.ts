@@ -10,6 +10,17 @@ export type LLMConfig = {
   followupExtraParams: Record<string, unknown>;
 };
 
+export type MemorySummaryConfig = {
+  enabled: boolean;
+  baseURL: string;
+  apiKey?: string;
+  model: string;
+  temperature: number;
+  timeoutMs: number;
+  stream: boolean;
+  extraParams: Record<string, unknown>;
+};
+
 export type FeishuConfig = {
   enabled: boolean;
   connectionMode: "websocket" | "webhook";
@@ -47,6 +58,7 @@ export type AppConfig = {
     port: number;
   };
   llm: LLMConfig;
+  memorySummary: MemorySummaryConfig;
   plugins: {
     feishu: FeishuConfig;
     wechat: WeChatConfig;
@@ -171,6 +183,18 @@ export function loadConfig(env: Env = process.env): AppConfig {
       followupExtraParams: env.LLM_FOLLOWUP_EXTRA_PARAMS === undefined
         ? jsonObjectValue(env.LLM_EXTRA_PARAMS)
         : jsonObjectValue(env.LLM_FOLLOWUP_EXTRA_PARAMS)
+    },
+    memorySummary: {
+      enabled: bool(env.MEMORY_SUMMARY_ENABLED, true),
+      baseURL: (env.MEMORY_SUMMARY_BASE_URL ?? llmBaseURL ?? "https://api.deepseek.com").replace(/\/+$/, ""),
+      apiKey: env.MEMORY_SUMMARY_API_KEY ?? env.DEEPSEEK_API_KEY ?? llmApiKey,
+      model: env.MEMORY_SUMMARY_MODEL ?? "deepseek-v4-pro",
+      temperature: numberValue(env.MEMORY_SUMMARY_TEMPERATURE, 0.8),
+      timeoutMs: numberValue(env.MEMORY_SUMMARY_TIMEOUT_MS, 120_000),
+      stream: bool(env.MEMORY_SUMMARY_STREAM_ENABLED, false),
+      extraParams: env.MEMORY_SUMMARY_EXTRA_PARAMS === undefined
+        ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
+        : jsonObjectValue(env.MEMORY_SUMMARY_EXTRA_PARAMS)
     },
     plugins: {
       feishu: {

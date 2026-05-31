@@ -24,6 +24,35 @@ test("tts config defaults to genie tts backend with moss fallback settings", () 
   assert.equal(config.tts.mossFfmpegCommand, "ffmpeg-static");
 });
 
+test("memory summary config is independent from core llm config", () => {
+  const config = loadConfig({
+    LLM_API_KEY: "core-key",
+    LLM_BASE_URL: "https://core.example/v1",
+    DEEPSEEK_API_KEY: "deepseek-key"
+  });
+
+  assert.equal(config.llm.apiKey, "core-key");
+  assert.equal(config.memorySummary.apiKey, "deepseek-key");
+  assert.equal(config.memorySummary.baseURL, "https://core.example/v1");
+  assert.equal(config.memorySummary.model, "deepseek-v4-pro");
+  assert.equal(config.memorySummary.temperature, 0.8);
+  assert.deepEqual(config.memorySummary.extraParams, { thinking: { type: "enabled" }, reasoning_effort: "high" });
+});
+
+test("memory summary config may reuse core auth settings but not core model settings", () => {
+  const config = loadConfig({
+    LLM_API_KEY: "core-key",
+    LLM_BASE_URL: "https://core.example/v1",
+    LLM_MODEL: "deepseek-chat",
+    LLM_TEMPERATURE: "0.2"
+  });
+
+  assert.equal(config.memorySummary.apiKey, "core-key");
+  assert.equal(config.memorySummary.baseURL, "https://core.example/v1");
+  assert.equal(config.memorySummary.model, "deepseek-v4-pro");
+  assert.equal(config.memorySummary.temperature, 0.8);
+});
+
 test("tts config reads moss onnx settings", () => {
   const config = loadConfig({
     TTS_BACKEND: "moss-onnx",

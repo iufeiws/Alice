@@ -25,6 +25,7 @@ test("prompt profile store creates defaults and persists edits", () => {
     "角色设定",
     "职责",
     "Skill",
+      "记忆",
     "壳设定 + DeepSeek Role Immersion"
   ]);
 
@@ -79,6 +80,28 @@ test("prompt messages render variables and preserve unknown placeholders", () =>
   assert.match(messages[0].content, /Asia\/Shanghai/);
   assert.match(messages[0].content, /session-1/);
   assert.match(messages[0].content, /\{\{missing\}\}/);
+});
+
+test("prompt messages render memory variables", () => {
+  const profile = {
+    ...defaultPromptProfile(),
+    layers: [
+      { id: "memory", title: "Memory", role: "system" as const, enabled: true, content: "{{memory/persistent/content}}\n{{memory/userPreferences/content}}\n{{memory/yesterdaySummary/content}}", order: 1 }
+    ]
+  };
+  const messages = buildPromptMessages(profile, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")),
+    memory: {
+      persistent: "long fact",
+      userPreferences: "likes short replies",
+      yesterdaySummary: "yesterday was busy"
+    }
+  });
+
+  assert.match(messages[0].content, /long fact/);
+  assert.match(messages[0].content, /likes short replies/);
+  assert.match(messages[0].content, /yesterday was busy/);
 });
 
 test("prompt messages pair tool request layers with actual tool results", async () => {

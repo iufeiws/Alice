@@ -38,6 +38,42 @@ test("wardrobe lists current and available outfits", async () => {
   const filteredOutput = JSON.parse(String(filtered.output));
   assert.equal(filteredOutput.query, "Two");
   assert.deepEqual(filteredOutput.outfits.map((item: any) => item.name), ["O Two"]);
+
+  const groupFiltered = await tools.execute({ id: "call_filter_group", toolName: "wardrobe", input: { action: "list", name: "formal" } });
+  assert.equal(groupFiltered.ok, true);
+  const groupFilteredOutput = JSON.parse(String(groupFiltered.output));
+  assert.equal(groupFilteredOutput.query, "formal");
+  assert.deepEqual(groupFilteredOutput.outfits.map((item: any) => item.name), ["O Two"]);
+});
+
+test("wardrobe mirror returns the current outfit without messaging target", async () => {
+  const root = makeTempDir("wardrobe-mirror");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two" }
+  ]);
+  store.switchOutfit(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai", "o2");
+
+  const sent: unknown[] = [];
+  const tools = createShellTools({
+    dailyShellStore: store,
+    store: createAliceStore(path.join(makeTempDir("wardrobe-mirror-db"), "alice.sqlite")),
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+      }
+    },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z"))
+  });
+
+  const result = await tools.execute({ id: "call_mirror", toolName: "wardrobe", input: { action: "mirror" } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "你看到镜子中的自己穿着: \n 服装：O Two\n\noutfit two");
+  assert.deepEqual(sent, []);
 });
 
 test("wardrobe switches outfit without shell switch messages or logs", async () => {

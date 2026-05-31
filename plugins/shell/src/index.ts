@@ -49,6 +49,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
   async function wardrobe(call: ToolCall): Promise<ToolResult> {
     const action = stringValue(call.input.action).trim();
     if (action === "list") return listWardrobe(call);
+    if (action === "mirror") return mirrorWardrobe(call);
     if (action === "switch") return switchOutfit(call);
     return toolError(call, "unsupported action");
   }
@@ -65,6 +66,16 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
         query: query || undefined,
         outfits: outfits.map((outfit) => toOutfitOutput(outfit, outfit.id === config.daily.outfit.id))
       })
+    };
+  }
+
+  function mirrorWardrobe(call: ToolCall): ToolResult {
+    const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
+    const outfit = config.daily.outfit;
+    return {
+      callId: call.id,
+      ok: true,
+      output: `你看到镜子中的自己穿着: \n 服装：${outfit.name}\n${outfit.content}`
     };
   }
 
@@ -186,11 +197,11 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
 
 const wardrobeTool: ToolDefinition = {
   name: "wardrobe",
-  description: "查看或切换爱丽丝的服装。action=list 返回可用衣橱，可用 name 模糊过滤；action=switch 根据服装 name 切换服装。",
+  description: "查看或切换爱丽丝的服装。action=list 返回可用衣橱，可用 name 按服装 name/id/group/content 模糊过滤；action=mirror 返回镜中当前服装；action=switch 根据服装 name 切换服装。",
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["list", "switch"] },
+      action: { type: "string", enum: ["list", "mirror", "switch"] },
       name: { type: "string" }
     },
     required: ["action"],

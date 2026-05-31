@@ -123,6 +123,7 @@ const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
+const userSpeakerPlaceholder = "{{user}}";
 type SendType = "message" | "markdown" | "image" | "voice";
 type SendPartResult = {
   ok: boolean;
@@ -131,6 +132,19 @@ type SendPartResult = {
   content: string;
   storedId?: number;
 };
+
+export function formatCheckChatMessages(
+  messages: StoredConversationMessage[],
+  options: {
+    shellEvents?: ShellSwitchContextEntry[];
+    timeZone: string;
+    userName: string;
+  }
+): string {
+  return messages.length > 0 || (options.shellEvents?.length ?? 0) > 0
+    ? formatTimelineBlocks(messages, options.shellEvents ?? [], options.timeZone, options.userName)
+    : "nothing new";
+}
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
@@ -178,15 +192,17 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (!target) return toolError(call, "No current messaging session is available");
     return viewMessagesForScope(call.id, target, resolveViewScope(call.input.scope ?? call.input.__scope), {
       readonly: call.input.__preview === true,
-      fromPrefixAfterMessageId: integerValue(call.input.__fromPrefixAfterMessageId)
+      fromPrefixAfterMessageId: integerValue(call.input.__fromPrefixAfterMessageId),
+      from: optionalStringValue(call.input.from),
+      to: optionalStringValue(call.input.to)
     });
   }
 
   function viewMessagesForScope(
     callId: string,
     target: MessagingToolTarget,
-    scope: "recent" | "today" | "todayold" | "new" | "from_prefix",
-    options: { readonly?: boolean; fromPrefixAfterMessageId?: number } = {}
+    scope: "recent" | "today" | "todayold" | "new" | "from_prefix" | "range",
+    options: { readonly?: boolean; fromPrefixAfterMessageId?: number; from?: string; to?: string } = {}
   ): ToolResult {
     const all = deps.store.listMessages(checkChatMessageLimit);
     const cursorMessageId = all.reduce((max, message) => Math.max(max, message.id), 0);
@@ -199,6 +215,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       const afterId = options.fromPrefixAfterMessageId ?? 0;
       messages = all.filter((message) => message.id > afterId);
       sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : time.now().date;
+    } else if (scope === "range") {
+      const fromMs = options.from ? parseMessageTime(options.from, time.timeZone).getTime() : Number.NEGATIVE_INFINITY;
+      const toMs = options.to ? parseMessageTime(options.to, time.timeZone).getTime() : Number.POSITIVE_INFINITY;
+      messages = all.filter((message) => {
+        const createdMs = parseMessageTime(message.createdAt, time.timeZone).getTime();
+        return createdMs >= fromMs && createdMs < toMs;
+      });
+      sinceDate = Number.isFinite(fromMs)
+        ? new Date(fromMs)
+        : messages.length > 0
+          ? parseMessageTime(messages[0].createdAt, time.timeZone)
+          : time.now().date;
     } else if (scope === "new") {
       const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
       sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
@@ -216,26 +244,22 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
     if (!options.readonly) markViewedUserMessages(messages);
+    const body = formatCheckChatMessages(messages, { shellEvents, timeZone: time.timeZone, userName: userSpeakerPlaceholder });
     return {
       callId,
       ok: true,
       messageCursorId: cursorMessageId,
-      output: appendCurrentTime(
-        messages.length > 0 || shellEvents.length > 0
-          ? formatTimelineBlocks(messages, shellEvents, time.timeZone, userName())
-          : "nothing new",
-        time.timeZone,
-        time.now().date
-      )
+      output: appendCurrentTime(body, time.timeZone, time.now().date)
     };
   }
 
-  function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "from_prefix" {
+  function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "from_prefix" | "range" {
     if (scopeHint === "recent") return "recent";
     if (scopeHint === "today") return "today";
     if (scopeHint === "todayold") return "todayold";
     if (scopeHint === "new") return "new";
     if (scopeHint === "from_prefix") return "from_prefix";
+    if (scopeHint === "range") return "range";
     if (!activeLLMSession) return "today";
     checkChatCallsInLLMSession += 1;
     return checkChatCallsInLLMSession === 1 ? "today" : "new";
@@ -272,7 +296,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         hitMessageId: hit.id,
         hitTime: formatLocalDateTime(parseMessageTime(hit.createdAt, time.timeZone), time.timeZone),
         direction,
-        messages: formatMessageBlocks(context, time.timeZone, userName(), currentDate)
+        messages: formatMessageBlocks(context, time.timeZone, userSpeakerPlaceholder, currentDate)
       };
     });
 
@@ -562,7 +586,9 @@ const checkChatTool: ToolDefinition = {
   inputSchema: {
     type: "object",
     properties: {
-      scope: { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix"] }
+      scope: { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix", "range"] },
+      from: { type: "string", description: "scope=range 时的起始时间，包含该时间。" },
+      to: { type: "string", description: "scope=range 时的结束时间，不包含该时间。" }
     },
     additionalProperties: false
   }

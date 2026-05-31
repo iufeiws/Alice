@@ -177,7 +177,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
         references.missingOutfitImage ? "missingOutfitImage=true" : ""
       ].join(" "));
-      codexResult = await executor({
+      const executorResult = await executor({
         command: codexCommand,
         workDir: tempDir,
         fileName,
@@ -195,7 +195,8 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
         apiOutputCompression: imageApiOutputCompression,
         apiTimeoutMs: imageApiTimeoutMs,
         proxyUrl
-      }) ?? undefined;
+      });
+      if (executorResult) codexResult = executorResult;
       deps.appendLog?.("info", [
         "selfie generator finished:",
         `workDir=${tempDir}`,

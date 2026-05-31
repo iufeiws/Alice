@@ -71,6 +71,7 @@ test("wardrobe switches outfit without shell switch messages or logs", async () 
   const result = await tools.execute({ id: "call_switch", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, true);
+  assert.equal(result.invalidateLLMSession, undefined);
   assert.equal(shellStore.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
   const switchLogs = shellStore.listSwitchLogs();
   assert.equal(switchLogs.length, 1);

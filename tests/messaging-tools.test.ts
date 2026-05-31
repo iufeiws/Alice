@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
+import { formatToolResultForLLM } from "../core/text-renderer/src/index.js";
 import { createConfiguredVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
@@ -25,6 +26,59 @@ test("messaging tools expose merged check_chat and send_chat tools", () => {
   assert.ok(names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
+  const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
+  const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
+  assert.deepEqual(properties.scope, { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix", "range"] });
+  assert.deepEqual(properties.from, { type: "string", description: "scope=range 时的起始时间，包含该时间。" });
+  assert.deepEqual(properties.to, { type: "string", description: "scope=range 时的结束时间，不包含该时间。" });
+});
+
+test("check_chat range scope filters with from and to", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-range-scope"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "before range",
+    createdAt: "2026-05-24T00:59:00.000Z"
+  });
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_2",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "inside range",
+    createdAt: "2026-05-24T01:00:00.000Z"
+  });
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_3",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "after range",
+    createdAt: "2026-05-24T02:00:00.000Z"
+  });
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai"),
+    getUserName: () => "Y",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_range",
+    toolName: "check_chat",
+    input: { scope: "range", from: "2026-05-24T01:00:00.000Z", to: "2026-05-24T02:00:00.000Z" }
+  });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /<chat-log>\n\[2026-05-24 09:00:00\]\n\{\{user\}\}:inside range\n<\/chat-log>/);
+  assert.match(formatToolResultForLLM(result, { user: "Y" }), /<chat-log>\n\[2026-05-24 09:00:00\]\nY:inside range\n<\/chat-log>/);
+  assert.doesNotMatch(String(result.output), /before range|after range/);
 });
 
 test("check_chat defaults to recent outside llm sessions", async () => {
@@ -77,9 +131,10 @@ test("check_chat defaults to recent outside llm sessions", async () => {
   assert.match(String(recent.output), /hello today/);
   assert.match(String(recent.output), /hello from old session/);
   assert.match(String(recent.output), /hello from wechat/);
-  assert.match(String(recent.output), /小王:hello today/);
+  assert.match(String(recent.output), /\{\{user\}\}:hello today/);
+  assert.match(formatToolResultForLLM(recent, { user: "小王" }), /小王:hello today/);
   assert.match(String(recent.output), /Alice:hello back/);
-  assert.match(String(recent.output), /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n小王:hello today\nAlice:hello back/m);
+  assert.match(String(recent.output), /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\{\{user\}\}:hello today\nAlice:hello back/m);
   assert.doesNotMatch(String(recent.output), /\[(?:today|yesterday) /);
   assert.equal((String(recent.output).match(/^\[/gm) ?? []).length, 2);
   assert.doesNotMatch(String(recent.output), /\.\d{3}Z/);
@@ -351,7 +406,7 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
   assert.doesNotMatch(String(recent.output), /msg 510\b/);
   assert.match(String(recent.output), /msg 511\b/);
   assert.match(String(recent.output), /msg 560\b/);
-  assert.equal((String(recent.output).match(/user:msg /g) ?? []).length, 50);
+  assert.equal((String(recent.output).match(/\{\{user\}\}:msg /g) ?? []).length, 50);
 });
 
 test("check_chat preview does not mark messages read or advance cursor", async () => {
@@ -459,7 +514,7 @@ test("check_chat chat labels use absolute local time", async () => {
   });
 
   const result = await tools.execute({ id: "call_time_label", toolName: "check_chat", input: {} });
-  assert.match(String(result.output), /\[2026-05-25 23:30:00\]\nuser:late yesterday/);
+  assert.match(String(result.output), /\[2026-05-25 23:30:00\]\n\{\{user\}\}:late yesterday/);
   assert.doesNotMatch(String(result.output), /\[(?:today|yesterday) /);
 });
 
@@ -490,7 +545,7 @@ test("check_chat merges shell switch logs into chat context", async () => {
 
   const result = await tools.execute({ id: "call_shell_switch", toolName: "check_chat", input: {} });
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /user:hello\n-壳切换:切换为冷淡的同桌爱丽丝-/);
+  assert.match(String(result.output), /\{\{user\}\}:hello\n-壳切换:切换为冷淡的同桌爱丽丝-/);
   assert.doesNotMatch(String(result.output), /制服|服装/);
   assert.doesNotMatch(String(result.output), /system:/);
 });

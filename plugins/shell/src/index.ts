@@ -97,12 +97,11 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     }
 
     const noticeResult = await sendChangingNotice(call.id, target);
-    if (!noticeResult.ok) return noticeResult.result;
+    if (noticeResult.ok === false) return noticeResult.result;
 
     return {
       callId: call.id,
       ok: true,
-      invalidateLLMSession: true,
       output: JSON.stringify({
         current: toOutfitOutput(shell.outfit, true),
         message: `服装已切换为${shell.outfit.name}`,

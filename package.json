@@ -6,7 +6,8 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "rm -rf dist && node node_modules/typescript/bin/tsc -p tsconfig.build.json",
-    "dev:api": "npm run build && node dist/apps/api/src/index.js",
+    "build:api": "rm -rf dist && node node_modules/typescript/bin/tsc -p tsconfig.api.json",
+    "dev:api": "npm run build:api && node dist/apps/api/src/index.js",
     "tts:moss:conda": ".miniconda/_conda create -y -p .conda-moss python=3.11 pip",
     "tts:moss:install": "npm run tts:moss:conda && .conda-moss/bin/python -m pip install -r scripts/moss_tts_onnx/requirements.txt",
     "tts:moss:start": ".conda-moss/bin/python scripts/moss_tts_onnx/service.py",

@@ -1,0 +1,479 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { Readable } from "node:stream";
+import { createApiRequestHandler } from "../apps/api/src/admin-routes.js";
+import {
+  createMarkdownMemoryStore,
+  createMemoryInductionPromptStore,
+  runMemoryInductionForMessages
+} from "../core/agent/src/memory.js";
+import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
+import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
+
+const fs = await import("node:fs");
+const path = await import("node:path");
+
+test("llm api preset save stores extra params as part of the preset", async () => {
+  const root = makeTempDir("admin-llm-preset-extra");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = baseContext(root, memoryStore, promptStore);
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
+    name: "Core Custom",
+    baseURL: "https://core.example.test/v1",
+    model: "core-custom",
+    temperature: "0.4",
+    timeoutMs: "90000",
+    stream: true,
+    extraParams: JSON.stringify({ top_p: 0.7, stream_options: { include_usage: true } }),
+    followupExtraParams: JSON.stringify({ top_p: 0.2 })
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(path.join(root, "config", "llm-api-presets.json"), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(context.config.llm.timeoutMs, 60_000);
+  assert.deepEqual(saved.presets[0], {
+    name: "Core Custom",
+    baseURL: "https://core.example.test/v1",
+    model: "core-custom",
+    temperature: 0.4,
+    timeoutMs: 90_000,
+    stream: true,
+    extraParams: { top_p: 0.7, stream_options: { include_usage: true } },
+    followupExtraParams: { top_p: 0.2 }
+  });
+});
+
+test("llm api preset save accepts long timeout values", async () => {
+  const root = makeTempDir("admin-llm-preset-timeout");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
+    name: "Long Timeout",
+    baseURL: "https://core.example.test/v1",
+    model: "core-custom",
+    temperature: "0.4",
+    timeoutMs: "600000",
+    stream: true,
+    extraParams: "{}",
+    followupExtraParams: "{}"
+  }), response);
+  const saved = JSON.parse(fs.readFileSync(path.join(root, "config", "llm-api-presets.json"), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.presets[0].timeoutMs, 600_000);
+});
+
+test("memory run-day reuses Memorize preset, api settings, prompts, and target order", async () => {
+  const root = makeTempDir("admin-memory-run-day");
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
+    presets: [{
+      name: "Memorize Custom",
+      baseURL: "https://memorize.example.test/v1",
+      apiKey: "memorize-key",
+      model: "memorize-model",
+      temperature: 0.65,
+      timeoutMs: 45_000,
+      stream: false,
+      extraParams: { top_p: 0.9 },
+      followupExtraParams: {}
+    }]
+  })}\n`);
+  fs.writeFileSync(path.join(root, "config", "prompt-api-profile.json"), `${JSON.stringify({
+    memorizePresetName: "Memorize Custom"
+  })}\n`);
+
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  promptStore.save({
+    commonLayers: [
+      { id: "common", title: "Common", role: "system", enabled: true, order: 10, content: "custom memorize common prompt" }
+    ],
+    persistentLayers: [
+      { id: "persistent", title: "Persistent", role: "user", enabled: true, order: 10, content: "persistent-only prompt" }
+    ],
+    userPreferencesLayers: [
+      { id: "user", title: "User", role: "user", enabled: true, order: 10, content: "user-preferences-only prompt" }
+    ],
+    yesterdaySummaryLayers: [
+      { id: "diary", title: "Diary", role: "user", enabled: true, order: 10, content: "diary-only prompt" }
+    ]
+  });
+
+  const seen: LLMChatInput[] = [];
+  let capturedPreset: any;
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    store: {
+      listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
+        assert.equal(startAt, "2026-05-23T22:00:00.000");
+        assert.equal(endAt, "2026-05-24T06:00:00.000");
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string, windowEndAt: string, apiPreset: any) {
+      capturedPreset = apiPreset;
+      return runMemoryInductionForMessages({
+        memoryStore,
+        promptStore,
+        messages,
+        windowStartAt,
+        windowEndAt,
+        llm: editToolClient(seen, [
+          addPatch("memory\n"),
+          addPatch("user\n"),
+          addPatch("diary\n")
+        ]),
+        config: {
+          enabled: true,
+          baseURL: apiPreset.baseURL,
+          apiKey: apiPreset.apiKey,
+          model: apiPreset.model,
+          temperature: apiPreset.temperature,
+          timeoutMs: apiPreset.timeoutMs,
+          stream: apiPreset.stream,
+          extraParams: apiPreset.extraParams
+        },
+        nowIso: () => "2026-05-24T06:00:00.000Z",
+        timezone: "Asia/Shanghai",
+        log() {}
+      });
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(capturedPreset.name, "Memorize Custom");
+  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
+  const targetRequests = [seen[0], seen[2], seen[4]];
+  assert.deepEqual(targetRequests.map((input) => input.model), ["memorize-model", "memorize-model", "memorize-model"]);
+  assert.deepEqual(targetRequests.map((input) => input.temperature), [0.65, 0.65, 0.65]);
+  assert.deepEqual(targetRequests.map((input) => input.extraParams), [{ top_p: 0.9 }, { top_p: 0.9 }, { top_p: 0.9 }]);
+  assert.match(targetRequests[0].messages.map((entry) => entry.content).join("\n"), /custom memorize common prompt/);
+  assert.match(targetRequests[0].messages.map((entry) => entry.content).join("\n"), /persistent-only prompt/);
+  assert.match(targetRequests[1].messages.map((entry) => entry.content).join("\n"), /user-preferences-only prompt/);
+  assert.match(targetRequests[2].messages.map((entry) => entry.content).join("\n"), /diary-only prompt/);
+});
+
+test("memory run-target runs only the selected memory file", async () => {
+  const root = makeTempDir("admin-memory-run-target");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  let capturedTarget = "";
+  let capturedMessages: StoredConversationMessage[] = [];
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    store: {
+      listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
+        assert.equal(startAt, "2026-05-23T22:00:00.000");
+        assert.equal(endAt, "2026-05-24T06:00:00.000");
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string, windowEndAt: string, apiPreset: any, target: string) {
+      capturedTarget = target;
+      capturedMessages = messages;
+      return {
+        ok: true,
+        startedAt: "2026-05-24T06:00:00.000Z",
+        windowStartAt,
+        windowEndAt,
+        messageCount: messages.length,
+        results: [{ target, ok: true, edited: true, toolCalls: [] }]
+      };
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/run-target", { date: "2026-05-24", target: "userPreferences" }), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(capturedTarget, "userPreferences");
+  assert.equal(capturedMessages.length, 1);
+  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["userPreferences"]);
+});
+
+test("memory windows include persisted sleep system messages as sleep boundaries", async () => {
+  const root = makeTempDir("admin-memory-persisted-sleep-boundary");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const recorded: Array<{ occurredAt: string; source: string; now: string }> = [];
+  const boundaries = [
+    { occurredAt: "2026-05-31T03:46:02.806", source: "inferred_gap" }
+  ];
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    store: {
+      listMessagesByCreatedAtRange() {
+        return [];
+      },
+      listMessagesChronological() {
+        return [
+          message("2026-05-31T07:07:15.653", "我也终于能睡了"),
+          { ...message("2026-05-31T07:12:33.529", "-少女已入眠-"), direction: "outbound", senderRole: "system" }
+        ];
+      }
+    },
+    diaryStore: {
+      listSleepBoundaries: () => boundaries,
+      recordSleepBoundary(input: { occurredAt: string; source: string; now: string }) {
+        recorded.push(input);
+        boundaries.push({ occurredAt: input.occurredAt, source: input.source });
+      }
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/memory", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(recorded, [{
+    occurredAt: "2026-05-31T07:12:33.529",
+    source: "sleep",
+    now: "2026-05-24T06:00:00.000Z"
+  }]);
+  assert.equal(body.sleepDays[0].date, "2026-05-31");
+  assert.equal(body.sleepDays[0].startAt, "2026-05-31T03:46:02.806");
+  assert.equal(body.sleepDays[0].endAt, "2026-05-31T07:12:33.529");
+});
+
+test("memory undo and redo walk memorize commits one at a time", async () => {
+  const root = makeTempDir("admin-memory-undo-redo");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+
+  memoryStore.writeTarget("persistent", "persistent v1\n");
+  memoryStore.writeTarget("userPreferences", "pref v1\n");
+
+  let response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).message, "memorize userPreferences");
+  assert.equal(memoryStore.read().persistent, "persistent v1\n");
+  assert.equal(memoryStore.read().userPreferences, "");
+
+  response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).message, "memorize persistent");
+  assert.equal(memoryStore.read().persistent, "");
+  assert.equal(memoryStore.read().userPreferences, "");
+
+  response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/redo-last", {}), response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).message, 'Revert "memorize persistent"');
+  assert.equal(memoryStore.read().persistent, "persistent v1\n");
+  assert.equal(memoryStore.read().userPreferences, "");
+
+  response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/redo-last", {}), response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).message, 'Revert "memorize userPreferences"');
+  assert.equal(memoryStore.read().persistent, "persistent v1\n");
+  assert.equal(memoryStore.read().userPreferences, "pref v1\n");
+});
+
+function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdownMemoryStore>, promptStore: ReturnType<typeof createMemoryInductionPromptStore>) {
+  return {
+    config: {
+      memoryFiles: { root },
+      memorySummary: {
+        enabled: true,
+        baseURL: "https://default.example.test/v1",
+        apiKey: "default-key",
+        model: "default-memory-model",
+        temperature: 0.2,
+        timeoutMs: 60_000,
+        stream: false,
+        extraParams: {}
+      },
+      llm: {
+        provider: "stub",
+        baseURL: "",
+        apiKey: "",
+        model: "core-model",
+        temperature: 0.2,
+        timeoutMs: 60_000,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      },
+      plugins: { wechat: { enabled: false }, feishu: { enabled: false } },
+      core: { timezone: "Asia/Shanghai" }
+    },
+    logs: [],
+    messageLogs: [],
+    llmRequestLogs: [],
+    llmResponseLogs: [],
+    getActiveLLMSession: () => undefined,
+    getClearedLLMSessions: () => [],
+    getMemoryLLMSessions: () => [],
+    getLLMSession: () => undefined,
+    store: undefined,
+    getLLMRequestPreview: () => undefined,
+    getLLMRequestProfilePreview: () => undefined,
+    getTokenUsageReport: () => ({}),
+    clearLLMChainCache() {},
+    outputRouter: { listChannels: () => [] },
+    feishuPairingStore: { list: () => [] },
+    coreProfileStore: { get: () => ({ appearanceDescription: "" }) },
+    promptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
+    memoryStore,
+    diaryStore: {
+      listSleepBoundaries: () => [
+        { occurredAt: "2026-05-23T22:00:00.000", source: "inferred_start" },
+        { occurredAt: "2026-05-24T06:00:00.000", source: "sleep" }
+      ],
+      recordSleepBoundary() {}
+    },
+    memoryInductionPromptStore: promptStore,
+    runMemoryInductionForMessages: async () => ({ ok: false, startedAt: "", windowEndAt: "", messageCount: 0, results: [] }),
+    getDailyShell: () => "",
+    dailyShellStore: { get: () => ({}), getConfig: () => ({}), render: () => "", reroll() {}, listSwitchLogs: () => [] },
+    agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
+    messagingTools: emptyPlugin("messaging"),
+    mediaTools: emptyPlugin("media"),
+    shellTools: emptyPlugin("shell"),
+    bookcaseTools: emptyPlugin("bookcase"),
+    sleepCocoonTools: emptyPlugin("sleep-cocoon"),
+    feishu: { async start() {}, async stop() {}, async send() {} },
+    wechat: { async start() {}, async stop() {}, async send() {} },
+    wechatStateStore: {
+      listContacts: () => [],
+      getCredentials: () => undefined,
+      saveCredentials() {},
+      clearCredentials() {}
+    },
+    runtime: { feishuStarted: false, wechatStarted: false },
+    messageRuntime: { pauseHeartbeat() {}, resumeHeartbeat() {}, async processNow() {}, getStatus: () => ({}) },
+    getLLM: () => editToolClient([], []),
+    reloadLLM() {},
+    time: {
+      timeZone: "Asia/Shanghai",
+      now: () => ({ iso: "2026-05-24T06:00:00.000Z", date: new Date("2026-05-24T06:00:00.000Z") })
+    },
+    setTimeZone() {},
+    appendLog() {},
+    appendMessageLog: () => ({})
+  } as any;
+}
+
+function emptyPlugin(id: string) {
+  return {
+    id,
+    listTools: () => [],
+    async execute() {
+      return { ok: false, error: "not implemented" };
+    }
+  };
+}
+
+function createRequest(method: string, url: string, body: Record<string, unknown>) {
+  const request = Readable.from([JSON.stringify(body)]) as any;
+  request.method = method;
+  request.url = url;
+  request.socket = { remoteAddress: "127.0.0.1" };
+  return request;
+}
+
+function createResponse() {
+  return {
+    statusCode: 0,
+    headers: {},
+    body: "",
+    writeHead(statusCode: number, headers: Record<string, string>) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    },
+    end(chunk: string) {
+      this.body = chunk;
+    }
+  };
+}
+
+function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
+  let index = 0;
+  let finishNext = false;
+  return {
+    async chat(input) {
+      seen.push(input);
+      if (finishNext) {
+        finishNext = false;
+        return { message: { role: "assistant", content: "done" } };
+      }
+      const patch = patches[index++] ?? addPatch("fallback\n");
+      finishNext = true;
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: `edit_${index}`,
+            type: "function",
+            function: {
+              name: "edit_memory",
+              arguments: JSON.stringify({ patch })
+            }
+          }]
+        }
+      };
+    }
+  };
+}
+
+function addPatch(content: string): string {
+  const lines = content.trimEnd().split("\n");
+  return [
+    "--- a/memory.md",
+    "+++ b/memory.md",
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`)
+  ].join("\n");
+}
+
+function message(createdAt: string, contentText: string): StoredConversationMessage {
+  return {
+    id: 1,
+    plugin: "feishu",
+    conversationId: "session",
+    direction: "inbound",
+    senderRole: "user",
+    contentType: "text",
+    contentText,
+    createdAt,
+    status: "sent",
+    isRead: false,
+    isRecalled: false,
+    reactionsJson: "{}",
+    lastEventAt: createdAt
+  };
+}
+
+function makeTempDir(name: string): string {
+  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}

@@ -1,10 +1,13 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMClient } from "../../../core/llm/src/index.js";
-import { formatZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
+import type { DiaryStore, SleepBoundary } from "../../../packages/storage/src/diary-store.js";
+import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
 import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
+import { buildMemoryPromptPreview, type MemoryInductionPromptStore, type MemoryRunSummary, type MemoryStore, type MemoryTarget } from "../../../core/agent/src/memory.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
 import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
 import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
@@ -13,7 +16,7 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { createConfiguredVoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
@@ -25,6 +28,38 @@ const maxTtsReferenceDurationSeconds = 20;
 const maxTtsReferenceUploadBytes = 15 * 1024 * 1024;
 const ttsReferenceConvertTimeoutMs = 60_000;
 
+type LLMApiPreset = {
+  name: string;
+  baseURL: string;
+  apiKey?: string;
+  model: string;
+  temperature: number;
+  timeoutMs: number;
+  stream: boolean;
+  extraParams: Record<string, unknown>;
+  followupExtraParams: Record<string, unknown>;
+};
+
+type PromptApiProfile = {
+  corePresetName?: string;
+  memorizePresetName?: string;
+};
+
+type LLMApiPresetView = Omit<LLMApiPreset, "apiKey"> & { apiKeySet: boolean };
+
+type MemoryRunProgress = {
+  id: string;
+  date: string;
+  target?: MemoryTarget;
+  status: "running" | "complete" | "failed";
+  rounds: Partial<Record<MemoryTarget, number>>;
+  tools: Partial<Record<MemoryTarget, string>>;
+  roundStartedAt: Partial<Record<MemoryTarget, string>>;
+  updatedAt: string;
+};
+
+const memoryRunProgress = new Map<string, MemoryRunProgress>();
+
 export type AdminRoutesContext = {
   config: AppConfig;
   logs: unknown[];
@@ -33,16 +68,26 @@ export type AdminRoutesContext = {
   llmResponseLogs: unknown[];
   getActiveLLMSession(): unknown;
   getClearedLLMSessions(): unknown[];
-  getLLMSession(id: number): unknown;
-  store: { listMessages?(limit: number): unknown[]; listMessageLogs?(limit: number): unknown[] } | undefined;
+  getMemoryLLMSessions(): unknown[];
+  getLLMSession(id: string): unknown;
+  store: {
+    listMessages?(limit: number): unknown[];
+    listMessageLogs?(limit: number): unknown[];
+    listMessagesByCreatedAtRange?(startAt: string | undefined, endAt: string, limit?: number): any[];
+    listMessagesChronological?(limit?: number): StoredConversationMessage[];
+  } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
-  getLLMRequestProfilePreview(): unknown | Promise<unknown>;
+  getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
   coreProfileStore: CoreProfileStore;
   promptProfileStore: PromptProfileStore;
+  memoryStore: MemoryStore;
+  diaryStore: DiaryStore;
+  memoryInductionPromptStore: MemoryInductionPromptStore;
+  runMemoryInductionForMessages(messages: any[], windowStartAt: string, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
   getDailyShell(): string;
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
@@ -75,7 +120,6 @@ export type AdminRoutesContext = {
     getStatus(): unknown;
   };
   getLLM(): LLMClient;
-  reloadLLM(): void;
   time: CurrentTimeProvider;
   setTimeZone(timeZone: string): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -128,7 +172,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         writeJson(response, 200, {
           ok: true,
           service: "alice-agent-api",
-          llmProvider: context.config.llm.provider,
+          llmProvider: "api-preset",
           channels: context.outputRouter.listChannels()
         });
         return;
@@ -154,6 +198,86 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
           variables: getPromptVariablePreview(context),
           tools: getVisiblePromptTools(context)
         });
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/memory/prompts") {
+        writeJson(response, 200, {
+          prompts: context.memoryInductionPromptStore.get(),
+          apiProfile: readPromptApiProfile(context),
+          apiPresets: publicLLMApiPresets(readLLMApiPresets(context))
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/memory/prompts") {
+        const body = await readJsonBody(request);
+        const prompts = context.memoryInductionPromptStore.save(body.prompts && typeof body.prompts === "object" ? body.prompts : body);
+        context.appendLog("info", "memorize prompts saved");
+        writeJson(response, 200, { ok: true, prompts });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/prompts/preview") {
+        await previewMemoryPrompts(context, request, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/prompt-api-profile") {
+        writeJson(response, 200, {
+          profile: readPromptApiProfile(context),
+          presets: publicLLMApiPresets(readLLMApiPresets(context))
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/prompt-api-profile") {
+        await savePromptApiProfile(context, request, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/admin/api/memory") {
+        const sleepDays = ensureMemorySleepBoundaries(context);
+        writeJson(response, 200, {
+          files: context.memoryStore.stats(),
+          prompts: context.memoryInductionPromptStore.get(),
+          sleepDays
+        });
+        return;
+      }
+
+      if (request.method === "GET" && request.url.startsWith("/admin/api/memory/messages")) {
+        await listMemoryDayMessages(context, request, response);
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/memory/file") {
+        await saveMemoryFile(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/run-day") {
+        await runMemoryDay(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/run-target") {
+        await runMemoryTarget(context, request, response);
+        return;
+      }
+
+      if (request.method === "GET" && request.url.startsWith("/admin/api/memory/run-progress")) {
+        getMemoryRunProgress(request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/undo-last") {
+        undoLastMemoryGitCommit(context, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/redo-last") {
+        redoLastMemoryGitCommit(context, response);
         return;
       }
 
@@ -218,7 +342,8 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         writeJson(response, 200, {
           activeSession: context.getActiveLLMSession(),
           clearedSessions: context.getClearedLLMSessions(),
-          profilePreview: await context.getLLMRequestProfilePreview(),
+          memorySessions: context.getMemoryLLMSessions(),
+          profilePreview: await context.getLLMRequestProfilePreview(resolvePromptApiPreset(context, "core")),
           messagePreview: await context.getLLMRequestPreview(),
           actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
         });
@@ -227,8 +352,8 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url?.startsWith("/admin/api/llm-chain/session")) {
         const url = new URL(request.url, "http://localhost");
-        const id = Number(url.searchParams.get("id"));
-        if (!Number.isFinite(id)) {
+        const id = url.searchParams.get("id") ?? "";
+        if (!id) {
           writeJson(response, 400, { ok: false, error: "invalid_session_id" });
           return;
         }
@@ -347,8 +472,28 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
-      if (request.method === "PUT" && request.url === "/admin/api/config/llm") {
-        await saveLLMConfig(context, request, response);
+      if (request.method === "GET" && request.url === "/admin/api/config/llm-presets") {
+        const active = resolvePromptApiPreset(context, "core");
+        writeJson(response, 200, {
+          presets: publicLLMApiPresets(readLLMApiPresets(context)),
+          active: active ? publicLLMApiPreset(active) : undefined,
+          activeName: active?.name
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && request.url === "/admin/api/config/llm-presets") {
+        await saveLLMApiPreset(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/config/llm-presets/rename") {
+        await renameLLMApiPreset(context, request, response);
+        return;
+      }
+
+      if (request.method === "DELETE" && request.url === "/admin/api/config/llm-presets") {
+        await deleteLLMApiPreset(context, request, response);
         return;
       }
 
@@ -437,7 +582,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/v1/models") {
         const llm = context.getLLM();
-        const models = llm.listModels ? await llm.listModels() : [{ id: context.config.llm.model }];
+        const models = llm.listModels ? await llm.listModels() : [];
         writeJson(response, 200, { object: "list", data: models });
         return;
       }
@@ -484,6 +629,461 @@ async function savePromptProfile(context: AdminRoutesContext, request: any, resp
   });
 }
 
+async function savePromptApiProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const profile = normalizePromptApiProfile(body);
+  const presetNames = new Set(readLLMApiPresets(context).map((entry) => entry.name));
+  if (profile.corePresetName && !presetNames.has(profile.corePresetName)) return writeJson(response, 400, { ok: false, error: "core_preset_not_found" });
+  if (profile.memorizePresetName && !presetNames.has(profile.memorizePresetName)) return writeJson(response, 400, { ok: false, error: "memorize_preset_not_found" });
+  writePromptApiProfile(context, profile);
+  context.appendLog("info", `prompt api profile saved: core=${profile.corePresetName ?? "(current)"} memorize=${profile.memorizePresetName ?? "(current)"}`);
+  writeJson(response, 200, { ok: true, profile });
+}
+
+async function saveMemoryFile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const target = requiredString(body.target);
+  if (!isMemoryTarget(target)) {
+    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+    return;
+  }
+  const content = typeof body.content === "string" ? body.content : "";
+  context.memoryStore.writeTarget(target, content);
+  context.appendLog("info", `memory file saved: ${target}`);
+  writeJson(response, 200, { ok: true, files: context.memoryStore.stats() });
+}
+
+async function listMemoryDayMessages(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const url = new URL(request.url, "http://admin.local");
+  const date = url.searchParams.get("date") || "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    writeJson(response, 400, { ok: false, error: "invalid_date" });
+    return;
+  }
+  if (!context.store?.listMessagesByCreatedAtRange) {
+    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
+    return;
+  }
+  const window = resolveMemorySleepWindow(context, date);
+  if (!window) {
+    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
+    return;
+  }
+  const { startAt, endAt } = window;
+  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
+  const content = formatCheckChatMessages(messages, {
+    timeZone: context.time.timeZone,
+    userName: context.promptProfileStore.get().userName || "user"
+  });
+  writeJson(response, 200, { ok: true, date, startAt, endAt, source: window.source, content, messages });
+}
+
+async function runMemoryDay(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const date = requiredString(body.date);
+  await runMemoryForDate(context, response, date, undefined, optionalString(body.runId));
+}
+
+async function runMemoryTarget(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const date = requiredString(body.date);
+  const target = requiredString(body.target);
+  if (!isMemoryTarget(target)) {
+    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+    return;
+  }
+  await runMemoryForDate(context, response, date, target, optionalString(body.runId));
+}
+
+async function runMemoryForDate(
+  context: AdminRoutesContext,
+  response: any,
+  date: string,
+  target?: MemoryTarget,
+  runId?: string
+): Promise<void> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    writeJson(response, 400, { ok: false, error: "invalid_date" });
+    return;
+  }
+  if (!context.store?.listMessagesByCreatedAtRange) {
+    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
+    return;
+  }
+  const window = resolveMemorySleepWindow(context, date);
+  if (!window) {
+    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
+    return;
+  }
+  const { startAt, endAt } = window;
+  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
+  const apiPreset = resolveMemorizeApiPreset(context);
+  if (!apiPreset) {
+    writeJson(response, 400, { ok: false, error: "memorize_preset_required" });
+    return;
+  }
+  updateMemoryRunProgress(runId, date, target, "running");
+  const result = await context.runMemoryInductionForMessages(messages, startAt, endAt, apiPreset, target, (roundTarget, rounds, toolStatus) => {
+    updateMemoryRunProgress(runId, date, target, "running", roundTarget, rounds, toolStatus);
+  });
+  updateMemoryRunProgress(runId, date, target, result.ok ? "complete" : "failed");
+  context.appendLog(result.ok ? "info" : "warn", `memorize ${target ?? "day"} ${date}: ${result.ok ? "ok" : "failed"} messages=${messages.length}`);
+  writeJson(response, result.ok ? 200 : 400, {
+    ok: result.ok,
+    result,
+    files: context.memoryStore.stats()
+  });
+}
+
+function updateMemoryRunProgress(
+  runId: string | undefined,
+  date: string,
+  target: MemoryTarget | undefined,
+  status: MemoryRunProgress["status"],
+  roundTarget?: MemoryTarget,
+  rounds?: number,
+  toolStatus?: string
+): void {
+  if (!runId) return;
+  const previous = memoryRunProgress.get(runId);
+  const next: MemoryRunProgress = previous ?? {
+    id: runId,
+    date,
+    target,
+    status,
+    rounds: {},
+    tools: {},
+    roundStartedAt: {},
+    updatedAt: new Date().toISOString()
+  };
+  next.status = status;
+  next.updatedAt = new Date().toISOString();
+  if (roundTarget && rounds !== undefined) {
+    if (next.rounds[roundTarget] !== rounds) {
+      next.roundStartedAt[roundTarget] = next.updatedAt;
+      delete next.tools[roundTarget];
+    }
+    next.rounds[roundTarget] = rounds;
+  }
+  if (roundTarget && toolStatus) next.tools[roundTarget] = toolStatus;
+  if (status === "complete" && target) next.tools[target] = "ok";
+  memoryRunProgress.set(runId, next);
+}
+
+function getMemoryRunProgress(request: any, response: any): void {
+  const url = new URL(request.url, "http://admin.local");
+  const id = url.searchParams.get("id") || "";
+  const progress = memoryRunProgress.get(id);
+  if (!progress) {
+    writeJson(response, 404, { ok: false, error: "memory_run_progress_not_found" });
+    return;
+  }
+  writeJson(response, 200, { ok: true, progress });
+}
+
+function undoLastMemoryGitCommit(context: AdminRoutesContext, response: any): void {
+  const dir = path.join(context.config.memoryFiles.root, "long-term-memory");
+  try {
+    const unavailable = validateMemoryGitRepo(dir);
+    if (unavailable) {
+      writeJson(response, 400, { ok: false, error: unavailable });
+      return;
+    }
+    const target = findLatestActiveMemoryCommit(dir);
+    if (!target) {
+      writeJson(response, 400, { ok: false, error: "no_memorize_commit_to_undo" });
+      return;
+    }
+    removeEmptyUntrackedMemoryFiles(dir);
+    gitExecFileSync(["revert", "--no-edit", target.commit], { cwd: dir });
+    context.appendLog("info", `memory git undo: reverted ${target.shortCommit} ${target.subject}`);
+    writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
+  } catch (error) {
+    writeJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "memory_git_undo_failed" });
+  }
+}
+
+function redoLastMemoryGitCommit(context: AdminRoutesContext, response: any): void {
+  const dir = path.join(context.config.memoryFiles.root, "long-term-memory");
+  try {
+    const unavailable = validateMemoryGitRepo(dir);
+    if (unavailable) {
+      writeJson(response, 400, { ok: false, error: unavailable });
+      return;
+    }
+    const target = findLatestActiveMemoryRevertCommit(dir);
+    if (!target) {
+      writeJson(response, 400, { ok: false, error: "no_memorize_revert_to_redo" });
+      return;
+    }
+    removeEmptyUntrackedMemoryFiles(dir);
+    gitExecFileSync(["revert", "--no-edit", target.commit], { cwd: dir });
+    context.appendLog("info", `memory git redo: reverted ${target.shortCommit} ${target.subject}`);
+    writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
+  } catch (error) {
+    writeJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "memory_git_redo_failed" });
+  }
+}
+
+type MemoryGitLogEntry = {
+  commit: string;
+  shortCommit: string;
+  subject: string;
+  body: string;
+  originalMemoryCommit?: string;
+};
+
+function validateMemoryGitRepo(dir: string): string | undefined {
+  if (!fs.existsSync(path.join(dir, ".git"))) return "memory_git_unavailable";
+  try {
+    gitExecFileSync(["rev-parse", "--verify", "HEAD"], { cwd: dir });
+    return undefined;
+  } catch {
+    return "memory_git_empty";
+  }
+}
+
+function findLatestActiveMemoryCommit(dir: string): MemoryGitLogEntry | undefined {
+  const log = readMemoryGitLog(dir);
+  const activeOriginals = activeOriginalMemoryCommits(log);
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    const entry = log[index];
+    if (isMemorizeSubject(entry.subject) && activeOriginals.has(entry.commit)) return entry;
+  }
+  return undefined;
+}
+
+function findLatestActiveMemoryRevertCommit(dir: string): MemoryGitLogEntry | undefined {
+  const log = readMemoryGitLog(dir);
+  const activeOriginals = activeOriginalMemoryCommits(log);
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    const entry = log[index];
+    if (!isMemorizeRevertSubject(entry.subject) || !entry.originalMemoryCommit) continue;
+    if (!activeOriginals.has(entry.originalMemoryCommit)) return entry;
+  }
+  return undefined;
+}
+
+function activeOriginalMemoryCommits(log: MemoryGitLogEntry[]): Set<string> {
+  const active = new Set<string>();
+  const originalsByCommit = new Map<string, string>();
+  for (const entry of log) {
+    if (isMemorizeSubject(entry.subject)) {
+      active.add(entry.commit);
+      originalsByCommit.set(entry.commit, entry.commit);
+      entry.originalMemoryCommit = entry.commit;
+      continue;
+    }
+    const reverted = revertedCommitFromBody(entry.body);
+    const original = reverted ? originalsByCommit.get(reverted) : undefined;
+    if (!original) continue;
+    entry.originalMemoryCommit = original;
+    originalsByCommit.set(entry.commit, original);
+    if (active.has(original)) active.delete(original);
+    else active.add(original);
+  }
+  return active;
+}
+
+function readMemoryGitLog(dir: string): MemoryGitLogEntry[] {
+  const output = gitExecFileSync(["log", "--reverse", "--format=%H%x00%h%x00%s%x00%b%x1e"], { cwd: dir, encoding: "utf8" });
+  return output
+    .split("\x1e")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const [commit = "", shortCommit = "", subject = "", ...bodyParts] = chunk.split("\x00");
+      return { commit, shortCommit, subject, body: bodyParts.join("\x00") };
+    })
+    .filter((entry) => entry.commit);
+}
+
+function isMemorizeSubject(subject: string): boolean {
+  return subject.startsWith("memorize ");
+}
+
+function isMemorizeRevertSubject(subject: string): boolean {
+  return subject.startsWith('Revert "memorize ');
+}
+
+function revertedCommitFromBody(body: string): string | undefined {
+  return body.match(/This reverts commit ([0-9a-f]{40})\./)?.[1];
+}
+
+function removeEmptyUntrackedMemoryFiles(dir: string): void {
+  for (const fileName of ["persistent-memory.md", "user-preferences.md"]) {
+    const filePath = path.join(dir, fileName);
+    if (!fs.existsSync(filePath) || fs.readFileSync(filePath, "utf8") !== "") continue;
+    try {
+      gitExecFileSync(["ls-files", "--error-unmatch", fileName], { cwd: dir });
+    } catch {
+      fs.rmSync(filePath);
+    }
+  }
+}
+
+function gitExecFileSync(args: string[], options: { cwd: string; encoding?: BufferEncoding }): string {
+  const result = childProcess.spawnSync("git", args, {
+    cwd: options.cwd,
+    encoding: options.encoding ?? "utf8"
+  });
+  if (result.status !== 0) {
+    const error = new Error(result.stderr?.toString() || result.error?.message || `git ${args.join(" ")} failed`);
+    (error as Error & { status?: number }).status = result.status ?? undefined;
+    throw error;
+  }
+  return result.stdout?.toString() ?? "";
+}
+
+function memoryDayWindow(date: string, timeZone: string): { startAt: string; endAt: string; source: "calendar" } {
+  const startAt = `${date}T00:00:00.000`;
+  const endAt = formatZonedIso(new Date(parseZonedIso(startAt, timeZone).getTime() + 24 * 60 * 60 * 1000), timeZone);
+  return { startAt, endAt, source: "calendar" };
+}
+
+function resolveMemorySleepWindow(
+  context: AdminRoutesContext,
+  date: string
+): { startAt: string; endAt: string; source: SleepBoundary["source"] | "calendar" } | undefined {
+  const sleepDays = ensureMemorySleepBoundaries(context);
+  const option = sleepDays.find((day) => day.date === date);
+  if (option) return { startAt: option.startAt, endAt: option.endAt, source: option.source };
+  return sleepDays.length === 0 ? memoryDayWindow(date, context.time.timeZone) : undefined;
+}
+
+function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
+  date: string;
+  startAt: string;
+  endAt: string;
+  source: SleepBoundary["source"];
+  messageCount?: number;
+}> {
+  recordPersistedSleepMessageBoundaries(context);
+  if (!context.diaryStore.listSleepBoundaries().some((boundary) => boundary.source !== "sleep")) inferSleepBoundaries(context);
+  const boundaries = context.diaryStore.listSleepBoundaries();
+  return boundaries.slice(1).map((boundary, index) => {
+    const previous = boundaries[index];
+    return {
+      date: sleepBoundaryLocalDate(boundary, context.time.timeZone),
+      startAt: previous.occurredAt,
+      endAt: boundary.occurredAt,
+      source: boundary.source
+    };
+  }).reverse();
+}
+
+function recordPersistedSleepMessageBoundaries(context: AdminRoutesContext): void {
+  const messages = context.store?.listMessagesChronological?.(10_000) ?? [];
+  if (messages.length === 0) return;
+  const boundaries = new Set(context.diaryStore.listSleepBoundaries().map((boundary) => boundary.occurredAt));
+  for (const message of messages) {
+    if (message.contentText !== "-少女已入眠-") continue;
+    if (boundaries.has(message.createdAt)) continue;
+    context.diaryStore.recordSleepBoundary({
+      occurredAt: message.createdAt,
+      source: "sleep",
+      now: context.time.now().iso
+    });
+    boundaries.add(message.createdAt);
+  }
+}
+
+function inferSleepBoundaries(context: AdminRoutesContext): void {
+  const messages = context.store?.listMessagesChronological?.(10_000) ?? [];
+  if (messages.length === 0) return;
+  const segments = mergeSmallSleepSegments(splitMessagesByLongGap(messages, context.time.timeZone), context.time.timeZone);
+  for (const segment of segments) {
+    context.diaryStore.recordSleepBoundary({
+      occurredAt: segment[0].createdAt,
+      source: segment === segments[0] ? "inferred_start" : "inferred_gap",
+      now: context.time.now().iso
+    });
+  }
+}
+
+function splitMessagesByLongGap(messages: StoredConversationMessage[], timeZone: string): StoredConversationMessage[][] {
+  const segments: StoredConversationMessage[][] = [];
+  let current: StoredConversationMessage[] = [];
+  let previousTime: number | undefined;
+  for (const message of messages) {
+    const messageTime = parseMessageCreatedAt(message.createdAt, timeZone);
+    if (previousTime !== undefined && messageTime - previousTime > 6 * 60 * 60 * 1000 && current.length > 0) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(message);
+    previousTime = messageTime;
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function mergeSmallSleepSegments(segments: StoredConversationMessage[][], timeZone: string): StoredConversationMessage[][] {
+  const merged = segments.slice();
+  while (merged.length > 1) {
+    const index = merged.findIndex((segment) => segment.length <= 10);
+    if (index < 0) break;
+    const target = nearestSegmentIndex(merged, index, timeZone);
+    merged[target] = index < target ? merged[index].concat(merged[target]) : merged[target].concat(merged[index]);
+    merged.splice(index, 1);
+  }
+  return merged;
+}
+
+function nearestSegmentIndex(segments: StoredConversationMessage[][], index: number, timeZone: string): number {
+  if (index === 0) return 1;
+  if (index === segments.length - 1) return index - 1;
+  const previousGap = parseMessageCreatedAt(segments[index][0].createdAt, timeZone) - parseMessageCreatedAt(segments[index - 1][segments[index - 1].length - 1].createdAt, timeZone);
+  const nextGap = parseMessageCreatedAt(segments[index + 1][0].createdAt, timeZone) - parseMessageCreatedAt(segments[index][segments[index].length - 1].createdAt, timeZone);
+  return previousGap <= nextGap ? index - 1 : index + 1;
+}
+
+function sleepBoundaryLocalDate(boundary: SleepBoundary, timeZone: string): string {
+  return formatZonedIso(new Date(parseMessageCreatedAt(boundary.occurredAt, timeZone)), timeZone).slice(0, 10);
+}
+
+function parseMessageCreatedAt(value: string, timeZone: string): number {
+  return /Z$|[+-]\d{2}:\d{2}$/.test(value) ? new Date(value).getTime() : parseZonedIso(value, timeZone).getTime();
+}
+
+
+async function previewMemoryPrompts(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const target = requiredString(body.target);
+  if (!isMemoryTarget(target)) {
+    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+    return;
+  }
+  if (!context.store?.listMessagesByCreatedAtRange) {
+    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
+    return;
+  }
+  const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+    ? body.date
+    : formatZonedIso(context.time.now().date, context.time.timeZone).slice(0, 10);
+  const startAt = `${date}T00:00:00.000`;
+  const endAt = formatZonedIso(new Date(parseZonedIso(startAt, context.time.timeZone).getTime() + 24 * 60 * 60 * 1000), context.time.timeZone);
+  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
+  const prompts = body.prompts && typeof body.prompts === "object"
+    ? body.prompts as ReturnType<MemoryInductionPromptStore["get"]>
+    : context.memoryInductionPromptStore.get();
+  const preview = buildMemoryPromptPreview({
+    memoryStore: context.memoryStore,
+    prompts,
+    messages,
+    windowStartAt: startAt,
+    windowEndAt: endAt,
+    timezone: context.time.timeZone,
+    userName: context.promptProfileStore.get().userName,
+    config: memorySummaryConfigForPreset(context, resolveMemorizeApiPreset(context))
+  }, target as MemoryTarget);
+  writeJson(response, 200, { ok: true, date, preview });
+}
+
+function isMemoryTarget(value: string): value is "persistent" | "userPreferences" | "yesterdaySummary" {
+  return value === "persistent" || value === "userPreferences" || value === "yesterdaySummary";
+}
+
 function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables {
   const target = resolvePromptPreviewTarget(context);
   return promptVariables(context.promptProfileStore.get(), {
@@ -491,6 +1091,7 @@ function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables
     dailyShell: context.getDailyShell(),
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,
+    memory: context.memoryStore.read(),
     event: {
       id: "preview",
       source: {
@@ -1219,46 +1820,180 @@ function contentForTest(kind: "markdown" | "image" | "audio", body: Record<strin
   return { kind, assetId: assetPath };
 }
 
-async function saveLLMConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+async function saveLLMApiPreset(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
-  const apiKey = optionalString(body.apiKey) ?? context.config.llm.apiKey;
+  const name = requiredString(body.name);
+  if (!name) return writeJson(response, 400, { ok: false, error: "missing_name" });
+  const preset = parseLLMApiPresetBody(context, body, name);
+  if ("error" in preset) return writeJson(response, 400, { ok: false, error: preset.error });
+  const presets = readLLMApiPresets(context).filter((entry) => entry.name !== name);
+  presets.push(preset);
+  writeLLMApiPresets(context, presets);
+  context.appendLog("info", `llm api preset saved: ${name}`);
+  writeJson(response, 200, { ok: true, presets: publicLLMApiPresets(sortLLMApiPresets(presets)) });
+}
+
+async function renameLLMApiPreset(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const from = requiredString(body.from);
+  const to = requiredString(body.to);
+  if (!from || !to) return writeJson(response, 400, { ok: false, error: "missing_name" });
+  const presets = readLLMApiPresets(context);
+  if (!presets.some((entry) => entry.name === from)) return writeJson(response, 404, { ok: false, error: "preset_not_found" });
+  if (from !== to && presets.some((entry) => entry.name === to)) return writeJson(response, 409, { ok: false, error: "preset_exists" });
+  const renamed = presets.map((entry) => entry.name === from ? { ...entry, name: to } : entry);
+  writeLLMApiPresets(context, renamed);
+  context.appendLog("info", `llm api preset renamed: ${from} -> ${to}`);
+  writeJson(response, 200, { ok: true, presets: publicLLMApiPresets(sortLLMApiPresets(renamed)) });
+}
+
+async function deleteLLMApiPreset(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const name = requiredString(body.name);
+  if (!name) return writeJson(response, 400, { ok: false, error: "missing_name" });
+  const presets = readLLMApiPresets(context);
+  const next = presets.filter((entry) => entry.name !== name);
+  if (next.length === presets.length) return writeJson(response, 404, { ok: false, error: "preset_not_found" });
+  writeLLMApiPresets(context, next);
+  context.appendLog("info", `llm api preset deleted: ${name}`);
+  writeJson(response, 200, { ok: true, presets: publicLLMApiPresets(sortLLMApiPresets(next)) });
+}
+
+function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string, unknown>, name: string): LLMApiPreset | { error: string } {
+  const existing = readLLMApiPresets(context).find((entry) => entry.name === name);
   const baseURL = requiredString(body.baseURL);
+  const apiKey = optionalString(body.apiKey) ?? existing?.apiKey;
   const model = requiredString(body.model);
-  const temperature = numberFromUnknown(body.temperature, context.config.llm.temperature);
-  const timeoutMs = numberFromUnknown(body.timeoutMs, context.config.llm.timeoutMs);
-  const stream = body.stream === undefined ? context.config.llm.stream : booleanFromUnknown(body.stream);
+  const temperature = numberFromUnknown(body.temperature, existing?.temperature ?? 0.2);
+  const timeoutMs = numberFromUnknown(body.timeoutMs, existing?.timeoutMs ?? 60_000);
+  const stream = body.stream === undefined ? existing?.stream ?? true : booleanFromUnknown(body.stream);
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
   const followupExtraParamsResult = parseJsonObject(optionalString(body.followupExtraParams) ?? "{}");
-  if (baseURL && !isValidHttpUrl(baseURL)) return writeJson(response, 400, { ok: false, error: "invalid_base_url" });
-  if (!model) return writeJson(response, 400, { ok: false, error: "missing_model" });
-  if (temperature < 0 || temperature > 2) return writeJson(response, 400, { ok: false, error: "invalid_temperature" });
-  if (timeoutMs < 1_000 || timeoutMs > 300_000) return writeJson(response, 400, { ok: false, error: "invalid_timeout_ms" });
-  if (!extraParamsResult.ok) return writeJson(response, 400, { ok: false, error: "invalid_extra_params" });
-  if (!followupExtraParamsResult.ok) return writeJson(response, 400, { ok: false, error: "invalid_followup_extra_params" });
+  if (baseURL && !isValidHttpUrl(baseURL)) return { error: "invalid_base_url" };
+  if (!model) return { error: "missing_model" };
+  if (temperature < 0 || temperature > 2) return { error: "invalid_temperature" };
+  if (timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
+  if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
+  if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
+  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
+}
 
-  updateEnvFile(".env", {
-    LLM_PROVIDER: "openai-compatible",
-    LLM_BASE_URL: baseURL,
-    LLM_API_KEY: optionalString(body.apiKey),
-    LLM_MODEL: model,
-    LLM_TEMPERATURE: String(temperature),
-    LLM_TIMEOUT_MS: String(timeoutMs),
-    LLM_STREAM_ENABLED: String(stream),
-    LLM_EXTRA_PARAMS: JSON.stringify(extraParamsResult.value),
-    LLM_FOLLOWUP_EXTRA_PARAMS: JSON.stringify(followupExtraParamsResult.value)
-  });
-  context.config.llm.provider = baseURL && apiKey ? "openai-compatible" : "stub";
-  context.config.llm.baseURL = baseURL;
-  context.config.llm.apiKey = apiKey;
-  context.config.llm.model = model;
-  context.config.llm.temperature = temperature;
-  context.config.llm.timeoutMs = timeoutMs;
-  context.config.llm.stream = stream;
-  context.config.llm.extraParams = extraParamsResult.value;
-  context.config.llm.followupExtraParams = followupExtraParamsResult.value;
-  context.reloadLLM();
-  context.appendLog("info", `llm config saved: ${baseURL || "(empty)"} ${model || "(empty)"}`);
-  writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
+function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
+  const filePath = llmApiPresetsPath(context);
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: LLMApiPreset[] } | LLMApiPreset[];
+    const presets = Array.isArray(parsed) ? parsed : Array.isArray(parsed.presets) ? parsed.presets : [];
+    return sortLLMApiPresets(presets.map(normalizeLLMApiPreset).filter((entry): entry is LLMApiPreset => Boolean(entry)));
+  } catch {
+    return [];
+  }
+}
+
+function writeLLMApiPresets(context: AdminRoutesContext, presets: LLMApiPreset[]): void {
+  const filePath = llmApiPresetsPath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify({ presets: sortLLMApiPresets(presets) }, null, 2)}\n`);
+}
+
+function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | undefined {
+  if (!value || typeof value !== "object" || !value.name || !value.model) return undefined;
+  return {
+    name: String(value.name),
+    baseURL: typeof value.baseURL === "string" ? value.baseURL : "",
+    apiKey: typeof value.apiKey === "string" ? value.apiKey : undefined,
+    model: String(value.model),
+    temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
+    timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
+    stream: value.stream !== false,
+    extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
+    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
+  };
+}
+
+function sortLLMApiPresets(presets: LLMApiPreset[]): LLMApiPreset[] {
+  return [...presets].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function llmApiPresetsPath(context: AdminRoutesContext): string {
+  return path.join(context.config.memoryFiles.root, "config", "llm-api-presets.json");
+}
+
+function publicLLMApiPresets(presets: LLMApiPreset[]): LLMApiPresetView[] {
+  return presets.map(publicLLMApiPreset);
+}
+
+function publicLLMApiPreset(preset: LLMApiPreset): LLMApiPresetView {
+  const { apiKey, ...rest } = preset;
+  return { ...rest, apiKeySet: Boolean(apiKey) };
+}
+
+function readPromptApiProfile(context: AdminRoutesContext): PromptApiProfile {
+  const filePath = promptApiProfilePath(context);
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    return normalizePromptApiProfile(JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>);
+  } catch {
+    return {};
+  }
+}
+
+function writePromptApiProfile(context: AdminRoutesContext, profile: PromptApiProfile): void {
+  const filePath = promptApiProfilePath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(normalizePromptApiProfile(profile), null, 2)}\n`);
+}
+
+function normalizePromptApiProfile(value: Record<string, unknown>): PromptApiProfile {
+  return {
+    corePresetName: optionalString(value.corePresetName),
+    memorizePresetName: optionalString(value.memorizePresetName)
+  };
+}
+
+function resolvePromptApiPreset(context: AdminRoutesContext, kind: "core" | "memorize"): LLMApiPreset | undefined {
+  const profile = readPromptApiProfile(context);
+  const name = kind === "core" ? profile.corePresetName : profile.memorizePresetName;
+  if (!name) return undefined;
+  return readLLMApiPresets(context).find((entry) => entry.name === name);
+}
+
+function resolveMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | undefined {
+  return resolvePromptApiPreset(context, "memorize") ?? defaultMemorizeApiPreset(context);
+}
+
+function memorySummaryConfigForPreset(context: AdminRoutesContext, preset: LLMApiPreset | undefined) {
+  if (!preset) return { ...context.config.memorySummary, enabled: false, apiKey: undefined };
+  return {
+    ...context.config.memorySummary,
+    baseURL: preset.baseURL,
+    apiKey: preset.apiKey,
+    model: preset.model,
+    temperature: preset.temperature,
+    timeoutMs: preset.timeoutMs,
+    stream: preset.stream,
+    extraParams: preset.extraParams
+  };
+}
+
+function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | undefined {
+  const config = context.config.memorySummary;
+  if (!config.enabled || !config.model) return undefined;
+  return {
+    name: "Memory Summary",
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+    model: config.model,
+    temperature: config.temperature,
+    timeoutMs: config.timeoutMs,
+    stream: config.stream,
+    extraParams: config.extraParams,
+    followupExtraParams: {}
+  };
+}
+
+function promptApiProfilePath(context: AdminRoutesContext): string {
+  return path.join(context.config.memoryFiles.root, "config", "prompt-api-profile.json");
 }
 
 async function saveFeishuConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
@@ -1484,20 +2219,16 @@ async function stopWeChat(context: AdminRoutesContext, response: any): Promise<v
 }
 
 function getAdminConfig(context: AdminRoutesContext): unknown {
+  const apiProfile = readPromptApiProfile(context);
   return {
     core: context.config.core,
     coreProfile: context.coreProfileStore.get(),
     api: context.config.api,
     llm: {
-      provider: context.config.llm.provider,
-      baseURL: context.config.llm.baseURL,
-      model: context.config.llm.model,
-      temperature: context.config.llm.temperature,
-      timeoutMs: context.config.llm.timeoutMs,
-      stream: context.config.llm.stream,
-      extraParams: context.config.llm.extraParams,
-      followupExtraParams: context.config.llm.followupExtraParams,
-      apiKeyConfigured: Boolean(context.config.llm.apiKey)
+      provider: "api-preset",
+      corePresetName: apiProfile.corePresetName,
+      memorizePresetName: apiProfile.memorizePresetName,
+      presets: publicLLMApiPresets(readLLMApiPresets(context))
     },
     tts: {
       backend: context.config.tts.backend,

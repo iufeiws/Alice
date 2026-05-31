@@ -382,6 +382,39 @@ test("message runtime can pause heartbeat and process pending messages on demand
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
 });
 
+test("message runtime can start with heartbeat paused", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-start-paused"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  assert.equal(runtime.getStatus().heartbeatPaused, true);
+  runtime.ingestEvent(textEvent("session-1", "om_1", "hello"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(coreInputs.length, 0);
+
+  runtime.resumeHeartbeat();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(coreInputs.length, 1);
+});
+
 test("message runtime processNow starts a manual LLM session without pending messages", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-process-now-empty"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];

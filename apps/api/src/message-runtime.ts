@@ -13,6 +13,7 @@ import type {
 export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
+  startHeartbeatPaused?: boolean;
   onHeartbeatTick?: () => void;
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
@@ -110,7 +111,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const now = () => time.now().date;
   const llmFailureNotice = "-星界信号丢失-";
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
-  let heartbeatPaused = false;
+  let heartbeatPaused = deps.startHeartbeatPaused === true;
   const unsubscribeState = deps.agentState?.onChange(() => scheduleHeartbeat(0));
   scheduleHeartbeat(0);
 

@@ -47,6 +47,16 @@ export function renderAdminHtmlV2(): string {
       .prompt-layer[open] summary { margin-bottom: 8px; }
       .prompt-actions { display: flex; gap: 6px; flex-wrap: wrap; }
       .prompt-actions button { margin-top: 6px; }
+      .prompt-editor-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-template-areas: "mode preview" "api preview" "editor preview"; gap: 16px; align-items: start; }
+      .prompt-mode-cell { grid-area: mode; }
+      .prompt-api-cell { grid-area: api; }
+      .prompt-edit-cell { grid-area: editor; min-width: 0; }
+      .prompt-preview-pane { grid-area: preview; position: sticky; top: 12px; min-width: 0; }
+      .prompt-preview-pane .logs { max-height: calc(100vh - 210px); }
+      .prompt-preview-pane > pre { max-height: calc(100vh - 210px); overflow: auto; }
+      .prompt-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+      .prompt-preview-head h2 { margin: 0; }
+      .prompt-preview-head button { margin: 0; white-space: nowrap; }
       .shell-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
       .shell-category-outfits { grid-column: 1 / -1; }
       .shell-option { border-bottom: 1px solid #e4e7eb; padding: 10px 0; }
@@ -61,7 +71,13 @@ export function renderAdminHtmlV2(): string {
       .shell-image-drop { border: 1px dashed #98a2b3; border-radius: 6px; padding: 10px; background: #f8fafc; transition: border-color 120ms ease, background 120ms ease; }
       .shell-image-drop.dragging { border-color: #2563eb; background: #eff6ff; }
       .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .shell-group { border-bottom: 1px solid #e4e7eb; padding: 8px 0; }
+      .shell-group summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; }
+      .shell-group summary strong { min-width: 0; overflow-wrap: anywhere; }
+      .shell-group-actions { display: flex; align-items: center; gap: 8px; }
+      .shell-group-add { width: 28px; height: 28px; display: inline-grid; place-items: center; margin: 0; padding: 0; font-size: 17px; line-height: 1; }
       .logs { max-height: calc(100vh - 150px); overflow: auto; background: #111827; color: #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+      .logs pre { color: #17202a; }
       .llm-split { display: grid; grid-template-rows: minmax(280px, 1fr) minmax(280px, 1fr); gap: 12px; height: calc(100vh - 145px); }
       .llm-window { min-height: 0; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
       .llm-window h2 { margin: 0; }
@@ -93,12 +109,28 @@ export function renderAdminHtmlV2(): string {
       .usage-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
       .usage-table th, .usage-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
       .usage-table th { color: #667085; font-weight: 800; }
+      .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+      .memory-controls label { margin: 0; min-width: 180px; }
+      .memory-day-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 16px; }
+      .memory-calendar { margin: 0; }
+      .memory-calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+      .memory-calendar-head strong { font-size: 13px; }
+      .memory-calendar-head button { width: 26px; height: 26px; padding: 0; margin: 0; }
+      .memory-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+      .memory-calendar-weekday { color: #667085; font-size: 10px; font-weight: 800; text-align: center; padding: 3px 0; }
+      .memory-calendar-day { height: 26px; margin: 0; padding: 0; border-radius: 5px; font-size: 11px; }
+      .memory-calendar-day.available { background: #17202a; color: #fff; border-color: #17202a; }
+      .memory-calendar-day.selected { outline: 2px solid #2563eb; outline-offset: 1px; }
+      .memory-calendar-day.empty { visibility: hidden; }
+      .memory-calendar-day:disabled { color: #98a2b3; background: #eef1f5; border-color: #d7dce3; cursor: not-allowed; }
+      .memory-chat-panel h2 { margin-bottom: 8px; }
+      .memory-chat-preview { margin: 0; max-height: 360px; min-height: 238px; }
       .tool-preview-grid { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 14px; align-items: start; }
       .tool-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts { grid-template-columns: 1fr; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
     </style>
   </head>
   <body>
@@ -118,6 +150,15 @@ export function renderAdminHtmlV2(): string {
           <div id="left-llm" class="pane active">
             <h2>LLM API</h2>
             <form id="llm-form">
+              <label for="llmPresetSelect">API Preset</label>
+              <select id="llmPresetSelect"></select>
+              <label for="llmPresetName">Preset Name <span class="shell-marker" id="llmPresetMarker"></span></label>
+              <input id="llmPresetName" autocomplete="off" placeholder="preset name" />
+              <div class="prompt-actions">
+                <button type="button" id="llm-preset-save">Save Preset</button>
+                <button type="button" id="llm-preset-rename">Rename</button>
+                <button type="button" id="llm-preset-delete" class="secondary">Delete</button>
+              </div>
               <label for="baseURL">Base URL</label>
               <input id="baseURL" name="baseURL" autocomplete="off" />
               <label for="model">Model</label>
@@ -134,7 +175,6 @@ export function renderAdminHtmlV2(): string {
               <label for="followupExtraParams">Follow-up Extra Params JSON</label>
               <textarea id="followupExtraParams" name="followupExtraParams" rows="6" spellcheck="false">{}</textarea>
               <p class="muted">First-call params apply to the first LLM request in a session; follow-up params apply to later tool-result requests. Object-body fragments are also accepted. For streaming token usage, include "stream_options":{"include_usage":true}.</p>
-              <button type="submit">Save</button>
               <p class="muted" id="save-status"></p>
             </form>
             <h2>Runtime</h2>
@@ -262,7 +302,7 @@ export function renderAdminHtmlV2(): string {
             </form>
             <h2>Runtime</h2>
             <button type="button" id="heartbeat-pause" class="secondary">Pause Heartbeat</button>
-            <button type="button" id="heartbeat-resume">Resume Heartbeat</button>
+            <button type="button" id="heartbeat-resume">Start Heartbeat</button>
             <button type="button" id="process-now">Process Now</button>
             <pre id="runtimeStatus">Loading...</pre>
           </div>
@@ -275,6 +315,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Sessions</button>
           <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
+          <button class="tab" data-main-tab="memory" type="button">Memory</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
           <button class="tab" data-main-tab="events" type="button">Event Log</button>
@@ -315,7 +356,7 @@ export function renderAdminHtmlV2(): string {
               <select id="tokenUsageModel"><option value="all">all</option></select>
             </label>
             <label for="tokenUsageAgent">Agent
-              <select id="tokenUsageAgent"><option value="all">all</option><option value="core">core</option></select>
+              <select id="tokenUsageAgent"><option value="all">all</option><option value="core">core</option><option value="memorize">memorize</option></select>
             </label>
             <button type="button" id="tokenUsageRefresh">Refresh</button>
           </div>
@@ -323,6 +364,30 @@ export function renderAdminHtmlV2(): string {
           <div id="tokenUsageChart" class="usage-chart">Loading...</div>
           <div id="tokenUsageModels"></div>
           <div id="tokenUsageLatest"></div>
+        </section>
+        <section id="main-memory" class="pane">
+          <div>
+            <h2>Memory</h2>
+            <div class="memory-controls">
+              <label for="memoryRunDate">Date
+                <select id="memoryRunDate"></select>
+              </label>
+              <button type="button" id="memory-run-day">Run Selected Day</button>
+              <button type="button" id="memory-undo-last" class="secondary">撤销</button>
+              <button type="button" id="memory-redo-last" class="secondary">重做</button>
+            </div>
+            <div class="memory-day-layout">
+              <div class="memory-calendar" id="memoryCalendar"></div>
+              <div class="memory-chat-panel">
+                <h2>Selected Day Chat</h2>
+                <div id="memoryDayMessages" class="logs memory-chat-preview">Choose a date to load chat records.</div>
+              </div>
+            </div>
+            <p class="muted" id="memory-status"></p>
+            <div id="memoryFiles">Loading...</div>
+            <h2>Last Run</h2>
+            <pre id="memoryRunResult">No memory run yet.</pre>
+          </div>
         </section>
         <section id="main-tool-preview" class="pane">
           <div class="tool-preview-grid">
@@ -358,7 +423,7 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-memory,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
@@ -373,6 +438,7 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
         if (button.dataset.mainTab === "token-usage") await refreshTokenUsage();
+        if (button.dataset.mainTab === "memory") await refreshMemory();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
@@ -380,13 +446,8 @@ export function renderAdminHtmlV2(): string {
       async function refresh() {
         const config = await fetch("/admin/api/config").then((res) => res.json());
         $("config").textContent = JSON.stringify(config, null, 2);
-        $("baseURL").value = config.llm.baseURL || "";
-        $("model").value = config.llm.model || "";
-        $("temperature").value = String(config.llm.temperature ?? "");
-        $("timeoutMs").value = String(config.llm.timeoutMs ?? "");
-        $("streamEnabled").checked = config.llm.stream !== false;
-        $("extraParams").value = JSON.stringify(config.llm.extraParams || {}, null, 2);
-        $("followupExtraParams").value = JSON.stringify(config.llm.followupExtraParams || {}, null, 2);
+        await refreshLLMApiPresets();
+        if (!currentLLMApiPreset) clearLLMApiForm();
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
         $("timezone").value = config.core.timezone || "Asia/Singapore";
         $("defaultTargetPlugin").value = config.core.defaultTargetPlugin || "auto";
@@ -438,7 +499,7 @@ export function renderAdminHtmlV2(): string {
 
       async function refreshLLMChain() {
         const requestPayload = await fetch("/admin/api/llm-requests").then((res) => res.json());
-        $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || []);
+        $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || [], requestPayload.memorySessions || []);
         bindLLMSessionDetails("llmChainSessions");
         $("llmChainSessions").scrollTop = $("llmChainSessions").scrollHeight;
       }
@@ -629,17 +690,25 @@ export function renderAdminHtmlV2(): string {
         return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} rounds=\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} messages=\${escapeHtml(session.messageCount ?? 0)}</div>\`;
       }
 
-      function renderLLMSessionGroups(activeSession, clearedSessions) {
+      function renderLLMSessionGroups(activeSession, clearedSessions, memorySessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
         const activeGroup = activeSession
           ? renderLLMSessionShell(activeSession, "Active Session")
           : "";
-        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Saved Session")).join("");
-        return (archived || '<div class="log-line">Saved sessions: none</div>') + active + activeGroup;
+        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Core Saved Session")).join("");
+        const memory = sortedLLMSessions(memorySessions).map((session) => renderLLMSessionShell(session, "Memorize")).join("");
+        return [
+          '<h2>Core</h2>',
+          archived || '<div class="log-line">Core saved sessions: none</div>',
+          active,
+          activeGroup,
+          '<h2>Memorize</h2>',
+          memory || '<div class="log-line">Memorize sessions: none</div>'
+        ].join("");
       }
 
       function sortedLLMSessions(sessions) {
-        return [...(sessions || [])].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")) || Number(left.id || 0) - Number(right.id || 0));
+        return [...(sessions || [])].sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")) || String(left.id || "").localeCompare(String(right.id || "")));
       }
 
       function renderLLMSessionShell(session, title) {
@@ -719,7 +788,42 @@ export function renderAdminHtmlV2(): string {
       }
 
       function renderLLMTranscript(messages) {
-        return (messages || []).map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}</div>\`).join("") || '<div class="log-line">No messages archived.</div>';
+        const parsed = renderParsedLLMMessages(messages);
+        return parsed || '<div class="log-line">No messages archived.</div>';
+      }
+
+      function renderParsedLLMMessages(messages) {
+        const list = Array.isArray(messages) ? messages : [];
+        if (!list.length) return "";
+        const unresolved = unresolvedPromptVariables(list);
+        return [
+          unresolved.length ? '<div class="log-line log-warn">unresolved variables\\n' + escapeHtml(unresolved.join("\\n")) + '</div>' : "",
+          ...list.map((message, index) => renderParsedLLMMessage(message, index))
+        ].join("");
+      }
+
+      function renderParsedLLMMessage(message, index) {
+        const header = [
+          "#" + (index + 1),
+          "[" + (message.role || "unknown") + "]",
+          message.name ? "name=" + message.name : "",
+          message.toolCallId ? "tool_call_id=" + message.toolCallId : ""
+        ].filter(Boolean).join(" ");
+        const parts = [
+          '<strong>' + escapeHtml(header) + '</strong>',
+          message.content ? '<div>content</div><pre>' + escapeHtml(message.content) + '</pre>' : "",
+          message.reasoningContent ? '<div>reasoning_content</div><pre>' + escapeHtml(message.reasoningContent) + '</pre>' : "",
+          Array.isArray(message.toolCalls) && message.toolCalls.length
+            ? '<div>tool_calls</div><pre>' + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) + '</pre>'
+            : ""
+        ].filter(Boolean).join("\\n");
+        return '<details class="log-line" open><summary>' + escapeHtml(header) + '</summary>' + parts + '</details>';
+      }
+
+      function unresolvedPromptVariables(value) {
+        const text = JSON.stringify(value || "");
+        const found = text.match(/\\{\\{\\s*[a-zA-Z0-9_/]+\\s*\\}\\}/g) || [];
+        return [...new Set(found)].sort();
       }
 
       function renderLLMRequestBlock(title, current) {
@@ -733,8 +837,9 @@ export function renderAdminHtmlV2(): string {
         return \`
           <div class="log-line">== \${escapeHtml(title)} ==</div>
           <div class="log-line">[\${escapeHtml(current.time || "")}] source=\${escapeHtml(current.source || "actual")} model=\${escapeHtml(current.model || "")} temperature=\${escapeHtml(current.temperature ?? "")}\${current.conversationId ? " conversation=" + escapeHtml(current.conversationId) : ""}</div>
-          \${current.tools && current.tools.length ? \`<div class="log-line">tool: feishu\\n\${escapeHtml(current.tools.map((tool) => tool.function.name).join(", "))}</div>\` : ""}
-          \${(current.messages || []).map((message, index) => \`<div class="log-line">#\${index + 1} [\${escapeHtml(message.role)}]\${message.name ? " " + escapeHtml(message.name) : ""}\${message.toolCallId ? " tool_call_id=" + escapeHtml(message.toolCallId) : ""}\\n\${escapeHtml(message.content || "")}\${message.reasoningContent ? "\\nreasoning_content\\n" + escapeHtml(message.reasoningContent) : ""}\${message.toolCalls ? "\\ntool_calls=" + escapeHtml(JSON.stringify(message.toolCalls, null, 2)) : ""}</div>\`).join("")}
+          \${current.tools && current.tools.length ? \`<div class="log-line">tools\\n\${escapeHtml(current.tools.map((tool) => tool.function.name).join(", "))}</div>\` : ""}
+          <div class="log-line">parsed messages</div>
+          \${renderParsedLLMMessages(current.messages || [])}
           <div class="log-line">raw json\\n\${escapeHtml(JSON.stringify(raw, null, 2))}</div>
         \`;
       }
@@ -756,40 +861,72 @@ export function renderAdminHtmlV2(): string {
       let promptProfile = null;
       let promptVariables = {};
       let promptTools = [];
+      let promptEditorMode = "core";
+      let promptSideView = "preview";
+      let memoryPrompts = null;
+      let lastMemoryPromptPreviewTarget = "persistent";
+      let memorySleepDays = [];
+      let memoryCalendarMonth = "";
       let toolPreviewTools = [];
+      let llmApiPresets = [];
+      let currentLLMApiPreset = null;
+      let promptApiProfile = {};
       async function refreshPromptProfile() {
         const payload = await fetch("/admin/api/prompt-profile").then((res) => res.json());
         promptProfile = payload.profile;
         promptVariables = payload.variables || {};
         promptTools = payload.tools || [];
+        const memoryPayload = await fetch("/admin/api/memory/prompts").then((res) => res.json());
+        memoryPrompts = memoryPayload.prompts || {};
+        promptApiProfile = memoryPayload.apiProfile || promptApiProfile || {};
+        if (memoryPayload.apiPresets) {
+          llmApiPresets = memoryPayload.apiPresets;
+          renderLLMApiPresetControls();
+        }
         renderPromptProfile();
       }
 
       function renderPromptProfile() {
-        if (!promptProfile) return;
+        if (!promptProfile || !memoryPrompts) return;
+        if (promptEditorMode === "memory") {
+          renderMemoryPromptEditor();
+          return;
+        }
         const layers = [...promptProfile.layers].sort((a, b) => a.order - b.order);
         if (!Array.isArray(promptProfile.appendLayers)) promptProfile.appendLayers = [];
         const appendLayers = [...promptProfile.appendLayers].sort((a, b) => a.order - b.order);
         $("promptProfile").innerHTML = \`
-          <h2>Prompt Profile</h2>
-          <label for="promptUserName">User Name</label>
-          <input id="promptUserName" autocomplete="off" value="\${escapeAttr(promptProfile.userName || "user")}" />
-          <h2>Variables</h2>
-          <pre>\${escapeHtml(JSON.stringify(promptVariables, null, 2))}</pre>
-          <h2>Visible Tools</h2>
-          <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: feishu</label>
-          <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
-          <label><input id="toolShellVisible" type="checkbox" \${promptProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
-          <p class="muted">check_chat · send_chat · wardrobe · selfie</p>
-          <h2>Initial Layers</h2>
-          <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
-          <button type="button" id="prompt-add">Add Initial Layer</button>
-          <h2>Append Layers</h2>
-          <p class="muted">Append layers are rendered and appended before each heartbeat LLM request. Tool request layers run immediately and include their tool result.</p>
-          <div id="promptAppendLayers">\${appendLayers.map((layer, index) => renderPromptLayer(layer, index, appendLayers.length, "appendLayers")).join("")}</div>
-          <button type="button" id="prompt-append-add">Add Append Layer</button>
-          <button type="button" id="prompt-save">Save Prompt Profile</button>
+          <div class="prompt-editor-grid">
+            <div class="subtabs prompt-mode-cell">
+              <button class="tab active" id="prompt-mode-core" type="button">Core</button>
+              <button class="tab" id="prompt-mode-memory" type="button">Memorize</button>
+            </div>
+            <div class="prompt-api-cell">\${renderPromptApiPresetPicker("core")}</div>
+            <div class="prompt-edit-cell">
+              <h2>Prompt Profile</h2>
+              <label for="promptUserName">User Name</label>
+              <input id="promptUserName" autocomplete="off" value="\${escapeAttr(promptProfile.userName || "user")}" />
+              <h2>Visible Tools</h2>
+              <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
+              <label><input id="toolMediaVisible" type="checkbox" \${promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: media</label>
+              <label><input id="toolShellVisible" type="checkbox" \${promptProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
+              <p class="muted">check_chat · send_chat · wardrobe · selfie</p>
+              <h2>Initial Layers</h2>
+              <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
+              <button type="button" id="prompt-add">Add Initial Layer</button>
+              <h2>Append Layers</h2>
+              <p class="muted">Append layers are rendered and appended before each heartbeat LLM request. Tool request layers run immediately and include their tool result.</p>
+              <div id="promptAppendLayers">\${appendLayers.map((layer, index) => renderPromptLayer(layer, index, appendLayers.length, "appendLayers")).join("")}</div>
+              <button type="button" id="prompt-append-add">Add Append Layer</button>
+              <button type="button" id="prompt-save">Save Prompt Profile</button>
+            </div>
+            \${renderPromptSidePane("core", "Core Preview", "Save Prompt Profile to refresh preview.")}
+          </div>
         \`;
+        $("prompt-mode-core").addEventListener("click", () => { promptEditorMode = "core"; renderPromptProfile(); });
+        $("prompt-mode-memory").addEventListener("click", () => { promptEditorMode = "memory"; renderPromptProfile(); });
+        bindPromptSideToggle("core");
+        bindPromptApiPresetPicker("core");
         $("promptUserName").addEventListener("input", () => { promptProfile.userName = $("promptUserName").value; });
         $("toolFeishuVisible").addEventListener("change", () => { promptProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolMediaVisible").addEventListener("change", () => { promptProfile.visibleTools.media = $("toolMediaVisible").checked; });
@@ -807,6 +944,705 @@ export function renderAdminHtmlV2(): string {
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);
+      }
+
+      function renderPromptSidePane(mode, previewTitle, placeholder) {
+        return \`
+          <div class="prompt-preview-pane">
+            <div class="prompt-preview-head">
+              <h2 id="promptSideTitle">\${promptSideView === "variables" ? "变量解析树" : escapeHtml(previewTitle)}</h2>
+              <button type="button" id="promptSideToggle" class="secondary">\${promptSideView === "variables" ? "预览" : "变量解析树"}</button>
+            </div>
+            \${renderPromptSideContent(mode, placeholder)}
+          </div>
+        \`;
+      }
+
+      function renderPromptSideContent(mode, placeholder) {
+        const elementId = mode === "memory" ? "memoryPromptPreview" : "corePromptPreview";
+        if (promptSideView === "variables") {
+          return \`<pre id="\${elementId}">\${escapeHtml(JSON.stringify(promptVariables, null, 2))}</pre>\`;
+        }
+        return \`<div id="\${elementId}" class="logs">\${escapeHtml(placeholder)}</div>\`;
+      }
+
+      function bindPromptSideToggle(mode) {
+        $("promptSideToggle")?.addEventListener("click", async () => {
+          promptSideView = promptSideView === "variables" ? "preview" : "variables";
+          renderPromptProfile();
+          if (promptSideView !== "preview") return;
+          if (mode === "memory") await refreshMemoryPromptPreview(lastMemoryPromptPreviewTarget);
+          else await refreshCorePromptPreview();
+        });
+      }
+
+      function renderMemoryPromptEditor() {
+        const groups = [
+          ["commonLayers", "共同组", "persistent"],
+          ["persistentLayers", "长期记忆专属", "persistent"],
+          ["userPreferencesLayers", "用户偏好专属", "userPreferences"],
+          ["yesterdaySummaryLayers", "日记专属", "yesterdaySummary"]
+        ];
+        $("promptProfile").innerHTML = \`
+          <div class="prompt-editor-grid">
+            <div class="subtabs prompt-mode-cell">
+              <button class="tab" id="prompt-mode-core" type="button">Core</button>
+              <button class="tab active" id="prompt-mode-memory" type="button">Memorize</button>
+            </div>
+            <div class="prompt-api-cell">\${renderPromptApiPresetPicker("memorize")}</div>
+            <div class="prompt-edit-cell">
+              \${groups.map(([key, title, target]) => \`
+                <h2>\${escapeHtml(title)}</h2>
+                <div id="memory-\${escapeAttr(key)}">\${[...(memoryPrompts[key] || [])].sort((a, b) => a.order - b.order).map((layer, index, list) => renderMemoryPromptLayer(layer, index, list.length, key)).join("")}</div>
+                <button type="button" data-memory-layer-add="\${escapeAttr(key)}">Add Layer</button>
+                <button type="button" data-memory-group-save="\${escapeAttr(key)}" data-memory-preview-target="\${escapeAttr(target)}">Save \${escapeHtml(title)}</button>
+              \`).join("")}
+            </div>
+            \${renderPromptSidePane("memory", "Prompt Preview", "Save a Memorize group to refresh its preview.")}
+          </div>
+        \`;
+        $("prompt-mode-core").addEventListener("click", () => { promptEditorMode = "core"; renderPromptProfile(); });
+        $("prompt-mode-memory").addEventListener("click", () => { promptEditorMode = "memory"; renderPromptProfile(); });
+        bindPromptSideToggle("memory");
+        bindPromptApiPresetPicker("memorize");
+        groups.forEach(([key]) => (memoryPrompts[key] || []).forEach((layer, index) => bindMemoryPromptLayer(layer, index, key)));
+        document.querySelectorAll("[data-memory-layer-add]").forEach((button) => button.addEventListener("click", () => {
+          const key = button.dataset.memoryLayerAdd;
+          if (!Array.isArray(memoryPrompts[key])) memoryPrompts[key] = [];
+          const order = Math.max(0, ...memoryPrompts[key].map((layer) => Number(layer.order) || 0)) + 10;
+          memoryPrompts[key].push({ id: key + "_" + Date.now(), title: "New Layer", role: "user", enabled: true, order, content: "" });
+          renderPromptProfile();
+        }));
+        document.querySelectorAll("[data-memory-group-save]").forEach((button) => button.addEventListener("click", () => {
+          saveMemoryPromptGroup(button.dataset.memoryGroupSave, button.dataset.memoryPreviewTarget || "persistent");
+        }));
+      }
+
+      function renderPromptApiPresetPicker(mode) {
+        const isMemorize = mode === "memorize";
+        const selected = isMemorize ? promptApiProfile.memorizePresetName : promptApiProfile.corePresetName;
+        const label = isMemorize ? "Memorize API Preset" : "Core API Preset";
+        const buttonLabel = isMemorize ? "Save Memorize API Binding" : "Save Core API Binding";
+        return \`
+          <div class="row">
+            <div>
+              <label for="promptApiPresetSelect">\${escapeHtml(label)}</label>
+              <select id="promptApiPresetSelect" data-prompt-api-mode="\${escapeAttr(mode)}">\${renderLLMApiPresetOptions(selected || "")}</select>
+            </div>
+            <div>
+              <button type="button" id="prompt-api-profile-save" data-prompt-api-mode="\${escapeAttr(mode)}">\${escapeHtml(buttonLabel)}</button>
+            </div>
+          </div>
+        \`;
+      }
+
+      function bindPromptApiPresetPicker(mode) {
+        $("prompt-api-profile-save")?.addEventListener("click", () => savePromptApiProfile(mode));
+      }
+
+      function renderMemoryPromptLayer(layer, index, count, group) {
+        const role = layer.role || "system";
+        const isToolRequest = role === "tool_request";
+        const canThink = role === "assistant" || isToolRequest;
+        return \`
+          <details class="prompt-layer" data-memory-layer-group="\${escapeAttr(group)}" data-memory-layer-id="\${escapeAttr(layer.id)}" open>
+            <summary>\${escapeHtml(layer.title || "Untitled Layer")}<span>[\${escapeHtml(role)}]\${layer.enabled ? "" : " disabled"}</span></summary>
+            <div class="row">
+              <div>
+                <label>Title</label>
+                <input data-field="title" value="\${escapeAttr(layer.title || "")}" />
+              </div>
+              <div>
+                <label>Role</label>
+                <select data-field="role">
+                  \${["system", "user", "assistant", "tool_request"].map((item) => \`<option value="\${item}" \${role === item ? "selected" : ""}>\${item}</option>\`).join("")}
+                </select>
+              </div>
+              \${isToolRequest ? \`
+              <div>
+                <label>Tool</label>
+                <select data-field="toolName">
+                  \${["read_memory", "self_talk"].map((item) => \`<option value="\${item}" \${(layer.toolName || "read_memory") === item ? "selected" : ""}>\${item}</option>\`).join("")}
+                </select>
+              </div>
+              \` : ""}
+              <label><input data-field="enabled" type="checkbox" \${layer.enabled ? "checked" : ""} /> Enabled</label>
+            </div>
+            \${canThink ? \`
+            <label>Thinking / Fake Reasoning</label>
+            <textarea data-field="thinking" rows="3">\${escapeHtml(layer.thinking || "")}</textarea>
+            \` : ""}
+            \${isToolRequest ? \`
+            <label>Tool Arguments</label>
+            <textarea data-field="toolArguments" rows="3">\${escapeHtml(layer.toolArguments || "{}")}</textarea>
+            \` : ""}
+            <label>Content</label>
+            <textarea data-field="content" rows="7">\${escapeHtml(layer.content || "")}</textarea>
+            <div class="prompt-actions">
+              <button type="button" data-action="up" \${index === 0 ? "disabled" : ""}>Up</button>
+              <button type="button" data-action="down" \${index === count - 1 ? "disabled" : ""}>Down</button>
+              <button type="button" data-action="delete" class="secondary">Delete</button>
+            </div>
+          </details>
+        \`;
+      }
+
+      function bindMemoryPromptLayer(layer, index, group) {
+        const root = document.querySelector('[data-memory-layer-group="' + cssEscape(group) + '"][data-memory-layer-id="' + cssEscape(layer.id) + '"]');
+        if (!root) return;
+        root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
+        root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
+          layer.role = event.target.value;
+          if (layer.role === "tool_request") {
+            layer.toolName = "read_memory";
+            if (!layer.toolArguments) layer.toolArguments = "{}";
+          } else {
+            delete layer.toolName;
+            delete layer.toolCallId;
+            delete layer.toolArguments;
+          }
+          if (layer.role !== "assistant" && layer.role !== "tool_request") delete layer.thinking;
+          renderPromptProfile();
+        });
+        root.querySelector('[data-field="enabled"]').addEventListener("change", (event) => { layer.enabled = event.target.checked; });
+        root.querySelector('[data-field="content"]').addEventListener("input", (event) => { layer.content = event.target.value; });
+        root.querySelector('[data-field="thinking"]')?.addEventListener("input", (event) => { layer.thinking = event.target.value; });
+        root.querySelector('[data-field="toolName"]')?.addEventListener("change", (event) => { layer.toolName = event.target.value; });
+        root.querySelector('[data-field="toolArguments"]')?.addEventListener("input", (event) => { layer.toolArguments = event.target.value; });
+        root.querySelector('[data-action="delete"]').addEventListener("click", () => {
+          memoryPrompts[group] = memoryPrompts[group].filter((item) => item.id !== layer.id);
+          renderPromptProfile();
+        });
+        root.querySelector('[data-action="up"]').addEventListener("click", () => moveMemoryPromptLayer(index, -1, group));
+        root.querySelector('[data-action="down"]').addEventListener("click", () => moveMemoryPromptLayer(index, 1, group));
+      }
+
+      function moveMemoryPromptLayer(index, delta, group) {
+        const layers = [...memoryPrompts[group]].sort((a, b) => a.order - b.order);
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= layers.length) return;
+        const currentOrder = layers[index].order;
+        layers[index].order = layers[nextIndex].order;
+        layers[nextIndex].order = currentOrder;
+        renderPromptProfile();
+      }
+
+      async function saveMemoryPromptGroup(group, target) {
+        const result = await fetch("/admin/api/memory/prompts", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompts: memoryPrompts }) }).then((res) => res.json());
+        $("prompt-status").textContent = result.ok ? "Memorize " + group + " saved." : "Memorize prompt save failed.";
+        if (result.prompts) memoryPrompts = result.prompts;
+        renderPromptProfile();
+        if (result.ok) await refreshMemoryPromptPreview(target);
+      }
+
+      async function refreshMemoryPromptPreview(target) {
+        if (!$("memoryPromptPreview")) return;
+        if (promptSideView === "variables") {
+          $("memoryPromptPreview").outerHTML = renderPromptSideContent("memory", "Save a Memorize group to refresh its preview.");
+          return;
+        }
+        lastMemoryPromptPreviewTarget = target || lastMemoryPromptPreviewTarget;
+        $("promptSideTitle").textContent = "Prompt Preview · " + memoryTargetLabel(target);
+        $("memoryPromptPreview").textContent = "Loading preview...";
+        const result = await fetch("/admin/api/memory/prompts/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompts: memoryPrompts, target })
+        }).then(async (res) => ({ status: res.status, body: await res.json() }));
+        if (!result.body.ok) {
+          $("memoryPromptPreview").textContent = JSON.stringify(result.body, null, 2);
+          return;
+        }
+        $("memoryPromptPreview").innerHTML = renderMemoryPromptPreview(result.body.preview);
+      }
+
+      function memoryTargetLabel(target) {
+        if (target === "userPreferences") return "user-preferences → user-preferences";
+        if (target === "yesterdaySummary") return "diary → diary";
+        return "persistent-memory → persistent-memory";
+      }
+
+      function renderMemoryPromptPreview(preview) {
+        const request = preview.request || {};
+        return renderLLMRequestBlock("Current Memorize Prompt Preview · " + memoryTargetLabel(preview.target), {
+          ...request,
+          source: "preview",
+          time: preview.windowEndAt,
+          conversationId: preview.target,
+          rawRequest: request
+        });
+      }
+
+      async function refreshLLMApiPresets() {
+        const payload = await fetch("/admin/api/config/llm-presets").then((res) => res.json());
+        llmApiPresets = payload.presets || [];
+        currentLLMApiPreset = payload.active;
+        renderLLMApiPresetControls();
+        if (payload.active) {
+          applyLLMApiPresetToForm(payload.active);
+          $("llmPresetSelect").value = payload.active.name || "";
+        }
+      }
+
+      function renderLLMApiPresetControls() {
+        if ($("llmPresetSelect")) $("llmPresetSelect").innerHTML = renderLLMApiPresetOptions($("llmPresetSelect").value || "");
+        if ($("promptApiPresetSelect")) {
+          const selected = promptEditorMode === "memory" ? promptApiProfile.memorizePresetName : promptApiProfile.corePresetName;
+          $("promptApiPresetSelect").innerHTML = renderLLMApiPresetOptions(selected || "");
+        }
+      }
+
+      function renderLLMApiPresetOptions(selected = "") {
+        return ['<option value="" ' + (!selected ? "selected" : "") + '>Choose API preset</option>']
+          .concat(llmApiPresets.map((preset) => \`<option value="\${escapeAttr(preset.name)}" \${selected === preset.name ? "selected" : ""}>\${escapeHtml(preset.name)}\${preset.apiKeySet ? "" : " (no key)"}</option>\`))
+          .join("");
+      }
+
+      function selectedLLMApiPreset(selectId = "llmPresetSelect") {
+        const name = $(selectId)?.value || "";
+        return llmApiPresets.find((preset) => preset.name === name);
+      }
+
+      function collectLLMApiForm() {
+        const body = {
+          baseURL: $("baseURL").value,
+          model: $("model").value,
+          temperature: $("temperature").value,
+          timeoutMs: $("timeoutMs").value,
+          stream: $("streamEnabled").checked,
+          extraParams: $("extraParams").value,
+          followupExtraParams: $("followupExtraParams").value
+        };
+        if ($("apiKey").value) body.apiKey = $("apiKey").value;
+        return body;
+      }
+
+      function bindLLMApiPresetFormDirtyTracking() {
+        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
+          $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
+        });
+        $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+      }
+
+      function markLLMApiPreset(state) {
+        const marker = $("llmPresetMarker");
+        if (!marker) return;
+        marker.textContent = state === "dirty" ? "[●]" : state === "saved" ? "[M]" : "";
+      }
+
+      function applyLLMApiPresetToForm(preset) {
+        $("baseURL").value = preset.baseURL || "";
+        $("model").value = preset.model || "";
+        $("temperature").value = String(preset.temperature ?? "");
+        $("timeoutMs").value = String(preset.timeoutMs ?? "");
+        $("streamEnabled").checked = preset.stream !== false;
+        $("extraParams").value = JSON.stringify(preset.extraParams || {}, null, 2);
+        $("followupExtraParams").value = JSON.stringify(preset.followupExtraParams || {}, null, 2);
+        $("llmPresetName").value = preset.name || "";
+        $("apiKey").value = "";
+        markLLMApiPreset("");
+      }
+
+      function clearLLMApiForm() {
+        $("baseURL").value = "";
+        $("model").value = "";
+        $("temperature").value = "0.2";
+        $("timeoutMs").value = "60000";
+        $("streamEnabled").checked = true;
+        $("extraParams").value = "{}";
+        $("followupExtraParams").value = "{}";
+        $("llmPresetName").value = "";
+        $("apiKey").value = "";
+        markLLMApiPreset("");
+      }
+
+      function validateLLMApiPresetForm() {
+        const name = $("llmPresetName").value.trim() || $("llmPresetSelect").value;
+        if (!name) return "Preset name required. API settings are saved only as named presets.";
+        if (!$("model").value.trim()) return "Model is required.";
+        const baseURL = $("baseURL").value.trim();
+        if (baseURL) {
+          try {
+            const url = new URL(baseURL);
+            if (url.protocol !== "http:" && url.protocol !== "https:") return "Base URL must start with http:// or https://.";
+          } catch {
+            return "Base URL is not a valid URL.";
+          }
+        }
+        const temperature = Number($("temperature").value);
+        if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return "Temperature must be a number between 0 and 2.";
+        const timeoutMs = Number($("timeoutMs").value);
+        if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) return "Timeout Ms must be at least 1000.";
+        const extraParams = parseLLMApiJsonObject("Extra Params JSON", $("extraParams").value);
+        if (extraParams) return extraParams;
+        const followupExtraParams = parseLLMApiJsonObject("Follow-up Extra Params JSON", $("followupExtraParams").value);
+        if (followupExtraParams) return followupExtraParams;
+        return "";
+      }
+
+      function parseLLMApiJsonObject(label, value) {
+        const text = value.trim();
+        if (!text) return "";
+        try {
+          const parsed = JSON.parse(text);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return label + " must be a JSON object.";
+          return "";
+        } catch {
+          return label + " is not valid JSON.";
+        }
+      }
+
+      async function saveCurrentLLMApiPreset() {
+        const name = $("llmPresetName").value.trim() || $("llmPresetSelect").value;
+        const validationError = validateLLMApiPresetForm();
+        if (validationError) {
+          $("save-status").textContent = validationError;
+          return;
+        }
+        try {
+          $("save-status").textContent = "Saving preset...";
+          const result = await persistLLMApiPreset(name);
+          $("save-status").textContent = "Preset saved: " + name;
+          llmApiPresets = result.presets || llmApiPresets;
+          renderLLMApiPresetControls();
+          $("llmPresetSelect").value = name;
+          const saved = selectedLLMApiPreset();
+          if (saved) applyLLMApiPresetToForm(saved);
+          markLLMApiPreset("saved");
+        } catch (error) {
+          $("save-status").textContent = "Preset save failed: " + (error?.message || "unknown");
+        }
+      }
+
+      async function persistLLMApiPreset(name) {
+        const result = await fetch("/admin/api/config/llm-presets", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, ...collectLLMApiForm() })
+        }).then((res) => res.json());
+        if (!result.ok) throw new Error(result.error || "unknown");
+        return result;
+      }
+
+      async function savePromptApiProfile(mode) {
+        const selected = $("promptApiPresetSelect")?.value || undefined;
+        const profile = {
+          corePresetName: promptApiProfile.corePresetName || undefined,
+          memorizePresetName: promptApiProfile.memorizePresetName || undefined
+        };
+        if (mode === "memorize") profile.memorizePresetName = selected;
+        else profile.corePresetName = selected;
+        const result = await fetch("/admin/api/prompt-api-profile", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(profile)
+        }).then((res) => res.json());
+        $("prompt-status").textContent = result.ok ? "API binding saved." : "API binding save failed: " + (result.error || "unknown");
+        if (result.profile) promptApiProfile = result.profile;
+        if (result.ok) {
+          if (mode === "memorize") await refreshMemoryPromptPreview(lastMemoryPromptPreviewTarget);
+          else await refreshCorePromptPreview();
+        }
+      }
+
+      async function renameSelectedLLMApiPreset() {
+        const from = $("llmPresetSelect").value;
+        const to = $("llmPresetName").value.trim();
+        if (!from || !to) {
+          $("save-status").textContent = "Choose a preset and enter a new name.";
+          return;
+        }
+        const result = await fetch("/admin/api/config/llm-presets/rename", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ from, to })
+        }).then((res) => res.json());
+        $("save-status").textContent = result.ok ? "Preset renamed." : "Preset rename failed: " + (result.error || "unknown");
+        if (result.presets) {
+          llmApiPresets = result.presets;
+          renderLLMApiPresetControls();
+          $("llmPresetSelect").value = to;
+        }
+      }
+
+      async function deleteSelectedLLMApiPreset() {
+        const name = $("llmPresetSelect").value;
+        if (!name) {
+          $("save-status").textContent = "Choose a preset to delete.";
+          return;
+        }
+        const result = await fetch("/admin/api/config/llm-presets", {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name })
+        }).then((res) => res.json());
+        $("save-status").textContent = result.ok ? "Preset deleted." : "Preset delete failed: " + (result.error || "unknown");
+        if (result.presets) {
+          llmApiPresets = result.presets;
+          renderLLMApiPresetControls();
+          $("llmPresetName").value = "";
+        }
+      }
+
+      async function refreshMemory() {
+        const payload = await fetch("/admin/api/memory").then((res) => res.json());
+        const files = payload.files || [];
+        renderMemorySleepDays(payload.sleepDays || []);
+        await refreshMemoryDayMessages();
+        $("memoryFiles").innerHTML = files.map((file) => \`
+          <details class="prompt-layer" open>
+            <summary>
+              <span>\${escapeHtml(file.fileName)}</span>
+              <span>
+                \${escapeHtml(file.lines)}/\${escapeHtml(file.maxLines)} lines · \${escapeHtml(file.bytes)}/\${escapeHtml(file.maxBytes)} bytes
+                <button type="button" class="secondary" data-memory-run="\${escapeAttr(file.target)}">Run</button>
+              </span>
+            </summary>
+            <textarea data-memory-target="\${escapeAttr(file.target)}" rows="10">\${escapeHtml(file.content || "")}</textarea>
+            <button type="button" data-memory-save="\${escapeAttr(file.target)}">Save File</button>
+          </details>
+        \`).join("");
+        document.querySelectorAll("[data-memory-run]").forEach((button) => button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await runMemoryTarget(button.dataset.memoryRun);
+        }));
+        document.querySelectorAll("[data-memory-save]").forEach((button) => button.addEventListener("click", async () => {
+          const target = button.dataset.memorySave;
+          const content = document.querySelector('[data-memory-target="' + cssEscape(target) + '"]').value;
+          const result = await fetch("/admin/api/memory/file", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ target, content })
+          }).then((res) => res.json());
+          $("memory-status").textContent = result.ok ? "Memory file saved." : "Memory file save failed: " + (result.error || "unknown error");
+          if (result.ok && Array.isArray(result.files)) {
+            const file = result.files.find((entry) => entry.target === target);
+            const details = button.closest("details");
+            if (file && details) {
+              details.querySelector("summary span").textContent = file.lines + "/" + file.maxLines + " lines · " + file.bytes + "/" + file.maxBytes + " bytes";
+            }
+          }
+        }));
+      }
+
+      function renderMemorySleepDays(days) {
+        memorySleepDays = days;
+        const select = $("memoryRunDate");
+        const previous = select.value;
+        if (!days.length) {
+          select.innerHTML = '<option value="">No sleep windows</option>';
+          renderMemoryCalendar();
+          return;
+        }
+        select.innerHTML = days.map((day) => {
+          const label = day.date + "  " + (day.startAt || "") + " -> " + (day.endAt || "");
+          return \`<option value="\${escapeAttr(day.date)}">\${escapeHtml(label)}</option>\`;
+        }).join("");
+        select.value = days.some((day) => day.date === previous) ? previous : days[0].date;
+        memoryCalendarMonth = select.value.slice(0, 7);
+        renderMemoryCalendar();
+      }
+
+      function renderMemoryCalendar() {
+        const root = $("memoryCalendar");
+        if (!root) return;
+        const selected = $("memoryRunDate").value;
+        if (!memorySleepDays.length) {
+          const month = memoryCalendarMonth || new Date().toISOString().slice(0, 7);
+          root.innerHTML = renderMemoryCalendarShell(month, selected, new Set());
+          bindMemoryCalendar();
+          return;
+        }
+        if (!memoryCalendarMonth) memoryCalendarMonth = selected ? selected.slice(0, 7) : memorySleepDays[0].date.slice(0, 7);
+        root.innerHTML = renderMemoryCalendarShell(memoryCalendarMonth, selected, new Set(memorySleepDays.map((day) => day.date)));
+        bindMemoryCalendar();
+      }
+
+      function renderMemoryCalendarShell(month, selected, availableDates) {
+        const first = new Date(month + "-01T00:00:00");
+        const year = first.getFullYear();
+        const monthIndex = first.getMonth();
+        const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+        const leading = first.getDay();
+        const cells = [];
+        for (let i = 0; i < leading; i += 1) cells.push('<button type="button" class="memory-calendar-day empty" disabled></button>');
+        for (let day = 1; day <= daysInMonth; day += 1) {
+          const date = month + "-" + String(day).padStart(2, "0");
+          const available = availableDates.has(date);
+          const classes = ["memory-calendar-day", available ? "available" : "", selected === date ? "selected" : ""].filter(Boolean).join(" ");
+          cells.push(\`<button type="button" class="\${classes}" data-memory-calendar-date="\${escapeAttr(date)}" \${available ? "" : "disabled"}>\${day}</button>\`);
+        }
+        const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => '<div class="memory-calendar-weekday">' + day + '</div>').join("");
+        return \`
+          <div class="memory-calendar-head">
+            <button type="button" class="secondary" data-memory-calendar-shift="-1">&lt;</button>
+            <strong>\${escapeHtml(month)}</strong>
+            <button type="button" class="secondary" data-memory-calendar-shift="1">&gt;</button>
+          </div>
+          <div class="memory-calendar-grid">\${weekdays}\${cells.join("")}</div>
+        \`;
+      }
+
+      function bindMemoryCalendar() {
+        document.querySelectorAll("[data-memory-calendar-date]").forEach((button) => button.addEventListener("click", async () => {
+          $("memoryRunDate").value = button.dataset.memoryCalendarDate;
+          memoryCalendarMonth = $("memoryRunDate").value.slice(0, 7);
+          renderMemoryCalendar();
+          await refreshMemoryDayMessages();
+        }));
+        document.querySelectorAll("[data-memory-calendar-shift]").forEach((button) => button.addEventListener("click", () => {
+          const current = new Date((memoryCalendarMonth || new Date().toISOString().slice(0, 7)) + "-01T00:00:00");
+          current.setMonth(current.getMonth() + Number(button.dataset.memoryCalendarShift || 0));
+          memoryCalendarMonth = current.toISOString().slice(0, 7);
+          renderMemoryCalendar();
+        }));
+      }
+
+      async function refreshMemoryDayMessages() {
+        if (!$("memoryDayMessages")) return;
+        const date = $("memoryRunDate").value;
+        if (!date) {
+          $("memoryDayMessages").textContent = "Choose a date to load chat records.";
+          return;
+        }
+        $("memoryDayMessages").textContent = "Loading chat records...";
+        const payload = await fetch("/admin/api/memory/messages?date=" + encodeURIComponent(date)).then((res) => res.json());
+        if (!payload.ok) {
+          $("memoryDayMessages").textContent = "Chat load failed: " + (payload.error || "unknown error");
+          return;
+        }
+        $("memoryDayMessages").innerHTML = '<div class="log-line">Window: ' + escapeHtml(payload.startAt || "") + ' -> ' + escapeHtml(payload.endAt || "") + '</div>' + renderMemoryDayMessages(payload);
+      }
+
+      function renderMemoryDayMessages(payload) {
+        if (typeof payload.content === "string" && payload.content.trim()) {
+          return '<pre class="log-line">' + escapeHtml(payload.content) + '</pre>';
+        }
+        const messages = payload.messages || [];
+        if (!messages.length) return '<div class="log-line">No chat records for selected date.</div>';
+        return messages.map((message) => {
+          const actor = message.senderRole || message.direction || "unknown";
+          const status = message.status && message.status !== "sent" ? " " + message.status : "";
+          return \`<div class="log-line">[\${escapeHtml(message.createdAt || "")}] \${escapeHtml(actor)}\${escapeHtml(status)}: \${escapeHtml(message.contentText || "")}</div>\`;
+        }).join("");
+      }
+
+      async function runMemoryDay() {
+        const runId = createMemoryRunId();
+        const startedAt = Date.now();
+        const stopProgress = startMemoryRunProgress(runId, "Running Memorize...", startedAt);
+        let result;
+        try {
+          result = await fetch("/admin/api/memory/run-day", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ date: $("memoryRunDate").value, runId })
+          }).then(async (res) => ({ status: res.status, body: await res.json() }));
+        } finally {
+          stopProgress();
+        }
+        const progress = await fetchMemoryRunProgress(runId);
+        const rounds = memoryRunRoundsText(result.body.result, result.body.ok ? "ok" : "failed", progress);
+        $("memory-status").textContent = result.body.ok ? "Memorize complete." + rounds : "Memorize failed: " + (result.body.error || result.body.result?.results?.find((entry) => !entry.ok)?.error || "see Last Run / System Log") + rounds;
+        $("memoryRunResult").textContent = JSON.stringify(result.body.result || result.body, null, 2);
+        await refreshMemory();
+        await refreshLogs();
+      }
+
+      async function runMemoryTarget(target) {
+        const runId = createMemoryRunId();
+        const startedAt = Date.now();
+        const stopProgress = startMemoryRunProgress(runId, "Running Memorize for " + target + "...", startedAt);
+        let result;
+        try {
+          result = await fetch("/admin/api/memory/run-target", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ date: $("memoryRunDate").value, target, runId })
+          }).then(async (res) => ({ status: res.status, body: await res.json() }));
+        } finally {
+          stopProgress();
+        }
+        const progress = await fetchMemoryRunProgress(runId);
+        const rounds = memoryRunRoundsText(result.body.result, result.body.ok ? "ok" : "failed", progress);
+        $("memory-status").textContent = result.body.ok ? "Memorize " + target + " complete." + rounds : "Memorize " + target + " failed: " + (result.body.error || result.body.result?.results?.find((entry) => !entry.ok)?.error || "see Last Run / System Log") + rounds;
+        $("memoryRunResult").textContent = JSON.stringify(result.body.result || result.body, null, 2);
+        await refreshMemory();
+        await refreshLogs();
+      }
+
+      function createMemoryRunId() {
+        return Date.now() + "-" + Math.random().toString(16).slice(2);
+      }
+
+      function startMemoryRunProgress(runId, prefix, startedAt) {
+        let stopped = false;
+        let timer = null;
+        const tick = async () => {
+          if (stopped) return;
+          try {
+            const progress = await fetchMemoryRunProgress(runId);
+            if (progress) renderMemoryProgress(prefix, progress, startedAt);
+          } catch {}
+          if (!stopped) timer = setTimeout(tick, 800);
+        };
+        $("memory-status").textContent = prefix + " rounds. 0 0s";
+        timer = setTimeout(tick, 150);
+        return () => {
+          stopped = true;
+          if (timer) clearTimeout(timer);
+        };
+      }
+
+      async function fetchMemoryRunProgress(runId) {
+        try {
+          const payload = await fetch("/admin/api/memory/run-progress?id=" + encodeURIComponent(runId)).then((res) => res.json());
+          return payload.ok ? payload.progress : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function renderMemoryProgress(prefix, progress, startedAt) {
+        $("memory-status").textContent = prefix + memoryProgressRoundsText(progress, startedAt);
+      }
+
+      function memoryProgressRoundsText(progress, startedAt) {
+        const entries = Object.entries(progress?.rounds || {});
+        if (!entries.length) return " rounds. 0 0s";
+        return " rounds. " + entries.map(([target, rounds]) => {
+          const seconds = elapsedSecondsText(Date.parse(progress?.roundStartedAt?.[target] || progress?.updatedAt || new Date().toISOString()));
+          return [rounds, progress?.tools?.[target], seconds].filter(Boolean).join(" ");
+        }).join(", ");
+      }
+
+      function memoryRunRoundsText(result, status, progress) {
+        const results = Array.isArray(result?.results) ? result.results : [];
+        const parts = results.filter((entry) => typeof entry.rounds === "number").map((entry) => {
+          const tool = status || progress?.tools?.[entry.target];
+          const seconds = elapsedSecondsText(Date.parse(progress?.roundStartedAt?.[entry.target] || progress?.updatedAt || new Date().toISOString()));
+          return [entry.rounds, tool, seconds].filter(Boolean).join(" ");
+        });
+        return parts.length ? " rounds. " + parts.join(", ") : "";
+      }
+
+      function elapsedSecondsText(startedAtMs) {
+        return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)) + "s";
+      }
+
+      async function undoLastMemoryRun() {
+        $("memory-status").textContent = "Undoing latest active long-term memory git commit...";
+        const result = await fetch("/admin/api/memory/undo-last", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Memory undo complete: " + (result.commit || "") : "Memory undo failed: " + (result.error || "unknown error");
+        await refreshMemory();
+      }
+
+      async function redoLastMemoryRun() {
+        $("memory-status").textContent = "Redoing latest undone long-term memory git commit...";
+        const result = await fetch("/admin/api/memory/redo-last", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Memory redo complete: " + (result.commit || "") : "Memory redo failed: " + (result.error || "unknown error");
+        await refreshMemory();
       }
 
       async function refreshToolPreviewTools() {
@@ -1000,8 +1836,21 @@ export function renderAdminHtmlV2(): string {
           promptProfile = result.profile;
           promptVariables = result.variables || {};
           renderPromptProfile();
+          await refreshCorePromptPreview();
         }
         await refreshLLMRequests();
+      }
+
+      async function refreshCorePromptPreview() {
+        if (!$("corePromptPreview")) return;
+        if (promptSideView === "variables") {
+          $("corePromptPreview").outerHTML = renderPromptSideContent("core", "Save Prompt Profile to refresh preview.");
+          return;
+        }
+        $("corePromptPreview").textContent = "Loading preview...";
+        const payload = await fetch("/admin/api/llm-requests").then((res) => res.json());
+        const preview = payload.profilePreview;
+        $("corePromptPreview").innerHTML = preview ? renderLLMRequestBlock("Current Prompt Profile Prebuild", preview) : "No Core prompt preview available.";
       }
 
       let shellData = null;
@@ -1065,12 +1914,11 @@ export function renderAdminHtmlV2(): string {
           <div class="prompt-layer shell-category-\${escapeAttr(category.key)}" data-shell-category="\${escapeAttr(category.key)}">
             <div class="shell-head">
               <h2>\${escapeHtml(category.title)}</h2>
-              <span class="muted">\${options.length} options</span>
+              <span class="muted" data-shell-category-count>\${options.length} options</span>
             </div>
             <div class="shell-category-body">
               \${renderShellGroups(category.key, options)}
             </div>
-            <button type="button" data-action="add">Add</button>
           </div>
         \`;
       }
@@ -1082,12 +1930,28 @@ export function renderAdminHtmlV2(): string {
           if (!groups.has(group)) groups.set(group, []);
           groups.get(group).push({ option, index });
         });
-        return [...groups.entries()].map(([group, items]) => \`
-          <div class="item">
-            <strong>\${escapeHtml(group)}</strong>
+        return [...groups.entries()].map(([group, items]) => renderShellGroup(category, group, items)).join("");
+      }
+
+      function renderShellGroup(category, group, items = shellGroupItems(category, group), open = false) {
+        return \`
+          <details class="shell-group" data-shell-group="\${escapeAttr(group)}" \${open ? "open" : ""}>
+            <summary>
+              <strong>\${escapeHtml(group)}</strong>
+              <div class="shell-group-actions">
+                <span class="muted" data-shell-group-count>\${items.length} items</span>
+                <button type="button" class="shell-group-add" data-action="add-group" data-shell-group-add="\${escapeAttr(group)}" title="Add to \${escapeAttr(group)}" aria-label="Add to \${escapeAttr(group)}">+</button>
+              </div>
+            </summary>
             \${items.map(({ option, index }) => renderShellOption(category, option, index)).join("")}
-          </div>
-        \`).join("");
+          </details>
+        \`;
+      }
+
+      function shellGroupItems(category, group) {
+        return (shellData[category] || [])
+          .map((option, index) => ({ option, index }))
+          .filter(({ option }) => (option.group || "root") === group);
       }
 
       function applyShellOrder(category, options) {
@@ -1137,53 +2001,86 @@ export function renderAdminHtmlV2(): string {
       function bindShellCategory(category) {
         const root = document.querySelector('[data-shell-category="' + cssEscape(category) + '"]');
         if (!root) return;
-        root.querySelector('[data-action="add"]').addEventListener("click", () => {
-          shellData[category].push({ id: category.slice(0, -1) + "_" + Date.now(), name: "New Shell", content: "", group: "" });
-          renderShellEditor();
+        root.querySelectorAll(".shell-group").forEach((groupRoot) => bindShellGroup(groupRoot, category));
+      }
+
+      function bindShellGroup(groupRoot, category) {
+        if (!groupRoot) return;
+        groupRoot.querySelector('[data-action="add-group"]')?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const group = event.currentTarget.dataset.shellGroupAdd || "root";
+          shellData[category].push({ id: category.slice(0, -1) + "_" + Date.now(), name: "New Shell", content: "", group });
+          rerenderShellGroup(category, group, true);
+          updateShellCategoryCount(category);
         });
-        root.querySelectorAll(".shell-option").forEach((optionRoot) => {
-          const index = Number(optionRoot.dataset.shellIndex);
-          const option = shellData[category][index];
-          option._previousId = option._previousId || option.id;
-          optionRoot.querySelector('[data-field="id"]').addEventListener("input", (event) => { option.id = event.target.value; markShellOption(optionRoot, "dirty"); });
-          optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
-          optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
-          bindShellImageDrop(optionRoot, option, category, index);
-          optionRoot.querySelector('[data-field="content"]').addEventListener("input", (event) => { option.content = event.target.value; markShellOption(optionRoot, "dirty"); });
-          optionRoot.querySelector('[data-action="save-one"]').addEventListener("click", async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-              await saveShellOption(category, currentShellIndex(optionRoot));
-            } catch (error) {
-              $("shell-status").textContent = "Shell save failed: " + (error?.message || "unknown error");
-            }
+        groupRoot.querySelectorAll(".shell-option").forEach((optionRoot) => bindShellOption(optionRoot, category));
+      }
+
+      function rerenderShellGroup(category, group, open) {
+        const categoryRoot = document.querySelector('[data-shell-category="' + cssEscape(category) + '"]');
+        const groupRoot = categoryRoot?.querySelector('[data-shell-group="' + cssEscape(group) + '"]');
+        const items = shellGroupItems(category, group);
+        if (!items.length) {
+          groupRoot?.remove();
+          return;
+        }
+        const shouldOpen = open ?? Boolean(groupRoot?.open);
+        const html = renderShellGroup(category, group, items, shouldOpen);
+        if (groupRoot) groupRoot.outerHTML = html;
+        else categoryRoot?.querySelector(".shell-category-body")?.insertAdjacentHTML("beforeend", html);
+        bindShellGroup(categoryRoot?.querySelector('[data-shell-group="' + cssEscape(group) + '"]'), category);
+      }
+
+      function updateShellCategoryCount(category) {
+        const categoryRoot = document.querySelector('[data-shell-category="' + cssEscape(category) + '"]');
+        const categoryCount = categoryRoot?.querySelector("[data-shell-category-count]");
+        if (categoryCount) categoryCount.textContent = shellData[category].length + " options";
+      }
+
+      function bindShellOption(optionRoot, category) {
+        if (!optionRoot) return;
+        const index = Number(optionRoot.dataset.shellIndex);
+        const option = shellData[category][index];
+        option._previousId = option._previousId || option.id;
+        optionRoot.querySelector('[data-field="id"]').addEventListener("input", (event) => { option.id = event.target.value; markShellOption(optionRoot, "dirty"); });
+        optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
+        optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
+        bindShellImageDrop(optionRoot, option, category, index);
+        optionRoot.querySelector('[data-field="content"]').addEventListener("input", (event) => { option.content = event.target.value; markShellOption(optionRoot, "dirty"); });
+        optionRoot.querySelector('[data-action="save-one"]').addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            await saveShellOption(category, currentShellIndex(optionRoot));
+          } catch (error) {
+            $("shell-status").textContent = "Shell save failed: " + (error?.message || "unknown error");
+          }
+        });
+        optionRoot.querySelector('[data-action="up"]').addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          moveShellOption(category, currentShellIndex(optionRoot), -1).catch((error) => {
+            $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
           });
-          optionRoot.querySelector('[data-action="up"]').addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            moveShellOption(category, currentShellIndex(optionRoot), -1).catch((error) => {
-              $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
-            });
+        });
+        optionRoot.querySelector('[data-action="down"]').addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          moveShellOption(category, currentShellIndex(optionRoot), 1).catch((error) => {
+            $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
           });
-          optionRoot.querySelector('[data-action="down"]').addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            moveShellOption(category, currentShellIndex(optionRoot), 1).catch((error) => {
-              $("shell-status").textContent = "Shell order save failed: " + (error?.message || "unknown error");
-            });
-          });
-          optionRoot.querySelector('[data-action="delete"]').addEventListener("click", async () => {
-            if (shellData[category].length <= 1) {
-              $("shell-status").textContent = "Each shell category must keep at least one option.";
-              return;
-            }
-            try {
-              await deleteShellOption(category, currentShellIndex(optionRoot));
-            } catch (error) {
-              $("shell-status").textContent = "Shell delete failed: " + (error?.message || "unknown error");
-            }
-          });
+        });
+        optionRoot.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+          if (shellData[category].length <= 1) {
+            $("shell-status").textContent = "Each shell category must keep at least one option.";
+            return;
+          }
+          try {
+            await deleteShellOption(category, currentShellIndex(optionRoot));
+          } catch (error) {
+            $("shell-status").textContent = "Shell delete failed: " + (error?.message || "unknown error");
+          }
         });
       }
 
@@ -1202,9 +2099,16 @@ export function renderAdminHtmlV2(): string {
       async function saveShellOption(category, index) {
         const optionRoot = document.querySelector('[data-shell-category="' + cssEscape(category) + '"] [data-shell-index="' + index + '"]');
         const option = shellData[category][index];
+        const previousGroup = option?.group || "root";
         const result = await persistShellOption(category, index);
         $("shell-status").textContent = "Shell saved: " + (option?.name || option?.id || category);
         shellData[category][index] = { ...result.option, _previousId: result.option.id };
+        const nextGroup = result.option.group || "root";
+        if (previousGroup !== nextGroup) {
+          rerenderShellGroup(category, previousGroup);
+          rerenderShellGroup(category, nextGroup, true);
+          return;
+        }
         optionRootLabel(category, index, result.option);
         if (optionRoot) {
           markShellOption(optionRoot, "saved");
@@ -1239,7 +2143,8 @@ export function renderAdminHtmlV2(): string {
         shellData[category].splice(index, 1);
         shellOrder = result.order || shellOrder;
         $("shell-status").textContent = "Shell deleted: " + (option?.name || id || category);
-        renderShellEditor();
+        rerenderShellGroup(category, option?.group || "root");
+        updateShellCategoryCount(category);
       }
 
       function optionRootLabel(category, index, option) {
@@ -1497,14 +2402,21 @@ export function renderAdminHtmlV2(): string {
 
       $("llm-form").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        const body = { baseURL: form.get("baseURL"), model: form.get("model"), temperature: form.get("temperature"), timeoutMs: form.get("timeoutMs"), stream: $("streamEnabled").checked, extraParams: form.get("extraParams"), followupExtraParams: form.get("followupExtraParams") };
-        const apiKey = form.get("apiKey");
-        if (apiKey) body.apiKey = apiKey;
-        const result = await fetch("/admin/api/config/llm", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
-        $("save-status").textContent = result.ok ? "Saved." : "Save failed.";
-        await refresh();
+        await saveCurrentLLMApiPreset();
       });
+      bindLLMApiPresetFormDirtyTracking();
+      $("llmPresetSelect").addEventListener("change", () => {
+        const preset = selectedLLMApiPreset();
+        if (preset) {
+          applyLLMApiPresetToForm(preset);
+          $("save-status").textContent = "Preset loaded.";
+          return;
+        }
+        clearLLMApiForm();
+      });
+      $("llm-preset-save").addEventListener("click", saveCurrentLLMApiPreset);
+      $("llm-preset-rename").addEventListener("click", renameSelectedLLMApiPreset);
+      $("llm-preset-delete").addEventListener("click", deleteSelectedLLMApiPreset);
 
       $("feishu-form").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -1556,8 +2468,16 @@ export function renderAdminHtmlV2(): string {
       });
       $("heartbeat-resume").addEventListener("click", async () => {
         const result = await fetch("/admin/api/runtime/heartbeat/resume", { method: "POST" }).then((res) => res.json());
-        $("agent-status").textContent = result.ok ? "Heartbeat resumed." : "Failed to resume heartbeat.";
+        $("agent-status").textContent = result.ok ? "Heartbeat started." : "Failed to start heartbeat.";
         await refreshRuntimeStatus();
+      });
+      $("memory-run-day").addEventListener("click", runMemoryDay);
+      $("memory-undo-last").addEventListener("click", undoLastMemoryRun);
+      $("memory-redo-last").addEventListener("click", redoLastMemoryRun);
+      $("memoryRunDate").addEventListener("change", async () => {
+        memoryCalendarMonth = $("memoryRunDate").value.slice(0, 7);
+        renderMemoryCalendar();
+        await refreshMemoryDayMessages();
       });
       $("process-now").addEventListener("click", async () => {
         const result = await fetch("/admin/api/runtime/process-now", { method: "POST" }).then((res) => res.json());

@@ -180,190 +180,184 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         return [buildReply(event, time, { kind: "text", text: routed.reason })];
       }
 
-      const serious = routed.kind === "codex";
-      deps.state?.noteWorkStarted({ serious });
-      try {
-        if (routed.kind === "codex") {
-          return [
-            buildReply(event, time, {
-              kind: "markdown",
-              markdown: `Codex command accepted by router, but Codex worker is not implemented yet.\n\nPrompt: ${routed.prompt || "(empty)"}`
-            })
-          ];
-        }
+      if (routed.kind === "codex") {
+        return [
+          buildReply(event, time, {
+            kind: "markdown",
+            markdown: `Codex command accepted by router, but Codex worker is not implemented yet.\n\nPrompt: ${routed.prompt || "(empty)"}`
+          })
+        ];
+      }
 
-        const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
-        const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
-        let sleepCocoonInstruction = sleepCocoonGeneratedInstruction(event, promptProfile.userName);
-        if (deps.loadLLMSession) {
-          const persistedSession = deps.loadLLMSession();
-          activeLLMSession = persistedSession?.staticPromptFingerprint
-            ? hydrateLLMSessionSnapshot(persistedSession)
-            : undefined;
+      const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
+      const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
+      let sleepCocoonInstruction = sleepCocoonGeneratedInstruction(event, promptProfile.userName);
+      if (deps.loadLLMSession) {
+        const persistedSession = deps.loadLLMSession();
+        activeLLMSession = persistedSession?.staticPromptFingerprint
+          ? hydrateLLMSessionSnapshot(persistedSession)
+          : undefined;
+      }
+      const makePromptContext = () => ({
+        event,
+        time,
+        dailyShell: deps.getDailyShell?.(),
+        dailyShellRaw: deps.getDailyShellRaw?.(),
+        appearanceDescription: deps.getAppearanceDescription?.(),
+        memory: deps.getMemorySnapshot?.()
+      });
+      const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
+        const promptContext = makePromptContext();
+        const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
+        if (sleepCocoonInstruction && activeLLMSession && !applyModeStateToNewSession) {
+          deps.onLLMSessionCleared?.("mode_transition");
+          activeLLMSession = undefined;
         }
-        const makePromptContext = () => ({
-          event,
-          time,
-          dailyShell: deps.getDailyShell?.(),
-          dailyShellRaw: deps.getDailyShellRaw?.(),
-          appearanceDescription: deps.getAppearanceDescription?.(),
-          memory: deps.getMemorySnapshot?.()
-        });
-        const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
-          const promptContext = makePromptContext();
-          const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
-          if (sleepCocoonInstruction && activeLLMSession && !applyModeStateToNewSession) {
-            deps.onLLMSessionCleared?.("mode_transition");
-            activeLLMSession = undefined;
-          }
-          if (activeLLMSession && isModeExpired(activeLLMSession)) {
-            deps.onLLMSessionCleared?.("mode_timeout");
-            activeLLMSession = undefined;
-            applyModeStateToNewSession = defaultModeState();
-          }
-          if (activeLLMSession?.hydratedFixedPrefixPendingRebuild && !applyModeStateToNewSession) {
-            const mode = modeStateFromSession(activeLLMSession);
-            activeLLMSession = undefined;
-            applyModeStateToNewSession = mode;
-          }
-          if (activeLLMSession && activeLLMSession.mode !== "fixed_prefix" && activeLLMSession.staticPromptFingerprint !== fingerprint) {
-            const mode = modeStateFromSession(activeLLMSession);
-            deps.onLLMSessionCleared?.("prompt_static_changed");
-            activeLLMSession = undefined;
-            applyModeStateToNewSession = mode;
-          }
-          if (activeLLMSession
-            && await shouldResetSessionForTokenPressure(activeLLMSession, event, findToolPlugin(toolPlugins, "check_chat"))) {
-            const mode = modeStateFromSession(activeLLMSession);
-            activeLLMSession = undefined;
-            deps.onLLMSessionCleared?.("token_pressure");
-            applyModeStateToNewSession = mode;
-          }
-          if (!activeLLMSession) {
-            const mode = applyModeStateToNewSession ?? defaultModeState();
-            applyModeStateToNewSession = undefined;
-            let promptCheckChatCursor: number | undefined;
-            const promptMessages = mode.mode === "fixed_prefix"
-              ? cloneLLMMessages(mode.modeStaticMessages)
-              : [
-                ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                  const result = await runPromptToolRequest(layer, call, toolPlugins);
-                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                  return result;
-                }),
-                ...(sleepCocoonInstruction ? [{ role: "user" as const, content: sleepCocoonInstruction }] : []),
-                ...mode.modeStaticMessages
-              ];
-            sleepCocoonInstruction = undefined;
-            activeLLMSession = {
-              messages: promptMessages,
-              staticPromptFingerprint: fingerprint,
-              staticPromptMessageCount: promptMessages.length,
-              requestTimestamps: [],
-              tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
-              mode: mode.mode,
-              modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
-              modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
-              modeStartedAt: mode.modeStartedAt,
-              modeExpiresAt: mode.modeExpiresAt,
-              fixedPrefixKind: mode.fixedPrefixKind,
-              fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
-              lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
-            };
-            noteLLMSessionUpdated();
-          }
-          if (!activeLLMSession) throw new Error("llm_session_unavailable");
-          return activeLLMSession;
-        };
-        await ensureActiveLLMSession();
-        if (!activeLLMSession || activeLLMSession.messages.length === 0) {
-          return [];
+        if (activeLLMSession && isModeExpired(activeLLMSession)) {
+          deps.onLLMSessionCleared?.("mode_timeout");
+          activeLLMSession = undefined;
+          applyModeStateToNewSession = defaultModeState();
         }
-        deps.onLLMHeartbeatStarted?.();
-        let sentMessage = false;
-        try {
-          const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
-            const promptContext = makePromptContext();
-            if (session.mode === "fixed_prefix") {
-              const appendMessages = await buildFixedPrefixAppendMessages(modeStateFromSession(session), event, toolPlugins);
-              if (appendMessages.length === 0) return;
-              session.messages = [
-                ...session.messages,
-                ...appendMessages
-              ];
-              noteLLMSessionUpdated();
-              return;
-            }
-            const appendProfile = {
-              ...promptProfile,
-              appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
-                layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
-              )).map((layer) => {
-                if (layer.role !== "tool_request") return layer;
-                return {
-                  ...layer,
-                  toolCallId: layer.toolCallId ?? `append_${layer.id}_${nextAppendToolCallId++}`
-                };
-              })
-            };
-            const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
-              return runPromptToolRequest(layer, call, toolPlugins).then((result) => {
-                session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
+        if (activeLLMSession?.hydratedFixedPrefixPendingRebuild && !applyModeStateToNewSession) {
+          const mode = modeStateFromSession(activeLLMSession);
+          activeLLMSession = undefined;
+          applyModeStateToNewSession = mode;
+        }
+        if (activeLLMSession && activeLLMSession.mode !== "fixed_prefix" && activeLLMSession.staticPromptFingerprint !== fingerprint) {
+          const mode = modeStateFromSession(activeLLMSession);
+          deps.onLLMSessionCleared?.("prompt_static_changed");
+          activeLLMSession = undefined;
+          applyModeStateToNewSession = mode;
+        }
+        if (activeLLMSession
+          && await shouldResetSessionForTokenPressure(activeLLMSession, event, findToolPlugin(toolPlugins, "check_chat"))) {
+          const mode = modeStateFromSession(activeLLMSession);
+          activeLLMSession = undefined;
+          deps.onLLMSessionCleared?.("token_pressure");
+          applyModeStateToNewSession = mode;
+        }
+        if (!activeLLMSession) {
+          const mode = applyModeStateToNewSession ?? defaultModeState();
+          applyModeStateToNewSession = undefined;
+          let promptCheckChatCursor: number | undefined;
+          const promptMessages = mode.mode === "fixed_prefix"
+            ? cloneLLMMessages(mode.modeStaticMessages)
+            : [
+              ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
+                const result = await runPromptToolRequest(layer, call, toolPlugins);
+                promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                 return result;
-              });
-            });
+              }),
+              ...(sleepCocoonInstruction ? [{ role: "user" as const, content: sleepCocoonInstruction }] : []),
+              ...mode.modeStaticMessages
+            ];
+          sleepCocoonInstruction = undefined;
+          activeLLMSession = {
+            messages: promptMessages,
+            staticPromptFingerprint: fingerprint,
+            staticPromptMessageCount: promptMessages.length,
+            requestTimestamps: [],
+            tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
+            mode: mode.mode,
+            modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
+            modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
+            modeStartedAt: mode.modeStartedAt,
+            modeExpiresAt: mode.modeExpiresAt,
+            fixedPrefixKind: mode.fixedPrefixKind,
+            fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
+            lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
+          };
+          noteLLMSessionUpdated();
+        }
+        if (!activeLLMSession) throw new Error("llm_session_unavailable");
+        return activeLLMSession;
+      };
+      await ensureActiveLLMSession();
+      if (!activeLLMSession || activeLLMSession.messages.length === 0) {
+        return [];
+      }
+      deps.onLLMHeartbeatStarted?.();
+      let sentMessage = false;
+      try {
+        const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
+          const promptContext = makePromptContext();
+          if (session.mode === "fixed_prefix") {
+            const appendMessages = await buildFixedPrefixAppendMessages(modeStateFromSession(session), event, toolPlugins);
             if (appendMessages.length === 0) return;
             session.messages = [
               ...session.messages,
               ...appendMessages
             ];
             noteLLMSessionUpdated();
-          };
-          await appendSessionContext(activeLLMSession);
-          const llmConfig = deps.getLLMConfig?.() ?? {
-            client: deps.llm,
-            model: deps.config.llm.model,
-            temperature: deps.config.llm.temperature,
-            extraParams: deps.config.llm.extraParams,
-            followupExtraParams: deps.config.llm.followupExtraParams,
-            stream: deps.config.llm.stream
-          };
-          const llmInput: CoreLLMTurnInput = {
-            messages: activeLLMSession.messages,
-            client: llmConfig.client,
-            model: llmConfig.model,
-            temperature: llmConfig.temperature,
-            extraParams: llmConfig.extraParams,
-            followupExtraParams: llmConfig.followupExtraParams,
-            stream: llmConfig.stream,
-            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
-          };
-          const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession, ensureActiveLLMSession, appendSessionContext);
-          sentMessage = llmResult.sentMessage;
-          if (llmResult.invalidateSession) {
-            deps.onLLMSessionCleared?.("prompt_static_changed");
-            activeLLMSession = undefined;
+            return;
           }
-          const usage = llmResult.finalResult?.usage;
-          const usageModel = llmResult.finalResult?.model ?? llmInput.model;
-          if (activeLLMSession && usage) {
-            if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-              activeLLMSession.lastTotalTokens = usage.totalTokens;
-            }
-            if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
-              activeLLMSession.lastInputTokens = usage.inputTokens;
-            }
-            if (usageModel) activeLLMSession.lastUsageModel = usageModel;
-            noteLLMSessionUpdated();
-          }
-        } finally {
-          deps.onLLMSessionCompleted?.({ sentMessage });
+          const appendProfile = {
+            ...promptProfile,
+            appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
+              layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
+            )).map((layer) => {
+              if (layer.role !== "tool_request") return layer;
+              return {
+                ...layer,
+                toolCallId: layer.toolCallId ?? `append_${layer.id}_${nextAppendToolCallId++}`
+              };
+            })
+          };
+          const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
+            return runPromptToolRequest(layer, call, toolPlugins).then((result) => {
+              session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
+              return result;
+            });
+          });
+          if (appendMessages.length === 0) return;
+          session.messages = [
+            ...session.messages,
+            ...appendMessages
+          ];
+          noteLLMSessionUpdated();
+        };
+        await appendSessionContext(activeLLMSession);
+        const llmConfig = deps.getLLMConfig?.() ?? {
+          client: deps.llm,
+          model: deps.config.llm.model,
+          temperature: deps.config.llm.temperature,
+          extraParams: deps.config.llm.extraParams,
+          followupExtraParams: deps.config.llm.followupExtraParams,
+          stream: deps.config.llm.stream
+        };
+        const llmInput: CoreLLMTurnInput = {
+          messages: activeLLMSession.messages,
+          client: llmConfig.client,
+          model: llmConfig.model,
+          temperature: llmConfig.temperature,
+          extraParams: llmConfig.extraParams,
+          followupExtraParams: llmConfig.followupExtraParams,
+          stream: llmConfig.stream,
+          toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
+        };
+        const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession, ensureActiveLLMSession, appendSessionContext);
+        sentMessage = llmResult.sentMessage;
+        if (llmResult.invalidateSession) {
+          deps.onLLMSessionCleared?.("prompt_static_changed");
+          activeLLMSession = undefined;
         }
-
-        return [];
+        const usage = llmResult.finalResult?.usage;
+        const usageModel = llmResult.finalResult?.model ?? llmInput.model;
+        if (activeLLMSession && usage) {
+          if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
+            activeLLMSession.lastTotalTokens = usage.totalTokens;
+          }
+          if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
+            activeLLMSession.lastInputTokens = usage.inputTokens;
+          }
+          if (usageModel) activeLLMSession.lastUsageModel = usageModel;
+          noteLLMSessionUpdated();
+        }
       } finally {
-        deps.state?.noteWorkFinished();
+        deps.onLLMSessionCompleted?.({ sentMessage });
       }
+
+      return [];
     }
   };
 

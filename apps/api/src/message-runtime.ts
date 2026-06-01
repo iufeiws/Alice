@@ -56,7 +56,7 @@ export type MessageRuntimeDeps = {
   agentState?: Pick<
     AgentStateController,
     "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "noteInboundMessage" | "onChange" | "tick"
-  > & Partial<Pick<AgentStateController, "setState">>;
+  > & Partial<Pick<AgentStateController, "noteInboundProcessed" | "setState">>;
   outputRouter: {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };
@@ -275,7 +275,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     const sessionIds = [...pendingSessions];
     for (const sessionId of sessionIds) {
       if (processingSessions.has(sessionId)) continue;
-      const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, 50);
+      const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
       if (pending.length === 0) {
         pendingSessions.delete(sessionId);
         continue;
@@ -441,7 +441,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   async function handleDirtySession(sessionId: string): Promise<void> {
-    const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, 50);
+    const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
     if (pending.length === 0) {
       deps.appendLog("info", `dirty session skipped: no pending inbound ${sessionId}`);
       return;
@@ -513,6 +513,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       const processedAt = time.now().iso;
       const batchId = createId("batch");
       deps.store.markMessagesCoreProcessed(pending.map((entry) => entry.id), processedAt, batchId);
+      deps.agentState?.noteInboundProcessed?.();
       deps.appendLog("info", `chat session handled: ${outputs.length} output(s), batch=${batchId}`);
     } finally {
       await setTypingIndicator(typingTargetFromPending(sessionId, pending, agentEvent, false));

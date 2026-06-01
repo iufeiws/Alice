@@ -490,7 +490,7 @@ const wechat = createWeChatPlugin(config.plugins.wechat, {
 
 const messageRuntime = createMessageRuntime({
   getDelayMs: () => config.core.inboundDebounceMs,
-  startHeartbeatPaused: true,
+  startHeartbeatPaused: config.core.heartbeatStartPaused,
   time: currentTime,
   getProcessNowTarget() {
     return getDefaultMessagingTarget();

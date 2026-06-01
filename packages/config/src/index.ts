@@ -52,6 +52,7 @@ export type AppConfig = {
     defaultAgentProfile: string;
     inboundDebounceMs: number;
     defaultTargetPlugin: "auto" | "wechat" | "feishu";
+    heartbeatStartPaused: boolean;
   };
   api: {
     host: string;
@@ -165,7 +166,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       timezone: env.AGENT_TIMEZONE ?? "Asia/Singapore",
       defaultAgentProfile: "main",
       inboundDebounceMs: numberValue(env.AGENT_INBOUND_DEBOUNCE_MS, 1000),
-      defaultTargetPlugin: normalizeDefaultTargetPlugin(env.AGENT_DEFAULT_TARGET_PLUGIN)
+      defaultTargetPlugin: normalizeDefaultTargetPlugin(env.AGENT_DEFAULT_TARGET_PLUGIN),
+      heartbeatStartPaused: bool(env.AGENT_HEARTBEAT_START_PAUSED, true)
     },
     api: {
       host: env.API_HOST ?? "127.0.0.1",

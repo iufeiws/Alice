@@ -1,4 +1,4 @@
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
+import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -42,6 +42,7 @@ export type AgentStateController = {
   setIntimacy(value: number): AgentStateSnapshot;
   tick(): AgentStateSnapshot;
   noteInboundMessage(): AgentStateSnapshot;
+  noteInboundProcessed(): AgentStateSnapshot;
   noteWorkStarted(options?: { serious?: boolean }): AgentStateSnapshot;
   noteWorkFinished(): AgentStateSnapshot;
   getInboundDelayMs(): number;
@@ -145,7 +146,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
   }
 
   function advanceDueTransitions(): AgentStateSnapshot {
-    if (!isDeadlineDue(snapshot, now())) {
+    if (!isDeadlineDue(snapshot, now(), time.timeZone)) {
       return clone(snapshot);
     }
 
@@ -219,19 +220,22 @@ export function createAgentStateController(options: AgentStateControllerOptions)
         lastInboundAt: inboundAt,
         updatedAt: inboundAt
       };
-      if (snapshot.state === "waiting" || snapshot.state === "curious" || snapshot.state === "going_to_sleep") {
+      if (snapshot.state === "idle" || snapshot.state === "waiting" || snapshot.state === "curious" || snapshot.state === "going_to_sleep") {
         next.nextTransitionAt = addMsIso(ACTIVE_TIMEOUT_MS);
       }
       return commit(next);
     },
-    noteWorkStarted(opts = {}) {
-      const baseline = opts.serious ? "serious" : snapshot.state === "serious" ? "serious" : snapshot.state === "test" ? "test" : "waiting";
-      return transition("working", { reason: opts.serious ? "serious_task" : "task", previousState: baseline });
+    noteInboundProcessed() {
+      if (snapshot.state === "idle" || snapshot.state === "curious") {
+        return transition("waiting", { reason: "inbound_processed" });
+      }
+      return clone(snapshot);
+    },
+    noteWorkStarted() {
+      return clone(snapshot);
     },
     noteWorkFinished() {
-      if (snapshot.state !== "working") return clone(snapshot);
-      const baseline = snapshot.previousState === "serious" ? "serious" : snapshot.previousState === "test" ? "test" : "waiting";
-      return transition(baseline, { reason: "task_finished" });
+      return clone(snapshot);
     },
     getInboundDelayMs() {
       return snapshot.responseDelayMs;
@@ -326,14 +330,14 @@ function positiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
 }
 
-function getDeadlineMs(snapshot: AgentStateSnapshot, now: Date): number | undefined {
+function getDeadlineMs(snapshot: AgentStateSnapshot, now: Date, timeZone: string): number | undefined {
   const deadline = snapshot.nextTransitionAt;
   if (!deadline) return undefined;
-  return new Date(deadline).getTime() - now.getTime();
+  return parseZonedIso(deadline, timeZone).getTime() - now.getTime();
 }
 
-function isDeadlineDue(snapshot: AgentStateSnapshot, now: Date): boolean {
-  const delay = getDeadlineMs(snapshot, now);
+function isDeadlineDue(snapshot: AgentStateSnapshot, now: Date, timeZone: string): boolean {
+  const delay = getDeadlineMs(snapshot, now, timeZone);
   return delay !== undefined && delay <= 0;
 }
 

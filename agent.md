@@ -8,6 +8,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 
 - 优先做小而聚焦的变更。
 - 不在没有充分理由时引入新依赖。
+- 所有文档必须使用中文撰写；新增或修改 README、设计说明、变更说明、审阅记录等文档时都遵守这一规则。
 - 对于边界清晰且已有成熟方案的问题，优先使用维护良好的依赖，不重复造轮子。
 - 所有 API 行为变更都需要测试。
 - 后端变更需要检查授权和数据校验。
@@ -47,8 +48,8 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 
 ## Agent 状态说明
 
-- 当前预期行为：在 `away`、`sleeping` 或 `working` 状态收到的消息，仍会把经过的 wall-clock 时间计入已保存的 `responseDelayMs`；当状态稍后允许回复时，如果旧待处理消息的等待时间已经超过延迟，就可能立刻处理。
-- 当前预期行为：AgentCore 被视为单一非并发 worker。`working` 状态尚未为并发或嵌套 `handleEvent()` 调用设计。
+- 当前预期行为：在 `away`、`sleeping` 或 `working` 状态收到的消息，仍会把经过的 wall-clock 时间计入已保存的 `responseDelayMs`；当状态稍后允许回复时，如果旧未处理消息的等待时间已经超过延迟，就可能立刻处理。
+- 当前预期行为：AgentCore 被视为单一非并发 worker。`working` 状态已废弃，普通聊天、Codex 任务、后台任务和普通 heartbeat 都不应进入 `working`。
 
 ## Review Checklist
 

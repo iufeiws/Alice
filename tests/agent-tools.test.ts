@@ -10,6 +10,7 @@ import { createAllowAllPolicy } from "../core/policy/src/index.js";
 import { createIntentRouter } from "../core/router/src/index.js";
 import { createSessionResolver } from "../core/session/src/index.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
+import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../core/agent/src/state.js";
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
@@ -107,6 +108,34 @@ test("agent core sends tool names to injected LLM sender without rendering schem
   await core.handleEvent(textEvent());
 
   assert.deepEqual(senderInputs[0].toolNames, ["check_chat"]);
+});
+
+test("agent core ordinary chat does not enter deprecated working state", async () => {
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    random: () => 0
+  });
+  const states: AgentBehaviorState[] = [];
+  controller.onChange((snapshot) => {
+    states.push(snapshot.state);
+  });
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm: {
+      async chat() {
+        return { message: { role: "assistant", content: "done" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    state: controller
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(states.includes("working"), false);
 });
 
 test("agent core appends assistant tool call and tool result before the next llm request", async () => {
@@ -2582,6 +2611,18 @@ function textEvent(): AgentEvent {
     meta: {
       receivedAt: "2026-05-26T00:00:00.000Z",
       replyTo: "om_1"
+    }
+  };
+}
+
+function memoryStore(initial?: string): AgentStateStore & { content?: string } {
+  return {
+    content: initial,
+    read() {
+      return this.content;
+    },
+    write(content) {
+      this.content = content;
     }
   };
 }

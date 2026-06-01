@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMessageRuntime } from "../apps/api/src/message-runtime.js";
+import { createAgentStateController, type AgentStateStore } from "../core/agent/src/state.js";
 import { createAliceStore, type StoredMessageLog } from "../packages/storage/src/sqlite-store.js";
 import type { AgentEvent, AgentOutput } from "../packages/types/src/index.js";
 
@@ -775,6 +776,156 @@ test("message runtime does not run sleep cocoon goodnight while user messages ar
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
 });
 
+test("message runtime applies documented state landing after processing inbound messages", async () => {
+  for (const scenario of [
+    { initial: "idle" as const, expected: "waiting" as const },
+    { initial: "curious" as const, expected: "waiting" as const },
+    { initial: "serious" as const, expected: "serious" as const },
+    { initial: "test" as const, expected: "test" as const }
+  ]) {
+    const store = createAliceStore(path.join(makeTempDir(`runtime-state-landing-${scenario.initial}`), "alice.sqlite"));
+    const controller = createAgentStateController({
+      store: memoryStore(),
+      random: () => 0
+    });
+    controller.setState(scenario.initial, { durationMs: 60_000 });
+    const coreInputs: AgentEvent[] = [];
+    const runtime = createMessageRuntime({
+      getDelayMs: () => 0,
+      startHeartbeatPaused: true,
+      agentState: controller,
+      store,
+      core: {
+        async handleEvent(event) {
+          coreInputs.push(event);
+          return [];
+        }
+      },
+      outputRouter: { async sendAll() {} },
+      appendLog() {},
+      appendMessageLog(input) {
+        return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+      }
+    });
+
+    runtime.ingestEvent(textEvent("session-1", `om_${scenario.initial}`, "hello"));
+    await runtime.processNow();
+
+    assert.equal(coreInputs.length, 1, scenario.initial);
+    assert.equal(controller.getSnapshot().state, scenario.expected, scenario.initial);
+  }
+});
+
+test("message runtime does not run idle no-message transition before processing inbound messages", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-idle-inbound-before-tick"), "alice.sqlite"));
+  let current = new Date("2026-05-25T00:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 1
+  });
+  controller.setState("idle", { durationMs: 1 });
+  current = new Date("2026-05-25T00:00:00.001Z");
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    now: () => current,
+    agentState: controller,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEventAt("session-1", "om_idle_due", "hello", "2026-05-25T00:00:00.001Z"));
+  await runtime.processNow();
+
+  assert.equal(coreInputs.length, 1);
+  assert.equal(controller.getSnapshot().state, "waiting");
+  assert.equal(controller.getSnapshot().reason, "inbound_processed");
+});
+
+test("message runtime keeps going_to_sleep after processing and only postpones sleep", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-going-to-sleep-postpone"), "alice.sqlite"));
+  let current = new Date("2026-05-24T16:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    timeZone: "Asia/Shanghai",
+    random: () => 0
+  });
+  controller.setState("going_to_sleep", {
+    sleepCocoonEnteredAt: "2026-05-25T00:00:00.000",
+    sleepDurationMs: 8 * 60 * 60 * 1000
+  });
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    now: () => current,
+    agentState: controller,
+    store,
+    core: {
+      async handleEvent() {
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  current = new Date("2026-05-24T16:03:00.000Z");
+  runtime.ingestEvent(textEventAt("session-1", "om_sleep", "still here", "2026-05-25T00:03:00.000"));
+  await runtime.processNow();
+
+  assert.equal(controller.getSnapshot().state, "going_to_sleep");
+  assert.equal(controller.getSnapshot().lastInboundAt, "2026-05-25T00:03:00.000");
+  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T00:08:00.000");
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T00:00:00.000");
+  assert.equal(controller.getSnapshot().sleepDurationMs, 8 * 60 * 60 * 1000);
+});
+
+test("message runtime processes all currently unprocessed messages for a session in one turn", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-process-all"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  for (let i = 0; i < 75; i += 1) {
+    runtime.ingestEvent(textEvent("session-1", `om_many_${i}`, `message ${i}`));
+  }
+  await runtime.processNow();
+
+  assert.equal(coreInputs.length, 1);
+  assert.equal(coreInputs[0].meta.replyTo, "om_many_74");
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 100).length, 0);
+});
+
 function textEvent(sessionId: string, rawMessageId: string, text: string): AgentEvent {
   return textEventAt(sessionId, rawMessageId, text, "2026-05-24T00:00:00.000Z");
 }
@@ -822,6 +973,18 @@ function makeTempDir(name: string): string {
   const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function memoryStore(initial?: string): AgentStateStore & { content?: string } {
+  return {
+    content: initial,
+    read() {
+      return this.content;
+    },
+    write(content) {
+      this.content = content;
+    }
+  };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

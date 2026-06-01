@@ -80,6 +80,7 @@ export type AdminRoutesContext = {
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
+  clearMemoryInductionSession(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
   coreProfileStore: CoreProfileStore;
@@ -263,6 +264,13 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "POST" && request.url === "/admin/api/memory/run-target") {
         await runMemoryTarget(context, request, response);
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/clear-session") {
+        context.clearMemoryInductionSession();
+        context.appendLog("info", "memorize console session clear requested");
+        writeJson(response, 200, { ok: true });
         return;
       }
 
@@ -1972,7 +1980,8 @@ function memorySummaryConfigForPreset(context: AdminRoutesContext, preset: LLMAp
     temperature: preset.temperature,
     timeoutMs: preset.timeoutMs,
     stream: preset.stream,
-    extraParams: preset.extraParams
+    extraParams: preset.extraParams,
+    followupExtraParams: preset.followupExtraParams
   };
 }
 
@@ -1988,7 +1997,7 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
     timeoutMs: config.timeoutMs,
     stream: config.stream,
     extraParams: config.extraParams,
-    followupExtraParams: {}
+    followupExtraParams: config.followupExtraParams
   };
 }
 

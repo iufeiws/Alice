@@ -2,7 +2,7 @@ import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
-import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction } from "../../../core/agent/src/memory.js";
+import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables, staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../core/agent/src/prompts.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
@@ -215,6 +215,7 @@ let nextLLMRequestLogId = 1;
 let nextLLMResponseLogId = 1;
 let nextLLMSessionId = 1;
 let llmSessionBusy = false;
+let memoryConsoleSession: MemoryInductionSession | undefined;
 let store: ReturnType<typeof createAliceStore> | undefined;
 let tokenUsageStore: ReturnType<typeof createTokenUsageStore> | undefined;
 let systemLogStore: ReturnType<typeof createFileLogStore> | undefined;
@@ -265,7 +266,7 @@ const agentState = createAgentStateController({
 });
 let previousAgentBehaviorState = agentState.getSnapshot().state;
 let pendingSleepCocoonMorningEvent: ReturnType<typeof buildSleepCocoonGeneratedEvent> | undefined;
-let sleepMemoryInductionRunning = false;
+let sleepMemoryInductionQueue: Promise<void> = Promise.resolve();
 agentState.onChange((snapshot) => {
   if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
     const now = currentTime.now().iso;
@@ -275,6 +276,8 @@ agentState.onChange((snapshot) => {
     void triggerSleepMemoryInduction();
   }
   if (previousAgentBehaviorState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
+    const daily = dailyShellStore.reroll(currentTime.now().date, currentTime.timeZone);
+    appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
     pendingSleepCocoonMorningEvent = buildSleepCocoonGeneratedEvent("sleep_cocoon_morning", { sleepCocoonMorning: true });
   }
   previousAgentBehaviorState = snapshot.state;
@@ -381,7 +384,15 @@ const bookcaseTools = createBookcaseTools({
   outputRouter,
   appendMessageLog
 });
-const sleepCocoonTools = createSleepCocoonTools({ agentState, time: currentTime });
+const sleepCocoonTools = createSleepCocoonTools({
+  agentState,
+  time: currentTime,
+  outputRouter,
+  getDefaultTarget() {
+    return getDefaultMessagingTarget();
+  },
+  appendLog
+});
 const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools, sleepCocoonTools];
 const llmRequests = createLLMRequests({
   getTool: getLLMRequestToolDefinition,
@@ -551,6 +562,7 @@ const server = http.createServer(createApiRequestHandler({
   getLLMRequestProfilePreview,
   getTokenUsageReport,
   clearLLMChainCache,
+  clearMemoryInductionSession,
   outputRouter,
   feishuPairingStore,
   coreProfileStore,
@@ -567,9 +579,13 @@ const server = http.createServer(createApiRequestHandler({
       temperature: apiPreset.temperature,
       timeoutMs: apiPreset.timeoutMs,
       stream: apiPreset.stream,
-      extraParams: apiPreset.extraParams
+      extraParams: apiPreset.extraParams,
+      followupExtraParams: apiPreset.followupExtraParams
     } : { ...config.memorySummary, enabled: false, apiKey: undefined };
     const memoryLLM = apiPreset ? createLLMClientFromPreset(apiPreset) : undefined;
+    const memorySession = target
+      ? ensureMemoryConsoleSession(windowEndAt, windowStartAt)
+      : undefined;
     return runMemoryInductionForMessages({
       memoryStore,
       promptStore: memoryInductionPromptStore,
@@ -583,6 +599,7 @@ const server = http.createServer(createApiRequestHandler({
       timezone: currentTime.timeZone,
       userName: promptProfileStore.get().userName,
       sessionRoot: llmSessionsRoot(),
+      memorySession,
       onRound,
       log: appendLog
     }, target);
@@ -777,11 +794,15 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
 }
 
 async function triggerSleepMemoryInduction(): Promise<void> {
-  if (sleepMemoryInductionRunning) {
-    appendLog("warn", "sleep Memorize skipped: already running");
-    return;
-  }
-  sleepMemoryInductionRunning = true;
+  sleepMemoryInductionQueue = sleepMemoryInductionQueue
+    .catch((error) => {
+      appendLog("warn", `sleep Memorize queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+    })
+    .then(runQueuedSleepMemoryInduction);
+  return sleepMemoryInductionQueue;
+}
+
+async function runQueuedSleepMemoryInduction(): Promise<void> {
   try {
     const memoryPreset = resolvePromptApiPreset("memorize");
     const memoryConfig = memoryPreset ? {
@@ -792,10 +813,11 @@ async function triggerSleepMemoryInduction(): Promise<void> {
       temperature: memoryPreset.temperature,
       timeoutMs: memoryPreset.timeoutMs,
       stream: memoryPreset.stream,
-      extraParams: memoryPreset.extraParams
+      extraParams: memoryPreset.extraParams,
+      followupExtraParams: memoryPreset.followupExtraParams
     } : { ...config.memorySummary, enabled: false, apiKey: undefined };
     const memoryLLM = memoryPreset ? createLLMClientFromPreset(memoryPreset) : undefined;
-    await runSleepMemoryInduction({
+    const ok = await runSleepMemoryInduction({
       memoryStore,
       promptStore: memoryInductionPromptStore,
       stateStore: sleepMemoryStateStore,
@@ -805,11 +827,14 @@ async function triggerSleepMemoryInduction(): Promise<void> {
       config: memoryConfig,
       nowIso: () => currentTime.now().iso,
       timezone: currentTime.timeZone,
+      sleepWindowStartAt: agentState.getSnapshot().sleepCocoonEnteredAt,
       sessionRoot: llmSessionsRoot(),
       log: appendLog
     });
-  } finally {
-    sleepMemoryInductionRunning = false;
+    if (!ok) await sendMemoryFailureNoticeToFeishu();
+  } catch (error) {
+    appendLog("error", `sleep Memorize failed: ${error instanceof Error ? error.message : String(error)}`);
+    await sendMemoryFailureNoticeToFeishu();
   }
 }
 
@@ -1065,6 +1090,22 @@ function getTokenUsageReport(query: TokenUsageQuery) {
 
 function clearLLMChainCache(): void {
   core.clearLLMSession("admin_clear");
+}
+
+function ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): MemoryInductionSession {
+  if (!memoryConsoleSession || memoryConsoleSession.clearedAt) {
+    memoryConsoleSession = createMemoryInductionSession(llmSessionsRoot(), windowEndAt, {
+      name: "console",
+      windowStartAt,
+      windowEndAt
+    });
+  }
+  return memoryConsoleSession;
+}
+
+function clearMemoryInductionSession(): void {
+  clearActiveMemoryInductionSession(memoryConsoleSession, currentTime.now().iso, "admin_clear");
+  memoryConsoleSession = undefined;
 }
 
 function ensureActiveLLMSession(time: string): ActiveLLMSession {
@@ -1699,6 +1740,9 @@ function llmSessionRoundCount(session: ActiveLLMSession): number {
 function buildLLMSessionTurns(session: ActiveLLMSession): LLMSessionTurn[] {
   const requests = [...(session.requests ?? [])].sort(compareLLMLogEntries);
   const responses = [...(session.responses ?? [])].sort(compareLLMLogEntries);
+  if (requests.length === 0 && responses.length === 0) {
+    return buildLLMSessionTurnsFromTranscript(session);
+  }
   const count = Math.max(llmSessionRoundCount(session), 1);
   const turns: LLMSessionTurn[] = [];
   for (let index = 0; index < count; index += 1) {
@@ -1716,6 +1760,63 @@ function buildLLMSessionTurns(session: ActiveLLMSession): LLMSessionTurn[] {
     });
   }
   return turns;
+}
+
+function buildLLMSessionTurnsFromTranscript(session: ActiveLLMSession): LLMSessionTurn[] {
+  const messages = cloneLLMMessages(session.messages);
+  const staticCount = Math.max(0, Math.min(messages.length, session.staticPromptMessageCount ?? 0));
+  const responseIndexes: number[] = [];
+  for (let index = staticCount; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    if (isSyntheticPromptToolRequest(message)) continue;
+    responseIndexes.push(index);
+  }
+  if (responseIndexes.length === 0) {
+    return [{
+      round: 0,
+      latestRequest: session.latestRequestInfo,
+      latestResponse: session.latestResponseInfo,
+      messages
+    }];
+  }
+  return responseIndexes.map((responseIndex, round) => {
+    const latestRequest = session.latestRequestInfo?.round === round ? session.latestRequestInfo : undefined;
+    const latestResponse = session.latestResponseInfo?.round === round ? session.latestResponseInfo : undefined;
+    return {
+      round,
+      latestRequest,
+      latestResponse,
+      messages: messages.slice(0, responseIndex),
+      response: transcriptResponseEntry(session, round, responseIndex, messages[responseIndex], latestResponse)
+    };
+  });
+}
+
+function isSyntheticPromptToolRequest(message: LLMChatInput["messages"][number]): boolean {
+  const calls = message.toolCalls ?? [];
+  return calls.length > 0 && calls.every((call) => (
+    call.id.startsWith("append_")
+    || call.id.startsWith("fixed_prefix_")
+    || call.id.startsWith("call_prompt_")
+  ));
+}
+
+function transcriptResponseEntry(
+  session: ActiveLLMSession,
+  round: number,
+  responseIndex: number,
+  message: LLMChatInput["messages"][number],
+  latestResponse: LLMSessionResponseInfo | undefined
+): LLMResponseLogEntry {
+  return {
+    id: responseIndex,
+    sessionId: session.id,
+    time: latestResponse?.time ?? session.updatedAt,
+    message,
+    finishReason: latestResponse?.finishReason,
+    usage: latestResponse?.usage
+  };
 }
 
 function messagesForLLMSessionTurn(
@@ -1931,6 +2032,45 @@ async function sendSystemNoticeToDefaultTarget(text: string): Promise<void> {
       status: "send_failed",
       summary: text,
       error: reason
+    });
+  }
+}
+
+async function sendMemoryFailureNoticeToFeishu(): Promise<void> {
+  const target = getDefaultFeishuTarget();
+  if (!target) return;
+  const text = "-记忆整理大失败-";
+  const output = {
+    id: createId("memory_failure_notice"),
+    target,
+    content: { kind: "text" as const, text },
+    meta: {
+      createdAt: currentTime.now().iso,
+      urgency: "normal" as const,
+      allowStreaming: false
+    }
+  };
+  try {
+    await outputRouter.send(output);
+    appendMessageLog({
+      direction: "outbound",
+      plugin: "feishu",
+      kind: "text",
+      target: target.channelId ?? target.userId,
+      sessionId: target.sessionId,
+      status: "sent",
+      summary: text
+    });
+  } catch (error) {
+    appendMessageLog({
+      direction: "outbound",
+      plugin: "feishu",
+      kind: "text",
+      target: target.channelId ?? target.userId,
+      sessionId: target.sessionId,
+      status: "send_failed",
+      summary: text,
+      error: error instanceof Error ? error.message : String(error)
     });
   }
 }

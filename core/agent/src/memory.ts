@@ -91,6 +91,7 @@ export type MemorySummaryDeps = {
   config: MemorySummaryConfig;
   nowIso(): string;
   timezone: string;
+  sleepWindowStartAt?: string;
   userName?: string;
   sessionRoot?: string;
   onRound?(target: MemoryTarget, rounds: number, status?: string): void;
@@ -122,14 +123,25 @@ export type MemoryPromptPreview = {
   windowStartAt?: string;
   windowEndAt: string;
   messageCount: number;
-  request: {
-    model?: string;
-    temperature?: number;
-    maxTokens: number;
-    extraParams?: Record<string, unknown>;
-    tools: LLMToolSpec[];
-    messages: LLMMessage[];
-  };
+    request: {
+      model?: string;
+      temperature?: number;
+      maxTokens: number;
+      extraParams?: Record<string, unknown>;
+      followupExtraParams?: Record<string, unknown>;
+      tools: LLMToolSpec[];
+      messages: LLMMessage[];
+    };
+};
+
+export type MemoryInductionSession = {
+  messages: LLMMessage[];
+  roundOffset: number;
+  activeTarget?: MemoryTarget;
+  completedTargets: MemoryTarget[];
+  clearedAt?: string;
+  clearReason?: string;
+  append?(entry: unknown): void;
 };
 
 export const memoryFileLimits = {
@@ -166,6 +178,7 @@ const targetTitles: Record<MemoryTarget, string> = {
 
 const maxMessagesPerSummary = 10_000;
 const memoryToolRoundLimit = 20;
+const memoryInductionMaxAttempts = 3;
 
 export function createMarkdownMemoryStore(root: string): MemoryStore {
   function filePath(target: MemoryTarget): string {
@@ -379,7 +392,8 @@ export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<
     return false;
   }
 
-  const messages = deps.messageStore.listMessagesByCreatedAtRange(existing.lastInductionAt, currentInductionAt, maxMessagesPerSummary);
+  const windowStartAt = deps.sleepWindowStartAt ?? existing.lastInductionAt;
+  const messages = deps.messageStore.listMessagesByCreatedAtRange(windowStartAt, currentInductionAt, maxMessagesPerSummary);
   if (messages.length === 0) {
     deps.stateStore.write({
       ...existing,
@@ -396,7 +410,7 @@ export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<
   const result = await runMemoryInductionForMessages({
     ...deps,
     messages,
-    windowStartAt: existing.lastInductionAt,
+    windowStartAt,
     windowEndAt: currentInductionAt
   });
   if (result.ok) {
@@ -426,6 +440,7 @@ export async function runMemoryInductionForMessages(
     messages: StoredConversationMessage[];
     windowStartAt?: string;
     windowEndAt: string;
+    memorySession?: MemoryInductionSession;
   },
   targetFilter?: MemoryTarget
 ): Promise<MemoryRunSummary> {
@@ -448,14 +463,23 @@ export async function runMemoryInductionForMessages(
   }
 
   const targets = targetFilter ? [targetFilter] : ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
+  const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
+    name: targetFilter ? targetFilter : "run",
+    windowStartAt: deps.windowStartAt,
+    windowEndAt: deps.windowEndAt
+  });
+  const ownsMemorySession = deps.memorySession === undefined;
   for (const target of targets) {
-    const result = await runSingleMemoryInduction(deps, target);
+    const result = await runSingleMemoryInductionWithRetry({ ...deps, memorySession }, target);
     results.push(result);
     if (!result.ok) {
       deps.log("warn", `Memorize ${target} failed: ${result.error ?? "unknown"}`);
       break;
     }
     deps.log("info", `Memorize ${target} completed`);
+  }
+  if (ownsMemorySession) {
+    clearMemoryInductionSession(memorySession, startedAt, results.every((entry) => entry.ok) ? "complete" : "failed");
   }
 
   return {
@@ -466,6 +490,32 @@ export async function runMemoryInductionForMessages(
     messageCount: deps.messages.length,
     results
   };
+}
+
+async function runSingleMemoryInductionWithRetry(
+  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
+    messages: StoredConversationMessage[];
+    windowStartAt?: string;
+    windowEndAt: string;
+    memorySession?: MemoryInductionSession;
+  },
+  target: MemoryTarget
+): Promise<MemoryRunResult> {
+  let lastResult: MemoryRunResult | undefined;
+  for (let attempt = 1; attempt <= memoryInductionMaxAttempts; attempt += 1) {
+    try {
+      const result = await runSingleMemoryInduction(deps, target);
+      if (result.ok || attempt >= memoryInductionMaxAttempts) return result;
+      lastResult = result;
+      deps.log("warn", `Memorize ${target} attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${result.error ?? "unknown"}, retrying`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastResult = { target, ok: false, edited: false, rounds: 0, error: message, toolCalls: [] };
+      if (attempt >= memoryInductionMaxAttempts) return lastResult;
+      deps.log("warn", `Memorize ${target} attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${message}, retrying`);
+    }
+  }
+  return lastResult ?? { target, ok: false, edited: false, rounds: 0, error: "unknown Memorize failure", toolCalls: [] };
 }
 
 export async function runSleepMemoryBackfill(deps: MemorySummaryDeps): Promise<{ ok: boolean; segments: number; messages: number }> {
@@ -557,6 +607,7 @@ export function buildMemoryPromptPreview(
       temperature: deps.config?.temperature,
       maxTokens: 8192,
       extraParams: deps.config?.extraParams,
+      followupExtraParams: deps.config?.followupExtraParams,
       tools: memoryTools(),
       messages
     }
@@ -568,16 +619,22 @@ async function runSingleMemoryInduction(
     messages: StoredConversationMessage[];
     windowStartAt?: string;
     windowEndAt: string;
+    memorySession?: MemoryInductionSession;
   },
   target: MemoryTarget
 ): Promise<MemoryRunResult> {
   const toolCalls: MemoryRunResult["toolCalls"] = [];
-  const session = createMemorySessionLogger(deps.sessionRoot, deps.windowEndAt, target, {
+  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
+    name: target,
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt
   });
+  session.activeTarget = target;
   const diaryDraftPath = target === "yesterdaySummary" ? deps.memoryStore.createDiaryDraft() : undefined;
-  const messages = buildMemoryPromptMessages({ ...deps, diaryDraftPath }, target);
+  const promptMessages = buildMemoryPromptMessages({ ...deps, diaryDraftPath }, target);
+  const messages = session.messages.length > 0
+    ? [...session.messages, ...promptMessages]
+    : promptMessages;
   const stageLongTerm = isLongTermMemoryTarget(target);
   let stagedLongTermContent = stageLongTerm ? deps.memoryStore.readTarget(target) : undefined;
   let edited = false;
@@ -608,12 +665,12 @@ async function runSingleMemoryInduction(
         model: deps.config.model,
         temperature: deps.config.temperature,
         maxTokens: 8192,
-        extraParams: deps.config.extraParams,
+        extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
         tools: memoryTools(),
         messages
       };
       deps.onRound?.(target, round + 1);
-      session?.append({ type: "request", round, request });
+      session.append?.({ type: "request", round: session.roundOffset + round, request });
       return {
         agentId: "memorize",
         client: deps.llm,
@@ -621,7 +678,7 @@ async function runSingleMemoryInduction(
         model: deps.config.model,
         temperature: deps.config.temperature,
         maxTokens: 8192,
-        extraParams: deps.config.extraParams,
+        extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
         toolNames: [...memoryToolNames],
         stream: deps.config.stream === true,
         metadata: { target }
@@ -629,7 +686,7 @@ async function runSingleMemoryInduction(
     },
     sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
     afterRequest({ round, result }) {
-      session?.append({ type: "response", round, response: result });
+      session.append?.({ type: "response", round: session.roundOffset + round, response: result });
     },
     beforeTool({ round, call }) {
       deps.onRound?.(target, round + 1, call.function.name);
@@ -673,9 +730,13 @@ async function runSingleMemoryInduction(
       return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: `error: ${error}` } };
     },
     onMessagesChanged({ messages }) {
-      session?.append({ type: "final_messages", messages });
+      session.messages = messages;
+      session.append?.({ type: "final_messages", messages });
     }
   });
+  session.roundOffset += loopResult.rounds;
+  if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
+  session.activeTarget = undefined;
 
   if (loopResult.stopReason === "completed") {
     if (stageLongTerm && edited && stagedLongTermContent !== undefined) {
@@ -693,7 +754,7 @@ async function runSingleMemoryInduction(
         windowStartAt: deps.windowStartAt,
         windowEndAt: deps.windowEndAt
       });
-      session?.append({
+      session.append?.({
         type: "diary_commit",
         file: targetResultFiles[target],
         draftPath: diaryDraftPath,
@@ -1134,18 +1195,22 @@ function gitExecFileSync(args: string[], options: { cwd: string; encoding?: Buff
   return result.stdout?.toString() ?? "";
 }
 
-function createMemorySessionLogger(
+export function createMemoryInductionSession(
   root: string | undefined,
   time: string,
-  target: MemoryTarget,
-  window: { windowStartAt?: string; windowEndAt: string }
-): { append(entry: unknown): void } | undefined {
-  if (!root) return undefined;
-  return createLLMSessionTranscriptLogger({
+  options: { name: string; windowStartAt?: string; windowEndAt: string }
+): MemoryInductionSession {
+  const session: MemoryInductionSession = {
+    messages: [],
+    roundOffset: 0,
+    completedTargets: []
+  };
+  if (!root) return session;
+  const logger = createLLMSessionTranscriptLogger({
     root,
     time,
     namespace: "memorize",
-    name: target,
+    name: options.name,
     metadata: (state) => {
       const last = state.messages.at(-1);
       return {
@@ -1153,9 +1218,10 @@ function createMemorySessionLogger(
         schemaVersion: 1,
         sessionId: memorySessionId(root, state.filePath),
         agent: "memorize",
-        target,
-        windowStartAt: window.windowStartAt,
-        windowEndAt: window.windowEndAt,
+        target: session.activeTarget,
+        targets: session.completedTargets,
+        windowStartAt: options.windowStartAt,
+        windowEndAt: options.windowEndAt,
         startedAt: time,
         updatedAt: state.updatedAt,
         requestCount: state.requestCount,
@@ -1166,10 +1232,22 @@ function createMemorySessionLogger(
         messageCount: state.messages.length,
         lastMessageRole: last?.role,
         lastMessageAt: state.updatedAt,
-        mode: "memorize"
+        mode: "memorize",
+        clearedAt: session.clearedAt,
+        clearReason: session.clearReason
       };
     }
   });
+  session.append = logger.append;
+  return session;
+}
+
+export function clearMemoryInductionSession(session: MemoryInductionSession | undefined, time: string, reason: string): void {
+  if (!session || session.clearedAt) return;
+  session.clearedAt = time;
+  session.clearReason = reason;
+  session.activeTarget = undefined;
+  session.append?.({ type: "final_messages", messages: session.messages });
 }
 
 function memorySessionId(root: string, filePath: string): string {

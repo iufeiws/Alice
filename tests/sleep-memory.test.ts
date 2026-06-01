@@ -84,7 +84,12 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
     assert.equal(input.messages[fakeReadIndex + 1].name, "read_memory");
     assert.match(input.messages.map((entry) => entry.content).join("\n"), /聊天记录：\n\[2026-05-24 09:00:00\]\nY:hello/);
   }
-  const readResult = (input: LLMChatInput) => input.messages[input.messages.findIndex((entry) => entry.toolCalls?.[0]?.function.name === "read_memory") + 1].content;
+  const readResult = (input: LLMChatInput) => {
+    const fakeReadIndexes = input.messages
+      .map((entry, index) => entry.toolCalls?.[0]?.function.name === "read_memory" ? index : -1)
+      .filter((index) => index >= 0);
+    return input.messages[fakeReadIndexes.at(-1)! + 1].content;
+  };
   assert.match(readResult(targetRequests[0]), /<persistent-memory>\nold persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
   assert.match(readResult(targetRequests[1]), /<user-preferences>\nold pref\n<\/user-preferences>\n1 line\(s\), 9 byte\(s\)/);
   assert.match(readResult(targetRequests[2]), /<diary>\n\n<\/diary>\n0 line\(s\), 0 byte\(s\)/);
@@ -166,6 +171,53 @@ test("memorize passes stream setting to injected request sender", async () => {
   assert.deepEqual(streamFlags, [true]);
 });
 
+test("memorize uses follow-up extra params after first tool round", async () => {
+  const root = makeTempDir("memory-followup-extra");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const seen: unknown[] = [];
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: {
+      async chat() {
+        throw new Error("request sender should handle memorize calls");
+      }
+    },
+    llmRequestSender: async (input) => {
+      seen.push(input.extraParams);
+      if (seen.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "edit_1",
+              type: "function",
+              function: { name: "edit_memory", arguments: JSON.stringify({ patch: addPatch("memory\n") }) }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+    config: {
+      ...memoryConfig(),
+      extraParams: { first: true },
+      followupExtraParams: { followup: true }
+    },
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(seen, [{ first: true }, { followup: true }]);
+});
+
 test("memorize local request sender uses chatStream when enabled", async () => {
   const root = makeTempDir("memory-local-stream");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -199,6 +251,61 @@ test("memorize local request sender uses chatStream when enabled", async () => {
   assert.equal(streamCalls, 1);
 });
 
+test("memorize retries a failed target before moving to the next target", async () => {
+  const root = makeTempDir("memory-retry-serial");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const attempts: string[] = [];
+  const finished = new Set<string>();
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: {
+      async chat() {
+        throw new Error("request sender should be used");
+      }
+    },
+    llmRequestSender: async (input) => {
+      const target = String(input.metadata?.target ?? "");
+      attempts.push(target);
+      if (target === "persistent" && attempts.filter((entry) => entry === "persistent").length === 1) {
+        throw new Error("temporary persistent failure");
+      }
+      if (finished.has(target)) return { message: { role: "assistant", content: "done" } };
+      finished.add(target);
+      const patch = target === "persistent"
+        ? addPatch("new persistent\n")
+        : target === "userPreferences"
+          ? addPatch("new pref\n")
+          : addPatch("new yesterday\n");
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: `edit_${target}`,
+            type: "function",
+            function: { name: "edit_memory", arguments: JSON.stringify({ patch }) }
+          }]
+        }
+      };
+    },
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    log() {}
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(attempts, ["persistent", "persistent", "persistent", "userPreferences", "userPreferences", "yesterdaySummary", "yesterdaySummary"]);
+  assert.match(memoryStore.read().persistent, /new persistent/);
+  assert.match(memoryStore.read().userPreferences, /new pref/);
+  assert.match(memoryStore.read().yesterdaySummary, /new yesterday/);
+});
+
 test("memorize LLM session persists as metadata followed by transcript messages", async () => {
   const root = makeTempDir("memory-session-transcript");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -225,7 +332,9 @@ test("memorize LLM session persists as metadata followed by transcript messages"
   const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.equal(lines[0].type, "llm_session");
   assert.equal(lines[0].agent, "memorize");
-  assert.equal(lines[0].target, "persistent");
+  assert.deepEqual(lines[0].targets, ["persistent", "userPreferences", "yesterdaySummary"]);
+  assert.equal(lines[0].clearedAt, "2026-05-24T06:00:00.000Z");
+  assert.equal(lines[0].clearReason, "complete");
   assert.equal(lines[0].windowStartAt, "2026-05-24T00:00:00.000Z");
   assert.equal(lines[0].windowEndAt, "2026-05-24T06:00:00.000Z");
   assert.equal(lines[1].role, "system");
@@ -404,6 +513,45 @@ test("sleep induction records current timestamp first and advances after success
   assert.match(memoryStore.read().persistent, /fact/);
 });
 
+test("sleep induction can use the pre-sleep check_chat today window", async () => {
+  const root = makeTempDir("memory-induction-sleep-window");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const stateStore = createSleepMemoryStateStore(path.join(root, "state.json"));
+  stateStore.write({ lastInductionAt: "2026-05-23T20:00:00.000Z" });
+  const calls: Array<{ start?: string; end: string }> = [];
+
+  const ok = await runSleepMemoryInduction({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    stateStore,
+    messageStore: {
+      listMessagesByCreatedAtRange(startAt, endAt) {
+        calls.push({ start: startAt, end: endAt });
+        return [
+          message("2026-05-24T12:30:00.000Z", "after sleep cocoon")
+        ];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    llm: editToolClient([], [
+      addPatch("- fact\n"),
+      addPatch("- pref\n"),
+      addPatch("- summary\n")
+    ]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T14:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    sleepWindowStartAt: "2026-05-24T12:00:00.000",
+    log() {}
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(calls, [{ start: "2026-05-24T12:00:00.000", end: "2026-05-24T14:00:00.000Z" }]);
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T14:00:00.000Z");
+});
+
 test("sleep induction treats no-edit completion as success and advances cursor", async () => {
   const root = makeTempDir("memory-failure");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -458,7 +606,8 @@ function memoryConfig() {
     temperature: 0.8,
     timeoutMs: 120_000,
     stream: false,
-    extraParams: {}
+    extraParams: {},
+    followupExtraParams: {}
   };
 }
 

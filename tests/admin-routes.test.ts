@@ -144,7 +144,8 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
           temperature: apiPreset.temperature,
           timeoutMs: apiPreset.timeoutMs,
           stream: apiPreset.stream,
-          extraParams: apiPreset.extraParams
+          extraParams: apiPreset.extraParams,
+          followupExtraParams: apiPreset.followupExtraParams
         },
         nowIso: () => "2026-05-24T06:00:00.000Z",
         timezone: "Asia/Shanghai",
@@ -211,6 +212,27 @@ test("memory run-target runs only the selected memory file", async () => {
   assert.equal(capturedTarget, "userPreferences");
   assert.equal(capturedMessages.length, 1);
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["userPreferences"]);
+});
+
+test("memory clear-session clears the console memorize session", async () => {
+  const root = makeTempDir("admin-memory-clear-session");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  let cleared = false;
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    clearMemoryInductionSession() {
+      cleared = true;
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/clear-session", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(cleared, true);
 });
 
 test("memory windows include persisted sleep system messages as sleep boundaries", async () => {
@@ -308,7 +330,8 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
         temperature: 0.2,
         timeoutMs: 60_000,
         stream: false,
-        extraParams: {}
+        extraParams: {},
+        followupExtraParams: {}
       },
       llm: {
         provider: "stub",
@@ -337,6 +360,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     getLLMRequestProfilePreview: () => undefined,
     getTokenUsageReport: () => ({}),
     clearLLMChainCache() {},
+    clearMemoryInductionSession() {},
     outputRouter: { listChannels: () => [] },
     feishuPairingStore: { list: () => [] },
     coreProfileStore: { get: () => ({ appearanceDescription: "" }) },

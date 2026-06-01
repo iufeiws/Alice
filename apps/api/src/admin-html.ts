@@ -373,6 +373,7 @@ export function renderAdminHtmlV2(): string {
                 <select id="memoryRunDate"></select>
               </label>
               <button type="button" id="memory-run-day">Run Selected Day</button>
+              <button type="button" id="memory-clear-session" class="secondary">Clear Session</button>
               <button type="button" id="memory-undo-last" class="secondary">撤销</button>
               <button type="button" id="memory-redo-last" class="secondary">重做</button>
             </div>
@@ -1645,6 +1646,12 @@ export function renderAdminHtmlV2(): string {
         await refreshMemory();
       }
 
+      async function clearMemorySession() {
+        const result = await fetch("/admin/api/memory/clear-session", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Memorize session cleared." : "Memorize session clear failed: " + (result.error || "unknown error");
+        await refreshLLMChain();
+      }
+
       async function refreshToolPreviewTools() {
         const payload = await fetch("/admin/api/tools").then((res) => res.json());
         toolPreviewTools = payload.tools || [];
@@ -2472,6 +2479,7 @@ export function renderAdminHtmlV2(): string {
         await refreshRuntimeStatus();
       });
       $("memory-run-day").addEventListener("click", runMemoryDay);
+      $("memory-clear-session").addEventListener("click", clearMemorySession);
       $("memory-undo-last").addEventListener("click", undoLastMemoryRun);
       $("memory-redo-last").addEventListener("click", redoLastMemoryRun);
       $("memoryRunDate").addEventListener("change", async () => {

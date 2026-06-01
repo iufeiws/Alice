@@ -11,6 +11,16 @@ test("admin llm chain uses merged session view", () => {
   assert.doesNotMatch(html, /id="llmChainResponses"/);
 });
 
+test("llm session detail renders persisted jsonl shape", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /session\.jsonlEntries/);
+  assert.match(html, /"\[meta\]"/);
+  assert.match(html, /"\[message" \+ index \+ "\]"/);
+  assert.doesNotMatch(html, /Session metadata/);
+  assert.doesNotMatch(html, /Message transcript/);
+});
+
 test("llm api preset select applies directly without apply button", () => {
   const html = renderAdminHtmlV2();
 
@@ -55,6 +65,19 @@ test("llm api preset form tracks dirty and saved states like shell editor", () =
   assert.match(html, /if \(!result\.ok\) throw new Error\(result\.error \|\| "unknown"\)/);
   assert.match(html, /markLLMApiPreset\("saved"\)/);
   assert.match(html, /bindLLMApiPresetFormDirtyTracking\(\)/);
+});
+
+test("plugin config includes translation voice test box", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /id="pluginTestInput"/);
+  assert.match(html, /id="pluginConfigTest"/);
+  assert.match(html, /Test translation and voice/);
+  assert.match(html, /\/admin\/api\/plugins\/" \+ encodeURIComponent\(pluginId\) \+ "\/test"/);
+  assert.match(html, /translationMs|ttsMs|totalMs|audio controls/);
+  assert.match(html, /field\.type === "number"/);
+  assert.match(html, /input type="number" min="\$\{escapeAttr\(field\.min \?\? "0\.5"\)\}"/);
+  assert.match(html, /input\.type === "number" && input\.value !== "" \? Number\(input\.value\)/);
 });
 
 test("core prompt editor keeps variables in preview side pane", () => {

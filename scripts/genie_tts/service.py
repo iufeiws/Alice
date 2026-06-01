@@ -113,6 +113,7 @@ class GenieRuntime:
         language: str | None = None,
         reference_audio_path: str | Path | None = None,
         reference_text: str | None = None,
+        part_silence_seconds: float = GENIE_TTS_PART_SILENCE_SECONDS,
     ) -> dict[str, Any]:
         normalized = str(text or "").strip()
         if not normalized:
@@ -141,7 +142,7 @@ class GenieRuntime:
                         part_path = target.with_name(f"{target.stem}.part{index:03d}{target.suffix}")
                         self._synthesize_part(part, part_path)
                         part_paths.append(part_path)
-                    concatenate_audio(part_paths, target)
+                    concatenate_audio(part_paths, target, part_silence_seconds=part_silence_seconds)
                 finally:
                     for part_path in part_paths:
                         try:
@@ -208,9 +209,11 @@ def is_split_symbol(char: str) -> bool:
     return category.startswith("P") or category.startswith("S")
 
 
-def concatenate_audio(paths: list[Path], output_path: Path) -> None:
+def concatenate_audio(paths: list[Path], output_path: Path, *, part_silence_seconds: float = GENIE_TTS_PART_SILENCE_SECONDS) -> None:
     if not paths:
         raise ValueError("no Genie TTS audio parts to concatenate")
+    if part_silence_seconds < 0:
+        raise ValueError("partSilenceSeconds cannot be negative")
     sample_rate: int | None = None
     chunks: list[np.ndarray] = []
     for index, path in enumerate(paths):
@@ -219,8 +222,8 @@ def concatenate_audio(paths: list[Path], output_path: Path) -> None:
             sample_rate = int(current_sample_rate)
         elif sample_rate != int(current_sample_rate):
             raise RuntimeError(f"Genie TTS audio parts have different sample rates: {sample_rate} vs {current_sample_rate}")
-        if index > 0:
-            silence_frames = max(1, round((sample_rate or 32_000) * GENIE_TTS_PART_SILENCE_SECONDS))
+        if index > 0 and part_silence_seconds > 0:
+            silence_frames = max(1, round((sample_rate or 32_000) * part_silence_seconds))
             chunks.append(np.zeros((silence_frames, data.shape[1]), dtype=data.dtype))
         chunks.append(data)
     combined = np.concatenate(chunks, axis=0)
@@ -254,6 +257,7 @@ class GenieHandler(BaseHTTPRequestHandler):
                 language=optional_string(body, "language"),
                 reference_audio_path=optional_string(body, "referenceAudioPath"),
                 reference_text=optional_string(body, "referenceText"),
+                part_silence_seconds=optional_float(body, "partSilenceSeconds", GENIE_TTS_PART_SILENCE_SECONDS),
             )
             self.write_json(200, {"ok": True, **result})
         except Exception as error:
@@ -292,6 +296,15 @@ def optional_string(body: dict[str, Any], key: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{key} must be a string")
     return value.strip() or None
+
+
+def optional_float(body: dict[str, Any], key: str, default: float) -> float:
+    value = body.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{key} must be a number")
+    return float(value)
 
 
 def parse_args() -> argparse.Namespace:

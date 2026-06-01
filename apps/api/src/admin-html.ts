@@ -109,6 +109,32 @@ export function renderAdminHtmlV2(): string {
       .usage-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
       .usage-table th, .usage-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
       .usage-table th { color: #667085; font-weight: 800; }
+      .plugin-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+      .plugin-toolbar label { margin: 0; min-width: 260px; }
+      .plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-items: stretch; }
+      .plugin-card { border: 1px solid #d7dce3; border-radius: 8px; padding: 14px; background: #fff; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; min-height: 180px; }
+      .plugin-card-head { display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: start; min-width: 0; }
+      .plugin-icon { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: #17202a; color: #fff; font-weight: 900; }
+      .plugin-title { font-weight: 900; overflow-wrap: anywhere; }
+      .plugin-desc { color: #667085; font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+      .plugin-meta { display: grid; gap: 4px; color: #667085; font-size: 12px; }
+      .plugin-state { font-weight: 800; color: #17202a; }
+      .plugin-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .plugin-actions button { margin-top: 0; }
+      .plugin-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: #17202a; white-space: nowrap; cursor: pointer; }
+      .plugin-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+      .plugin-switch-visual { position: relative; display: inline-block; width: 46px; height: 24px; flex: 0 0 46px; border: 1px solid #98a2b3; border-radius: 999px; background: #eef1f5; transition: background 140ms ease, border-color 140ms ease; }
+      .plugin-switch-visual::after { content: ""; position: absolute; top: 2px; left: 3px; width: 18px; height: 18px; border-radius: 999px; background: #667085; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.24); transition: left 140ms ease, background 140ms ease; }
+      .plugin-switch input:checked + .plugin-switch-visual { border-color: #2563eb; background: #e8f1ff; }
+      .plugin-switch input:checked + .plugin-switch-visual::after { left: 23px; background: #2563eb; }
+      .plugin-switch input:focus-visible + .plugin-switch-visual { outline: 2px solid #93c5fd; outline-offset: 2px; }
+      .plugin-switch input:disabled + .plugin-switch-visual { opacity: 0.48; cursor: not-allowed; }
+      .plugin-config { margin-top: 14px; }
+      .plugin-config.pane.active { display: block; }
+      .plugin-config-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      .plugin-config-head button { margin-top: 0; }
+      .plugin-config-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+      .plugin-events { max-height: 280px; }
       .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
       .memory-controls label { margin: 0; min-width: 180px; }
       .memory-day-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 16px; }
@@ -130,7 +156,7 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
     </style>
   </head>
   <body>
@@ -316,6 +342,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Sessions</button>
           <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
           <button class="tab" data-main-tab="memory" type="button">Memory</button>
+          <button class="tab" data-main-tab="plugins" type="button">Plugin</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
           <button class="tab" data-main-tab="messages" type="button">Message Log</button>
           <button class="tab" data-main-tab="events" type="button">Event Log</button>
@@ -390,6 +417,28 @@ export function renderAdminHtmlV2(): string {
             <pre id="memoryRunResult">No memory run yet.</pre>
           </div>
         </section>
+        <section id="main-plugins" class="pane">
+          <div id="pluginListPanel">
+            <div class="plugin-toolbar">
+              <div>
+                <h2>Plugin</h2>
+                <p class="muted">Manage local plugins and their runtime switches.</p>
+              </div>
+              <label for="pluginSearch">Search plugins
+                <input id="pluginSearch" autocomplete="off" placeholder="name, id, kind" />
+              </label>
+            </div>
+            <div id="pluginGrid" class="plugin-grid">Loading...</div>
+          </div>
+          <section id="pluginConfigPanel" class="plugin-config pane">
+            <div class="plugin-config-head">
+              <button type="button" id="pluginBack" class="secondary">← Plugin</button>
+              <h2 id="pluginConfigTitle">Plugin Config</h2>
+            </div>
+            <div id="pluginConfigBody">Choose a plugin to configure.</div>
+          </section>
+          <p class="muted" id="plugin-status"></p>
+        </section>
         <section id="main-tool-preview" class="pane">
           <div class="tool-preview-grid">
             <div>
@@ -424,7 +473,7 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-memory,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
@@ -440,6 +489,7 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
         if (button.dataset.mainTab === "token-usage") await refreshTokenUsage();
         if (button.dataset.mainTab === "memory") await refreshMemory();
+        if (button.dataset.mainTab === "plugins") await refreshPlugins();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
@@ -514,6 +564,219 @@ export function renderAdminHtmlV2(): string {
         });
         const payload = await fetch("/admin/api/token-usage?" + params.toString()).then((res) => res.json());
         renderTokenUsage(payload);
+      }
+
+      async function refreshPlugins() {
+        if ($("pluginConfigPanel").classList.contains("active")) return;
+        const payload = await fetch("/admin/api/plugins").then((res) => res.json());
+        const query = ($("pluginSearch").value || "").toLowerCase().trim();
+        const plugins = (payload.plugins || []).filter((plugin) => {
+          const haystack = [plugin.id, plugin.name, plugin.kind, plugin.status, plugin.description].join(" ").toLowerCase();
+          return !query || haystack.includes(query);
+        });
+        $("pluginGrid").innerHTML = plugins.length ? plugins.map(renderPluginCard).join("") : '<p class="muted">No plugins match this search.</p>';
+      }
+
+      function renderPluginCard(plugin) {
+        const initial = String(plugin.name || plugin.id || "?").slice(0, 1).toUpperCase();
+        const canConfig = Boolean(plugin.configurable);
+        const canSwitch = Boolean(plugin.switchable);
+        const enabled = plugin.status === "enabled" || plugin.status === "missing_config" || plugin.status === "error";
+        return \`
+          <div class="plugin-card" data-plugin-card="\${escapeAttr(plugin.id)}">
+            <div class="plugin-card-head">
+              <div class="plugin-icon">\${escapeHtml(initial)}</div>
+              <div>
+                <div class="plugin-title">\${escapeHtml(plugin.name || plugin.id)}</div>
+                <div class="plugin-desc">\${escapeHtml(plugin.description || "")}</div>
+              </div>
+            </div>
+            <div class="plugin-meta">
+              <div>ID: \${escapeHtml(plugin.id)}</div>
+              <div>Kind: \${escapeHtml(plugin.kind)}</div>
+              <div class="plugin-state">\${escapeHtml(plugin.status)} · \${escapeHtml(plugin.health)}</div>
+              \${plugin.configSource ? \`<div>Config: \${escapeHtml(plugin.configSource)}</div>\` : ""}
+              \${plugin.lastLoadedAt ? \`<div>Loaded: \${escapeHtml(plugin.lastLoadedAt)}</div>\` : ""}
+            </div>
+            <div class="plugin-actions">
+              <div>
+                <button type="button" data-plugin-config="\${escapeAttr(plugin.id)}" \${canConfig ? "" : "disabled"}>Config</button>
+                <button type="button" class="secondary" data-plugin-reload="\${escapeAttr(plugin.id)}" \${canConfig ? "" : "disabled"}>Reload</button>
+              </div>
+              <label class="plugin-switch">
+                <input type="checkbox" data-plugin-switch="\${escapeAttr(plugin.id)}" \${enabled ? "checked" : ""} \${canSwitch ? "" : "disabled"} />
+                <span class="plugin-switch-visual" aria-hidden="true"></span>
+              </label>
+            </div>
+          </div>
+        \`;
+      }
+
+      async function openPluginConfig(pluginId) {
+        $("plugin-status").textContent = "Loading plugin config...";
+        const payload = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config").then((res) => res.json());
+        if (payload.error) {
+          $("plugin-status").textContent = "Cannot load plugin config: " + payload.error;
+          return;
+        }
+        $("pluginListPanel").style.display = "none";
+        $("pluginConfigPanel").classList.add("active");
+        $("pluginConfigTitle").textContent = (payload.plugin && payload.plugin.name ? payload.plugin.name : pluginId) + " Config";
+        renderPluginConfig(payload);
+        $("plugin-status").textContent = "";
+      }
+
+      function closePluginConfig() {
+        $("pluginConfigPanel").classList.remove("active");
+        $("pluginListPanel").style.display = "";
+        $("pluginConfigBody").textContent = "Choose a plugin to configure.";
+        refreshPlugins();
+      }
+
+      function renderPluginConfig(payload) {
+        const config = payload.configValue || {};
+        const fields = (payload.configSchema && payload.configSchema.fields) || [];
+        $("pluginConfigBody").innerHTML = \`
+          <form id="pluginConfigForm" class="plugin-config-grid" data-plugin-id="\${escapeAttr(payload.plugin.id)}">
+            <div>\${fields.filter((_, index) => index % 2 === 0).map((field) => renderPluginField(field, config, payload.apiPresets || [])).join("")}</div>
+            <div>\${fields.filter((_, index) => index % 2 === 1).map((field) => renderPluginField(field, config, payload.apiPresets || [])).join("")}
+              <div class="prompt-actions">
+                <button type="submit">Save</button>
+                <button type="button" id="pluginConfigReload" class="secondary">Reload</button>
+                <button type="button" id="pluginConfigLogs" class="secondary">Load Events</button>
+              </div>
+            </div>
+          </form>
+          <h2>Route</h2>
+          <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
+          <h2>Runtime Access</h2>
+          <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
+          <h2>Test</h2>
+          <div class="plugin-test-box">
+            <label>Input<textarea id="pluginTestInput" rows="4" spellcheck="false">晚点见。</textarea></label>
+            <button type="button" id="pluginConfigTest" class="secondary">Test translation and voice</button>
+            <pre id="pluginTestOutput">No test run yet.</pre>
+          </div>
+          <h2>Recent Events</h2>
+          <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
+        \`;
+        $("pluginConfigForm").addEventListener("submit", savePluginConfig);
+        document.querySelectorAll("[data-plugin-upload]").forEach((input) => input.addEventListener("change", uploadPluginAsset));
+        $("pluginConfigReload").addEventListener("click", async () => {
+          const pluginId = $("pluginConfigForm").dataset.pluginId;
+          const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/reload", { method: "POST" }).then((res) => res.json());
+          $("plugin-status").textContent = result.ok ? pluginId + " reloaded." : "Reload failed: " + (result.error || "unknown error");
+          await openPluginConfig(pluginId);
+        });
+        $("pluginConfigLogs").addEventListener("click", () => loadPluginEvents($("pluginConfigForm").dataset.pluginId));
+        $("pluginConfigTest").addEventListener("click", () => runPluginTest($("pluginConfigForm").dataset.pluginId));
+      }
+
+      function renderPluginField(field, config, apiPresets) {
+        const value = valueAtPath(config, field.key);
+        const inputName = escapeAttr(field.key);
+        const description = field.description ? \`<p class="muted">\${escapeHtml(field.description)}</p>\` : "";
+        if (field.type === "switch") {
+          return \`<label class="plugin-switch"><input type="checkbox" name="\${inputName}" data-plugin-field="\${inputName}" \${value ? "checked" : ""} /><span class="plugin-switch-visual" aria-hidden="true"></span> \${escapeHtml(field.label)}</label>\${description}\`;
+        }
+        if (field.type === "textarea") {
+          return \`<label>\${escapeHtml(field.label)}<textarea rows="7" spellcheck="false" name="\${inputName}" data-plugin-field="\${inputName}">\${escapeHtml(value || "")}</textarea></label>\${description}\`;
+        }
+        if (field.type === "number") {
+          return \`<label>\${escapeHtml(field.label)}<input type="number" min="\${escapeAttr(field.min ?? "0.5")}" max="\${escapeAttr(field.max ?? "2")}" step="\${escapeAttr(field.step ?? "0.05")}" name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value ?? "")}" /></label>\${description}\`;
+        }
+        if (field.type === "apiPresetSelect") {
+          const options = ["", ...apiPresets.map((preset) => preset.name).filter(Boolean)];
+          return \`<label>\${escapeHtml(field.label)}<select name="\${inputName}" data-plugin-field="\${inputName}">\${options.map((option) => \`<option value="\${escapeAttr(option)}" \${option === value ? "selected" : ""}>\${escapeHtml(option || "(none)")}</option>\`).join("")}</select></label>\${description}\`;
+        }
+        if (field.type === "fileUpload" || field.type === "folderUpload") {
+          const directoryAttrs = field.type === "folderUpload" ? "webkitdirectory directory multiple" : "";
+          return \`<label>\${escapeHtml(field.label)}<input type="file" data-plugin-upload="\${escapeAttr(field.assetKey || field.key)}" data-plugin-field="\${inputName}" accept="\${escapeAttr(field.accept || "")}" \${directoryAttrs} /></label><p class="muted">Current: \${escapeHtml(value || "(none)")}</p>\${description}\`;
+        }
+        if (field.type === "readonly") {
+          return \`<label>\${escapeHtml(field.label)}<input value="\${escapeAttr(value ?? field.description ?? "")}" readonly /></label>\`;
+        }
+        return \`<label>\${escapeHtml(field.label)}<input name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value || "")}" /></label>\${description}\`;
+      }
+
+      async function savePluginConfig(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const pluginId = form.dataset.pluginId;
+        const body = {};
+        form.querySelectorAll("[data-plugin-field]").forEach((input) => {
+          if (input.type === "file") return;
+          const value = input.type === "checkbox" ? input.checked : input.type === "number" && input.value !== "" ? Number(input.value) : input.value;
+          setValueAtPath(body, input.dataset.pluginField, value);
+        });
+        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        }).then((res) => res.json());
+        $("plugin-status").textContent = result.ok ? pluginId + " config saved." : "Save failed: " + (result.error || "unknown error");
+        if (result.ok) await openPluginConfig(pluginId);
+      }
+
+      async function uploadPluginAsset(event) {
+        const input = event.currentTarget;
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        const pluginId = $("pluginConfigForm").dataset.pluginId;
+        const assetKey = input.dataset.pluginUpload;
+        for (const file of files) {
+          const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/assets/" + encodeURIComponent(assetKey), {
+            method: "POST",
+            headers: {
+              "content-type": file.type || "application/octet-stream",
+              "x-file-name": encodeURIComponent(file.name || "asset"),
+              "x-relative-dir": encodeURIComponent(file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(0, -1).join("/") : "")
+            },
+            body: file
+          }).then((res) => res.json());
+          if (!result.ok) {
+            $("plugin-status").textContent = "Upload failed: " + (result.error || "unknown error");
+            return;
+          }
+        }
+        $("plugin-status").textContent = "Asset uploaded.";
+        await openPluginConfig(pluginId);
+      }
+
+      async function loadPluginEvents(pluginId) {
+        const payload = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/events").then((res) => res.json());
+        if (!$("pluginEvents")) return;
+        $("pluginEvents").innerHTML = (payload.events || []).length
+          ? payload.events.map((entry) => \`<div class="log-line log-\${escapeAttr(entry.level || "info")}">[\${escapeHtml(entry.time || "")}] [\${escapeHtml(entry.level || "info")}] \${escapeHtml(entry.message || "")}</div>\`).join("")
+          : "No plugin events yet.";
+      }
+
+      async function runPluginTest(pluginId) {
+        $("pluginTestOutput").textContent = "Running...";
+        const payload = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/test", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: $("pluginTestInput").value })
+        }).then((res) => res.json());
+        if (!payload.ok) {
+          $("pluginTestOutput").textContent = "Test failed: " + (payload.error || "unknown error");
+          return;
+        }
+        const result = payload.result || {};
+        $("pluginTestOutput").innerHTML = \`
+Input:
+\${escapeHtml(result.input || "")}
+
+Output:
+\${escapeHtml(result.output || "")}
+
+Voice:
+\${result.voice && result.voice.audioUrl ? \`<audio controls src="\${escapeAttr(result.voice.audioUrl)}"></audio>\` : "No audio"}
+\${result.voice && result.voice.assetId ? "\\nAsset: " + escapeHtml(result.voice.assetId) : ""}
+
+Timing:
+\${escapeHtml(JSON.stringify(result.timing || {}, null, 2))}
+\`;
       }
 
       const deepSeekPricesCnyPer1M = ${JSON.stringify(deepSeekPricesCnyPer1M)};
@@ -738,7 +1001,14 @@ export function renderAdminHtmlV2(): string {
       }
 
       function renderLLMSession(session) {
-        const metadata = {
+        const entries = Array.isArray(session.jsonlEntries) && session.jsonlEntries.length
+          ? session.jsonlEntries
+          : [fallbackLLMSessionMetadata(session), ...(Array.isArray(session.messages) ? session.messages : [])];
+        return entries.map((entry, index) => renderLLMSessionJsonlEntry(entry, index)).join("");
+      }
+
+      function fallbackLLMSessionMetadata(session) {
+        return {
           id: session.id,
           startedAt: session.startedAt,
           updatedAt: session.updatedAt,
@@ -752,38 +1022,20 @@ export function renderAdminHtmlV2(): string {
           latestResponse: session.latestResponse,
           clearedAt: session.clearedAt,
           reason: session.reason,
-          archiveFilePath: session.archiveFilePath
+          archiveFilePath: session.archiveFilePath,
+          messageCount: Array.isArray(session.messages) ? session.messages.length : session.messageCount
         };
-        const turns = Array.isArray(session.turns) && session.turns.length
-          ? session.turns.map((turn, index) => renderLLMSessionTurn(turn, index + 1)).join("")
-          : '<div class="log-line">No round metadata yet.</div>';
-        const transcript = \`<details><summary>Message transcript</summary>\${renderLLMTranscript(session.messages || [])}</details>\`;
-        return \`<details open><summary>Session metadata</summary><pre>\${escapeHtml(JSON.stringify(metadata, null, 2))}</pre></details>\${turns}\${transcript}\`;
       }
 
-      function renderLLMSessionTurn(turn, index) {
-        const request = turn.request || turn.latestRequest || {};
-        const response = turn.response || turn.latestResponse || {};
-        const title = [
-          \`round #\${index}\`,
-          request.time ? \`request=\${request.time}\` : "",
-          request.model ? \`model=\${request.model}\` : "",
-          response.time ? \`response=\${response.time}\` : "",
-          response.finishReason ? \`finish=\${response.finishReason}\` : ""
-        ].filter(Boolean).join(" · ");
-        const requestRaw = turn.request?.rawRequest || turn.latestRequest || null;
-        const responseRaw = turn.response ? {
-          message: turn.response.message,
-          finishReason: turn.response.finishReason,
-          usage: turn.response.usage,
-          raw: turn.response.raw
-        } : turn.latestResponse || null;
+      function renderLLMSessionJsonlEntry(entry, index) {
+        const isMeta = index === 0;
+        const label = isMeta ? "[meta]" : "[message" + index + "]";
+        const role = !isMeta && entry && typeof entry === "object" && entry.role ? " " + entry.role : "";
+        const name = !isMeta && entry && typeof entry === "object" && entry.name ? " name=" + entry.name : "";
         return \`
           <details class="log-line">
-            <summary>\${escapeHtml(title)}</summary>
-            \${renderLLMTranscript(turn.messages || [])}
-            <details><summary>round request metadata</summary><pre>\${escapeHtml(JSON.stringify(requestRaw, null, 2))}</pre></details>
-            <details><summary>round response metadata</summary><pre>\${escapeHtml(JSON.stringify(responseRaw, null, 2))}</pre></details>
+            <summary>\${escapeHtml(label + role + name)}</summary>
+            <pre>\${escapeHtml(JSON.stringify(entry, null, 2))}</pre>
           </details>
         \`;
       }
@@ -2406,6 +2658,21 @@ export function renderAdminHtmlV2(): string {
       }
       function escapeAttr(value) { return escapeHtml(value); }
       function cssEscape(value) { return String(value).replace(/["\\\\]/g, "\\\\$&"); }
+      function valueAtPath(object, key) {
+        return String(key || "").split(".").reduce((value, part) => value && typeof value === "object" ? value[part] : undefined, object);
+      }
+      function setValueAtPath(object, key, value) {
+        const parts = String(key || "").split(".").filter(Boolean);
+        let cursor = object;
+        parts.forEach((part, index) => {
+          if (index === parts.length - 1) {
+            cursor[part] = value;
+            return;
+          }
+          cursor[part] = cursor[part] && typeof cursor[part] === "object" ? cursor[part] : {};
+          cursor = cursor[part];
+        });
+      }
 
       $("llm-form").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -2556,6 +2823,31 @@ export function renderAdminHtmlV2(): string {
       $("tokenUsageModel").addEventListener("change", refreshTokenUsage);
       $("tokenUsageAgent").addEventListener("change", refreshTokenUsage);
       $("tokenUsageRefresh").addEventListener("click", refreshTokenUsage);
+      $("pluginBack").addEventListener("click", closePluginConfig);
+      $("pluginSearch").addEventListener("input", refreshPlugins);
+      $("pluginGrid").addEventListener("click", async (event) => {
+        const configButton = event.target.closest("[data-plugin-config]");
+        if (configButton && !configButton.disabled) {
+          await openPluginConfig(configButton.dataset.pluginConfig);
+          return;
+        }
+        const reloadButton = event.target.closest("[data-plugin-reload]");
+        if (reloadButton && !reloadButton.disabled) {
+          const pluginId = reloadButton.dataset.pluginReload;
+          const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/reload", { method: "POST" }).then((res) => res.json());
+          $("plugin-status").textContent = result.ok ? pluginId + " reloaded." : "Reload failed: " + (result.error || "unknown error");
+          await refreshPlugins();
+        }
+      });
+      $("pluginGrid").addEventListener("change", async (event) => {
+        const input = event.target.closest("[data-plugin-switch]");
+        if (!input || input.disabled) return;
+        const pluginId = input.dataset.pluginSwitch;
+        const action = input.checked ? "enable" : "disable";
+        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/" + action, { method: "POST" }).then((res) => res.json());
+        $("plugin-status").textContent = result.ok ? pluginId + " " + action + "d." : "Switch failed: " + (result.error || "unknown error");
+        await refreshPlugins();
+      });
       $("tool-view").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("view"), {}));
       $("tool-search").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("search"), { content: $("toolSearchContent").value, direction: $("toolSearchDirection").value || "backward" }));
       $("tool-send").addEventListener("click", async () => runMessagingTool(activeMessagingToolPath("send"), { type: $("toolSendType").value || "message", content: $("toolSendContent").value }));

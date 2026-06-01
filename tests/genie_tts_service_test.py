@@ -66,7 +66,11 @@ def _run_split_sentence_check(tmp_path: Path) -> None:
         )
 
         output_path = tmp_path / "out.wav"
-        runtime.synthesize(text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面，再来一点。没", output_path=output_path)
+        runtime.synthesize(
+            text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面，再来一点。没",
+            output_path=output_path,
+            part_silence_seconds=0.25,
+        )
     finally:
         if previous_genie is None:
             sys.modules.pop("genie_tts", None)
@@ -85,7 +89,7 @@ def _run_split_sentence_check(tmp_path: Path) -> None:
     assert len(tts_calls) == 2
     assert [call["text"] for call in tts_calls] == ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面，再来一点。没"]
     assert all(call["split_sentence"] is False for call in tts_calls)
-    assert [chunk.shape for chunk in concatenate_chunks] == [(16, 1), (21333, 1), (16, 1)]
+    assert [chunk.shape for chunk in concatenate_chunks] == [(16, 1), (8000, 1), (16, 1)]
     assert (tmp_path / "out.wav").is_file()
 
 

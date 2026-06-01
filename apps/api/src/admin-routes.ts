@@ -90,10 +90,12 @@ type JapaneseVoiceAdminConfig = {
     modelDir?: string;
     referenceAudio?: string;
     referenceText?: string;
+    speed?: number;
+    partSilenceSeconds?: number;
   };
 };
 
-type AdminPluginFieldType = "switch" | "text" | "textarea" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
+type AdminPluginFieldType = "switch" | "text" | "number" | "textarea" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
 
 type AdminPluginConfigField = {
   key: string;
@@ -102,6 +104,9 @@ type AdminPluginConfigField = {
   description?: string;
   assetKey?: string;
   accept?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 
 type AdminPluginRegistryEntry = {
@@ -931,6 +936,8 @@ function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
         { key: "voice.modelDir", label: "Voice Model Folder", type: "folderUpload", assetKey: "model", description: "Plugin-owned model folder under assets/plugin/{plugin_id}/." },
         { key: "apiPresetName", label: "API Preset", type: "apiPresetSelect", description: "Select a saved API preset. The plugin does not store API keys." },
         { key: "voice.referenceText", label: "Reference Text", type: "textarea", description: "Stored directly in this plugin config file." },
+        { key: "voice.speed", label: "Voice Speed", type: "number", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
+        { key: "voice.partSilenceSeconds", label: "Part Silence", type: "number", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "targetRoute", label: "Target Route", type: "readonly", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", description: "Translations are transient and never written to message log." }
       ]
@@ -1085,7 +1092,9 @@ function updateJapaneseVoiceConfig(
     voice: {
       modelDir: voicePatch.modelDir === undefined ? currentVoice.modelDir : optionalString(voicePatch.modelDir),
       referenceAudio: voicePatch.referenceAudio === undefined ? currentVoice.referenceAudio : optionalString(voicePatch.referenceAudio),
-      referenceText: voicePatch.referenceText === undefined ? currentVoice.referenceText : optionalString(voicePatch.referenceText)
+      referenceText: voicePatch.referenceText === undefined ? currentVoice.referenceText : optionalString(voicePatch.referenceText),
+      speed: voicePatch.speed === undefined ? currentVoice.speed : optionalSpeedValue(voicePatch.speed),
+      partSilenceSeconds: voicePatch.partSilenceSeconds === undefined ? currentVoice.partSilenceSeconds : optionalPartSilenceSecondsValue(voicePatch.partSilenceSeconds)
     }
   };
 
@@ -1103,6 +1112,8 @@ function validateJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): string 
   for (const value of [voice.modelDir, voice.referenceAudio]) {
     if (value && !isPluginAssetPath("japanese-voice", value)) return "invalid_asset_path";
   }
+  if (voice.speed !== undefined && (voice.speed < 0.5 || voice.speed > 2)) return "invalid_voice_speed";
+  if (voice.partSilenceSeconds !== undefined && (voice.partSilenceSeconds < 0 || voice.partSilenceSeconds > 3)) return "invalid_part_silence";
   return undefined;
 }
 
@@ -2994,6 +3005,18 @@ function optionalString(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const text = String(value);
   return text.length > 0 ? text : undefined;
+}
+
+function optionalSpeedValue(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 1000) / 1000 : undefined;
+}
+
+function optionalPartSilenceSecondsValue(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 1000) / 1000 : undefined;
 }
 
 function requiredString(value: unknown): string {

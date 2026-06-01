@@ -22,5 +22,7 @@ Fields:
 - `voice.referenceAudio`: plugin-owned reference audio path under `assets/plugin/japanese-voice/`.
 - `voice.referenceText`: reference text stored directly in this config file.
 - `voice.modelDir`: plugin-owned model directory. Folder uploads are flattened into `assets/plugin/japanese-voice/model/`.
+- `voice.speed`: optional Genie playback speed multiplier from `0.5` to `2.0`.
+- `voice.partSilenceSeconds`: optional silence inserted between split Genie audio parts, from `0` to `3` seconds. The Genie service default is `0.67`.
 
-The original text is appended directly to the final LLM message content after `prompt`.
+The plugin sends `prompt` as a system message and the original text as the user message.

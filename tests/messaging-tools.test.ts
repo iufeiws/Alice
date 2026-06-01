@@ -764,7 +764,7 @@ test("japanese voice plugin translates before tts while preserving original send
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const synthesizedTexts: string[] = [];
-  const llmMessages: string[] = [];
+  const llmMessages: Array<{ role: string; content: string }> = [];
   const llmAgents: string[] = [];
   let generatedPath = "";
   const voiceSynthesizer = createJapaneseVoiceTranslationSynthesizer({
@@ -787,12 +787,12 @@ test("japanese voice plugin translates before tts while preserving original send
     },
     llmRequestSender: async (input) => {
       llmAgents.push(input.agentId);
-      llmMessages.push(input.messages.at(-1)?.content ?? "");
+      llmMessages.push(...input.messages.map((message) => ({ role: message.role, content: message.content })));
       return { message: { role: "assistant", content: "また後で会いましょう" } };
     },
     llm: {
       async chat(input) {
-        llmMessages.push(input.messages.at(-1)?.content ?? "");
+        llmMessages.push(...input.messages.map((message) => ({ role: message.role, content: message.content })));
         return { message: { role: "assistant", content: "direct chat should not be used" } };
       }
     }
@@ -819,7 +819,10 @@ test("japanese voice plugin translates before tts while preserving original send
 
   assert.equal(result.ok, true);
   assert.deepEqual(llmAgents, ["japanese-voice"]);
-  assert.deepEqual(llmMessages, ["Translate to Japanese.\nText:\n晚点见"]);
+  assert.deepEqual(llmMessages, [
+    { role: "system", content: "Translate to Japanese.\nText:" },
+    { role: "user", content: "晚点见" }
+  ]);
   assert.deepEqual(synthesizedTexts, ["また後で会いましょう"]);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
@@ -897,7 +900,9 @@ test("japanese voice passes Genie language and plugin voice assets as per-reques
     voice: {
       modelDir: "assets/plugin/japanese-voice/model",
       referenceAudio: "assets/plugin/japanese-voice/reference.wav",
-      referenceText: "まぁ、そうですね。"
+      referenceText: "まぁ、そうですね。",
+      speed: 1.15,
+      partSilenceSeconds: 0.35
     }
   });
 
@@ -905,7 +910,9 @@ test("japanese voice passes Genie language and plugin voice assets as per-reques
     language: "jp",
     modelDir: "assets/plugin/japanese-voice/model",
     referenceAudio: "assets/plugin/japanese-voice/reference.wav",
-    referenceText: "まぁ、そうですね。"
+    referenceText: "まぁ、そうですね。",
+    speed: 1.15,
+    partSilenceSeconds: 0.35
   });
 });
 
@@ -1133,6 +1140,7 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
   const calls: string[] = [];
   const requestedTexts: string[] = [];
   const requestedOverrides: Array<Record<string, unknown>> = [];
+  const ffmpegArgs: string[][] = [];
   const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
     const pathname = new URL(String(url)).pathname;
     calls.push(`${init?.method ?? "GET"} ${pathname}`);
@@ -1144,7 +1152,8 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
         language: body.language,
         modelDir: body.modelDir,
         referenceAudioPath: body.referenceAudioPath,
-        referenceText: body.referenceText
+        referenceText: body.referenceText,
+        partSilenceSeconds: body.partSilenceSeconds
       });
       fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
       fs.writeFileSync(body.outputPath, "wav");
@@ -1152,13 +1161,18 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
     }
     return new Response(JSON.stringify({ ok: false }), { status: 404 });
   };
+  const ffmpegSpawn = fakeFfmpegSpawn();
+  const spawn = ((command: string, args: readonly string[]) => {
+    if (command === "ffmpeg") ffmpegArgs.push([...args]);
+    return ffmpegSpawn(command, args);
+  }) as any;
   const synthesize = createGenieTtsVoiceSynthesizer({
     backend: "genie-tts",
     genieBaseURL: "http://127.0.0.1:8767",
     genieOutputDir: "generated/tts",
     genieIdleShutdownMs: 0,
     genieFfmpegCommand: "ffmpeg"
-  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+  }, { fetch: fakeFetch as typeof fetch, spawn });
 
   const text = "啊……\n等等、、、可以吗？？";
   const result = await synthesize({
@@ -1168,7 +1182,9 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
       language: "jp",
       modelDir: "plugin/japanese-voice/model",
       referenceAudio: "plugin/japanese-voice/_.wav",
-      referenceText: "参照テキスト"
+      referenceText: "参照テキスト",
+      speed: 1.25,
+      partSilenceSeconds: 0.4
     }
   });
 
@@ -1180,8 +1196,10 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
     language: "jp",
     modelDir: path.resolve("assets/plugin/japanese-voice/model"),
     referenceAudioPath: path.resolve("assets/plugin/japanese-voice/_.wav"),
-    referenceText: "参照テキスト"
+    referenceText: "参照テキスト",
+    partSilenceSeconds: 0.4
   }]);
+  assert.ok(ffmpegArgs.some((args) => args.includes("-filter:a") && args.includes("atempo=1.25")));
   await fsp.unlink(result.filePath);
 });
 

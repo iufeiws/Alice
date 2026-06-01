@@ -26,6 +26,8 @@ export type JapaneseVoicePluginConfig = {
     modelDir?: string;
     referenceAudio?: string;
     referenceText?: string;
+    speed?: number;
+    partSilenceSeconds?: number;
   };
 };
 
@@ -79,7 +81,9 @@ export function readJapaneseVoicePluginConfig(configPath = defaultConfigPath): J
     voice: {
       modelDir: stringValue(parseJsonObject(parsed.voice).modelDir),
       referenceAudio: stringValue(parseJsonObject(parsed.voice).referenceAudio),
-      referenceText: stringValue(parseJsonObject(parsed.voice).referenceText)
+      referenceText: stringValue(parseJsonObject(parsed.voice).referenceText),
+      speed: optionalNumberValue(parseJsonObject(parsed.voice).speed),
+      partSilenceSeconds: optionalNumberValue(parseJsonObject(parsed.voice).partSilenceSeconds)
     }
   };
 }
@@ -139,7 +143,9 @@ export function japaneseVoiceGenieOverrides(config: JapaneseVoicePluginConfig): 
     language: "jp",
     modelDir: voice.modelDir,
     referenceAudio: voice.referenceAudio,
-    referenceText: voice.referenceText
+    referenceText: voice.referenceText,
+    ...(voice.speed !== undefined ? { speed: voice.speed } : {}),
+    ...(voice.partSilenceSeconds !== undefined ? { partSilenceSeconds: voice.partSilenceSeconds } : {})
   };
 }
 
@@ -151,13 +157,15 @@ export async function translateJapaneseVoiceText(text: string, config: JapaneseV
     return undefined;
   }
 
-  const lastMessage = appendOriginalTextToLastMessage(config.prompt, text);
   try {
     deps.appendLog?.("info", `japanese voice translation start: chars=${Array.from(text).length}`);
     const request = {
       agentId: "japanese-voice",
       client,
-      messages: [{ role: "user" as const, content: lastMessage }],
+      messages: [
+        { role: "system" as const, content: config.prompt.trim() },
+        { role: "user" as const, content: text }
+      ],
       model: preset?.model ?? config.api_preset.model,
       temperature: preset?.temperature ?? config.api_preset.temperature,
       extraParams: preset?.extraParams ?? config.api_preset.extraParams,
@@ -206,10 +214,6 @@ function createClientFromPreset(preset: JapaneseVoiceApiPreset, env: Record<stri
   return createOpenAICompatibleClient(config);
 }
 
-function appendOriginalTextToLastMessage(prompt: string, text: string): string {
-  return `${prompt.trimEnd()}\n${text}`;
-}
-
 function defaultPrompt(): string {
   return [
     "Translate the text appended below into natural Japanese for voice reading.",
@@ -245,6 +249,11 @@ function stringValue(value: unknown): string | undefined {
 function numberValue(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function optionalNumberValue(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

@@ -72,6 +72,198 @@ test("llm api preset save accepts long timeout values", async () => {
   assert.equal(saved.presets[0].timeoutMs, 600_000);
 });
 
+test("admin plugin list exposes japanese voice config card state", async () => {
+  const root = makeTempDir("admin-plugin-list");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    apiPresetName: "voice",
+    prompt: "Translate:"
+  })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { japaneseVoice: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), response);
+  const body = JSON.parse(response.body);
+  const japaneseVoice = body.plugins.find((plugin: { id: string }) => plugin.id === "japanese-voice");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(japaneseVoice.status, "enabled");
+  assert.equal(japaneseVoice.health, "healthy");
+  assert.equal(japaneseVoice.configurable, true);
+  assert.equal(japaneseVoice.switchable, true);
+});
+
+test("admin plugin config patch writes japanese voice config with preset reference only", async () => {
+  const root = makeTempDir("admin-plugin-config");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    apiPresetName: "old",
+    prompt: "Old prompt"
+  })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { japaneseVoice: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/japanese-voice/config", {
+    enabled: true,
+    prompt: "New prompt",
+    apiPresetName: "voice",
+    voice: {
+      modelDir: "assets/plugin/japanese-voice/model",
+      referenceText: "これは参照テキストです。",
+      speed: 1.2,
+      partSilenceSeconds: 0.45
+    }
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.configValue.apiPresetName, "voice");
+  assert.equal(body.configValue.api_preset, undefined);
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.prompt, "New prompt");
+  assert.equal(saved.apiPresetName, "voice");
+  assert.equal(saved.api_preset, undefined);
+  assert.equal(saved.voice.modelDir, "assets/plugin/japanese-voice/model");
+  assert.equal(saved.voice.referenceText, "これは参照テキストです。");
+  assert.equal(saved.voice.speed, 1.2);
+  assert.equal(saved.voice.partSilenceSeconds, 0.45);
+});
+
+test("admin plugin enable and disable update japanese voice config", async () => {
+  const root = makeTempDir("admin-plugin-switch");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    apiPresetName: "voice",
+    prompt: "Translate:"
+  })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { japaneseVoice: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const enableResponse = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/enable", {}), enableResponse);
+  assert.equal(enableResponse.statusCode, 200);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, true);
+
+  const disableResponse = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/disable", {}), disableResponse);
+  assert.equal(disableResponse.statusCode, 200);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, false);
+});
+
+test("admin plugin model folder upload flattens files under plugin model root", async () => {
+  const root = makeTempDir("admin-plugin-asset");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { japaneseVoice: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  const fileName = `model-${path.basename(root)}.onnx`;
+  await handler(createRawRequest("POST", "/admin/api/plugins/japanese-voice/assets/model", Buffer.from("model"), {
+    "x-file-name": encodeURIComponent(fileName),
+    "x-relative-dir": encodeURIComponent("uploaded-folder/nested")
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const expectedAssetPath = `assets/plugin/japanese-voice/model/${fileName}`;
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.assetPath, expectedAssetPath);
+  assert.equal(saved.voice.modelDir, "assets/plugin/japanese-voice/model");
+  assert.equal(fs.readFileSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), "utf8"), "model");
+  assert.equal(fs.existsSync(path.join("assets", "plugin", "japanese-voice", "model", "uploaded-folder", "nested", fileName)), false);
+  fs.rmSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), { force: true });
+});
+
+test("admin plugin test runs japanese voice translation and tts with timing", async () => {
+  const root = makeTempDir("admin-plugin-test");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const ttsOutputDir = path.join("assets", "generated", "tts");
+  const voiceFileName = `voice-${path.basename(root)}.opus`;
+  const voicePath = path.join(ttsOutputDir, voiceFileName);
+  let capturedGenie: unknown;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(ttsOutputDir, { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const senderAgents: string[] = [];
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    config: {
+      ...baseContext(root, memoryStore, promptStore).config,
+      tts: { mossOutputDir: ttsOutputDir }
+    },
+    pluginConfigs: {
+      japaneseVoice: {
+        configPath,
+        testVoiceSynthesizer: async ({ text, genie }: { text: string; genie?: unknown }) => {
+          capturedGenie = genie;
+          fs.writeFileSync(voicePath, `voice:${text}`);
+          return { assetId: "generated/tts/voice.opus", filePath: voicePath };
+        }
+      }
+    },
+    llmRequestSender: async (input: any) => {
+      senderAgents.push(input.agentId);
+      return { message: { role: "assistant", content: "また後で" } };
+    }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/test", { text: "晚点见" }), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.result.input, "晚点见");
+  assert.equal(body.result.output, "また後で");
+  assert.equal(body.result.voice.audioUrl, `/admin/assets/tts/${voiceFileName}`);
+  assert.equal(typeof body.result.timing.translationMs, "number");
+  assert.equal(typeof body.result.timing.ttsMs, "number");
+  assert.equal(typeof body.result.timing.totalMs, "number");
+  assert.deepEqual(senderAgents, ["japanese-voice"]);
+  assert.deepEqual(capturedGenie, { language: "jp", modelDir: undefined, referenceAudio: undefined, referenceText: undefined });
+  fs.rmSync(voicePath, { force: true });
+});
+
 test("memory run-day reuses Memorize preset, api settings, prompts, and target order", async () => {
   const root = makeTempDir("admin-memory-run-day");
   fs.mkdirSync(path.join(root, "config"), { recursive: true });
@@ -420,7 +612,35 @@ function createRequest(method: string, url: string, body: Record<string, unknown
   request.method = method;
   request.url = url;
   request.socket = { remoteAddress: "127.0.0.1" };
+  request.headers = {};
   return request;
+}
+
+function createRawRequest(method: string, url: string, body: Buffer, headers: Record<string, string> = {}) {
+  const request = Readable.from([body]) as any;
+  request.method = method;
+  request.url = url;
+  request.socket = { remoteAddress: "127.0.0.1" };
+  request.headers = headers;
+  return request;
+}
+
+function writePreset(root: string, name: string) {
+  const filePath = path.join(root, "config", "llm-api-presets.json");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify({
+    presets: [{
+      name,
+      baseURL: "https://llm.example.test/v1",
+      apiKey: "secret",
+      model: "flash",
+      temperature: 0.2,
+      timeoutMs: 60_000,
+      stream: false,
+      extraParams: {},
+      followupExtraParams: {}
+    }]
+  })}\n`);
 }
 
 function createResponse() {
@@ -458,7 +678,7 @@ function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
             id: `edit_${index}`,
             type: "function",
             function: {
-              name: "edit_memory",
+              name: "apply_patch",
               arguments: JSON.stringify({ patch })
             }
           }]

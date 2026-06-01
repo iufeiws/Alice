@@ -67,6 +67,8 @@ export type VoiceSynthesisInput = {
     modelDir?: string;
     referenceAudio?: string;
     referenceText?: string;
+    speed?: number;
+    partSilenceSeconds?: number;
   };
 };
 
@@ -1266,8 +1268,10 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     const baseName = uniqueVoiceBaseName(outputDir.fullPath, time.now().iso);
     const wavPath = path.resolve(outputDir.fullPath, `${baseName}.wav`);
+    const speedAdjustedWavPath = path.resolve(outputDir.fullPath, `${baseName}.speed.wav`);
     const opusPath = path.resolve(outputDir.fullPath, `${baseName}.opus`);
     const opusAssetId = path.join(outputDir.relativePath, `${baseName}.opus`);
+    const speed = genieSpeedValue(request.genie?.speed);
     await ensureGenieService();
     try {
       const response = await postJson(`${config.baseURL}/synthesize`, {
@@ -1279,14 +1283,20 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
         throw new Error(isRecord(response) ? optionalStringValue(response.error) || "Genie TTS synthesize failed" : "Genie TTS synthesize failed");
       }
       validateGeneratedVoice(wavPath, outputDir.fullPath);
-      await validateVoiceLoudness(wavPath, config.ffmpegCommand, spawnImpl);
-      await convertWavToOpus(wavPath, opusPath, config.ffmpegCommand, spawnImpl);
+      const conversionWavPath = speed === 1 ? wavPath : speedAdjustedWavPath;
+      if (speed !== 1) {
+        await changeAudioTempo(wavPath, speedAdjustedWavPath, speed, config.ffmpegCommand, spawnImpl);
+        validateGeneratedVoice(speedAdjustedWavPath, outputDir.fullPath);
+      }
+      await validateVoiceLoudness(conversionWavPath, config.ffmpegCommand, spawnImpl);
+      await convertWavToOpus(conversionWavPath, opusPath, config.ffmpegCommand, spawnImpl);
       validateGeneratedVoice(opusPath, outputDir.fullPath);
       await validateVoiceLoudness(opusPath, config.ffmpegCommand, spawnImpl);
       noteActivity();
       return { assetId: opusAssetId, filePath: opusPath };
     } finally {
       await removeGeneratedVoice(wavPath);
+      await removeGeneratedVoice(speedAdjustedWavPath);
     }
   }) as VoiceSynthesizer;
 
@@ -1431,11 +1441,27 @@ function genieRequestOverrides(input: VoiceSynthesisInput["genie"], appendLog?: 
   }
   if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found");
   if (input.referenceText) overrides.referenceText = input.referenceText;
+  if (input.partSilenceSeconds !== undefined) overrides.partSilenceSeconds = geniePartSilenceSecondsValue(input.partSilenceSeconds);
   return overrides;
 }
 
 function missingGenieBaseModelFiles(modelDir: string): string[] {
   return genieRequiredBaseModelFiles.filter((fileName) => !fs.existsSync(path.join(modelDir, fileName)));
+}
+
+function genieSpeedValue(value: unknown): number {
+  if (value === undefined || value === null) return 1;
+  const speed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(speed)) throw new Error("Genie TTS speed must be a number");
+  if (speed < 0.5 || speed > 2) throw new Error("Genie TTS speed must be between 0.5 and 2.0");
+  return Math.round(speed * 1000) / 1000;
+}
+
+function geniePartSilenceSecondsValue(value: unknown): number {
+  const seconds = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(seconds)) throw new Error("Genie TTS part silence seconds must be a number");
+  if (seconds < 0 || seconds > 3) throw new Error("Genie TTS part silence seconds must be between 0 and 3");
+  return Math.round(seconds * 1000) / 1000;
 }
 
 async function postJson(url: string, body: Record<string, unknown>, timeoutMs: number, fetchImpl: typeof fetch, label = "MOSS TTS"): Promise<unknown> {
@@ -1459,6 +1485,32 @@ async function postJson(url: string, body: Record<string, unknown>, timeoutMs: n
     throw new Error(`${label} HTTP ${response.status}: ${(message ?? text).slice(0, 500)}`);
   }
   return parsed ?? {};
+}
+
+async function changeAudioTempo(inputPath: string, outputPath: string, speed: number, ffmpegCommand: string, spawnImpl: typeof childProcess.spawn): Promise<void> {
+  const resolvedFfmpegCommand = resolveFfmpegCommand(ffmpegCommand);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawnImpl(resolvedFfmpegCommand, [
+      "-y",
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", inputPath,
+      "-filter:a", `atempo=${speed}`,
+      outputPath
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`ffmpeg tempo adjustment failed with exit code ${code}: ${stderr.slice(0, 500)}`));
+    });
+  });
 }
 
 async function convertWavToOpus(wavPath: string, opusPath: string, ffmpegCommand: string, spawnImpl: typeof childProcess.spawn): Promise<void> {

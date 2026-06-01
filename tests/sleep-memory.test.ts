@@ -38,6 +38,37 @@ test("memory store bootstraps files and enforces line and byte limits", () => {
   assert.equal(limited.yesterdaySummary.trim().split("\n").length, 20);
 });
 
+test("apply_patch normalizes configured fullwidth characters in written memory", async () => {
+  const root = makeTempDir("memory-patch-normalize");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("persistent", "ＡＢＣ，测试（one）。\n未触碰：＃＠＆＊＋＝＜＞＿｜\n");
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: editToolClient([], [
+      [
+        "--- a/memory.md",
+        "+++ b/memory.md",
+        "@@ -1,1 +1,1 @@",
+        "-ABC,测试(one).",
+        "+新增：ａｂｃ１２３／路径＼名字－OK～"
+      ].join("\n")
+    ]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    userName: "Y",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.ok, true);
+  assert.equal(memoryStore.read().persistent, "新增:abc123/路径\\名字-OK~\n未触碰:#@&*+=<>_|\n");
+});
+
 test("three-step induction uses fake read and fixed no-file tools", async () => {
   const root = makeTempDir("memory-three-step");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -73,7 +104,7 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
   const targetRequests = [seen[0], seen[2], seen[4]];
   for (const input of targetRequests) {
     assert.doesNotMatch(input.messages.map((entry) => entry.content).join("\n"), /当前任务：/);
-    assert.deepEqual(input.tools?.map((tool) => tool.function.name), ["read_memory", "self_talk", "edit_memory"]);
+    assert.deepEqual(input.tools?.map((tool) => tool.function.name), ["read_memory", "self_talk", "apply_patch"]);
     assert.deepEqual(input.tools?.[0].function.parameters, { type: "object", properties: {}, additionalProperties: false });
     assert.deepEqual(Object.keys((input.tools?.[1].function.parameters?.properties as Record<string, unknown>) ?? {}), ["content"]);
     assert.deepEqual(Object.keys((input.tools?.[2].function.parameters?.properties as Record<string, unknown>) ?? {}), ["patch"]);
@@ -91,9 +122,13 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
     return input.messages[fakeReadIndexes.at(-1)! + 1].content;
   };
   assert.match(readResult(targetRequests[0]), /<persistent-memory>\nold persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
-  assert.match(readResult(targetRequests[1]), /<user-preferences>\nold pref\n<\/user-preferences>\n1 line\(s\), 9 byte\(s\)/);
-  assert.match(readResult(targetRequests[2]), /<diary>\n\n<\/diary>\n0 line\(s\), 0 byte\(s\)/);
-  assert.doesNotMatch(readResult(targetRequests[2]), /old yesterday/);
+  const userPreferencesPrompt = String(targetRequests[1].messages.at(-1)?.content ?? "");
+  const diaryPrompt = String(targetRequests[2].messages.at(-1)?.content ?? "");
+  assert.match(userPreferencesPrompt, /维护用户偏好文件/);
+  assert.match(diaryPrompt, /维护 agent 日记/);
+  assert.doesNotMatch(userPreferencesPrompt, /聊天记录：/);
+  assert.doesNotMatch(diaryPrompt, /聊天记录：/);
+  assert.doesNotMatch(diaryPrompt, /old yesterday/);
   assert.equal(memoryStore.read().persistent, "new persistent\n");
   assert.equal(memoryStore.read().userPreferences, "new pref\n");
   assert.equal(memoryStore.read().yesterdaySummary, "new yesterday\n");
@@ -122,7 +157,7 @@ test("long-term memory edits commit only after memorize loop completes", async (
               id: `edit_${calls}`,
               type: "function",
               function: {
-                name: "edit_memory",
+                name: "apply_patch",
                 arguments: JSON.stringify({ patch: replacePatch("old persistent\n", "new persistent\n") })
               }
             }]
@@ -197,7 +232,7 @@ test("memorize uses follow-up extra params after first tool round", async () => 
             toolCalls: [{
               id: "edit_1",
               type: "function",
-              function: { name: "edit_memory", arguments: JSON.stringify({ patch: addPatch("memory\n") }) }
+              function: { name: "apply_patch", arguments: JSON.stringify({ patch: addPatch("memory\n") }) }
             }]
           }
         };
@@ -288,7 +323,7 @@ test("memorize retries a failed target before moving to the next target", async 
           toolCalls: [{
             id: `edit_${target}`,
             type: "function",
-            function: { name: "edit_memory", arguments: JSON.stringify({ patch }) }
+            function: { name: "apply_patch", arguments: JSON.stringify({ patch }) }
           }]
         }
       };
@@ -425,7 +460,7 @@ test("memory self_talk echoes content in tool result", async () => {
               id: "edit_1",
               type: "function",
               function: {
-                name: "edit_memory",
+                name: "apply_patch",
                 arguments: JSON.stringify({ patch: addPatch("done\n") })
               }
             }]
@@ -631,7 +666,7 @@ function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
             id: `edit_${index}`,
             type: "function",
             function: {
-              name: "edit_memory",
+              name: "apply_patch",
               arguments: JSON.stringify({ patch })
             }
           }]

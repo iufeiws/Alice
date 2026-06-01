@@ -1,10 +1,23 @@
 import type { AgentStateController } from "../../../core/agent/src/state.js";
+import type { OutputRouter } from "../../../core/output-router/src/index.js";
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import { createId } from "../../../packages/types/src/index.js";
+
+export type SleepCocoonToolTarget = {
+  plugin: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+  sessionId: string;
+};
 
 export type SleepCocoonToolsDeps = {
   agentState: Pick<AgentStateController, "getSnapshot" | "setState">;
   time: CurrentTimeProvider;
+  outputRouter?: Pick<OutputRouter, "send">;
+  getDefaultTarget?(): SleepCocoonToolTarget | undefined;
+  appendLog?(level: "info" | "warn" | "error", message: string): void;
   random?: () => number;
 };
 
@@ -46,7 +59,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
     }
   };
 
-  function enterSleepCocoon(call: ToolCall): ToolResult {
+  async function enterSleepCocoon(call: ToolCall): Promise<ToolResult> {
     const sleepDurationMs = resolveSleepDurationMs(call.input.hours, random);
     const state = deps.agentState.setState("going_to_sleep", {
       reason: "sleep_cocoon_in",
@@ -54,6 +67,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       sleepDurationMs,
       resetSleepCocoonAuto: true
     });
+    await sendSuccessNotice(call, "-少女就寝中-");
     return {
       callId: call.id,
       ok: true,
@@ -69,12 +83,13 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
     };
   }
 
-  function exitSleepCocoon(call: ToolCall): ToolResult {
+  async function exitSleepCocoon(call: ToolCall): Promise<ToolResult> {
     const current = deps.agentState.getSnapshot();
     if (current.state !== "going_to_sleep") {
       return toolError(call, current.state === "sleeping" ? "already sleeping" : "no sleep cocoon countdown to cancel");
     }
     const state = deps.agentState.setState("waiting", { reason: "sleep_cocoon_out", clearSleepCocoon: true });
+    await sendSuccessNotice(call, "-少女起床-");
     return {
       callId: call.id,
       ok: true,
@@ -87,6 +102,49 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
         state
       }
     };
+  }
+
+  async function sendSuccessNotice(call: ToolCall, text: string): Promise<void> {
+    if (!deps.outputRouter) return;
+    const target = resolveTarget(call);
+    if (!target) {
+      deps.appendLog?.("warn", `sleep_cocoon success notice skipped: no current messaging session`);
+      return;
+    }
+    const output: AgentOutput = {
+      id: createId("tool_out"),
+      target: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId,
+        sessionId: target.sessionId
+      },
+      content: { kind: "text", text },
+      meta: {
+        createdAt: deps.time.now().iso,
+        urgency: "normal",
+        allowStreaming: false
+      }
+    };
+    try {
+      await deps.outputRouter.send(output);
+    } catch (error) {
+      deps.appendLog?.("warn", `sleep_cocoon success notice send failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function resolveTarget(call: ToolCall): SleepCocoonToolTarget | undefined {
+    if (call.requester?.plugin && call.session?.sessionId) {
+      return {
+        plugin: call.requester.plugin,
+        accountId: call.requester.accountId,
+        channelId: call.requester.channelId,
+        userId: call.requester.userId,
+        sessionId: call.session.sessionId
+      };
+    }
+    return deps.getDefaultTarget?.();
   }
 }
 

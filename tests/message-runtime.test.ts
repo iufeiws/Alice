@@ -660,6 +660,67 @@ test("message runtime can run sleep cocoon morning event on heartbeat", async ()
   assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonMorning: true });
 });
 
+test("message runtime runs sleep cocoon morning event after wake tick", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-wake-morning"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let current = new Date("2026-06-01T10:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    timeZone: "Asia/Shanghai",
+    random: () => 0
+  });
+  controller.setState("sleeping", { durationMs: 1 });
+  let morningEvent: AgentEvent | undefined;
+  let previousState = controller.getSnapshot().state;
+  controller.onChange((snapshot) => {
+    if (previousState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
+      morningEvent = {
+        ...textEvent("session-1", "sleep_cocoon_morning_after_wake", "morning"),
+        type: "system.heartbeat",
+        meta: {
+          receivedAt: "2026-06-01T18:00:00.000",
+          raw: { sleepCocoonMorning: true }
+        }
+      };
+    }
+    previousState = snapshot.state;
+  });
+  current = new Date("2026-06-01T10:00:00.001Z");
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    now: () => current,
+    agentState: controller,
+    getSleepCocoonMorningEvent: () => {
+      const event = morningEvent;
+      morningEvent = undefined;
+      return event;
+    },
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.resumeHeartbeat();
+  await waitFor(() => coreInputs.length === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(controller.getSnapshot().state, "waiting");
+  assert.equal(coreInputs[0].type, "system.heartbeat");
+  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonMorning: true });
+});
+
 test("message runtime can run sleep cocoon goodnight event on heartbeat", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-goodnight"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];

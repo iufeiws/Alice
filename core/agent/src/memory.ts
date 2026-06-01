@@ -180,6 +180,47 @@ const maxMessagesPerSummary = 10_000;
 const memoryToolRoundLimit = 20;
 const memoryInductionMaxAttempts = 3;
 
+const fullwidthLettersAndDigits = "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ０１２３４５６７８９";
+const halfwidthLettersAndDigits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+export const commonHalfwidthNormalizationMap: Readonly<Record<string, string>> = Object.freeze({
+  ...Object.fromEntries(Array.from(fullwidthLettersAndDigits).map((char, index) => [char, halfwidthLettersAndDigits[index]])),
+  "　": " ",
+  "，": ",",
+  "。": ".",
+  "．": ".",
+  "：": ":",
+  "；": ";",
+  "？": "?",
+  "！": "!",
+  "（": "(",
+  "）": ")",
+  "【": "[",
+  "】": "]",
+  "［": "[",
+  "］": "]",
+  "｛": "{",
+  "｝": "}",
+  "“": "\"",
+  "”": "\"",
+  "‘": "'",
+  "’": "'",
+  "／": "/",
+  "＼": "\\",
+  "＿": "_",
+  "－": "-",
+  "～": "~",
+  "｜": "|",
+  "＃": "#",
+  "＠": "@",
+  "＆": "&",
+  "＊": "*",
+  "＋": "+",
+  "＝": "=",
+  "＜": "<",
+  "＞": ">"
+});
+
 export function createMarkdownMemoryStore(root: string): MemoryStore {
   function filePath(target: MemoryTarget): string {
     return path.join(root, targetDirectories[target], targetFiles[target]);
@@ -307,9 +348,9 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
     commonLayers: [
       layer("common_scope", "共同规则", "system", 10, [
         "你是 Alice 的记忆维护子系统。",
-        "只通过 read_memory / edit_memory 工具工作。",
-        "edit_memory 写入的是当前任务绑定文件，没有 file/path 参数。",
-        "必须调用 edit_memory({ patch }) 提交 unified diff patch；普通回复不会保存。"
+        "只通过 read_memory / apply_patch 工具工作。",
+        "apply_patch 写入的是当前任务绑定文件，没有 file/path 参数。",
+        "必须调用 apply_patch({ patch }) 提交 unified diff patch；普通回复不会保存。"
       ].join("\n")),
       layer("common_quality", "质量标准", "system", 20, [
         "保留明确、稳定、有未来价值的信息。",
@@ -631,7 +672,9 @@ async function runSingleMemoryInduction(
   });
   session.activeTarget = target;
   const diaryDraftPath = target === "yesterdaySummary" ? deps.memoryStore.createDiaryDraft() : undefined;
-  const promptMessages = buildMemoryPromptMessages({ ...deps, diaryDraftPath }, target);
+  const promptMessages = buildMemoryPromptMessages({ ...deps, diaryDraftPath }, target, {
+    includeCommonLayers: session.messages.length === 0
+  });
   const messages = session.messages.length > 0
     ? [...session.messages, ...promptMessages]
     : promptMessages;
@@ -704,26 +747,26 @@ async function runSingleMemoryInduction(
         toolCalls.push({ name: "self_talk", file: targetResultFiles[target], input, ok: true, output });
         return { message: { role: "tool", name: "self_talk", toolCallId: call.id, content: output } };
       }
-      if (call.function.name === "edit_memory") {
+      if (call.function.name === "apply_patch") {
         const patch = typeof input.patch === "string" ? input.patch : undefined;
         if (patch === undefined) {
-          toolCalls.push({ name: "edit_memory", file: targetResultFiles[target], input, ok: false, error: "patch must be a string" });
-          return { message: { role: "tool", name: "edit_memory", toolCallId: call.id, content: "error: patch must be a string" } };
+          toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input, ok: false, error: "patch must be a string" });
+          return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: "error: patch must be a string" } };
         }
         let nextContent: string;
         try {
           nextContent = applyMemoryPatch(readCurrentMemoryContent(), patch);
         } catch (error) {
           const message = error instanceof Error ? error.message : "invalid patch";
-          toolCalls.push({ name: "edit_memory", file: targetResultFiles[target], input: { patch }, ok: false, error: message });
-          return { message: { role: "tool", name: "edit_memory", toolCallId: call.id, content: `error: ${message}` } };
+          toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input: { patch }, ok: false, error: message });
+          return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: `error: ${message}` } };
         }
         const written = writeMemoryContentForRun(nextContent);
         const writeMode = stageLongTerm ? "staged" : "wrote";
         const output = `ok: ${writeMode} ${targetResultFiles[target]}${diaryDraftPath ? " draft" : ""}, ${lineCount(written)} line(s), ${utf8ByteLength(written)} byte(s)`;
-        toolCalls.push({ name: "edit_memory", file: targetResultFiles[target], input: { patch }, ok: true, output });
+        toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input: { patch }, ok: true, output });
         edited = true;
-        return { message: { role: "tool", name: "edit_memory", toolCallId: call.id, content: output } };
+        return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: output } };
       }
       const error = `unknown tool: ${call.function.name}`;
       toolCalls.push({ name: call.function.name, file: targetResultFiles[target], input, ok: false, error });
@@ -790,10 +833,11 @@ function buildMemoryPromptMessages(
     userName?: string;
     diaryDraftPath?: string;
   },
-  target: MemoryTarget
+  target: MemoryTarget,
+  options?: { includeCommonLayers?: boolean }
 ): LLMMessage[] {
   const variables = memoryPromptVariables(deps, target);
-  const layers = memoryPromptLayers(deps.promptStore.get(), target);
+  const layers = memoryPromptLayers(deps.promptStore.get(), target, options);
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
     const message = promptLayerToMessage(layer, variables, {
@@ -815,7 +859,11 @@ function buildMemoryPromptMessages(
   return messages;
 }
 
-function memoryPromptLayers(prompts: MemoryInductionPrompts, target: MemoryTarget): MemoryPromptLayer[] {
+function memoryPromptLayers(
+  prompts: MemoryInductionPrompts,
+  target: MemoryTarget,
+  options?: { includeCommonLayers?: boolean }
+): MemoryPromptLayer[] {
   const targetLayers = target === "persistent"
     ? prompts.persistentLayers
     : target === "userPreferences"
@@ -825,7 +873,7 @@ function memoryPromptLayers(prompts: MemoryInductionPrompts, target: MemoryTarge
     .filter((item) => item.enabled !== false)
     .sort((left, right) => left.order - right.order);
   return [
-    ...sortEnabled(prompts.commonLayers),
+    ...(options?.includeCommonLayers === false ? [] : sortEnabled(prompts.commonLayers)),
     ...sortEnabled(targetLayers)
   ];
 }
@@ -951,7 +999,7 @@ function memoryLimitVariables(target: MemoryTarget): LLMTextVariables {
   };
 }
 
-export const memoryToolNames = ["read_memory", "self_talk", "edit_memory"] as const;
+export const memoryToolNames = ["read_memory", "self_talk", "apply_patch"] as const;
 
 export function memoryToolDefinitions(): ToolDefinition[] {
   return [
@@ -980,7 +1028,7 @@ export function memoryToolDefinitions(): ToolDefinition[] {
       }
     },
     {
-      name: "edit_memory",
+      name: "apply_patch",
       description: "把 unified diff patch 应用到当前归纳任务绑定的记忆文件",
       inputSchema: {
         type: "object",
@@ -1078,7 +1126,7 @@ function applyMemoryPatch(content: string, patch: string): string {
 
   if (!sawHunk) throw new Error("patch must include at least one unified diff hunk");
   output.push(...original.slice(originalIndex));
-  return output.length > 0 ? `${output.join("\n")}\n` : "";
+  return output.length > 0 ? `${normalizeCommonHalfwidthCharacters(output.join("\n"))}\n` : "";
 }
 
 function splitPatchContentLines(content: string): string[] {
@@ -1087,7 +1135,14 @@ function splitPatchContentLines(content: string): string[] {
 }
 
 function assertPatchLine(original: string[], index: number, expected: string): void {
-  if (original[index] !== expected) throw new Error("patch does not apply to current memory content");
+  const actual = original[index];
+  if (actual === expected) return;
+  if (normalizeCommonHalfwidthCharacters(actual) === normalizeCommonHalfwidthCharacters(expected)) return;
+  throw new Error("patch does not apply to current memory content");
+}
+
+export function normalizeCommonHalfwidthCharacters(text: string): string {
+  return Array.from(text, (char) => commonHalfwidthNormalizationMap[char] ?? char).join("");
 }
 
 function enforceTargetLimit(target: MemoryTarget, text: string): string {

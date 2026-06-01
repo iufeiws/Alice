@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createAgentStateController, type AgentStateStore } from "../core/agent/src/state.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { createSleepCocoonTools, resolveSleepDurationMs } from "../plugins/sleep-cocoon/src/index.js";
+import type { AgentOutput } from "../packages/types/src/index.js";
 
 test("sleep_cocoon schema exposes in and out actions with Chinese descriptions", () => {
   const tools = createSleepCocoonTools({
@@ -65,6 +66,42 @@ test("sleep_cocoon in clears previous auto trigger pointers", async () => {
   assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, undefined);
 });
 
+test("sleep_cocoon in sends non-persisted sleep notice to current chat", async () => {
+  const sent: AgentOutput[] = [];
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => new Date("2026-05-25T00:00:00.000Z"),
+    random: () => 0
+  });
+  const tools = createSleepCocoonTools({
+    agentState: controller,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T00:00:00.000Z")),
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+      }
+    },
+    random: () => 0
+  });
+
+  const result = await tools.execute({
+    id: "call_in_notice",
+    toolName: "sleep_cocoon",
+    input: { action: "in" },
+    requester: { plugin: "feishu", accountId: "account-1", channelId: "chat-1", userId: "user-1" },
+    session: { scope: "dm", sessionId: "session-1" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].target.plugin, "feishu");
+  assert.equal(sent[0].target.accountId, "account-1");
+  assert.equal(sent[0].target.channelId, "chat-1");
+  assert.equal(sent[0].target.userId, "user-1");
+  assert.equal(sent[0].target.sessionId, "session-1");
+  assert.deepEqual(sent[0].content, { kind: "text", text: "-少女就寝中-" });
+});
+
 test("sleep_cocoon duration uses requested integer hours plus fifteen minute jitter", () => {
   assert.equal(resolveSleepDurationMs(8, () => 0), 7.75 * 60 * 60 * 1000);
   assert.equal(resolveSleepDurationMs(8, () => 1), 8.25 * 60 * 60 * 1000);
@@ -100,6 +137,43 @@ test("sleep_cocoon out returns going_to_sleep to waiting", async () => {
   assert.equal(controller.getSnapshot().reason, "sleep_cocoon_out");
   assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, undefined);
   assert.equal(controller.getSnapshot().sleepDurationMs, undefined);
+});
+
+test("sleep_cocoon out sends non-persisted wake notice to current chat", async () => {
+  const sent: AgentOutput[] = [];
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    random: () => 0
+  });
+  controller.setState("going_to_sleep", {
+    sleepCocoonEnteredAt: "2026-05-25T00:00:00.000",
+    sleepDurationMs: 8 * 60 * 60 * 1000
+  });
+  const tools = createSleepCocoonTools({
+    agentState: controller,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T08:00:00.000Z")),
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+      }
+    }
+  });
+
+  const result = await tools.execute({
+    id: "call_out_notice",
+    toolName: "sleep_cocoon",
+    input: { action: "out" },
+    requester: { plugin: "wechat", channelId: "room-1", userId: "user-1" },
+    session: { scope: "group", sessionId: "session-2" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].target.plugin, "wechat");
+  assert.equal(sent[0].target.channelId, "room-1");
+  assert.equal(sent[0].target.userId, "user-1");
+  assert.equal(sent[0].target.sessionId, "session-2");
+  assert.deepEqual(sent[0].content, { kind: "text", text: "-少女起床-" });
 });
 
 test("sleep_cocoon out does not wake sleeping state", async () => {

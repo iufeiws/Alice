@@ -29,7 +29,7 @@ export type LLMSessionSnapshot = {
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;
-  tokenPressurePreviewBaselines?: Record<string, number>;
+  tokenPressurePreviewBaselines?: Record<string, TokenPressurePreviewBaseline>;
   mode?: string;
   modeStaticMessages?: LLMChatInput["messages"];
   modeStaticTokenEstimate?: number;
@@ -39,11 +39,60 @@ export type LLMSessionSnapshot = {
   fixedPrefixCursorMessageId?: number;
 };
 
+export type TokenPressurePreviewBaseline = {
+  inputTokens: number;
+  previewTokens: number;
+};
+
+export type TokenPressureComparisonInput = {
+  lastInputTokens: number;
+  baselineInputTokens: number;
+  baselinePreviewTokens: number;
+  currentPreviewTokens: number;
+  cacheHitPrice: number;
+  cacheMissPrice: number;
+  contextImportance?: number;
+  minRebuildTokens?: number;
+};
+
+export type TokenPressureComparison = TokenPressureComparisonInput & {
+  estimatedCurrentInputTokens: number;
+  continuedTokenDelta: number;
+  rebuildTokenDelta: number;
+  continuedCost: number;
+  rebuildCost: number;
+  shouldReset: boolean;
+};
+
+export function calculateTokenPressureSwitch(input: TokenPressureComparisonInput): TokenPressureComparison {
+  const minRebuildTokens = input.minRebuildTokens ?? 50;
+  const contextImportance = Number.isFinite(input.contextImportance) && input.contextImportance !== undefined
+    ? input.contextImportance
+    : 1;
+  const previewDelta = Math.max(0, input.currentPreviewTokens - input.baselinePreviewTokens);
+  const estimatedCurrentInputTokens = input.baselineInputTokens + previewDelta;
+  const continuedTokenDelta = Math.max(0, input.lastInputTokens - input.baselineInputTokens);
+  const rebuildTokenDelta = Math.max(minRebuildTokens, estimatedCurrentInputTokens - input.baselineInputTokens);
+  const continuedCost = continuedTokenDelta * input.cacheHitPrice;
+  const rebuildCost = rebuildTokenDelta * input.cacheMissPrice * contextImportance;
+  return {
+    ...input,
+    minRebuildTokens,
+    contextImportance,
+    estimatedCurrentInputTokens,
+    continuedTokenDelta,
+    rebuildTokenDelta,
+    continuedCost,
+    rebuildCost,
+    shouldReset: continuedCost > rebuildCost
+  };
+}
+
 type ModeState = {
   mode: string;
   modeStaticMessages: LLMChatInput["messages"];
   modeStaticTokenEstimate: number;
-  tokenPressurePreviewBaselines: Record<string, number>;
+  tokenPressurePreviewBaselines: Record<string, TokenPressurePreviewBaseline>;
   modeStartedAt?: number;
   modeExpiresAt?: number;
   fixedPrefixKind?: string;
@@ -122,7 +171,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     lastTotalTokens?: number;
     lastInputTokens?: number;
     lastUsageModel?: string;
-    tokenPressurePreviewBaselines: Record<string, number>;
+    tokenPressurePreviewBaselines: Record<string, TokenPressurePreviewBaseline>;
     mode: string;
     modeStaticMessages: LLMChatInput["messages"];
     modeStaticTokenEstimate: number;
@@ -828,17 +877,32 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const currentPreviewTokens = estimateTextTokens(toolResultText(preview));
       const baselineKey = tokenPressureBaselineKey(session, previewInput.__scope);
       const baseline = session.tokenPressurePreviewBaselines[baselineKey];
-      if (typeof baseline !== "number" || !Number.isFinite(baseline)) {
-        session.tokenPressurePreviewBaselines[baselineKey] = currentPreviewTokens;
+      if (!isTokenPressurePreviewBaseline(baseline)) {
+        session.tokenPressurePreviewBaselines[baselineKey] = {
+          inputTokens,
+          previewTokens: currentPreviewTokens
+        };
         noteLLMSessionUpdated();
         return false;
       }
       const price = deepSeekPriceForModel(session.lastUsageModel ?? deps.config.llm.model);
-      const continuedHitTokens = Math.max(0, inputTokens - baseline);
-      const rebuildMissTokens = Math.max(50, currentPreviewTokens - baseline);
-      const shouldReset = continuedHitTokens * price.hit > rebuildMissTokens * price.miss;
-      if (shouldReset) session.tokenPressurePreviewBaselines[baselineKey] = currentPreviewTokens;
-      return shouldReset;
+      const comparison = calculateTokenPressureSwitch({
+        lastInputTokens: inputTokens,
+        baselineInputTokens: baseline.inputTokens,
+        baselinePreviewTokens: baseline.previewTokens,
+        currentPreviewTokens,
+        cacheHitPrice: price.hit,
+        cacheMissPrice: price.miss,
+        contextImportance: deps.config.llm.tokenPressureContextImportance
+      });
+      if (comparison.shouldReset) {
+        session.tokenPressurePreviewBaselines[baselineKey] = {
+          inputTokens: comparison.estimatedCurrentInputTokens,
+          previewTokens: currentPreviewTokens
+        };
+        noteLLMSessionUpdated();
+      }
+      return comparison.shouldReset;
     } catch {
       return false;
     }
@@ -934,10 +998,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     }));
   }
 
-  function cloneTokenPressurePreviewBaselines(value: Record<string, number> | undefined): Record<string, number> {
-    const result: Record<string, number> = {};
+  function cloneTokenPressurePreviewBaselines(value: Record<string, TokenPressurePreviewBaseline> | undefined): Record<string, TokenPressurePreviewBaseline> {
+    const result: Record<string, TokenPressurePreviewBaseline> = {};
     for (const [key, entry] of Object.entries(value ?? {})) {
-      if (typeof entry === "number" && Number.isFinite(entry)) result[key] = entry;
+      if (isTokenPressurePreviewBaseline(entry)) {
+        result[key] = { inputTokens: entry.inputTokens, previewTokens: entry.previewTokens };
+      }
     }
     return result;
   }
@@ -1041,6 +1107,15 @@ function estimateMessagesTokens(messages: LLMChatInput["messages"]): number {
 
 function finiteTokenCount(value: number | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isTokenPressurePreviewBaseline(value: unknown): value is TokenPressurePreviewBaseline {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Partial<TokenPressurePreviewBaseline>;
+  return typeof entry.inputTokens === "number"
+    && Number.isFinite(entry.inputTokens)
+    && typeof entry.previewTokens === "number"
+    && Number.isFinite(entry.previewTokens);
 }
 
 function renderLLMTextValue(value: string, variables: LLMTextVariables): string {

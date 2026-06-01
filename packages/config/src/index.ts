@@ -6,6 +6,7 @@ export type LLMConfig = {
   temperature: number;
   timeoutMs: number;
   stream: boolean;
+  tokenPressureContextImportance: number;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
 };
@@ -19,6 +20,7 @@ export type MemorySummaryConfig = {
   timeoutMs: number;
   stream: boolean;
   extraParams: Record<string, unknown>;
+  followupExtraParams: Record<string, unknown>;
 };
 
 export type FeishuConfig = {
@@ -181,6 +183,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       temperature: numberValue(env.LLM_TEMPERATURE, 0.2),
       timeoutMs: numberValue(env.LLM_TIMEOUT_MS, 60_000),
       stream: bool(env.LLM_STREAM_ENABLED, true),
+      tokenPressureContextImportance: numberValue(env.LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE, 1.5),
       extraParams: jsonObjectValue(env.LLM_EXTRA_PARAMS),
       followupExtraParams: env.LLM_FOLLOWUP_EXTRA_PARAMS === undefined
         ? jsonObjectValue(env.LLM_EXTRA_PARAMS)
@@ -196,7 +199,12 @@ export function loadConfig(env: Env = process.env): AppConfig {
       stream: bool(env.MEMORY_SUMMARY_STREAM_ENABLED, false),
       extraParams: env.MEMORY_SUMMARY_EXTRA_PARAMS === undefined
         ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
-        : jsonObjectValue(env.MEMORY_SUMMARY_EXTRA_PARAMS)
+        : jsonObjectValue(env.MEMORY_SUMMARY_EXTRA_PARAMS),
+      followupExtraParams: env.MEMORY_SUMMARY_FOLLOWUP_EXTRA_PARAMS === undefined
+        ? env.MEMORY_SUMMARY_EXTRA_PARAMS === undefined
+          ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
+          : jsonObjectValue(env.MEMORY_SUMMARY_EXTRA_PARAMS)
+        : jsonObjectValue(env.MEMORY_SUMMARY_FOLLOWUP_EXTRA_PARAMS)
     },
     plugins: {
       feishu: {

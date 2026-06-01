@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAgentCore, type LLMSessionSnapshot } from "../core/agent/src/index.js";
+import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "../core/agent/src/index.js";
 import type { LLMRequestSenderInput } from "../core/agent/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import type { AgentEvent, ToolCall } from "../packages/types/src/index.js";
@@ -38,7 +38,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
     }
   };
   const core = createAgentCore({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -69,10 +69,37 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
 
+test("token pressure calculation is independent from preview execution", () => {
+  assert.deepEqual(calculateTokenPressureSwitch({
+    lastInputTokens: 8000,
+    baselineInputTokens: 4000,
+    baselinePreviewTokens: 3,
+    currentPreviewTokens: 60,
+    cacheHitPrice: 0.02,
+    cacheMissPrice: 1
+  }), {
+    lastInputTokens: 8000,
+    baselineInputTokens: 4000,
+    baselinePreviewTokens: 3,
+    currentPreviewTokens: 60,
+    cacheHitPrice: 0.02,
+    cacheMissPrice: 1,
+    contextImportance: 1,
+    minRebuildTokens: 50,
+    estimatedCurrentInputTokens: 4057,
+    continuedTokenDelta: 4000,
+    rebuildTokenDelta: 57,
+    continuedCost: 80,
+    rebuildCost: 57,
+    shouldReset: true
+  });
+});
+
+
 test("agent core sends tool names to injected LLM sender without rendering schemas", async () => {
   const senderInputs: LLMRequestSenderInput[] = [];
   const core = createAgentCore({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
       async chat() {
         throw new Error("direct llm client should not be called");
@@ -1721,6 +1748,80 @@ test("agent core uses first-call and follow-up extra params", async () => {
   ]);
 });
 
+test("agent core fake append tool requests do not consume first llm round", async () => {
+  const senderInputs: LLMRequestSenderInput[] = [];
+  const core = createAgentCore({
+    config: loadConfig({
+      LLM_MODEL: "test-model",
+      LLM_EXTRA_PARAMS: "{\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"send_chat\"}}}",
+      LLM_FOLLOWUP_EXTRA_PARAMS: "{\"tool_choice\":\"auto\"}"
+    }),
+    llm: {
+      async chat() {
+        throw new Error("direct llm client should not be called");
+      }
+    },
+    llmRequestSender: async (input) => {
+      senderInputs.push(input);
+      if (input.round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_mirror",
+              type: "function",
+              function: { name: "wardrobe", arguments: "{\"action\":\"mirror\"}" }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "sys", title: "Sys", role: "system", enabled: true, content: "sys", order: 1 }],
+      appendLayers: [{
+        id: "append_check",
+        title: "Check",
+        role: "tool_request",
+        enabled: true,
+        content: "",
+        toolName: "check_chat",
+        toolArguments: "{}",
+        order: 1
+      }]
+    }),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [
+          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+          { name: "wardrobe", description: "mirror", inputSchema: { type: "object" } }
+        ];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: call.toolName === "check_chat" ? "history" : "outfit" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(senderInputs.length, 2);
+  assert.equal(senderInputs[0].round, 0);
+  assert.deepEqual(senderInputs[0].extraParams, { tool_choice: { type: "function", function: { name: "send_chat" } } });
+  assert.equal(senderInputs[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), true);
+  assert.equal(senderInputs[1].round, 1);
+  assert.deepEqual(senderInputs[1].extraParams, { tool_choice: "auto" });
+  assert.equal(senderInputs[1].messages.at(-1)?.content, "outfit");
+});
+
 test("agent core retries transient llm failures", async () => {
   const attempts: string[] = [];
   const retryLogs: Array<{ attempt?: number; delayMs?: number }> = [];
@@ -1845,14 +1946,20 @@ test("agent core clears session before the next request when cached input cost e
           usage: { inputTokens: 4000, totalTokens: 4000 }
         };
       }
+      if (requests.length === 2) {
+        return {
+          message: { role: "assistant", content: "final 2" },
+          usage: { inputTokens: 8000, totalTokens: 8000 }
+        };
+      }
       return {
         message: { role: "assistant", content: `final ${requests.length}` },
-        usage: { inputTokens: 4000, totalTokens: 4000 }
+        usage: { inputTokens: 12000, totalTokens: 12000 }
       };
     }
   };
   const core = createAgentCore({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -1907,15 +2014,26 @@ test("agent core clears session before the next request when cached input cost e
   assert.deepEqual(previewCalls, []);
 
   await core.handleEvent(textEvent());
-
-  assert.deepEqual(events, ["completed", "cleared:token_pressure", "completed"]);
+  assert.deepEqual(events, ["completed", "completed"]);
   assert.deepEqual(previewCalls, [
     { __preview: true, __scope: "today" },
     { __preview: true, __scope: "today" }
   ]);
-  assert.equal(requests.length, 3);
-  assert.equal(requests[2].messages.some((message) => message.content === "final 2"), false);
-  assert.equal(persistedSession?.tokenPressurePreviewBaselines?.["test-model|normal|today|"], 60);
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(events, ["completed", "completed", "cleared:token_pressure", "completed"]);
+  assert.deepEqual(previewCalls, [
+    { __preview: true, __scope: "today" },
+    { __preview: true, __scope: "today" },
+    { __preview: true, __scope: "today" }
+  ]);
+  assert.equal(requests.length, 4);
+  assert.equal(requests[3].messages.some((message) => message.content === "final 2"), false);
+  assert.deepEqual(persistedSession?.tokenPressurePreviewBaselines?.["test-model|normal|today|"], {
+    inputTokens: 8057,
+    previewTokens: 60
+  });
 });
 
 test("agent core restores token pressure baseline from persisted session snapshot", async () => {
@@ -1934,7 +2052,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
     }
   };
   const baseDeps = {
-    config: loadConfig({ LLM_MODEL: "deepseek-v4-flash" }),
+    config: loadConfig({ LLM_MODEL: "deepseek-v4-flash", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -1982,7 +2100,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
     ...persistedSession,
     lastInputTokens: 3001,
     lastUsageModel: "deepseek-v4-flash",
-    tokenPressurePreviewBaselines: { "deepseek-v4-flash|normal|today|": 1 }
+    tokenPressurePreviewBaselines: { "deepseek-v4-flash|normal|today|": { inputTokens: 1, previewTokens: 1 } }
   };
 
   const restartedCore = createAgentCore(baseDeps);
@@ -2079,7 +2197,7 @@ test("agent core token pressure comparison uses model-specific prices", async ()
       }
     };
     const core = createAgentCore({
-      config: loadConfig({ LLM_MODEL: model }),
+    config: loadConfig({ LLM_MODEL: model, LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
       llm,
       outputRouter: createOutputRouter(),
       intentRouter: createIntentRouter(),
@@ -2102,7 +2220,7 @@ test("agent core token pressure comparison uses model-specific prices", async ()
           lastTotalTokens: 3001,
           lastInputTokens: 3001,
           lastUsageModel: model,
-          tokenPressurePreviewBaselines: { [`${model}|normal|today|`]: 1 }
+          tokenPressurePreviewBaselines: { [`${model}|normal|today|`]: { inputTokens: 1, previewTokens: 1 } }
         };
       },
       onLLMSessionCleared(reason) {

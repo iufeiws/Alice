@@ -321,8 +321,8 @@ test("daily shell can switch only the active outfit", () => {
   assert.equal(store.get(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });
 
-test("daily shell rolls over after the configured next-day hour", () => {
-  const root = makeTempDir("daily-shell-rollover");
+test("daily shell stays stable until an explicit wake reroll", () => {
+  const root = makeTempDir("daily-shell-wake-reroll");
   const store = createDailyShellStore(root);
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
@@ -332,12 +332,58 @@ test("daily shell rolls over after the configured next-day hour", () => {
   const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   const before = store.get(new Date("2026-05-26T19:59:00.000Z"), "Asia/Shanghai");
   const after = store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
+  const woke = store.reroll(new Date("2026-05-26T20:01:00.000Z"), "Asia/Shanghai");
 
   assert.equal(first.date, "2026-05-26");
   assert.equal(before.createdAt, first.createdAt);
-  assert.equal(after.date, "2026-05-27");
-  assert.notEqual(after.createdAt, first.createdAt);
+  assert.equal(after.createdAt, first.createdAt);
+  assert.equal(woke.date, "2026-05-27");
+  assert.notEqual(woke.createdAt, first.createdAt);
   assert.equal(store.getSettings().rolloverHour, 4);
+});
+
+test("daily shell reroll avoids recently used relationship identities", () => {
+  const root = makeTempDir("daily-shell-recent-relationships");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [
+    { id: "r1", name: "A One", content: "relationship one" },
+    { id: "r2", name: "B Two", content: "relationship two" },
+    { id: "r3", name: "C Three", content: "relationship three" }
+  ]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const originalRandom = Math.random;
+  const randomValues = [
+    0, 0, 0,
+    0.9, 0, 0,
+    0.9, 0, 0,
+    0.9, 0, 0
+  ];
+  Math.random = () => randomValues.shift() ?? 0;
+  try {
+    const first = store.reroll(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+    const reopened = createDailyShellStore(root);
+    const second = reopened.reroll(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
+    const third = reopened.reroll(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai");
+    const fourth = reopened.reroll(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai");
+
+    assert.deepEqual(
+      [first.relationship.id, second.relationship.id, third.relationship.id, fourth.relationship.id],
+      ["r1", "r3", "r2", "r3"]
+    );
+    assert.deepEqual(
+      [first.personality.id, second.personality.id, third.personality.id, fourth.personality.id],
+      ["p1", "p1", "p1", "p1"]
+    );
+  } finally {
+    Math.random = originalRandom;
+  }
+
+  const record = JSON.parse(fs.readFileSync(path.join(root, "shell", "daily-shell.json"), "utf8")) as {
+    recentRelationshipIds?: string[];
+  };
+  assert.deepEqual(record.recentRelationshipIds, ["r3"]);
 });
 
 test("daily shell store records shell switch logs", () => {
@@ -356,6 +402,7 @@ test("daily shell store records shell switch logs", () => {
   store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   store.get(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
   store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
+  store.reroll(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
 
   const logs = store.listSwitchLogs();
   assert.equal(logs.length, 2);

@@ -72,7 +72,7 @@ test("wardrobe mirror returns the current outfit without messaging target", asyn
   const result = await tools.execute({ id: "call_mirror", toolName: "wardrobe", input: { action: "mirror" } });
 
   assert.equal(result.ok, true);
-  assert.equal(result.output, "你看到镜子中的自己穿着: \n 服装：O Two\n\noutfit two");
+  assert.equal(result.output, "你看到镜子中的自己穿着: \n 服装：O Two\noutfit two");
   assert.deepEqual(sent, []);
 });
 

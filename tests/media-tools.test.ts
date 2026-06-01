@@ -66,7 +66,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     assert.equal(result.ok, true);
     assert.equal(executorInputs[0].aspectRatio, "3:4");
     assert.equal(executorInputs[0].fileName, "selfie_20260526_120000.jpg");
-    assert.match(executorInputs[0].prompt, /当前时间:\n2026-05-26 12:00:00/);
+    assert.match(executorInputs[0].prompt, /当前时间:\n12:00:00/);
     assert.match(executorInputs[0].prompt, /角色动作:\n踮脚靠近镜头/);
     assert.match(executorInputs[0].prompt, /发色: 低饱和浅金色/);
     assert.match(executorInputs[0].prompt, /说话声音很小/);
@@ -350,7 +350,7 @@ function writeReferenceFiles(root: string): void {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "selfie-prompt.txt"), [
     "当前时间:",
-    "{{date_time}}",
+    "{{time}}",
     "角色动作:",
     "{{action}}",
     "角色特征:",

@@ -68,6 +68,7 @@ type DailyShellRecord = {
   personalityId: string;
   relationshipId: string;
   outfitId: string;
+  recentRelationshipIds?: string[];
   rendered: string;
 };
 
@@ -85,16 +86,16 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
 
   ensureShellFiles(paths);
   let cached: DailyShell | undefined;
+  let cachedRecentRelationshipIds: string[] = [];
 
   return {
     get(date, timeZone) {
-      const settings = readSettings(paths.settings);
-      if (cached && !isDailyShellExpired(cached.createdAt, date, timeZone, settings.rolloverHour, cached.date)) return cached;
+      if (cached) return cached;
       const personalities = readOptions(paths.personalitiesDir, defaultPersonalities());
       const relationships = readOptions(paths.relationshipsDir, defaultRelationships());
       const outfits = readOptions(paths.outfitsDir, defaultOutfits());
       const existing = readDailyShell(paths.daily);
-      if (existing && !isRecordExpired(existing, date, timeZone, settings.rolloverHour)) {
+      if (existing) {
         const createdAt = existing.createdAt ?? formatZonedIso(date, timeZone);
         const daily = {
           date: existing.date,
@@ -103,26 +104,36 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
           relationship: findOption(relationships, existing.relationshipId) ?? pick(relationships),
           outfit: findOption(outfits, existing.outfitId) ?? pick(outfits)
         };
+        cachedRecentRelationshipIds = normalizeRecentRelationshipIds(existing.recentRelationshipIds, relationships);
+        const nextRecentRelationshipIds = updateRecentRelationshipIds(
+          daily.relationship.id,
+          cachedRecentRelationshipIds,
+          relationships.length
+        );
         cached = daily;
         if (
           !existing.createdAt
           || daily.personality.id !== existing.personalityId
           || daily.relationship.id !== existing.relationshipId
           || daily.outfit.id !== existing.outfitId
+          || !sameStringArray(nextRecentRelationshipIds, cachedRecentRelationshipIds)
         ) {
-          writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
+          cachedRecentRelationshipIds = nextRecentRelationshipIds;
+          writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
         }
         return daily;
       }
 
+      const relationship = pickExcludingRecent(relationships, cachedRecentRelationshipIds);
       const daily: DailyShell = {
         date: formatLocalDate(date, timeZone),
         createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
-        relationship: pick(relationships),
+        relationship,
         outfit: pick(outfits)
       };
-      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
+      cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
+      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
       noteShellSwitch(paths.switchLog, daily, options);
       cached = daily;
       return daily;
@@ -157,7 +168,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         relationship: current.relationship,
         outfit
       };
-      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
+      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
       cached = daily;
       return daily;
     },
@@ -174,13 +185,19 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         const nextCached = replaceDailyOption(cached, category, normalized, previousId);
         if (nextCached !== cached) {
           cached = nextCached;
-          writeDailyShell(paths.daily, cached, readPromptTemplate(paths.promptTemplate));
+          if (category === "relationships") {
+            cachedRecentRelationshipIds = replaceRecentRelationshipId(cachedRecentRelationshipIds, normalized.id, previousId);
+          }
+          writeDailyShell(paths.daily, cached, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
         }
       }
       return normalized;
     },
     deleteOption(category, id) {
       deleteOptionFile(dirForCategory(paths, category), id);
+      if (category === "relationships") {
+        cachedRecentRelationshipIds = cachedRecentRelationshipIds.filter((recentId) => recentId !== id);
+      }
       if (cached && dailyOptionId(cached, category) === id) cached = undefined;
     },
     getSettings() {
@@ -197,14 +214,22 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
       fs.writeFileSync(paths.promptTemplate, next.endsWith("\n") ? next : `${next}\n`);
     },
     reroll(date, timeZone) {
+      const personalities = readOptions(paths.personalitiesDir, defaultPersonalities());
+      const relationships = readOptions(paths.relationshipsDir, defaultRelationships());
+      if (cachedRecentRelationshipIds.length === 0) {
+        cachedRecentRelationshipIds = readRecentRelationshipIds(paths.daily, relationships);
+      }
+      cachedRecentRelationshipIds = normalizeRecentRelationshipIds(cachedRecentRelationshipIds, relationships);
+      const relationship = pickExcludingRecent(relationships, cachedRecentRelationshipIds);
       const daily: DailyShell = {
         date: formatLocalDate(date, timeZone),
         createdAt: formatZonedIso(date, timeZone),
-        personality: pick(readOptions(paths.personalitiesDir, defaultPersonalities())),
-        relationship: pick(readOptions(paths.relationshipsDir, defaultRelationships())),
+        personality: pick(personalities),
+        relationship,
         outfit: pick(readOptions(paths.outfitsDir, defaultOutfits()))
       };
-      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate));
+      cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
+      writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
       noteShellSwitch(paths.switchLog, daily, options);
       cached = daily;
       return daily;
@@ -228,6 +253,11 @@ function replaceDailyOption(daily: DailyShell, category: ShellCategory, option: 
     return { ...daily, outfit: option };
   }
   return daily;
+}
+
+function replaceRecentRelationshipId(recentIds: string[], nextId: string, previousId?: string): string[] {
+  if (!previousId || previousId === nextId) return recentIds;
+  return recentIds.map((id) => id === previousId ? nextId : id);
 }
 
 function dailyOptionId(daily: DailyShell, category: ShellCategory): string {
@@ -369,13 +399,23 @@ function readDailyShell(filePath: string): DailyShellRecord | undefined {
   return undefined;
 }
 
-function writeDailyShell(filePath: string, shell: DailyShell, promptTemplate = defaultPromptTemplate()): void {
+function readRecentRelationshipIds(filePath: string, relationships: ShellOption[]): string[] {
+  return normalizeRecentRelationshipIds(readDailyShell(filePath)?.recentRelationshipIds, relationships);
+}
+
+function writeDailyShell(
+  filePath: string,
+  shell: DailyShell,
+  promptTemplate = defaultPromptTemplate(),
+  recentRelationshipIds: string[] = []
+): void {
   const record: DailyShellRecord = {
     date: shell.date,
     createdAt: shell.createdAt,
     personalityId: shell.personality.id,
     relationshipId: shell.relationship.id,
     outfitId: shell.outfit.id,
+    recentRelationshipIds,
     rendered: renderDailyShell(shell, promptTemplate)
   };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -464,6 +504,36 @@ function findOption(options: ShellOption[], id: string): ShellOption | undefined
 
 function pick(options: ShellOption[]): ShellOption {
   return options[Math.floor(Math.random() * options.length)] ?? options[0];
+}
+
+function pickExcludingRecent(options: ShellOption[], recentIds: string[]): ShellOption {
+  const blocked = new Set(recentIds);
+  const candidates = options.filter((option) => !blocked.has(option.id));
+  return pick(candidates.length > 0 ? candidates : options);
+}
+
+function normalizeRecentRelationshipIds(value: unknown, relationships: ShellOption[]): string[] {
+  if (!Array.isArray(value)) return [];
+  const validIds = new Set(relationships.map((option) => option.id));
+  const uniqueIds: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !validIds.has(item) || uniqueIds.includes(item)) continue;
+    uniqueIds.push(item);
+  }
+  return trimRecentRelationshipIds(uniqueIds, relationships.length);
+}
+
+function updateRecentRelationshipIds(selectedId: string, previousIds: string[], relationshipCount: number): string[] {
+  return trimRecentRelationshipIds([selectedId, ...previousIds.filter((id) => id !== selectedId)], relationshipCount);
+}
+
+function trimRecentRelationshipIds(ids: string[], relationshipCount: number): string[] {
+  const limit = Math.min(7, Math.max(relationshipCount - 2, 0));
+  return ids.slice(0, limit);
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function readSettings(filePath: string): ShellSettings {

@@ -1,5 +1,6 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { LLMClient } from "../../../core/llm/src/index.js";
+import { createOpenAICompatibleClient, type LLMClient } from "../../../core/llm/src/index.js";
+import type { LLMRequestSender } from "../../../core/agent/src/llm-tool-loop.js";
 import { formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
@@ -16,7 +17,8 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { createConfiguredVoiceSynthesizer, formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, formatCheckChatMessages, type VoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
+import { japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig, translateJapaneseVoiceText, type JapaneseVoicePluginConfig } from "../../../plugins/japanese-voice/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
@@ -26,6 +28,8 @@ const moduleApi = await import("node:module");
 const require = moduleApi.createRequire(import.meta.url);
 const maxTtsReferenceDurationSeconds = 20;
 const maxTtsReferenceUploadBytes = 15 * 1024 * 1024;
+const maxPluginAssetUploadBytes = 100 * 1024 * 1024;
+const maxPluginModelAssetUploadBytes = 512 * 1024 * 1024;
 const ttsReferenceConvertTimeoutMs = 60_000;
 
 type LLMApiPreset = {
@@ -59,6 +63,61 @@ type MemoryRunProgress = {
 };
 
 const memoryRunProgress = new Map<string, MemoryRunProgress>();
+
+type AdminPluginKind = "channel" | "tool" | "voice" | "presentation";
+type AdminPluginStatus = "enabled" | "disabled" | "planned" | "external_config" | "missing_config" | "error";
+type AdminPluginHealth = "healthy" | "degraded" | "failing" | "unknown";
+
+type AdminPluginSummary = {
+  id: string;
+  name: string;
+  kind: AdminPluginKind;
+  status: AdminPluginStatus;
+  health: AdminPluginHealth;
+  description: string;
+  configurable: boolean;
+  switchable: boolean;
+  configSource?: string;
+  lastLoadedAt?: string;
+  lastUsedAt?: string;
+};
+
+type JapaneseVoiceAdminConfig = {
+  enabled: boolean;
+  apiPresetName?: string;
+  prompt: string;
+  voice: {
+    modelDir?: string;
+    referenceAudio?: string;
+    referenceText?: string;
+  };
+};
+
+type AdminPluginFieldType = "switch" | "text" | "textarea" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
+
+type AdminPluginConfigField = {
+  key: string;
+  label: string;
+  type: AdminPluginFieldType;
+  description?: string;
+  assetKey?: string;
+  accept?: string;
+};
+
+type AdminPluginRegistryEntry = {
+  summary(context: AdminRoutesContext): AdminPluginSummary;
+  config?(context: AdminRoutesContext): unknown;
+  patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown } | { error: string };
+  setEnabled?(context: AdminRoutesContext, enabled: boolean): { config: unknown } | { error: string };
+  reload?(context: AdminRoutesContext): { config: unknown } | { error: string };
+  test?(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> | { ok: true; result?: unknown } | { error: string };
+  uploadAsset?(context: AdminRoutesContext, assetKey: string, request: any): Promise<{ config: unknown; assetPath: string } | { error: string; statusCode?: number }>;
+  configSchema?: {
+    fields: AdminPluginConfigField[];
+  };
+  routePreview?: string[];
+  runtimeAccess?: string[];
+};
 
 export type AdminRoutesContext = {
   config: AppConfig;
@@ -114,6 +173,12 @@ export type AdminRoutesContext = {
     clearCredentials(): void;
   };
   runtime: { feishuStarted: boolean; wechatStarted: boolean };
+  pluginConfigs?: {
+    japaneseVoice?: {
+      configPath?: string;
+      testVoiceSynthesizer?: VoiceSynthesizer;
+    };
+  };
   messageRuntime: {
     pauseHeartbeat(): void;
     resumeHeartbeat(): void;
@@ -121,6 +186,7 @@ export type AdminRoutesContext = {
     getStatus(): unknown;
   };
   getLLM(): LLMClient;
+  llmRequestSender?: LLMRequestSender;
   time: CurrentTimeProvider;
   setTimeZone(timeZone: string): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -435,6 +501,10 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (await handleAdminPluginApi(context, request, response)) {
+        return;
+      }
+
       if (request.method === "POST" && request.url === "/admin/api/tools/messaging/view") {
         await executeMessagingTool(context, request, response, "check_chat", "feishu");
         return;
@@ -600,6 +670,580 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       handleHttpError(context, response, error);
     }
   };
+}
+
+async function handleAdminPluginApi(context: AdminRoutesContext, request: any, response: any): Promise<boolean> {
+  if (!request.url?.startsWith("/admin/api/plugins")) return false;
+  const url = new URL(request.url, "http://admin.local");
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts[0] !== "admin" || parts[1] !== "api" || parts[2] !== "plugins") return false;
+
+  if (request.method === "GET" && parts.length === 3) {
+    writeJson(response, 200, { plugins: listAdminPlugins(context) });
+    return true;
+  }
+
+  const pluginId = parts[3];
+  const action = parts[4];
+  if (!pluginId || !action) return false;
+
+  if (request.method === "POST" && action === "assets" && parts.length === 6) {
+    await uploadAdminPluginAsset(context, request, response, pluginId, parts[5]);
+    return true;
+  }
+
+  if (parts.length !== 5) return false;
+
+  if (request.method === "GET" && action === "config") {
+    writeAdminPluginConfig(context, response, pluginId);
+    return true;
+  }
+  if (request.method === "PATCH" && action === "config") {
+    await patchAdminPluginConfig(context, request, response, pluginId);
+    return true;
+  }
+  if (request.method === "POST" && action === "enable") {
+    await setAdminPluginEnabled(context, response, pluginId, true);
+    return true;
+  }
+  if (request.method === "POST" && action === "disable") {
+    await setAdminPluginEnabled(context, response, pluginId, false);
+    return true;
+  }
+  if (request.method === "POST" && action === "reload") {
+    reloadAdminPlugin(context, response, pluginId);
+    return true;
+  }
+  if (request.method === "POST" && action === "test") {
+    await testAdminPlugin(context, request, response, pluginId);
+    return true;
+  }
+  if (request.method === "GET" && action === "events") {
+    writeAdminPluginEvents(context, response, pluginId);
+    return true;
+  }
+
+  return false;
+}
+
+function listAdminPlugins(context: AdminRoutesContext): AdminPluginSummary[] {
+  return adminPluginRegistry(context).map((entry) => entry.summary(context));
+}
+
+function findAdminPlugin(context: AdminRoutesContext, pluginId: string): AdminPluginSummary | undefined {
+  return findAdminPluginEntry(context, pluginId)?.summary(context);
+}
+
+function findAdminPluginEntry(context: AdminRoutesContext, pluginId: string): AdminPluginRegistryEntry | undefined {
+  return adminPluginRegistry(context).find((entry) => entry.summary(context).id === pluginId);
+}
+
+function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryEntry[] {
+  return [
+    japaneseVoicePluginEntry(),
+    feishuPluginEntry(),
+    wechatPluginEntry()
+  ];
+}
+
+function writeAdminPluginConfig(context: AdminRoutesContext, response: any, pluginId: string): void {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!plugin.configurable || !entry?.config) {
+    writeJson(response, 400, { ok: false, error: "plugin_not_configurable" });
+    return;
+  }
+  writeJson(response, 200, adminPluginConfigPayload(context, entry));
+}
+
+async function patchAdminPluginConfig(context: AdminRoutesContext, request: any, response: any, pluginId: string): Promise<void> {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!plugin.configurable || !entry?.patch) {
+    writeJson(response, 400, { ok: false, error: "plugin_not_configurable" });
+    return;
+  }
+  const body = await readJsonBody(request);
+  const result = entry.patch(context, body);
+  if ("error" in result) {
+    writeJson(response, 400, { ok: false, error: result.error });
+    return;
+  }
+  context.appendLog("info", `plugin ${plugin.id} config saved`);
+  writeJson(response, 200, {
+    ok: true,
+    plugin: entry.summary(context),
+    configValue: result.config
+  });
+}
+
+async function setAdminPluginEnabled(context: AdminRoutesContext, response: any, pluginId: string, enabled: boolean): Promise<void> {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!plugin.switchable || !entry?.setEnabled) {
+    writeJson(response, 400, { ok: false, error: "plugin_not_switchable" });
+    return;
+  }
+  const result = entry.setEnabled(context, enabled);
+  if ("error" in result) {
+    writeJson(response, 400, { ok: false, error: result.error });
+    return;
+  }
+  context.appendLog("info", `plugin ${plugin.id} ${enabled ? "enabled" : "disabled"}`);
+  writeJson(response, 200, {
+    ok: true,
+    plugin: entry.summary(context),
+    configValue: result.config
+  });
+}
+
+function reloadAdminPlugin(context: AdminRoutesContext, response: any, pluginId: string): void {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!plugin.configurable || !entry?.reload) {
+    writeJson(response, 400, { ok: false, error: "plugin_not_configurable" });
+    return;
+  }
+  const result = entry.reload(context);
+  if ("error" in result) {
+    writeJson(response, 400, { ok: false, error: result.error });
+    return;
+  }
+  context.appendLog("info", `plugin ${plugin.id} config reloaded`);
+  writeJson(response, 200, {
+    ok: true,
+    plugin: entry.summary(context),
+    configValue: result.config
+  });
+}
+
+async function testAdminPlugin(context: AdminRoutesContext, request: any, response: any, pluginId: string): Promise<void> {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!entry?.test) {
+    writeJson(response, 400, { ok: false, error: "plugin_test_unavailable" });
+    return;
+  }
+  const body = await readJsonBody(request);
+  const result = await entry.test(context, body);
+  writeJson(response, "error" in result ? 400 : 200, "error" in result ? { ok: false, error: result.error } : result);
+}
+
+function writeAdminPluginEvents(context: AdminRoutesContext, response: any, pluginId: string): void {
+  const plugin = findAdminPlugin(context, pluginId);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  writeJson(response, 200, { events: listAdminPluginEvents(context, pluginId) });
+}
+
+async function uploadAdminPluginAsset(context: AdminRoutesContext, request: any, response: any, pluginId: string, assetKey: string): Promise<void> {
+  const entry = findAdminPluginEntry(context, pluginId);
+  const plugin = entry?.summary(context);
+  if (!plugin) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!entry?.uploadAsset) {
+    writeJson(response, 400, { ok: false, error: "plugin_not_configurable" });
+    return;
+  }
+  const result = await entry.uploadAsset(context, assetKey, request);
+  if ("error" in result) {
+    writeJson(response, result.statusCode ?? 400, { ok: false, error: result.error });
+    return;
+  }
+  context.appendLog("info", `plugin ${plugin.id} asset uploaded: ${assetKey} -> ${result.assetPath}`);
+  writeJson(response, 200, {
+    ok: true,
+    plugin: entry.summary(context),
+    assetPath: result.assetPath,
+    configValue: result.config
+  });
+}
+
+function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPluginRegistryEntry): unknown {
+  const plugin = entry.summary(context);
+  return {
+    plugin: {
+      ...plugin,
+      version: "local"
+    },
+    configSchema: entry.configSchema ?? { fields: [] },
+    configValue: entry.config?.(context) ?? {},
+    apiPresets: publicLLMApiPresets(readLLMApiPresets(context)),
+    routePreview: entry.routePreview ?? [],
+    runtimeAccess: entry.runtimeAccess ?? []
+  };
+}
+
+function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return japaneseVoicePluginSummary(context);
+    },
+    config(context) {
+      return publicJapaneseVoiceConfig(readJapaneseVoiceConfigForAdmin(context));
+    },
+    patch(context, patch) {
+      const result = updateJapaneseVoiceConfig(context, patch);
+      return "error" in result ? result : { config: publicJapaneseVoiceConfig(result.config) };
+    },
+    setEnabled(context, enabled) {
+      const result = updateJapaneseVoiceConfig(context, { enabled });
+      return "error" in result ? result : { config: publicJapaneseVoiceConfig(result.config) };
+    },
+    reload(context) {
+      return { config: publicJapaneseVoiceConfig(readJapaneseVoiceConfigForAdmin(context)) };
+    },
+    test(context, input) {
+      return testJapaneseVoicePlugin(context, input);
+    },
+    uploadAsset(context, assetKey, request) {
+      return uploadGenericPluginAsset(context, "japanese-voice", assetKey, request);
+    },
+    configSchema: {
+      fields: [
+        { key: "enabled", label: "Enabled", type: "switch", description: "Enable or disable this plugin route." },
+        { key: "voice.referenceAudio", label: "Reference Audio", type: "fileUpload", assetKey: "reference-audio", accept: "audio/*", description: "Plugin-owned reference audio under assets/plugin/{plugin_id}/." },
+        { key: "prompt", label: "Prompt", type: "textarea", description: "Prompt used by this plugin before it calls the selected API preset." },
+        { key: "voice.modelDir", label: "Voice Model Folder", type: "folderUpload", assetKey: "model", description: "Plugin-owned model folder under assets/plugin/{plugin_id}/." },
+        { key: "apiPresetName", label: "API Preset", type: "apiPresetSelect", description: "Select a saved API preset. The plugin does not store API keys." },
+        { key: "voice.referenceText", label: "Reference Text", type: "textarea", description: "Stored directly in this plugin config file." },
+        { key: "targetRoute", label: "Target Route", type: "readonly", description: "send_chat.voice.before_tts" },
+        { key: "persistTranslation", label: "Persist Translation", type: "readonly", description: "Translations are transient and never written to message log." }
+      ]
+    },
+    routePreview: [
+      "send_chat.voice",
+      "plugin.translate",
+      "default_tts.synthesize",
+      "channel.audio.send"
+    ],
+    runtimeAccess: [
+      "call selected API preset",
+      "read outgoing voice text before TTS",
+      "pass translated text to TTS",
+      "do not persist translated text to message log"
+    ]
+  };
+}
+
+function feishuPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return {
+        id: "feishu",
+        name: "Feishu",
+        kind: "channel",
+        status: "external_config",
+        health: context.runtime.feishuStarted ? "healthy" : "unknown",
+        description: "Feishu channel plugin for inbound and outbound messages.",
+        configurable: false,
+        switchable: false,
+        configSource: ".env"
+      };
+    }
+  };
+}
+
+function wechatPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary() {
+      return {
+        id: "wechat",
+        name: "WeChat",
+        kind: "channel",
+        status: "planned",
+        health: "unknown",
+        description: "WeChat channel plugin placeholder for the unified plugin page.",
+        configurable: false,
+        switchable: false
+      };
+    }
+  };
+}
+
+function japaneseVoicePluginSummary(context: AdminRoutesContext, config = readJapaneseVoiceConfigForAdmin(context)): AdminPluginSummary {
+  const presetExists = !config.apiPresetName || readLLMApiPresets(context).some((entry) => entry.name === config.apiPresetName);
+  const missingConfig = config.enabled && (!config.apiPresetName || !presetExists);
+  return {
+    id: "japanese-voice",
+    name: "Japanese Voice",
+    kind: "voice",
+    status: missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
+    health: missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
+    description: "Translate send_chat voice text through a selected API preset before the normal TTS route.",
+    configurable: true,
+    switchable: true,
+    configSource: japaneseVoiceConfigPath(context),
+    lastLoadedAt: japaneseVoiceConfigMtime(context)
+  };
+}
+
+async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> {
+  const config = readJapaneseVoiceConfigForAdmin(context);
+  const text = requiredString(input.text) || "晚点见。";
+  if (Array.from(text).length > 240) return { error: "text_too_long" };
+  if (!config.apiPresetName) return { error: "missing_api_preset" };
+  const preset = readLLMApiPresets(context).find((entry) => entry.name === config.apiPresetName);
+  if (!preset) return { error: "invalid_api_preset" };
+  if (!preset.baseURL || !preset.apiKey) return { error: "incomplete_api_preset" };
+
+  const totalStartedAt = Date.now();
+  const translationStartedAt = Date.now();
+  const translatedText = await translateJapaneseVoiceText(text, config, {
+    baseSynthesizer: async () => {
+      throw new Error("not used");
+    },
+    llmRequestSender: context.llmRequestSender,
+    llm: createOpenAICompatibleClient({
+      baseURL: preset.baseURL,
+      apiKey: preset.apiKey,
+      model: preset.model,
+      temperature: preset.temperature,
+      timeoutMs: preset.timeoutMs,
+      extraParams: preset.extraParams
+    }),
+    resolveApiPreset(name) {
+      return readLLMApiPresets(context).find((entry) => entry.name === name);
+    },
+    appendLog: context.appendLog
+  });
+  const translationMs = Date.now() - translationStartedAt;
+  if (!translatedText) return { error: "translation_failed" };
+
+  const ttsStartedAt = Date.now();
+  const configuredSynthesizer = context.pluginConfigs?.japaneseVoice?.testVoiceSynthesizer;
+  const synthesizer = configuredSynthesizer ?? createConfiguredVoiceSynthesizer(context.config.tts, {
+    appendLog: context.appendLog
+  });
+  let voice: Awaited<ReturnType<VoiceSynthesizer>>;
+  let ttsMs = 0;
+  try {
+    voice = await synthesizer({ text: translatedText, time: context.time, genie: japaneseVoiceGenieOverrides(config) });
+    ttsMs = Date.now() - ttsStartedAt;
+  } finally {
+    if (!configuredSynthesizer) await synthesizer.shutdown?.();
+  }
+
+  return {
+    ok: true,
+    result: {
+      input: text,
+      output: translatedText,
+      voice: {
+        assetId: voice.assetId,
+        filePath: voice.filePath,
+        audioUrl: ttsAudioUrl(context, voice.filePath)
+      },
+      timing: {
+        translationMs,
+        ttsMs,
+        totalMs: Date.now() - totalStartedAt
+      }
+    }
+  };
+}
+
+function updateJapaneseVoiceConfig(
+  context: AdminRoutesContext,
+  patch: Record<string, unknown>
+): { config: JapaneseVoicePluginConfig } | { error: string } {
+  const current = readJapaneseVoiceConfigForAdmin(context);
+  const currentVoice = current.voice ?? {};
+  if ("api_preset" in patch) return { error: "invalid_plugin_config" };
+  const voicePatch = patch.voice && typeof patch.voice === "object" && !Array.isArray(patch.voice)
+    ? patch.voice as Record<string, unknown>
+    : {};
+  const next: JapaneseVoicePluginConfig = {
+    enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    apiPresetName: patch.apiPresetName === undefined ? current.apiPresetName : optionalString(patch.apiPresetName),
+    api_preset: current.api_preset,
+    prompt: patch.prompt === undefined ? current.prompt : requiredString(patch.prompt),
+    voice: {
+      modelDir: voicePatch.modelDir === undefined ? currentVoice.modelDir : optionalString(voicePatch.modelDir),
+      referenceAudio: voicePatch.referenceAudio === undefined ? currentVoice.referenceAudio : optionalString(voicePatch.referenceAudio),
+      referenceText: voicePatch.referenceText === undefined ? currentVoice.referenceText : optionalString(voicePatch.referenceText)
+    }
+  };
+
+  const validationError = validateJapaneseVoiceConfig(next);
+  if (validationError) return { error: validationError };
+  if (next.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.apiPresetName)) {
+    return { error: "invalid_api_preset" };
+  }
+  writeJapaneseVoiceConfig(context, next);
+  return { config: next };
+}
+
+function validateJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): string | undefined {
+  const voice = config.voice ?? {};
+  for (const value of [voice.modelDir, voice.referenceAudio]) {
+    if (value && !isPluginAssetPath("japanese-voice", value)) return "invalid_asset_path";
+  }
+  return undefined;
+}
+
+function readJapaneseVoiceConfigForAdmin(context: AdminRoutesContext): JapaneseVoicePluginConfig {
+  return readJapaneseVoicePluginConfig(japaneseVoiceConfigPath(context));
+}
+
+function writeJapaneseVoiceConfig(context: AdminRoutesContext, config: JapaneseVoicePluginConfig): void {
+  const filePath = japaneseVoiceConfigPath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(publicJapaneseVoiceConfig(config), null, 2)}\n`);
+}
+
+async function uploadGenericPluginAsset(
+  context: AdminRoutesContext,
+  pluginId: string,
+  assetKey: string,
+  request: any
+): Promise<{ config: JapaneseVoiceAdminConfig; assetPath: string } | { error: string; statusCode?: number }> {
+  const config = readJapaneseVoiceConfigForAdmin(context);
+  const fileName = safePluginAssetFileName(decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? ""));
+  const relativeDir = decodeHeaderFileName(optionalString(request.headers?.["x-relative-dir"]) ?? "");
+  const maxBytes = assetKey === "model" ? maxPluginModelAssetUploadBytes : maxPluginAssetUploadBytes;
+  const body = await readRawBody(request, { maxBytes });
+  if (body.length === 0) return { error: "empty_upload" };
+
+  const assetPath = resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
+  fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
+  fs.writeFileSync(assetPath.fullPath, body);
+
+  const next: JapaneseVoicePluginConfig = {
+    ...config,
+    voice: {
+      ...config.voice,
+      ...voiceAssetPatch(assetKey, assetPath.assetPath)
+    }
+  };
+  writeJapaneseVoiceConfig(context, next);
+  return { config: publicJapaneseVoiceConfig(next), assetPath: assetPath.assetPath };
+}
+
+function voiceAssetPatch(assetKey: string, assetPath: string): Partial<JapaneseVoicePluginConfig["voice"]> {
+  if (assetKey === "model") return { modelDir: path.join("assets", "plugin", "japanese-voice", "model").split(path.sep).join("/") };
+  if (assetKey === "reference-audio") return { referenceAudio: assetPath };
+  if (assetKey === "reference-text") return { referenceText: assetPath };
+  return {};
+}
+
+function resolvePluginAssetPathForUpload(pluginId: string, assetKey: string, fileName: string, relativeDir: string): { fullPath: string; assetPath: string } {
+  const root = path.resolve("assets", "plugin", pluginId);
+  const normalizedRelativeDir = sanitizePluginAssetRelativePath(relativeDir);
+  const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
+  const baseRelativeDir = assetKey === "model" ? "model" : normalizedRelativeDir;
+  const fullPath = path.resolve(root, baseRelativeDir, effectiveFileName);
+  const relative = path.relative(root, fullPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new HttpJsonError(400, "invalid_asset_path");
+  }
+  return {
+    fullPath,
+    assetPath: path.join("assets", "plugin", pluginId, relative).split(path.sep).join("/")
+  };
+}
+
+function defaultPluginAssetFileName(assetKey: string): string {
+  if (assetKey === "reference-text") return "reference.txt";
+  if (assetKey === "reference-audio") return "reference";
+  return "asset";
+}
+
+function safePluginAssetFileName(fileName: string): string {
+  const base = path.basename(fileName).replace(/[^\w.\- ]+/g, "_").trim();
+  return base || "";
+}
+
+function sanitizePluginAssetRelativePath(value: string): string {
+  if (!value) return "";
+  const normalized = path.normalize(value).replace(/^(\.\.(\/|\\|$))+/, "");
+  return normalized === "." ? "" : normalized;
+}
+
+function isPluginAssetPath(pluginId: string, value: string): boolean {
+  const root = path.resolve("assets", "plugin", pluginId);
+  const fullPath = path.resolve(value);
+  const relative = path.relative(root, fullPath);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function japaneseVoiceConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.japaneseVoice?.configPath ?? "plugins/japanese-voice/config.json";
+}
+
+function japaneseVoiceConfigMtime(context: AdminRoutesContext): string | undefined {
+  try {
+    const stats = fs.statSync(japaneseVoiceConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
+    if (stats.mtime instanceof Date) return stats.mtime.toISOString();
+    if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function publicJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): JapaneseVoiceAdminConfig {
+  return {
+    enabled: config.enabled,
+    apiPresetName: config.apiPresetName,
+    prompt: config.prompt,
+    voice: { ...config.voice }
+  };
+}
+
+function japaneseVoiceConfigSchema(): unknown {
+  return {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean" },
+      apiPresetName: { type: "string" },
+      prompt: { type: "string" },
+      voice: { type: "object" }
+    },
+    required: ["enabled", "prompt"]
+  };
+}
+
+function listAdminPluginEvents(context: AdminRoutesContext, pluginId: string): unknown[] {
+  const aliases = [pluginId, pluginId.replace(/-/g, " "), pluginId.replace(/-/g, "_")];
+  return context.logs
+    .filter((entry): entry is { id?: number; time?: string; level?: "info" | "warn" | "error"; message: string } => {
+      if (!entry || typeof entry !== "object") return false;
+      const message = (entry as { message?: unknown }).message;
+      return typeof message === "string" && aliases.some((alias) => message.toLowerCase().includes(alias));
+    })
+    .slice(-50)
+    .reverse()
+    .map((entry) => ({
+      id: entry.id,
+      time: entry.time,
+      level: entry.level,
+      message: entry.message
+    }));
 }
 
 function getTokenUsagePayload(context: AdminRoutesContext, requestUrl: string): unknown {
@@ -1532,6 +2176,8 @@ async function generateTtsPreview(context: AdminRoutesContext, request: any, res
     const message = error instanceof Error ? error.message : String(error);
     context.appendLog("warn", `tts preview failed: ${message}`);
     writeJson(response, 500, { ok: false, error: message });
+  } finally {
+    await synthesizer.shutdown?.();
   }
 }
 

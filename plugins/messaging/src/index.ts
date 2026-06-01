@@ -62,6 +62,12 @@ export type TTSConfig = {
 export type VoiceSynthesisInput = {
   text: string;
   time: CurrentTimeProvider;
+  genie?: {
+    language?: string;
+    modelDir?: string;
+    referenceAudio?: string;
+    referenceText?: string;
+  };
 };
 
 export type VoiceSynthesisResult = {
@@ -1083,9 +1089,9 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   let ownedProcess: ReturnType<typeof childProcess.spawn> | undefined;
   let starting: Promise<void> | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let serviceWasExternal = false;
 
-  const synthesize = (async ({ text, time }) => {
+  const synthesize = (async (request) => {
+    const { text, time } = request;
     noteActivity();
     const outputDir = resolveAssetOutputDir(config.outputDir);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
@@ -1139,7 +1145,6 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
 
   async function ensureMossService(): Promise<void> {
     if (await isHealthy()) {
-      serviceWasExternal = ownedProcess === undefined;
       return;
     }
     if (config.baseURLExplicit) {
@@ -1172,7 +1177,6 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"]
     });
-    serviceWasExternal = false;
     ownedProcess.stdout?.on("data", (chunk: Buffer) => deps.appendLog?.("info", `moss tts: ${String(chunk).trim()}`));
     ownedProcess.stderr?.on("data", (chunk: Buffer) => deps.appendLog?.("warn", `moss tts: ${String(chunk).trim()}`));
     ownedProcess.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
@@ -1216,8 +1220,9 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       clearTimer(idleTimer);
       idleTimer = undefined;
     }
-    if (!ownedProcess || serviceWasExternal) return;
+    if (!ownedProcess) return;
     const processToStop = ownedProcess;
+    ownedProcess = undefined;
     try {
       await postJson(`${config.baseURL}/shutdown`, {}, 2_000, fetchImpl);
     } catch {
@@ -1253,9 +1258,9 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   let ownedProcess: ReturnType<typeof childProcess.spawn> | undefined;
   let starting: Promise<void> | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let serviceWasExternal = false;
 
-  const synthesize = (async ({ text, time }) => {
+  const synthesize = (async (request) => {
+    const { text, time } = request;
     noteActivity();
     const outputDir = resolveAssetOutputDir(config.outputDir);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
@@ -1267,7 +1272,8 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     try {
       const response = await postJson(`${config.baseURL}/synthesize`, {
         text,
-        outputPath: wavPath
+        outputPath: wavPath,
+        ...genieRequestOverrides(request.genie, deps.appendLog)
       }, config.timeoutMs, fetchImpl, "Genie TTS");
       if (!isRecord(response) || response.ok === false) {
         throw new Error(isRecord(response) ? optionalStringValue(response.error) || "Genie TTS synthesize failed" : "Genie TTS synthesize failed");
@@ -1306,7 +1312,6 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
 
   async function ensureGenieService(): Promise<void> {
     if (await isHealthy()) {
-      serviceWasExternal = ownedProcess === undefined;
       return;
     }
     if (config.baseURLExplicit) {
@@ -1347,7 +1352,6 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GENIE_DATA_DIR: dataDir }
     });
-    serviceWasExternal = false;
     ownedProcess.stdout?.on("data", (chunk: Buffer) => deps.appendLog?.("info", `genie tts: ${String(chunk).trim()}`));
     ownedProcess.stderr?.on("data", (chunk: Buffer) => deps.appendLog?.("warn", `genie tts: ${String(chunk).trim()}`));
     ownedProcess.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
@@ -1391,14 +1395,47 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       clearTimer(idleTimer);
       idleTimer = undefined;
     }
-    if (!ownedProcess || serviceWasExternal) return;
+    if (!ownedProcess) return;
     const processToStop = ownedProcess;
+    ownedProcess = undefined;
     try {
       await postJson(`${config.baseURL}/shutdown`, {}, 2_000, fetchImpl, "Genie TTS");
     } catch {
       processToStop.kill("SIGTERM");
     }
   }
+}
+
+const genieRequiredBaseModelFiles = [
+  "t2s_encoder_fp32.bin",
+  "t2s_encoder_fp32.onnx",
+  "t2s_first_stage_decoder_fp32.onnx",
+  "t2s_shared_fp16.bin",
+  "t2s_stage_decoder_fp32.onnx",
+  "vits_fp16.bin",
+  "vits_fp32.onnx"
+];
+
+function genieRequestOverrides(input: VoiceSynthesisInput["genie"], appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"]): Record<string, unknown> {
+  if (!input) return {};
+  const overrides: Record<string, unknown> = {};
+  if (input.language) overrides.language = input.language;
+  if (input.modelDir) {
+    const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS model directory was not found");
+    const missing = missingGenieBaseModelFiles(modelDir);
+    if (missing.length === 0) {
+      overrides.modelDir = modelDir;
+    } else {
+      appendLog?.("warn", `genie tts model override skipped because ${input.modelDir} is incomplete; missing ${missing.join(", ")}`);
+    }
+  }
+  if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found");
+  if (input.referenceText) overrides.referenceText = input.referenceText;
+  return overrides;
+}
+
+function missingGenieBaseModelFiles(modelDir: string): string[] {
+  return genieRequiredBaseModelFiles.filter((fileName) => !fs.existsSync(path.join(modelDir, fileName)));
 }
 
 async function postJson(url: string, body: Record<string, unknown>, timeoutMs: number, fetchImpl: typeof fetch, label = "MOSS TTS"): Promise<unknown> {

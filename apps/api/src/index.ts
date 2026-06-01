@@ -1,5 +1,5 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
-import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot } from "../../../core/agent/src/index.js";
+import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot, type TokenPressurePreviewBaseline } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
@@ -26,7 +26,8 @@ import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createMediaTools } from "../../../plugins/media/src/index.js";
-import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/index.js";
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
@@ -148,6 +149,7 @@ type ActiveLLMSession = {
   startedAt: string;
   updatedAt: string;
   archiveFilePath?: string;
+  archiveMetadata?: Record<string, unknown>;
   requestIds: number[];
   responseIds: number[];
   messages: LLMChatInput["messages"];
@@ -158,7 +160,7 @@ type ActiveLLMSession = {
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;
-  tokenPressurePreviewBaselines?: Record<string, number>;
+  tokenPressurePreviewBaselines?: Record<string, TokenPressurePreviewBaseline>;
   mode?: string;
   modeStaticMessages?: LLMChatInput["messages"];
   modeStaticTokenEstimate?: number;
@@ -315,11 +317,20 @@ const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
     appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
   }
 });
+const baseVoiceSynthesizer = createConfiguredVoiceSynthesizer(config.tts, { appendLog });
+const japaneseVoicePlugin = createJapaneseVoicePlugin({
+  baseSynthesizer: baseVoiceSynthesizer,
+  llmRequestSender: (input) => llmRequests.send(input),
+  resolveApiPreset(name) {
+    return readLLMApiPresets().find((entry) => entry.name === name);
+  },
+  appendLog
+});
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
   time: currentTime,
-  tts: config.tts,
+  voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getSleepCocoonEnteredAt: () => agentState.getSnapshot().sleepCocoonEnteredAt,
@@ -616,6 +627,12 @@ const server = http.createServer(createApiRequestHandler({
   wechat,
   wechatStateStore,
   runtime: runtimeState,
+  pluginConfigs: {
+    japaneseVoice: {
+      configPath: "plugins/japanese-voice/config.json"
+    }
+  },
+  llmRequestSender: llmRequests.send,
   messageRuntime,
   getLLM: () => currentCoreLLMConfig().client ?? activeLLM,
   time: currentTime,
@@ -637,13 +654,20 @@ server.listen(config.api.port, config.api.host, () => {
   console.log(`[api] listening on http://${config.api.host}:${config.api.port}`);
 });
 
+let shutdownStarted = false;
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, async () => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     appendLog("info", `shutdown requested: ${signal}`);
     scheduler.stop();
-    await messageRuntime.flushAll();
-    await core.stop();
-    server.close(() => process.exit(0));
+    try {
+      await japaneseVoicePlugin.voiceSynthesizer.shutdown?.();
+      await messageRuntime.flushAll();
+      await core.stop();
+    } finally {
+      server.close(() => process.exit(0));
+    }
   });
 }
 
@@ -1366,15 +1390,17 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
 function writeLLMSessionFile(session: ActiveLLMSession): void {
   const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAt);
   session.archiveFilePath = filePath;
-  writeLLMSessionJsonl(filePath, sessionMetadata(session), session.messages);
+  session.archiveMetadata = sessionMetadata(session);
+  writeLLMSessionJsonl(filePath, session.archiveMetadata, session.messages);
 }
 
 function writeLLMSessionMetadata(session: ActiveLLMSession): void {
+  session.archiveMetadata = sessionMetadata(session);
   if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
     writeLLMSessionFile(session);
     return;
   }
-  writeLLMSessionJsonlMetadata(session.archiveFilePath, sessionMetadata(session));
+  writeLLMSessionJsonlMetadata(session.archiveFilePath, session.archiveMetadata);
 }
 
 function appendLLMSessionMessages(session: ActiveLLMSession, messages: LLMChatInput["messages"]): void {
@@ -1444,6 +1470,7 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
       startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
       updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
       archiveFilePath: filePath,
+      archiveMetadata: metadata,
       requestIds: [],
       responseIds: [],
       messages: cloneLLMMessages(messages),
@@ -1454,7 +1481,7 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
       lastTotalTokens: typeof metadata.lastTotalTokens === "number" && Number.isFinite(metadata.lastTotalTokens) ? metadata.lastTotalTokens : undefined,
       lastInputTokens: typeof metadata.lastInputTokens === "number" && Number.isFinite(metadata.lastInputTokens) ? metadata.lastInputTokens : undefined,
       lastUsageModel: typeof metadata.lastUsageModel === "string" ? metadata.lastUsageModel : undefined,
-      tokenPressurePreviewBaselines: parseNumberRecord(metadata.tokenPressurePreviewBaselines),
+      tokenPressurePreviewBaselines: parseTokenPressurePreviewBaselines(metadata.tokenPressurePreviewBaselines),
       mode: typeof metadata.mode === "string" ? metadata.mode : "normal",
       modeStaticMessages,
       modeStaticTokenEstimate: typeof metadata.modeStaticTokenEstimate === "number" && Number.isFinite(metadata.modeStaticTokenEstimate) ? metadata.modeStaticTokenEstimate : 0,
@@ -1565,8 +1592,8 @@ function cloneJsonObject<T>(value: T): T {
   return text === undefined ? value : JSON.parse(text) as T;
 }
 
-function cloneTokenPressurePreviewBaselines(value: Record<string, number> | undefined): Record<string, number> {
-  return parseNumberRecord(value);
+function cloneTokenPressurePreviewBaselines(value: Record<string, TokenPressurePreviewBaseline> | undefined): Record<string, TokenPressurePreviewBaseline> {
+  return parseTokenPressurePreviewBaselines(value);
 }
 
 function hydrateLatestEmptyRequestFromTranscript(session: ActiveLLMSession): void {
@@ -1594,11 +1621,18 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function parseNumberRecord(value: unknown): Record<string, number> {
+function parseTokenPressurePreviewBaselines(value: unknown): Record<string, TokenPressurePreviewBaseline> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, number> = {};
+  const result: Record<string, TokenPressurePreviewBaseline> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof entry === "number" && Number.isFinite(entry)) result[key] = entry;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const baseline = entry as Partial<TokenPressurePreviewBaseline>;
+    if (typeof baseline.inputTokens === "number"
+      && Number.isFinite(baseline.inputTokens)
+      && typeof baseline.previewTokens === "number"
+      && Number.isFinite(baseline.previewTokens)) {
+      result[key] = { inputTokens: baseline.inputTokens, previewTokens: baseline.previewTokens };
+    }
   }
   return result;
 }
@@ -1631,11 +1665,13 @@ function getLLMSession(id: string): unknown {
   const numericId = Number(id);
   if (!Number.isFinite(numericId)) return undefined;
   const session = readLatestLLMSessionSnapshot(numericId) ?? (activeLLMSession?.id === numericId ? activeLLMSession : undefined);
+  const metadata = session ? session.archiveMetadata ?? sessionMetadata(session) : undefined;
   return session ? {
     ...session,
     requests: (session.requests ?? []).sort(compareLLMLogEntries),
     responses: (session.responses ?? []).sort(compareLLMLogEntries),
-    turns: buildLLMSessionTurns(session)
+    turns: buildLLMSessionTurns(session),
+    jsonlEntries: [metadata, ...cloneLLMMessages(session.messages)]
   } : undefined;
 }
 
@@ -1679,10 +1715,12 @@ function readMemoryLLMSessionFile(filePath: string, includeTurns: boolean): any 
       latestResponse: parseResponseInfo(metadata.latestResponse),
       mode: typeof metadata.mode === "string" ? metadata.mode : "memorize",
       archiveFilePath: filePath,
+      archiveMetadata: metadata,
       messages: includeTurns ? parsed.messages : undefined
     };
     return includeTurns ? {
       ...session,
+      jsonlEntries: [metadata, ...parsed.messages],
       turns: [{
         round: 0,
         latestRequest: session.latestRequest,

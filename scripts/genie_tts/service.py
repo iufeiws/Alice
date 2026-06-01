@@ -8,6 +8,7 @@ import signal
 import threading
 import time
 import unicodedata
+import gc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -51,54 +52,102 @@ class GenieRuntime:
         self.language = language
         self.reference_audio = Path(reference_audio).expanduser().resolve()
         self.reference_text = Path(reference_text).expanduser().resolve()
-        self._load()
+        self._loaded_model_key: tuple[str, str] | None = None
+        self._reference_key: tuple[str, str, str] | None = None
+        self._lock = threading.Lock()
+        self._load(
+            model_dir=self.model_dir,
+            language=self.language,
+            reference_audio=self.reference_audio,
+            reference_text=self.reference_text.read_text(encoding="utf-8").strip(),
+        )
 
-    def _load(self) -> None:
-        if not self.model_dir.is_dir():
-            raise FileNotFoundError(f"Genie model directory was not found: {self.model_dir}")
-        if not self.reference_audio.is_file():
-            raise FileNotFoundError(f"Genie reference audio was not found: {self.reference_audio}")
-        if not self.reference_text.is_file():
-            raise FileNotFoundError(f"Genie reference text was not found: {self.reference_text}")
-        audio_text = self.reference_text.read_text(encoding="utf-8").strip()
+    def _load(self, *, model_dir: Path, language: str, reference_audio: Path, reference_text: str) -> None:
+        if not model_dir.is_dir():
+            raise FileNotFoundError(f"Genie model directory was not found: {model_dir}")
+        if not reference_audio.is_file():
+            raise FileNotFoundError(f"Genie reference audio was not found: {reference_audio}")
+        audio_text = reference_text.strip()
         if not audio_text:
-            raise ValueError(f"Genie reference text is empty: {self.reference_text}")
-        genie.load_character(
-            character_name=self.character_name,
-            onnx_model_dir=str(self.model_dir),
-            language=self.language,
-        )
-        genie.set_reference_audio(
-            character_name=self.character_name,
-            audio_path=str(self.reference_audio),
-            audio_text=audio_text,
-            language=self.language,
-        )
+            raise ValueError("Genie reference text is empty")
+        model_key = (str(model_dir), language)
+        if self._loaded_model_key != model_key:
+            self._unload_current_character()
+            genie.load_character(
+                character_name=self.character_name,
+                onnx_model_dir=str(model_dir),
+                language=language,
+            )
+            self._loaded_model_key = model_key
+            self._reference_key = None
 
-    def synthesize(self, *, text: str, output_path: str | Path) -> dict[str, Any]:
+        reference_key = (str(reference_audio), audio_text, language)
+        if self._reference_key != reference_key:
+            genie.set_reference_audio(
+                character_name=self.character_name,
+                audio_path=str(reference_audio),
+                audio_text=audio_text,
+                language=language,
+            )
+            self._reference_key = reference_key
+
+    def _unload_current_character(self) -> None:
+        if self._loaded_model_key is None:
+            return
+        unload_character = getattr(genie, "unload_character", None)
+        if callable(unload_character):
+            try:
+                unload_character(character_name=self.character_name)
+            except Exception:
+                logging.warning("failed to unload previous Genie TTS character before reload", exc_info=True)
+        gc.collect()
+        self._loaded_model_key = None
+        self._reference_key = None
+
+    def synthesize(
+        self,
+        *,
+        text: str,
+        output_path: str | Path,
+        model_dir: str | Path | None = None,
+        language: str | None = None,
+        reference_audio_path: str | Path | None = None,
+        reference_text: str | None = None,
+    ) -> dict[str, Any]:
         normalized = str(text or "").strip()
         if not normalized:
             raise ValueError("text cannot be empty")
         started_at = time.perf_counter()
         target = Path(output_path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        parts = split_text_for_tts(normalized)
-        part_paths: list[Path] = []
-        if len(parts) == 1:
-            self._synthesize_part(parts[0], target)
-        else:
-            try:
-                for index, part in enumerate(parts):
-                    part_path = target.with_name(f"{target.stem}.part{index:03d}{target.suffix}")
-                    self._synthesize_part(part, part_path)
-                    part_paths.append(part_path)
-                concatenate_audio(part_paths, target)
-            finally:
-                for part_path in part_paths:
-                    try:
-                        part_path.unlink(missing_ok=True)
-                    except Exception:
-                        logging.warning("failed to remove temporary Genie TTS part: %s", part_path)
+        effective_model_dir = Path(model_dir).expanduser().resolve() if model_dir else self.model_dir
+        effective_language = language or self.language
+        effective_reference_audio = Path(reference_audio_path).expanduser().resolve() if reference_audio_path else self.reference_audio
+        effective_reference_text = reference_text if reference_text is not None else self.reference_text.read_text(encoding="utf-8").strip()
+        with self._lock:
+            self._load(
+                model_dir=effective_model_dir,
+                language=effective_language,
+                reference_audio=effective_reference_audio,
+                reference_text=effective_reference_text,
+            )
+            parts = split_text_for_tts(normalized)
+            part_paths: list[Path] = []
+            if len(parts) == 1:
+                self._synthesize_part(parts[0], target)
+            else:
+                try:
+                    for index, part in enumerate(parts):
+                        part_path = target.with_name(f"{target.stem}.part{index:03d}{target.suffix}")
+                        self._synthesize_part(part, part_path)
+                        part_paths.append(part_path)
+                    concatenate_audio(part_paths, target)
+                finally:
+                    for part_path in part_paths:
+                        try:
+                            part_path.unlink(missing_ok=True)
+                        except Exception:
+                            logging.warning("failed to remove temporary Genie TTS part: %s", part_path)
         if not target.is_file() or target.stat().st_size <= 0:
             raise RuntimeError(f"Genie TTS did not create output audio: {target}")
         return {
@@ -201,6 +250,10 @@ class GenieHandler(BaseHTTPRequestHandler):
             result = self.runtime.synthesize(
                 text=required_string(body, "text"),
                 output_path=required_string(body, "outputPath"),
+                model_dir=optional_string(body, "modelDir"),
+                language=optional_string(body, "language"),
+                reference_audio_path=optional_string(body, "referenceAudioPath"),
+                reference_text=optional_string(body, "referenceText"),
             )
             self.write_json(200, {"ok": True, **result})
         except Exception as error:
@@ -230,6 +283,15 @@ def required_string(body: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} is required")
     return value
+
+
+def optional_string(body: dict[str, Any], key: str) -> str | None:
+    value = body.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return value.strip() or None
 
 
 def parse_args() -> argparse.Namespace:

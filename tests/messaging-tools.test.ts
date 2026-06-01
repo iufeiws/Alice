@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { formatToolResultForLLM } from "../core/text-renderer/src/index.js";
 import { createConfiguredVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
+import { createJapaneseVoicePlugin, createJapaneseVoiceTranslationSynthesizer, japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig } from "../plugins/japanese-voice/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
 
@@ -758,6 +759,156 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   assert.equal(stored[0].externalMessageId, "voice_1");
 });
 
+test("japanese voice plugin translates before tts while preserving original send_chat voice transcript", async () => {
+  const dir = makeTempDir("messaging-japanese-voice");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const synthesizedTexts: string[] = [];
+  const llmMessages: string[] = [];
+  const llmAgents: string[] = [];
+  let generatedPath = "";
+  const voiceSynthesizer = createJapaneseVoiceTranslationSynthesizer({
+    enabled: true,
+    api_preset: {
+      baseURL: "https://example.invalid/v1",
+      apiKey: "test-key",
+      model: "flash",
+      temperature: 0,
+      timeoutMs: 1000,
+      extraParams: {}
+    },
+    prompt: "Translate to Japanese.\nText:"
+  }, {
+    baseSynthesizer: async ({ text }) => {
+      synthesizedTexts.push(text);
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    llmRequestSender: async (input) => {
+      llmAgents.push(input.agentId);
+      llmMessages.push(input.messages.at(-1)?.content ?? "");
+      return { message: { role: "assistant", content: "また後で会いましょう" } };
+    },
+    llm: {
+      async chat(input) {
+        llmMessages.push(input.messages.at(-1)?.content ?? "");
+        return { message: { role: "assistant", content: "direct chat should not be used" } };
+      }
+    }
+  });
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    voiceSynthesizer,
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: "voice_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_japanese",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(llmAgents, ["japanese-voice"]);
+  assert.deepEqual(llmMessages, ["Translate to Japanese.\nText:\n晚点见"]);
+  assert.deepEqual(synthesizedTexts, ["また後で会いましょう"]);
+  assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
+  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+  assert.doesNotMatch(String(result.output), /また後で会いましょう/);
+});
+
+test("japanese voice plugin config reads switch, api preset, and prompt from plugin folder config", () => {
+  const dir = makeTempDir("japanese-voice-config");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+
+  const config = readJapaneseVoicePluginConfig(configPath);
+
+  assert.equal(config.enabled, true);
+  assert.equal(config.apiPresetName, "fixed-flash");
+  assert.equal(config.api_preset.apiKey, undefined);
+  assert.equal(config.api_preset.baseURL, "");
+  assert.equal(config.prompt, "Translate to Japanese.\nText:");
+});
+
+test("japanese voice plugin switch is read from plugin config at synthesis time", async () => {
+  const dir = makeTempDir("japanese-voice-switch");
+  const configPath = path.join(dir, "config.json");
+  const synthesizedTexts: string[] = [];
+  const writeConfig = (enabled: boolean) => fs.writeFileSync(configPath, JSON.stringify({
+    enabled,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+  writeConfig(false);
+  const plugin = createJapaneseVoicePlugin({
+    configPath,
+    baseSynthesizer: async ({ text }) => {
+      synthesizedTexts.push(text);
+      const filePath = path.join(dir, `${synthesizedTexts.length}.wav`);
+      fs.writeFileSync(filePath, text);
+      return { assetId: `generated/tts/${synthesizedTexts.length}.wav`, filePath };
+    },
+    llm: {
+      async chat() {
+        return { message: { role: "assistant", content: "日本語" } };
+      }
+    },
+    resolveApiPreset(name) {
+      assert.equal(name, "fixed-flash");
+      return {
+        name,
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash"
+      };
+    }
+  });
+
+  await plugin.voiceSynthesizer({ text: "原文", time: createCurrentTimeProvider("UTC") });
+  writeConfig(true);
+  await plugin.voiceSynthesizer({ text: "原文", time: createCurrentTimeProvider("UTC") });
+
+  assert.deepEqual(synthesizedTexts, ["原文", "日本語"]);
+});
+
+test("japanese voice passes Genie language and plugin voice assets as per-request overrides", () => {
+  const overrides = japaneseVoiceGenieOverrides({
+    enabled: true,
+    apiPresetName: "fixed-flash",
+    api_preset: {
+      baseURL: "",
+      model: "flash"
+    },
+    prompt: "Translate to Japanese.\nText:",
+    voice: {
+      modelDir: "assets/plugin/japanese-voice/model",
+      referenceAudio: "assets/plugin/japanese-voice/reference.wav",
+      referenceText: "まぁ、そうですね。"
+    }
+  });
+
+  assert.deepEqual(overrides, {
+    language: "jp",
+    modelDir: "assets/plugin/japanese-voice/model",
+    referenceAudio: "assets/plugin/japanese-voice/reference.wav",
+    referenceText: "まぁ、そうですね。"
+  });
+});
+
 test("send_chat voice sends bracketed transcript text on feishu", async () => {
   const dir = makeTempDir("messaging-send-voice-feishu-transcript");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
@@ -981,13 +1132,20 @@ test("configured voice synthesizer falls back to moss when genie model is missin
 test("genie tts voice synthesizer calls service and returns opus asset", async () => {
   const calls: string[] = [];
   const requestedTexts: string[] = [];
+  const requestedOverrides: Array<Record<string, unknown>> = [];
   const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
     const pathname = new URL(String(url)).pathname;
     calls.push(`${init?.method ?? "GET"} ${pathname}`);
     if (pathname === "/health") return new Response(JSON.stringify({ ok: true, ready: true }), { status: 200 });
     if (pathname === "/synthesize") {
-      const body = JSON.parse(String(init?.body)) as { text: string; outputPath: string };
+      const body = JSON.parse(String(init?.body)) as { text: string; outputPath: string } & Record<string, unknown>;
       requestedTexts.push(body.text);
+      requestedOverrides.push({
+        language: body.language,
+        modelDir: body.modelDir,
+        referenceAudioPath: body.referenceAudioPath,
+        referenceText: body.referenceText
+      });
       fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
       fs.writeFileSync(body.outputPath, "wav");
       return new Response(JSON.stringify({ ok: true, audioPath: body.outputPath }), { status: 200 });
@@ -1003,13 +1161,79 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
   const text = "啊……\n等等、、、可以吗？？";
-  const result = await synthesize({ text, time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")) });
+  const result = await synthesize({
+    text,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    genie: {
+      language: "jp",
+      modelDir: "plugin/japanese-voice/model",
+      referenceAudio: "plugin/japanese-voice/_.wav",
+      referenceText: "参照テキスト"
+    }
+  });
 
   assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
   assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
   assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
   assert.deepEqual(requestedTexts, [text]);
+  assert.deepEqual(requestedOverrides, [{
+    language: "jp",
+    modelDir: path.resolve("assets/plugin/japanese-voice/model"),
+    referenceAudioPath: path.resolve("assets/plugin/japanese-voice/_.wav"),
+    referenceText: "参照テキスト"
+  }]);
   await fsp.unlink(result.filePath);
+});
+
+test("genie tts owned service shuts down on idle timeout", async () => {
+  const calls: string[] = [];
+  let healthCalls = 0;
+  let idleCallback: (() => void) | undefined;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") {
+      healthCalls += 1;
+      return new Response(JSON.stringify({ ok: healthCalls > 1 }), { status: healthCalls > 1 ? 200 : 503 });
+    }
+    if (pathname === "/shutdown") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const fakeSpawn = (() => {
+    const child = new events.EventEmitter() as any;
+    child.stdout = new events.EventEmitter();
+    child.stderr = new events.EventEmitter();
+    child.exitCode = null;
+    child.kill = () => {
+      child.emit("exit", null, "SIGTERM");
+      return true;
+    };
+    return child;
+  }) as any;
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieDataDir: "plugin/japanese-voice/model",
+    genieModelDir: "plugin/japanese-voice/model",
+    genieReferenceAudio: "test.opus",
+    genieReferenceText: "selfie/references/selfie-prompt.txt",
+    genieOutputDir: "generated/tts",
+    genieTimeoutMs: 1_000,
+    genieIdleShutdownMs: 10
+  }, {
+    fetch: fakeFetch as typeof fetch,
+    spawn: fakeSpawn,
+    setTimeout: ((callback: () => void) => {
+      idleCallback = callback;
+      return { unref() {} };
+    }) as any,
+    clearTimeout: (() => {}) as any
+  });
+
+  await synthesize.prepare?.();
+  idleCallback?.();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, ["GET /health", "GET /health", "POST /shutdown"]);
 });
 
 test("configured voice synthesizer falls back to moss when explicit genie service is unhealthy", async () => {

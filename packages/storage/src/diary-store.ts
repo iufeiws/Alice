@@ -18,8 +18,18 @@ export type DiaryEntry = {
 export type SleepBoundary = {
   id: number;
   occurredAt: string;
+  occurredAtUtc?: string;
   source: "sleep" | "inferred_gap" | "inferred_start";
   createdAt: string;
+  createdAtUtc?: string;
+};
+
+export type SleepPreparationBoundary = {
+  id: number;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  createdAt: string;
+  createdAtUtc?: string;
 };
 
 export type DiaryStore = {
@@ -33,8 +43,13 @@ export type DiaryStore = {
   latestEntry(): DiaryEntry | undefined;
   getEntry(localDate: string): DiaryEntry | undefined;
   listEntries(limit: number): DiaryEntry[];
-  recordSleepBoundary(input: { occurredAt: string; source: SleepBoundary["source"]; now: string }): SleepBoundary;
+  deleteLatestEntry(): DiaryEntry | undefined;
+  recordSleepBoundary(input: { occurredAt: string; occurredAtUtc?: string; source: SleepBoundary["source"]; now: string; nowUtc?: string }): SleepBoundary;
   listSleepBoundaries(limit?: number): SleepBoundary[];
+  recordSleepPreparationBoundary(input: { occurredAt: string; occurredAtUtc?: string; now: string; nowUtc?: string }): SleepPreparationBoundary;
+  deleteLatestSleepPreparationBoundary(): SleepPreparationBoundary | undefined;
+  latestSleepPreparationBoundary(): SleepPreparationBoundary | undefined;
+  listSleepPreparationBoundaries(limit?: number): SleepPreparationBoundary[];
 };
 
 export function createDiaryStore(dbPath: string): DiaryStore {
@@ -90,13 +105,19 @@ export function createDiaryStore(dbPath: string): DiaryStore {
         LIMIT ?
       `).all(limit).map((row: unknown) => normalizeEntry(row)!).filter(Boolean);
     },
+    deleteLatestEntry() {
+      const entry = this.latestEntry();
+      if (!entry) return undefined;
+      db.prepare("DELETE FROM diary_entries WHERE id = ?").run(entry.id);
+      return entry;
+    },
     recordSleepBoundary(input) {
       db.prepare(`
-        INSERT OR IGNORE INTO sleep_boundaries(occurred_at, source, created_at)
-        VALUES (?, ?, ?)
-      `).run(input.occurredAt, input.source, input.now);
+        INSERT OR IGNORE INTO sleep_boundaries(occurred_at, occurred_at_utc, source, created_at, created_at_utc)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(input.occurredAt, input.occurredAtUtc ?? null, input.source, input.now, input.nowUtc ?? null);
       return normalizeSleepBoundary(db.prepare(`
-        SELECT id, occurred_at AS occurredAt, source, created_at AS createdAt
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, source, created_at AS createdAt, created_at_utc AS createdAtUtc
         FROM sleep_boundaries
         WHERE occurred_at = ?
         LIMIT 1
@@ -104,11 +125,45 @@ export function createDiaryStore(dbPath: string): DiaryStore {
     },
     listSleepBoundaries(limit = 10_000) {
       return db.prepare(`
-        SELECT id, occurred_at AS occurredAt, source, created_at AS createdAt
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, source, created_at AS createdAt, created_at_utc AS createdAtUtc
         FROM sleep_boundaries
-        ORDER BY occurred_at ASC, id ASC
+        ORDER BY COALESCE(occurred_at_utc, occurred_at) ASC, id ASC
         LIMIT ?
       `).all(limit).map((row: unknown) => normalizeSleepBoundary(row)!).filter(Boolean);
+    },
+    recordSleepPreparationBoundary(input) {
+      db.prepare(`
+        INSERT INTO sleep_preparation_boundaries(occurred_at, occurred_at_utc, created_at, created_at_utc)
+        VALUES (?, ?, ?, ?)
+      `).run(input.occurredAt, input.occurredAtUtc ?? null, input.now, input.nowUtc ?? null);
+      return normalizeSleepPreparationBoundary(db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM sleep_preparation_boundaries
+        ORDER BY id DESC
+        LIMIT 1
+      `).get())!;
+    },
+    deleteLatestSleepPreparationBoundary() {
+      const boundary = this.latestSleepPreparationBoundary();
+      if (!boundary) return undefined;
+      db.prepare("DELETE FROM sleep_preparation_boundaries WHERE id = ?").run(boundary.id);
+      return boundary;
+    },
+    latestSleepPreparationBoundary() {
+      return normalizeSleepPreparationBoundary(db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM sleep_preparation_boundaries
+        ORDER BY id DESC
+        LIMIT 1
+      `).get());
+    },
+    listSleepPreparationBoundaries(limit = 10_000) {
+      return db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM sleep_preparation_boundaries
+        ORDER BY id ASC
+        LIMIT ?
+      `).all(limit).map((row: unknown) => normalizeSleepPreparationBoundary(row)!).filter(Boolean);
     }
   };
 }
@@ -128,11 +183,33 @@ function initialize(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS sleep_boundaries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       occurred_at TEXT NOT NULL UNIQUE,
+      occurred_at_utc TEXT,
       source TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
     );
     CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_idx ON sleep_boundaries(occurred_at);
+    CREATE TABLE IF NOT EXISTS sleep_preparation_boundaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at TEXT NOT NULL,
+      occurred_at_utc TEXT,
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_idx ON sleep_preparation_boundaries(occurred_at);
   `);
+  const columns = db.prepare("PRAGMA table_info(sleep_boundaries)").all().map((row: any) => row.name);
+  addColumnIfMissing(db, columns, "occurred_at_utc", "ALTER TABLE sleep_boundaries ADD COLUMN occurred_at_utc TEXT");
+  addColumnIfMissing(db, columns, "created_at_utc", "ALTER TABLE sleep_boundaries ADD COLUMN created_at_utc TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_utc_idx ON sleep_boundaries(occurred_at_utc)");
+  const preparationColumns = db.prepare("PRAGMA table_info(sleep_preparation_boundaries)").all().map((row: any) => row.name);
+  addColumnIfMissing(db, preparationColumns, "occurred_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN occurred_at_utc TEXT");
+  addColumnIfMissing(db, preparationColumns, "created_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN created_at_utc TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc)");
+}
+
+function addColumnIfMissing(db: DatabaseSync, columns: string[], name: string, statement: string): void {
+  if (!columns.includes(name)) db.exec(statement);
 }
 
 function normalizeEntry(row: unknown): DiaryEntry | undefined {
@@ -155,7 +232,21 @@ function normalizeSleepBoundary(row: unknown): SleepBoundary | undefined {
   return {
     id: Number(value.id),
     occurredAt: value.occurredAt,
+    occurredAtUtc: value.occurredAtUtc || undefined,
     source: value.source,
-    createdAt: value.createdAt
+    createdAt: value.createdAt,
+    createdAtUtc: value.createdAtUtc || undefined
+  };
+}
+
+function normalizeSleepPreparationBoundary(row: unknown): SleepPreparationBoundary | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as SleepPreparationBoundary;
+  return {
+    id: Number(value.id),
+    occurredAt: value.occurredAt,
+    occurredAtUtc: value.occurredAtUtc || undefined,
+    createdAt: value.createdAt,
+    createdAtUtc: value.createdAtUtc || undefined
   };
 }

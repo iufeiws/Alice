@@ -5,6 +5,7 @@ import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
+import { parseZonedIso } from "../../time/src/index.js";
 import { createLLMSessionTranscriptLogger, relativeLLMSessionPath } from "./llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "./prompt-layer-parser.js";
@@ -507,7 +508,9 @@ export async function runMemoryInductionForMessages(
   const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
     name: targetFilter ? targetFilter : "run",
     windowStartAt: deps.windowStartAt,
-    windowEndAt: deps.windowEndAt
+    windowEndAt: deps.windowEndAt,
+    timezone: deps.timezone,
+    nowIso: deps.nowIso
   });
   const ownsMemorySession = deps.memorySession === undefined;
   for (const target of targets) {
@@ -668,7 +671,9 @@ async function runSingleMemoryInduction(
   const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
     name: target,
     windowStartAt: deps.windowStartAt,
-    windowEndAt: deps.windowEndAt
+    windowEndAt: deps.windowEndAt,
+    timezone: deps.timezone,
+    nowIso: deps.nowIso
   });
   session.activeTarget = target;
   const diaryDraftPath = target === "yesterdaySummary" ? deps.memoryStore.createDiaryDraft() : undefined;
@@ -1236,6 +1241,7 @@ function ensureGitRepo(dir: string): void {
 function commitLongTermMemory(root: string, target: MemoryTarget, fileName: string): void {
   const dir = path.join(root, "long-term-memory");
   try {
+    if (isLongTermMemoryGitOperationInProgress(dir)) return;
     gitExecFileSync(["add", fileName], { cwd: dir });
     const status = gitExecFileSync(["status", "--porcelain", "--", fileName], { cwd: dir, encoding: "utf8" });
     if (!status.trim()) return;
@@ -1248,6 +1254,7 @@ function commitLongTermMemory(root: string, target: MemoryTarget, fileName: stri
 function commitLongTermMemoryBaseline(root: string): void {
   const dir = path.join(root, "long-term-memory");
   try {
+    if (isLongTermMemoryGitOperationInProgress(dir)) return;
     gitExecFileSync(["add", targetFiles.persistent, targetFiles.userPreferences], { cwd: dir });
     const status = gitExecFileSync(["status", "--porcelain", "--", targetFiles.persistent, targetFiles.userPreferences], { cwd: dir, encoding: "utf8" });
     if (!status.trim()) return;
@@ -1255,6 +1262,18 @@ function commitLongTermMemoryBaseline(root: string): void {
   } catch {
     // Keep the write path non-fatal if git is unavailable or not configured.
   }
+}
+
+function isLongTermMemoryGitOperationInProgress(dir: string): boolean {
+  const gitDir = path.join(dir, ".git");
+  return [
+    "MERGE_HEAD",
+    "REVERT_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REBASE_HEAD",
+    "rebase-merge",
+    "rebase-apply"
+  ].some((name) => fs.existsSync(path.join(gitDir, name)));
 }
 
 function gitExecFileSync(args: string[], options: { cwd: string; encoding?: BufferEncoding }): string {
@@ -1273,7 +1292,7 @@ function gitExecFileSync(args: string[], options: { cwd: string; encoding?: Buff
 export function createMemoryInductionSession(
   root: string | undefined,
   time: string,
-  options: { name: string; windowStartAt?: string; windowEndAt: string }
+  options: { name: string; windowStartAt?: string; windowEndAt: string; timezone: string; nowIso: () => string }
 ): MemoryInductionSession {
   const session: MemoryInductionSession = {
     messages: [],
@@ -1284,6 +1303,11 @@ export function createMemoryInductionSession(
   const logger = createLLMSessionTranscriptLogger({
     root,
     time,
+    timeUtc: parseZonedIso(time, options.timezone).toISOString(),
+    now: () => {
+      const current = options.nowIso();
+      return { time: current, timeUtc: parseZonedIso(current, options.timezone).toISOString() };
+    },
     namespace: "memorize",
     name: options.name,
     metadata: (state) => {
@@ -1298,7 +1322,9 @@ export function createMemoryInductionSession(
         windowStartAt: options.windowStartAt,
         windowEndAt: options.windowEndAt,
         startedAt: time,
+        startedAtUtc: state.startedAtUtc,
         updatedAt: state.updatedAt,
+        updatedAtUtc: state.updatedAtUtc,
         requestCount: state.requestCount,
         responseCount: state.responseCount,
         currentRound: state.currentRound,
@@ -1309,6 +1335,7 @@ export function createMemoryInductionSession(
         lastMessageAt: state.updatedAt,
         mode: "memorize",
         clearedAt: session.clearedAt,
+        clearedAtUtc: session.clearedAt ? parseZonedIso(session.clearedAt, options.timezone).toISOString() : undefined,
         clearReason: session.clearReason
       };
     }

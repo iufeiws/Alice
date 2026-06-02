@@ -81,6 +81,8 @@ export function appendLLMSessionJsonlMessages(filePath: string, messages: LLMCha
 export function createLLMSessionTranscriptLogger(input: {
   root: string;
   time: string;
+  timeUtc?: string;
+  now?: () => { time: string; timeUtc?: string };
   namespace?: string;
   name?: string;
   metadata: (state: LLMSessionTranscriptLoggerState) => Record<string, unknown>;
@@ -90,7 +92,9 @@ export function createLLMSessionTranscriptLogger(input: {
     filePath,
     messages: [],
     startedAt: input.time,
+    startedAtUtc: input.timeUtc,
     updatedAt: input.time,
+    updatedAtUtc: input.timeUtc,
     requestCount: 0,
     responseCount: 0
   };
@@ -99,7 +103,8 @@ export function createLLMSessionTranscriptLogger(input: {
   return {
     filePath,
     append(entry) {
-      applyTranscriptLoggerEntry(state, entry, input.time);
+      const current = input.now?.() ?? { time: input.time, timeUtc: input.timeUtc };
+      applyTranscriptLoggerEntry(state, entry, current.time, current.timeUtc);
       write();
     }
   };
@@ -109,7 +114,9 @@ export type LLMSessionTranscriptLoggerState = {
   filePath: string;
   messages: LLMChatInput["messages"];
   startedAt: string;
+  startedAtUtc?: string;
   updatedAt: string;
+  updatedAtUtc?: string;
   requestCount: number;
   responseCount: number;
   currentRound?: Record<string, unknown>;
@@ -128,7 +135,7 @@ export function cloneLLMMessage(message: LLMMessage): LLMMessage {
   };
 }
 
-function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entry: unknown, fallbackTime: string): void {
+function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entry: unknown, fallbackTime: string, fallbackTimeUtc?: string): void {
   if (!entry || typeof entry !== "object") return;
   const raw = entry as Record<string, unknown>;
   const round = typeof raw.round === "number" ? raw.round : Math.max(0, state.requestCount - 1);
@@ -137,10 +144,12 @@ function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entr
     state.messages = cloneLLMMessages(request.messages ?? []);
     state.requestCount = Math.max(state.requestCount, round + 1);
     state.updatedAt = fallbackTime;
+    state.updatedAtUtc = fallbackTimeUtc;
     state.currentRound = {
       status: "running",
       round,
       startedAt: fallbackTime,
+      startedAtUtc: fallbackTimeUtc,
       model: request.model,
       temperature: request.temperature,
       tools: request.tools,
@@ -148,6 +157,7 @@ function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entr
     };
     state.latestRequest = {
       time: fallbackTime,
+      timeUtc: fallbackTimeUtc,
       round,
       model: request.model,
       temperature: request.temperature,
@@ -159,15 +169,18 @@ function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entr
     const response = raw.response as LLMChatResult;
     state.responseCount = Math.max(state.responseCount, round + 1);
     state.updatedAt = fallbackTime;
+    state.updatedAtUtc = fallbackTimeUtc;
     state.messages.push(cloneLLMMessage(response.message));
     state.currentRound = {
       ...(state.currentRound ?? { round, startedAt: fallbackTime }),
       status: "finished",
       round,
-      finishedAt: fallbackTime
+      finishedAt: fallbackTime,
+      finishedAtUtc: fallbackTimeUtc
     };
     state.latestResponse = {
       time: fallbackTime,
+      timeUtc: fallbackTimeUtc,
       round,
       finishReason: response.finishReason,
       usage: response.usage,
@@ -176,5 +189,6 @@ function applyTranscriptLoggerEntry(state: LLMSessionTranscriptLoggerState, entr
   } else if (raw.type === "final_messages" && Array.isArray(raw.messages)) {
     state.messages = cloneLLMMessages(raw.messages as LLMChatInput["messages"]);
     state.updatedAt = fallbackTime;
+    state.updatedAtUtc = fallbackTimeUtc;
   }
 }

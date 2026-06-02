@@ -1,4 +1,5 @@
 import * as sqlite from "./sqlite-compat.js";
+import { createCurrentTimeProvider, formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -7,6 +8,7 @@ type DatabaseSync = any;
 
 export type TokenUsageEventInput = {
   createdAt: string;
+  createdAtUtc?: string;
   agentId: string;
   model?: string;
   sessionId?: number;
@@ -23,6 +25,7 @@ export type TokenUsageEventInput = {
 
 export type StoredTokenUsageEvent = Required<Pick<TokenUsageEventInput, "createdAt" | "agentId">> & {
   id: number;
+  createdAtUtc?: string;
   model?: string;
   sessionId?: number;
   requestId?: number;
@@ -80,7 +83,8 @@ export type TokenUsageStore = {
   report(query?: TokenUsageQuery): TokenUsageReport;
 };
 
-export function createTokenUsageStore(dbPath: string): TokenUsageStore {
+export function createTokenUsageStore(dbPath: string, options: { time?: CurrentTimeProvider } = {}): TokenUsageStore {
+  const time = options.time ?? createCurrentTimeProvider("UTC");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db: DatabaseSync = new sqlite.DatabaseSync(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
@@ -88,6 +92,7 @@ export function createTokenUsageStore(dbPath: string): TokenUsageStore {
     CREATE TABLE IF NOT EXISTS token_usage_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       created_at TEXT NOT NULL,
+      created_at_utc TEXT,
       agent_id TEXT NOT NULL,
       model TEXT,
       session_id INTEGER,
@@ -107,18 +112,24 @@ export function createTokenUsageStore(dbPath: string): TokenUsageStore {
     CREATE INDEX IF NOT EXISTS token_usage_agent_model_idx ON token_usage_events(agent_id, model, created_at);
     PRAGMA user_version = 1;
   `);
+  const columns = db.prepare("PRAGMA table_info(token_usage_events)").all().map((row: any) => row.name);
+  addColumnIfMissing(db, columns, "created_at_utc", "ALTER TABLE token_usage_events ADD COLUMN created_at_utc TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS token_usage_created_at_utc_idx ON token_usage_events(created_at_utc)");
 
   return {
     insert(input) {
       const cacheHitRate = calculateCacheHitRate(input);
+      const createdAtUtc = input.createdAtUtc ?? parseZonedIso(input.createdAt, time.timeZone).toISOString();
+      const createdAt = formatZonedIso(new Date(createdAtUtc), time.timeZone);
       const result = db.prepare(`
         INSERT INTO token_usage_events(
-          created_at, agent_id, model, session_id, request_id, response_id,
+          created_at, created_at_utc, agent_id, model, session_id, request_id, response_id,
           input_tokens, output_tokens, total_tokens, cache_hit_tokens,
           cache_miss_tokens, cache_hit_rate, finish_reason, raw_usage_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        input.createdAt,
+        createdAt,
+        createdAtUtc,
         input.agentId,
         input.model ?? null,
         input.sessionId ?? null,
@@ -196,6 +207,13 @@ function buildFilter(query: TokenUsageQuery): { where: string; values: unknown[]
   };
 }
 
+function addColumnIfMissing(db: DatabaseSync, columns: string[], name: string, statement: string): void {
+  if (!columns.includes(name)) {
+    db.exec(statement);
+    columns.push(name);
+  }
+}
+
 function aggregateSelect(): string {
   return `
     COUNT(*) AS requests,
@@ -242,6 +260,7 @@ function tokenUsageSelect(suffix: string): string {
     SELECT
       id,
       created_at AS createdAt,
+      created_at_utc AS createdAtUtc,
       agent_id AS agentId,
       model,
       session_id AS sessionId,
@@ -264,6 +283,7 @@ function rowToEvent(row: any): StoredTokenUsageEvent {
   return {
     id: Number(row.id),
     createdAt: row.createdAt,
+    createdAtUtc: optionalString(row.createdAtUtc),
     agentId: row.agentId,
     model: optionalString(row.model),
     sessionId: optionalNumber(row.sessionId),

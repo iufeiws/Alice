@@ -239,15 +239,17 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
       sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
       messages = firstUnread ? all.filter((message) => message.id >= firstUnread.id) : [];
+    } else if (scope === "today") {
+      const sleepCocoonEnteredAt = deps.getSleepCocoonEnteredAt?.();
+      const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
+      sinceDate = sleepCocoonDate ?? time.now().date;
+      messages = sleepCocoonDate
+        ? all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonDate.getTime())
+        : [];
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
-      const sleepCocoonEnteredAt = scope === "today" ? deps.getSleepCocoonEnteredAt?.() : undefined;
-      const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
-      sinceDate = sleepCocoonDate ?? new Date(after);
+      sinceDate = new Date(after);
       messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
-      if (sleepCocoonDate) {
-        messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonDate.getTime());
-      }
     }
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);

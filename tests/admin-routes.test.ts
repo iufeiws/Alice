@@ -8,10 +8,12 @@ import {
   runMemoryInductionForMessages
 } from "../core/agent/src/memory.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
+import { createDiaryStore } from "../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+const childProcess = await import("node:child_process");
 
 test("llm api preset save stores extra params as part of the preset", async () => {
   const root = makeTempDir("admin-llm-preset-extra");
@@ -406,6 +408,102 @@ test("memory run-target runs only the selected memory file", async () => {
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["userPreferences"]);
 });
 
+test("memory admin rejects concurrent run requests", async () => {
+  const root = makeTempDir("admin-memory-run-concurrent");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  let activeRuns = 0;
+  let maxActiveRuns = 0;
+  const calls: Array<{ target?: string }> = [];
+  let resolveFirstRun: () => void = () => {};
+  let resolveFirstStarted: () => void = () => {};
+  const firstRunRelease = new Promise<void>((resolve) => {
+    resolveFirstRun = resolve;
+  });
+  const firstRunStarted = new Promise<void>((resolve) => {
+    resolveFirstStarted = resolve;
+  });
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    store: {
+      listMessagesByCreatedAtRange() {
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string, windowEndAt: string, apiPreset: any, target?: string) {
+      activeRuns += 1;
+      maxActiveRuns = Math.max(maxActiveRuns, activeRuns);
+      calls.push({ target });
+      if (calls.length === 1) {
+        resolveFirstStarted();
+        await firstRunRelease;
+      }
+      activeRuns -= 1;
+      return {
+        ok: true,
+        startedAt: "2026-05-24T06:00:00.000Z",
+        windowStartAt,
+        windowEndAt,
+        messageCount: messages.length,
+        results: [{ target: target ?? "persistent", ok: true, edited: true, toolCalls: [] }]
+      };
+    }
+  });
+
+  const firstResponse = createResponse();
+  const first = handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24", runId: "first" }), firstResponse);
+  await firstRunStarted;
+
+  const secondResponse = createResponse();
+  const second = handler(createRequest("POST", "/admin/api/memory/run-target", { date: "2026-05-24", target: "userPreferences", runId: "second" }), secondResponse);
+  await second;
+
+  assert.equal(calls.length, 1);
+  assert.equal(maxActiveRuns, 1);
+  assert.equal(secondResponse.statusCode, 409);
+  assert.equal(JSON.parse(secondResponse.body).error, "memory_run_already_running");
+
+  resolveFirstRun();
+  await first;
+
+  assert.equal(calls.length, 1);
+  assert.equal(maxActiveRuns, 1);
+  assert.equal(firstResponse.statusCode, 200);
+});
+
+test("memory admin manual run requires sleeping state by default", async () => {
+  const root = makeTempDir("admin-memory-run-sleep-only");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  let calls = 0;
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
+    store: {
+      listMessagesByCreatedAtRange() {
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages() {
+      calls += 1;
+      return { ok: true, startedAt: "", windowEndAt: "", messageCount: 0, results: [] };
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24", runId: "idle" }), response);
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(JSON.parse(response.body).error, "memory_manual_run_requires_sleeping");
+  assert.equal(calls, 0);
+});
+
 test("memory clear-session clears the console memorize session", async () => {
   const root = makeTempDir("admin-memory-clear-session");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -464,12 +562,16 @@ test("memory windows include persisted sleep system messages as sleep boundaries
   assert.equal(response.statusCode, 200);
   assert.deepEqual(recorded, [{
     occurredAt: "2026-05-31T07:12:33.529",
+    occurredAtUtc: "2026-05-30T23:12:33.529Z",
     source: "sleep",
-    now: "2026-05-24T06:00:00.000Z"
+    now: "2026-05-24T06:00:00.000Z",
+    nowUtc: "2026-05-24T06:00:00.000Z"
   }]);
   assert.equal(body.sleepDays[0].date, "2026-05-31");
   assert.equal(body.sleepDays[0].startAt, "2026-05-31T03:46:02.806");
   assert.equal(body.sleepDays[0].endAt, "2026-05-31T07:12:33.529");
+  assert.equal(body.sleepDays[0].startAtUtc, "2026-05-30T19:46:02.806Z");
+  assert.equal(body.sleepDays[0].endAtUtc, "2026-05-30T23:12:33.529Z");
 });
 
 test("memory undo and redo walk memorize commits one at a time", async () => {
@@ -510,12 +612,104 @@ test("memory undo and redo walk memorize commits one at a time", async () => {
   assert.equal(memoryStore.read().userPreferences, "pref v1\n");
 });
 
+test("memory undo aborts conflicted git revert without leaving conflict markers", async () => {
+  const root = makeTempDir("admin-memory-undo-conflict");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const longTermDir = path.join(root, "long-term-memory");
+  const persistentPath = path.join(longTermDir, "persistent-memory.md");
+
+  memoryStore.writeTarget("persistent", "original memory\n");
+  fs.writeFileSync(persistentPath, "baseline changed the same line\n");
+  git(longTermDir, "add", "persistent-memory.md");
+  git(longTermDir, "commit", "-m", "memory baseline");
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
+
+  assert.equal(response.statusCode, 500);
+  assert.match(JSON.parse(response.body).error, /could not revert|CONFLICT|error/i);
+  assert.equal(fs.existsSync(path.join(longTermDir, ".git", "REVERT_HEAD")), false);
+  assert.equal(fs.readFileSync(persistentPath, "utf8"), "baseline changed the same line\n");
+  assert.doesNotMatch(fs.readFileSync(persistentPath, "utf8"), /^(<<<<<<<|=======|>>>>>>>)$/m);
+  assert.equal(git(longTermDir, "status", "--porcelain"), "");
+});
+
+test("memory undo refuses dirty long-term memory git worktree", async () => {
+  const root = makeTempDir("admin-memory-undo-dirty");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const longTermDir = path.join(root, "long-term-memory");
+
+  memoryStore.writeTarget("persistent", "persistent v1\n");
+  fs.writeFileSync(path.join(longTermDir, "persistent-memory.md"), "unsaved edit\n");
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(JSON.parse(response.body).error, "memory_git_worktree_dirty");
+  assert.equal(fs.readFileSync(path.join(longTermDir, "persistent-memory.md"), "utf8"), "unsaved edit\n");
+});
+
+test("memory delete-latest-sql removes the latest diary entry", async () => {
+  const root = makeTempDir("admin-memory-delete-latest-sql");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    diaryStore
+  });
+
+  memoryStore.writeTarget("yesterdaySummary", "older diary\n", { localDate: "2026-05-31", now: "2026-05-31T08:00:00.000Z" });
+  memoryStore.writeTarget("yesterdaySummary", "latest diary\n", { localDate: "2026-06-01", now: "2026-06-01T08:00:00.000Z" });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.entry.localDate, "2026-06-01");
+  assert.equal(memoryStore.read().yesterdaySummary, "older diary\n");
+  assert.equal(diaryStore.latestEntry()?.localDate, "2026-05-31");
+});
+
+test("memory delete-latest-sql reports when no diary entry exists", async () => {
+  const root = makeTempDir("admin-memory-delete-latest-sql-empty");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    diaryStore
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", {}), response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "no_memory_sql_record_to_delete");
+});
+
+function git(cwd: string, ...args: string[]): string {
+  const result = childProcess.spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.error?.message || `git ${args.join(" ")} failed`);
+  }
+  return result.stdout.trim();
+}
+
 function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdownMemoryStore>, promptStore: ReturnType<typeof createMemoryInductionPromptStore>) {
   return {
     config: {
       memoryFiles: { root },
       memorySummary: {
         enabled: true,
+        manualRunRequiresSleeping: true,
         baseURL: "https://default.example.test/v1",
         apiKey: "default-key",
         model: "default-memory-model",
@@ -569,7 +763,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     runMemoryInductionForMessages: async () => ({ ok: false, startedAt: "", windowEndAt: "", messageCount: 0, results: [] }),
     getDailyShell: () => "",
     dailyShellStore: { get: () => ({}), getConfig: () => ({}), render: () => "", reroll() {}, listSwitchLogs: () => [] },
-    agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
+    agentState: { getSnapshot: () => ({ state: "sleeping" }), setState() {} },
     messagingTools: emptyPlugin("messaging"),
     mediaTools: emptyPlugin("media"),
     shellTools: emptyPlugin("shell"),

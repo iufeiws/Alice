@@ -153,7 +153,8 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     });
     try {
       const sent = await deps.outputRouter.send(output);
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().date.toISOString());
+      const sentAtUtc = time.now().date.toISOString();
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAtUtc, extractSentMessageCreatedAtUtc(sent));
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -265,6 +266,14 @@ function extractSentMessageId(value: unknown): string | undefined {
   if (value && typeof value === "object" && "messageId" in value) {
     const messageId = (value as { messageId?: unknown }).messageId;
     return typeof messageId === "string" ? messageId : undefined;
+  }
+  return undefined;
+}
+
+function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
+  if (value && typeof value === "object" && "createdAtUtc" in value) {
+    const createdAtUtc = (value as { createdAtUtc?: unknown }).createdAtUtc;
+    return typeof createdAtUtc === "string" ? createdAtUtc : undefined;
   }
   return undefined;
 }

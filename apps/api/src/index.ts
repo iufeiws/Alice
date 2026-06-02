@@ -42,6 +42,7 @@ import { createMessageRuntime, summarizePayload } from "./message-runtime.js";
 import { createApiRequestHandler } from "./admin-routes.js";
 import { createId, type ToolDefinition } from "../../../packages/types/src/index.js";
 import { createLLMRequests } from "./llm-requests.js";
+import { acquireSingletonLock } from "./singleton-lock.js";
 
 const http = await import("node:http");
 const fs = await import("node:fs");
@@ -82,6 +83,7 @@ type LLMRequestLogEntry = {
   id: number;
   sessionId?: number;
   time: string;
+  timeUtc?: string;
   model?: string;
   temperature?: number;
   messages: LLMChatInput["messages"];
@@ -131,6 +133,7 @@ type LLMResponseLogEntry = {
   sessionId?: number;
   requestId?: number;
   time: string;
+  timeUtc?: string;
   message: LLMChatResult["message"];
   finishReason?: string;
   usage?: LLMChatResult["usage"];
@@ -149,7 +152,9 @@ type LLMSessionTurn = {
 type ActiveLLMSession = {
   id: number;
   startedAt: string;
+  startedAtUtc?: string;
   updatedAt: string;
+  updatedAtUtc?: string;
   archiveFilePath?: string;
   archiveMetadata?: Record<string, unknown>;
   requestIds: number[];
@@ -174,6 +179,7 @@ type ActiveLLMSession = {
   latestRequestInfo?: LLMSessionRequestInfo;
   latestResponseInfo?: LLMSessionResponseInfo;
   clearedAt?: string;
+  clearedAtUtc?: string;
   reason?: string;
   requests?: LLMRequestLogEntry[];
   responses?: LLMResponseLogEntry[];
@@ -183,7 +189,9 @@ type LLMSessionRoundInfo = {
   status: "running" | "finished" | "interrupted";
   round: number;
   startedAt: string;
+  startedAtUtc?: string;
   finishedAt?: string;
+  finishedAtUtc?: string;
   model?: string;
   temperature?: number;
   tools?: LLMChatInput["tools"];
@@ -192,6 +200,7 @@ type LLMSessionRoundInfo = {
 
 type LLMSessionRequestInfo = {
   time: string;
+  timeUtc?: string;
   round: number;
   model?: string;
   temperature?: number;
@@ -202,6 +211,7 @@ type LLMSessionRequestInfo = {
 
 type LLMSessionResponseInfo = {
   time: string;
+  timeUtc?: string;
   round: number;
   finishReason?: string;
   usage?: LLMChatResult["usage"];
@@ -240,6 +250,7 @@ console.error = (...args: unknown[]) => {
 
 loadDotEnv(".env");
 const config = loadConfig();
+const serviceLock = acquireSingletonLock(config.memoryFiles.root, "api");
 currentTime.setTimeZone(config.core.timezone);
 const activeLLM = createMutableLLMClient(createStubLLMClient());
 store = createAliceStore("data/alice.sqlite", {
@@ -247,7 +258,7 @@ store = createAliceStore("data/alice.sqlite", {
   messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
-tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"));
+tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"), { time: currentTime });
 systemLogStore = createFileLogStore("logs/system", { getTimeZone: () => currentTime.timeZone });
 for (const entry of systemLogStore.listRecent(500)) {
   logs.push(entry);
@@ -271,10 +282,25 @@ const agentState = createAgentStateController({
 let previousAgentBehaviorState = agentState.getSnapshot().state;
 let pendingSleepCocoonMorningEvent: ReturnType<typeof buildSleepCocoonGeneratedEvent> | undefined;
 let sleepMemoryInductionQueue: Promise<void> = Promise.resolve();
+let memoryInductionActive = false;
 agentState.onChange((snapshot) => {
   if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
-    const now = currentTime.now().iso;
-    diaryStore.recordSleepBoundary({ occurredAt: now, source: "sleep", now });
+    const now = currentTime.now();
+    diaryStore.recordSleepBoundary({
+      occurredAt: now.iso,
+      occurredAtUtc: now.date.toISOString(),
+      source: "sleep",
+      now: now.iso,
+      nowUtc: now.date.toISOString()
+    });
+    if (snapshot.sleepCocoonEnteredAt) {
+      diaryStore.recordSleepPreparationBoundary({
+        occurredAt: snapshot.sleepCocoonEnteredAt,
+        occurredAtUtc: snapshot.sleepCocoonEnteredAtUtc,
+        now: now.iso,
+        nowUtc: now.date.toISOString()
+      });
+    }
     core.clearLLMSession("mode_transition");
     if (snapshot.reason === "sleep_started") void sendSystemNoticeToDefaultTarget("-少女已入眠-");
     void triggerSleepMemoryInduction();
@@ -335,7 +361,7 @@ const messagingTools = createMessagingTools({
   voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
-  getSleepCocoonEnteredAt: () => agentState.getSnapshot().sleepCocoonEnteredAt,
+  getSleepCocoonEnteredAt: () => diaryStore.latestSleepPreparationBoundary()?.occurredAt,
   getDefaultTarget() {
     return getDefaultMessagingTarget();
   },
@@ -418,8 +444,10 @@ const llmRequests = createLLMRequests({
       return;
     }
     appendLLMUsageLog(result, result.model ?? request.model);
+    const createdTime = currentTime.now();
     recordTokenUsageEvent({
-      createdAt: currentTime.now().iso,
+      createdAt: createdTime.iso,
+      createdAtUtc: createdTime.date.toISOString(),
       agentId: input.agentId,
       model: result.model ?? request.model,
       result
@@ -584,6 +612,24 @@ const server = http.createServer(createApiRequestHandler({
   diaryStore,
   memoryInductionPromptStore,
   async runMemoryInductionForMessages(messages, windowStartAt, windowEndAt, apiPreset, target, onRound) {
+    if (memoryInductionActive) {
+      return {
+        ok: false,
+        startedAt: currentTime.now().iso,
+        windowStartAt,
+        windowEndAt,
+        messageCount: messages.length,
+        results: [{
+          target: target ?? "persistent",
+          ok: false,
+          edited: false,
+          rounds: 0,
+          error: "memory_induction_already_running",
+          toolCalls: []
+        }]
+      };
+    }
+    memoryInductionActive = true;
     const memoryConfig = apiPreset ? {
       ...config.memorySummary,
       baseURL: apiPreset.baseURL,
@@ -599,23 +645,27 @@ const server = http.createServer(createApiRequestHandler({
     const memorySession = target
       ? ensureMemoryConsoleSession(windowEndAt, windowStartAt)
       : undefined;
-    return runMemoryInductionForMessages({
-      memoryStore,
-      promptStore: memoryInductionPromptStore,
-      messages,
-      windowStartAt,
-      windowEndAt,
-      llm: memoryLLM,
-      llmRequestSender: llmRequests.send,
-      config: memoryConfig,
-      nowIso: () => currentTime.now().iso,
-      timezone: currentTime.timeZone,
-      userName: promptProfileStore.get().userName,
-      sessionRoot: llmSessionsRoot(),
-      memorySession,
-      onRound,
-      log: appendLog
-    }, target);
+    try {
+      return await runMemoryInductionForMessages({
+        memoryStore,
+        promptStore: memoryInductionPromptStore,
+        messages,
+        windowStartAt,
+        windowEndAt,
+        llm: memoryLLM,
+        llmRequestSender: llmRequests.send,
+        config: memoryConfig,
+        nowIso: () => currentTime.now().iso,
+        timezone: currentTime.timeZone,
+        userName: promptProfileStore.get().userName,
+        sessionRoot: llmSessionsRoot(),
+        memorySession,
+        onRound,
+        log: appendLog
+      }, target);
+    } finally {
+      memoryInductionActive = false;
+    }
   },
   getDailyShell: () => dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
   dailyShellStore,
@@ -668,10 +718,15 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
       await messageRuntime.flushAll();
       await core.stop();
     } finally {
+      serviceLock.release();
       server.close(() => process.exit(0));
     }
   });
 }
+
+process.on("beforeExit", () => {
+  serviceLock.release();
+});
 
 function appendLog(level: LogLevel, message: string): void {
   const now = currentTime.now();
@@ -835,6 +890,7 @@ async function triggerSleepMemoryInduction(): Promise<void> {
 }
 
 async function runQueuedSleepMemoryInduction(): Promise<void> {
+  memoryInductionActive = true;
   try {
     const memoryPreset = resolvePromptApiPreset("memorize");
     const memoryConfig = memoryPreset ? {
@@ -867,6 +923,8 @@ async function runQueuedSleepMemoryInduction(): Promise<void> {
   } catch (error) {
     appendLog("error", `sleep Memorize failed: ${error instanceof Error ? error.message : String(error)}`);
     await sendMemoryFailureNoticeToFeishu();
+  } finally {
+    memoryInductionActive = false;
   }
 }
 
@@ -874,12 +932,13 @@ function appendLLMRequestLog(input: LLMChatInput): void {
   const rawRequest = buildRawLLMRequest(input);
   const previous = llmRequestLogs[llmRequestLogs.length - 1]?.rawRequest;
   const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
-  const now = currentTime.now().iso;
-  const sessionId = ensureActiveLLMSession(now).id;
+  const now = currentTime.now();
+  const sessionId = ensureActiveLLMSession(now.iso).id;
   const entry = {
     id: nextLLMRequestLogId,
     sessionId,
-    time: now,
+    time: now.iso,
+    timeUtc: now.date.toISOString(),
     model: input.model,
     temperature: input.temperature,
     messages: input.messages.map((message) => ({ ...message })),
@@ -995,12 +1054,13 @@ function estimateDeepSeekTokens(text: string): number {
 
 function appendLLMResponseLog(result: LLMChatResult): void {
   appendLLMUsageLog(result, result.model ?? resolvePromptApiPreset("core")?.model);
-  const now = currentTime.now().iso;
+  const now = currentTime.now();
   const entry = {
     id: nextLLMResponseLogId,
     sessionId: activeLLMSession?.id,
     requestId: activeLLMSession?.requestIds.at(-1),
-    time: now,
+    time: now.iso,
+    timeUtc: now.date.toISOString(),
     message: { ...result.message },
     finishReason: result.finishReason,
     usage: result.usage,
@@ -1018,6 +1078,7 @@ function appendLLMResponseLog(result: LLMChatResult): void {
 function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult): void {
   recordTokenUsageEvent({
     createdAt: entry.time,
+    createdAtUtc: entry.timeUtc,
     agentId: "core",
     model: result.model ?? resolvePromptApiPreset("core")?.model,
     sessionId: entry.sessionId,
@@ -1029,6 +1090,7 @@ function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult): vo
 
 function recordTokenUsageEvent(input: {
   createdAt: string;
+  createdAtUtc?: string;
   agentId: string;
   model?: string;
   sessionId?: number;
@@ -1040,6 +1102,7 @@ function recordTokenUsageEvent(input: {
   try {
     tokenUsageStore?.insert({
       createdAt: input.createdAt,
+      createdAtUtc: input.createdAtUtc,
       agentId: input.agentId,
       model: input.model,
       sessionId: input.sessionId,
@@ -1129,7 +1192,9 @@ function ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string)
     memoryConsoleSession = createMemoryInductionSession(llmSessionsRoot(), windowEndAt, {
       name: "console",
       windowStartAt,
-      windowEndAt
+      windowEndAt,
+      timezone: currentTime.timeZone,
+      nowIso: () => currentTime.now().iso
     });
   }
   return memoryConsoleSession;
@@ -1142,10 +1207,13 @@ function clearMemoryInductionSession(): void {
 
 function ensureActiveLLMSession(time: string): ActiveLLMSession {
   if (!activeLLMSession) {
+    const timeUtc = parseZonedIso(time, currentTime.timeZone).toISOString();
     activeLLMSession = {
       id: nextLLMSessionId,
       startedAt: time,
+      startedAtUtc: timeUtc,
       updatedAt: time,
+      updatedAtUtc: timeUtc,
       archiveFilePath: createLLMSessionFilePath(time),
       requestIds: [],
       responseIds: [],
@@ -1165,6 +1233,7 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
   const session = ensureActiveLLMSession(entry.time);
   entry.sessionId = session.id;
   session.updatedAt = entry.time;
+  session.updatedAtUtc = entry.timeUtc;
   session.requestIds.push(entry.id);
   session.latestRequest = entry.rawRequest;
   session.requests = [...(session.requests ?? []), archiveRequestEntry(entry)];
@@ -1173,6 +1242,7 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
     status: "running",
     round,
     startedAt: entry.time,
+    startedAtUtc: entry.timeUtc,
     model: entry.model,
     temperature: entry.temperature,
     tools: cloneLLMTools(entry.tools),
@@ -1180,6 +1250,7 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
   };
   session.latestRequestInfo = {
     time: entry.time,
+    timeUtc: entry.timeUtc,
     round,
     model: entry.model,
     temperature: entry.temperature,
@@ -1193,6 +1264,7 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
 function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
   if (!activeLLMSession) return;
   activeLLMSession.updatedAt = entry.time;
+  activeLLMSession.updatedAtUtc = entry.timeUtc;
   activeLLMSession.responseIds.push(entry.id);
   activeLLMSession.responses = [...(activeLLMSession.responses ?? []), entry];
   const round = activeLLMSession.currentRound?.round ?? Math.max(0, activeLLMSession.requestIds.length - 1);
@@ -1200,10 +1272,12 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
     ...(activeLLMSession.currentRound ?? { round, startedAt: entry.time }),
     status: "finished",
     round,
-    finishedAt: entry.time
+    finishedAt: entry.time,
+    finishedAtUtc: entry.timeUtc
   };
   activeLLMSession.latestResponseInfo = {
     time: entry.time,
+    timeUtc: entry.timeUtc,
     round,
     finishReason: entry.finishReason,
     usage: entry.usage,
@@ -1213,9 +1287,12 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
 }
 
 function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {
-  const now = currentTime.now().iso;
+  const current = currentTime.now();
+  const now = current.iso;
+  const nowUtc = current.date.toISOString();
   const session = ensureActiveLLMSession(now);
   session.updatedAt = now;
+  session.updatedAtUtc = nowUtc;
   const commonPrefix = commonMessagePrefixLength(session.messages, input.messages);
   const isAppend = commonPrefix === session.messages.length;
   const delta = input.messages.slice(commonPrefix);
@@ -1240,6 +1317,7 @@ function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPr
     || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
   if (!isAppend) {
     session.clearedAt = now;
+    session.clearedAtUtc = nowUtc;
     session.reason = "transcript_replaced";
     writeLLMSessionMetadata(session);
     clearCurrentLLMSessionPointer();
@@ -1273,7 +1351,9 @@ function clearActiveLLMSession(reason: LLMSessionClearReason): void {
   }
   const sessionId = activeLLMSession.id;
   const requestCount = activeLLMSession.requestIds.length;
-  activeLLMSession.clearedAt = currentTime.now().iso;
+  const clearedTime = currentTime.now();
+  activeLLMSession.clearedAt = clearedTime.iso;
+  activeLLMSession.clearedAtUtc = clearedTime.date.toISOString();
   activeLLMSession.reason = reason;
   writeLLMSessionMetadata(activeLLMSession);
   clearCurrentLLMSessionPointer();
@@ -1369,7 +1449,9 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
     schemaVersion: 1,
     sessionId: session.id,
     startedAt: session.startedAt,
+    startedAtUtc: session.startedAtUtc,
     updatedAt: session.updatedAt,
+    updatedAtUtc: session.updatedAtUtc,
     staticPromptFingerprint: session.staticPromptFingerprint,
     staticPromptMessageCount: session.staticPromptMessageCount ?? 0,
     requestTimestamps: session.requestTimestamps,
@@ -1391,6 +1473,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
     lastMessageRole: last?.role,
     lastMessageAt: session.updatedAt,
     clearedAt: session.clearedAt,
+    clearedAtUtc: session.clearedAtUtc,
     clearReason: session.reason
   };
 }
@@ -1476,7 +1559,9 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
     return {
       id: metadata.sessionId,
       startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
+      startedAtUtc: typeof metadata.startedAtUtc === "string" ? metadata.startedAtUtc : undefined,
       updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
+      updatedAtUtc: typeof metadata.updatedAtUtc === "string" ? metadata.updatedAtUtc : undefined,
       archiveFilePath: filePath,
       archiveMetadata: metadata,
       requestIds: [],
@@ -1501,6 +1586,7 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
       latestRequestInfo: parseRequestInfo(metadata.latestRequest),
       latestResponseInfo: parseResponseInfo(metadata.latestResponse),
       clearedAt: typeof metadata.clearedAt === "string" ? metadata.clearedAt : undefined,
+      clearedAtUtc: typeof metadata.clearedAtUtc === "string" ? metadata.clearedAtUtc : undefined,
       reason: typeof metadata.clearReason === "string" ? metadata.clearReason : undefined,
       requests: [],
       responses: []

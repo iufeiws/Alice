@@ -10,6 +10,7 @@ import {
   splitMessagesByLongGaps
 } from "../core/agent/src/memory.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
+import { createDiaryStore } from "../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
@@ -36,6 +37,33 @@ test("memory store bootstraps files and enforces line and byte limits", () => {
   assert.equal(new TextEncoder().encode(limited.userPreferences).length <= 8 * 1024, true);
   assert.equal(new TextEncoder().encode(limited.yesterdaySummary).length <= 2 * 1024, true);
   assert.equal(limited.yesterdaySummary.trim().split("\n").length, 20);
+});
+
+test("diary store keeps sleep preparation boundaries as a stack", () => {
+  const root = makeTempDir("diary-sleep-preparation-boundaries");
+  const store = createDiaryStore(path.join(root, "diary.sqlite"));
+
+  const first = store.recordSleepPreparationBoundary({
+    occurredAt: "2026-05-24T23:00:00.000",
+    occurredAtUtc: "2026-05-24T15:00:00.000Z",
+    now: "2026-05-24T23:00:00.000",
+    nowUtc: "2026-05-24T15:00:00.000Z"
+  });
+  const second = store.recordSleepPreparationBoundary({
+    occurredAt: "2026-05-25T01:00:00.000",
+    occurredAtUtc: "2026-05-24T17:00:00.000Z",
+    now: "2026-05-25T01:00:00.000",
+    nowUtc: "2026-05-24T17:00:00.000Z"
+  });
+
+  assert.equal(store.latestSleepPreparationBoundary()?.id, second.id);
+  assert.deepEqual(store.listSleepPreparationBoundaries().map((boundary) => boundary.id), [first.id, second.id]);
+
+  const deleted = store.deleteLatestSleepPreparationBoundary();
+
+  assert.equal(deleted?.id, second.id);
+  assert.equal(store.latestSleepPreparationBoundary()?.id, first.id);
+  assert.deepEqual(store.listSleepPreparationBoundaries().map((boundary) => boundary.id), [first.id]);
 });
 
 test("apply_patch normalizes configured fullwidth characters in written memory", async () => {

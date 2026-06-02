@@ -43,6 +43,24 @@ test("sleep_cocoon in enters going_to_sleep and stores sleep pointers", async ()
   assert.equal(controller.getSnapshot().sleepDurationMs, 8 * 60 * 60 * 1000);
 });
 
+test("sleep_cocoon in caches the preparation boundary in state until sleep starts", async () => {
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => new Date("2026-05-25T01:00:00.000Z"),
+    random: () => 0
+  });
+  const tools = createSleepCocoonTools({
+    agentState: controller,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T01:00:00.000Z")),
+    random: () => 0
+  });
+
+  await tools.execute({ id: "call_in_boundary", toolName: "sleep_cocoon", input: { action: "in" } });
+
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T01:00:00.000");
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAtUtc, "2026-05-25T01:00:00.000Z");
+});
+
 test("sleep_cocoon in clears previous auto trigger pointers", async () => {
   const controller = createAgentStateController({
     store: memoryStore(JSON.stringify({

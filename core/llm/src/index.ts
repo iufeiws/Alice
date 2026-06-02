@@ -196,24 +196,26 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   ): Promise<LLMChatResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
-    const response = await fetch(`${baseURL}${path}`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({ ...body, stream: true })
-    });
-
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let completed = false;
     try {
+      const response = await fetch(`${baseURL}${path}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({ ...body, stream: true })
+      });
+
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${text}`);
       }
       if (!response.body) throw new Error("LLM stream response did not include a body");
 
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let id: string | undefined;
@@ -283,6 +285,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       }
       buffer += decoder.decode();
       if (buffer.trim()) await processLine(buffer);
+      completed = true;
 
       return {
         id,
@@ -302,6 +305,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       };
     } finally {
       clearTimeout(timeout);
+      if (!completed) {
+        try {
+          await reader?.cancel();
+        } catch {
+          // The stream may already be aborted or locked by the runtime.
+        }
+        controller.abort();
+      }
     }
   }
 

@@ -147,6 +147,8 @@ test("memory page shows selected day chat with undo and redo actions", () => {
   assert.match(html, /\/admin\/api\/memory\/undo-last/);
   assert.match(html, /id="memory-redo-last"/);
   assert.match(html, /\/admin\/api\/memory\/redo-last/);
+  assert.match(html, /id="memory-delete-latest-sql"/);
+  assert.match(html, /\/admin\/api\/memory\/delete-latest-sql/);
   assert.match(html, /id="memory-clear-session"/);
   assert.match(html, /\/admin\/api\/memory\/clear-session/);
   assert.match(html, /data-memory-run=/);

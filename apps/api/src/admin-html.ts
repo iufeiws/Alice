@@ -403,6 +403,7 @@ export function renderAdminHtmlV2(): string {
               <button type="button" id="memory-clear-session" class="secondary">Clear Session</button>
               <button type="button" id="memory-undo-last" class="secondary">撤销</button>
               <button type="button" id="memory-redo-last" class="secondary">重做</button>
+              <button type="button" id="memory-delete-latest-sql" class="secondary">删除最新SQL记录</button>
             </div>
             <div class="memory-day-layout">
               <div class="memory-calendar" id="memoryCalendar"></div>
@@ -1765,7 +1766,10 @@ Timing:
           $("memoryDayMessages").textContent = "Chat load failed: " + (payload.error || "unknown error");
           return;
         }
-        $("memoryDayMessages").innerHTML = '<div class="log-line">Window: ' + escapeHtml(payload.startAt || "") + ' -> ' + escapeHtml(payload.endAt || "") + '</div>' + renderMemoryDayMessages(payload);
+        const utcWindow = payload.startAtUtc || payload.endAtUtc
+          ? ' utc=' + escapeHtml(payload.startAtUtc || "") + ' -> ' + escapeHtml(payload.endAtUtc || "")
+          : "";
+        $("memoryDayMessages").innerHTML = '<div class="log-line">Window: ' + escapeHtml(payload.startAt || "") + ' -> ' + escapeHtml(payload.endAt || "") + utcWindow + '</div>' + renderMemoryDayMessages(payload);
       }
 
       function renderMemoryDayMessages(payload) {
@@ -1896,6 +1900,13 @@ Timing:
         $("memory-status").textContent = "Redoing latest undone long-term memory git commit...";
         const result = await fetch("/admin/api/memory/redo-last", { method: "POST" }).then((res) => res.json());
         $("memory-status").textContent = result.ok ? "Memory redo complete: " + (result.commit || "") : "Memory redo failed: " + (result.error || "unknown error");
+        await refreshMemory();
+      }
+
+      async function deleteLatestMemorySqlRecord() {
+        $("memory-status").textContent = "Deleting latest memory SQL record...";
+        const result = await fetch("/admin/api/memory/delete-latest-sql", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Deleted latest SQL record: " + (result.entry?.localDate || result.entry?.id || "") : "Delete latest SQL record failed: " + (result.error || "unknown error");
         await refreshMemory();
       }
 
@@ -2751,6 +2762,7 @@ Timing:
       $("memory-clear-session").addEventListener("click", clearMemorySession);
       $("memory-undo-last").addEventListener("click", undoLastMemoryRun);
       $("memory-redo-last").addEventListener("click", redoLastMemoryRun);
+      $("memory-delete-latest-sql").addEventListener("click", deleteLatestMemorySqlRecord);
       $("memoryRunDate").addEventListener("change", async () => {
         memoryCalendarMonth = $("memoryRunDate").value.slice(0, 7);
         renderMemoryCalendar();

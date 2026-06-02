@@ -13,6 +13,7 @@ export type LLMConfig = {
 
 export type MemorySummaryConfig = {
   enabled: boolean;
+  manualRunRequiresSleeping?: boolean;
   baseURL: string;
   apiKey?: string;
   model: string;
@@ -191,6 +192,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     },
     memorySummary: {
       enabled: bool(env.MEMORY_SUMMARY_ENABLED, true),
+      manualRunRequiresSleeping: bool(env.MEMORY_MANUAL_RUN_REQUIRES_SLEEPING, true),
       baseURL: (env.MEMORY_SUMMARY_BASE_URL ?? llmBaseURL ?? "https://api.deepseek.com").replace(/\/+$/, ""),
       apiKey: env.MEMORY_SUMMARY_API_KEY ?? env.DEEPSEEK_API_KEY ?? llmApiKey,
       model: env.MEMORY_SUMMARY_MODEL ?? "deepseek-v4-pro",

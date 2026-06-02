@@ -55,7 +55,7 @@ type MemoryRunProgress = {
   id: string;
   date: string;
   target?: MemoryTarget;
-  status: "running" | "complete" | "failed";
+  status: "running" | "complete" | "failed" | "rejected";
   rounds: Partial<Record<MemoryTarget, number>>;
   tools: Partial<Record<MemoryTarget, string>>;
   roundStartedAt: Partial<Record<MemoryTarget, string>>;
@@ -63,6 +63,7 @@ type MemoryRunProgress = {
 };
 
 const memoryRunProgress = new Map<string, MemoryRunProgress>();
+let memoryAdminRunActive = false;
 
 type AdminPluginKind = "channel" | "tool" | "voice" | "presentation";
 type AdminPluginStatus = "enabled" | "disabled" | "planned" | "external_config" | "missing_config" | "error";
@@ -342,6 +343,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         context.clearMemoryInductionSession();
         context.appendLog("info", "memorize console session clear requested");
         writeJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/memory/delete-latest-sql") {
+        deleteLatestMemorySqlRecord(context, response);
         return;
       }
 
@@ -1338,7 +1344,17 @@ async function listMemoryDayMessages(context: AdminRoutesContext, request: any, 
     timeZone: context.time.timeZone,
     userName: context.promptProfileStore.get().userName || "user"
   });
-  writeJson(response, 200, { ok: true, date, startAt, endAt, source: window.source, content, messages });
+  writeJson(response, 200, {
+    ok: true,
+    date,
+    startAt,
+    endAt,
+    startAtUtc: window.startAtUtc,
+    endAtUtc: window.endAtUtc,
+    source: window.source,
+    content,
+    messages
+  });
 }
 
 async function runMemoryDay(context: AdminRoutesContext, request: any, response: any): Promise<void> {
@@ -1385,17 +1401,32 @@ async function runMemoryForDate(
     writeJson(response, 400, { ok: false, error: "memorize_preset_required" });
     return;
   }
+  if (context.config.memorySummary.manualRunRequiresSleeping !== false && context.agentState.getSnapshot().state !== "sleeping") {
+    updateMemoryRunProgress(runId, date, target, "rejected");
+    writeJson(response, 409, { ok: false, error: "memory_manual_run_requires_sleeping" });
+    return;
+  }
+  if (memoryAdminRunActive) {
+    updateMemoryRunProgress(runId, date, target, "rejected");
+    writeJson(response, 409, { ok: false, error: "memory_run_already_running" });
+    return;
+  }
+  memoryAdminRunActive = true;
   updateMemoryRunProgress(runId, date, target, "running");
-  const result = await context.runMemoryInductionForMessages(messages, startAt, endAt, apiPreset, target, (roundTarget, rounds, toolStatus) => {
-    updateMemoryRunProgress(runId, date, target, "running", roundTarget, rounds, toolStatus);
-  });
-  updateMemoryRunProgress(runId, date, target, result.ok ? "complete" : "failed");
-  context.appendLog(result.ok ? "info" : "warn", `memorize ${target ?? "day"} ${date}: ${result.ok ? "ok" : "failed"} messages=${messages.length}`);
-  writeJson(response, result.ok ? 200 : 400, {
-    ok: result.ok,
-    result,
-    files: context.memoryStore.stats()
-  });
+  try {
+    const result = await context.runMemoryInductionForMessages(messages, startAt, endAt, apiPreset, target, (roundTarget, rounds, toolStatus) => {
+      updateMemoryRunProgress(runId, date, target, "running", roundTarget, rounds, toolStatus);
+    });
+    updateMemoryRunProgress(runId, date, target, result.ok ? "complete" : "failed");
+    context.appendLog(result.ok ? "info" : "warn", `memorize ${target ?? "day"} ${date}: ${result.ok ? "ok" : "failed"} messages=${messages.length}`);
+    writeJson(response, result.ok ? 200 : 400, {
+      ok: result.ok,
+      result,
+      files: context.memoryStore.stats()
+    });
+  } finally {
+    memoryAdminRunActive = false;
+  }
 }
 
 function updateMemoryRunProgress(
@@ -1458,7 +1489,8 @@ function undoLastMemoryGitCommit(context: AdminRoutesContext, response: any): vo
       return;
     }
     removeEmptyUntrackedMemoryFiles(dir);
-    gitExecFileSync(["revert", "--no-edit", target.commit], { cwd: dir });
+    ensureMemoryGitClean(dir);
+    revertMemoryGitCommit(dir, target.commit);
     context.appendLog("info", `memory git undo: reverted ${target.shortCommit} ${target.subject}`);
     writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
   } catch (error) {
@@ -1480,12 +1512,23 @@ function redoLastMemoryGitCommit(context: AdminRoutesContext, response: any): vo
       return;
     }
     removeEmptyUntrackedMemoryFiles(dir);
-    gitExecFileSync(["revert", "--no-edit", target.commit], { cwd: dir });
+    ensureMemoryGitClean(dir);
+    revertMemoryGitCommit(dir, target.commit);
     context.appendLog("info", `memory git redo: reverted ${target.shortCommit} ${target.subject}`);
     writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
   } catch (error) {
     writeJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "memory_git_redo_failed" });
   }
+}
+
+function deleteLatestMemorySqlRecord(context: AdminRoutesContext, response: any): void {
+  const entry = context.diaryStore.deleteLatestEntry();
+  if (!entry) {
+    writeJson(response, 400, { ok: false, error: "no_memory_sql_record_to_delete" });
+    return;
+  }
+  context.appendLog("info", `memory sql delete latest diary entry: ${entry.localDate}`);
+  writeJson(response, 200, { ok: true, entry, files: context.memoryStore.stats() });
 }
 
 type MemoryGitLogEntry = {
@@ -1585,6 +1628,30 @@ function removeEmptyUntrackedMemoryFiles(dir: string): void {
   }
 }
 
+function ensureMemoryGitClean(dir: string): void {
+  const status = gitExecFileSync(["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).trim();
+  if (!status) return;
+  throw new Error("memory_git_worktree_dirty");
+}
+
+function revertMemoryGitCommit(dir: string, commit: string): void {
+  try {
+    gitExecFileSync(["revert", "--no-edit", commit], { cwd: dir });
+  } catch (error) {
+    abortMemoryGitRevert(dir);
+    throw error;
+  }
+}
+
+function abortMemoryGitRevert(dir: string): void {
+  if (!fs.existsSync(path.join(dir, ".git", "REVERT_HEAD"))) return;
+  try {
+    gitExecFileSync(["revert", "--abort"], { cwd: dir });
+  } catch {
+    // Preserve the original revert error for the API response.
+  }
+}
+
 function gitExecFileSync(args: string[], options: { cwd: string; encoding?: BufferEncoding }): string {
   const result = childProcess.spawnSync("git", args, {
     cwd: options.cwd,
@@ -1598,19 +1665,21 @@ function gitExecFileSync(args: string[], options: { cwd: string; encoding?: Buff
   return result.stdout?.toString() ?? "";
 }
 
-function memoryDayWindow(date: string, timeZone: string): { startAt: string; endAt: string; source: "calendar" } {
+function memoryDayWindow(date: string, timeZone: string): { startAt: string; endAt: string; startAtUtc: string; endAtUtc: string; source: "calendar" } {
   const startAt = `${date}T00:00:00.000`;
-  const endAt = formatZonedIso(new Date(parseZonedIso(startAt, timeZone).getTime() + 24 * 60 * 60 * 1000), timeZone);
-  return { startAt, endAt, source: "calendar" };
+  const startDate = parseZonedIso(startAt, timeZone);
+  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+  const endAt = formatZonedIso(endDate, timeZone);
+  return { startAt, endAt, startAtUtc: startDate.toISOString(), endAtUtc: endDate.toISOString(), source: "calendar" };
 }
 
 function resolveMemorySleepWindow(
   context: AdminRoutesContext,
   date: string
-): { startAt: string; endAt: string; source: SleepBoundary["source"] | "calendar" } | undefined {
+): { startAt: string; endAt: string; startAtUtc?: string; endAtUtc?: string; source: SleepBoundary["source"] | "calendar" } | undefined {
   const sleepDays = ensureMemorySleepBoundaries(context);
   const option = sleepDays.find((day) => day.date === date);
-  if (option) return { startAt: option.startAt, endAt: option.endAt, source: option.source };
+  if (option) return { startAt: option.startAt, endAt: option.endAt, startAtUtc: option.startAtUtc, endAtUtc: option.endAtUtc, source: option.source };
   return sleepDays.length === 0 ? memoryDayWindow(date, context.time.timeZone) : undefined;
 }
 
@@ -1618,6 +1687,8 @@ function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
   date: string;
   startAt: string;
   endAt: string;
+  startAtUtc?: string;
+  endAtUtc?: string;
   source: SleepBoundary["source"];
   messageCount?: number;
 }> {
@@ -1626,10 +1697,14 @@ function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
   const boundaries = context.diaryStore.listSleepBoundaries();
   return boundaries.slice(1).map((boundary, index) => {
     const previous = boundaries[index];
+    const start = boundaryInstant(previous, context.time.timeZone);
+    const end = boundaryInstant(boundary, context.time.timeZone);
     return {
       date: sleepBoundaryLocalDate(boundary, context.time.timeZone),
-      startAt: previous.occurredAt,
-      endAt: boundary.occurredAt,
+      startAt: formatZonedIso(start, context.time.timeZone),
+      endAt: formatZonedIso(end, context.time.timeZone),
+      startAtUtc: start.toISOString(),
+      endAtUtc: end.toISOString(),
       source: boundary.source
     };
   }).reverse();
@@ -1642,10 +1717,14 @@ function recordPersistedSleepMessageBoundaries(context: AdminRoutesContext): voi
   for (const message of messages) {
     if (message.contentText !== "-少女已入眠-") continue;
     if (boundaries.has(message.createdAt)) continue;
+    const occurredAtUtc = message.createdAtUtc ?? new Date(parseMessageCreatedAt(message.createdAt, context.time.timeZone)).toISOString();
+    const now = context.time.now();
     context.diaryStore.recordSleepBoundary({
       occurredAt: message.createdAt,
+      occurredAtUtc,
       source: "sleep",
-      now: context.time.now().iso
+      now: now.iso,
+      nowUtc: now.date.toISOString()
     });
     boundaries.add(message.createdAt);
   }
@@ -1656,10 +1735,15 @@ function inferSleepBoundaries(context: AdminRoutesContext): void {
   if (messages.length === 0) return;
   const segments = mergeSmallSleepSegments(splitMessagesByLongGap(messages, context.time.timeZone), context.time.timeZone);
   for (const segment of segments) {
+    const occurredAt = segment[0].createdAt;
+    const occurredAtUtc = segment[0].createdAtUtc ?? new Date(parseMessageCreatedAt(occurredAt, context.time.timeZone)).toISOString();
+    const now = context.time.now();
     context.diaryStore.recordSleepBoundary({
-      occurredAt: segment[0].createdAt,
+      occurredAt,
+      occurredAtUtc,
       source: segment === segments[0] ? "inferred_start" : "inferred_gap",
-      now: context.time.now().iso
+      now: now.iso,
+      nowUtc: now.date.toISOString()
     });
   }
 }
@@ -1702,7 +1786,11 @@ function nearestSegmentIndex(segments: StoredConversationMessage[][], index: num
 }
 
 function sleepBoundaryLocalDate(boundary: SleepBoundary, timeZone: string): string {
-  return formatZonedIso(new Date(parseMessageCreatedAt(boundary.occurredAt, timeZone)), timeZone).slice(0, 10);
+  return formatZonedIso(boundaryInstant(boundary, timeZone), timeZone).slice(0, 10);
+}
+
+function boundaryInstant(boundary: SleepBoundary, timeZone: string): Date {
+  return boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : new Date(parseMessageCreatedAt(boundary.occurredAt, timeZone));
 }
 
 function parseMessageCreatedAt(value: string, timeZone: string): number {
@@ -2900,6 +2988,9 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       corePresetName: apiProfile.corePresetName,
       memorizePresetName: apiProfile.memorizePresetName,
       presets: publicLLMApiPresets(readLLMApiPresets(context))
+    },
+    memory: {
+      manualRunRequiresSleeping: context.config.memorySummary.manualRunRequiresSleeping !== false
     },
     tts: {
       backend: context.config.tts.backend,

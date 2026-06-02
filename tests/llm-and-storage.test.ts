@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../core/llm/src/index.js";
 import { createLLMRequests } from "../apps/api/src/llm-requests.js";
+import { acquireSingletonLock } from "../apps/api/src/singleton-lock.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore } from "../packages/storage/src/token-usage-store.js";
@@ -19,6 +20,18 @@ test("mutable LLM client delegates to the latest configured client", async () =>
   client.setClient(second);
   assert.equal((await client.chat({ messages: [] })).message.content, "second");
   assert.deepEqual(await client.listModels?.(), [{ id: "second" }]);
+});
+
+test("singleton lock rejects another running process in the same memory root", () => {
+  const root = makeTempDir("singleton-lock");
+  const first = acquireSingletonLock(root, "api");
+  try {
+    assert.throws(() => acquireSingletonLock(root, "api"), /service_already_running/);
+  } finally {
+    first.release();
+  }
+  const second = acquireSingletonLock(root, "api");
+  second.release();
 });
 
 test("openai stream client processes a final SSE frame without trailing newline", async () => {
@@ -60,6 +73,88 @@ test("openai stream client processes a final SSE frame without trailing newline"
     assert.equal(result?.message.toolCalls?.[0].function.arguments, "{}");
     assert.equal(result?.message.reasoningContent, "think more");
     assert.equal(requestBody.messages[0].reasoning_content, "prior thinking");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client cancels failed streams before retry can continue", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("data: {not json}\n\n"));
+    },
+    cancel() {
+      cancelled = true;
+    }
+  });
+  globalThis.fetch = async () => new Response(stream, { status: 200 });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    assert.ok(client.chatStream);
+    await assert.rejects(() => client.chatStream!({ messages: [] }));
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client cancels when reader.read throws", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  globalThis.fetch = async () => ({
+    ok: true,
+    body: {
+      getReader() {
+        return {
+          async read() {
+            throw new Error("read failed");
+          },
+          async cancel() {
+            cancelled = true;
+          }
+        };
+      }
+    }
+  }) as unknown as Response;
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    assert.ok(client.chatStream);
+    await assert.rejects(() => client.chatStream!({ messages: [] }), /read failed/);
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client aborts requests at timeout", async () => {
+  const originalFetch = globalThis.fetch;
+  let aborted = false;
+  globalThis.fetch = (_url, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => {
+      aborted = true;
+      reject(new DOMException("aborted", "AbortError"));
+    });
+  });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test",
+      timeoutMs: 1
+    });
+    assert.ok(client.chatStream);
+    await assert.rejects(() => client.chatStream!({ messages: [] }), /aborted|AbortError/);
+    assert.equal(aborted, true);
   } finally {
     globalThis.fetch = originalFetch;
   }

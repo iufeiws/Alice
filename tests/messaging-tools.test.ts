@@ -126,6 +126,7 @@ test("check_chat defaults to recent outside llm sessions", async () => {
     store,
     outputRouter: { async send() {} },
     getUserName: () => "小王",
+    getSleepCocoonEnteredAt: () => new Date(baseTime - 1000).toISOString(),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -181,7 +182,7 @@ test("check_chat returns current time from configured timezone provider", async 
   assert.match(String(result.output), /<time>2026-05-26T12:34:56\.789<\\time>$/);
 });
 
-test("check_chat today starts at sleep cocoon pointer and todayold keeps old anchor", async () => {
+test("check_chat today only starts at sleep cocoon pointer and todayold keeps old anchor", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -216,6 +217,17 @@ test("check_chat today starts at sleep cocoon pointer and todayold keeps old anc
   const todayOld = await tools.execute({ id: "call_todayold", toolName: "check_chat", input: { scope: "todayold" } });
   assert.match(String(todayOld.output), /after old today anchor/);
   assert.match(String(todayOld.output), /after sleep cocoon/);
+
+  const toolsWithoutSleepPointer = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+  const todayWithoutSleepPointer = await toolsWithoutSleepPointer.execute({ id: "call_today_no_sleep", toolName: "check_chat", input: { scope: "today" } });
+  assert.doesNotMatch(String(todayWithoutSleepPointer.output), /after old today anchor/);
+  assert.doesNotMatch(String(todayWithoutSleepPointer.output), /after sleep cocoon/);
+  assert.match(String(todayWithoutSleepPointer.output), /nothing new/);
 });
 
 test("check_chat from_prefix reads messages after injected cursor", async () => {
@@ -274,6 +286,7 @@ test("check_chat defaults to new after first recent call in the same llm session
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -341,6 +354,7 @@ test("check_chat renders system prompts as system messages", async () => {
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:01:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -386,6 +400,7 @@ test("check_chat simplifies outbound media records", async () => {
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:01:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -443,6 +458,7 @@ test("check_chat preview does not mark messages read or advance cursor", async (
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:02:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -530,6 +546,7 @@ test("check_chat chat labels use absolute local time", async () => {
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T21:00:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-25T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -556,6 +573,7 @@ test("check_chat merges shell switch logs into chat context", async () => {
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
     getShellSwitchLogs: () => [{
       time: "2026-05-26T10:02:00.000Z",
@@ -588,6 +606,7 @@ test("check_chat new scope does not return shell logs without unread messages", 
     store,
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
     outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
     getShellSwitchLogs: () => [
       {
@@ -658,6 +677,7 @@ test("send_chat defaults to message and splits newline text into multiple sends"
         return { messageId: `sent_${sent.length}` };
       }
     },
+    getSleepCocoonEnteredAt: () => "2026-05-25T00:00:00.000",
     getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
   });
 

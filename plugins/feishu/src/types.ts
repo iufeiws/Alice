@@ -26,6 +26,32 @@ export type FeishuTextMessageEvent = {
   };
 };
 
+export type FeishuAudioMessageEvent = {
+  schema?: string;
+  header?: {
+    event_id?: string;
+    create_time?: string;
+  };
+  event: {
+    message: {
+      message_id: string;
+      chat_id: string;
+      chat_type: "p2p" | "group" | string;
+      message_type?: string;
+      msg_type?: string;
+      content: string;
+      mentions?: Array<{ id?: { open_id?: string }; name?: string; key?: string }>;
+      thread_id?: string;
+    };
+    sender: {
+      sender_id: {
+        open_id?: string;
+        user_id?: string;
+      };
+    };
+  };
+};
+
 export type FeishuMessageLifecycleEvent =
   | {
       kind: "reaction.created" | "reaction.deleted";
@@ -93,12 +119,42 @@ export type FeishuOutboundClient = {
   send(plan: FeishuSendPlan): Promise<void>;
 };
 
+export type FeishuStoredAudioAsset = {
+  assetId: string;
+  filePath: string;
+  filename?: string;
+  mimeType?: string;
+};
+
+export type FeishuAudioAssetStore = (input: {
+  fileKey: string;
+  messageId: string;
+  raw: FeishuAudioMessageEvent;
+}) => Promise<FeishuStoredAudioAsset>;
+
+export type FeishuAsrTranscriber = {
+  transcribe(input: {
+    audioFile: string;
+    filename?: string;
+    mimeType?: string;
+    language?: string;
+    provider?: "tencent" | "openai_compatible";
+    prompt?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<
+    | { text: string; provider: "tencent" | "openai_compatible"; model?: string; language?: string; durationMs?: number; requestId?: string; raw?: unknown }
+    | { ok: false; error: string; message?: string; provider?: "tencent" | "openai_compatible"; requestId?: string }
+  >;
+};
+
 export type FeishuPluginDeps = {
   onEvent(event: AgentEvent): Promise<void>;
   onLifecycleEvent?(event: FeishuMessageLifecycleEvent): Promise<void>;
   log?(level: "info" | "warn" | "error", message: string): void;
   outbound?: FeishuOutboundClient;
   pairingStore?: FeishuPairingStore;
+  storeAudioAsset?: FeishuAudioAssetStore;
+  asr?: FeishuAsrTranscriber;
   time?: CurrentTimeProvider;
 };
 

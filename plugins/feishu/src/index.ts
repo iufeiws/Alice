@@ -1,19 +1,21 @@
 import type { FeishuConfig } from "../../../packages/config/src/index.js";
 import type { AgentOutput, ChannelPlugin } from "../../../packages/types/src/index.js";
-import { createInMemoryFeishuBindingStore } from "./bindings.js";
+import { createInMemoryFeishuBindingStore, type FeishuBindingStore } from "./bindings.js";
 import { isFeishuConfigured } from "./config.js";
 import { createFeishuMonitor } from "./monitor.js";
 import { checkFeishuEventPolicy } from "./policy.js";
 import { renderForFeishu } from "./renderer.js";
-import type { FeishuMessageLifecycleEvent, FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
+import type { FeishuAudioMessageEvent, FeishuMessageLifecycleEvent, FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
 import { textMessageEventToAgentEvent } from "./handlers/message.js";
 import { reactionEventToLifecycleEvent, readEventToLifecycleEvent, recalledEventToLifecycleEvent } from "./handlers/lifecycle.js";
 import { getPairingCommand, isPairingCommand } from "./pairing.js";
 import { createRecentMessageDeduper } from "./dedupe.js";
-import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createId } from "../../../packages/types/src/index.js";
 
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
+  ingestAudioMessage(raw: FeishuAudioMessageEvent): Promise<void>;
 } {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const bindings = createInMemoryFeishuBindingStore();
@@ -22,6 +24,10 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     log: deps.log,
     time,
     async onMessage(raw) {
+      if (isFeishuAudioMessage(raw)) {
+        await receiveAudioMessage(raw);
+        return;
+      }
       await receiveTextMessage(raw as FeishuTextMessageEvent);
     },
     async onLifecycle(kind, raw) {
@@ -90,6 +96,9 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     },
     async ingestTextMessage(raw: FeishuTextMessageEvent) {
       await receiveTextMessage(raw);
+    },
+    async ingestAudioMessage(raw: FeishuAudioMessageEvent) {
+      await receiveAudioMessage(raw);
     }
   };
 
@@ -125,11 +134,32 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     }
   }
 
+  async function receiveAudioMessage(raw: FeishuAudioMessageEvent): Promise<void> {
+    try {
+      const messageId = raw.event.message.message_id;
+      if (!deduper.remember(messageId)) {
+        deps.log?.("warn", `[feishu] duplicate message ignored: ${messageId}`);
+        return;
+      }
+      queueAudioMessage(raw);
+    } catch (error) {
+      deps.log?.("error", `[feishu] failed to receive audio message: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   function queueTextMessage(event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>): void {
     Promise.resolve()
       .then(() => handleTextMessage(event))
       .catch((error) => {
         deps.log?.("error", `[feishu] failed to process message ${event.source.rawMessageId ?? event.id}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  function queueAudioMessage(raw: FeishuAudioMessageEvent): void {
+    Promise.resolve()
+      .then(() => handleAudioMessage(raw))
+      .catch((error) => {
+        deps.log?.("error", `[feishu] failed to process audio message ${raw.event.message.message_id}: ${error instanceof Error ? error.message : String(error)}`);
       });
   }
 
@@ -199,7 +229,127 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       await deps.onEvent(event);
   }
 
+  async function handleAudioMessage(raw: FeishuAudioMessageEvent): Promise<void> {
+    if (!deps.asr) {
+      deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: asr is not configured`);
+      return;
+    }
+
+    const content = parseFeishuAudioContent(raw.event.message.content);
+    if (!content.fileKey) {
+      deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: missing file_key`);
+      return;
+    }
+
+    const stored = deps.storeAudioAsset
+      ? await deps.storeAudioAsset({
+        fileKey: content.fileKey,
+        messageId: raw.event.message.message_id,
+        raw
+      })
+      : await monitor.downloadAudioResource({
+        fileKey: content.fileKey,
+        messageId: raw.event.message.message_id
+      });
+    const asrResult = await deps.asr.transcribe({
+      audioFile: stored.filePath,
+      filename: stored.filename,
+      mimeType: stored.mimeType,
+      metadata: {
+        plugin: "feishu",
+        messageId: raw.event.message.message_id,
+        chatId: raw.event.message.chat_id
+      }
+    });
+    if (!("text" in asrResult)) {
+      deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: asr ${asrResult.error}`);
+      return;
+    }
+
+    const transcript = asrResult.text.trim();
+    if (!transcript) {
+      deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: asr empty_transcription`);
+      return;
+    }
+
+    const event = await audioMessageEventToAgentEvent(raw, stored.assetId, transcript, bindings, time);
+    const decision = checkFeishuEventPolicy(config, event);
+    if (decision.allowed && config.dmPolicy === "pairing" && event.session.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
+      deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
+      return;
+    }
+    if (!decision.allowed) {
+      deps.log?.("warn", `[feishu] ignored event: ${decision.reason ?? "policy denied"}`);
+      return;
+    }
+    await deps.onEvent(event);
+  }
+
   return plugin;
+}
+
+async function audioMessageEventToAgentEvent(
+  raw: FeishuAudioMessageEvent,
+  assetId: string,
+  transcript: string,
+  bindings: FeishuBindingStore,
+  time: CurrentTimeProvider
+) {
+  const message = raw.event.message;
+  const sender = raw.event.sender.sender_id;
+  const userId = sender.open_id ?? sender.user_id;
+  const scope = message.chat_type === "p2p" ? "dm" : "group";
+  const sessionId = await bindings.resolveSession({
+    chatId: message.chat_id,
+    chatType: message.chat_type,
+    userId,
+    threadId: message.thread_id
+  });
+  const receivedAtUtc = raw.header?.create_time ? new Date(Number(raw.header.create_time)).toISOString() : new Date().toISOString();
+  const receivedAt = time.addMs(0, new Date(receivedAtUtc)).iso;
+  return {
+    id: raw.header?.event_id ?? createId("evt"),
+    source: {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: message.chat_id,
+      userId,
+      rawMessageId: message.message_id
+    },
+    session: {
+      scope,
+      sessionId,
+      threadId: message.thread_id
+    },
+    type: "message.audio",
+    payload: {
+      kind: "audio",
+      assetId,
+      transcript
+    },
+    meta: {
+      receivedAt,
+      receivedAtUtc,
+      mentionsBot: Boolean(message.mentions?.length),
+      replyTo: message.message_id,
+      raw
+    }
+  } as const;
+}
+
+function isFeishuAudioMessage(raw: unknown): raw is FeishuAudioMessageEvent {
+  const message = (raw as FeishuAudioMessageEvent | undefined)?.event?.message;
+  return message?.message_type === "audio" || message?.msg_type === "audio";
+}
+
+function parseFeishuAudioContent(content: string): { fileKey?: string } {
+  try {
+    const parsed = JSON.parse(content) as { file_key?: unknown; fileKey?: unknown };
+    const fileKey = typeof parsed.file_key === "string" ? parsed.file_key : typeof parsed.fileKey === "string" ? parsed.fileKey : undefined;
+    return { fileKey };
+  } catch {
+    return {};
+  }
 }
 
 function normalizeLifecycleEvent(

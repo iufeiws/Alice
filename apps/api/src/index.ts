@@ -31,6 +31,7 @@ import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/i
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
+import { createAsrPlugin } from "../../../plugins/asr/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createDiaryStore } from "../../../packages/storage/src/diary-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
@@ -354,6 +355,12 @@ const japaneseVoicePlugin = createJapaneseVoicePlugin({
   },
   appendLog
 });
+const asrPlugin = createAsrPlugin({
+  resolveApiPreset(name) {
+    return readLLMApiPresets().find((entry) => entry.name === name);
+  },
+  appendLog
+});
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
@@ -523,6 +530,7 @@ const feishu = createFeishuPlugin(config.plugins.feishu, {
   log: appendLog,
   pairingStore: feishuPairingStore,
   time: currentTime,
+  asr: asrPlugin,
   async onEvent(event) {
     messageRuntime.ingestEvent(event);
   },
@@ -682,6 +690,9 @@ const server = http.createServer(createApiRequestHandler({
   pluginConfigs: {
     japaneseVoice: {
       configPath: "plugins/japanese-voice/config.json"
+    },
+    asr: {
+      configPath: "plugins/asr/config.json"
     }
   },
   llmRequestSender: llmRequests.send,

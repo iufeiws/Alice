@@ -1,5 +1,6 @@
 import type { FeishuConfig } from "../../../packages/config/src/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { FeishuStoredAudioAsset } from "./types.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
@@ -11,6 +12,7 @@ export type FeishuClient = {
   sendImage(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string }): Promise<FeishuSendResult>;
   sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
   sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
+  downloadAudioResource(input: { messageId: string; fileKey: string }): Promise<FeishuStoredAudioAsset>;
 };
 
 export type FeishuSendResult = {
@@ -185,6 +187,31 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       }, time);
       deps.log?.("info", `[feishu] sent file ${input.filename} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
+    },
+    async downloadAudioResource(input) {
+      assertStarted(client);
+      const filename = `${safeFileName(input.messageId)}.opus`;
+      const assetId = path.join("plugin", "feishu", "audio", filename);
+      const filePath = resolveWritableAssetPath(assetId);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const resource = await client.im.v1.messageResource.get({
+        path: {
+          message_id: input.messageId,
+          file_key: input.fileKey
+        },
+        params: {
+          type: "file"
+        }
+      });
+      if (!resource?.writeFile) throw new Error("Feishu audio resource download did not return writeFile");
+      await resource.writeFile(filePath);
+      deps.log?.("info", `[feishu] downloaded audio ${input.messageId} to ${assetId}`);
+      return {
+        assetId,
+        filePath,
+        filename,
+        mimeType: "audio/opus"
+      };
     }
   };
 }
@@ -287,6 +314,20 @@ function resolveAssetPath(assetId: string): string {
   return filePath;
 }
 
+function resolveWritableAssetPath(assetId: string): string {
+  const assetRoot = path.resolve("assets");
+  const filePath = path.resolve(assetRoot, assetId);
+  const relative = path.relative(assetRoot, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Feishu asset path is outside assets directory");
+  }
+  return filePath;
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "audio";
+}
+
 function wrapLarkMessageEvent(data: any, time: CurrentTimeProvider): unknown {
   return {
     schema: "2.0",
@@ -299,6 +340,8 @@ function wrapLarkMessageEvent(data: any, time: CurrentTimeProvider): unknown {
         message_id: data?.message?.message_id,
         chat_id: data?.message?.chat_id,
         chat_type: data?.message?.chat_type,
+        message_type: data?.message?.message_type,
+        msg_type: data?.message?.msg_type,
         content: data?.message?.content,
         mentions: data?.message?.mentions,
         thread_id: data?.message?.thread_id

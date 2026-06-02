@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRecentMessageDeduper } from "../plugins/feishu/src/dedupe.js";
 import { createFeishuPlugin } from "../plugins/feishu/src/index.js";
-import type { FeishuTextMessageEvent } from "../plugins/feishu/src/types.js";
+import type { FeishuAudioMessageEvent, FeishuTextMessageEvent } from "../plugins/feishu/src/types.js";
 import type { FeishuConfig } from "../packages/config/src/index.js";
+import type { AgentEvent } from "../packages/types/src/index.js";
 
 test("recent message deduper rejects repeated keys inside ttl", () => {
   const deduper = createRecentMessageDeduper({ ttlMs: 1000 });
@@ -72,6 +73,87 @@ test("feishu plugin returns before slow agent handling completes", async () => {
   assert.equal(handled, true);
 });
 
+test("feishu plugin prepares inbound audio with transcript for message runtime", async () => {
+  const handled: AgentEvent[] = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent(event) {
+      handled.push(event);
+    },
+    pairingStore: pairedStore(),
+    async storeAudioAsset(input) {
+      assert.equal(input.fileKey, "file_v2_1");
+      assert.equal(input.messageId, "om_audio");
+      return {
+        assetId: "plugin/feishu/audio/om_audio.opus",
+        filePath: "assets/plugin/feishu/audio/om_audio.opus",
+        filename: "om_audio.opus",
+        mimeType: "audio/opus"
+      };
+    },
+    asr: {
+      async transcribe(input) {
+        assert.equal(input.audioFile, "assets/plugin/feishu/audio/om_audio.opus");
+        assert.equal(input.filename, "om_audio.opus");
+        assert.equal(input.mimeType, "audio/opus");
+        assert.deepEqual(input.metadata, {
+          plugin: "feishu",
+          messageId: "om_audio",
+          chatId: "oc_chat"
+        });
+        return { text: "今晚十点提醒我睡觉", provider: "openai_compatible" };
+      }
+    }
+  });
+
+  await plugin.ingestAudioMessage(rawAudioMessage("om_audio"));
+  await waitFor(() => handled.length === 1);
+
+  const event = handled[0];
+  assert.equal(event.type, "message.audio");
+  assert.equal(event.payload.kind, "audio");
+  assert.equal(event.payload.assetId, "plugin/feishu/audio/om_audio.opus");
+  assert.equal(event.payload.transcript, "今晚十点提醒我睡觉");
+  assert.equal(event.source.plugin, "feishu");
+  assert.equal(event.source.rawMessageId, "om_audio");
+  assert.equal(event.session.scope, "dm");
+  assert.equal(event.session.sessionId, "feishu:dm:oc_chat");
+  assert.equal(event.meta.replyTo, "om_audio");
+  assert.equal(event.meta.receivedAtUtc, "2026-02-02T02:40:00.000Z");
+});
+
+test("feishu plugin does not forward inbound audio when asr returns no transcript", async () => {
+  let handled = 0;
+  const warnings: string[] = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {
+      handled += 1;
+    },
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    },
+    pairingStore: pairedStore(),
+    async storeAudioAsset() {
+      return {
+        assetId: "plugin/feishu/audio/om_empty.opus",
+        filePath: "assets/plugin/feishu/audio/om_empty.opus",
+        filename: "om_empty.opus",
+        mimeType: "audio/opus"
+      };
+    },
+    asr: {
+      async transcribe() {
+        return { ok: false, error: "empty_transcription", provider: "openai_compatible" };
+      }
+    }
+  });
+
+  await plugin.ingestAudioMessage(rawAudioMessage("om_empty"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(handled, 0);
+  assert.ok(warnings.some((message) => message.includes("ignored audio om_empty: asr empty_transcription")));
+});
+
 function feishuConfig(): FeishuConfig {
   return {
     enabled: true,
@@ -104,6 +186,29 @@ function rawTextMessage(messageId: string, text: string): FeishuTextMessageEvent
         chat_id: "oc_chat",
         chat_type: "p2p",
         content: JSON.stringify({ text })
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_user"
+        }
+      }
+    }
+  };
+}
+
+function rawAudioMessage(messageId: string): FeishuAudioMessageEvent {
+  return {
+    header: {
+      event_id: `evt_${messageId}`,
+      create_time: "1770000000000"
+    },
+    event: {
+      message: {
+        message_id: messageId,
+        chat_id: "oc_chat",
+        chat_type: "p2p",
+        message_type: "audio",
+        content: JSON.stringify({ file_key: "file_v2_1", duration: 3000 })
       },
       sender: {
         sender_id: {

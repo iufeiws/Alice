@@ -852,11 +852,18 @@ function splitSendContentParts(content: string): string[] {
 
 function filterParentheticalSendContent(content: string): string {
   return content
+    .split(/\r?\n|\\r\\n|\\n/g)
+    .filter((line) => !containsDsmlMarkup(line))
+    .join("\n")
     .replace(/[ \t]*\([^()\r\n]*\)[ \t]*/g, " ")
     .replace(/[ \t]*（[^（）\r\n]*）[ \t]*/g, " ")
     .split(/\r?\n|\\r\\n|\\n/g)
     .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
     .join("\n");
+}
+
+function containsDsmlMarkup(value: string): boolean {
+  return /<\s*[｜|]{2}\s*DSML\s*[｜|]{2}/i.test(value);
 }
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {

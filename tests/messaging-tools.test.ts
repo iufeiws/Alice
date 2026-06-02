@@ -739,6 +739,33 @@ test("send_chat filters parenthetical text before sending and storing", async ()
   assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
 });
 
+test("send_chat filters DSML markup lines before sending and storing", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-filter-dsml"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", userId: "ou-user", sessionId: "feishu:dm:ou-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_filter_dsml",
+    toolName: "send_chat",
+    input: { type: "message", content: "one\n<｜｜DSML｜｜parameter name=\"type\" string=\"true\">message\ntwo" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+  const stored = store.listMessagesForConversation("feishu:dm:ou-user", 10).filter((message) => message.direction === "outbound");
+  assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
+});
+
 test("messaging tools prepare voice synthesizer when llm request starts", async () => {
   let prepareCalls = 0;
   const tools = createMessagingTools({

@@ -1109,7 +1109,7 @@ test("agent core streams send_chat message content on newlines before final tool
             arguments: "{\"type\":\"message\",\"content\":\"one\\n"
           }
         });
-        assert.deepEqual(sentLines, ["one"]);
+        assert.deepEqual(sentLines, []);
         await handlers?.onToolCallDelta?.({
           index: 0,
           function: {
@@ -1168,6 +1168,92 @@ test("agent core streams send_chat message content on newlines before final tool
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
+test("agent core blocks unsafe streamed send_chat arguments before sending held line", async () => {
+  const requests: LLMChatInput[] = [];
+  const sentLines: string[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
+    },
+    async chatStream(input, handlers) {
+      requests.push(input);
+      if (requests.length === 1) {
+        await handlers?.onToolCallDelta?.({
+          index: 0,
+          id: "tool_bad",
+          type: "function",
+          function: {
+            name: "send_chat",
+            arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n"
+          }
+        });
+        assert.deepEqual(sentLines, []);
+        await handlers?.onToolCallDelta?.({
+          index: 0,
+          function: {
+            arguments: "\\n<｜｜DSML｜｜parameter name=\\\"type\\\" string=\\\"true\\\">message\", \"content\":\"算是通过了吗,父皇？\"}"
+          }
+        });
+        assert.deepEqual(sentLines, []);
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_bad",
+              type: "function",
+              function: {
+                name: "send_chat",
+                arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n\\n<｜｜DSML｜｜parameter name=\\\"type\\\" string=\\\"true\\\">message\", \"content\":\"算是通过了吗,父皇？\"}"
+              }
+            }]
+          }
+        };
+      }
+      if (requests.length === 2) {
+        const toolMessage = input.messages.find((message) => message.role === "tool");
+        assert.equal(toolMessage?.content, "error: unsafe send_chat arguments");
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_good",
+              type: "function",
+              function: {
+                name: "send_chat",
+                arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试算是通过了吗,父皇？\"}"
+              }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        sentLines.push(String(call.input.content));
+        return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+  assert.deepEqual(sentLines, ["原来如此。那这个测试算是通过了吗,父皇？"]);
+});
+
 test("agent core streams send_chat voice content on newlines before final tool JSON", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
@@ -1187,7 +1273,7 @@ test("agent core streams send_chat voice content on newlines before final tool J
           arguments: "{\"type\":\"voice\",\"content\":\"第一句\\\\n"
         }
       });
-      assert.deepEqual(sentLines, ["voice:第一句"]);
+      assert.deepEqual(sentLines, []);
       await handlers?.onToolCallDelta?.({
         index: 0,
         function: {

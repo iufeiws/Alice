@@ -528,13 +528,21 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           };
         } else {
           try {
-            toolResult = await plugin.execute({
-              id: call.id,
-              toolName: call.function.name,
-              input: parseToolArguments(call.function.arguments),
-              requester: event.source,
-              session: event.session
-            });
+            if (isSendChatToolName(call.function.name) && hasUnsafeSendChatArguments(call.function.arguments)) {
+              toolResult = {
+                callId: call.id,
+                ok: false,
+                error: "unsafe send_chat arguments"
+              };
+            } else {
+              toolResult = await plugin.execute({
+                id: call.id,
+                toolName: call.function.name,
+                input: parseToolArguments(call.function.arguments),
+                requester: event.source,
+                session: event.session
+              });
+            }
           } catch (error) {
             toolResult = {
               callId: call.id,
@@ -730,14 +738,14 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const state = states.get(delta.index) ?? new StreamingSendMessageState();
         states.set(delta.index, state);
         const { readyLines } = state.accept(delta);
-        const lines = state.canStreamNow() ? readyLines : [];
-        if (lines.length === 0) return;
         const callId = state.callId;
         const plugin = toolMap.get(sendChatToolName);
         if (!callId || !plugin || !isSendChatToolName(state.toolName)) {
-          state.restoreReadyLines(lines);
+          state.restoreReadyLines(readyLines);
           return;
         }
+        const lines = state.canStreamNow() && !state.hasUnsafeArguments() ? state.stageStreamingLines(readyLines) : [];
+        if (lines.length === 0) return;
         state.dropPendingLines();
         sendChain = sendChain.then(async () => {
           const sendType = state.sendType();
@@ -750,6 +758,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       },
       async finish() {
         for (const state of states.values()) {
+          if (state.hasUnsafeArguments()) continue;
           const lines = state.finish();
           const callId = state.callId;
           const plugin = toolMap.get(sendChatToolName);
@@ -1213,6 +1222,7 @@ class StreamingSendMessageState {
   private escaped = false;
   private unicodeBuffer = "";
   private pendingLine = "";
+  private heldStreamingLine: string | undefined;
   private readyLines: string[] = [];
   private pendingLines: string[] = [];
   private explicitStreamingType: "message" | "voice" | undefined;
@@ -1233,8 +1243,12 @@ class StreamingSendMessageState {
   }
 
   finish(): string[] {
-    const lines = this.shouldSendAsStreamingType() ? [...this.pendingLines, ...this.drainReadyLines()] : [];
+    const lines = this.shouldSendAsStreamingType()
+      ? [...this.pendingLines, ...this.stageStreamingLines(this.drainReadyLines())]
+      : [];
     this.pendingLines = [];
+    if (this.heldStreamingLine && this.shouldSendAsStreamingType()) lines.push(this.heldStreamingLine);
+    this.heldStreamingLine = undefined;
     const tail = this.pendingLine.trim();
     if (tail && this.shouldSendAsStreamingType()) lines.push(tail);
     this.pendingLine = "";
@@ -1255,6 +1269,19 @@ class StreamingSendMessageState {
 
   dropPendingLines(): void {
     this.pendingLines = [];
+  }
+
+  stageStreamingLines(lines: string[]): string[] {
+    const ready: string[] = [];
+    for (const line of lines) {
+      if (this.heldStreamingLine) ready.push(this.heldStreamingLine);
+      this.heldStreamingLine = line;
+    }
+    return ready;
+  }
+
+  hasUnsafeArguments(): boolean {
+    return hasUnsafeSendChatArguments(this.argumentsText);
   }
 
   private updateTypeState(): void {
@@ -1345,6 +1372,18 @@ function decodeJsonEscape(char: string): string {
   if (char === "b") return "\b";
   if (char === "f") return "\f";
   return char;
+}
+
+function hasUnsafeSendChatArguments(rawArguments: string): boolean {
+  return containsDsmlMarkup(rawArguments) || countJsonContentKeys(rawArguments) > 1;
+}
+
+function containsDsmlMarkup(value: string): boolean {
+  return /<\s*[｜|]{2}\s*DSML\s*[｜|]{2}/i.test(value);
+}
+
+function countJsonContentKeys(raw: string): number {
+  return raw.match(/"content"\s*:/g)?.length ?? 0;
 }
 
 function buildReply(

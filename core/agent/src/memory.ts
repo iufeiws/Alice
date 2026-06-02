@@ -1092,7 +1092,10 @@ function applyMemoryPatch(content: string, patch: string): string {
     const oldStart = Number(match[1]);
     const hunkStart = oldStart === 0 ? 0 : oldStart - 1;
     if (hunkStart < originalIndex || hunkStart > original.length) {
-      throw new Error("invalid patch hunk range");
+      throw new Error(
+        `invalid patch hunk range at patch line ${patchIndex + 1}: hunk starts at original line ${oldStart}, ` +
+        `but the next applicable original line is ${originalIndex + 1} and the file has ${original.length} line(s)`
+      );
     }
     output.push(...original.slice(originalIndex, hunkStart));
     originalIndex = hunkStart;
@@ -1106,13 +1109,13 @@ function applyMemoryPatch(content: string, patch: string): string {
       const marker = line[0];
       const text = line.slice(1);
       if (marker === " ") {
-        assertPatchLine(original, originalIndex, text);
+        assertPatchLine(original, originalIndex, text, patchIndex, "context");
         output.push(text);
         originalIndex += 1;
         continue;
       }
       if (marker === "-") {
-        assertPatchLine(original, originalIndex, text);
+        assertPatchLine(original, originalIndex, text, patchIndex, "removal");
         originalIndex += 1;
         continue;
       }
@@ -1120,7 +1123,10 @@ function applyMemoryPatch(content: string, patch: string): string {
         output.push(text);
         continue;
       }
-      throw new Error("invalid patch line");
+      throw new Error(
+        `invalid patch line ${patchIndex}: expected a line starting with space, +, -, @@, or "\\ No newline at end of file"; ` +
+        `got ${formatPatchLineForError(line)}`
+      );
     }
   }
 
@@ -1134,11 +1140,25 @@ function splitPatchContentLines(content: string): string[] {
   return content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
 }
 
-function assertPatchLine(original: string[], index: number, expected: string): void {
+function assertPatchLine(original: string[], index: number, expected: string, patchLine: number, kind: "context" | "removal"): void {
   const actual = original[index];
   if (actual === expected) return;
+  if (actual === undefined) {
+    throw new Error(
+      `patch does not apply at patch line ${patchLine}: ${kind} expected original line ${index + 1}, ` +
+      `but the file only has ${original.length} line(s); expected ${formatPatchLineForError(expected)}`
+    );
+  }
   if (normalizeCommonHalfwidthCharacters(actual) === normalizeCommonHalfwidthCharacters(expected)) return;
-  throw new Error("patch does not apply to current memory content");
+  throw new Error(
+    `patch does not apply at patch line ${patchLine}: ${kind} mismatch on original line ${index + 1}; ` +
+    `expected ${formatPatchLineForError(expected)}, actual ${formatPatchLineForError(actual)}`
+  );
+}
+
+function formatPatchLineForError(line: string): string {
+  const compact = line.length > 120 ? `${line.slice(0, 117)}...` : line;
+  return JSON.stringify(compact);
 }
 
 export function normalizeCommonHalfwidthCharacters(text: string): string {

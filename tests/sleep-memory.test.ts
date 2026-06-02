@@ -69,6 +69,31 @@ test("apply_patch normalizes configured fullwidth characters in written memory",
   assert.equal(memoryStore.read().persistent, "新增:abc123/路径\\名字-OK~\n未触碰:#@&*+=<>_|\n");
 });
 
+test("apply_patch reports the concrete mismatch when a patch fails", async () => {
+  const root = makeTempDir("memory-patch-error-detail");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("persistent", "old\n");
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: editToolClient([], [replacePatch("missing\n", "new\n")]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    userName: "Y",
+    log() {}
+  }, "persistent");
+
+  assert.match(result.results[0].toolCalls[0].error ?? "", /patch line 4/);
+  assert.match(result.results[0].toolCalls[0].error ?? "", /original line 1/);
+  assert.match(result.results[0].toolCalls[0].error ?? "", /expected "missing", actual "old"/);
+  assert.equal(memoryStore.read().persistent, "old\n");
+});
+
 test("three-step induction uses fake read and fixed no-file tools", async () => {
   const root = makeTempDir("memory-three-step");
   const memoryStore = createMarkdownMemoryStore(root);

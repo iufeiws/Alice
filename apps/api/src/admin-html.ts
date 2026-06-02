@@ -637,10 +637,12 @@ export function renderAdminHtmlV2(): string {
       function renderPluginConfig(payload) {
         const config = payload.configValue || {};
         const fields = (payload.configSchema && payload.configSchema.fields) || [];
+        const groups = (payload.configSchema && payload.configSchema.groups) || [];
         $("pluginConfigBody").innerHTML = \`
+          \${renderPluginConfigGroupSelector(groups)}
           <form id="pluginConfigForm" class="plugin-config-grid" data-plugin-id="\${escapeAttr(payload.plugin.id)}">
-            <div>\${fields.filter((_, index) => index % 2 === 0).map((field) => renderPluginField(field, config, payload.apiPresets || [])).join("")}</div>
-            <div>\${fields.filter((_, index) => index % 2 === 1).map((field) => renderPluginField(field, config, payload.apiPresets || [])).join("")}
+            <div>\${fields.filter((_, index) => index % 2 === 0).map((field) => renderPluginFieldContainer(field, config, payload.apiPresets || [])).join("")}</div>
+            <div>\${fields.filter((_, index) => index % 2 === 1).map((field) => renderPluginFieldContainer(field, config, payload.apiPresets || [])).join("")}
               <div class="prompt-actions">
                 <button type="submit">Save</button>
                 <button type="button" id="pluginConfigReload" class="secondary">Reload</button>
@@ -652,17 +654,14 @@ export function renderAdminHtmlV2(): string {
           <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
           <h2>Runtime Access</h2>
           <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
-          <h2>Test</h2>
-          <div class="plugin-test-box">
-            <label>Input<textarea id="pluginTestInput" rows="4" spellcheck="false">晚点见。</textarea></label>
-            <button type="button" id="pluginConfigTest" class="secondary">Test translation and voice</button>
-            <pre id="pluginTestOutput">No test run yet.</pre>
-          </div>
+          \${renderPluginTestBox(payload)}
           <h2>Recent Events</h2>
           <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
         \`;
         $("pluginConfigForm").addEventListener("submit", savePluginConfig);
         document.querySelectorAll("[data-plugin-upload]").forEach((input) => input.addEventListener("change", uploadPluginAsset));
+        if ($("pluginConfigGroup")) $("pluginConfigGroup").addEventListener("change", applyPluginConfigGroupFilter);
+        applyPluginConfigGroupFilter();
         $("pluginConfigReload").addEventListener("click", async () => {
           const pluginId = $("pluginConfigForm").dataset.pluginId;
           const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/reload", { method: "POST" }).then((res) => res.json());
@@ -670,7 +669,46 @@ export function renderAdminHtmlV2(): string {
           await openPluginConfig(pluginId);
         });
         $("pluginConfigLogs").addEventListener("click", () => loadPluginEvents($("pluginConfigForm").dataset.pluginId));
-        $("pluginConfigTest").addEventListener("click", () => runPluginTest($("pluginConfigForm").dataset.pluginId));
+        if ($("pluginConfigTest")) $("pluginConfigTest").addEventListener("click", () => runPluginTest($("pluginConfigForm").dataset.pluginId));
+      }
+
+      function renderPluginConfigGroupSelector(groups) {
+        if (!groups.length) return "";
+        return \`
+          <label for="pluginConfigGroup">Configure
+            <select id="pluginConfigGroup">
+              \${groups.map((group) => \`<option value="\${escapeAttr(group.key)}">\${escapeHtml(group.label || group.key)}</option>\`).join("")}
+            </select>
+          </label>
+        \`;
+      }
+
+      function renderPluginFieldContainer(field, config, apiPresets) {
+        return \`<div data-plugin-config-group="\${escapeAttr(field.group || "")}">\${renderPluginField(field, config, apiPresets)}</div>\`;
+      }
+
+      function applyPluginConfigGroupFilter() {
+        const selector = $("pluginConfigGroup");
+        const active = selector ? selector.value : "";
+        document.querySelectorAll("[data-plugin-config-group]").forEach((node) => {
+          const group = node.dataset.pluginConfigGroup || "";
+          node.style.display = !active || !group || group === active ? "" : "none";
+        });
+      }
+
+      function renderPluginTestBox(payload) {
+        const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Test translation and voice", defaultValue: "晚点见。" };
+        const input = schema.input === "audio"
+          ? \`<label>\${escapeHtml(schema.label || "Audio")}<input id="pluginTestAudio" value="\${escapeAttr((payload.configValue && payload.configValue.testAudioPath) || schema.defaultValue || "")}" placeholder="assets/plugin/asr/test-audio/example.wav" /></label>\`
+          : \`<label>\${escapeHtml(schema.label || "Input")}<textarea id="pluginTestText" rows="4" spellcheck="false">\${escapeHtml(schema.defaultValue || "晚点见。")}</textarea></label>\`;
+        return \`
+          <h2>Test</h2>
+          <div class="plugin-test-box" data-plugin-test-input="\${escapeAttr(schema.input || "text")}">
+            \${input}
+            <button type="button" id="pluginConfigTest" class="secondary">\${escapeHtml(schema.buttonLabel || "Run test")}</button>
+            <pre id="pluginTestOutput">No test run yet.</pre>
+          </div>
+        \`;
       }
 
       function renderPluginField(field, config, apiPresets) {
@@ -685,6 +723,10 @@ export function renderAdminHtmlV2(): string {
         }
         if (field.type === "number") {
           return \`<label>\${escapeHtml(field.label)}<input type="number" min="\${escapeAttr(field.min ?? "0.5")}" max="\${escapeAttr(field.max ?? "2")}" step="\${escapeAttr(field.step ?? "0.05")}" name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value ?? "")}" /></label>\${description}\`;
+        }
+        if (field.type === "select") {
+          const options = field.options || [];
+          return \`<label>\${escapeHtml(field.label)}<select name="\${inputName}" data-plugin-field="\${inputName}">\${options.map((option) => \`<option value="\${escapeAttr(option.value)}" \${option.value === value ? "selected" : ""}>\${escapeHtml(option.label || option.value)}</option>\`).join("")}</select></label>\${description}\`;
         }
         if (field.type === "apiPresetSelect") {
           const options = ["", ...apiPresets.map((preset) => preset.name).filter(Boolean)];
@@ -754,10 +796,14 @@ export function renderAdminHtmlV2(): string {
 
       async function runPluginTest(pluginId) {
         $("pluginTestOutput").textContent = "Running...";
+        const box = document.querySelector(".plugin-test-box");
+        const body = box && box.dataset.pluginTestInput === "audio"
+          ? { audioFile: $("pluginTestAudio").value }
+          : { text: $("pluginTestText").value };
         const payload = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/test", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: $("pluginTestInput").value })
+          body: JSON.stringify(body)
         }).then((res) => res.json());
         if (!payload.ok) {
           $("pluginTestOutput").textContent = "Test failed: " + (payload.error || "unknown error");
@@ -770,6 +816,8 @@ Input:
 
 Output:
 \${escapeHtml(result.output || "")}
+
+\${result.provider ? "Transcription:\\nProvider: " + escapeHtml(result.provider) + (result.model ? "\\nModel: " + escapeHtml(result.model) : "") + "\\n" : ""}
 
 Voice:
 \${result.voice && result.voice.audioUrl ? \`<audio controls src="\${escapeAttr(result.voice.audioUrl)}"></audio>\` : "No audio"}

@@ -174,7 +174,7 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
       .filter((index) => index >= 0);
     return input.messages[fakeReadIndexes.at(-1)! + 1].content;
   };
-  assert.match(readResult(targetRequests[0]), /<persistent-memory>\nold persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
+  assert.match(readResult(targetRequests[0]), /<persistent-memory>\n1: old persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
   const userPreferencesPrompt = String(targetRequests[1].messages.at(-1)?.content ?? "");
   const diaryPrompt = String(targetRequests[2].messages.at(-1)?.content ?? "");
   assert.match(userPreferencesPrompt, /维护用户偏好文件/);
@@ -529,7 +529,7 @@ test("memory self_talk echoes content in tool result", async () => {
 
   assert.equal(result.ok, true);
   const selfTalkResult = seen[1].messages.find((entry) => entry.role === "tool" && entry.name === "self_talk");
-  assert.equal(selfTalkResult?.content, "你听到自己说:\n原样\n输出");
+  assert.equal(selfTalkResult?.content, "爱丽丝听到自己说:\n原样\n输出");
 });
 
 test("diary target writes tmp markdown before sqlite commit", () => {

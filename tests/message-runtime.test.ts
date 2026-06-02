@@ -52,6 +52,45 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
   ]);
 });
 
+test("message runtime processes inbound audio transcript while storing it as voice-marked audio", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-audio-inbound"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(audioEvent("session-1", "om_audio_1", "voice-1.opus", "[语音][0:0.020,0:5.000]  晚点见"));
+
+  const stored = store.listMessagesForConversation("session-1", 10)[0];
+  assert.equal(stored.contentType, "audio");
+  assert.equal(stored.contentText, "[语音]晚点见");
+  assert.equal(stored.coreProcessedAt ?? undefined, undefined);
+  assert.equal(JSON.parse(stored.contentJson ?? "{}").transcript, "晚点见");
+
+  await runtime.processNow();
+
+  assert.equal(coreInputs.length, 1);
+  assert.equal(coreInputs[0].type, "message.audio");
+  assert.equal(coreInputs[0].payload.kind, "text");
+  assert.doesNotMatch(coreInputs[0].payload.kind === "text" ? coreInputs[0].payload.text : "", /0:0\.020|0:5\.000/);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
 test("message runtime uses agent state delay and records inbound activity", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-state-delay"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -625,6 +664,67 @@ test("message runtime handles force wake without calling core", async () => {
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
 });
 
+test("message runtime queues sleep cocoon force wake event on force wake", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-force-wake-morning"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let morningEvent: AgentEvent | undefined;
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    agentState: {
+      canReplyToInbound: () => true,
+      canRunHeartbeat: () => true,
+      tick() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      getInboundDelayMs: () => 0,
+      onChange: () => () => {},
+      noteInboundMessage() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      setState(state) {
+        return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+      }
+    },
+    onForceWake() {
+      morningEvent = {
+        ...textEvent("session-1", "sleep_cocoon_force_wake", "force wake"),
+        type: "system.heartbeat",
+        meta: {
+          receivedAt: "2026-05-24T08:00:00.000Z",
+          raw: { sleepCocoonForceWake: true }
+        }
+      };
+    },
+    getSleepCocoonMorningEvent() {
+      const event = morningEvent;
+      morningEvent = undefined;
+      return event;
+    },
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEvent("session-1", "om_force", "/force_wake"));
+  runtime.resumeHeartbeat();
+  await waitFor(() => coreInputs.length === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs[0].type, "system.heartbeat");
+  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonForceWake: true });
+});
+
 test("message runtime can run sleep cocoon morning event on heartbeat", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-sleep-cocoon-morning"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -1009,6 +1109,29 @@ function textEventAt(sessionId: string, rawMessageId: string, text: string, rece
     payload: { kind: "text", text },
     meta: {
       receivedAt,
+      replyTo: rawMessageId
+    }
+  };
+}
+
+function audioEvent(sessionId: string, rawMessageId: string, assetId: string, transcript: string): AgentEvent {
+  return {
+    id: `evt_${rawMessageId}`,
+    source: {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "chat",
+      userId: "user",
+      rawMessageId
+    },
+    session: {
+      scope: "dm",
+      sessionId
+    },
+    type: "message.audio",
+    payload: { kind: "audio", assetId, transcript },
+    meta: {
+      receivedAt: "2026-05-24T00:00:00.000Z",
       replyTo: rawMessageId
     }
   };

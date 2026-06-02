@@ -368,7 +368,7 @@ const messagingTools = createMessagingTools({
   voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
-  getSleepCocoonEnteredAt: () => diaryStore.latestSleepPreparationBoundary()?.occurredAt,
+  getSleepCocoonEnteredAt: () => diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
   getDefaultTarget() {
     return getDefaultMessagingTarget();
   },
@@ -574,10 +574,13 @@ const messageRuntime = createMessageRuntime({
   getSleepCocoonGoodnightEvent() {
     return maybeBuildSleepCocoonGoodnightEvent();
   },
-  getSleepCocoonMorningEvent() {
+  getSleepCocoonWakeEvent() {
     const event = pendingSleepCocoonMorningEvent;
     pendingSleepCocoonMorningEvent = undefined;
     return event;
+  },
+  onForceWake() {
+    pendingSleepCocoonMorningEvent = buildSleepCocoonGeneratedEvent("sleep_cocoon_force_wake", { sleepCocoonForceWake: true });
   },
   clearLLMSession(reason) {
     core.clearLLMSession("mode_transition");

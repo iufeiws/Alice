@@ -67,17 +67,31 @@ test("llm api preset form tracks dirty and saved states like shell editor", () =
   assert.match(html, /bindLLMApiPresetFormDirtyTracking\(\)/);
 });
 
-test("plugin config includes translation voice test box", () => {
+test("plugin config test box is schema-driven for voice and ASR plugins", () => {
   const html = renderAdminHtmlV2();
 
-  assert.match(html, /id="pluginTestInput"/);
+  assert.match(html, /function renderPluginTestBox\(payload\)/);
+  assert.match(html, /payload\.testSchema/);
+  assert.match(html, /id="pluginTestText"/);
+  assert.match(html, /id="pluginTestAudio"/);
   assert.match(html, /id="pluginConfigTest"/);
   assert.match(html, /Test translation and voice/);
+  assert.match(html, /schema\.buttonLabel/);
   assert.match(html, /\/admin\/api\/plugins\/" \+ encodeURIComponent\(pluginId\) \+ "\/test"/);
-  assert.match(html, /translationMs|ttsMs|totalMs|audio controls/);
+  assert.match(html, /translationMs|ttsMs|totalMs|audio controls|Transcription/);
   assert.match(html, /field\.type === "number"/);
   assert.match(html, /input type="number" min="\$\{escapeAttr\(field\.min \?\? "0\.5"\)\}"/);
   assert.match(html, /input\.type === "number" && input\.value !== "" \? Number\(input\.value\)/);
+});
+
+test("plugin config fields can be split by schema-driven group selector", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /id="pluginConfigGroup"/);
+  assert.match(html, /payload\.configSchema\.groups/);
+  assert.match(html, /data-plugin-config-group=/);
+  assert.match(html, /function applyPluginConfigGroupFilter/);
+  assert.match(html, /pluginConfigGroup"\)\.addEventListener\("change", applyPluginConfigGroupFilter/);
 });
 
 test("core prompt editor keeps variables in preview side pane", () => {

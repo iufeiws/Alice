@@ -182,7 +182,7 @@ test("check_chat returns current time from configured timezone provider", async 
   assert.match(String(result.output), /<time>2026-05-26T12:34:56\.789<\\time>$/);
 });
 
-test("check_chat today only starts at sleep cocoon pointer and todayold keeps old anchor", async () => {
+test("check_chat today starts ten messages before sleep cocoon pointer and todayold keeps old anchor", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -193,6 +193,17 @@ test("check_chat today only starts at sleep cocoon pointer and todayold keeps ol
     contentText: "after old today anchor",
     createdAt: "2026-05-25T08:00:00.000"
   });
+  for (let index = 1; index <= 10; index += 1) {
+    store.upsertInboundMessage({
+      plugin: "feishu",
+      externalMessageId: `om_pre_sleep_${index}`,
+      conversationId: "session-1",
+      senderId: "user-1",
+      contentType: "text",
+      contentText: `pre sleep context ${index}`,
+      createdAt: `2026-05-25T11:${String(index).padStart(2, "0")}:00.000`
+    });
+  }
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_after_sleep",
@@ -212,6 +223,8 @@ test("check_chat today only starts at sleep cocoon pointer and todayold keeps ol
 
   const today = await tools.execute({ id: "call_today", toolName: "check_chat", input: { scope: "today" } });
   assert.doesNotMatch(String(today.output), /after old today anchor/);
+  assert.match(String(today.output), /pre sleep context 1/);
+  assert.match(String(today.output), /pre sleep context 10/);
   assert.match(String(today.output), /after sleep cocoon/);
 
   const todayOld = await tools.execute({ id: "call_todayold", toolName: "check_chat", input: { scope: "todayold" } });
@@ -383,8 +396,8 @@ test("check_chat simplifies outbound media records", async () => {
     plugin: "feishu",
     conversationId: "session-1",
     contentType: "audio",
-    contentText: "voice-1.mp3",
-    contentJson: JSON.stringify({ kind: "audio", assetId: "voice-1.mp3", transcript: "晚点见" }),
+    contentText: "[语音][0:0.020,0:5.000]  晚点见",
+    contentJson: JSON.stringify({ kind: "audio", assetId: "voice-1.mp3", transcript: "[语音][0:0.020,0:5.000]  晚点见" }),
     createdAt: "2026-05-26T12:00:01.000Z"
   });
   store.insertOutboundMessage({
@@ -409,6 +422,7 @@ test("check_chat simplifies outbound media records", async () => {
   assert.match(String(result.output), /Alice发送了一张图片/);
   assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+  assert.doesNotMatch(String(result.output), /0:0\.020|0:5\.000/);
   assert.match(String(result.output), /Alice发送了文件\[report\.pdf\]/);
   assert.doesNotMatch(String(result.output), /Alice:发送了文件\[report\.pdf\]/);
   assert.doesNotMatch(String(result.output), /selfie_20260528_160956\.jpg/);

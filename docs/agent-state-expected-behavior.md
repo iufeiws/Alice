@@ -62,7 +62,7 @@
 
 - `sleep_cocoon in`：处理结束后应处于 `going_to_sleep`。
 - `sleep_cocoon out`：仅在 `going_to_sleep` 时取消睡眠茧，处理结束后处于 `waiting` 并清理睡眠茧指针。
-- `/force_wake`：处理后处于 `waiting`，清理睡眠茧指针，并清理活跃 LLM session。
+- `/force_wake`：处理后处于 `waiting`，清理睡眠茧指针，清理活跃 LLM session，并排队一次 sleep cocoon force wake generated event。
 - 进入 `sleeping` 的状态切换只能由 `going_to_sleep` 的无消息倒计时到期触发，普通消息处理完成本身不能直接把状态设为 `sleeping`。
 - 废弃的 `working` 不能作为“处理前状态快照”或“处理后恢复目标”参与普通消息处理，因此不能出现 `任意状态 -> working -> waiting` 的隐式落点路径。
 
@@ -156,7 +156,7 @@ Heartbeat 由 message runtime 管理，是驱动状态 tick、generated event �
 
 - 入站事件会先调用 `agentState.noteInboundMessage()`，再写入消息日志和 Core 侧消息表。
 - 文本消息会进入未处理消息集合；非文本消息会立即标记为已处理，不进入普通 Core 文本处理队列。
-- `/force_wake` 是特殊命令：记录入站活动后，直接将状态设为 `waiting`，清理睡眠茧指针，并清理活跃 LLM session，不进入普通消息处理。
+- `/force_wake` 是特殊命令：记录入站活动后，直接将状态设为 `waiting`，清理睡眠茧指针，清理活跃 LLM session，并排队一次强制唤醒 generated event；命令本身不进入普通消息处理。
 - 这里的“未处理消息”只是消息存储状态，不是 Agent 状态机里的独立状态。
 - 有未处理消息的会话以 session id 去重；同一 session 已在 processing 时，不重复处理。
 - 处理前会读取该会话当前全部未处理 Core 消息；一次触发处理的输入应覆盖该会话当前全部未处理消息。

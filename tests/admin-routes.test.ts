@@ -104,6 +104,41 @@ test("admin plugin list exposes japanese voice config card state", async () => {
   assert.equal(japaneseVoice.switchable, true);
 });
 
+test("admin plugin list exposes ASR config card state", async () => {
+  const root = makeTempDir("admin-asr-plugin-list");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "asr",
+      }
+    }
+  })}\n`);
+  writePreset(root, "asr");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), response);
+  const body = JSON.parse(response.body);
+  const asr = body.plugins.find((plugin: { id: string }) => plugin.id === "asr");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(asr.status, "enabled");
+  assert.equal(asr.health, "healthy");
+  assert.equal(asr.kind, "asr");
+  assert.equal(asr.configurable, true);
+  assert.equal(asr.switchable, true);
+});
+
 test("admin plugin config patch writes japanese voice config with preset reference only", async () => {
   const root = makeTempDir("admin-plugin-config");
   const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
@@ -151,6 +186,87 @@ test("admin plugin config patch writes japanese voice config with preset referen
   assert.equal(saved.voice.partSilenceSeconds, 0.45);
 });
 
+test("admin plugin config patch writes ASR config with preset references only", async () => {
+  const root = makeTempDir("admin-asr-plugin-config");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  })}\n`);
+  writePreset(root, "asr-openai");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/asr/config", {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "asr-openai",
+        model: "whisper-1",
+        responseFormat: "json"
+      },
+      tencent: {
+        secretId: "secret-id",
+        secretKey: "secret-key",
+        endpoint: "https://asr.tencentcloudapi.com",
+        region: "ap-guangzhou",
+        engineModelType: "16k_zh",
+        pollIntervalMs: 500,
+        timeoutMs: 120000
+      }
+    }
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.configValue.providers.openaiCompatible.apiPresetName, "asr-openai");
+  assert.equal(body.configValue.providers.tencent.secretId, "secret-id");
+  assert.equal(body.configValue.providers.tencent.secretKey, "secret-key");
+  assert.equal(saved.providers.openaiCompatible.apiKey, undefined);
+  assert.equal(saved.providers.tencent.secretKey, "secret-key");
+  assert.equal(saved.providers.openaiCompatible.model, undefined);
+  assert.equal(saved.providers.tencent.engineModelType, "16k_zh");
+});
+
+test("admin ASR plugin config schema groups general and provider settings", async () => {
+  const root = makeTempDir("admin-asr-plugin-schema-groups");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/asr/config", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai_compatible", "tencent"]);
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "enabled").group, "general");
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.model"), undefined);
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.apiPresetName").group, "openai_compatible");
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.tencent.engineModelType").group, "tencent");
+});
+
 test("admin plugin enable and disable update japanese voice config", async () => {
   const root = makeTempDir("admin-plugin-switch");
   const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
@@ -176,6 +292,34 @@ test("admin plugin enable and disable update japanese voice config", async () =>
 
   const disableResponse = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/disable", {}), disableResponse);
+  assert.equal(disableResponse.statusCode, 200);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, false);
+});
+
+test("admin plugin enable and disable update ASR config", async () => {
+  const root = makeTempDir("admin-asr-plugin-switch");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const enableResponse = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/asr/enable", {}), enableResponse);
+  assert.equal(enableResponse.statusCode, 200);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, true);
+
+  const disableResponse = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/asr/disable", {}), disableResponse);
   assert.equal(disableResponse.statusCode, 200);
   assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, false);
 });
@@ -210,6 +354,39 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   assert.equal(fs.readFileSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), "utf8"), "model");
   assert.equal(fs.existsSync(path.join("assets", "plugin", "japanese-voice", "model", "uploaded-folder", "nested", fileName)), false);
   fs.rmSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), { force: true });
+});
+
+test("admin plugin ASR test audio upload stores plugin asset path", async () => {
+  const root = makeTempDir("admin-asr-plugin-asset");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: false,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  const fileName = `asr-${path.basename(root)}.wav`;
+  await handler(createRawRequest("POST", "/admin/api/plugins/asr/assets/test-audio", Buffer.from("audio"), {
+    "x-file-name": encodeURIComponent(fileName)
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const expectedAssetPath = `assets/plugin/asr/test-audio/${fileName}`;
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.assetPath, expectedAssetPath);
+  assert.equal(saved.testAudioPath, expectedAssetPath);
+  assert.equal(fs.readFileSync(path.join("assets", "plugin", "asr", "test-audio", fileName), "utf8"), "audio");
+  fs.rmSync(path.join("assets", "plugin", "asr", "test-audio", fileName), { force: true });
 });
 
 test("admin plugin test runs japanese voice translation and tts with timing", async () => {
@@ -264,6 +441,60 @@ test("admin plugin test runs japanese voice translation and tts with timing", as
   assert.deepEqual(senderAgents, ["japanese-voice"]);
   assert.deepEqual(capturedGenie, { language: "jp", modelDir: undefined, referenceAudio: undefined, referenceText: undefined });
   fs.rmSync(voicePath, { force: true });
+});
+
+test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
+  const root = makeTempDir("admin-asr-plugin-test");
+  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const audioPath = path.join("assets", "plugin", "asr", `test-${path.basename(root)}.wav`);
+  let capturedAudioFile = "";
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+  fs.writeFileSync(audioPath, "audio");
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    testAudioPath: audioPath,
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "asr"
+      }
+    }
+  })}\n`);
+  writePreset(root, "asr");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: {
+      asr: {
+        configPath,
+        testTranscriber: async (input: { audioFile: string }) => {
+          capturedAudioFile = input.audioFile;
+          return {
+            text: "识别文本",
+            provider: "openai_compatible",
+            model: "whisper-1",
+            durationMs: 12
+          };
+        }
+      }
+    }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/asr/test", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(capturedAudioFile, audioPath);
+  assert.equal(body.result.output, "识别文本");
+  assert.equal(body.result.provider, "openai_compatible");
+  assert.equal(body.result.model, "whisper-1");
+  assert.equal(typeof body.result.timing.totalMs, "number");
+  fs.rmSync(audioPath, { force: true });
 });
 
 test("memory run-day reuses Memorize preset, api settings, prompts, and target order", async () => {
@@ -822,19 +1053,20 @@ function createRawRequest(method: string, url: string, body: Buffer, headers: Re
 function writePreset(root: string, name: string) {
   const filePath = path.join(root, "config", "llm-api-presets.json");
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({
-    presets: [{
-      name,
-      baseURL: "https://llm.example.test/v1",
-      apiKey: "secret",
-      model: "flash",
-      temperature: 0.2,
-      timeoutMs: 60_000,
-      stream: false,
-      extraParams: {},
-      followupExtraParams: {}
-    }]
-  })}\n`);
+  const current = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, "utf8")) : { presets: [] };
+  const presets = Array.isArray(current.presets) ? current.presets.filter((entry: { name?: string }) => entry.name !== name) : [];
+  presets.push({
+    name,
+    baseURL: "https://llm.example.test/v1",
+    apiKey: "secret",
+    model: "flash",
+    temperature: 0.2,
+    timeoutMs: 60_000,
+    stream: false,
+    extraParams: {},
+    followupExtraParams: {}
+  });
+  fs.writeFileSync(filePath, `${JSON.stringify({ presets })}\n`);
 }
 
 function createResponse() {

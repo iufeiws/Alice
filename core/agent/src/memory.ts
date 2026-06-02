@@ -350,6 +350,7 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
       layer("common_scope", "共同规则", "system", 10, [
         "你是 Alice 的记忆维护子系统。",
         "只通过 read_memory / apply_patch 工具工作。",
+        "read_memory 返回的内容带“行号: ”前缀；行号仅用于定位，写 apply_patch 时不要包含行号前缀。",
         "apply_patch 写入的是当前任务绑定文件，没有 file/path 参数。",
         "必须调用 apply_patch({ patch }) 提交 unified diff patch；普通回复不会保存。"
       ].join("\n")),
@@ -748,7 +749,7 @@ async function runSingleMemoryInduction(
       }
       if (call.function.name === "self_talk") {
         const content = typeof input.content === "string" ? input.content : "";
-        const output = `你听到自己说:\n${content}`;
+        const output = `爱丽丝听到自己说:\n${content}`;
         toolCalls.push({ name: "self_talk", file: targetResultFiles[target], input, ok: true, output });
         return { message: { role: "tool", name: "self_talk", toolCallId: call.id, content: output } };
       }
@@ -892,7 +893,7 @@ function memoryPromptToolResult(
   if (toolName === "self_talk") {
     const input = parsePromptToolArguments(rawArguments);
     const content = typeof input.content === "string" ? input.content : "";
-    return `你听到自己说:\n${content}`;
+    return `爱丽丝听到自己说:\n${content}`;
   }
   if (toolName !== "read_memory") return `error: unsupported prompt tool ${toolName}`;
   return formatReadMemoryResult(target, readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath));
@@ -902,10 +903,16 @@ function formatReadMemoryResult(target: MemoryTarget, content: string): string {
   const file = targetResultFiles[target];
   return [
     `<${file}>`,
-    content.trimEnd(),
+    formatReadMemoryContentWithLineNumbers(content),
     `</${file}>`,
     `${lineCount(content)} line(s), ${utf8ByteLength(content)} byte(s)`
   ].join("\n");
+}
+
+function formatReadMemoryContentWithLineNumbers(content: string): string {
+  return splitPatchContentLines(content)
+    .map((line, index) => `${index + 1}: ${line}`)
+    .join("\n");
 }
 
 function readMemoryTargetForRun(memoryStore: MemoryStore, target: MemoryTarget, diaryDraftPath?: string): string {

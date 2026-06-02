@@ -11,7 +11,7 @@ import { reactionEventToLifecycleEvent, readEventToLifecycleEvent, recalledEvent
 import { getPairingCommand, isPairingCommand } from "./pairing.js";
 import { createRecentMessageDeduper } from "./dedupe.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
+import { createId, sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
 
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
@@ -266,7 +266,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       return;
     }
 
-    const transcript = asrResult.text.trim();
+    const transcript = sanitizeAudioTranscript(asrResult.text);
     if (!transcript) {
       deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: asr empty_transcription`);
       return;

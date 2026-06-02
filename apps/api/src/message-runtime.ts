@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentOutput } from "../../../packages/types/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
+import { createId, sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../packages/types/src/index.js";
 import type { AgentStateController } from "../../../core/agent/src/state.js";
 import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type {
@@ -16,7 +16,9 @@ export type MessageRuntimeDeps = {
   startHeartbeatPaused?: boolean;
   onHeartbeatTick?: () => void;
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
+  getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
+  onForceWake?: () => void;
   clearLLMSession?(reason: string): void;
   isLLMSessionActive?: () => boolean;
   setTypingIndicator?(input: {
@@ -119,6 +121,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
 
   return {
     ingestEvent(event) {
+      event = normalizeInboundEvent(event);
       deps.agentState?.noteInboundMessage();
       const contentText = summarizeEventPayload(event);
       deps.appendMessageLog({
@@ -136,6 +139,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
         deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
         deps.clearLLMSession?.("force_wake");
+        deps.onForceWake?.();
         deps.appendLog("info", `force wake command handled: ${event.session.sessionId}`);
         return;
       }
@@ -154,7 +158,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         createdAtUtc: receivedAtUtc,
         lastEventAt: receivedAt,
         lastEventAtUtc: receivedAtUtc,
-        coreProcessedAt: event.payload.kind === "text" ? undefined : receivedAt
+        coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
       });
       latestSessionEvents.set(event.session.sessionId, event);
       markPending(event.session.sessionId);
@@ -233,6 +237,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     scheduleHeartbeat(0);
   }
 
+  function shouldProcessInboundWithCore(event: AgentEvent): boolean {
+    if (event.payload.kind === "text") return true;
+    return event.payload.kind === "audio" && typeof event.payload.transcript === "string" && event.payload.transcript.trim().length > 0;
+  }
+
   function recoverPendingSessionsFromStore(): void {
     for (const session of deps.store.listPendingCoreConversations()) {
       markPending(session.conversationId);
@@ -264,11 +273,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     if (canRunHeartbeat()) deps.onHeartbeatTick?.();
     let processed = 0;
-    const sleepCocoonMorningEvent = !force && canRunHeartbeat()
-      ? deps.getSleepCocoonMorningEvent?.()
+    const sleepCocoonWakeEvent = !force && canRunHeartbeat()
+      ? (deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.())
       : undefined;
-    if (sleepCocoonMorningEvent) {
-      const handled = await runGeneratedSession(sleepCocoonMorningEvent, "sleep cocoon morning");
+    if (sleepCocoonWakeEvent) {
+      const handled = await runGeneratedSession(sleepCocoonWakeEvent, "sleep cocoon wake");
       if (handled) processed += 1;
     }
     const sleepCocoonGoodnightEvent = !force && canRunHeartbeat() && !hasPendingUserMessages()
@@ -750,7 +759,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
 }
 
 export function summarizePayload(payload: { kind: string; text?: string; markdown?: string; assetId?: string; url?: string; filename?: string; transcript?: string }): string {
-  if (payload.kind === "audio" && payload.transcript) return `[语音]${payload.transcript}`;
+  if (payload.kind === "audio") return summarizeAudioText(payload.transcript, payload.assetId);
+  if (payload.kind === "text" && payload.text) return sanitizeMessageText(payload.text);
   return payload.text ?? payload.markdown ?? payload.assetId ?? payload.url ?? payload.filename ?? payload.kind;
 }
 
@@ -767,8 +777,31 @@ function summarizeEventPayload(event: AgentEvent): string {
 }
 
 export function summarizeOutput(content: { kind: string; text?: string; markdown?: string; assetId?: string; filename?: string; transcript?: string }): string {
-  if (content.kind === "audio" && content.transcript) return `[语音]${content.transcript}`;
+  if (content.kind === "audio") return summarizeAudioText(content.transcript, content.assetId);
+  if (content.kind === "text" && content.text) return sanitizeMessageText(content.text);
   return content.text ?? content.markdown ?? content.assetId ?? content.filename ?? content.kind;
+}
+
+function normalizeInboundEvent(event: AgentEvent): AgentEvent {
+  if (event.payload.kind === "audio") {
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        transcript: sanitizeAudioTranscript(event.payload.transcript)
+      }
+    };
+  }
+  if (event.payload.kind === "text") {
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        text: sanitizeMessageText(event.payload.text)
+      }
+    };
+  }
+  return event;
 }
 
 function formatContextLine(entry: StoredConversationMessage): string {

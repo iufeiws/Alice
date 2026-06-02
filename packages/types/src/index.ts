@@ -91,6 +91,38 @@ export interface ChannelPlugin {
   send(output: AgentOutput): Promise<unknown>;
 }
 
+export function sanitizeMessageText(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => stripLeadingTransportMetadata(line))
+    .join("\n")
+    .trim();
+}
+
+export function sanitizeAudioTranscript(value: string | undefined): string {
+  return sanitizeMessageText(value ?? "");
+}
+
+export function summarizeAudioText(transcript: string | undefined, fallback?: string): string {
+  const text = sanitizeAudioTranscript(transcript);
+  return text ? `[语音]${text}` : fallback ?? "语音";
+}
+
+function stripLeadingTransportMetadata(value: string): string {
+  let text = value.trim();
+  for (let index = 0; index < 10; index += 1) {
+    const next = text
+      .replace(/^\[(?:语音|音频|voice|audio)\]\s*/i, "")
+      .replace(/^\[\s*(?:\d+(?::\d+)*(?:\.\d+)?\s*[,，-]\s*)+\d+(?::\d+)*(?:\.\d+)?\s*\]\s*/, "")
+      .replace(/^(?:start|end|duration|时长|开始|结束)\s*[:：]\s*\d+(?::\d+)*(?:\.\d+)?\s*(?:[,，-]\s*)?/i, "")
+      .trim();
+    if (next === text) return text;
+    text = next;
+  }
+  return text;
+}
+
 export type ToolDefinition = {
   name: string;
   description: string;

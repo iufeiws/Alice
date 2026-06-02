@@ -100,7 +100,7 @@ test("feishu plugin prepares inbound audio with transcript for message runtime",
           messageId: "om_audio",
           chatId: "oc_chat"
         });
-        return { text: "今晚十点提醒我睡觉", provider: "openai_compatible" };
+        return { text: "[语音][0:0.020,0:5.000]  今晚十点提醒我睡觉", provider: "openai_compatible" };
       }
     }
   });

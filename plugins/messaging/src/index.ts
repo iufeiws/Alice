@@ -4,7 +4,7 @@ import { todayMessagingAnchor } from "../../../core/time/src/index.js";
 import { parseZonedIso } from "../../../core/time/src/index.js";
 import type { OutputRouter } from "../../../core/output-router/src/index.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
+import { createId, sanitizeMessageText, summarizeAudioText } from "../../../packages/types/src/index.js";
 import type {
   AliceStore,
   InsertOutboundMessageInput,
@@ -131,6 +131,7 @@ const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
+const todaySleepContextMessageCount = 10;
 const userSpeakerPlaceholder = "{{user}}";
 type SendType = "message" | "markdown" | "image" | "voice";
 type SendPartResult = {
@@ -242,10 +243,17 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     } else if (scope === "today") {
       const sleepCocoonEnteredAt = deps.getSleepCocoonEnteredAt?.();
       const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
-      sinceDate = sleepCocoonDate ?? time.now().date;
-      messages = sleepCocoonDate
-        ? all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonDate.getTime())
-        : [];
+      if (sleepCocoonDate) {
+        const sleepCocoonMs = sleepCocoonDate.getTime();
+        const firstAfterSleepIndex = all.findIndex((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonMs);
+        const boundaryIndex = firstAfterSleepIndex === -1 ? all.length : firstAfterSleepIndex;
+        const startIndex = Math.max(0, boundaryIndex - todaySleepContextMessageCount);
+        messages = all.slice(startIndex);
+        sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : sleepCocoonDate;
+      } else {
+        sinceDate = time.now().date;
+        messages = [];
+      }
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
@@ -731,7 +739,7 @@ function formatMessageContent(message: StoredConversationMessage): string {
   if (message.contentType === "image" || content?.kind === "image") return "发送了一张图片";
   if (message.contentType === "audio" || content?.kind === "audio") {
     const transcript = optionalStringValue(content?.transcript) || message.contentText;
-    return `[语音]${transcript}`;
+    return summarizeAudioText(transcript, message.contentText);
   }
   if (message.contentType === "file" || content?.kind === "file") {
     const filePath = optionalStringValue(content?.filename) || optionalStringValue(content?.assetId) || message.contentText;
@@ -909,9 +917,9 @@ function toStoredOutbound(output: AgentOutput): InsertOutboundMessageInput {
 
 function summarizeOutput(output: AgentOutput): string {
   const content = output.content;
-  if (content.kind === "text") return content.text;
+  if (content.kind === "text") return sanitizeMessageText(content.text);
   if (content.kind === "markdown") return content.markdown;
-  if (content.kind === "audio") return content.transcript ? `[语音]${content.transcript}` : content.assetId;
+  if (content.kind === "audio") return summarizeAudioText(content.transcript, content.assetId);
   if (content.kind === "image") return content.assetId;
   if (content.kind === "file") return content.filename || content.assetId;
   if (content.kind === "card") return content.card.title;

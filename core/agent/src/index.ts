@@ -1146,6 +1146,9 @@ function sleepCocoonGeneratedInstruction(event: AgentEvent, userName: string): s
   if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) {
     return `爱丽丝你醒了? 对${userName}说句早安吧`;
   }
+  if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) {
+    return `爱丽丝你被${userName}强制唤醒了。短短回应${userName}，语气带一点刚醒的迷糊，避免普通晨间问候。`;
+  }
   return undefined;
 }
 

@@ -513,6 +513,52 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
   assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), false);
 });
 
+test("agent core appends force wake instruction from heartbeat event", async () => {
+  const requests: LLMChatInput[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "醒了" } };
+    }
+  };
+  const event = {
+    ...textEvent(),
+    type: "system.heartbeat" as const,
+    meta: {
+      receivedAt: "2026-05-26T08:00:00.000Z",
+      raw: { sleepCocoonForceWake: true }
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [],
+    getPromptProfile: () => ({
+      userName: "YY",
+      visibleTools: { feishu: true },
+      layers: [{
+        id: "base",
+        title: "Base",
+        role: "system",
+        enabled: true,
+        order: 1,
+        content: "base prompt"
+      }],
+      appendLayers: []
+    })
+  });
+
+  await core.handleEvent(event);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("强制唤醒")), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("早安")), false);
+});
+
 test("agent core keeps fixed prefix static messages when token pressure rebuilds the session", async () => {
   let capturedSession: LLMSessionSnapshot | undefined;
   const promptProfile = {

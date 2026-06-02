@@ -1,15 +1,16 @@
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createCurrentTimeProvider, formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import * as sqlite from "./sqlite-compat.js";
 
-const sqlite = await import("node:sqlite");
 const fs = await import("node:fs");
 const path = await import("node:path");
 
 type DatabaseSync = any;
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export type StoredMessageLog = {
   id: number;
   time: string;
+  timeUtc?: string;
   direction: "inbound" | "outbound";
   plugin: string;
   kind: string;
@@ -41,6 +42,7 @@ export type StoredConversationMessage = {
   contentText: string;
   contentJson?: string;
   createdAt: string;
+  createdAtUtc?: string;
   status: MessageStatus;
   isRead: boolean;
   readAt?: string;
@@ -48,6 +50,7 @@ export type StoredConversationMessage = {
   recalledAt?: string;
   reactionsJson: string;
   lastEventAt: string;
+  lastEventAtUtc?: string;
   coreProcessedAt?: string;
   coreBatchId?: string;
   sendFailureReason?: string;
@@ -72,10 +75,10 @@ export type AliceStore = {
   markMessagesCoreProcessed(ids: number[], processedAt: string, batchId: string): void;
   markMessagesReadAndCoreProcessed(ids: number[], readAt: string, batchId: string): void;
   listPendingOutboundMessages(plugin: string, limit: number): StoredConversationMessage[];
-  markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAt: string): void;
-  markOutboundMessageFailed(id: number, failedAt: string, failureReason: string): void;
-  markMessageRead(plugin: string, externalMessageId: string, readAt: string): boolean;
-  markMessageRecalled(plugin: string, externalMessageId: string, recalledAt: string): boolean;
+  markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAtUtc: string, createdAtUtc?: string): void;
+  markOutboundMessageFailed(id: number, failedAt: string, failureReason: string, failedAtUtc?: string): void;
+  markMessageRead(plugin: string, externalMessageId: string, readAt: string, readAtUtc?: string): boolean;
+  markMessageRecalled(plugin: string, externalMessageId: string, recalledAt: string, recalledAtUtc?: string): boolean;
   updateMessageReaction(input: UpdateMessageReactionInput): boolean;
 };
 
@@ -97,7 +100,9 @@ export type UpsertInboundMessageInput = {
   contentText: string;
   contentJson?: string;
   createdAt: string;
+  createdAtUtc?: string;
   lastEventAt?: string;
+  lastEventAtUtc?: string;
   coreProcessedAt?: string;
 };
 
@@ -110,6 +115,7 @@ export type InsertOutboundMessageInput = {
   contentText: string;
   contentJson?: string;
   createdAt: string;
+  createdAtUtc?: string;
 };
 
 export type UpdateMessageReactionInput = {
@@ -119,6 +125,7 @@ export type UpdateMessageReactionInput = {
   actorId?: string;
   op: "add" | "remove";
   at: string;
+  atUtc?: string;
 };
 
 export function createAliceStore(dbPath: string, options: { time?: CurrentTimeProvider; messageDbPath?: string; messageLogDbPath?: string } = {}): AliceStore {
@@ -151,6 +158,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
     db.exec("BEGIN");
     try {
       const columns = logDb.prepare("PRAGMA table_info(message_logs)").all().map((row: any) => row.name);
+      addColumnIfMissing(logDb, columns, "time_utc", "ALTER TABLE message_logs ADD COLUMN time_utc TEXT");
       addColumnIfMissing(logDb, columns, "session_id", "ALTER TABLE message_logs ADD COLUMN session_id TEXT");
       addColumnIfMissing(logDb, columns, "raw_message_id", "ALTER TABLE message_logs ADD COLUMN raw_message_id TEXT");
       addColumnIfMissing(logDb, columns, "processed_at", "ALTER TABLE message_logs ADD COLUMN processed_at TEXT");
@@ -161,6 +169,9 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       addColumnIfMissing(logDb, columns, "status", "ALTER TABLE message_logs ADD COLUMN status TEXT");
       addColumnIfMissing(logDb, columns, "raw_json", "ALTER TABLE message_logs ADD COLUMN raw_json TEXT");
       addColumnIfMissing(logDb, columns, "error", "ALTER TABLE message_logs ADD COLUMN error TEXT");
+      const messageColumns = messageDb.prepare("PRAGMA table_info(messages)").all().map((row: any) => row.name);
+      addColumnIfMissing(messageDb, messageColumns, "created_at_utc", "ALTER TABLE messages ADD COLUMN created_at_utc TEXT");
+      addColumnIfMissing(messageDb, messageColumns, "last_event_at_utc", "ALTER TABLE messages ADD COLUMN last_event_at_utc TEXT");
       if (currentVersion < 3) {
         logDb.exec("UPDATE message_logs SET processed_at = time, processed_batch_id = 'legacy' WHERE direction = 'inbound' AND processed_at IS NULL");
       }
@@ -191,15 +202,18 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
   if (logDb !== db) migrateLegacyMessageLogsToLogDb(db, logDb);
   return {
     insertMessageLog(input) {
+      const timeUtc = input.timeUtc ?? toUtcIso(input.time, time.timeZone);
+      const localTime = localIsoFromUtc(timeUtc, time.timeZone);
       const result = logDb.prepare(`
         INSERT OR IGNORE INTO message_logs(
-          time, direction, plugin, kind, target, session_id, raw_message_id,
+          time, time_utc, direction, plugin, kind, target, session_id, raw_message_id,
           processed_at, processed_batch_id, summary, external_event_id,
           parent_raw_message_id, actor_id, status, raw_json, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
         .run(
-          input.time,
+          localTime,
+          timeUtc,
           input.direction,
           input.plugin,
           input.kind,
@@ -223,7 +237,9 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       }
       return {
         id: Number(result.lastInsertRowid),
-        ...input
+        ...input,
+        time: localTime,
+        timeUtc
       };
     },
     listMessageLogs(limit) {
@@ -256,13 +272,17 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
         .run(processedAt, batchId, ...ids);
     },
     upsertInboundMessage(input) {
+      const createdAtUtc = input.createdAtUtc ?? toUtcIso(input.createdAt, time.timeZone);
+      const createdAt = localIsoFromUtc(createdAtUtc, time.timeZone);
+      const lastEventAtUtc = input.lastEventAtUtc ?? (input.lastEventAt ? toUtcIso(input.lastEventAt, time.timeZone) : createdAtUtc);
+      const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
       const existing = messageDb.prepare(conversationMessageSelect("WHERE plugin = ? AND external_message_id = ? LIMIT 1"))
         .get(input.plugin, input.externalMessageId);
       if (existing) {
         messageDb.prepare(`
           UPDATE messages
           SET conversation_id = ?, sender_id = ?, sender_role = ?, content_type = ?,
-            content_text = ?, content_json = ?, created_at = ?, last_event_at = ?,
+            content_text = ?, content_json = ?, created_at = ?, created_at_utc = ?, last_event_at = ?, last_event_at_utc = ?,
             core_processed_at = COALESCE(core_processed_at, ?)
           WHERE id = ?
         `).run(
@@ -272,8 +292,10 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
           input.contentType,
           input.contentText,
           input.contentJson ?? null,
-          input.createdAt,
-          input.lastEventAt ?? input.createdAt,
+          createdAt,
+          createdAtUtc,
+          lastEventAt,
+          lastEventAtUtc,
           input.coreProcessedAt ?? null,
           existing.id
         );
@@ -283,10 +305,10 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       const result = messageDb.prepare(`
         INSERT INTO messages(
           plugin, external_message_id, conversation_id, direction, sender_id,
-          sender_role, content_type, content_text, content_json, created_at,
-          status, is_read, is_recalled, reactions_json, last_event_at,
+          sender_role, content_type, content_text, content_json, created_at, created_at_utc,
+          status, is_read, is_recalled, reactions_json, last_event_at, last_event_at_utc,
           core_processed_at
-        ) VALUES (?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, 'sent', 0, 0, '{}', ?, ?)
+        ) VALUES (?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, 'sent', 0, 0, '{}', ?, ?, ?)
       `).run(
         input.plugin,
         input.externalMessageId,
@@ -296,19 +318,23 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
         input.contentType,
         input.contentText,
         input.contentJson ?? null,
-        input.createdAt,
-        input.lastEventAt ?? input.createdAt,
+        createdAt,
+        createdAtUtc,
+        lastEventAt,
+        lastEventAtUtc,
         input.coreProcessedAt ?? null
       );
       return messageDb.prepare(conversationMessageSelect("WHERE id = ?")).get(Number(result.lastInsertRowid));
     },
     insertOutboundMessage(input) {
+      const createdAtUtc = input.createdAtUtc ?? toUtcIso(input.createdAt, time.timeZone);
+      const createdAt = localIsoFromUtc(createdAtUtc, time.timeZone);
       const result = messageDb.prepare(`
         INSERT INTO messages(
           plugin, conversation_id, direction, sender_id, sender_role,
-          content_type, content_text, content_json, created_at, status,
-          is_read, is_recalled, reactions_json, last_event_at
-        ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, 'sending', 0, 0, '{}', ?)
+          content_type, content_text, content_json, created_at, created_at_utc, status,
+          is_read, is_recalled, reactions_json, last_event_at, last_event_at_utc
+        ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, 'sending', 0, 0, '{}', ?, ?)
       `).run(
         input.plugin,
         input.conversationId,
@@ -317,8 +343,10 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
         input.contentType,
         input.contentText,
         input.contentJson ?? null,
-        input.createdAt,
-        input.createdAt
+        createdAt,
+        createdAtUtc,
+        createdAt,
+        createdAtUtc,
       );
       return messageDb.prepare(conversationMessageSelect("WHERE id = ?")).get(Number(result.lastInsertRowid));
     },
@@ -332,12 +360,14 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
         .all(limit);
     },
     listMessagesByCreatedAtRange(startAt, endAt, limit = 10_000) {
+      const normalizedStartAt = startAt ? normalizeQueryTime(startAt, time.timeZone) : undefined;
+      const normalizedEndAt = normalizeQueryTime(endAt, time.timeZone);
       const where = startAt
         ? "WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?"
         : "WHERE created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?";
       return startAt
-        ? messageDb.prepare(conversationMessageSelect(where)).all(startAt, endAt, limit)
-        : messageDb.prepare(conversationMessageSelect(where)).all(endAt, limit);
+        ? messageDb.prepare(conversationMessageSelect(where)).all(normalizedStartAt, normalizedEndAt, limit)
+        : messageDb.prepare(conversationMessageSelect(where)).all(normalizedEndAt, limit);
     },
     listMessagesForConversation(conversationId, limit) {
       return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? ORDER BY id DESC LIMIT ?"))
@@ -386,6 +416,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
             m.content_text AS contentText,
             m.content_json AS contentJson,
             m.created_at AS createdAt,
+            m.created_at_utc AS createdAtUtc,
             m.status,
             m.is_read AS isRead,
             m.read_at AS readAt,
@@ -393,6 +424,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
             m.recalled_at AS recalledAt,
             m.reactions_json AS reactionsJson,
             m.last_event_at AS lastEventAt,
+            m.last_event_at_utc AS lastEventAtUtc,
             m.core_processed_at AS coreProcessedAt,
             m.core_batch_id AS coreBatchId,
             m.send_failure_reason AS sendFailureReason
@@ -429,36 +461,46 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
     markMessagesReadAndCoreProcessed(ids, readAt, batchId) {
       if (ids.length === 0) return;
       const placeholders = ids.map(() => "?").join(", ");
+      const readAtUtc = toUtcIso(readAt, time.timeZone);
       messageDb.prepare(`
         UPDATE messages
         SET is_read = 1,
           read_at = COALESCE(read_at, ?),
           last_event_at = CASE WHEN is_read = 0 THEN ? ELSE last_event_at END,
+          last_event_at_utc = CASE WHEN is_read = 0 THEN ? ELSE last_event_at_utc END,
           core_processed_at = COALESCE(core_processed_at, ?),
           core_batch_id = COALESCE(core_batch_id, ?)
         WHERE id IN (${placeholders})
-      `).run(readAt, readAt, readAt, batchId, ...ids);
+      `).run(readAt, readAt, readAtUtc, readAt, batchId, ...ids);
     },
     listPendingOutboundMessages(plugin, limit) {
       return messageDb.prepare(conversationMessageSelect("WHERE plugin = ? AND direction = 'outbound' AND status = 'sending' ORDER BY id ASC LIMIT ?"))
         .all(plugin, limit);
     },
-    markOutboundMessageSent(id, externalMessageId, sentAt) {
-      messageDb.prepare("UPDATE messages SET external_message_id = COALESCE(?, external_message_id), status = 'sent', last_event_at = ?, send_failure_reason = NULL WHERE id = ?")
-        .run(externalMessageId ?? null, sentAt, id);
+    markOutboundMessageSent(id, externalMessageId, sentAtUtc, createdAtUtc) {
+      const createdAt = createdAtUtc ? localIsoFromUtc(createdAtUtc, time.timeZone) : undefined;
+      const sentAt = localIsoFromUtc(sentAtUtc, time.timeZone);
+      messageDb.prepare("UPDATE messages SET external_message_id = COALESCE(?, external_message_id), status = 'sent', created_at = COALESCE(?, created_at), created_at_utc = COALESCE(?, created_at_utc), last_event_at = ?, last_event_at_utc = ?, send_failure_reason = NULL WHERE id = ?")
+        .run(externalMessageId ?? null, createdAt ?? null, createdAtUtc ?? null, sentAt, sentAtUtc, id);
     },
-    markOutboundMessageFailed(id, failedAt, failureReason) {
-      messageDb.prepare("UPDATE messages SET status = 'send_failed', last_event_at = ?, send_failure_reason = ? WHERE id = ?")
-        .run(failedAt, failureReason, id);
+    markOutboundMessageFailed(id, failedAt, failureReason, failedAtUtc) {
+      const lastEventAtUtc = failedAtUtc ?? toUtcIso(failedAt, time.timeZone);
+      const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
+      messageDb.prepare("UPDATE messages SET status = 'send_failed', last_event_at = ?, last_event_at_utc = ?, send_failure_reason = ? WHERE id = ?")
+        .run(lastEventAt, lastEventAtUtc, failureReason, id);
     },
-    markMessageRead(plugin, externalMessageId, readAt) {
-      const result = messageDb.prepare("UPDATE messages SET is_read = 1, read_at = COALESCE(read_at, ?), last_event_at = ? WHERE plugin = ? AND external_message_id = ?")
-        .run(readAt, readAt, plugin, externalMessageId);
+    markMessageRead(plugin, externalMessageId, readAt, readAtUtc) {
+      const lastEventAtUtc = readAtUtc ?? toUtcIso(readAt, time.timeZone);
+      const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
+      const result = messageDb.prepare("UPDATE messages SET is_read = 1, read_at = COALESCE(read_at, ?), last_event_at = ?, last_event_at_utc = ? WHERE plugin = ? AND external_message_id = ?")
+        .run(lastEventAt, lastEventAt, lastEventAtUtc, plugin, externalMessageId);
       return Number(result.changes) > 0;
     },
-    markMessageRecalled(plugin, externalMessageId, recalledAt) {
-      const result = messageDb.prepare("UPDATE messages SET is_recalled = 1, recalled_at = COALESCE(recalled_at, ?), last_event_at = ? WHERE plugin = ? AND external_message_id = ?")
-        .run(recalledAt, recalledAt, plugin, externalMessageId);
+    markMessageRecalled(plugin, externalMessageId, recalledAt, recalledAtUtc) {
+      const lastEventAtUtc = recalledAtUtc ?? toUtcIso(recalledAt, time.timeZone);
+      const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
+      const result = messageDb.prepare("UPDATE messages SET is_recalled = 1, recalled_at = COALESCE(recalled_at, ?), last_event_at = ?, last_event_at_utc = ? WHERE plugin = ? AND external_message_id = ?")
+        .run(lastEventAt, lastEventAt, lastEventAtUtc, plugin, externalMessageId);
       return Number(result.changes) > 0;
     },
     updateMessageReaction(input) {
@@ -466,8 +508,10 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
         .get(input.plugin, input.externalMessageId);
       if (!existing) return false;
       const reactions = updateReactionJson(existing.reactionsJson, input.emoji, input.actorId, input.op);
-      messageDb.prepare("UPDATE messages SET reactions_json = ?, last_event_at = ? WHERE id = ?")
-        .run(JSON.stringify(reactions), input.at, existing.id);
+      const lastEventAtUtc = input.atUtc ?? toUtcIso(input.at, time.timeZone);
+      const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
+      messageDb.prepare("UPDATE messages SET reactions_json = ?, last_event_at = ?, last_event_at_utc = ? WHERE id = ?")
+        .run(JSON.stringify(reactions), lastEventAt, lastEventAtUtc, existing.id);
       return true;
     }
   };
@@ -501,6 +545,7 @@ function initializeMessageLogDatabase(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS message_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       time TEXT NOT NULL,
+      time_utc TEXT,
       direction TEXT NOT NULL,
       plugin TEXT NOT NULL,
       kind TEXT NOT NULL,
@@ -534,6 +579,7 @@ function initializeMessageDatabase(db: DatabaseSync): void {
       content_text TEXT NOT NULL,
       content_json TEXT,
       created_at TEXT NOT NULL,
+      created_at_utc TEXT,
       status TEXT NOT NULL,
       is_read INTEGER NOT NULL DEFAULT 0,
       read_at TEXT,
@@ -541,6 +587,7 @@ function initializeMessageDatabase(db: DatabaseSync): void {
       recalled_at TEXT,
       reactions_json TEXT NOT NULL DEFAULT '{}',
       last_event_at TEXT NOT NULL,
+      last_event_at_utc TEXT,
       core_processed_at TEXT,
       core_batch_id TEXT,
       send_failure_reason TEXT
@@ -577,10 +624,10 @@ function migrateLegacyMessagesToMessageDb(legacyDb: DatabaseSync, messageDb: Dat
     const insert = messageDb.prepare(`
       INSERT OR IGNORE INTO messages(
         id, plugin, external_message_id, conversation_id, direction, sender_id,
-        sender_role, content_type, content_text, content_json, created_at, status,
-        is_read, read_at, is_recalled, recalled_at, reactions_json, last_event_at,
+        sender_role, content_type, content_text, content_json, created_at, created_at_utc, status,
+        is_read, read_at, is_recalled, recalled_at, reactions_json, last_event_at, last_event_at_utc,
         core_processed_at, core_batch_id, send_failure_reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     messageDb.exec("BEGIN");
     try {
@@ -597,6 +644,7 @@ function migrateLegacyMessagesToMessageDb(legacyDb: DatabaseSync, messageDb: Dat
           row.contentText,
           row.contentJson ?? null,
           row.createdAt,
+          row.createdAtUtc ?? null,
           row.status,
           row.isRead ? 1 : 0,
           row.readAt ?? null,
@@ -604,6 +652,7 @@ function migrateLegacyMessagesToMessageDb(legacyDb: DatabaseSync, messageDb: Dat
           row.recalledAt ?? null,
           row.reactionsJson,
           row.lastEventAt,
+          row.lastEventAtUtc ?? null,
           row.coreProcessedAt ?? null,
           row.coreBatchId ?? null,
           row.sendFailureReason ?? null
@@ -625,10 +674,10 @@ function migrateLegacyMessageLogsToLogDb(legacyDb: DatabaseSync, logDb: Database
   if (rows.length > 0) {
     const insert = logDb.prepare(`
       INSERT OR IGNORE INTO message_logs(
-        id, time, direction, plugin, kind, target, session_id, raw_message_id,
+        id, time, time_utc, direction, plugin, kind, target, session_id, raw_message_id,
         processed_at, processed_batch_id, summary, external_event_id,
         parent_raw_message_id, actor_id, status, raw_json, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     logDb.exec("BEGIN");
     try {
@@ -636,6 +685,7 @@ function migrateLegacyMessageLogsToLogDb(legacyDb: DatabaseSync, logDb: Database
         insert.run(
           row.id,
           row.time,
+          row.timeUtc ?? null,
           row.direction,
           row.plugin,
           row.kind,
@@ -699,11 +749,13 @@ function backfillMessagesFromEventLogs(db: DatabaseSync): void {
       content_text,
       content_json,
       created_at,
+      created_at_utc,
       status,
       is_read,
       is_recalled,
       reactions_json,
       last_event_at,
+      last_event_at_utc,
       core_processed_at,
       core_batch_id,
       send_failure_reason
@@ -719,6 +771,7 @@ function backfillMessagesFromEventLogs(db: DatabaseSync): void {
       summary,
       raw_json,
       time,
+      time_utc,
       CASE
         WHEN direction = 'outbound' AND status = 'send_failed' THEN 'send_failed'
         WHEN direction = 'outbound' AND status = 'sending' THEN 'sending'
@@ -728,6 +781,7 @@ function backfillMessagesFromEventLogs(db: DatabaseSync): void {
       0,
       '{}',
       time,
+      time_utc,
       CASE WHEN direction = 'inbound' THEN processed_at ELSE NULL END,
       CASE WHEN direction = 'inbound' THEN processed_batch_id ELSE NULL END,
       error
@@ -867,6 +921,7 @@ function conversationMessageSelect(suffix: string): string {
       content_text AS contentText,
       content_json AS contentJson,
       created_at AS createdAt,
+      created_at_utc AS createdAtUtc,
       status,
       is_read AS isRead,
       read_at AS readAt,
@@ -874,12 +929,25 @@ function conversationMessageSelect(suffix: string): string {
       recalled_at AS recalledAt,
       reactions_json AS reactionsJson,
       last_event_at AS lastEventAt,
+      last_event_at_utc AS lastEventAtUtc,
       core_processed_at AS coreProcessedAt,
       core_batch_id AS coreBatchId,
       send_failure_reason AS sendFailureReason
     FROM messages
     ${suffix}
   `;
+}
+
+function toUtcIso(value: string, timeZone: string): string {
+  return parseZonedIso(value, timeZone).toISOString();
+}
+
+function localIsoFromUtc(value: string, timeZone: string): string {
+  return formatZonedIso(new Date(value), timeZone);
+}
+
+function normalizeQueryTime(value: string, timeZone: string): string {
+  return /[zZ]$|[+-]\d{2}:\d{2}$/.test(value) ? formatZonedIso(new Date(value), timeZone) : value;
 }
 
 function updateReactionJson(raw: string, emoji: string, actorId: string | undefined, op: "add" | "remove"): Record<string, { count: number; users: string[] }> {

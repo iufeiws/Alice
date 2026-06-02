@@ -44,10 +44,10 @@ export type MessageRuntimeDeps = {
     listUnprocessedCoreMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
     listPendingCoreConversations(): Array<{ conversationId: string }>;
     markMessagesCoreProcessed(ids: number[], processedAt: string, batchId: string): void;
-    markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAt: string): void;
-    markOutboundMessageFailed(id: number, failedAt: string, failureReason: string): void;
-    markMessageRead(plugin: string, externalMessageId: string, readAt: string): boolean;
-    markMessageRecalled(plugin: string, externalMessageId: string, recalledAt: string): boolean;
+    markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAtUtc: string, createdAtUtc?: string): void;
+    markOutboundMessageFailed(id: number, failedAt: string, failureReason: string, failedAtUtc?: string): void;
+    markMessageRead(plugin: string, externalMessageId: string, readAt: string, readAtUtc?: string): boolean;
+    markMessageRecalled(plugin: string, externalMessageId: string, recalledAt: string, recalledAtUtc?: string): boolean;
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
   core: {
@@ -61,7 +61,7 @@ export type MessageRuntimeDeps = {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };
   appendLog(level: "info" | "warn" | "error", message: string): void;
-  appendMessageLog(input: Omit<StoredMessageLog, "id" | "time">): StoredMessageLog;
+  appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
 };
 
 export type MessageRuntime = {
@@ -90,6 +90,7 @@ export type MessageLifecycleEvent =
       actorId?: string;
       emoji: string;
       occurredAt: string;
+      occurredAtUtc?: string;
       raw?: unknown;
     }
   | {
@@ -100,6 +101,7 @@ export type MessageLifecycleEvent =
       conversationId?: string;
       actorId?: string;
       occurredAt: string;
+      occurredAtUtc?: string;
       raw?: unknown;
     };
 
@@ -138,6 +140,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         return;
       }
       const receivedAt = event.meta.receivedAt;
+      const receivedAtUtc = event.meta.receivedAtUtc;
       deps.store.upsertInboundMessage({
         plugin: event.source.plugin,
         externalMessageId: event.source.rawMessageId ?? event.id,
@@ -148,7 +151,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         contentText,
         contentJson: safeJson({ ...event.payload, quotedMessage: event.meta.quotedMessage }),
         createdAt: receivedAt,
+        createdAtUtc: receivedAtUtc,
         lastEventAt: receivedAt,
+        lastEventAtUtc: receivedAtUtc,
         coreProcessedAt: event.payload.kind === "text" ? undefined : receivedAt
       });
       latestSessionEvents.set(event.session.sessionId, event);
@@ -172,11 +177,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       });
 
       if (event.kind === "message.read") {
-        deps.store.markMessageRead(event.plugin, event.externalMessageId, event.occurredAt);
+        deps.store.markMessageRead(event.plugin, event.externalMessageId, event.occurredAt, event.occurredAtUtc);
         return;
       }
       if (event.kind === "message.recalled") {
-        deps.store.markMessageRecalled(event.plugin, event.externalMessageId, event.occurredAt);
+        deps.store.markMessageRecalled(event.plugin, event.externalMessageId, event.occurredAt, event.occurredAtUtc);
         return;
       }
       if (event.kind === "reaction.created" || event.kind === "reaction.deleted") {
@@ -186,7 +191,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
           emoji: event.emoji,
           actorId: event.actorId,
           op: event.kind === "reaction.created" ? "add" : "remove",
-          at: event.occurredAt
+          at: event.occurredAt,
+          atUtc: event.occurredAtUtc
         });
       }
     },
@@ -325,20 +331,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         contentType: output.content.kind,
         contentText: summarizeOutput(output.content),
         contentJson: safeJson(output.content),
-        createdAt: output.meta.createdAt
+        createdAt: output.meta.createdAt,
+        createdAtUtc: output.meta.createdAtUtc
       }));
       try {
         const sendResults = await deps.outputRouter.sendAll(outputs);
-        const sentAt = time.now().iso;
+        const sentAtUtc = time.now().date.toISOString();
         const resultList = Array.isArray(sendResults) ? sendResults : [];
         for (const [index, message] of outboundMessages.entries()) {
-          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAtUtc, extractSentMessageCreatedAtUtc(resultList[index]));
         }
       } catch (error) {
-        const failedAt = time.now().iso;
+        const failedTime = time.now();
+        const failedAt = failedTime.iso;
+        const failedAtUtc = failedTime.date.toISOString();
         const reason = error instanceof Error ? error.message : String(error);
         for (const message of outboundMessages) {
-          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason, failedAtUtc);
         }
         throw error;
       }
@@ -383,20 +392,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         contentType: output.content.kind,
         contentText: summarizeOutput(output.content),
         contentJson: safeJson(output.content),
-        createdAt: output.meta.createdAt
+        createdAt: output.meta.createdAt,
+        createdAtUtc: output.meta.createdAtUtc
       }));
       try {
         const sendResults = await deps.outputRouter.sendAll(outputs);
-        const sentAt = time.now().iso;
+        const sentAtUtc = time.now().date.toISOString();
         const resultList = Array.isArray(sendResults) ? sendResults : [];
         for (const [index, message] of outboundMessages.entries()) {
-          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAtUtc, extractSentMessageCreatedAtUtc(resultList[index]));
         }
       } catch (error) {
-        const failedAt = time.now().iso;
+        const failedTime = time.now();
+        const failedAt = failedTime.iso;
+        const failedAtUtc = failedTime.date.toISOString();
         const reason = error instanceof Error ? error.message : String(error);
         for (const message of outboundMessages) {
-          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason, failedAtUtc);
         }
         throw error;
       }
@@ -467,20 +479,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         contentType: output.content.kind,
         contentText: summarizeOutput(output.content),
         contentJson: safeJson(output.content),
-        createdAt: output.meta.createdAt
+        createdAt: output.meta.createdAt,
+        createdAtUtc: output.meta.createdAtUtc
       }));
       try {
         const sendResults = await deps.outputRouter.sendAll(outputs);
-        const sentAt = time.now().iso;
+        const sentAtUtc = time.now().date.toISOString();
         const resultList = Array.isArray(sendResults) ? sendResults : [];
         for (const [index, message] of outboundMessages.entries()) {
-          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAt);
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[index]), sentAtUtc, extractSentMessageCreatedAtUtc(resultList[index]));
         }
       } catch (error) {
-        const failedAt = time.now().iso;
+        const failedTime = time.now();
+        const failedAt = failedTime.iso;
+        const failedAtUtc = failedTime.date.toISOString();
         const reason = error instanceof Error ? error.message : String(error);
         for (const message of outboundMessages) {
-          deps.store.markOutboundMessageFailed(message.id, failedAt, reason);
+          deps.store.markOutboundMessageFailed(message.id, failedAt, reason, failedAtUtc);
         }
         for (const output of outputs) {
           deps.appendMessageLog({
@@ -543,12 +558,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     userId?: string;
     sessionId: string;
   }, text: string): Promise<void> {
+    const now = time.now();
     const output: AgentOutput = {
       id: createId("out"),
       target,
       content: { kind: "text", text },
       meta: {
-        createdAt: time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }
@@ -560,13 +577,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       contentType: output.content.kind,
       contentText: summarizeOutput(output.content),
       contentJson: safeJson(output.content),
-      createdAt: output.meta.createdAt
+      createdAt: output.meta.createdAt,
+      createdAtUtc: output.meta.createdAtUtc
     });
     try {
       const sendResults = await deps.outputRouter.sendAll([output]);
       const resultList = Array.isArray(sendResults) ? sendResults : [];
-      const sentAt = time.now().iso;
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(resultList[0]), sentAt);
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(resultList[0]), time.now().date.toISOString(), extractSentMessageCreatedAtUtc(resultList[0]));
       deps.appendMessageLog({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -577,9 +594,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         summary: summarizeOutput(output.content)
       });
     } catch (error) {
-      const failedAt = time.now().iso;
+      const failedTime = time.now();
+      const failedAt = failedTime.iso;
+      const failedAtUtc = failedTime.date.toISOString();
       const reason = error instanceof Error ? error.message : String(error);
-      deps.store.markOutboundMessageFailed(stored.id, failedAt, reason);
+      deps.store.markOutboundMessageFailed(stored.id, failedAt, reason, failedAtUtc);
       deps.appendMessageLog({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -674,6 +693,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       payload: { kind: "text", text },
       meta: {
         receivedAt: latestLog.createdAt,
+        receivedAtUtc: latestLog.createdAtUtc,
         replyTo: latestLog.externalMessageId,
         raw: {
           recoveredFromMessageLog: true,
@@ -684,7 +704,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function buildManualProcessEvent(target: NonNullable<ReturnType<NonNullable<MessageRuntimeDeps["getProcessNowTarget"]>>>): AgentEvent {
-    const receivedAt = time.now().iso;
+    const receivedTime = time.now();
+    const receivedAt = receivedTime.iso;
+    const receivedAtUtc = receivedTime.date.toISOString();
     return {
       id: createId("evt"),
       source: {
@@ -704,6 +726,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       },
       meta: {
         receivedAt,
+        receivedAtUtc,
         raw: {
           adminProcessNow: true
         }
@@ -788,4 +811,10 @@ function extractSentMessageId(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as { messageId?: unknown };
   return typeof record.messageId === "string" ? record.messageId : undefined;
+}
+
+function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { createdAtUtc?: unknown };
+  return typeof record.createdAtUtc === "string" ? record.createdAtUtc : undefined;
 }

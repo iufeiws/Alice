@@ -64,6 +64,7 @@ def _run_split_sentence_check(tmp_path: Path) -> None:
             reference_audio=reference_audio,
             reference_text=reference_text,
         )
+        assert calls == []
 
         output_path = tmp_path / "out.wav"
         runtime.synthesize(
@@ -135,6 +136,7 @@ def _run_language_reload_check(tmp_path: Path) -> None:
             reference_audio=reference_audio,
             reference_text=reference_text,
         )
+        assert calls == []
 
         runtime.synthesize(text="中文。", output_path=tmp_path / "zh.wav", language="zh")
         runtime.synthesize(text="日本語。", output_path=tmp_path / "jp.wav", language="jp", reference_text="参照テキスト")

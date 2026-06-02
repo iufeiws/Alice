@@ -4,6 +4,7 @@ const path = await import("node:path");
 export type FileSystemLogEntry = {
   id: number;
   time: string;
+  utcTime?: string;
   level: "info" | "warn" | "error";
   message: string;
 };
@@ -27,7 +28,7 @@ export function createFileLogStore(root: string, options: { timeZone?: string; g
       };
       nextId += 1;
 
-      fs.appendFileSync(logPathFor(root, input.time, getTimeZone()), `${JSON.stringify(entry)}\n`);
+      fs.appendFileSync(logPathFor(root, input.utcTime ?? input.time, getTimeZone()), `${JSON.stringify(entry)}\n`);
       return entry;
     },
     listRecent(limit) {

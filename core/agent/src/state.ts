@@ -24,6 +24,7 @@ export type AgentStateSnapshot = {
   reason?: string;
   responseDelayMs: number;
   sleepCocoonEnteredAt?: string;
+  sleepCocoonEnteredAtUtc?: string;
   sleepDurationMs?: number;
   sleepCocoonAutoCheckedAt?: string;
 };
@@ -37,7 +38,7 @@ export type AgentStateController = {
   start(): void;
   stop(): void;
   getSnapshot(): AgentStateSnapshot;
-  setState(state: AgentBehaviorState, options?: { reason?: string; durationMs?: number; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean }): AgentStateSnapshot;
+  setState(state: AgentBehaviorState, options?: { reason?: string; durationMs?: number; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean }): AgentStateSnapshot;
   noteSleepCocoonAutoChecked(): AgentStateSnapshot;
   setIntimacy(value: number): AgentStateSnapshot;
   tick(): AgentStateSnapshot;
@@ -108,7 +109,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
 
   function transition(
     state: AgentBehaviorState,
-    opts: { reason?: string; durationMs?: number; previousState?: AgentBehaviorState; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean } = {}
+    opts: { reason?: string; durationMs?: number; previousState?: AgentBehaviorState; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean } = {}
   ): AgentStateSnapshot {
     const updatedAt = currentIso();
     const next: AgentStateSnapshot = {
@@ -120,6 +121,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       reason: opts.reason,
       responseDelayMs: responseDelayFor(state, random),
       sleepCocoonEnteredAt: opts.clearSleepCocoon ? undefined : opts.sleepCocoonEnteredAt ?? snapshot.sleepCocoonEnteredAt,
+      sleepCocoonEnteredAtUtc: opts.clearSleepCocoon ? undefined : opts.sleepCocoonEnteredAtUtc ?? snapshot.sleepCocoonEnteredAtUtc,
       sleepDurationMs: opts.clearSleepCocoon ? undefined : opts.sleepDurationMs ?? snapshot.sleepDurationMs,
       sleepCocoonAutoCheckedAt: opts.clearSleepCocoon || opts.resetSleepCocoonAuto ? undefined : snapshot.sleepCocoonAutoCheckedAt
     };
@@ -286,6 +288,7 @@ function normalizeSnapshot(raw: unknown, time: CurrentTimeProvider, random: () =
     reason: typeof value.reason === "string" ? value.reason : undefined,
     responseDelayMs: positiveNumber(value.responseDelayMs) ?? responseDelayFor(state, random),
     sleepCocoonEnteredAt: validIso(value.sleepCocoonEnteredAt),
+    sleepCocoonEnteredAtUtc: validIso(value.sleepCocoonEnteredAtUtc),
     sleepDurationMs: positiveNumber(value.sleepDurationMs),
     sleepCocoonAutoCheckedAt: validIso(value.sleepCocoonAutoCheckedAt)
   };

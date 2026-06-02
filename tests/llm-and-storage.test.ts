@@ -2,12 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../core/llm/src/index.js";
 import { createLLMRequests } from "../apps/api/src/llm-requests.js";
+import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore } from "../packages/storage/src/token-usage-store.js";
+import * as sqlite from "../packages/storage/src/sqlite-compat.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
-const sqlite = await import("node:sqlite");
 
 test("mutable LLM client delegates to the latest configured client", async () => {
   const first = namedClient("first");
@@ -517,7 +518,7 @@ test("sqlite store initializes schema version without losing existing logs", () 
   assert.equal(reopened.listUnprocessedInboundForSession("session-1", 10).length, 0);
 
   const db: any = new sqlite.DatabaseSync(dbPath);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
 });
 
 test("sqlite migration marks legacy inbound logs processed", () => {
@@ -542,7 +543,7 @@ test("sqlite migration marks legacy inbound logs processed", () => {
 
   const store = createAliceStore(dbPath);
   assert.equal(store.listUnprocessedInboundForSession("session-legacy", 10).length, 0);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
 });
 
 test("sqlite migration backfills message event logs into core-facing messages", () => {
@@ -607,7 +608,7 @@ test("sqlite migration backfills message event logs into core-facing messages", 
   assert.equal(message.contentText, "old text");
   assert.equal(Boolean(message.isRead), true);
   assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
 });
 
 test("sqlite store keeps core-facing message state separate from event logs", () => {
@@ -642,7 +643,7 @@ test("sqlite store keeps core-facing message state separate from event logs", ()
 
   const updated = store.listMessagesForConversation("feishu:dm:ou_user", 10)[0];
   assert.equal(Boolean(updated.isRead), true);
-  assert.equal(updated.readAt, "2026-05-24T00:02:00.000Z");
+  assert.equal(updated.readAt, "2026-05-24T00:02:00.000");
   assert.equal(Boolean(updated.isRecalled), true);
   assert.deepEqual(JSON.parse(updated.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
 });
@@ -683,6 +684,50 @@ test("sqlite store lists messages chronologically and by created range", () => {
     store.listMessagesByCreatedAtRange("2026-05-24T00:00:00.000Z", "2026-05-24T01:00:00.000Z").map((message) => message.contentText),
     ["one"]
   );
+});
+
+test("sqlite store writes UTC source times and derives configured timezone fields", () => {
+  const dir = makeTempDir("message-utc-source");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
+  const log = store.insertMessageLog({
+    time: "ignored-local",
+    timeUtc: "2026-06-02T15:26:34.819Z",
+    direction: "inbound",
+    plugin: "feishu",
+    kind: "text",
+    summary: "hello"
+  });
+  assert.equal(log.timeUtc, "2026-06-02T15:26:34.819Z");
+  assert.equal(log.time, "2026-06-02T23:26:34.819");
+
+  const inbound = store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_utc",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "one",
+    createdAt: "ignored-local",
+    createdAtUtc: "2026-06-02T15:26:34.819Z"
+  });
+  assert.equal(inbound.createdAtUtc, "2026-06-02T15:26:34.819Z");
+  assert.equal(inbound.createdAt, "2026-06-02T23:26:34.819");
+
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "two",
+    createdAt: "ignored-local",
+    createdAtUtc: "2026-06-02T15:29:58.129Z"
+  });
+  store.markOutboundMessageSent(outbound.id, "om_sent", "2026-06-02T15:29:59.326Z", "2026-06-02T15:29:58.129Z");
+  const sent = store.listMessagesForConversation("session", 10).find((message) => message.id === outbound.id);
+  assert.equal(sent?.createdAtUtc, "2026-06-02T15:29:58.129Z");
+  assert.equal(sent?.createdAt, "2026-06-02T23:29:58.129");
+  assert.equal(sent?.lastEventAtUtc, "2026-06-02T15:29:59.326Z");
+  assert.equal(sent?.lastEventAt, "2026-06-02T23:29:59.326");
 });
 
 function namedClient(name: string): LLMClient {

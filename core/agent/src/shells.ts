@@ -1,4 +1,4 @@
-import { formatZonedIso } from "../../time/src/index.js";
+import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -566,7 +566,7 @@ function isRecordExpired(record: DailyShellRecord, now: Date, timeZone: string, 
 }
 
 function isDailyShellExpired(createdAt: string, now: Date, timeZone: string, rolloverHour: number, fallbackCreatedDate?: string): boolean {
-  const createdDate = fallbackCreatedDate ?? formatLocalDate(new Date(createdAt), timeZone);
+  const createdDate = fallbackCreatedDate ?? formatLocalDate(parseZonedIso(createdAt, timeZone), timeZone);
   const expiryDate = addLocalDays(createdDate, 1);
   const currentDate = formatLocalDate(now, timeZone);
   const currentHour = localHour(now, timeZone);

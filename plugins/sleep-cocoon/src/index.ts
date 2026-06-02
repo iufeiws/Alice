@@ -61,9 +61,11 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
 
   async function enterSleepCocoon(call: ToolCall): Promise<ToolResult> {
     const sleepDurationMs = resolveSleepDurationMs(call.input.hours, random);
+    const now = deps.time.now();
     const state = deps.agentState.setState("going_to_sleep", {
       reason: "sleep_cocoon_in",
-      sleepCocoonEnteredAt: deps.time.now().iso,
+      sleepCocoonEnteredAt: now.iso,
+      sleepCocoonEnteredAtUtc: now.date.toISOString(),
       sleepDurationMs,
       resetSleepCocoonAuto: true
     });
@@ -111,6 +113,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       deps.appendLog?.("warn", `sleep_cocoon success notice skipped: no current messaging session`);
       return;
     }
+    const now = deps.time.now();
     const output: AgentOutput = {
       id: createId("tool_out"),
       target: {
@@ -122,7 +125,8 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       },
       content: { kind: "text", text },
       meta: {
-        createdAt: deps.time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }

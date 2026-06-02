@@ -1352,6 +1352,7 @@ function buildReply(
   time: CurrentTimeProvider,
   content: AgentOutput["content"]
 ): AgentOutput {
+  const now = time.now();
   return {
     id: createId("out"),
     target: {
@@ -1364,7 +1365,8 @@ function buildReply(
     },
     content,
     meta: {
-      createdAt: time.now().iso,
+      createdAt: now.iso,
+      createdAtUtc: now.date.toISOString(),
       urgency: "normal",
       allowStreaming: false
     }

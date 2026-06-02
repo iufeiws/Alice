@@ -138,6 +138,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         const result = deps.pairingStore?.pairFromEvent(event);
         if (result && !result.ok) {
           deps.log?.("warn", `[feishu] pairing rejected: already bound to ${result.contact.id}`);
+          const now = time.now();
           await plugin.send({
             id: `pair_reject_${Date.now()}`,
             target: {
@@ -153,7 +154,8 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
               text: "Pairing rejected. This agent is already bound to one Feishu user."
             },
             meta: {
-              createdAt: time.now().iso,
+              createdAt: now.iso,
+              createdAtUtc: now.date.toISOString(),
               urgency: "normal"
             }
           });
@@ -161,6 +163,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         }
 
         deps.log?.("info", `[feishu] paired unique contact ${result?.contact.id ?? event.source.userId ?? "(unknown)"}`);
+        const now = time.now();
         await plugin.send({
           id: `pair_${Date.now()}`,
           target: {
@@ -176,7 +179,8 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
             text: "Paired as the unique Feishu user. I can now reply here and keep this contact for future proactive messages."
           },
           meta: {
-              createdAt: time.now().iso,
+            createdAt: now.iso,
+            createdAtUtc: now.date.toISOString(),
             urgency: "normal"
           }
         });

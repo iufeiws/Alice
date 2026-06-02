@@ -257,7 +257,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       callId,
       ok: true,
       messageCursorId: cursorMessageId,
-      output: appendCurrentTime(body, time.timeZone, time.now().date)
+      output: appendCurrentTime(body, time.now().iso)
     };
   }
 
@@ -366,7 +366,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return {
       callId,
       ok: true,
-      output: appendCurrentTime(output || "nothing new", time.timeZone, time.now().date)
+      output: appendCurrentTime(output || "nothing new", time.now().iso)
     };
   }
 
@@ -423,8 +423,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     try {
       markMessageAttemptedNow();
       const sent = await deps.outputRouter.send(output);
-      const sentAt = time.now().iso;
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAt);
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().date.toISOString(), extractSentMessageCreatedAtUtc(sent));
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -437,7 +436,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       return { ok: true, messageId: extractSentMessageId(sent), content: options.transcript ?? content, storedId: stored.id };
     } catch (error) {
       const reason = normalizeSendError(error);
-      deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
+      const failedTime = time.now();
+      deps.store.markOutboundMessageFailed(stored.id, failedTime.iso, reason, failedTime.date.toISOString());
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -496,8 +496,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       try {
         markMessageAttemptedNow();
         const sent = await deps.outputRouter.send(input.output);
-        const sentAt = time.now().iso;
-        deps.store.markOutboundMessageSent(input.storedId, extractSentMessageId(sent), sentAt);
+        deps.store.markOutboundMessageSent(input.storedId, extractSentMessageId(sent), time.now().date.toISOString(), extractSentMessageCreatedAtUtc(sent));
         deps.appendMessageLog?.({
           direction: "outbound",
           plugin: input.output.target.plugin,
@@ -511,7 +510,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       } catch (error) {
         const reason = normalizeSendError(error);
         lastReason = reason;
-        deps.store.markOutboundMessageFailed(input.storedId, time.now().iso, reason);
+        const failedTime = time.now();
+        deps.store.markOutboundMessageFailed(input.storedId, failedTime.iso, reason, failedTime.date.toISOString());
       }
     }
     deps.appendMessageLog?.({
@@ -552,6 +552,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 
   function buildOutput(target: MessagingToolTarget, type: SendType, content: string, transcript?: string): AgentOutput {
+    const now = time.now();
     return {
       id: createId("tool_out"),
       target: {
@@ -569,7 +570,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
             ? { kind: "audio", assetId: content, transcript }
             : { kind: "text", text: content },
       meta: {
-        createdAt: time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }
@@ -701,8 +703,8 @@ function formatContextEntryLine(entry: ChatContextEntry, userName: string): stri
   return formatMessageContentLine(entry.message, userName);
 }
 
-function appendCurrentTime(output: string, timeZone: string, date: Date): string {
-  return `<chat-log>\n${output}\n</chat-log>\n<time>${formatLocalDateTime(date, timeZone)}<\\time>`;
+function appendCurrentTime(output: string, currentTime: string): string {
+  return `<chat-log>\n${output}\n</chat-log>\n<time>${currentTime}<\\time>`;
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
@@ -891,7 +893,8 @@ function toStoredOutbound(output: AgentOutput): InsertOutboundMessageInput {
     contentType: output.content.kind,
     contentText: summarizeOutput(output),
     contentJson: JSON.stringify(output.content),
-    createdAt: output.meta.createdAt
+    createdAt: output.meta.createdAt,
+    createdAtUtc: output.meta.createdAtUtc
   };
 }
 
@@ -910,6 +913,12 @@ function extractSentMessageId(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as { messageId?: unknown };
   return typeof record.messageId === "string" ? record.messageId : undefined;
+}
+
+function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { createdAtUtc?: unknown };
+  return typeof record.createdAtUtc === "string" ? record.createdAtUtc : undefined;
 }
 
 function normalizeSendError(error: unknown): string {
@@ -960,18 +969,37 @@ export type ConfiguredVoiceSynthesizerDeps = MossOnnxVoiceSynthesizerDeps;
 
 export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: ConfiguredVoiceSynthesizerDeps = {}): VoiceSynthesizer {
   const config = input ?? { backend: "genie-tts" as const };
-  const moss = createMossOnnxVoiceSynthesizer({ ...config, backend: "moss-onnx" }, deps);
-  if (config.backend === "moss-onnx") return moss;
+  const disableMoss = Boolean(
+    process.env.DISABLE_MOSS_TTS === "1" ||
+    String(process.env.DISABLE_MOSS_TTS || "").toLowerCase() === "true" ||
+    Boolean((input as any)?.disableMoss)
+  );
+  let moss: VoiceSynthesizer | undefined = undefined;
+  if (!disableMoss) {
+    moss = createMossOnnxVoiceSynthesizer({ ...config, backend: "moss-onnx" }, deps);
+    if (config.backend === "moss-onnx") return moss;
+  } else {
+    if (config.backend === "moss-onnx") {
+      throw new Error("MOSS TTS is disabled by DISABLE_MOSS_TTS");
+    }
+  }
   const genieReadinessError = getGenieReadinessError(config);
   if (genieReadinessError) {
     deps.appendLog?.("warn", `genie tts unavailable; falling back to moss: ${genieReadinessError}`);
-    return moss;
+    if (disableMoss) {
+      throw new Error(`Genie TTS unavailable and MOSS is disabled: ${genieReadinessError}`);
+    }
+    if (!moss) {
+      moss = createMossOnnxVoiceSynthesizer({ ...config, backend: "moss-onnx" }, deps);
+    }
+    return moss as VoiceSynthesizer;
   }
   const genie = createGenieTtsVoiceSynthesizer(config, deps);
+  const fallbackMoss = moss;
   let genieHasSynthesized = false;
   let useMossFallback = false;
   const synthesize = (async (request) => {
-    if (useMossFallback) return moss(request);
+    if (useMossFallback) return fallbackMoss?.(request) ?? Promise.reject(new Error("MOSS TTS is disabled"));
     try {
       const result = await genie(request);
       genieHasSynthesized = true;
@@ -981,18 +1009,18 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
       if (!genieHasSynthesized && isGenieStartupFallbackError(message)) {
         useMossFallback = true;
         deps.appendLog?.("warn", `genie tts startup failed; falling back to moss: ${message}`);
-        return moss(request);
+        return fallbackMoss?.(request) ?? Promise.reject(new Error("MOSS TTS is disabled"));
       }
       throw error;
     }
   }) as VoiceSynthesizer;
   synthesize.noteActivity = () => {
     if (!useMossFallback) genie.noteActivity?.();
-    moss.noteActivity?.();
+    fallbackMoss?.noteActivity?.();
   };
   synthesize.prepare = async () => {
     if (useMossFallback) {
-      await moss.prepare?.();
+      await fallbackMoss?.prepare?.();
       return;
     }
     try {
@@ -1002,7 +1030,7 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
       if (isGenieStartupFallbackError(message)) {
         useMossFallback = true;
         deps.appendLog?.("warn", `genie tts prepare failed; falling back to moss: ${message}`);
-        await moss.prepare?.();
+        await fallbackMoss?.prepare?.();
         return;
       }
       throw error;
@@ -1010,7 +1038,7 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
   };
   synthesize.shutdown = async () => {
     await genie.shutdown?.();
-    await moss.shutdown?.();
+    await fallbackMoss?.shutdown?.();
   };
   return synthesize;
 }

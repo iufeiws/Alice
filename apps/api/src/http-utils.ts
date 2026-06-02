@@ -19,10 +19,34 @@ export function isLoopbackAddress(remoteAddress: string | undefined): boolean {
     remoteAddress === "::ffff:127.0.0.1";
 }
 
+function normalizeRemoteAddress(remoteAddress: string | undefined): string | undefined {
+  return remoteAddress?.startsWith("::ffff:") ? remoteAddress.slice("::ffff:".length) : remoteAddress;
+}
+
+export function isPrivateNetworkAddress(remoteAddress: string | undefined): boolean {
+  const address = normalizeRemoteAddress(remoteAddress);
+  if (!address) return false;
+
+  const ipv4Parts = address.split(".").map((part) => Number(part));
+  if (ipv4Parts.length === 4 && ipv4Parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    const [first, second] = ipv4Parts;
+    return first === 10 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 169 && second === 254);
+  }
+
+  const lowerAddress = address.toLowerCase();
+  return lowerAddress.startsWith("fc") ||
+    lowerAddress.startsWith("fd") ||
+    lowerAddress.startsWith("fe80:");
+}
+
 export function assertLoopbackAdminRequest(request: any): void {
   if (!isAdminPath(request.url)) return;
-  if (!isLoopbackAddress(request.socket?.remoteAddress)) {
-    throw new HttpJsonError(403, "admin_local_only", "Admin endpoints are local-only");
+  const remoteAddress = request.socket?.remoteAddress;
+  if (!isLoopbackAddress(remoteAddress) && !isPrivateNetworkAddress(remoteAddress)) {
+    throw new HttpJsonError(403, "admin_lan_only", "Admin endpoints are limited to local and LAN addresses");
   }
 }
 

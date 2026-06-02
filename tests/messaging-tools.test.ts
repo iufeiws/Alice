@@ -35,7 +35,9 @@ test("messaging tools expose merged check_chat and send_chat tools", () => {
 });
 
 test("check_chat range scope filters with from and to", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-range-scope"), "alice.sqlite"));
+  const store = createAliceStore(path.join(makeTempDir("messaging-range-scope"), "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -140,7 +142,7 @@ test("check_chat defaults to recent outside llm sessions", async () => {
   assert.equal((String(recent.output).match(/^\[/gm) ?? []).length, 2);
   assert.doesNotMatch(String(recent.output), /\.\d{3}Z/);
   assert.match(String(recent.output), /^<chat-log>\n/);
-  assert.match(String(recent.output), /\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
+  assert.match(String(recent.output), /\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
   const readMessages = store.listMessages(10).filter((message) => message.direction === "inbound");
   assert.equal(readMessages.length, 3);
   assert.deepEqual(readMessages.map((message) => Boolean(message.isRead)), [true, true, true]);
@@ -162,6 +164,21 @@ test("check_chat defaults to recent outside llm sessions", async () => {
   assert.equal(recentAgain.ok, true);
   assert.match(String(recentAgain.output), /hello today/);
   assert.match(String(recentAgain.output), /after today check/);
+});
+
+test("check_chat returns current time from configured timezone provider", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-current-time"), "alice.sqlite"));
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T04:34:56.789Z")),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({ id: "call_current_time", toolName: "check_chat", input: { scope: "new" } });
+
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /<time>2026-05-26T12:34:56\.789<\\time>$/);
 });
 
 test("check_chat today starts at sleep cocoon pointer and todayold keeps old anchor", async () => {
@@ -293,7 +310,7 @@ test("check_chat defaults to new after first recent call in the same llm session
 
   const third = await tools.execute({ id: "call_3", toolName: "check_chat", input: {} });
   assert.equal(third.ok, true);
-  assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
+  assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
 
   tools.noteLLMSessionCompleted();
   tools.noteLLMRequestStarted();
@@ -496,7 +513,9 @@ test("check_chat recent is independent of the 6am today anchor", async () => {
 });
 
 test("check_chat chat labels use absolute local time", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-injected-now"), "alice.sqlite"));
+  const store = createAliceStore(path.join(makeTempDir("messaging-injected-now"), "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_yesterday",
@@ -520,7 +539,9 @@ test("check_chat chat labels use absolute local time", async () => {
 });
 
 test("check_chat merges shell switch logs into chat context", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch"), "alice.sqlite"));
+  const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch"), "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -582,7 +603,7 @@ test("check_chat new scope does not return shell logs without unread messages", 
   const result = await tools.execute({ id: "call_new", toolName: "check_chat", input: {} });
 
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
+  assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
   assert.doesNotMatch(String(result.output), /壳切换/);
 });
 
@@ -661,7 +682,7 @@ test("send_chat defaults to message and splits newline text into multiple sends"
 
   const noNew = await tools.execute({ id: "call_check_new", toolName: "check_chat", input: {} });
   assert.equal(noNew.ok, true);
-  assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\\time>$/);
+  assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
 });
 
 test("send_chat filters parenthetical text before sending and storing", async () => {

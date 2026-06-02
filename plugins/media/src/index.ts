@@ -243,14 +243,17 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error("selfie prompt template was not found");
     const template = fs.readFileSync(templatePath, "utf8");
+    const now = time.now();
     return renderLLMText(template, {
       ...buildLLMTextVariables({
         userName: deps.getUserName?.() || "user",
         time,
         appearanceDescription: deps.getAppearanceDescription?.() ?? context.appearanceDescription ?? "",
         dailyShellRaw: {
-          date: time.now().date.toISOString(),
-          createdAt: time.now().iso,
+          date: now.iso.slice(0, 10),
+          dateUtc: now.date.toISOString().slice(0, 10),
+          createdAt: now.iso,
+          createdAtUtc: now.date.toISOString(),
           personality: {
             id: context.personalityName,
             name: context.personalityName,
@@ -293,6 +296,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
   }
 
   async function sendText(target: MediaToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
+    const now = time.now();
     return sendOutput({
       id: createId("tool_out"),
       target: {
@@ -304,7 +308,8 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       },
       content: { kind: "text", text },
       meta: {
-        createdAt: time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }
@@ -312,6 +317,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
   }
 
   async function sendImage(target: MediaToolTarget, assetId: string): Promise<unknown> {
+    const now = time.now();
     return sendOutput({
       id: createId("tool_out"),
       target: {
@@ -323,7 +329,8 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       },
       content: { kind: "image", assetId },
       meta: {
-        createdAt: time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }
@@ -342,7 +349,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output, senderRole));
     try {
       const sent = await deps.outputRouter.send(output);
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().iso);
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().date.toISOString(), extractSentMessageCreatedAtUtc(sent));
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -355,7 +362,8 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
       return sent;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
+      const failedTime = time.now();
+      deps.store.markOutboundMessageFailed(stored.id, failedTime.iso, reason, failedTime.date.toISOString());
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -729,7 +737,8 @@ function toStoredOutbound(output: AgentOutput, senderRole: "assistant" | "system
     contentType: output.content.kind,
     contentText: summarizeOutput(output),
     contentJson: JSON.stringify(output.content),
-    createdAt: output.meta.createdAt
+    createdAt: output.meta.createdAt,
+    createdAtUtc: output.meta.createdAtUtc
   };
 }
 
@@ -747,6 +756,12 @@ function extractSentMessageId(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as { messageId?: unknown };
   return typeof record.messageId === "string" ? record.messageId : undefined;
+}
+
+function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { createdAtUtc?: unknown };
+  return typeof record.createdAtUtc === "string" ? record.createdAtUtc : undefined;
 }
 
 function toolError(call: ToolCall, error: string): ToolResult {

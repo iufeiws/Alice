@@ -16,7 +16,9 @@ export type LLMTextShellOption = {
 
 export type LLMTextDailyShell = {
   date: string;
+  dateUtc?: string;
   createdAt: string;
+  createdAtUtc?: string;
   personality: LLMTextShellOption;
   relationship: LLMTextShellOption;
   outfit: LLMTextShellOption;
@@ -46,8 +48,11 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   });
   const variables: LLMTextVariables = {
     date_time: "",
+    date_time_utc: "",
     time: "",
+    time_utc: "",
     date: "",
+    date_utc: "",
     timezone: "",
     session: "",
     channel: "",
@@ -83,9 +88,13 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   };
   if (input.time) {
     const now = input.time.now();
-    variables.date_time = formatLocalDateTime(now.date, input.time.timeZone);
-    variables.time = formatLocalTime(now.date, input.time.timeZone);
-    variables.date = formatLocalDate(now.date, input.time.timeZone);
+    const utc = now.date.toISOString();
+    variables.date_time = now.iso.slice(0, 19).replace("T", " ");
+    variables.time = now.iso.slice(11, 19);
+    variables.date = now.iso.slice(0, 10);
+    variables.date_time_utc = utc.slice(0, 19).replace("T", " ");
+    variables.time_utc = utc.slice(11, 19);
+    variables.date_utc = utc.slice(0, 10);
     variables.timezone = input.time.timeZone;
   }
   variables.user = input.userName?.trim() || "user";
@@ -172,42 +181,4 @@ function resolveVariablePath(variables: LLMTextVariables, path: string): LLMText
     if (!segment || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
     return current[segment];
   }, variables);
-}
-
-function formatLocalDateTime(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
-}
-
-function formatLocalDate(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function formatLocalTime(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.hour}:${values.minute}:${values.second}`;
 }

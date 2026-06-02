@@ -105,7 +105,8 @@ export function createWeChatPlugin(config: WeChatConfig, deps: WeChatPluginDeps)
   }
 
   function textMessageToAgentEvent(message: WeChatTextMessage): AgentEvent {
-    const receivedAt = normalizeReceivedAt(message.createdAt);
+    const receivedAtUtc = normalizeReceivedAtUtc(message.createdAt);
+    const receivedAt = time.addMs(0, new Date(receivedAtUtc)).iso;
     return {
       id: createId("evt"),
       source: {
@@ -126,6 +127,7 @@ export function createWeChatPlugin(config: WeChatConfig, deps: WeChatPluginDeps)
       },
       meta: {
         receivedAt,
+        receivedAtUtc,
         replyTo: message.id,
         quotedMessage: message.quotedMessage
           ? {
@@ -156,15 +158,15 @@ export function createWeChatPlugin(config: WeChatConfig, deps: WeChatPluginDeps)
     return result.typingTicket;
   }
 
-  function normalizeReceivedAt(value: string | undefined): string {
-    if (!value) return time.now().iso;
+  function normalizeReceivedAtUtc(value: string | undefined): string {
+    if (!value) return time.now().date.toISOString();
     const asNumber = Number(value);
     if (Number.isFinite(asNumber)) {
       const milliseconds = asNumber > 10_000_000_000 ? asNumber : asNumber * 1000;
-      return time.addMs(0, new Date(milliseconds)).iso;
+      return new Date(milliseconds).toISOString();
     }
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? time.now().iso : time.addMs(0, date).iso;
+    return Number.isNaN(date.getTime()) ? time.now().date.toISOString() : date.toISOString();
   }
 
   return plugin;

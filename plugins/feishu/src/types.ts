@@ -35,6 +35,7 @@ export type FeishuMessageLifecycleEvent =
       actorId?: string;
       emoji: string;
       occurredAt: string;
+      occurredAtUtc?: string;
       raw?: unknown;
     }
   | {
@@ -44,6 +45,7 @@ export type FeishuMessageLifecycleEvent =
       conversationId?: string;
       actorId?: string;
       occurredAt: string;
+      occurredAtUtc?: string;
       raw?: unknown;
     };
 

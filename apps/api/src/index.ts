@@ -52,6 +52,7 @@ type LogLevel = "info" | "warn" | "error";
 type LogEntry = {
   id: number;
   time: string;
+  utcTime?: string;
   level: LogLevel;
   message: string;
 };
@@ -59,6 +60,7 @@ type LogEntry = {
 type MessageLogEntry = {
   id: number;
   time: string;
+  timeUtc?: string;
   direction: "inbound" | "outbound";
   plugin: string;
   kind: string;
@@ -672,9 +674,11 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 function appendLog(level: LogLevel, message: string): void {
+  const now = currentTime.now();
   const entry = {
     id: nextLogId,
-    time: currentTime.now().iso,
+    time: now.iso,
+    utcTime: now.date.toISOString(),
     level,
     message
   };
@@ -682,6 +686,7 @@ function appendLog(level: LogLevel, message: string): void {
   nextLogId += 1;
   systemLogStore?.append({
     time: entry.time,
+    utcTime: entry.utcTime,
     level: entry.level,
     message: entry.message
   });
@@ -691,10 +696,12 @@ function appendLog(level: LogLevel, message: string): void {
   }
 }
 
-function appendMessageLog(input: Omit<MessageLogEntry, "id" | "time">): MessageLogEntry {
+function appendMessageLog(input: Omit<MessageLogEntry, "id" | "time" | "timeUtc">): MessageLogEntry {
+  const now = currentTime.now();
   const entry = {
     id: nextMessageLogId,
-    time: currentTime.now().iso,
+    time: now.iso,
+    timeUtc: now.date.toISOString(),
     ...input,
     summary: input.summary.length > 500 ? `${input.summary.slice(0, 500)}...` : input.summary
   };
@@ -702,6 +709,7 @@ function appendMessageLog(input: Omit<MessageLogEntry, "id" | "time">): MessageL
   nextMessageLogId += 1;
   store?.insertMessageLog({
     time: entry.time,
+    timeUtc: entry.timeUtc,
     direction: entry.direction,
     plugin: entry.plugin,
       kind: entry.kind,
@@ -1895,6 +1903,7 @@ async function getLLMRequestProfilePreview(apiPreset?: { model?: string; tempera
 async function buildLLMRequestPreviewFromProfile(apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
   const profile = promptProfileStore.get();
   const target = getDefaultMessagingTarget();
+  const previewTime = currentTime.now();
   const previewEvent = {
     id: "preview",
     source: {
@@ -1910,14 +1919,15 @@ async function buildLLMRequestPreviewFromProfile(apiPreset?: { model?: string; t
     type: "message.text",
     payload: { kind: "text", text: "" },
     meta: {
-      receivedAt: currentTime.now().iso
+      receivedAt: previewTime.iso,
+      receivedAtUtc: previewTime.date.toISOString()
     }
   } as const;
   return {
     id: 0,
     source: "preview",
     conversationId: target?.sessionId ?? "preview",
-    time: currentTime.now().iso,
+    time: previewTime.iso,
     model: apiPreset?.model,
     temperature: apiPreset?.temperature,
     extraParams: apiPreset?.extraParams ?? {},
@@ -1973,7 +1983,9 @@ function maybeBuildSleepCocoonGoodnightEvent() {
 function buildSleepCocoonGeneratedEvent(idPrefix: string, raw: Record<string, unknown>) {
   const target = getDefaultMessagingTarget();
   if (!target) return undefined;
-  const receivedAt = currentTime.now().iso;
+  const receivedTime = currentTime.now();
+  const receivedAt = receivedTime.iso;
+  const receivedAtUtc = receivedTime.date.toISOString();
   return {
     id: createId(idPrefix),
     source: {
@@ -1993,6 +2005,7 @@ function buildSleepCocoonGeneratedEvent(idPrefix: string, raw: Record<string, un
     },
     meta: {
       receivedAt,
+      receivedAtUtc,
       raw
     }
   };
@@ -2027,12 +2040,14 @@ function erf(value: number): number {
 async function sendSystemNoticeToDefaultTarget(text: string): Promise<void> {
   const target = getDefaultMessagingTarget();
   if (!target || !store) return;
+  const now = currentTime.now();
   const output = {
     id: createId("sleep_notice"),
     target,
     content: { kind: "text" as const, text },
     meta: {
-      createdAt: currentTime.now().iso,
+      createdAt: now.iso,
+      createdAtUtc: now.date.toISOString(),
       urgency: "normal" as const,
       allowStreaming: false
     }
@@ -2044,11 +2059,12 @@ async function sendSystemNoticeToDefaultTarget(text: string): Promise<void> {
     contentType: output.content.kind,
     contentText: text,
     contentJson: JSON.stringify(output.content),
-    createdAt: output.meta.createdAt
+    createdAt: output.meta.createdAt,
+    createdAtUtc: output.meta.createdAtUtc
   });
   try {
     const sent = await outputRouter.send(output);
-    store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), currentTime.now().iso);
+    store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), currentTime.now().date.toISOString(), extractSentMessageCreatedAtUtc(sent));
     appendMessageLog({
       direction: "outbound",
       plugin: output.target.plugin,
@@ -2060,7 +2076,8 @@ async function sendSystemNoticeToDefaultTarget(text: string): Promise<void> {
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    store.markOutboundMessageFailed(stored.id, currentTime.now().iso, reason);
+    const failedTime = currentTime.now();
+    store.markOutboundMessageFailed(stored.id, failedTime.iso, reason, failedTime.date.toISOString());
     appendMessageLog({
       direction: "outbound",
       plugin: output.target.plugin,
@@ -2078,12 +2095,14 @@ async function sendMemoryFailureNoticeToFeishu(): Promise<void> {
   const target = getDefaultFeishuTarget();
   if (!target) return;
   const text = "-记忆整理大失败-";
+  const now = currentTime.now();
   const output = {
     id: createId("memory_failure_notice"),
     target,
     content: { kind: "text" as const, text },
     meta: {
-      createdAt: currentTime.now().iso,
+      createdAt: now.iso,
+      createdAtUtc: now.date.toISOString(),
       urgency: "normal" as const,
       allowStreaming: false
     }
@@ -2117,6 +2136,14 @@ function extractSentMessageId(value: unknown): string | undefined {
   if (value && typeof value === "object" && "messageId" in value) {
     const messageId = (value as { messageId?: unknown }).messageId;
     return typeof messageId === "string" ? messageId : undefined;
+  }
+  return undefined;
+}
+
+function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
+  if (value && typeof value === "object" && "createdAtUtc" in value) {
+    const createdAtUtc = (value as { createdAtUtc?: unknown }).createdAtUtc;
+    return typeof createdAtUtc === "string" ? createdAtUtc : undefined;
   }
   return undefined;
 }

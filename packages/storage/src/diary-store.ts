@@ -1,4 +1,5 @@
-const sqlite = await import("node:sqlite");
+import * as sqlite from "./sqlite-compat.js";
+
 const fs = await import("node:fs");
 const path = await import("node:path");
 

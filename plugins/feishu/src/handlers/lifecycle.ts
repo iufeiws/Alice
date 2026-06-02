@@ -36,7 +36,7 @@ export function reactionEventToLifecycleEvent(
       event?.sender?.sender_id?.user_id
     ),
     emoji,
-    occurredAt: eventTime(data, event, time),
+    ...eventTime(data, event, time),
     raw
   };
 }
@@ -56,7 +56,7 @@ export function readEventToLifecycleEvent(raw: unknown, time: CurrentTimeProvide
       event?.user_id?.open_id,
       event?.user_id?.user_id
     ),
-    occurredAt: eventTime(data, event, time),
+    ...eventTime(data, event, time),
     raw
   };
 }
@@ -76,16 +76,25 @@ export function recalledEventToLifecycleEvent(raw: unknown, time: CurrentTimePro
       event?.sender?.sender_id?.open_id,
       event?.sender?.sender_id?.user_id
     ),
-    occurredAt: eventTime(data, event, time),
+    ...eventTime(data, event, time),
     raw
   };
 }
 
-function eventTime(data: any, event: any, time: CurrentTimeProvider): string {
+function eventTime(data: any, event: any, time: CurrentTimeProvider): { occurredAt: string; occurredAtUtc: string } {
   const raw = firstString(data?.create_time, data?.header?.create_time, event?.create_time, event?.event_time);
-  if (raw && /^\d+$/.test(raw)) return time.addMs(0, new Date(Number(raw))).iso;
-  if (raw) return raw;
-  return time.now().iso;
+  if (raw && /^\d+$/.test(raw)) {
+    const date = new Date(Number(raw));
+    return { occurredAt: time.addMs(0, date).iso, occurredAtUtc: date.toISOString() };
+  }
+  if (raw) {
+    const date = new Date(raw);
+    if (!Number.isNaN(date.getTime())) return { occurredAt: time.addMs(0, date).iso, occurredAtUtc: date.toISOString() };
+    const now = time.now();
+    return { occurredAt: raw, occurredAtUtc: now.date.toISOString() };
+  }
+  const now = time.now();
+  return { occurredAt: now.iso, occurredAtUtc: now.date.toISOString() };
 }
 
 function firstString(...values: unknown[]): string | undefined {

@@ -15,6 +15,8 @@ export type FeishuClient = {
 
 export type FeishuSendResult = {
   messageId?: string;
+  createdAt?: string;
+  createdAtUtc?: string;
 };
 
 export type FeishuClientDeps = {
@@ -114,7 +116,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         receiveId: input.receiveId,
         msgType: "text",
         content: { text: input.text }
-      });
+      }, time);
       deps.log?.("info", `[feishu] sent text to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
@@ -124,7 +126,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         receiveId: input.receiveId,
         msgType: "interactive",
         content: buildMarkdownCard(input.markdown)
-      });
+      }, time);
       deps.log?.("info", `[feishu] sent markdown card to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
@@ -145,7 +147,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         receiveId: input.receiveId,
         msgType: "image",
         content: { image_key: imageKey }
-      });
+      }, time);
       deps.log?.("info", `[feishu] sent image ${path.basename(imagePath)} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
@@ -163,7 +165,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         receiveId: input.receiveId,
         msgType: "audio",
         content: { file_key: uploaded }
-      });
+      }, time);
       deps.log?.("info", `[feishu] sent audio ${path.basename(audioPath)} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
@@ -180,7 +182,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         receiveId: input.receiveId,
         msgType: "file",
         content: { file_key: uploaded }
-      });
+      }, time);
       deps.log?.("info", `[feishu] sent file ${input.filename} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     }
@@ -200,7 +202,8 @@ async function sendMessage(
     receiveId: string;
     msgType: string;
     content: Record<string, unknown>;
-  }
+  },
+  time: CurrentTimeProvider
 ): Promise<FeishuSendResult> {
   assertStarted(client);
   const result = await client.im.v1.message.create({
@@ -213,7 +216,25 @@ async function sendMessage(
       msg_type: input.msgType
     }
   });
-  return { messageId: result?.message_id ?? result?.data?.message_id };
+  return {
+    messageId: result?.message_id ?? result?.data?.message_id,
+    createdAt: normalizeFeishuTimestamp(result?.create_time ?? result?.data?.create_time, time),
+    createdAtUtc: normalizeFeishuTimestampUtc(result?.create_time ?? result?.data?.create_time)
+  };
+}
+
+function normalizeFeishuTimestamp(value: unknown, time: CurrentTimeProvider): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const text = String(value);
+  if (!/^\d+$/.test(text)) return undefined;
+  return time.addMs(0, new Date(Number(text))).iso;
+}
+
+function normalizeFeishuTimestampUtc(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const text = String(value);
+  if (!/^\d+$/.test(text)) return undefined;
+  return new Date(Number(text)).toISOString();
 }
 
 async function uploadFile(

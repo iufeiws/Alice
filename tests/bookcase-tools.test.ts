@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createBookcaseTools } from "../plugins/bookcase/src/index.js";
+import * as sqlite from "../packages/storage/src/sqlite-compat.js";
 
 const fs = await import("node:fs");
 const os = await import("node:os");
 const path = await import("node:path");
-const sqlite = await import("node:sqlite");
 
 test("bookcase tool draws a book and includes retelling instructions", async () => {
   const dbPath = createFixtureDb();

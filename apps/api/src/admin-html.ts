@@ -1777,7 +1777,8 @@ Timing:
         return messages.map((message) => {
           const actor = message.senderRole || message.direction || "unknown";
           const status = message.status && message.status !== "sent" ? " " + message.status : "";
-          return \`<div class="log-line">[\${escapeHtml(message.createdAt || "")}] \${escapeHtml(actor)}\${escapeHtml(status)}: \${escapeHtml(message.contentText || "")}</div>\`;
+          const utc = message.createdAtUtc ? " utc=" + message.createdAtUtc : "";
+          return \`<div class="log-line">[\${escapeHtml(message.createdAt || "")}\${escapeHtml(utc)}] \${escapeHtml(actor)}\${escapeHtml(status)}: \${escapeHtml(message.contentText || "")}</div>\`;
         }).join("");
       }
 
@@ -2630,17 +2631,18 @@ Timing:
 
       async function refreshLogs() {
         const system = await fetch("/admin/api/logs").then((res) => res.json());
-        $("logs").innerHTML = system.logs.map((entry) => \`<div class="log-line log-\${entry.level}">[\${entry.time}] [\${entry.level.toUpperCase()}] \${escapeHtml(entry.message)}</div>\`).join("");
+        $("logs").innerHTML = system.logs.map((entry) => \`<div class="log-line log-\${entry.level}">[\${entry.time}\${entry.utcTime ? " utc=" + entry.utcTime : ""}] [\${entry.level.toUpperCase()}] \${escapeHtml(entry.message)}</div>\`).join("");
         $("logs").scrollTop = $("logs").scrollHeight;
         const messages = await fetch("/admin/api/message-logs").then((res) => res.json());
         $("messageLogs").innerHTML = messages.logs.map((entry) => {
           const time = entry.createdAt || entry.time;
+          const utc = entry.createdAtUtc || entry.timeUtc || "";
           const kind = entry.contentType || entry.kind;
           const target = entry.conversationId || entry.target || "";
           const summary = entry.contentText || entry.summary || "";
           const state = entry.status ? " " + entry.status : "";
           const flags = [entry.isRead ? "read" : "", entry.isRecalled ? "recalled" : ""].filter(Boolean).join(",");
-          return \`<div class="log-line">[\${time}] [\${entry.direction}\${state}] [\${entry.plugin}/\${kind}] \${escapeHtml(target)}\${flags ? " · " + escapeHtml(flags) : ""} · \${escapeHtml(summary)}</div>\`;
+          return \`<div class="log-line">[\${time}\${utc ? " utc=" + utc : ""}] [\${entry.direction}\${state}] [\${entry.plugin}/\${kind}] \${escapeHtml(target)}\${flags ? " · " + escapeHtml(flags) : ""} · \${escapeHtml(summary)}</div>\`;
         }).join("");
         $("messageLogs").scrollTop = $("messageLogs").scrollHeight;
         const events = await fetch("/admin/api/message-event-logs").then((res) => res.json());

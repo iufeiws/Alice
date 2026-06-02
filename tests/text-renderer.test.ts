@@ -17,6 +17,21 @@ test("buildLLMTextVariables exposes date_time and time-only values", () => {
   assert.equal(variables.date_time, "2026-05-29 12:34:56");
   assert.equal(variables.date, "2026-05-29");
   assert.equal(variables.time, "12:34:56");
+  assert.equal(variables.date_time_utc, "2026-05-29 12:34:56");
+  assert.equal(variables.date_utc, "2026-05-29");
+  assert.equal(variables.time_utc, "12:34:56");
+});
+
+test("buildLLMTextVariables derives local values from UTC source", () => {
+  const variables = buildLLMTextVariables({
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-06-02T16:15:23.000Z"))
+  });
+  assert.equal(variables.date_time_utc, "2026-06-02 16:15:23");
+  assert.equal(variables.date_time, "2026-06-03 00:15:23");
+  assert.equal(variables.date_utc, "2026-06-02");
+  assert.equal(variables.date, "2026-06-03");
+  assert.equal(variables.time_utc, "16:15:23");
+  assert.equal(variables.time, "00:15:23");
 });
 
 test("buildLLMTextVariables exposes memory limit placeholders", () => {

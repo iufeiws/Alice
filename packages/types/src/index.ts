@@ -37,6 +37,7 @@ export type AgentEvent = {
   payload: AgentPayload;
   meta: {
     receivedAt: string;
+    receivedAtUtc?: string;
     locale?: string;
     timezone?: string;
     mentionsBot?: boolean;
@@ -77,6 +78,7 @@ export type AgentOutput = {
     | { kind: "file"; assetId: string; filename: string };
   meta: {
     createdAt: string;
+    createdAtUtc?: string;
     urgency: "silent" | "normal" | "important";
     allowStreaming?: boolean;
   };

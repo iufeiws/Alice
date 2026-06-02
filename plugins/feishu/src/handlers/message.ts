@@ -25,6 +25,7 @@ export async function textMessageEventToAgentEvent(
     threadId: message.thread_id
   });
 
+  const receivedAtUtc = raw.header?.create_time ? new Date(Number(raw.header.create_time)).toISOString() : time.now().date.toISOString();
   return {
     id: raw.header?.event_id ?? createId("evt"),
     source: {
@@ -45,7 +46,8 @@ export async function textMessageEventToAgentEvent(
       text
     },
     meta: {
-      receivedAt: raw.header?.create_time ? time.addMs(0, new Date(Number(raw.header.create_time))).iso : time.now().iso,
+      receivedAt: time.addMs(0, new Date(receivedAtUtc)).iso,
+      receivedAtUtc,
       mentionsBot,
       replyTo: message.message_id,
       raw

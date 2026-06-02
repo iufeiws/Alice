@@ -1749,6 +1749,7 @@ function isMemoryTarget(value: string): value is "persistent" | "userPreferences
 
 function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables {
   const target = resolvePromptPreviewTarget(context);
+  const receivedTime = context.time.now();
   return promptVariables(context.promptProfileStore.get(), {
     time: context.time,
     dailyShell: context.getDailyShell(),
@@ -1770,7 +1771,8 @@ function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables
       type: "message.text",
       payload: { kind: "text", text: "" },
       meta: {
-        receivedAt: context.time.now().iso
+        receivedAt: receivedTime.iso,
+        receivedAtUtc: receivedTime.date.toISOString()
       }
     }
   });
@@ -2388,6 +2390,7 @@ function getAdminTextVariables(
   context: AdminRoutesContext,
   target: { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string }
 ): LLMTextVariables {
+  const receivedTime = context.time.now();
   return buildLLMTextVariables({
     userName: context.promptProfileStore.get().userName,
     time: context.time,
@@ -2408,7 +2411,7 @@ function getAdminTextVariables(
       },
       type: "message.text",
       payload: { kind: "text", text: "" },
-      meta: { receivedAt: context.time.now().iso }
+      meta: { receivedAt: receivedTime.iso, receivedAtUtc: receivedTime.date.toISOString() }
     }
   });
 }
@@ -2446,12 +2449,14 @@ async function sendFeishuTest(context: AdminRoutesContext, request: any, respons
     return;
   }
 
+  const createdTime = context.time.now();
   await context.feishu.send({
     id: `test_${kind}_${Date.now()}`,
     target,
     content,
     meta: {
-      createdAt: context.time.now().iso,
+      createdAt: createdTime.iso,
+      createdAtUtc: createdTime.date.toISOString(),
       urgency: "normal"
     }
   });

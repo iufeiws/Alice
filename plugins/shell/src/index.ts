@@ -123,6 +123,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
 
   async function sendChangingNotice(callId: string, target: ShellToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
     const text = "-少女已更衣-";
+    const now = time.now();
     const output: AgentOutput = {
       id: createId("tool_out"),
       target: {
@@ -134,7 +135,8 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       },
       content: { kind: "text", text },
       meta: {
-        createdAt: time.now().iso,
+        createdAt: now.iso,
+        createdAtUtc: now.date.toISOString(),
         urgency: "normal",
         allowStreaming: false
       }
@@ -146,11 +148,12 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       contentType: output.content.kind,
       contentText: text,
       contentJson: JSON.stringify(output.content),
-      createdAt: output.meta.createdAt
+      createdAt: output.meta.createdAt,
+      createdAtUtc: output.meta.createdAtUtc
     });
     try {
       const sent = await deps.outputRouter.send(output);
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().iso);
+      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), time.now().date.toISOString());
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -163,7 +166,8 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      deps.store.markOutboundMessageFailed(stored.id, time.now().iso, reason);
+      const failedTime = time.now();
+      deps.store.markOutboundMessageFailed(stored.id, failedTime.iso, reason, failedTime.date.toISOString());
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,

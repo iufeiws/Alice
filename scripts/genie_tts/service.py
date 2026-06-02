@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +23,79 @@ import soundfile as sf
 
 GENIE_TTS_PART_SILENCE_SECONDS = 2 / 3
 
+_memory_peak_lock = threading.Lock()
+_memory_peak_label = "startup"
+_memory_peak_rss_mb = 0.0
+_memory_peak_running = True
+
+
+def release_unused_memory() -> None:
+    gc.collect()
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        return
+
+
+def release_genie_auxiliary_models(*, cn_hubert: bool = False, speaker_verification: bool = False) -> None:
+    try:
+        from genie_tts.ModelManager import model_manager
+    except Exception:
+        return
+    if cn_hubert:
+        model_manager.cn_hubert = None
+    if speaker_verification:
+        model_manager.speaker_verification_model = None
+    release_unused_memory()
+
+
+def current_rss_mb() -> float | None:
+    try:
+        status = Path("/proc/self/status").read_text(encoding="utf-8")
+    except Exception:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return int(parts[1]) / 1024
+    return None
+
+
+def log_memory(label: str) -> None:
+    rss = current_rss_mb()
+    if rss is not None:
+        logging.info("memory %s rss=%.1fMB", label, rss)
+
+
+def start_memory_peak_sampler(interval_seconds: float = 0.05) -> threading.Thread:
+    def sample() -> None:
+        global _memory_peak_rss_mb
+        while _memory_peak_running:
+            rss = current_rss_mb()
+            if rss is not None:
+                with _memory_peak_lock:
+                    if rss > _memory_peak_rss_mb:
+                        _memory_peak_rss_mb = rss
+            time.sleep(interval_seconds)
+
+    thread = threading.Thread(target=sample, daemon=True)
+    thread.start()
+    return thread
+
+
+def reset_memory_peak(label: str) -> None:
+    global _memory_peak_label, _memory_peak_rss_mb
+    with _memory_peak_lock:
+        _memory_peak_label = label
+        _memory_peak_rss_mb = current_rss_mb() or 0.0
+
+
+def log_memory_peak(label: str) -> None:
+    with _memory_peak_lock:
+        logging.info("memory_peak %s max_rss=%.1fMB", label, _memory_peak_rss_mb)
+
 
 def disable_genie_audio_playback() -> None:
     try:
@@ -35,6 +110,132 @@ def disable_genie_audio_playback() -> None:
 
 
 disable_genie_audio_playback()
+
+
+def install_memory_lean_genie_loader() -> None:
+    try:
+        import onnx
+        import onnxruntime
+        import genie_tts.ModelManager as genie_model_manager
+    except Exception:
+        return
+
+    def load_session_with_streaming_fp16_conversion(
+        onnx_path: str,
+        fp16_bin_path: str,
+        providers: list[str],
+        sess_options: object | None = None,
+    ) -> object:
+        if not os.path.exists(onnx_path):
+            raise FileNotFoundError(f"ONNX Model not found: {onnx_path}")
+        if not os.path.exists(fp16_bin_path):
+            raise FileNotFoundError(f"FP16 Weight file not found: {fp16_bin_path}")
+
+        model_proto = onnx.load(onnx_path, load_external_data=False)
+        fp16_data = np.memmap(fp16_bin_path, dtype=np.float16, mode="r")
+
+        for tensor in model_proto.graph.initializer:
+            if tensor.data_location != onnx.TensorProto.EXTERNAL:
+                continue
+
+            offset = 0
+            length = 0
+            for entry in tensor.external_data:
+                if entry.key == "offset":
+                    offset = int(entry.value)
+                elif entry.key == "length":
+                    length = int(entry.value)
+
+            element_start = offset // 4
+            element_count = length // 4
+            if offset % 4 != 0 or length % 4 != 0 or element_start + element_count > len(fp16_data):
+                raise ValueError(
+                    f"Invalid FP16 external data range for tensor {tensor.name}: "
+                    f"offset={offset} length={length} fp16_elements={len(fp16_data)}"
+                )
+
+            tensor.raw_data = fp16_data[element_start:element_start + element_count].astype(np.float32).tobytes()
+            del tensor.external_data[:]
+            tensor.data_location = onnx.TensorProto.DEFAULT
+
+        try:
+            return onnxruntime.InferenceSession(
+                model_proto.SerializeToString(),
+                providers=providers,
+                sess_options=sess_options,
+            )
+        finally:
+            del model_proto
+            del fp16_data
+            release_unused_memory()
+
+    genie_model_manager.load_session_with_fp16_conversion = load_session_with_streaming_fp16_conversion
+
+
+install_memory_lean_genie_loader()
+
+
+def ssl_cache_path(audio_path: str | Path) -> Path:
+    path = Path(audio_path).expanduser().resolve()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    cache_dir = Path(os.environ.get("GENIE_TTS_SSL_CACHE_DIR", "assets/tts/genie/ssl-cache")).expanduser().resolve()
+    return cache_dir / f"{digest}.ssl.npy"
+
+
+def install_reference_ssl_cache() -> None:
+    try:
+        import genie_tts.Audio.ReferenceAudio as reference_audio_module
+    except Exception:
+        return
+
+    reference_audio_class = reference_audio_module.ReferenceAudio
+    if getattr(reference_audio_class, "_alice_ssl_cache_installed", False):
+        return
+
+    def cached_init(self: object, prompt_wav: str, prompt_text: str, language: str) -> None:
+        if hasattr(self, "_initialized"):
+            return
+
+        self.text = prompt_text
+        self.phonemes_seq = None
+        self.text_bert = None
+        self.set_text(prompt_text, language=language)
+
+        self.audio_32k = reference_audio_module.load_audio(
+            audio_path=prompt_wav,
+            target_sampling_rate=32000,
+        )
+        self.audio_16k = reference_audio_module.soxr.resample(self.audio_32k, 32000, 16000, quality="hq")
+
+        self.audio_32k = np.expand_dims(self.audio_32k, axis=0)
+        self.audio_16k = np.expand_dims(self.audio_16k, axis=0)
+
+        cache_path = ssl_cache_path(prompt_wav)
+        if cache_path.is_file():
+            self.ssl_content = np.load(cache_path, allow_pickle=False)
+            logging.info("genie reference ssl cache hit: %s", cache_path)
+        else:
+            logging.info("genie reference ssl cache miss: %s", cache_path)
+            if not reference_audio_module.model_manager.cn_hubert:
+                reference_audio_module.model_manager.load_cn_hubert()
+            self.ssl_content = reference_audio_module.model_manager.cn_hubert.run(
+                None,
+                {"input_values": self.audio_16k},
+            )[0]
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = cache_path.with_suffix(".tmp.npy")
+            np.save(temp_path, self.ssl_content)
+            os.replace(temp_path, cache_path)
+
+        self.global_emb = None
+        self.global_emb_advanced = None
+        self._initialized = True
+
+    reference_audio_class.__init__ = cached_init
+    reference_audio_class._alice_ssl_cache_installed = True
+
+
+install_reference_ssl_cache()
 
 
 class GenieRuntime:
@@ -55,12 +256,6 @@ class GenieRuntime:
         self._loaded_model_key: tuple[str, str] | None = None
         self._reference_key: tuple[str, str, str] | None = None
         self._lock = threading.Lock()
-        self._load(
-            model_dir=self.model_dir,
-            language=self.language,
-            reference_audio=self.reference_audio,
-            reference_text=self.reference_text.read_text(encoding="utf-8").strip(),
-        )
 
     def _load(self, *, model_dir: Path, language: str, reference_audio: Path, reference_text: str) -> None:
         if not model_dir.is_dir():
@@ -73,22 +268,32 @@ class GenieRuntime:
         model_key = (str(model_dir), language)
         if self._loaded_model_key != model_key:
             self._unload_current_character()
+            log_memory(f"before_load_character model={model_dir.name} language={language}")
+            reset_memory_peak(f"load_character model={model_dir.name} language={language}")
             genie.load_character(
                 character_name=self.character_name,
                 onnx_model_dir=str(model_dir),
                 language=language,
             )
+            log_memory_peak(f"load_character model={model_dir.name} language={language}")
+            release_unused_memory()
+            log_memory(f"after_load_character model={model_dir.name} language={language}")
             self._loaded_model_key = model_key
             self._reference_key = None
 
         reference_key = (str(reference_audio), audio_text, language)
         if self._reference_key != reference_key:
+            log_memory(f"before_set_reference_audio language={language}")
+            reset_memory_peak(f"set_reference_audio language={language}")
             genie.set_reference_audio(
                 character_name=self.character_name,
                 audio_path=str(reference_audio),
                 audio_text=audio_text,
                 language=language,
             )
+            log_memory_peak(f"set_reference_audio language={language}")
+            release_genie_auxiliary_models(cn_hubert=True)
+            log_memory(f"after_set_reference_audio language={language}")
             self._reference_key = reference_key
 
     def _unload_current_character(self) -> None:
@@ -158,6 +363,8 @@ class GenieRuntime:
         }
 
     def _synthesize_part(self, text: str, target: Path) -> None:
+        log_memory("before_tts_part")
+        reset_memory_peak("tts_part")
         genie.tts(
             character_name=self.character_name,
             text=text,
@@ -165,6 +372,9 @@ class GenieRuntime:
             split_sentence=False,
             save_path=str(target),
         )
+        log_memory_peak("tts_part")
+        release_genie_auxiliary_models(speaker_verification=True)
+        log_memory("after_tts_part")
         if not target.is_file() or target.stat().st_size <= 0:
             raise RuntimeError(f"Genie TTS did not create output audio: {target}")
 
@@ -322,6 +532,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[genie-tts] %(asctime)s %(levelname)s %(message)s")
+    start_memory_peak_sampler()
     args = parse_args()
     Path(args.output_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
     runtime = GenieRuntime(
@@ -341,7 +552,13 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, request_shutdown)
     signal.signal(signal.SIGINT, request_shutdown)
-    logging.info("ready host=%s port=%s model_dir=%s character=%s", args.host, args.port, Path(args.model_dir).resolve(), args.character_name)
+    logging.info(
+        "ready host=%s port=%s model_dir=%s character=%s lazy_model_load=true",
+        args.host,
+        args.port,
+        Path(args.model_dir).resolve(),
+        args.character_name,
+    )
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     shutdown_event.wait()

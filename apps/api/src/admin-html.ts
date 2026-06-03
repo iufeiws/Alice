@@ -358,6 +358,7 @@ export function renderAdminHtmlV2(): string {
         </section>
         <section id="main-llm-request" class="pane"><div id="llmRequests" class="logs">No LLM request yet.</div></section>
         <section id="main-llm-chain" class="pane">
+          <button type="button" id="llm-run-cancel" class="secondary">Cancel Current Run</button>
           <button type="button" id="llm-chain-clear" class="secondary">Clear Active Session</button>
           <div class="llm-window">
             <h2>Sessions</h2>
@@ -2828,6 +2829,15 @@ Timing:
         $("llmChainSessions").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
         await refreshLLMRequests();
         await refreshLLMChain();
+      });
+      $("llm-run-cancel").addEventListener("click", async () => {
+        const result = await fetch("/admin/api/llm-run/cancel", { method: "POST" }).then((res) => res.json());
+        $("llmChainSessions").textContent = result.ok
+          ? (result.hadActiveRequest ? "Current LLM run cancellation requested." : "LLM loop cancellation requested.")
+          : "Failed to cancel current LLM run.";
+        await refreshLLMRequests();
+        await refreshLLMChain();
+        await refreshLogs();
       });
 
       $("feishu-start").addEventListener("click", async () => { const r = await fetch("/admin/api/plugins/feishu/start", { method: "POST" }).then((res) => res.json()); $("feishu-status").textContent = r.ok ? "Feishu runtime started." : "Cannot start Feishu: " + (r.error || "unknown error"); await refresh(); });

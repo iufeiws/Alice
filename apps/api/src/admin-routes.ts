@@ -155,6 +155,7 @@ export type AdminRoutesContext = {
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
+  cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
   clearMemoryInductionSession(): void;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
@@ -474,6 +475,13 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         context.clearLLMChainCache();
         context.appendLog("info", "llm active session clear requested");
         writeJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/api/llm-run/cancel") {
+        const result = context.cancelActiveLLMRun();
+        context.appendLog("warn", `llm run cancel requested: active_request=${result.hadActiveRequest}`);
+        writeJson(response, 200, result);
         return;
       }
 

@@ -477,6 +477,7 @@ const core = createAgentCore({
   llm: activeLLM,
   llmRequestSender: llmRequests.send,
   getLLMConfig: currentCoreLLMConfig,
+  isLLMRunCancelled: () => llmRequests.isCancelRequested(),
   outputRouter,
   intentRouter: createIntentRouter(),
   sessionResolver: createSessionResolver(),
@@ -493,6 +494,7 @@ const core = createAgentCore({
   onLLMRequestPrepared: appendLLMRequestLog,
   onLLMResponseReceived: appendLLMResponseLog,
   onLLMHeartbeatStarted() {
+    llmRequests.resetCancel();
     llmSessionBusy = true;
     messagingTools.noteLLMRequestStarted();
   },
@@ -522,6 +524,7 @@ const core = createAgentCore({
   },
   onLLMSessionCompleted(_result) {
     llmSessionBusy = false;
+    llmRequests.resetCancel();
   },
   initialLLMSession: activeLLMSession
 });
@@ -614,6 +617,7 @@ const server = http.createServer(createApiRequestHandler({
   getLLMRequestProfilePreview,
   getTokenUsageReport,
   clearLLMChainCache,
+  cancelActiveLLMRun,
   clearMemoryInductionSession,
   outputRouter,
   feishuPairingStore,
@@ -1199,6 +1203,14 @@ function getTokenUsageReport(query: TokenUsageQuery) {
 
 function clearLLMChainCache(): void {
   core.clearLLMSession("admin_clear");
+}
+
+function cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean } {
+  const hadActiveRequest = llmRequests.cancelActive("admin_cancel");
+  core.clearLLMSession("admin_cancel");
+  llmSessionBusy = false;
+  messagingTools.noteLLMSessionCompleted();
+  return { ok: true, hadActiveRequest };
 }
 
 function ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): MemoryInductionSession {

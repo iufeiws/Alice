@@ -587,6 +587,44 @@ test("LLMRequests does not retry a successful call when response hook fails", as
   assert.equal(calls, 1);
 });
 
+test("LLMRequests cancels the active request signal", async () => {
+  let signal: AbortSignal | undefined;
+  let responseHookCalls = 0;
+  const client: LLMClient = {
+    chat(input) {
+      signal = input.signal;
+      return new Promise((resolve, reject) => {
+        input.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        setTimeout(() => resolve({ message: { role: "assistant", content: "late" } }), 50);
+      });
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    onResponseReceived() {
+      responseHookCalls += 1;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  const pending = requests.send({
+    agentId: "core",
+    client,
+    messages: [],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(requests.cancelActive(), true);
+  await assert.rejects(() => pending, /llm_request_cancelled/);
+  assert.equal(signal?.aborted, true);
+  assert.equal(responseHookCalls, 0);
+});
+
 test("sqlite store initializes schema version without losing existing logs", () => {
   const dir = makeTempDir("db");
   const dbPath = path.join(dir, "alice.sqlite");

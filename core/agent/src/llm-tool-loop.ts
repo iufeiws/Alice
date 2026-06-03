@@ -16,6 +16,7 @@ export type LLMRequestSenderInput = {
   stream?: boolean;
   streamHandlers?: LLMStreamHandlers;
   metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 export type LLMRequestSender = (input: LLMRequestSenderInput) => Promise<LLMChatResult>;
@@ -43,7 +44,7 @@ export type LLMToolLoopRoundRequest = Omit<LLMRequestSenderInput, "round" | "mes
   messages?: LLMMessage[];
 };
 
-export type LLMToolLoopStopReason = "completed" | "empty_messages" | "tool_limit" | "reset" | "invalidated";
+export type LLMToolLoopStopReason = "completed" | "empty_messages" | "tool_limit" | "reset" | "invalidated" | "cancelled";
 
 export type LLMToolLoopResult = {
   messages: LLMMessage[];
@@ -69,6 +70,7 @@ export type LLMToolLoopInput = {
   beforeRound?(input: { round: number; messages: LLMMessage[] }): Promise<{ messages?: LLMMessage[]; stop?: boolean }> | { messages?: LLMMessage[]; stop?: boolean };
   beforeTool?(input: { round: number; call: LLMToolCall; callIndex: number }): Promise<void> | void;
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
+  shouldCancel?(): boolean;
   selectToolCalls?(calls: LLMToolCall[], result: LLMChatResult): LLMToolCall[];
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
   limits?: LLMToolLoopLimits;
@@ -89,7 +91,19 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
   let sentMessage = false;
   let invalidateSession = false;
 
+  const cancelledResult = (rounds: number, finalResult?: LLMChatResult): LLMToolLoopResult => ({
+    messages,
+    rounds,
+    finalResult,
+    finalMessage: finalResult?.message ?? messages.at(-1) ?? { role: "assistant", content: "" },
+    stopReason: "cancelled",
+    sentMessage,
+    invalidateSession,
+    toolCallCount: totalToolCallCount
+  });
+
   for (let round = 0; round < limits.maxRounds; round += 1) {
+    if (input.shouldCancel?.()) return cancelledResult(round);
     const before = await input.beforeRound?.({ round, messages });
     if (before?.messages) messages = cloneLLMMessages(before.messages);
     if (before?.stop || messages.length === 0) {
@@ -105,12 +119,19 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     }
 
     const request = await input.buildRequest({ round, messages });
-    const result = await input.sendRequest({
-      ...request,
-      round,
-      messages: cloneLLMMessages(request.messages ?? messages)
-    });
+    let result: LLMChatResult;
+    try {
+      result = await input.sendRequest({
+        ...request,
+        round,
+        messages: cloneLLMMessages(request.messages ?? messages)
+      });
+    } catch (error) {
+      if (input.shouldCancel?.()) return cancelledResult(round + 1);
+      throw error;
+    }
     await input.afterRequest?.({ round, result, messages });
+    if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
 
     const calls = input.selectToolCalls
       ? input.selectToolCalls(result.message.toolCalls ?? [], result)
@@ -153,7 +174,9 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       }
       if (repeatedToolCallCount >= limits.maxRepeatedToolCalls) reachedToolCallLimit = true;
 
+      if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       await input.beforeTool?.({ round, call, callIndex });
+      if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       const execution = await input.executeTool(call, {
         round,
         result,

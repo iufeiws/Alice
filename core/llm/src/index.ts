@@ -44,6 +44,7 @@ export type LLMChatInput = {
   tools?: LLMToolSpec[];
   maxTokens?: number;
   extraParams?: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 export type LLMUsage = {
@@ -163,8 +164,11 @@ type OpenAIToolCall = NonNullable<
 export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LLMClient {
   const baseURL = config.baseURL.replace(/\/+$/, "");
 
-  async function request<T>(path: string, init: RequestInit): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
 
     try {
@@ -185,6 +189,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
 
       return (await response.json()) as T;
     } finally {
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timeout);
     }
   }
@@ -192,9 +197,13 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   async function requestStream(
     path: string,
     body: Record<string, unknown>,
-    handlers: LLMStreamHandlers | undefined
+    handlers: LLMStreamHandlers | undefined,
+    signal?: AbortSignal
   ): Promise<LLMChatResult> {
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let completed = false;
@@ -304,6 +313,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         raw: rawUsage === undefined ? undefined : { usage: rawUsage }
       };
     } finally {
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timeout);
       if (!completed) {
         try {
@@ -330,7 +340,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       const json = await request<OpenAIChatCompletionResponse>("/chat/completions", {
         method: "POST",
         body: JSON.stringify(body)
-      });
+      }, input.signal);
 
       const choice = json.choices?.[0];
       return {
@@ -356,7 +366,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       };
       if (input.tools !== undefined) body.tools = input.tools;
       if (input.maxTokens !== undefined) body.max_tokens = input.maxTokens;
-      return requestStream("/chat/completions", body, handlers);
+      return requestStream("/chat/completions", body, handlers, input.signal);
     },
     async listModels() {
       const json = await request<{ data?: Array<{ id: string; owned_by?: string }> }>("/models", {

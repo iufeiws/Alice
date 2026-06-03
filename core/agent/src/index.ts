@@ -20,7 +20,7 @@ const maxLLMRequestsPerMinute = 10;
 const maxLLMRetryAttempts = 3;
 const fixedPrefixDefaultTtlMs = 2 * 60 * 60 * 1000;
 
-export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
 export type LLMSessionSnapshot = {
   messages: LLMChatInput["messages"];
   staticPromptFingerprint?: string;
@@ -139,6 +139,7 @@ export type AgentCoreDeps = {
   onLLMResponseReceived?(result: LLMChatResult): void;
   llmRequestSender?: LLMRequestSender;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
+  isLLMRunCancelled?(): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
@@ -386,6 +387,13 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         };
         const llmResult = await runLLMTurnWithTools(llmInput, event, toolPlugins, activeLLMSession, ensureActiveLLMSession, appendSessionContext);
         sentMessage = llmResult.sentMessage;
+        if (llmResult.cancelled) {
+          if (activeLLMSession) {
+            deps.onLLMSessionCleared?.("admin_cancel");
+            activeLLMSession = undefined;
+          }
+          return [];
+        }
         if (llmResult.invalidateSession) {
           deps.onLLMSessionCleared?.("prompt_static_changed");
           activeLLMSession = undefined;
@@ -417,7 +425,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     session: ActiveLLMSession,
     ensureSession: () => Promise<ActiveLLMSession>,
     appendSessionContext: (session: ActiveLLMSession) => Promise<void>
-  ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean; invalidateSession?: boolean; finalResult?: LLMChatResult }> {
+  ): Promise<{ message: LLMChatInput["messages"][number]; sentMessage: boolean; invalidateSession?: boolean; cancelled?: boolean; finalResult?: LLMChatResult }> {
     const toolMap = new Map<string, ToolPlugin>();
     const visibleToolNames = input.toolNames;
     for (const plugin of toolPlugins) {
@@ -440,6 +448,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       initialMessages: session.messages,
       limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
       async beforeRound({ round }) {
+        if (deps.isLLMRunCancelled?.()) return { stop: true, messages: session.messages };
         const ensuredSession = await ensureSession();
         if (ensuredSession !== session) {
           session = ensuredSession;
@@ -480,6 +489,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       sendRequest: deps.llmRequestSender ?? createLocalLLMRequestSender(toolPlugins),
       async afterRequest() {
         await streamingToolSender?.finish();
+      },
+      shouldCancel() {
+        return deps.isLLMRunCancelled?.() === true;
       },
       selectToolCalls(calls) {
         return calls.some((call) => isSendChatToolName(call.function.name))
@@ -638,6 +650,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       message: loopResult.finalMessage,
       sentMessage: loopResult.sentMessage,
       invalidateSession: loopResult.invalidateSession,
+      cancelled: loopResult.stopReason === "cancelled",
       finalResult: loopResult.finalResult
     };
   }

@@ -977,6 +977,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     getLLMRequestProfilePreview: () => undefined,
     getTokenUsageReport: () => ({}),
     clearLLMChainCache() {},
+    cancelActiveLLMRun: () => ({ ok: true, hadActiveRequest: false }),
     clearMemoryInductionSession() {},
     outputRouter: { listChannels: () => [] },
     feishuPairingStore: { list: () => [] },

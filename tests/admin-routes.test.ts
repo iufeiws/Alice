@@ -756,8 +756,8 @@ test("memory clear-session clears the console memorize session", async () => {
   assert.equal(cleared, true);
 });
 
-test("memory windows include persisted sleep system messages as sleep boundaries", async () => {
-  const root = makeTempDir("admin-memory-persisted-sleep-boundary");
+test("memory windows do not reseed sleep boundaries from persisted sleep system messages", async () => {
+  const root = makeTempDir("admin-memory-no-persisted-sleep-boundary-reseed");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const recorded: Array<{ occurredAt: string; source: string; now: string }> = [];
@@ -791,18 +791,8 @@ test("memory windows include persisted sleep system messages as sleep boundaries
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(recorded, [{
-    occurredAt: "2026-05-31T07:12:33.529",
-    occurredAtUtc: "2026-05-30T23:12:33.529Z",
-    source: "sleep",
-    now: "2026-05-24T06:00:00.000Z",
-    nowUtc: "2026-05-24T06:00:00.000Z"
-  }]);
-  assert.equal(body.sleepDays[0].date, "2026-05-31");
-  assert.equal(body.sleepDays[0].startAt, "2026-05-31T03:46:02.806");
-  assert.equal(body.sleepDays[0].endAt, "2026-05-31T07:12:33.529");
-  assert.equal(body.sleepDays[0].startAtUtc, "2026-05-30T19:46:02.806Z");
-  assert.equal(body.sleepDays[0].endAtUtc, "2026-05-30T23:12:33.529Z");
+  assert.deepEqual(recorded, []);
+  assert.deepEqual(body.sleepDays, []);
 });
 
 test("memory undo and redo walk memorize commits one at a time", async () => {

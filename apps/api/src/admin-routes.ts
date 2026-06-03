@@ -2004,7 +2004,6 @@ function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
   source: SleepBoundary["source"];
   messageCount?: number;
 }> {
-  recordPersistedSleepMessageBoundaries(context);
   if (!context.diaryStore.listSleepBoundaries().some((boundary) => boundary.source !== "sleep")) inferSleepBoundaries(context);
   const boundaries = context.diaryStore.listSleepBoundaries();
   return boundaries.slice(1).map((boundary, index) => {
@@ -2020,26 +2019,6 @@ function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
       source: boundary.source
     };
   }).reverse();
-}
-
-function recordPersistedSleepMessageBoundaries(context: AdminRoutesContext): void {
-  const messages = context.store?.listMessagesChronological?.(10_000) ?? [];
-  if (messages.length === 0) return;
-  const boundaries = new Set(context.diaryStore.listSleepBoundaries().map((boundary) => boundary.occurredAt));
-  for (const message of messages) {
-    if (message.contentText !== "-少女已入眠-") continue;
-    if (boundaries.has(message.createdAt)) continue;
-    const occurredAtUtc = message.createdAtUtc ?? new Date(parseMessageCreatedAt(message.createdAt, context.time.timeZone)).toISOString();
-    const now = context.time.now();
-    context.diaryStore.recordSleepBoundary({
-      occurredAt: message.createdAt,
-      occurredAtUtc,
-      source: "sleep",
-      now: now.iso,
-      nowUtc: now.date.toISOString()
-    });
-    boundaries.add(message.createdAt);
-  }
 }
 
 function inferSleepBoundaries(context: AdminRoutesContext): void {

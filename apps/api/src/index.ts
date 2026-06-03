@@ -44,6 +44,7 @@ import { createApiRequestHandler } from "./admin-routes.js";
 import { createId, type ToolDefinition } from "../../../packages/types/src/index.js";
 import { createLLMRequests } from "./llm-requests.js";
 import { acquireSingletonLock } from "./singleton-lock.js";
+import { updateEnvFile } from "./env-file.js";
 
 const http = await import("node:http");
 const fs = await import("node:fs");
@@ -553,7 +554,14 @@ const wechat = createWeChatPlugin(config.plugins.wechat, {
 
 const messageRuntime = createMessageRuntime({
   getDelayMs: () => config.core.inboundDebounceMs,
-  startHeartbeatPaused: config.core.heartbeatStartPaused,
+  startHeartbeatPaused: config.core.heartbeatPaused,
+  onHeartbeatPausedChange(paused) {
+    updateEnvFile(".env", {
+      AGENT_HEARTBEAT_PAUSED: String(paused),
+      AGENT_HEARTBEAT_START_PAUSED: null
+    });
+    config.core.heartbeatPaused = paused;
+  },
   time: currentTime,
   getProcessNowTarget() {
     return getDefaultMessagingTarget();

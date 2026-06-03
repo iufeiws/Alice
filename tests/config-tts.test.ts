@@ -5,7 +5,7 @@ import { loadConfig } from "../packages/config/src/index.js";
 test("tts config defaults to genie tts backend with moss fallback settings", () => {
   const config = loadConfig({});
 
-  assert.equal(config.core.heartbeatStartPaused, true);
+  assert.equal(config.core.heartbeatPaused, true);
   assert.equal(config.tts.backend, "genie-tts");
   assert.equal(config.tts.genieBaseURL, "http://127.0.0.1:8767");
   assert.equal(config.tts.genieBaseURLExplicit, false);
@@ -27,10 +27,18 @@ test("tts config defaults to genie tts backend with moss fallback settings", () 
 
 test("core config can enable heartbeat auto start", () => {
   const config = loadConfig({
+    AGENT_HEARTBEAT_PAUSED: "false"
+  });
+
+  assert.equal(config.core.heartbeatPaused, false);
+});
+
+test("core config keeps legacy heartbeat start paused env fallback", () => {
+  const config = loadConfig({
     AGENT_HEARTBEAT_START_PAUSED: "false"
   });
 
-  assert.equal(config.core.heartbeatStartPaused, false);
+  assert.equal(config.core.heartbeatPaused, false);
 });
 
 test("memory summary config is independent from core llm config", () => {

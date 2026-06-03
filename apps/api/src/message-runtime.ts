@@ -64,6 +64,7 @@ export type MessageRuntimeDeps = {
   };
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
+  onHeartbeatPausedChange?: (paused: boolean) => void;
 };
 
 export type MessageRuntime = {
@@ -212,11 +213,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     },
     pauseHeartbeat() {
       heartbeatPaused = true;
+      persistHeartbeatPaused();
       clearHeartbeat();
       deps.appendLog("info", "message runtime heartbeat paused");
     },
     resumeHeartbeat() {
       heartbeatPaused = false;
+      persistHeartbeatPaused();
       deps.appendLog("info", "message runtime heartbeat resumed");
       scheduleHeartbeat(0);
     },
@@ -269,6 +272,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     if (!heartbeatTimer) return;
     clearTimeout(heartbeatTimer);
     heartbeatTimer = undefined;
+  }
+
+  function persistHeartbeatPaused(): void {
+    try {
+      deps.onHeartbeatPausedChange?.(heartbeatPaused);
+    } catch (error) {
+      deps.appendLog("warn", `message runtime heartbeat state persist failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async function runHeartbeat(options: { force?: boolean } = {}): Promise<number> {

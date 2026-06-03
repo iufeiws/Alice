@@ -455,6 +455,48 @@ test("message runtime can start with heartbeat paused", async () => {
   assert.equal(coreInputs.length, 1);
 });
 
+test("message runtime reports heartbeat paused changes for env persistence", async () => {
+  let persisted = true;
+  const makeRuntime = (startHeartbeatPaused: boolean) => {
+    const store = createAliceStore(path.join(makeTempDir("runtime-persist-heartbeat"), "alice.sqlite"));
+    return createMessageRuntime({
+      getDelayMs: () => 0,
+      getHeartbeatIntervalMs: () => 10,
+      startHeartbeatPaused,
+      onHeartbeatPausedChange(paused) {
+        persisted = paused;
+      },
+      store,
+      core: {
+        async handleEvent() {
+          return [];
+        }
+      },
+      outputRouter: {
+        async sendAll() {}
+      },
+      appendLog() {},
+      appendMessageLog(input) {
+        return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+      }
+    });
+  };
+
+  const first = makeRuntime(true);
+  assert.equal(first.getStatus().heartbeatPaused, true);
+  first.resumeHeartbeat();
+  assert.equal(persisted, false);
+
+  const restarted = makeRuntime(persisted);
+  assert.equal(restarted.getStatus().heartbeatPaused, false);
+
+  restarted.pauseHeartbeat();
+  assert.equal(persisted, true);
+
+  const restartedAgain = makeRuntime(persisted);
+  assert.equal(restartedAgain.getStatus().heartbeatPaused, true);
+});
+
 test("message runtime processNow starts a manual LLM session without pending messages", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-process-now-empty"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];

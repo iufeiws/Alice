@@ -1,6 +1,6 @@
 const fs = await import("node:fs");
 
-export function updateEnvFile(path: string, updates: Record<string, string | undefined>): void {
+export function updateEnvFile(path: string, updates: Record<string, string | undefined | null>): void {
   const existing = fs.existsSync(path) ? fs.readFileSync(path, "utf8").split(/\r?\n/) : [];
   const seen = new Set<string>();
   const lines = existing.map((line) => {
@@ -10,13 +10,17 @@ export function updateEnvFile(path: string, updates: Record<string, string | und
     const key = line.slice(0, separator).trim();
     if (!(key in updates)) return line;
     if (updates[key] === undefined) return line;
+    if (updates[key] === null) {
+      seen.add(key);
+      return undefined;
+    }
 
     seen.add(key);
     return `${key}=${formatEnvValue(updates[key] ?? "")}`;
-  });
+  }).filter((line): line is string => line !== undefined);
 
   for (const [key, value] of Object.entries(updates)) {
-    if (!seen.has(key) && value !== undefined) {
+    if (!seen.has(key) && value !== undefined && value !== null) {
       lines.push(`${key}=${formatEnvValue(value)}`);
     }
   }

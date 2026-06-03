@@ -67,6 +67,7 @@ const HOUR = 60 * MINUTE;
 
 const DEFAULT_INTIMACY = 50;
 const ACTIVE_TIMEOUT_MS = 5 * MINUTE;
+const WAITING_INACTIVE_TIMEOUT_MS = 15 * MINUTE;
 
 export function createJsonAgentStateStore(filePath: string): AgentStateStore {
   return {
@@ -128,7 +129,9 @@ export function createAgentStateController(options: AgentStateControllerOptions)
 
     if (state === "idle") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(2 * MINUTE, 15 * MINUTE, random));
-    } else if (state === "waiting" || state === "curious" || state === "going_to_sleep" || state === "test") {
+    } else if (state === "waiting") {
+      next.nextTransitionAt = addMsIso(opts.durationMs ?? WAITING_INACTIVE_TIMEOUT_MS);
+    } else if (state === "curious" || state === "going_to_sleep" || state === "test") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? ACTIVE_TIMEOUT_MS);
     } else if (state === "away") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(5 * MINUTE, 30 * MINUTE, random));
@@ -222,7 +225,9 @@ export function createAgentStateController(options: AgentStateControllerOptions)
         lastInboundAt: inboundAt,
         updatedAt: inboundAt
       };
-      if (snapshot.state === "idle" || snapshot.state === "waiting" || snapshot.state === "curious" || snapshot.state === "going_to_sleep") {
+      if (snapshot.state === "waiting") {
+        next.nextTransitionAt = addMsIso(WAITING_INACTIVE_TIMEOUT_MS);
+      } else if (snapshot.state === "idle" || snapshot.state === "curious" || snapshot.state === "going_to_sleep") {
         next.nextTransitionAt = addMsIso(ACTIVE_TIMEOUT_MS);
       }
       return commit(next);
@@ -300,7 +305,7 @@ function defaultSnapshot(time: CurrentTimeProvider, random: () => number): Agent
     state: "waiting",
     intimacy: DEFAULT_INTIMACY,
     updatedAt: current.iso,
-    nextTransitionAt: time.addMs(ACTIVE_TIMEOUT_MS, current.date).iso,
+    nextTransitionAt: time.addMs(WAITING_INACTIVE_TIMEOUT_MS, current.date).iso,
     responseDelayMs: responseDelayFor("waiting", random)
   };
 }

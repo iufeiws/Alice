@@ -1015,6 +1015,47 @@ test("message runtime does not run idle no-message transition before processing 
   assert.equal(controller.getSnapshot().reason, "inbound_processed");
 });
 
+test("message runtime clears LLM session when waiting degrades to idle", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-waiting-idle-clear-llm"), "alice.sqlite"));
+  let current = new Date("2026-05-25T00:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 0
+  });
+  const clearReasons: string[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    now: () => current,
+    agentState: controller,
+    clearLLMSession(reason) {
+      clearReasons.push(reason);
+    },
+    store,
+    core: {
+      async handleEvent() {
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  current = new Date("2026-05-25T00:14:59.999Z");
+  await runtime.processNow();
+  assert.deepEqual(clearReasons, []);
+  assert.equal(controller.getSnapshot().state, "waiting");
+
+  current = new Date("2026-05-25T00:15:00.000Z");
+  await runtime.processNow();
+  assert.deepEqual(clearReasons, ["mode_transition"]);
+  assert.equal(controller.getSnapshot().state, "idle");
+});
+
 test("message runtime keeps going_to_sleep after processing and only postpones sleep", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-going-to-sleep-postpone"), "alice.sqlite"));
   let current = new Date("2026-05-24T16:00:00.000Z");

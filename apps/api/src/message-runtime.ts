@@ -58,7 +58,7 @@ export type MessageRuntimeDeps = {
   agentState?: Pick<
     AgentStateController,
     "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "noteInboundMessage" | "onChange" | "tick"
-  > & Partial<Pick<AgentStateController, "noteInboundProcessed" | "setState">>;
+  > & Partial<Pick<AgentStateController, "getSnapshot" | "noteInboundProcessed" | "setState">>;
   outputRouter: {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };
@@ -116,7 +116,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const llmFailureNotice = "-星界信号丢失-";
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatPaused = deps.startHeartbeatPaused === true;
-  const unsubscribeState = deps.agentState?.onChange(() => scheduleHeartbeat(0));
+  let previousAgentState = deps.agentState?.getSnapshot?.().state;
+  const unsubscribeState = deps.agentState?.onChange((snapshot) => {
+    if (previousAgentState === "waiting" && snapshot.state === "idle" && snapshot.reason === "inactive") {
+      deps.clearLLMSession?.("mode_transition");
+    }
+    previousAgentState = snapshot.state;
+    scheduleHeartbeat(0);
+  });
   scheduleHeartbeat(0);
 
   return {

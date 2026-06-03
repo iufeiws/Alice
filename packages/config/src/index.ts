@@ -184,7 +184,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       temperature: numberValue(env.LLM_TEMPERATURE, 0.2),
       timeoutMs: numberValue(env.LLM_TIMEOUT_MS, 60_000),
       stream: bool(env.LLM_STREAM_ENABLED, true),
-      tokenPressureContextImportance: numberValue(env.LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE, 1.5),
+      tokenPressureContextImportance: numberValue(env.LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE, 1),
       extraParams: jsonObjectValue(env.LLM_EXTRA_PARAMS),
       followupExtraParams: env.LLM_FOLLOWUP_EXTRA_PARAMS === undefined
         ? jsonObjectValue(env.LLM_EXTRA_PARAMS)

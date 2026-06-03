@@ -6,7 +6,7 @@ import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import { parseZonedIso } from "../../time/src/index.js";
-import { createLLMSessionTranscriptLogger, relativeLLMSessionPath } from "./llm-session-log.js";
+import { createLLMSessionTranscriptLogger } from "./llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "./prompt-layer-parser.js";
 
@@ -1322,7 +1322,8 @@ export function createMemoryInductionSession(
       return {
         type: "llm_session",
         schemaVersion: 1,
-        sessionId: memorySessionId(root, state.filePath),
+        sessionId: Date.parse(state.startedAtUtc ?? time),
+        sessionCreatedAtUtc: state.startedAtUtc,
         agent: "memorize",
         target: session.activeTarget,
         targets: session.completedTargets,
@@ -1357,10 +1358,6 @@ export function clearMemoryInductionSession(session: MemoryInductionSession | un
   session.clearReason = reason;
   session.activeTarget = undefined;
   session.append?.({ type: "final_messages", messages: session.messages });
-}
-
-function memorySessionId(root: string, filePath: string): string {
-  return `memorize:${relativeLLMSessionPath(root, filePath)}`;
 }
 
 function normalizeSleepMemoryState(value: SleepMemoryState): SleepMemoryState {

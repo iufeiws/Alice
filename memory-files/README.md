@@ -32,11 +32,14 @@ Memorize prompt 配置保存到：
 memory-files/config/memorize-prompts.json
 ```
 
-Memorize 的原始 LLM 会话逐次保存为 JSONL，和 Core 会话分开：
+Core 与 Memorize 的原始 LLM 会话逐次保存为 JSONL，按会话创建时的 UTC 日期和时间命名：
 
 ```text
-memory-files/llm-sessions/memorize/YYYY-MM-DD/*.sessions.jsonl
+memory-files/llm-sessions/core/YYYY-MM-DD/HH-MM-SS-mmm.jsonl
+memory-files/llm-sessions/memorize/YYYY-MM-DD/HH-MM-SS-mmm.jsonl
 ```
+
+Core 的当前可恢复会话指针保存为 `memory-files/llm-sessions/current.json`。JSONL 第一行是 metadata，包含创建时间 UTC 和以该 UTC 创建时间计算的 `sessionId` 时间戳；后续每行是一条 LLM transcript message。
 
 唯一飞书绑定保存到：
 

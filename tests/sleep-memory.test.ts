@@ -418,8 +418,11 @@ test("memorize LLM session persists as metadata followed by transcript messages"
 
   const filePath = findSessionFiles(path.join(root, "llm-sessions", "memorize"))[0];
   const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(path.relative(path.join(root, "llm-sessions"), filePath), path.join("memorize", "2026-05-24", "06-00-00-000.jsonl"));
   assert.equal(lines[0].type, "llm_session");
   assert.equal(lines[0].agent, "memorize");
+  assert.equal(lines[0].sessionId, Date.parse("2026-05-24T06:00:00.000Z"));
+  assert.equal(lines[0].sessionCreatedAtUtc, "2026-05-24T06:00:00.000Z");
   assert.deepEqual(lines[0].targets, ["persistent", "userPreferences", "yesterdaySummary"]);
   assert.equal(lines[0].clearedAt, "2026-05-24T06:00:00.000Z");
   assert.equal(lines[0].clearReason, "complete");
@@ -780,7 +783,7 @@ function findSessionFiles(dir: string): string[] {
   for (const entry of (fs.readdirSync as any)(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...findSessionFiles(fullPath));
-    else if (entry.isFile() && entry.name.endsWith(".sessions.jsonl")) files.push(fullPath);
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(fullPath);
   }
   return files.sort();
 }

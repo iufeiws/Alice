@@ -1242,13 +1242,14 @@ function clearMemoryInductionSession(): void {
 function ensureActiveLLMSession(time: string): ActiveLLMSession {
   if (!activeLLMSession) {
     const timeUtc = parseZonedIso(time, currentTime.timeZone).toISOString();
+    const sessionId = utcTimestamp(timeUtc) ?? nextLLMSessionId;
     activeLLMSession = {
-      id: nextLLMSessionId,
+      id: sessionId,
       startedAt: time,
       startedAtUtc: timeUtc,
       updatedAt: time,
       updatedAtUtc: timeUtc,
-      archiveFilePath: createLLMSessionFilePath(time),
+      archiveFilePath: createLLMSessionFilePath(timeUtc),
       requestIds: [],
       responseIds: [],
       messages: [],
@@ -1482,6 +1483,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
     type: "llm_session",
     schemaVersion: 1,
     sessionId: session.id,
+    sessionCreatedAtUtc: session.startedAtUtc,
     startedAt: session.startedAt,
     startedAtUtc: session.startedAtUtc,
     updatedAt: session.updatedAt,
@@ -1513,7 +1515,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
 }
 
 function writeLLMSessionFile(session: ActiveLLMSession): void {
-  const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAt);
+  const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAtUtc ?? session.startedAt);
   session.archiveFilePath = filePath;
   session.archiveMetadata = sessionMetadata(session);
   writeLLMSessionJsonl(filePath, session.archiveMetadata, session.messages);
@@ -1567,6 +1569,12 @@ function restorePersistedActiveLLMSession(): ActiveLLMSession | undefined {
   }
 }
 
+function utcTimestamp(timeUtc: string | undefined): number | undefined {
+  if (!timeUtc) return undefined;
+  const timestamp = Date.parse(timeUtc);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function readAllLLMSessions(): ActiveLLMSession[] {
   const root = llmSessionsRoot();
   if (!fs.existsSync(root)) return [];
@@ -1586,6 +1594,7 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
     const parsed = readLLMSessionJsonl(filePath);
     if (!parsed) return undefined;
     const metadata = parsed.metadata;
+    if (metadata.agent === "memorize") return undefined;
     if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
     const messages = parsed.messages;
     const staticPromptMessageCount = messageCountFromMetadata(metadata.staticPromptMessageCount, messages.length);

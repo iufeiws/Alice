@@ -118,7 +118,8 @@ data/alice.sqlite
 logs/system/*.log.jsonl
 logs/message/message-logs.sqlite
 memory-files/message/messages.sqlite
-memory-files/llm-sessions/*.sessions.jsonl
+memory-files/llm-sessions/core/YYYY-MM-DD/*.jsonl
+memory-files/llm-sessions/memorize/YYYY-MM-DD/*.jsonl
 memory-files/indexes/feishu-paired-contacts.json
 memory-files/indexes/wechat-ilink-state.json
 memory-files/config/prompt-profile.json

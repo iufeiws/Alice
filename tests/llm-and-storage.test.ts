@@ -7,6 +7,7 @@ import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore } from "../packages/storage/src/token-usage-store.js";
 import * as sqlite from "../packages/storage/src/sqlite-compat.js";
+import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../core/agent/src/llm-session-log.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -32,6 +33,22 @@ test("singleton lock rejects another running process in the same memory root", (
   }
   const second = acquireSingletonLock(root, "api");
   second.release();
+});
+
+test("LLM session files use type and UTC creation time in path and metadata", () => {
+  const root = makeTempDir("llm-session-path");
+  const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "core" });
+  assert.equal(path.relative(root, filePath), path.join("core", "2026-06-03", "06-19-01-271.jsonl"));
+  writeLLMSessionJsonl(filePath, {
+    type: "llm_session",
+    schemaVersion: 1,
+    sessionId: Date.parse("2026-06-03T06:19:01.271Z"),
+    sessionCreatedAtUtc: "2026-06-03T06:19:01.271Z"
+  }, [{ role: "user", content: "hello" }]);
+  const parsed = readLLMSessionJsonl(filePath);
+  assert.equal(parsed?.metadata.sessionId, Date.parse("2026-06-03T06:19:01.271Z"));
+  assert.equal(parsed?.metadata.sessionCreatedAtUtc, "2026-06-03T06:19:01.271Z");
+  assert.equal(parsed?.messages[0].content, "hello");
 });
 
 test("openai stream client processes a final SSE frame without trailing newline", async () => {

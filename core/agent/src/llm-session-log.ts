@@ -8,16 +8,16 @@ export type LLMSessionJsonl = {
   messages: LLMChatInput["messages"];
 };
 
-export function createLLMSessionFilePath(root: string, time: string, options?: { namespace?: string; name?: string }): string {
-  const date = String(time).slice(0, 10);
-  const clock = String(time).slice(11, 19).replace(/:/g, "-") || "00-00-00";
-  const dir = path.join(root, options?.namespace ?? "", date);
+export function createLLMSessionFilePath(root: string, time: string, options?: { namespace?: string; type?: string; name?: string }): string {
+  const utc = normalizeUtcTime(time);
+  const date = utc.slice(0, 10);
+  const clock = utc.slice(11, 23).replace(/[:.]/g, "-") || "00-00-00-000";
+  const dir = path.join(root, options?.type ?? options?.namespace ?? "core", date);
   fs.mkdirSync(dir, { recursive: true });
-  const baseName = options?.name ? `${clock}-${options.name}` : clock;
-  let filePath = path.join(dir, `${baseName}.sessions.jsonl`);
+  let filePath = path.join(dir, `${clock}.jsonl`);
   let suffix = 2;
   while (fs.existsSync(filePath)) {
-    filePath = path.join(dir, `${baseName}-${suffix}.sessions.jsonl`);
+    filePath = path.join(dir, `${clock}-${suffix}.jsonl`);
     suffix += 1;
   }
   return filePath;
@@ -39,7 +39,7 @@ export function collectLLMSessionFiles(dir: string, files: string[]): void {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collectLLMSessionFiles(fullPath, files);
-    } else if (entry.isFile() && entry.name.endsWith(".sessions.jsonl")) {
+    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
       files.push(fullPath);
     }
   }
@@ -87,7 +87,7 @@ export function createLLMSessionTranscriptLogger(input: {
   name?: string;
   metadata: (state: LLMSessionTranscriptLoggerState) => Record<string, unknown>;
 }): { filePath: string; append(entry: unknown): void } {
-  const filePath = createLLMSessionFilePath(input.root, input.time, { namespace: input.namespace, name: input.name });
+  const filePath = createLLMSessionFilePath(input.root, input.timeUtc ?? input.time, { type: input.namespace, name: input.name });
   const state: LLMSessionTranscriptLoggerState = {
     filePath,
     messages: [],
@@ -108,6 +108,12 @@ export function createLLMSessionTranscriptLogger(input: {
       write();
     }
   };
+}
+
+function normalizeUtcTime(time: string): string {
+  const date = new Date(time);
+  if (!Number.isNaN(date.getTime())) return date.toISOString();
+  return String(time);
 }
 
 export type LLMSessionTranscriptLoggerState = {

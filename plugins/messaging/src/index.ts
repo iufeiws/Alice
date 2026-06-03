@@ -69,6 +69,7 @@ export type VoiceSynthesisInput = {
     referenceText?: string;
     speed?: number;
     partSilenceSeconds?: number;
+    splitText?: boolean;
   };
 };
 
@@ -78,6 +79,7 @@ export type VoiceSynthesisResult = {
 };
 
 export type VoiceSynthesizer = ((input: VoiceSynthesisInput) => Promise<VoiceSynthesisResult>) & {
+  streamAudio?(input: VoiceSynthesisInput): AsyncIterable<Uint8Array>;
   noteActivity?(): void;
   prepare?(): Promise<void>;
   shutdown?(): Promise<void>;
@@ -1035,6 +1037,22 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
     if (!useMossFallback) genie.noteActivity?.();
     fallbackMoss?.noteActivity?.();
   };
+  synthesize.streamAudio = async function* (request) {
+    if (useMossFallback || !genie.streamAudio) {
+      throw new Error("Genie TTS stream is unavailable while using MOSS fallback");
+    }
+    try {
+      yield* genie.streamAudio(request);
+      genieHasSynthesized = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!genieHasSynthesized && isGenieStartupFallbackError(message)) {
+        useMossFallback = true;
+        deps.appendLog?.("warn", `genie tts stream failed; falling back to moss for non-stream synthesis: ${message}`);
+      }
+      throw error;
+    }
+  };
   synthesize.prepare = async () => {
     if (useMossFallback) {
       await fallbackMoss?.prepare?.();
@@ -1346,6 +1364,40 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   }) as VoiceSynthesizer;
 
   synthesize.noteActivity = noteActivity;
+  synthesize.streamAudio = async function* (request) {
+    const { text } = request;
+    noteActivity();
+    const speed = genieSpeedValue(request.genie?.speed);
+    if (speed !== 1) throw new Error("Genie TTS stream does not support speed adjustment");
+    await ensureGenieService();
+    const controller = new AbortController();
+    const timeout = setTimer(() => controller.abort(), config.timeoutMs);
+    timeout.unref?.();
+    try {
+      const response = await fetchImpl(`${config.baseURL}/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          text,
+          ...genieRequestOverrides({ ...request.genie, splitText: false }, deps.appendLog)
+        })
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        throw new Error(`Genie TTS stream HTTP ${response.status}: ${errorText.slice(0, 500)}`);
+      }
+      if (!response.body) throw new Error("Genie TTS stream response had no body");
+      for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+        if (!chunk.byteLength) continue;
+        noteActivity();
+        yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      }
+    } finally {
+      clearTimer(timeout);
+      controller.abort();
+    }
+  };
   synthesize.prepare = async () => {
     noteActivity();
     await ensureGenieService();
@@ -1487,6 +1539,7 @@ function genieRequestOverrides(input: VoiceSynthesisInput["genie"], appendLog?: 
   if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found");
   if (input.referenceText) overrides.referenceText = input.referenceText;
   if (input.partSilenceSeconds !== undefined) overrides.partSilenceSeconds = geniePartSilenceSecondsValue(input.partSilenceSeconds);
+  if (input.splitText !== undefined) overrides.splitText = Boolean(input.splitText);
   return overrides;
 }
 

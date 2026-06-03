@@ -1,6 +1,7 @@
 import type { LLMClient, OpenAICompatibleConfig } from "../../../core/llm/src/index.js";
 import { createOpenAICompatibleClient } from "../../../core/llm/src/index.js";
 import type { LLMRequestSender } from "../../../core/agent/src/llm-tool-loop.js";
+import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { VoiceSynthesizer } from "../../messaging/src/index.js";
 
 const fs = await import("node:fs");
@@ -28,6 +29,7 @@ export type JapaneseVoicePluginConfig = {
     referenceText?: string;
     speed?: number;
     partSilenceSeconds?: number;
+    splitText?: boolean;
   };
 };
 
@@ -44,7 +46,25 @@ export type JapaneseVoicePluginDeps = {
 export type JapaneseVoicePlugin = {
   id: "japanese_voice";
   config: JapaneseVoicePluginConfig;
-  voiceSynthesizer: VoiceSynthesizer;
+  voiceSynthesizer: JapaneseVoiceSynthesizer;
+};
+
+export type JapaneseVoiceStreamInput = {
+  text: AsyncIterable<string> | Iterable<string> | string;
+  time: CurrentTimeProvider;
+  source: "send_chat.voice";
+  streamId?: string;
+};
+
+export type JapaneseVoiceStreamChunk =
+  | { type: "translation_started"; sequence: number; sourceChars: number }
+  | { type: "translation_done"; sequence: number; translatedChars: number }
+  | { type: "audio"; sequence: number; chunk: Uint8Array; contentType: "audio/L16; rate=32000; channels=1" }
+  | { type: "part_done"; sequence: number }
+  | { type: "done" };
+
+export type JapaneseVoiceSynthesizer = VoiceSynthesizer & {
+  stream?(input: JapaneseVoiceStreamInput): AsyncIterable<JapaneseVoiceStreamChunk>;
 };
 
 const defaultConfigPath = "plugins/japanese-voice/config.json";
@@ -64,6 +84,7 @@ export function readJapaneseVoicePluginConfig(configPath = defaultConfigPath): J
   const raw = fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}";
   const parsed = parseJsonObject(raw);
   const preset = parseJsonObject(parsed.api_preset);
+  const voice = parseJsonObject(parsed.voice);
   return {
     enabled: booleanValue(parsed.enabled, false),
     apiPresetName: stringValue(parsed.apiPresetName) || stringValue(preset.name),
@@ -79,11 +100,12 @@ export function readJapaneseVoicePluginConfig(configPath = defaultConfigPath): J
     },
     prompt: stringValue(parsed.prompt) || defaultPrompt(),
     voice: {
-      modelDir: stringValue(parseJsonObject(parsed.voice).modelDir),
-      referenceAudio: stringValue(parseJsonObject(parsed.voice).referenceAudio),
-      referenceText: stringValue(parseJsonObject(parsed.voice).referenceText),
-      speed: optionalNumberValue(parseJsonObject(parsed.voice).speed),
-      partSilenceSeconds: optionalNumberValue(parseJsonObject(parsed.voice).partSilenceSeconds)
+      modelDir: stringValue(voice.modelDir),
+      referenceAudio: stringValue(voice.referenceAudio),
+      referenceText: stringValue(voice.referenceText),
+      speed: optionalNumberValue(voice.speed),
+      partSilenceSeconds: optionalNumberValue(voice.partSilenceSeconds),
+      splitText: booleanValue(voice.splitText, false)
     }
   };
 }
@@ -91,7 +113,7 @@ export function readJapaneseVoicePluginConfig(configPath = defaultConfigPath): J
 export function createJapaneseVoiceTranslationSynthesizer(
   config: JapaneseVoicePluginConfig,
   deps: JapaneseVoicePluginDeps
-): VoiceSynthesizer {
+): JapaneseVoiceSynthesizer {
   const base = deps.baseSynthesizer;
   const synthesize = (async (input) => {
     const translated = await translateJapaneseVoiceText(input.text, config, deps);
@@ -100,8 +122,10 @@ export function createJapaneseVoiceTranslationSynthesizer(
       text: translated || input.text,
       genie: japaneseVoiceGenieOverrides(config)
     });
-  }) as VoiceSynthesizer;
+  }) as JapaneseVoiceSynthesizer;
 
+  synthesize.stream = (input) => streamJapaneseVoiceText(input, config, deps);
+  synthesize.streamAudio = base.streamAudio?.bind(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -113,7 +137,7 @@ export function createJapaneseVoiceTranslationSynthesizer(
   return synthesize;
 }
 
-function createJapaneseVoiceRoutingSynthesizer(deps: JapaneseVoicePluginDeps): VoiceSynthesizer {
+function createJapaneseVoiceRoutingSynthesizer(deps: JapaneseVoicePluginDeps): JapaneseVoiceSynthesizer {
   const base = deps.baseSynthesizer;
   const synthesize = (async (input) => {
     const config = readJapaneseVoicePluginConfig(deps.configPath);
@@ -124,8 +148,13 @@ function createJapaneseVoiceRoutingSynthesizer(deps: JapaneseVoicePluginDeps): V
       text: translated || input.text,
       genie: japaneseVoiceGenieOverrides(config)
     });
-  }) as VoiceSynthesizer;
+  }) as JapaneseVoiceSynthesizer;
 
+  synthesize.stream = (input) => {
+    const config = readJapaneseVoicePluginConfig(deps.configPath);
+    return streamJapaneseVoiceText(input, config, deps);
+  };
+  synthesize.streamAudio = base.streamAudio?.bind(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -145,7 +174,8 @@ export function japaneseVoiceGenieOverrides(config: JapaneseVoicePluginConfig): 
     referenceAudio: voice.referenceAudio,
     referenceText: voice.referenceText,
     ...(voice.speed !== undefined ? { speed: voice.speed } : {}),
-    ...(voice.partSilenceSeconds !== undefined ? { partSilenceSeconds: voice.partSilenceSeconds } : {})
+    ...(voice.partSilenceSeconds !== undefined ? { partSilenceSeconds: voice.partSilenceSeconds } : {}),
+    splitText: voice.splitText ?? false
   };
 }
 
@@ -193,6 +223,98 @@ export async function translateJapaneseVoiceText(text: string, config: JapaneseV
     deps.appendLog?.("warn", `japanese voice translation failed; using original text: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
+}
+
+export async function* streamJapaneseVoiceText(
+  input: JapaneseVoiceStreamInput,
+  config: JapaneseVoicePluginConfig,
+  deps: JapaneseVoicePluginDeps
+): AsyncIterable<JapaneseVoiceStreamChunk> {
+  if (input.source !== "send_chat.voice") throw new Error("japanese voice stream only supports send_chat.voice");
+  if (!config.enabled) throw new Error("japanese voice stream is disabled");
+  if (!deps.baseSynthesizer.streamAudio) throw new Error("japanese voice stream requires a streaming Genie TTS synthesizer");
+
+  let sequence = 0;
+  for await (const sourcePart of splitJapaneseVoiceStreamParts(input.text)) {
+    const sourceChars = Array.from(sourcePart).length;
+    yield { type: "translation_started", sequence, sourceChars };
+    const translated = await translateJapaneseVoiceText(sourcePart, config, deps);
+    const ttsText = translated || sourcePart;
+    yield { type: "translation_done", sequence, translatedChars: Array.from(ttsText).length };
+    const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...streamGenie } = japaneseVoiceGenieOverrides(config);
+    for await (const chunk of deps.baseSynthesizer.streamAudio({
+      text: ttsText,
+      time: input.time,
+      genie: { ...streamGenie, splitText: false }
+    })) {
+      yield {
+        type: "audio",
+        sequence,
+        chunk,
+        contentType: "audio/L16; rate=32000; channels=1"
+      };
+    }
+    yield { type: "part_done", sequence };
+    sequence += 1;
+  }
+  yield { type: "done" };
+}
+
+export async function* splitJapaneseVoiceStreamParts(
+  text: AsyncIterable<string> | Iterable<string> | string,
+  options: { minFlushChars?: number; maxFlushChars?: number; softBoundaryChars?: number } = {}
+): AsyncIterable<string> {
+  const minFlushChars = options.minFlushChars ?? 10;
+  const maxFlushChars = options.maxFlushChars ?? 40;
+  const softBoundaryChars = options.softBoundaryChars ?? 20;
+  let pending = "";
+  for await (const chunk of iterateTextChunks(text)) {
+    pending += chunk;
+    while (true) {
+      const part = takeJapaneseVoiceStreamPart(pending, { minFlushChars, maxFlushChars, softBoundaryChars });
+      if (!part) break;
+      pending = pending.slice(part.length).trimStart();
+      const normalized = part.trim();
+      if (normalized) yield normalized;
+    }
+  }
+  const remaining = pending.trim();
+  if (remaining) yield remaining;
+}
+
+async function* iterateTextChunks(text: AsyncIterable<string> | Iterable<string> | string): AsyncIterable<string> {
+  if (typeof text === "string") {
+    yield text;
+    return;
+  }
+  for await (const chunk of text as AsyncIterable<string>) {
+    if (chunk) yield String(chunk);
+  }
+}
+
+function takeJapaneseVoiceStreamPart(
+  pending: string,
+  options: { minFlushChars: number; maxFlushChars: number; softBoundaryChars: number }
+): string | undefined {
+  const chars = Array.from(pending);
+  if (chars.length < options.minFlushChars) return undefined;
+  for (let index = 0; index < pending.length; index += 1) {
+    if (/[。！？.!?\n]/.test(pending[index]!)) {
+      return pending.slice(0, index + 1);
+    }
+  }
+  const hardLimit = Math.min(chars.length, options.maxFlushChars);
+  for (let index = 0, seen = 0; index < pending.length; index += 1) {
+    const char = pending[index]!;
+    seen += 1;
+    if (seen >= options.softBoundaryChars && /[。！？.!?\n]/.test(char)) {
+      return pending.slice(0, index + 1);
+    }
+    if (seen >= hardLimit) {
+      return pending.slice(0, index + 1);
+    }
+  }
+  return undefined;
 }
 
 function resolveEffectivePreset(config: JapaneseVoicePluginConfig, deps: JapaneseVoicePluginDeps): JapaneseVoiceApiPreset | undefined {

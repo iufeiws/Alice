@@ -11,6 +11,8 @@ npm run tts:genie:install
 This reuses `.conda-moss/bin/python` so the existing MOSS environment can host both TTS services.
 Genie runtime data defaults to `assets/tts/genie/GenieData`; override it with `GENIE_TTS_DATA_DIR` for Alice-managed startup or `GENIE_DATA_DIR` when running `service.py` directly.
 
+Chinese RoBERTa text features are disabled by default in Alice's service, even if `GenieData/RoBERTa` exists. Set `GENIE_TTS_ENABLE_ROBERTA=1` only when you want to opt into the optional Chinese prosody model.
+
 ## Model files
 
 Put the Genie/GPT-SoVITS ONNX character model under:
@@ -41,3 +43,7 @@ For manual debugging:
 ```bash
 npm run tts:genie:start
 ```
+
+## Streaming endpoint
+
+Alice's service also exposes `POST /stream` with the same request fields as `/synthesize`, except `outputPath` and `partSilenceSeconds` are not used. It returns chunked `audio/L16; rate=32000; channels=1` bytes. The stream follows Alice's `splitText` batching behavior, so each synthesized text part is emitted as soon as Genie finishes that part.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import ctypes
 import hashlib
 import json
@@ -13,7 +14,7 @@ import unicodedata
 import gc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator, Iterator
 
 os.environ.setdefault("GENIE_DATA_DIR", "assets/tts/genie/GenieData")
 
@@ -27,6 +28,13 @@ _memory_peak_lock = threading.Lock()
 _memory_peak_label = "startup"
 _memory_peak_rss_mb = 0.0
 _memory_peak_running = True
+
+
+def env_flag_enabled(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def release_unused_memory() -> None:
@@ -175,6 +183,27 @@ def install_memory_lean_genie_loader() -> None:
 install_memory_lean_genie_loader()
 
 
+def install_roberta_policy() -> None:
+    if env_flag_enabled("GENIE_TTS_ENABLE_ROBERTA", False):
+        return
+    try:
+        from genie_tts.ModelManager import model_manager
+    except Exception:
+        return
+
+    def skip_roberta_model(*_args: object, **_kwargs: object) -> bool:
+        model_manager.roberta_model = None
+        model_manager.roberta_tokenizer = None
+        return False
+
+    model_manager.load_roberta_model = skip_roberta_model
+    model_manager.roberta_model = None
+    model_manager.roberta_tokenizer = None
+
+
+install_roberta_policy()
+
+
 def ssl_cache_path(audio_path: str | Path) -> Path:
     path = Path(audio_path).expanduser().resolve()
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -319,6 +348,7 @@ class GenieRuntime:
         reference_audio_path: str | Path | None = None,
         reference_text: str | None = None,
         part_silence_seconds: float = GENIE_TTS_PART_SILENCE_SECONDS,
+        split_text: bool = True,
     ) -> dict[str, Any]:
         normalized = str(text or "").strip()
         if not normalized:
@@ -337,7 +367,7 @@ class GenieRuntime:
                 reference_audio=effective_reference_audio,
                 reference_text=effective_reference_text,
             )
-            parts = split_text_for_tts(normalized)
+            parts = split_text_for_tts(normalized) if split_text else [normalized]
             part_paths: list[Path] = []
             if len(parts) == 1:
                 self._synthesize_part(parts[0], target)
@@ -361,6 +391,40 @@ class GenieRuntime:
             "durationSeconds": None,
             "elapsedSeconds": time.perf_counter() - started_at,
         }
+
+    def stream(
+        self,
+        *,
+        text: str,
+        model_dir: str | Path | None = None,
+        language: str | None = None,
+        reference_audio_path: str | Path | None = None,
+        reference_text: str | None = None,
+        split_text: bool = True,
+    ) -> Iterator[bytes]:
+        normalized = str(text or "").strip()
+        if not normalized:
+            raise ValueError("text cannot be empty")
+        effective_model_dir = Path(model_dir).expanduser().resolve() if model_dir else self.model_dir
+        effective_language = language or self.language
+        effective_reference_audio = Path(reference_audio_path).expanduser().resolve() if reference_audio_path else self.reference_audio
+        effective_reference_text = reference_text if reference_text is not None else self.reference_text.read_text(encoding="utf-8").strip()
+        with self._lock:
+            self._load(
+                model_dir=effective_model_dir,
+                language=effective_language,
+                reference_audio=effective_reference_audio,
+                reference_text=effective_reference_text,
+            )
+            parts = split_text_for_tts(normalized) if split_text else [normalized]
+            for part in parts:
+                yield from iterate_async_bytes(genie.tts_async(
+                    character_name=self.character_name,
+                    text=part,
+                    play=False,
+                    split_sentence=False,
+                    save_path=None,
+                ))
 
     def _synthesize_part(self, text: str, target: Path) -> None:
         log_memory("before_tts_part")
@@ -419,6 +483,18 @@ def is_split_symbol(char: str) -> bool:
     return category.startswith("P") or category.startswith("S")
 
 
+def iterate_async_bytes(source: AsyncIterator[bytes]) -> Iterator[bytes]:
+    loop = asyncio.new_event_loop()
+    try:
+        while True:
+            try:
+                yield loop.run_until_complete(source.__anext__())
+            except StopAsyncIteration:
+                break
+    finally:
+        loop.close()
+
+
 def concatenate_audio(paths: list[Path], output_path: Path, *, part_silence_seconds: float = GENIE_TTS_PART_SILENCE_SECONDS) -> None:
     if not paths:
         raise ValueError("no Genie TTS audio parts to concatenate")
@@ -441,6 +517,7 @@ def concatenate_audio(paths: list[Path], output_path: Path, *, part_silence_seco
 
 
 class GenieHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     runtime: GenieRuntime
     shutdown_event: threading.Event
 
@@ -455,6 +532,9 @@ class GenieHandler(BaseHTTPRequestHandler):
             self.write_json(200, {"ok": True})
             self.shutdown_event.set()
             return
+        if self.path == "/stream":
+            self.stream_synthesis()
+            return
         if self.path != "/synthesize":
             self.write_json(404, {"ok": False, "error": "not found"})
             return
@@ -468,11 +548,46 @@ class GenieHandler(BaseHTTPRequestHandler):
                 reference_audio_path=optional_string(body, "referenceAudioPath"),
                 reference_text=optional_string(body, "referenceText"),
                 part_silence_seconds=optional_float(body, "partSilenceSeconds", GENIE_TTS_PART_SILENCE_SECONDS),
+                split_text=optional_bool(body, "splitText", True),
             )
             self.write_json(200, {"ok": True, **result})
         except Exception as error:
             logging.exception("synthesize failed")
             self.write_json(500, {"ok": False, "error": str(error)})
+
+    def stream_synthesis(self) -> None:
+        try:
+            body = self.read_json_body()
+            stream = self.runtime.stream(
+                text=required_string(body, "text"),
+                model_dir=optional_string(body, "modelDir"),
+                language=optional_string(body, "language"),
+                reference_audio_path=optional_string(body, "referenceAudioPath"),
+                reference_text=optional_string(body, "referenceText"),
+                split_text=optional_bool(body, "splitText", True),
+            )
+            first_chunk = next(stream, None)
+            self.send_response(200)
+            self.send_header("content-type", "audio/L16; rate=32000; channels=1")
+            self.send_header("transfer-encoding", "chunked")
+            self.end_headers()
+            if first_chunk:
+                self.write_stream_chunk(first_chunk)
+            for chunk in stream:
+                if not chunk:
+                    continue
+                self.write_stream_chunk(chunk)
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except Exception as error:
+            logging.exception("stream synthesize failed")
+            self.write_json(500, {"ok": False, "error": str(error)})
+
+    def write_stream_chunk(self, chunk: bytes) -> None:
+        self.wfile.write(f"{len(chunk):x}\r\n".encode("ascii"))
+        self.wfile.write(chunk)
+        self.wfile.write(b"\r\n")
+        self.wfile.flush()
 
     def log_message(self, format_value: str, *args: Any) -> None:
         logging.info("%s - %s", self.address_string(), format_value % args)
@@ -515,6 +630,21 @@ def optional_float(body: dict[str, Any], key: str, default: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be a number")
     return float(value)
+
+
+def optional_bool(body: dict[str, Any], key: str, default: bool) -> bool:
+    value = body.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{key} must be a boolean")
 
 
 def parse_args() -> argparse.Namespace:

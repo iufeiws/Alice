@@ -293,6 +293,203 @@ test("agent core stops before another llm request when a tool invalidates the se
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
 });
 
+test("agent core exits the current loop after wait_chat", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length > 1) throw new Error("unexpected follow-up llm request");
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "tool_wait",
+            type: "function",
+            function: { name: "wait_chat", arguments: "{}" }
+          }]
+        },
+        finishReason: "tool_calls"
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools()],
+    onLLMSessionUpdated(session) {
+      sessionUpdates.push(session);
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(requests.length, 1);
+  assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, "2026-05-26T00:00:00.000Z");
+  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.role, "assistant");
+  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "wait_chat");
+  assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "wait_chat"), false);
+});
+
+test("agent core resumes pending wait_chat with check_chat result on heartbeat", async () => {
+  const requests: LLMChatInput[] = [];
+  const checkInputs: Record<string, unknown>[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_wait",
+              type: "function",
+              function: { name: "wait_chat", arguments: "{}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Fake check_chat", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    }),
+    tools: [chatTestTools((call) => {
+      if (call.toolName === "check_chat") checkInputs.push(call.input);
+    })],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await core.handleEvent(textEvent());
+  nowMs = Date.parse("2026-05-26T00:05:00.000Z");
+  await core.handleEvent({ ...textEvent(), id: "evt_2", type: "system.heartbeat" });
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(checkInputs, [{}, {}]);
+  const secondMessages = requests[1].messages;
+  const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "wait_chat");
+  assert.equal(waitToolMessages.length, 1);
+  assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<time>2026-05-26T00:05:00.000<\\time>");
+  const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "wait_chat");
+  const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  assert.equal(checkChatAfterWait, undefined);
+  assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
+});
+
+test("agent core defers inbound tool results when wait_chat appears in the same round", async () => {
+  const requests: LLMChatInput[] = [];
+  const calls: string[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length > 1) return { message: { role: "assistant", content: "done" } };
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool_check",
+              type: "function",
+              function: { name: "check_chat", arguments: "{}" }
+            },
+            {
+              id: "tool_wait",
+              type: "function",
+              function: { name: "wait_chat", arguments: "{}" }
+            },
+            {
+              id: "tool_later",
+              type: "function",
+              function: { name: "later_tool", arguments: "{}" }
+            }
+          ]
+        },
+        finishReason: "tool_calls"
+      };
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools((call) => calls.push(call.toolName))],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.deepEqual(calls, ["wait_chat", "later_tool"]);
+  const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
+  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "wait_chat"));
+  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["check_chat", "wait_chat", "later_tool"]);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), false);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
+
+  nowMs = Date.parse("2026-05-26T00:05:00.000Z");
+  await core.handleEvent({ ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
+
+  const resumedMessages = requests[1].messages;
+  assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
+  assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), true);
+  assert.equal(resumedMessages.filter((message) => message.role === "tool" && message.toolCallId === "tool_later").length, 1);
+});
+
 test("agent core rebuilds fixed prefix session immediately after bookcase draw", async () => {
   const requests: LLMChatInput[] = [];
   const checkChatInputs: Record<string, unknown>[] = [];
@@ -3003,6 +3200,41 @@ function textEvent(): AgentEvent {
     meta: {
       receivedAt: "2026-05-26T00:00:00.000Z",
       replyTo: "om_1"
+    }
+  };
+}
+
+function chatTestTools(onCall?: (call: ToolCall) => void) {
+  return {
+    id: "messaging",
+    listTools() {
+      return [
+        { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+        { name: "wait_chat", description: "wait", inputSchema: { type: "object" } },
+        { name: "later_tool", description: "later", inputSchema: { type: "object" } }
+      ];
+    },
+    async execute(call: ToolCall) {
+      onCall?.(call);
+      if (call.toolName === "wait_chat") {
+        return {
+          callId: call.id,
+          ok: true,
+          meta: { yieldReturn: true }
+        };
+      }
+      if (call.toolName === "check_chat") {
+        return {
+          callId: call.id,
+          ok: true,
+          messageCursorId: 7,
+          output: "<chat-log>\nnew chat\n</chat-log>\n<time>2026-05-26T00:05:00.000<\\time>"
+        };
+      }
+      if (call.toolName === "later_tool") {
+        return { callId: call.id, ok: true, output: "later" };
+      }
+      return { callId: call.id, ok: false, error: `unknown tool ${call.toolName}` };
     }
   };
 }

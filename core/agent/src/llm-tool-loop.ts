@@ -33,10 +33,11 @@ export type LLMToolLoopControl = {
   resetSession?: boolean;
   continueAfterReset?: boolean;
   reachedToolCallLimit?: boolean;
+  yieldReturn?: boolean;
 };
 
 export type LLMToolLoopExecution = {
-  message: LLMMessage;
+  message?: LLMMessage;
   control?: LLMToolLoopControl;
 };
 
@@ -44,7 +45,7 @@ export type LLMToolLoopRoundRequest = Omit<LLMRequestSenderInput, "round" | "mes
   messages?: LLMMessage[];
 };
 
-export type LLMToolLoopStopReason = "completed" | "empty_messages" | "tool_limit" | "reset" | "invalidated" | "cancelled";
+export type LLMToolLoopStopReason = "completed" | "empty_messages" | "tool_limit" | "reset" | "invalidated" | "cancelled" | "yield_return";
 
 export type LLMToolLoopResult = {
   messages: LLMMessage[];
@@ -72,6 +73,8 @@ export type LLMToolLoopInput = {
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
   shouldCancel?(): boolean;
   selectToolCalls?(calls: LLMToolCall[], result: LLMChatResult): LLMToolCall[];
+  shouldYieldReturn?(calls: LLMToolCall[], result: LLMChatResult): boolean;
+  shouldDeferToolResult?(call: LLMToolCall, calls: LLMToolCall[], result: LLMChatResult): boolean;
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
   limits?: LLMToolLoopLimits;
 };
@@ -161,6 +164,9 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     let reachedToolCallLimit = false;
     let resetSession = false;
     let continueAfterReset = false;
+    let yieldReturn = false;
+    const yieldReturnRound = input.shouldYieldReturn?.(calls, result) === true;
+    const executedCalls: LLMToolCall[] = [];
     const toolMessages: LLMMessage[] = [];
     for (const [callIndex, call] of calls.entries()) {
       totalToolCallCount += 1;
@@ -177,17 +183,20 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       await input.beforeTool?.({ round, call, callIndex });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
+      executedCalls.push(call);
+      if (yieldReturnRound && input.shouldDeferToolResult?.(call, calls, result)) continue;
       const execution = await input.executeTool(call, {
         round,
         result,
         callIndex,
         reachedToolCallLimit
       });
-      toolMessages.push(execution.message);
+      if (execution.message && execution.control?.yieldReturn !== true) toolMessages.push(execution.message);
       sentMessage = sentMessage || execution.control?.sentMessage === true;
       invalidateSession = invalidateSession || execution.control?.invalidateSession === true;
       resetSession = resetSession || execution.control?.resetSession === true;
       continueAfterReset = continueAfterReset || execution.control?.continueAfterReset === true;
+      yieldReturn = yieldReturn || execution.control?.yieldReturn === true;
       reachedToolCallLimit = reachedToolCallLimit || execution.control?.reachedToolCallLimit === true;
       if (resetSession) break;
     }
@@ -198,8 +207,8 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         {
           role: "assistant",
           content: result.message.content,
-          reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, calls.length),
-          toolCalls: calls
+          reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, executedCalls.length),
+          toolCalls: executedCalls
         },
         ...toolMessages
       ];
@@ -218,6 +227,18 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "reset",
+        sentMessage,
+        invalidateSession,
+        toolCallCount: totalToolCallCount
+      };
+    }
+    if (yieldReturn) {
+      return {
+        messages,
+        rounds: round + 1,
+        finalResult: result,
+        finalMessage: result.message,
+        stopReason: "yield_return",
         sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount

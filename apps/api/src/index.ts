@@ -176,6 +176,7 @@ type ActiveLLMSession = {
   modeExpiresAt?: string;
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
+  waitChatStartedAt?: string;
   currentRound?: LLMSessionRoundInfo;
   latestRequestInfo?: LLMSessionRequestInfo;
   latestResponseInfo?: LLMSessionResponseInfo;
@@ -518,6 +519,7 @@ const core = createAgentCore({
       appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
     }
     if (event.kind === "rate_limited") appendLog("warn", `llm call skipped: active session reached 10 requests in 60s model=${event.model ?? fallbackModel ?? "(no preset)"}`);
+    if (event.kind === "wait_chat_resume_error") appendLog("error", `wait_chat resume failed: ${event.error ?? "unknown error"}`);
     if (event.kind === "stream_start") appendLog("info", `llm stream start: round=${event.round} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
     if (event.kind === "stream_end") appendLog("info", `llm stream end: round=${event.round} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
     if (event.kind === "response_received") appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
@@ -1337,6 +1339,7 @@ function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPr
   const nextModeExpiresAt = nextMode === "fixed_prefix" ? input.modeExpiresAt : undefined;
   const nextFixedPrefixKind = nextMode === "fixed_prefix" ? input.fixedPrefixKind : undefined;
   const nextFixedPrefixCursorMessageId = nextMode === "fixed_prefix" ? input.fixedPrefixCursorMessageId : undefined;
+  const nextWaitChatStartedAt = input.waitChatStartedAt;
   const nextTokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(input.tokenPressurePreviewBaselines);
   const tokenUsageChanged = session.lastTotalTokens !== input.lastTotalTokens
     || session.lastInputTokens !== input.lastInputTokens
@@ -1348,6 +1351,7 @@ function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPr
     || session.modeExpiresAt !== nextModeExpiresAt
     || session.fixedPrefixKind !== nextFixedPrefixKind
     || session.fixedPrefixCursorMessageId !== nextFixedPrefixCursorMessageId
+    || session.waitChatStartedAt !== nextWaitChatStartedAt
     || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
   if (!isAppend) {
     session.clearedAt = now;
@@ -1374,6 +1378,7 @@ function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPr
   session.modeExpiresAt = nextModeExpiresAt;
   session.fixedPrefixKind = nextFixedPrefixKind;
   session.fixedPrefixCursorMessageId = nextFixedPrefixCursorMessageId;
+  session.waitChatStartedAt = nextWaitChatStartedAt;
   if (delta.length > 0) appendLLMSessionMessages(session, delta);
   if (delta.length > 0 || tokenUsageChanged || modeChanged) writeLLMSessionMetadata(session);
 }
@@ -1419,7 +1424,8 @@ function loadActiveLLMSessionTranscript(): LLMSessionSnapshot | undefined {
     modeStartedAt: latest.modeStartedAt,
     modeExpiresAt: latest.modeExpiresAt,
     fixedPrefixKind: latest.fixedPrefixKind,
-    fixedPrefixCursorMessageId: latest.fixedPrefixCursorMessageId
+    fixedPrefixCursorMessageId: latest.fixedPrefixCursorMessageId,
+    waitChatStartedAt: latest.waitChatStartedAt
   };
 }
 
@@ -1501,6 +1507,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
     modeStaticTokenEstimate: session.modeStaticTokenEstimate ?? 0,
     fixedPrefixKind: session.fixedPrefixKind,
     fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+    waitChatStartedAt: session.waitChatStartedAt,
     currentRound: session.currentRound,
     latestRequest: session.latestRequestInfo,
     latestResponse: session.latestResponseInfo,
@@ -1624,6 +1631,7 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
       modeExpiresAt: typeof metadata.modeExpiresAt === "string" ? metadata.modeExpiresAt : undefined,
       fixedPrefixKind: typeof metadata.fixedPrefixKind === "string" ? metadata.fixedPrefixKind : undefined,
       fixedPrefixCursorMessageId: typeof metadata.fixedPrefixCursorMessageId === "number" && Number.isFinite(metadata.fixedPrefixCursorMessageId) ? metadata.fixedPrefixCursorMessageId : undefined,
+      waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
       currentRound: parseRoundInfo(metadata.currentRound),
       latestRequestInfo: parseRequestInfo(metadata.latestRequest),
       latestResponseInfo: parseResponseInfo(metadata.latestResponse),
@@ -1892,6 +1900,7 @@ function summarizeLLMSession(session: ActiveLLMSession): unknown {
     modeExpiresAt: session.modeExpiresAt,
     fixedPrefixKind: session.fixedPrefixKind,
     fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+    waitChatStartedAt: session.waitChatStartedAt,
     clearedAt: session.clearedAt,
     reason: session.reason,
     archiveFilePath: session.archiveFilePath

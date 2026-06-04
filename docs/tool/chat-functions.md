@@ -43,6 +43,25 @@ LLM-visible parameters:
 
 `send_chat` is user-facing and may be selected by the LLM when it needs to respond through the messaging channel.
 
+### `wait_chat`
+
+Waits for chat history updates. When new messages arrive, the model will be notified and receive the new messages.
+
+LLM-visible parameters:
+
+- `reason`: optional short internal reason for waiting.
+
+`wait_chat` belongs to the chat/messaging tool plugin. It must not be implemented as a separate generic wait tool, because its resume behavior is tied to `check_chat`.
+
+When an assistant tool-call batch contains `wait_chat`, AgentCore handles that batch specially:
+
+- outbound tools such as `send_chat` execute immediately and their tool results are appended to the transcript.
+- inbound tools such as `check_chat` are deferred until the wait resumes.
+- `wait_chat` itself records pending yield metadata and does not immediately append a tool result.
+- on heartbeat resume, AgentCore fills the remaining tool results in original tool-call order, including the deferred inbound results and the final `wait_chat` result.
+
+The resume path must not add a new fake `check_chat` assistant/tool pair for the heartbeat. The chat-check output used for wakeup is attached to the pending `wait_chat` tool result instead.
+
 ### `search_messages`
 
 Searches persisted chat messages and returns contextual message blocks.
@@ -54,3 +73,5 @@ When exposed intentionally, keep it separate from `check_chat`: `search_messages
 ## Boundary Rule
 
 `check_chat` is a zero-argument LLM function. Any scoped or cursor-based read is an internal AgentCore/admin/runtime operation, not an LLM contract.
+
+`wait_chat` is a chat-loop control function. Its first execution is control-only metadata, and its LLM-visible result is produced later by the heartbeat resume path.

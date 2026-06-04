@@ -188,11 +188,12 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       checkChatCallsInLLMSession = 0;
     },
     listTools() {
-      return [checkChatTool, sendChatTool];
+      return [checkChatTool, sendChatTool, waitChatTool];
     },
     async execute(call) {
       if (call.toolName === "check_chat" || call.toolName === "check_feishu" || call.toolName === "check_wechat" || call.toolName === "view_messages") return viewMessages(call);
       if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat" || call.toolName === "send_message") return sendMessage(call);
+      if (call.toolName === "wait_chat") return waitChat(call);
       if (call.toolName === "search_messages") return searchMessages(call);
       return { callId: call.id, ok: false, error: `Unknown messaging tool: ${call.toolName}` };
     }
@@ -329,6 +330,14 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
           block.messages
         ].join("\n")).join("\n\n")
         : "nothing found"
+    };
+  }
+
+  function waitChat(call: ToolCall): ToolResult {
+    return {
+      callId: call.id,
+      ok: true,
+      meta: { yieldReturn: true }
     };
   }
 
@@ -622,6 +631,18 @@ const sendChatTool: ToolDefinition = {
       content: { type: "string" }
     },
     required: ["type", "content"],
+    additionalProperties: false
+  }
+};
+
+const waitChatTool: ToolDefinition = {
+  name: "wait_chat",
+  description: "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。",
+  inputSchema: {
+    type: "object",
+    properties: {
+      reason: { type: "string", description: "Optional short internal reason for waiting." }
+    },
     additionalProperties: false
   }
 };

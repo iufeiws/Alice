@@ -12,7 +12,7 @@ const fsp = await import("node:fs/promises");
 const path = await import("node:path");
 const events = await import("node:events");
 
-test("messaging tools expose merged check_chat and send_chat tools", () => {
+test("messaging tools expose merged check_chat, send_chat, and wait_chat tools", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-tools"), "alice.sqlite"));
   const tools = createMessagingTools({
     store,
@@ -27,11 +27,18 @@ test("messaging tools expose merged check_chat and send_chat tools", () => {
   assert.ok(names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
+  assert.ok(names.includes("wait_chat"));
   assert.ok(!names.includes("search_messages"));
   const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
   const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
   assert.deepEqual(properties, {});
   assert.equal(checkChat?.inputSchema.additionalProperties, false);
+  const waitChat = tools.listTools().find((tool) => tool.name === "wait_chat");
+  assert.equal(waitChat?.description, "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。");
+  const result = await tools.execute({ id: "call_wait", toolName: "wait_chat", input: {} });
+  assert.equal(result.ok, true);
+  assert.equal(result.meta?.yieldReturn, true);
+  assert.equal(result.output, undefined);
 });
 
 test("check_chat range scope filters with from and to", async () => {

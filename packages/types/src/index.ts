@@ -142,6 +142,9 @@ export type ToolResult = {
   ok: boolean;
   output?: unknown;
   error?: string;
+  meta?: {
+    yieldReturn?: boolean;
+  };
   invalidateLLMSession?: boolean;
   resetLLMSession?: boolean;
   llmSessionMode?: string;

@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCallDelta } from "../../llm/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../llm/src/index.js";
 import type { OutputRouter } from "../../output-router/src/index.js";
 import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
@@ -37,6 +37,7 @@ export type LLMSessionSnapshot = {
   modeExpiresAt?: string;
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
+  waitChatStartedAt?: string;
 };
 
 export type TokenPressurePreviewBaseline = {
@@ -140,7 +141,7 @@ export type AgentCoreDeps = {
   llmRequestSender?: LLMRequestSender;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
-  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
+  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
   onLLMSessionCleared?(reason: LLMSessionClearReason): void;
@@ -180,6 +181,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     modeExpiresAt?: number;
     fixedPrefixKind?: string;
     fixedPrefixCursorMessageId?: number;
+    waitChatStartedAt?: number;
     lastCheckChatCursorMessageId?: number;
     hydratedFixedPrefixPendingRebuild?: boolean;
   };
@@ -315,6 +317,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             modeExpiresAt: mode.modeExpiresAt,
             fixedPrefixKind: mode.fixedPrefixKind,
             fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
+            waitChatStartedAt: undefined,
             lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
           };
           noteLLMSessionUpdated();
@@ -330,6 +333,16 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       let sentMessage = false;
       try {
         const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
+          const waitChatResumeMessages = await buildWaitChatResumeMessages(session, event, toolPlugins);
+          if (waitChatResumeMessages.length > 0) {
+            session.messages = [
+              ...session.messages,
+              ...waitChatResumeMessages
+            ];
+            session.waitChatStartedAt = undefined;
+            noteLLMSessionUpdated();
+            return;
+          }
           const promptContext = makePromptContext();
           if (session.mode === "fixed_prefix") {
             const appendMessages = await buildFixedPrefixAppendMessages(modeStateFromSession(session), event, toolPlugins);
@@ -494,9 +507,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         return deps.isLLMRunCancelled?.() === true;
       },
       selectToolCalls(calls) {
+        if (calls.some((call) => isWaitChatToolName(call.function.name))) return calls;
         return calls.some((call) => isSendChatToolName(call.function.name))
           ? calls.filter((call) => isSendChatToolName(call.function.name))
           : calls;
+      },
+      shouldYieldReturn(calls) {
+        return calls.some((call) => isWaitChatToolName(call.function.name));
+      },
+      shouldDeferToolResult(call, calls) {
+        return calls.some((entry) => isWaitChatToolName(entry.function.name))
+          && isInboundToolName(call.function.name);
       },
       async executeTool(call, { result }): Promise<LLMToolLoopExecution> {
         const textVariables = buildTurnTextVariables(event);
@@ -520,6 +541,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             control: {
               sentMessage: isSendChatToolName(call.function.name) && streamedResult.ok,
               invalidateSession: streamedResult.invalidateLLMSession === true,
+              yieldReturn: streamedResult.meta?.yieldReturn === true,
               reachedToolCallLimit
             }
           };
@@ -566,6 +588,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         }
 
         session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, toolResult) ?? session.lastCheckChatCursorMessageId;
+        if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
+          session.waitChatStartedAt = time.now().epochMs;
+        }
         lastCompletedToolName = call.function.name;
         const toolMessage = {
           role: "tool" as const,
@@ -576,6 +601,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const control = {
           sentMessage: isSendChatToolName(call.function.name) && toolResult.ok,
           invalidateSession: toolResult.invalidateLLMSession === true,
+          yieldReturn: toolResult.meta?.yieldReturn === true,
           reachedToolCallLimit,
           resetSession: false,
           continueAfterReset: false
@@ -874,6 +900,121 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return messages;
   }
 
+  async function buildWaitChatResumeMessages(
+    session: ActiveLLMSession,
+    event: AgentEvent,
+    toolPlugins: ToolPlugin[]
+  ): Promise<LLMChatInput["messages"]> {
+    const pending = pendingWaitChatToolCalls(session.messages);
+    if (!pending) return [];
+    const messages: LLMChatInput["messages"] = [];
+    const textVariables = buildTurnTextVariables(event);
+    let waitChatCheckResult: ToolResult | undefined;
+    for (const call of pending.calls) {
+      let result: ToolResult;
+      if (isWaitChatToolName(call.function.name)) {
+        waitChatCheckResult ??= await runWaitChatResumeCheck(call.id, session, event, toolPlugins);
+        result = {
+          ...waitChatCheckResult,
+          callId: call.id,
+          output: formatWaitChatResumeOutput(waitChatCheckResult, session.waitChatStartedAt)
+        };
+      } else {
+        const input = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), session);
+        result = await runPromptToolRequest(
+          { id: `wait_chat_resume_${call.id}`, title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: call.function.name, toolArguments: call.function.arguments, order: 0 },
+          {
+            id: call.id,
+            toolName: call.function.name,
+            input,
+            requester: event.source,
+            session: event.session
+          },
+          toolPlugins
+        );
+        session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, result) ?? session.lastCheckChatCursorMessageId;
+        if (isCheckChatToolName(call.function.name)) waitChatCheckResult ??= result;
+      }
+      messages.push({
+        role: "tool",
+        toolCallId: call.id,
+        name: call.function.name,
+        content: formatToolResultForLLM(result, textVariables)
+      });
+    }
+    return messages;
+  }
+
+  async function runWaitChatResumeCheck(
+    callId: string,
+    session: ActiveLLMSession,
+    event: AgentEvent,
+    toolPlugins: ToolPlugin[]
+  ): Promise<ToolResult> {
+    const checkInput = session.mode === "fixed_prefix"
+      ? { scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
+      : {};
+    const result = await runPromptToolRequest(
+      { id: "wait_chat_resume_check_chat", title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 0 },
+      {
+        id: callId,
+        toolName: "check_chat",
+        input: checkInput,
+        requester: event.source,
+        session: event.session
+      },
+      toolPlugins
+    );
+    session.lastCheckChatCursorMessageId = checkChatCursorFromResult("check_chat", result) ?? session.lastCheckChatCursorMessageId;
+    return result;
+  }
+
+  function pendingWaitChatToolCalls(messages: LLMChatInput["messages"]): { calls: LLMToolCall[] } | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant" || !message.toolCalls || message.toolCalls.length === 0) continue;
+      const followingToolCallIds = new Set(
+        messages
+          .slice(index + 1)
+          .filter((entry) => entry.role === "tool" && typeof entry.toolCallId === "string")
+          .map((entry) => entry.toolCallId as string)
+      );
+      const missingCalls = message.toolCalls.filter((call) => !followingToolCallIds.has(call.id));
+      if (!missingCalls.some((call) => isWaitChatToolName(call.function.name))) return undefined;
+      return { calls: missingCalls };
+    }
+    return undefined;
+  }
+
+  function formatWaitChatResumeOutput(result: ToolResult, waitChatStartedAt: number | undefined): unknown {
+    if (typeof result.output !== "string") return result.output;
+    if (typeof waitChatStartedAt !== "number" || !Number.isFinite(waitChatStartedAt)) {
+      deps.onLLMLog?.({
+        kind: "wait_chat_resume_error",
+        round: 0,
+        stream: false,
+        error: "wait_chat resume missing start time"
+      });
+      return result.output;
+    }
+    const duration = formatWaitChatDuration(time.now().epochMs - waitChatStartedAt);
+    if (!duration) return result.output;
+    const timeMarker = "\n<time>";
+    const index = result.output.lastIndexOf(timeMarker);
+    if (index === -1) return `${result.output}\n<wait-duration>${duration}</wait-duration>`;
+    return `${result.output.slice(0, index)}\n<wait-duration>${duration}</wait-duration>${result.output.slice(index)}`;
+  }
+
+  function formatWaitChatDuration(durationMs: number): string | undefined {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return undefined;
+    const totalMinutes = Math.max(0, Math.round(durationMs / 60_000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h`;
+    return `${minutes}m`;
+  }
+
   function fixedPrefixToolInput(toolName: string, input: Record<string, unknown>, session: ActiveLLMSession): Record<string, unknown> {
     if (
       session.mode !== "fixed_prefix"
@@ -896,6 +1037,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
   function isCheckChatToolName(toolName: string): boolean {
     return toolName === "check_chat" || toolName === "check_feishu" || toolName === "check_wechat" || toolName === "view_messages";
+  }
+
+  function isInboundToolName(toolName: string | undefined): boolean {
+    return isCheckChatToolName(toolName ?? "") || toolName === "search_messages";
   }
 
   async function shouldResetSessionForTokenPressure(
@@ -1003,6 +1148,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       fixedPrefixCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
         ? snapshot.fixedPrefixCursorMessageId
         : undefined,
+      waitChatStartedAt: typeof snapshot.waitChatStartedAt === "string" && Number.isFinite(Date.parse(snapshot.waitChatStartedAt))
+        ? Date.parse(snapshot.waitChatStartedAt)
+        : undefined,
       lastCheckChatCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
         ? snapshot.fixedPrefixCursorMessageId
         : undefined,
@@ -1067,7 +1215,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       modeStartedAt: typeof activeLLMSession.modeStartedAt === "number" ? new Date(activeLLMSession.modeStartedAt).toISOString() : undefined,
       modeExpiresAt: typeof activeLLMSession.modeExpiresAt === "number" ? new Date(activeLLMSession.modeExpiresAt).toISOString() : undefined,
       fixedPrefixKind: activeLLMSession.fixedPrefixKind,
-      fixedPrefixCursorMessageId: activeLLMSession.fixedPrefixCursorMessageId
+      fixedPrefixCursorMessageId: activeLLMSession.fixedPrefixCursorMessageId,
+      waitChatStartedAt: typeof activeLLMSession.waitChatStartedAt === "number" ? new Date(activeLLMSession.waitChatStartedAt).toISOString() : undefined
     });
   }
 }
@@ -1231,6 +1380,10 @@ async function sendStreamingLine(
 
 function isSendChatToolName(toolName: string | undefined): boolean {
   return toolName === sendChatToolName || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message";
+}
+
+function isWaitChatToolName(toolName: string | undefined): boolean {
+  return toolName === "wait_chat";
 }
 
 function mergeToolOutputs(previousOutput: string, nextOutput: string): string {

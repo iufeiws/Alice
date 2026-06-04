@@ -640,9 +640,7 @@ const waitChatTool: ToolDefinition = {
   description: "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。",
   inputSchema: {
     type: "object",
-    properties: {
-      reason: { type: "string", description: "Optional short internal reason for waiting." }
-    },
+    properties: {},
     additionalProperties: false
   }
 };

@@ -58,9 +58,7 @@ tools/wait
 
 等待聊天记录更新。当有新消息时会收到提醒并返回新消息。
 
-输入：
-
-- `reason`：可选，简短说明为什么等待。仅用于内部日志和调试，不应展示给用户。
+输入：无。
 
 Schema 建议：
 
@@ -70,9 +68,7 @@ const waitChatTool: ToolDefinition = {
   description: "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。",
   inputSchema: {
     type: "object",
-    properties: {
-      reason: { type: "string", description: "Optional short internal reason for waiting." }
-    },
+    properties: {},
     additionalProperties: false
   }
 };
@@ -173,7 +169,7 @@ tool result: check_chat(...)
 追加后的上下文形态应是：
 
 ```text
-assistant tool_call: wait_chat({"reason":"..."})
+assistant tool_call: wait_chat({})
 tool result: wait_chat("<本次 check_chat 的结果>")
 ```
 
@@ -184,7 +180,7 @@ tool result: wait_chat("<本次 check_chat 的结果>")
 ```text
 assistant tool_call: send_chat({"type":"message","content":"..."})
 assistant tool_call: check_chat({})
-assistant tool_call: wait_chat({"reason":"..."})
+assistant tool_call: wait_chat({})
 tool result: send_chat(...)
 ```
 

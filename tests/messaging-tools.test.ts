@@ -35,6 +35,8 @@ test("messaging tools expose merged check_chat, send_chat, and wait_chat tools",
   assert.equal(checkChat?.inputSchema.additionalProperties, false);
   const waitChat = tools.listTools().find((tool) => tool.name === "wait_chat");
   assert.equal(waitChat?.description, "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。");
+  assert.deepEqual(waitChat?.inputSchema.properties, {});
+  assert.equal(waitChat?.inputSchema.additionalProperties, false);
   const result = await tools.execute({ id: "call_wait", toolName: "wait_chat", input: {} });
   assert.equal(result.ok, true);
   assert.equal(result.meta?.yieldReturn, true);

@@ -47,9 +47,7 @@ LLM-visible parameters:
 
 Waits for chat history updates. When new messages arrive, the model will be notified and receive the new messages.
 
-LLM-visible parameters:
-
-- `reason`: optional short internal reason for waiting.
+LLM-visible parameters: none.
 
 `wait_chat` belongs to the chat/messaging tool plugin. It must not be implemented as a separate generic wait tool, because its resume behavior is tied to `check_chat`.
 

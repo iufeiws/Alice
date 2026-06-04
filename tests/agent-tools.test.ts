@@ -381,13 +381,14 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
 
   assert.equal(requests.length, 2);
   const secondMessages = requests[1].messages;
+  assert.equal(secondMessages.filter((message) => message.content === "static prompt").length, 1);
   assert.equal(secondMessages.some((message) => message.content === "old context marker"), true);
   const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
   const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
   assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
-  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"scope\":\"from_prefix\"}");
+  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
   assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
   assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 42);
   assert.equal(checkChatCallsInSession, 1);
@@ -401,11 +402,152 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   const thirdMessages = requests[2].messages;
   const thirdCheckChatIndex = thirdMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
   assert.ok(thirdCheckChatIndex > bookcaseIndex);
-  assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"scope\":\"from_prefix\"}");
+  assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
   assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
   const fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
   assert.equal(fromPrefixInputs.length, 2);
   assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [42, 42]);
+});
+
+test("agent core does not duplicate fixed prefix messages when appending fixed prefix context", async () => {
+  const fixedPrefixStatic: LLMChatInput["messages"] = [
+    { role: "system", content: "fixed static prompt" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: "tool_draw",
+        type: "function",
+        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+      }]
+    },
+    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
+  ];
+  const requests: LLMChatInput[] = [];
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "story continues" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    initialLLMSession: {
+      messages: fixedPrefixStatic,
+      staticPromptFingerprint: "old-fingerprint",
+      requestTimestamps: [],
+      mode: "fixed_prefix",
+      modeStaticMessages: fixedPrefixStatic,
+      modeStaticTokenEstimate: 50,
+      modeStartedAt: "2026-05-30T00:00:00.000Z",
+      modeExpiresAt: "2026-05-30T03:00:00.000Z",
+      fixedPrefixKind: "bookcase",
+      fixedPrefixCursorMessageId: 12
+    },
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "fresh chat" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  const messages = requests[0].messages;
+  assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
+  assert.equal(messages.filter((message) => message.content === "<book>fixed story</book>").length, 1);
+  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase").length, 1);
+  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").length, 1);
+});
+
+test("agent core injects fixed prefix cursor into model requested from_prefix checks", async () => {
+  const fixedPrefixStatic: LLMChatInput["messages"] = [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        id: "tool_draw",
+        type: "function",
+        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+      }]
+    },
+    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
+  ];
+  const checkChatInputs: Array<{ id: string; input: Record<string, unknown> }> = [];
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
+    llm: {
+      async chat() {
+        if (checkChatInputs.some((entry) => entry.id === "tool_check")) {
+          return { message: { role: "assistant", content: "done" } };
+        }
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_check",
+              type: "function",
+              function: { name: "check_chat", arguments: "{\"scope\":\"from_prefix\"}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    initialLLMSession: {
+      messages: fixedPrefixStatic,
+      staticPromptFingerprint: "old-fingerprint",
+      requestTimestamps: [],
+      mode: "fixed_prefix",
+      modeStaticMessages: fixedPrefixStatic,
+      modeStaticTokenEstimate: 50,
+      modeStartedAt: "2026-05-30T00:00:00.000Z",
+      modeExpiresAt: "2026-05-30T03:00:00.000Z",
+      fixedPrefixKind: "bookcase",
+      fixedPrefixCursorMessageId: 12
+    },
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        checkChatInputs.push({ id: call.id, input: call.input });
+        return { callId: call.id, ok: true, output: "fresh chat" };
+      }
+    }]
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(checkChatInputs.find((entry) => entry.id === "tool_check")?.input.__fromPrefixAfterMessageId, 12);
 });
 
 test("agent core appends sleep cocoon goodnight instruction from heartbeat event", async () => {

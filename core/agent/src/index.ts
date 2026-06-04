@@ -547,10 +547,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 error: "unsafe send_chat arguments"
               };
             } else {
+              const input = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), session);
               toolResult = await plugin.execute({
                 id: call.id,
                 toolName: call.function.name,
-                input: parseToolArguments(call.function.arguments),
+                input,
                 requester: event.source,
                 session: event.session
               });
@@ -835,17 +836,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     event: AgentEvent,
     toolPlugins: ToolPlugin[]
   ): Promise<LLMChatInput["messages"]> {
-    const messages = cloneLLMMessages(mode.modeStaticMessages);
+    const messages: LLMChatInput["messages"] = [];
     const plugin = findToolPlugin(toolPlugins, "check_chat");
     if (!plugin) return messages;
     const callId = `append_fixed_prefix_check_chat_${nextAppendToolCallId++}`;
-    const publicArguments = { scope: "from_prefix" };
+    const publicArguments = {};
     const result = await runPromptToolRequest(
       { id: "fixed_prefix_check_chat", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: JSON.stringify(publicArguments), order: 0 },
       {
         id: callId,
         toolName: "check_chat",
-        input: { ...publicArguments, __fromPrefixAfterMessageId: mode.fixedPrefixCursorMessageId ?? 0 },
+        input: { scope: "from_prefix", __fromPrefixAfterMessageId: mode.fixedPrefixCursorMessageId ?? 0 },
         requester: event.source,
         session: event.session
       },
@@ -873,9 +874,28 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return messages;
   }
 
+  function fixedPrefixToolInput(toolName: string, input: Record<string, unknown>, session: ActiveLLMSession): Record<string, unknown> {
+    if (
+      session.mode !== "fixed_prefix"
+      || !isCheckChatToolName(toolName)
+      || input.scope !== "from_prefix"
+      || typeof input.__fromPrefixAfterMessageId === "number"
+    ) {
+      return input;
+    }
+    return {
+      ...input,
+      __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0
+    };
+  }
+
   function checkChatCursorFromResult(toolName: string, result: ToolResult): number | undefined {
-    if (toolName !== "check_chat" && toolName !== "check_feishu" && toolName !== "check_wechat" && toolName !== "view_messages") return undefined;
+    if (!isCheckChatToolName(toolName)) return undefined;
     return typeof result.messageCursorId === "number" && Number.isFinite(result.messageCursorId) ? result.messageCursorId : undefined;
+  }
+
+  function isCheckChatToolName(toolName: string): boolean {
+    return toolName === "check_chat" || toolName === "check_feishu" || toolName === "check_wechat" || toolName === "view_messages";
   }
 
   async function shouldResetSessionForTokenPressure(

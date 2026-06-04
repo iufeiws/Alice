@@ -604,14 +604,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 const checkChatTool: ToolDefinition = {
   name: "check_chat",
-  description: "查看聊天记录。首次调用默认返回从最近一次 sleep_cocoon in 之后开始的消息；后续调用只返回新增消息。scope=todayold 可使用旧的当天范围；scope=from_prefix 由系统用于固定前缀后的新增消息。",
+  description: "查看聊天记录。首次调用默认返回从最近一次睡眠附近开始的消息；后续调用只返回新增消息。",
   inputSchema: {
     type: "object",
-    properties: {
-      scope: { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix", "range"] },
-      from: { type: "string", description: "scope=range 时的起始时间，包含该时间。" },
-      to: { type: "string", description: "scope=range 时的结束时间，不包含该时间。" }
-    },
+    properties: {},
     additionalProperties: false
   }
 };

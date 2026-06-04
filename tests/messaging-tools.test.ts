@@ -30,9 +30,8 @@ test("messaging tools expose merged check_chat and send_chat tools", () => {
   assert.ok(!names.includes("search_messages"));
   const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
   const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
-  assert.deepEqual(properties.scope, { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix", "range"] });
-  assert.deepEqual(properties.from, { type: "string", description: "scope=range 时的起始时间，包含该时间。" });
-  assert.deepEqual(properties.to, { type: "string", description: "scope=range 时的结束时间，不包含该时间。" });
+  assert.deepEqual(properties, {});
+  assert.equal(checkChat?.inputSchema.additionalProperties, false);
 });
 
 test("check_chat range scope filters with from and to", async () => {

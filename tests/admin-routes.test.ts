@@ -166,7 +166,8 @@ test("admin plugin config patch writes japanese voice config with preset referen
       modelDir: "assets/plugin/japanese-voice/model",
       referenceText: "これは参照テキストです。",
       speed: 1.2,
-      partSilenceSeconds: 0.45
+      partSilenceSeconds: 0.45,
+      splitText: false
     }
   }), response);
   const body = JSON.parse(response.body);
@@ -184,6 +185,7 @@ test("admin plugin config patch writes japanese voice config with preset referen
   assert.equal(saved.voice.referenceText, "これは参照テキストです。");
   assert.equal(saved.voice.speed, 1.2);
   assert.equal(saved.voice.partSilenceSeconds, 0.45);
+  assert.equal(saved.voice.splitText, false);
 });
 
 test("admin plugin config patch writes ASR config with preset references only", async () => {

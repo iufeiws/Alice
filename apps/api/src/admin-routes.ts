@@ -20,6 +20,7 @@ import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
 import { createConfiguredVoiceSynthesizer, formatCheckChatMessages, type VoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
 import { japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig, translateJapaneseVoiceText, type JapaneseVoicePluginConfig } from "../../../plugins/japanese-voice/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
+import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
@@ -94,6 +95,7 @@ type JapaneseVoiceAdminConfig = {
     referenceText?: string;
     speed?: number;
     partSilenceSeconds?: number;
+    splitText?: boolean;
   };
 };
 
@@ -241,6 +243,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin") {
         writeHtml(response, 200, renderAdminHtmlV2());
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/plugins/webrtc-voice/call") {
+        writeHtml(response, 200, renderWebRtcVoiceCallPage());
         return;
       }
 
@@ -971,6 +978,7 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
           { value: "tencent", label: "Tencent Cloud" }
         ], description: "Provider used when callers do not explicitly choose one." },
         { key: "testAudioPath", label: "Test Audio", type: "fileUpload", group: "general", assetKey: "test-audio", accept: "audio/*", description: "Plugin-owned test audio under assets/plugin/asr/test-audio/." },
+        { key: "pseudoStreamMinPauseMs", label: "Pseudo Stream Pause Ms", type: "number", group: "general", min: 500, max: 10000, step: 100, description: "Conservative pause threshold for pseudo streaming. Default is 1500 ms." },
         { key: "providers.openaiCompatible.apiPresetName", label: "OpenAI-Compatible Preset", type: "apiPresetSelect", group: "openai_compatible", description: "Preset for OpenAI or SiliconFlow compatible ASR. The plugin stores only the preset name." },
         { key: "providers.openaiCompatible.responseFormat", label: "Response Format", type: "select", group: "openai_compatible", options: [
           { value: "json", label: "json" },
@@ -979,11 +987,14 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
         ] },
         { key: "providers.openaiCompatible.retryCount", label: "OpenAI Retry Count", type: "number", group: "openai_compatible", min: 0, max: 5, step: 1, description: "Retries for timeout or transient provider failures. Default is 1." },
         { key: "providers.openaiCompatible.retryBackoffMs", label: "OpenAI Retry Backoff Ms", type: "number", group: "openai_compatible", min: 0, max: 30000, step: 100, description: "Base retry backoff in milliseconds. Default is 500." },
+        { key: "providers.tencent.appId", label: "Tencent AppID", type: "text", group: "tencent", description: "Tencent Cloud AppID used by native real-time WebSocket ASR. Omit to use pseudo streaming." },
         { key: "providers.tencent.secretId", label: "Tencent SecretId", type: "text", group: "tencent", description: "Tencent Cloud SecretId from the CAM API key pair." },
         { key: "providers.tencent.secretKey", label: "Tencent SecretKey", type: "text", group: "tencent", description: "Tencent Cloud SecretKey used to sign ASR requests." },
         { key: "providers.tencent.endpoint", label: "Tencent Endpoint", type: "text", group: "tencent", description: "Defaults to https://asr.tencentcloudapi.com when omitted." },
         { key: "providers.tencent.region", label: "Tencent Region", type: "text", group: "tencent", description: "Defaults to ap-guangzhou when omitted." },
         { key: "providers.tencent.engineModelType", label: "Tencent Engine", type: "text", group: "tencent", description: "EngineModelType, for example 16k_zh." },
+        { key: "providers.tencent.realtimeVoiceFormat", label: "Tencent Realtime Format", type: "number", group: "tencent", min: 1, max: 16, step: 1, description: "Tencent real-time voice_format. Defaults from MIME/filename; wav is 12, pcm is 1, opus is 10." },
+        { key: "providers.tencent.realtimeNeedVad", label: "Tencent Realtime VAD", type: "number", group: "tencent", min: 0, max: 1, step: 1, description: "Tencent real-time needvad. 1 enables VAD, 0 disables it. Default is 1." },
         { key: "providers.tencent.pollIntervalMs", label: "Tencent Poll Ms", type: "number", group: "tencent", min: 100, max: 10000, step: 100 },
         { key: "providers.tencent.timeoutMs", label: "Tencent Timeout Ms", type: "number", group: "tencent", min: 1000, max: 600000, step: 1000 },
         { key: "providers.tencent.retryCount", label: "Tencent Retry Count", type: "number", group: "tencent", min: 0, max: 5, step: 1, description: "Retries CreateRecTask and DescribeTaskStatus timeout or transient failures. Default is 1." },
@@ -1047,6 +1058,7 @@ function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
         { key: "apiPresetName", label: "API Preset", type: "apiPresetSelect", description: "Select a saved API preset. The plugin does not store API keys." },
         { key: "voice.referenceText", label: "Reference Text", type: "textarea", description: "Stored directly in this plugin config file." },
         { key: "voice.speed", label: "Voice Speed", type: "number", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
+        { key: "voice.splitText", label: "Split Text", type: "switch", description: "Whether this plugin lets Genie split one TTS text into multiple synthesized parts. Default is off." },
         { key: "voice.partSilenceSeconds", label: "Part Silence", type: "number", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "targetRoute", label: "Target Route", type: "readonly", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", description: "Translations are transient and never written to message log." }
@@ -1182,6 +1194,7 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     defaultProvider: patch.defaultProvider === undefined ? current.defaultProvider : asrProviderFromUnknown(patch.defaultProvider),
     testAudioPath: patch.testAudioPath === undefined ? current.testAudioPath : optionalString(patch.testAudioPath),
+    pseudoStreamMinPauseMs: patch.pseudoStreamMinPauseMs === undefined ? current.pseudoStreamMinPauseMs : optionalNumberFromUnknown(patch.pseudoStreamMinPauseMs),
     providers: {
       openaiCompatible: {
         apiPresetName: openAiPatch.apiPresetName === undefined ? current.providers.openaiCompatible?.apiPresetName : optionalString(openAiPatch.apiPresetName),
@@ -1190,11 +1203,14 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
         retryBackoffMs: openAiPatch.retryBackoffMs === undefined ? current.providers.openaiCompatible?.retryBackoffMs : optionalNumberFromUnknown(openAiPatch.retryBackoffMs)
       },
       tencent: {
+        appId: tencentPatch.appId === undefined ? current.providers.tencent?.appId : optionalString(tencentPatch.appId),
         secretId: tencentPatch.secretId === undefined ? current.providers.tencent?.secretId : optionalString(tencentPatch.secretId),
         secretKey: tencentPatch.secretKey === undefined ? current.providers.tencent?.secretKey : optionalString(tencentPatch.secretKey),
         endpoint: tencentPatch.endpoint === undefined ? current.providers.tencent?.endpoint : optionalString(tencentPatch.endpoint),
         region: tencentPatch.region === undefined ? current.providers.tencent?.region : optionalString(tencentPatch.region),
         engineModelType: tencentPatch.engineModelType === undefined ? current.providers.tencent?.engineModelType : optionalString(tencentPatch.engineModelType),
+        realtimeVoiceFormat: tencentPatch.realtimeVoiceFormat === undefined ? current.providers.tencent?.realtimeVoiceFormat : optionalNumberFromUnknown(tencentPatch.realtimeVoiceFormat),
+        realtimeNeedVad: tencentPatch.realtimeNeedVad === undefined ? current.providers.tencent?.realtimeNeedVad : optionalNumberFromUnknown(tencentPatch.realtimeNeedVad),
         pollIntervalMs: tencentPatch.pollIntervalMs === undefined ? current.providers.tencent?.pollIntervalMs : optionalNumberFromUnknown(tencentPatch.pollIntervalMs),
         timeoutMs: tencentPatch.timeoutMs === undefined ? current.providers.tencent?.timeoutMs : optionalNumberFromUnknown(tencentPatch.timeoutMs),
         retryCount: tencentPatch.retryCount === undefined ? current.providers.tencent?.retryCount : optionalNumberFromUnknown(tencentPatch.retryCount),
@@ -1214,11 +1230,17 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
 
 function validateAsrConfig(context: AdminRoutesContext, config: AsrPluginConfig): string | undefined {
   if (config.testAudioPath && !isPluginAssetPath("asr", config.testAudioPath)) return "invalid_asset_path";
+  const pseudoPause = config.pseudoStreamMinPauseMs;
+  if (pseudoPause !== undefined && (pseudoPause < 500 || pseudoPause > 10_000)) return "invalid_pseudo_stream_pause";
   const presets = new Set(readLLMApiPresets(context).map((entry) => entry.name));
   for (const name of [config.providers.openaiCompatible?.apiPresetName]) {
     if (name && !presets.has(name)) return "invalid_api_preset";
   }
   if (config.providers.tencent?.endpoint && !isValidHttpUrl(config.providers.tencent.endpoint)) return "invalid_tencent_endpoint";
+  const realtimeVoiceFormat = config.providers.tencent?.realtimeVoiceFormat;
+  if (realtimeVoiceFormat !== undefined && (realtimeVoiceFormat < 1 || realtimeVoiceFormat > 16)) return "invalid_realtime_voice_format";
+  const realtimeNeedVad = config.providers.tencent?.realtimeNeedVad;
+  if (realtimeNeedVad !== undefined && realtimeNeedVad !== 0 && realtimeNeedVad !== 1) return "invalid_realtime_need_vad";
   const poll = config.providers.tencent?.pollIntervalMs;
   if (poll !== undefined && (poll < 100 || poll > 10_000)) return "invalid_poll_interval";
   const timeout = config.providers.tencent?.timeoutMs;
@@ -1273,6 +1295,7 @@ function publicAsrConfig(config: AsrPluginConfig): AsrPluginConfig {
     enabled: config.enabled,
     defaultProvider: config.defaultProvider,
     testAudioPath: config.testAudioPath,
+    pseudoStreamMinPauseMs: config.pseudoStreamMinPauseMs,
     providers: {
       openaiCompatible: config.providers.openaiCompatible ? { ...config.providers.openaiCompatible } : undefined,
       tencent: config.providers.tencent ? { ...config.providers.tencent } : undefined
@@ -1412,7 +1435,8 @@ function updateJapaneseVoiceConfig(
       referenceAudio: voicePatch.referenceAudio === undefined ? currentVoice.referenceAudio : optionalString(voicePatch.referenceAudio),
       referenceText: voicePatch.referenceText === undefined ? currentVoice.referenceText : optionalString(voicePatch.referenceText),
       speed: voicePatch.speed === undefined ? currentVoice.speed : optionalSpeedValue(voicePatch.speed),
-      partSilenceSeconds: voicePatch.partSilenceSeconds === undefined ? currentVoice.partSilenceSeconds : optionalPartSilenceSecondsValue(voicePatch.partSilenceSeconds)
+      partSilenceSeconds: voicePatch.partSilenceSeconds === undefined ? currentVoice.partSilenceSeconds : optionalPartSilenceSecondsValue(voicePatch.partSilenceSeconds),
+      splitText: voicePatch.splitText === undefined ? currentVoice.splitText ?? false : booleanFromUnknown(voicePatch.splitText)
     }
   };
 

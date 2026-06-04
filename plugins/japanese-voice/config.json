@@ -7,6 +7,7 @@
     "referenceAudio": "assets/plugin/japanese-voice/tts_sorce.mp3_0009628480_0009775040.wav",
     "referenceText": "先輩が標本にでもなってくれますか?",
     "speed": 1.15,
-    "partSilenceSeconds": 0.01
+    "partSilenceSeconds": 0.25,
+    "splitText": true
   }
 }

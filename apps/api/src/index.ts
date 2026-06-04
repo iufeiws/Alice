@@ -31,7 +31,8 @@ import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/i
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
-import { createAsrPlugin } from "../../../plugins/asr/src/index.js";
+import { createAsrInboundStreamSession, createAsrPlugin } from "../../../plugins/asr/src/index.js";
+import { attachWebRtcVoiceSignalingServer, createWebRtcVoicePlugin, createWeriftPeer, decodeAudioFileToOpusRtpFrames, defaultWebRtcVoiceConfig, type WebRtcVoiceCall } from "../../../plugins/webrtc-voice/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
@@ -361,6 +362,42 @@ const asrPlugin = createAsrPlugin({
     return readLLMApiPresets().find((entry) => entry.name === name);
   },
   appendLog
+});
+const webRtcVoiceCalls = new Map<string, WebRtcVoiceCall>();
+const pendingWebRtcAudio = new Map<string, Uint8Array[]>();
+const webRtcVoicePlugin = createWebRtcVoicePlugin({
+  config: defaultWebRtcVoiceConfig(),
+  async createPeer(input) {
+    return createWeriftPeer({
+      ...input,
+      onStatus: (event) => appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`),
+      async onInboundAudioChunk(bytes) {
+        const call = webRtcVoiceCalls.get(input.callId);
+        if (!call) {
+          const pending = pendingWebRtcAudio.get(input.callId) ?? [];
+          pending.push(bytes);
+          pendingWebRtcAudio.set(input.callId, pending);
+          return;
+        }
+        await call.acceptInboundAudioChunk(bytes);
+      }
+    });
+  },
+  createAsrSession(start) {
+    return createAsrInboundStreamSession(start, asrPlugin.config, {
+      resolveApiPreset(name) {
+        return readLLMApiPresets().find((entry) => entry.name === name);
+      },
+      appendLog
+    });
+  },
+  voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
+  decodeAudioFileToFrames(input) {
+    return decodeAudioFileToOpusRtpFrames(input);
+  },
+  emitStatus(event) {
+    appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
+  }
 });
 const messagingTools = createMessagingTools({
   store,
@@ -721,6 +758,17 @@ const server = http.createServer(createApiRequestHandler({
   appendLog,
   appendMessageLog
 }));
+attachWebRtcVoiceSignalingServer({
+  server: server as any,
+  plugin: webRtcVoicePlugin,
+  appendLog,
+  async onCallCreated(call) {
+    webRtcVoiceCalls.set(call.callId, call);
+    const pending = pendingWebRtcAudio.get(call.callId) ?? [];
+    pendingWebRtcAudio.delete(call.callId);
+    for (const chunk of pending) await call.acceptInboundAudioChunk(chunk);
+  }
+});
 
 await core.start();
 scheduler.start();

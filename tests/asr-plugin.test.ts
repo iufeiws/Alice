@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { transcribeWithAsrPlugin, type AsrPluginConfig } from "../plugins/asr/src/index.js";
+import { createAsrInboundStreamSession, transcribeWithAsrPlugin, type AsrPluginConfig } from "../plugins/asr/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -286,6 +286,292 @@ test("ASR plugin returns unified errors for disabled and empty transcription sta
   assert.equal(empty.ok, false);
   assert.equal(empty.error, "empty_transcription");
 });
+
+test("ASR inbound stream protocol buffers chunks and transcribes final audio without timing metadata in text", async () => {
+  const receivedFiles: Array<{ name: string; size: number; model: unknown }> = [];
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "openai",
+        responseFormat: "json"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "stream-1",
+    audio: {
+      filename: "stream.wav",
+      mimeType: "audio/wav"
+    },
+    language: "zh",
+    metadata: {
+      source: "unit-test"
+    }
+  }, config, {
+    resolveApiPreset() {
+      return {
+        name: "openai",
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "secret",
+        model: "whisper-1",
+        timeoutMs: 60_000,
+        temperature: 0.2,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      const file = form.get("file") as File;
+      receivedFiles.push({ name: file.name, size: file.size, model: form.get("model") });
+      return jsonResponse({ text: "[语音][0:0.020,0:5.000]  你有注意到我加了我发语音的功能吗？" });
+    }
+  });
+
+  assert.deepEqual(await session.accept({
+    type: "chunk",
+    streamId: "stream-1",
+    sequence: 0,
+    bytes: new Uint8Array([1, 2]),
+    timing: { startMs: 20, endMs: 2500, durationMs: 2480 }
+  }), { ok: true, type: "ack", streamId: "stream-1", sequence: 0 });
+  assert.deepEqual(await session.accept({
+    type: "chunk",
+    streamId: "stream-1",
+    sequence: 1,
+    bytes: new Uint8Array([3, 4, 5]),
+    timing: { startMs: 2500, endMs: 5000, durationMs: 2500 }
+  }), { ok: true, type: "ack", streamId: "stream-1", sequence: 1 });
+
+  const result = await session.accept({
+    type: "end",
+    streamId: "stream-1",
+    metadata: { durationMs: 5000 }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.type, "final");
+  assert.equal(result.streamId, "stream-1");
+  assert.equal(result.result?.text, "你有注意到我加了我发语音的功能吗？");
+  assert.equal(result.result?.rawStream?.chunks, 2);
+  assert.equal(result.result?.rawStream?.bytes, 5);
+  assert.deepEqual(receivedFiles, [{ name: "stream.wav", size: 5, model: "whisper-1" }]);
+});
+
+test("ASR pseudo stream cuts on conservative long pauses and returns stable partials", async () => {
+  const receivedFiles: Array<{ name: string; size: number; model: unknown }> = [];
+  const responses = ["第一句", "第二句"];
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "openai",
+        responseFormat: "json"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "pseudo-pause-stream",
+    audio: {
+      filename: "stream.wav",
+      mimeType: "audio/wav"
+    }
+  }, config, {
+    resolveApiPreset() {
+      return {
+        name: "openai",
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "secret",
+        model: "whisper-1",
+        timeoutMs: 60_000,
+        temperature: 0.2,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      const file = form.get("file") as File;
+      receivedFiles.push({ name: file.name, size: file.size, model: form.get("model") });
+      return jsonResponse({ text: responses.shift() ?? "" });
+    }
+  });
+
+  assert.deepEqual(await session.accept({
+    type: "chunk",
+    streamId: "pseudo-pause-stream",
+    sequence: 0,
+    bytes: new Uint8Array([1, 2]),
+    timing: { startMs: 0, endMs: 1000, durationMs: 1000 }
+  }), { ok: true, type: "ack", streamId: "pseudo-pause-stream", sequence: 0 });
+
+  const partial = await session.accept({
+    type: "chunk",
+    streamId: "pseudo-pause-stream",
+    sequence: 1,
+    bytes: new Uint8Array([3, 4, 5]),
+    timing: { startMs: 3000, endMs: 4200, durationMs: 1200 }
+  });
+  assert.equal(partial.ok, true);
+  assert.equal(partial.type, "partial");
+  assert.equal(partial.text, "第一句");
+  assert.equal(partial.stable, true);
+
+  const final = await session.accept({
+    type: "end",
+    streamId: "pseudo-pause-stream"
+  });
+  assert.equal(final.ok, true);
+  assert.equal(final.type, "final");
+  assert.equal(final.result?.text, "第一句\n第二句");
+  assert.deepEqual(receivedFiles, [
+    { name: "stream.wav", size: 2, model: "whisper-1" },
+    { name: "stream.wav", size: 3, model: "whisper-1" }
+  ]);
+});
+
+test("ASR inbound stream protocol rejects out-of-order chunks and supports abort", async () => {
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "openai"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "stream-2",
+    audio: { filename: "stream.wav", mimeType: "audio/wav" }
+  }, config, {});
+
+  assert.deepEqual(await session.accept({ type: "chunk", streamId: "stream-2", sequence: 1, bytes: new Uint8Array([1]) }), {
+    ok: false,
+    type: "error",
+    streamId: "stream-2",
+    error: "out_of_order_chunk"
+  });
+  assert.deepEqual(await session.accept({ type: "abort", streamId: "stream-2", reason: "caller_cancelled" }), {
+    ok: true,
+    type: "aborted",
+    streamId: "stream-2",
+    reason: "caller_cancelled"
+  });
+  assert.deepEqual(await session.accept({ type: "chunk", streamId: "stream-2", sequence: 0, bytes: new Uint8Array([1]) }), {
+    ok: false,
+    type: "error",
+    streamId: "stream-2",
+    error: "stream_closed"
+  });
+});
+
+test("Tencent ASR inbound stream uses native websocket streaming when configured", async () => {
+  const sockets: FakeWebSocket[] = [];
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "tencent",
+    providers: {
+      tencent: {
+        appId: "1259220000",
+        secretId: "secret-id",
+        secretKey: "secret-key",
+        engineModelType: "16k_zh",
+        realtimeVoiceFormat: 12,
+        realtimeNeedVad: 1
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "voice-stream-1",
+    audio: { filename: "stream.wav", mimeType: "audio/wav" }
+  }, config, {
+    now: () => new Date("2026-06-03T00:00:00.000Z"),
+    createWebSocket(url) {
+      assert.match(url, /^wss:\/\/asr\.cloud\.tencent\.com\/asr\/v2\/1259220000\?/);
+      assert.match(url, /engine_model_type=16k_zh/);
+      assert.match(url, /voice_id=voice-stream-1/);
+      assert.match(url, /voice_format=12/);
+      assert.match(url, /needvad=1/);
+      assert.match(url, /signature=/);
+      const socket = new FakeWebSocket();
+      sockets.push(socket);
+      return socket;
+    }
+  });
+
+  assert.deepEqual(await session.accept({ type: "chunk", streamId: "voice-stream-1", sequence: 0, bytes: new Uint8Array([1, 2]) }), {
+    ok: true,
+    type: "ack",
+    streamId: "voice-stream-1",
+    sequence: 0
+  });
+  assert.deepEqual(sockets[0].sent, [new Uint8Array([1, 2])]);
+
+  sockets[0].emitMessage(JSON.stringify({
+    code: 0,
+    message: "success",
+    voice_id: "voice-stream-1",
+    result: { slice_type: 1, index: 0, start_time: 0, end_time: 1500, voice_text_str: "你有注意到" }
+  }));
+  const partial = await session.accept({ type: "chunk", streamId: "voice-stream-1", sequence: 1, bytes: new Uint8Array([3]) });
+  assert.equal(partial.ok, true);
+  assert.equal(partial.type, "partial");
+  assert.equal(partial.text, "你有注意到");
+  assert.deepEqual(sockets[0].sent.at(-1), new Uint8Array([3]));
+
+  sockets[0].emitMessage(JSON.stringify({
+    code: 0,
+    message: "success",
+    voice_id: "voice-stream-1",
+    result: { slice_type: 2, index: 0, start_time: 0, end_time: 3500, voice_text_str: "你有注意到我加了语音功能吗？" }
+  }));
+  const stable = await session.accept({ type: "chunk", streamId: "voice-stream-1", sequence: 2, bytes: new Uint8Array([4]) });
+  assert.equal(stable.ok, true);
+  assert.equal(stable.type, "partial");
+  assert.equal(stable.text, "你有注意到我加了语音功能吗？");
+  assert.equal(stable.stable, true);
+
+  sockets[0].emitMessage(JSON.stringify({ code: 0, message: "success", voice_id: "voice-stream-1", final: 1 }));
+  const final = await session.accept({ type: "end", streamId: "voice-stream-1" });
+  assert.equal(final.ok, true);
+  assert.equal(final.type, "final");
+  assert.equal(final.result?.text, "你有注意到我加了语音功能吗？");
+  assert.deepEqual(sockets[0].sent.at(-1), "{\"type\":\"end\"}");
+  assert.equal(sockets[0].closed, true);
+});
+
+class FakeWebSocket {
+  sent: Array<string | Uint8Array> = [];
+  closed = false;
+  private listeners = new Map<string, Array<(event: { data?: unknown }) => void>>();
+
+  send(data: string | Uint8Array) {
+    this.sent.push(data);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  addEventListener(type: string, listener: (event: { data?: unknown }) => void) {
+    const entries = this.listeners.get(type) ?? [];
+    entries.push(listener);
+    this.listeners.set(type, entries);
+  }
+
+  emitMessage(data: string) {
+    for (const listener of this.listeners.get("message") ?? []) listener({ data });
+  }
+}
 
 function writeAudioFixture(fileName: string, size = 14): string {
   const dir = path.join("/tmp", "alice-asr-plugin-tests");

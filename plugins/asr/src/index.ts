@@ -5,8 +5,17 @@ const os = await import("node:os");
 const childProcess = await import("node:child_process");
 const moduleApi = await import("node:module");
 const require = moduleApi.createRequire(import.meta.url);
+import type {
+  InboundAudioStreamAbortFrame,
+  InboundAudioStreamChunkFrame,
+  InboundAudioStreamEndFrame,
+  InboundAudioStreamFrame,
+  InboundAudioStreamStartFrame
+} from "../../../packages/types/src/index.js";
+import { sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
 
 const tencentLocalAudioUploadLimitBytes = 5 * 1024 * 1024;
+const defaultPseudoStreamMinPauseMs = 1500;
 
 export type AsrProvider = "tencent" | "openai_compatible";
 export type AsrResponseFormat = "json" | "text" | "verbose_json";
@@ -27,6 +36,7 @@ export type AsrPluginConfig = {
   enabled: boolean;
   defaultProvider: AsrProvider;
   testAudioPath?: string;
+  pseudoStreamMinPauseMs?: number;
   providers: {
     openaiCompatible?: {
       apiPresetName?: string;
@@ -35,11 +45,14 @@ export type AsrPluginConfig = {
       retryBackoffMs?: number;
     };
     tencent?: {
+      appId?: string;
       secretId?: string;
       secretKey?: string;
       endpoint?: string;
       region?: string;
       engineModelType?: string;
+      realtimeVoiceFormat?: number;
+      realtimeNeedVad?: number;
       pollIntervalMs?: number;
       timeoutMs?: number;
       retryCount?: number;
@@ -69,6 +82,12 @@ export type AsrTranscribeResult = {
   durationMs?: number;
   requestId?: string;
   raw?: unknown;
+  rawStream?: {
+    streamId: string;
+    chunks: number;
+    bytes: number;
+    metadata?: Record<string, unknown>;
+  };
 };
 
 export type AsrTranscribeError = {
@@ -89,12 +108,21 @@ export type AsrTranscribeError = {
 export type AsrPluginDeps = {
   configPath?: string;
   fetch?: typeof fetch;
+  createWebSocket?(url: string): AsrWebSocketLike | Promise<AsrWebSocketLike>;
   env?: Record<string, string | undefined>;
   resolveApiPreset?(name: string): AsrApiPreset | undefined;
   sleep?(ms: number): Promise<void>;
   splitAudio?(input: AsrSplitAudioInput): Promise<AsrAudioChunk[]>;
   now?(): Date;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
+};
+
+export type AsrWebSocketLike = {
+  readyState?: number;
+  send(data: string | Uint8Array): void | Promise<void>;
+  close?(): void;
+  addEventListener?(type: "message" | "error" | "close" | "open", listener: (event: { data?: unknown; error?: unknown }) => void): void;
+  on?(type: "message" | "error" | "close" | "open", listener: (data: unknown) => void): void;
 };
 
 export type AsrAudioChunk = {
@@ -115,6 +143,56 @@ export type AsrPlugin = {
   transcribe(input: AsrTranscribeInput): Promise<AsrTranscribeResult | AsrTranscribeError>;
 };
 
+export type AsrInboundStreamAccepted = {
+  ok: true;
+  type: "ack";
+  streamId: string;
+  sequence: number;
+};
+
+export type AsrInboundStreamFinal = {
+  ok: true;
+  type: "final";
+  streamId: string;
+  result: AsrTranscribeResult;
+};
+
+export type AsrInboundStreamAborted = {
+  ok: true;
+  type: "aborted";
+  streamId: string;
+  reason?: string;
+};
+
+export type AsrInboundStreamPartial = {
+  ok: true;
+  type: "partial";
+  streamId: string;
+  text: string;
+  stable: boolean;
+  raw?: unknown;
+};
+
+export type AsrInboundStreamError = {
+  ok: false;
+  type: "error";
+  streamId: string;
+  error: "stream_id_mismatch" | "out_of_order_chunk" | "stream_closed" | "empty_stream" | AsrTranscribeError["error"];
+  message?: string;
+};
+
+export type AsrInboundStreamAcceptResult =
+  | AsrInboundStreamAccepted
+  | AsrInboundStreamPartial
+  | AsrInboundStreamFinal
+  | AsrInboundStreamAborted
+  | AsrInboundStreamError;
+
+export type AsrInboundStreamSession = {
+  streamId: string;
+  accept(frame: Exclude<InboundAudioStreamFrame, InboundAudioStreamStartFrame>): Promise<AsrInboundStreamAcceptResult>;
+};
+
 const defaultConfigPath = "plugins/asr/config.json";
 
 export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
@@ -127,6 +205,383 @@ export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
   };
 }
 
+export function createAsrInboundStreamSession(
+  start: InboundAudioStreamStartFrame,
+  config: AsrPluginConfig,
+  deps: AsrPluginDeps = {}
+): AsrInboundStreamSession {
+  const provider = start.provider ?? config.defaultProvider;
+  if (provider === "tencent" && config.providers.tencent?.appId) {
+    return createTencentRealtimeInboundStreamSession(start, config, deps);
+  }
+
+  let currentChunks: InboundAudioStreamChunkFrame[] = [];
+  const completedTexts: string[] = [];
+  let totalChunks = 0;
+  let totalBytes = 0;
+  let expectedSequence = 0;
+  let closed = false;
+
+  return {
+    streamId: start.streamId,
+    async accept(frame): Promise<AsrInboundStreamAcceptResult> {
+      if (frame.streamId !== start.streamId) return streamError(start.streamId, "stream_id_mismatch");
+      if (closed) return streamError(start.streamId, "stream_closed");
+      if (frame.type === "abort") {
+        closed = true;
+        return abortStream(start.streamId, frame);
+      }
+      if (frame.type === "chunk") {
+        if (frame.sequence !== expectedSequence) return streamError(start.streamId, "out_of_order_chunk");
+        const chunk = copyInboundChunk(frame);
+        const shouldFlush = currentChunks.length > 0 && isConservativeLongPause(currentChunks[currentChunks.length - 1], chunk, config.pseudoStreamMinPauseMs);
+        if (shouldFlush) {
+          const partial = await transcribePseudoStreamSegment(start, currentChunks, config, deps);
+          if ("ok" in partial) return streamError(start.streamId, partial.error, partial.message);
+          const partialResult = partial;
+          const text = sanitizeAudioTranscript(partialResult.text);
+          if (text) completedTexts.push(text);
+          currentChunks = [chunk];
+          totalChunks += 1;
+          totalBytes += chunk.bytes.byteLength;
+          expectedSequence += 1;
+          return {
+            ok: true,
+            type: "partial",
+            streamId: start.streamId,
+            text,
+            stable: true,
+            raw: partialResult.raw
+          };
+        }
+        currentChunks.push(chunk);
+        totalChunks += 1;
+        totalBytes += chunk.bytes.byteLength;
+        expectedSequence += 1;
+        return { ok: true, type: "ack", streamId: start.streamId, sequence: frame.sequence };
+      }
+      if (frame.type === "end") {
+        closed = true;
+        if (!currentChunks.length && !completedTexts.length) return streamError(start.streamId, "empty_stream");
+        let finalResult: AsrTranscribeResult | undefined;
+        if (currentChunks.length) {
+          const result = await transcribePseudoStreamSegment(start, currentChunks, config, deps, frame.metadata);
+          if ("ok" in result) {
+            return streamError(start.streamId, result.error, result.message);
+          }
+          finalResult = result;
+          const text = sanitizeAudioTranscript(finalResult.text);
+          if (text) completedTexts.push(text);
+        }
+        const text = completedTexts.join("\n");
+        if (!text) return streamError(start.streamId, "empty_transcription");
+        return {
+          ok: true,
+          type: "final",
+          streamId: start.streamId,
+          result: {
+            ...(finalResult ?? {
+              provider: start.provider ?? config.defaultProvider
+            }),
+            text,
+            rawStream: {
+              streamId: start.streamId,
+              chunks: totalChunks,
+              bytes: totalBytes,
+              metadata: {
+                mode: "pseudo_stream",
+                ...start.metadata,
+                ...frame.metadata
+              }
+            }
+          }
+        };
+      }
+      return streamError(start.streamId, "stream_closed");
+    }
+  };
+}
+
+async function transcribePseudoStreamSegment(
+  start: InboundAudioStreamStartFrame,
+  chunks: InboundAudioStreamChunkFrame[],
+  config: AsrPluginConfig,
+  deps: AsrPluginDeps,
+  metadata?: Record<string, unknown>
+): Promise<AsrTranscribeResult | AsrTranscribeError> {
+  return transcribeWithAsrPlugin({
+    audioFile: concatAudioStreamChunks(chunks),
+    filename: start.audio.filename,
+    mimeType: start.audio.mimeType,
+    language: start.language,
+    provider: start.provider,
+    prompt: start.prompt,
+    metadata: {
+      ...start.metadata,
+      ...metadata,
+      streamId: start.streamId,
+      audio: start.audio,
+      mode: "pseudo_stream",
+      chunks: chunks.map((chunk) => ({
+        sequence: chunk.sequence,
+        bytes: chunk.bytes.byteLength,
+        timing: chunk.timing,
+        metadata: chunk.metadata
+      }))
+    }
+  }, config, deps);
+}
+
+function isConservativeLongPause(previous: InboundAudioStreamChunkFrame | undefined, next: InboundAudioStreamChunkFrame, minPauseMs = defaultPseudoStreamMinPauseMs): boolean {
+  const previousEnd = previous?.timing?.endMs;
+  const nextStart = next.timing?.startMs;
+  return typeof previousEnd === "number"
+    && typeof nextStart === "number"
+    && nextStart - previousEnd >= minPauseMs;
+}
+
+function createTencentRealtimeInboundStreamSession(
+  start: InboundAudioStreamStartFrame,
+  config: AsrPluginConfig,
+  deps: AsrPluginDeps
+): AsrInboundStreamSession {
+  const providerConfig = config.providers.tencent!;
+  const timeoutMs = providerConfig.timeoutMs ?? 120_000;
+  const messages: unknown[] = [];
+  const waiters: Array<() => void> = [];
+  const stableResults = new Map<number, string>();
+  let latestPartial = "";
+  let expectedSequence = 0;
+  let closed = false;
+  let socketClosed = false;
+  let finalReceived = false;
+
+  const socketPromise = Promise.resolve(createTencentRealtimeSocket(start, providerConfig, deps)).then(async (socket) => {
+    addSocketListener(socket, "message", (event) => {
+      messages.push(socketMessageData(event));
+      notifyMessageWaiters(waiters);
+    });
+    addSocketListener(socket, "close", () => {
+      socketClosed = true;
+      notifyMessageWaiters(waiters);
+    });
+    addSocketListener(socket, "error", () => {
+      socketClosed = true;
+      notifyMessageWaiters(waiters);
+    });
+    await waitForSocketOpen(socket, Math.min(timeoutMs, 10_000));
+    return socket;
+  });
+
+  return {
+    streamId: start.streamId,
+    async accept(frame): Promise<AsrInboundStreamAcceptResult> {
+      if (frame.streamId !== start.streamId) return streamError(start.streamId, "stream_id_mismatch");
+      if (closed) return streamError(start.streamId, "stream_closed");
+      const socket = await socketPromise;
+      if (frame.type === "abort") {
+        closed = true;
+        socket.close?.();
+        return abortStream(start.streamId, frame);
+      }
+      if (frame.type === "chunk") {
+        if (frame.sequence !== expectedSequence) return streamError(start.streamId, "out_of_order_chunk");
+        expectedSequence += 1;
+        await Promise.resolve(socket.send(frame.bytes));
+        return drainTencentRealtimeMessages(start.streamId, messages, stableResults, (text) => {
+          latestPartial = text;
+        }) ?? { ok: true, type: "ack", streamId: start.streamId, sequence: frame.sequence };
+      }
+      if (frame.type === "end") {
+        closed = true;
+        await Promise.resolve(socket.send(JSON.stringify({ type: "end" })));
+        let drained: AsrInboundStreamPartial | AsrInboundStreamError | undefined;
+        const deadline = Date.now() + timeoutMs;
+        do {
+          if (!messages.length && !socketClosed) await waitForSocketMessage(waiters, Math.min(1000, Math.max(0, deadline - Date.now())));
+          drained = drainTencentRealtimeMessages(start.streamId, messages, stableResults, (text) => {
+            latestPartial = text;
+          }, () => {
+            finalReceived = true;
+          });
+          if (drained && drained.ok === false) break;
+        } while (!finalReceived && !socketClosed && Date.now() < deadline);
+        socket.close?.();
+        if (drained && drained.ok === false) return drained;
+        const text = sanitizeAudioTranscript([...stableResults.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, value]) => value)
+          .join("") || latestPartial);
+        if (!text) return streamError(start.streamId, "empty_transcription");
+        return {
+          ok: true,
+          type: "final",
+          streamId: start.streamId,
+          result: {
+            text,
+            provider: "tencent",
+            model: providerConfig.engineModelType || "16k_zh",
+            rawStream: {
+              streamId: start.streamId,
+              chunks: expectedSequence,
+              bytes: 0,
+              metadata: {
+                mode: "native_stream",
+                ...start.metadata,
+                ...frame.metadata
+              }
+            }
+          }
+        };
+      }
+      return streamError(start.streamId, "stream_closed");
+    }
+  };
+}
+
+function createTencentRealtimeSocket(
+  start: InboundAudioStreamStartFrame,
+  providerConfig: NonNullable<AsrPluginConfig["providers"]["tencent"]>,
+  deps: AsrPluginDeps
+): AsrWebSocketLike | Promise<AsrWebSocketLike> {
+  const url = tencentRealtimeWebSocketUrl(start, providerConfig, deps);
+  if (deps.createWebSocket) return deps.createWebSocket(url);
+  const WebSocketCtor = (globalThis as unknown as { WebSocket?: new (url: string) => AsrWebSocketLike }).WebSocket;
+  if (WebSocketCtor) return new WebSocketCtor(url);
+  try {
+    const wsModule = require("ws") as { WebSocket?: new (url: string) => AsrWebSocketLike } | (new (url: string) => AsrWebSocketLike);
+    const Ws = typeof wsModule === "function" ? wsModule : wsModule.WebSocket;
+    if (Ws) return new Ws(url);
+  } catch {
+    // fall through
+  }
+  throw new AsrConfigError("missing_provider_config");
+}
+
+function drainTencentRealtimeMessages(
+  streamId: string,
+  messages: unknown[],
+  stableResults: Map<number, string>,
+  onPartial: (text: string) => void,
+  onFinal?: () => void
+): AsrInboundStreamPartial | AsrInboundStreamError | undefined {
+  let latest: AsrInboundStreamPartial | AsrInboundStreamError | undefined;
+  while (messages.length) {
+    const raw = messages.shift();
+    const parsed = parseJsonObject(socketTextMessage(raw));
+    const code = numberValue(parsed.code, 0);
+    if (code !== 0) return streamError(streamId, "provider_request_failed", stringValue(parsed.message));
+    if (numberValue(parsed.final, 0) === 1) {
+      onFinal?.();
+      continue;
+    }
+    const result = parseJsonObject(parsed.result);
+    const text = sanitizeAudioTranscript(stringValue(result.voice_text_str));
+    if (!text) continue;
+    const index = numberValue(result.index, stableResults.size);
+    const sliceType = numberValue(result.slice_type, 1);
+    const stable = sliceType === 2;
+    if (stable) stableResults.set(index, text);
+    onPartial(text);
+    latest = {
+      ok: true,
+      type: "partial",
+      streamId,
+      text,
+      stable,
+      raw: parsed
+    };
+  }
+  return latest;
+}
+
+function socketTextMessage(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (raw instanceof Uint8Array) return (Buffer as any).from(raw.slice()).toString("utf8");
+  return String(raw ?? "");
+}
+
+function notifyMessageWaiters(waiters: Array<() => void>): void {
+  for (const waiter of waiters.splice(0)) waiter();
+}
+
+function waitForSocketMessage(waiters: Array<() => void>, timeoutMs: number): Promise<void> {
+  if (timeoutMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    waiters.push(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function waitForSocketOpen(socket: AsrWebSocketLike, timeoutMs: number): Promise<void> {
+  if (socket.readyState === undefined || socket.readyState === 1) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("tencent_realtime_socket_open_timeout")), timeoutMs);
+    addSocketListener(socket, "open", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    addSocketListener(socket, "error", (event) => {
+      clearTimeout(timer);
+      reject(new Error(`tencent_realtime_socket_error:${String(event.error ?? "")}`));
+    });
+  });
+}
+
+function addSocketListener(socket: AsrWebSocketLike, type: "message" | "error" | "close" | "open", listener: (event: { data?: unknown; error?: unknown }) => void): void {
+  if (socket.addEventListener) {
+    socket.addEventListener(type, listener);
+    return;
+  }
+  socket.on?.(type, (data) => listener({ data }));
+}
+
+function socketMessageData(event: { data?: unknown }): unknown {
+  return event.data;
+}
+
+function tencentRealtimeWebSocketUrl(
+  start: InboundAudioStreamStartFrame,
+  providerConfig: NonNullable<AsrPluginConfig["providers"]["tencent"]>,
+  deps: AsrPluginDeps
+): string {
+  const appId = providerConfig.appId;
+  const secretId = providerConfig.secretId;
+  const secretKey = providerConfig.secretKey;
+  if (!appId || !secretId || !secretKey) throw new AsrConfigError("missing_provider_config");
+  const host = "asr.cloud.tencent.com";
+  const route = `/asr/v2/${appId}`;
+  const timestamp = Math.floor((deps.now?.() ?? new Date()).getTime() / 1000);
+  const params: Record<string, string> = {
+    engine_model_type: providerConfig.engineModelType || "16k_zh",
+    expired: String(timestamp + 24 * 60 * 60),
+    needvad: String(providerConfig.realtimeNeedVad ?? 1),
+    nonce: String(Math.abs(hashToInt(start.streamId)) % 1_000_000_000),
+    secretid: secretId,
+    timestamp: String(timestamp),
+    voice_format: String(providerConfig.realtimeVoiceFormat ?? voiceFormatForStream(start)),
+    voice_id: start.streamId
+  };
+  const canonical = canonicalQuery(params);
+  const signature = hmacSha1Base64(secretKey, `${host}${route}?${canonical}`);
+  return `wss://${host}${route}?${canonical}&signature=${encodeURIComponent(signature)}`;
+}
+
+function voiceFormatForStream(start: InboundAudioStreamStartFrame): number {
+  const encoding = `${start.audio.encoding ?? start.audio.mimeType ?? start.audio.filename ?? ""}`.toLowerCase();
+  if (encoding.includes("pcm")) return 1;
+  if (encoding.includes("silk")) return 6;
+  if (encoding.includes("mp3")) return 8;
+  if (encoding.includes("opus")) return 10;
+  if (encoding.includes("wav")) return 12;
+  if (encoding.includes("m4a")) return 14;
+  if (encoding.includes("aac")) return 16;
+  return 12;
+}
+
 export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginConfig {
   const resolved = path.resolve(configPath);
   const parsed = parseJsonObject(fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}");
@@ -135,6 +590,7 @@ export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginCo
     enabled: booleanValue(parsed.enabled, false),
     defaultProvider: asrProviderValue(parsed.defaultProvider) ?? "openai_compatible",
     testAudioPath: stringValue(parsed.testAudioPath),
+    pseudoStreamMinPauseMs: numberValue(parsed.pseudoStreamMinPauseMs, undefined),
     providers: {
       openaiCompatible: parseOpenAiCompatibleConfig(providers.openaiCompatible),
       tencent: parseTencentConfig(providers.tencent)
@@ -418,15 +874,59 @@ function parseOpenAiCompatibleConfig(value: unknown): AsrPluginConfig["providers
   };
 }
 
+function copyInboundChunk(frame: InboundAudioStreamChunkFrame): InboundAudioStreamChunkFrame {
+  const bytes = new Uint8Array(frame.bytes.byteLength);
+  bytes.set(frame.bytes);
+  return {
+    ...frame,
+    bytes,
+    timing: frame.timing ? { ...frame.timing } : undefined,
+    metadata: frame.metadata ? { ...frame.metadata } : undefined
+  };
+}
+
+function concatAudioStreamChunks(chunks: InboundAudioStreamChunkFrame[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.bytes.byteLength, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk.bytes, offset);
+    offset += chunk.bytes.byteLength;
+  }
+  return merged;
+}
+
+function abortStream(streamId: string, frame: InboundAudioStreamAbortFrame): AsrInboundStreamAborted {
+  return {
+    ok: true,
+    type: "aborted",
+    streamId,
+    reason: frame.reason
+  };
+}
+
+function streamError(streamId: string, error: AsrInboundStreamError["error"], message?: string): AsrInboundStreamError {
+  return {
+    ok: false,
+    type: "error",
+    streamId,
+    error,
+    ...(message ? { message } : {})
+  };
+}
+
 function parseTencentConfig(value: unknown): AsrPluginConfig["providers"]["tencent"] {
   const parsed = parseJsonObject(value);
   if (!Object.keys(parsed).length) return undefined;
   return {
+    appId: stringValue(parsed.appId),
     secretId: stringValue(parsed.secretId),
     secretKey: stringValue(parsed.secretKey),
     endpoint: stringValue(parsed.endpoint),
     region: stringValue(parsed.region),
     engineModelType: stringValue(parsed.engineModelType),
+    realtimeVoiceFormat: numberValue(parsed.realtimeVoiceFormat, undefined),
+    realtimeNeedVad: numberValue(parsed.realtimeNeedVad, undefined),
     pollIntervalMs: numberValue(parsed.pollIntervalMs, undefined),
     timeoutMs: numberValue(parsed.timeoutMs, undefined),
     retryCount: numberValue(parsed.retryCount, undefined),
@@ -493,6 +993,18 @@ function numberValue(value: unknown, fallback: number | undefined): number | und
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function canonicalQuery(params: Record<string, string>): string {
+  return Object.entries(params)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+}
+
+function hashToInt(value: string): number {
+  const hash = crypto.createHash("sha1").update(value).digest();
+  return ((hash[0] ?? 0) << 24) + ((hash[1] ?? 0) << 16) + ((hash[2] ?? 0) << 8) + (hash[3] ?? 0);
+}
+
 function sha256Hex(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -503,6 +1015,10 @@ function hmacSha256(key: string | Uint8Array, value: string): any {
 
 function hmacSha256Hex(key: string | Uint8Array, value: string): string {
   return crypto.createHmac("sha256", key).update(value).digest("hex");
+}
+
+function hmacSha1Base64(key: string, value: string): string {
+  return crypto.createHmac("sha1", key).update(value).digest("base64");
 }
 
 function bufferToArrayBuffer(buffer: Uint8Array): ArrayBuffer {

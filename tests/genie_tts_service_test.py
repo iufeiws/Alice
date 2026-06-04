@@ -37,6 +37,9 @@ class GenieTtsServiceTest(unittest.TestCase):
     def test_genie_service_disables_roberta_by_default(self) -> None:
         _run_roberta_disabled_by_default_check()
 
+    def test_genie_service_treats_broken_pipe_as_client_disconnect(self) -> None:
+        _run_broken_pipe_response_check()
+
 
 def _run_split_sentence_check(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
@@ -289,6 +292,54 @@ def _run_roberta_disabled_by_default_check() -> None:
     assert fake_model_manager.load_roberta_model() is False
     assert fake_model_manager.roberta_model is None
     assert fake_model_manager.roberta_tokenizer is None
+
+
+def _run_broken_pipe_response_check() -> None:
+    fake_genie = types.SimpleNamespace()
+    fake_numpy = types.SimpleNamespace()
+    fake_soundfile = types.SimpleNamespace()
+    previous_genie = sys.modules.get("genie_tts")
+    previous_numpy = sys.modules.get("numpy")
+    previous_soundfile = sys.modules.get("soundfile")
+    sys.modules["genie_tts"] = fake_genie
+    sys.modules["numpy"] = fake_numpy
+    sys.modules["soundfile"] = fake_soundfile
+    try:
+        service_path = Path(__file__).resolve().parents[1] / "scripts" / "genie_tts" / "service.py"
+        spec = importlib.util.spec_from_file_location("alice_genie_service_broken_pipe_test_target", service_path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        writes: list[tuple[int, dict[str, object]]] = []
+        handler = object.__new__(module.GenieHandler)
+        handler.path = "/synthesize"
+        handler.read_json_body = lambda: {"text": "hello", "outputPath": "/tmp/voice.wav"}
+        handler.runtime = types.SimpleNamespace(synthesize=lambda **_kwargs: {"audioPath": "/tmp/voice.wav"})
+
+        def write_json(status: int, body: dict[str, object]) -> None:
+            writes.append((status, body))
+            raise BrokenPipeError("client closed")
+
+        handler.write_json = write_json
+        with unittest.TestCase().assertLogs(level="WARNING") as logs:
+            handler.do_POST()
+    finally:
+        if previous_genie is None:
+            sys.modules.pop("genie_tts", None)
+        else:
+            sys.modules["genie_tts"] = previous_genie
+        if previous_numpy is None:
+            sys.modules.pop("numpy", None)
+        else:
+            sys.modules["numpy"] = previous_numpy
+        if previous_soundfile is None:
+            sys.modules.pop("soundfile", None)
+        else:
+            sys.modules["soundfile"] = previous_soundfile
+
+    assert [status for status, _body in writes] == [200]
+    assert any("client disconnected before synthesize response" in message for message in logs.output)
 
 
 def _run_language_reload_check(tmp_path: Path) -> None:

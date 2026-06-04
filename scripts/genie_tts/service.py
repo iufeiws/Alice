@@ -551,11 +551,14 @@ class GenieHandler(BaseHTTPRequestHandler):
                 split_text=optional_bool(body, "splitText", True),
             )
             self.write_json(200, {"ok": True, **result})
+        except (BrokenPipeError, ConnectionResetError) as error:
+            logging.warning("client disconnected before synthesize response could be written: %s", error)
         except Exception as error:
             logging.exception("synthesize failed")
-            self.write_json(500, {"ok": False, "error": str(error)})
+            self.try_write_json(500, {"ok": False, "error": str(error)})
 
     def stream_synthesis(self) -> None:
+        headers_sent = False
         try:
             body = self.read_json_body()
             stream = self.runtime.stream(
@@ -571,6 +574,7 @@ class GenieHandler(BaseHTTPRequestHandler):
             self.send_header("content-type", "audio/L16; rate=32000; channels=1")
             self.send_header("transfer-encoding", "chunked")
             self.end_headers()
+            headers_sent = True
             if first_chunk:
                 self.write_stream_chunk(first_chunk)
             for chunk in stream:
@@ -579,9 +583,12 @@ class GenieHandler(BaseHTTPRequestHandler):
                 self.write_stream_chunk(chunk)
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            logging.warning("client disconnected during stream synthesize response: %s", error)
         except Exception as error:
             logging.exception("stream synthesize failed")
-            self.write_json(500, {"ok": False, "error": str(error)})
+            if not headers_sent:
+                self.try_write_json(500, {"ok": False, "error": str(error)})
 
     def write_stream_chunk(self, chunk: bytes) -> None:
         self.wfile.write(f"{len(chunk):x}\r\n".encode("ascii"))
@@ -605,6 +612,12 @@ class GenieHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def try_write_json(self, status: int, body: dict[str, Any]) -> None:
+        try:
+            self.write_json(status, body)
+        except (BrokenPipeError, ConnectionResetError) as error:
+            logging.warning("client disconnected before error response could be written: %s", error)
 
 
 def required_string(body: dict[str, Any], key: str) -> str:

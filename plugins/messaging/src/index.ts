@@ -1354,11 +1354,19 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     const speed = genieSpeedValue(request.genie?.speed);
     await ensureGenieService();
     try {
-      const response = await postJson(`${config.baseURL}/synthesize`, {
+      const requestBody = {
         text,
         outputPath: wavPath,
         ...genieRequestOverrides(request.genie, deps.appendLog)
-      }, config.timeoutMs, fetchImpl, "Genie TTS");
+      };
+      let response: unknown;
+      try {
+        response = await postJson(`${config.baseURL}/synthesize`, requestBody, config.timeoutMs, fetchImpl, "Genie TTS");
+      } catch (error) {
+        if (!isAbortLikeError(error)) throw error;
+        deps.appendLog?.("warn", `genie tts synthesize timed out waiting for HTTP response; waiting for generated file: ${error instanceof Error ? error.message : String(error)}`);
+        response = await waitForGeneratedVoiceAfterAbort(wavPath, outputDir.fullPath, config.timeoutMs);
+      }
       if (!isRecord(response) || response.ok === false) {
         throw new Error(isRecord(response) ? optionalStringValue(response.error) || "Genie TTS synthesize failed" : "Genie TTS synthesize failed");
       }
@@ -1600,6 +1608,30 @@ async function postJson(url: string, body: Record<string, unknown>, timeoutMs: n
     throw new Error(`${label} HTTP ${response.status}: ${(message ?? text).slice(0, 500)}`);
   }
   return parsed ?? {};
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { name?: unknown; code?: unknown; message?: unknown };
+  const name = typeof value.name === "string" ? value.name : "";
+  const code = typeof value.code === "string" ? value.code : "";
+  const message = typeof value.message === "string" ? value.message : "";
+  return name === "AbortError" || code === "ABORT_ERR" || /abort|timeout/i.test(message);
+}
+
+async function waitForGeneratedVoiceAfterAbort(filePath: string, outputDir: string, timeoutMs: number): Promise<unknown> {
+  const deadline = Date.now() + Math.max(5_000, timeoutMs);
+  let lastError = "not generated yet";
+  while (Date.now() < deadline) {
+    try {
+      validateGeneratedVoice(filePath, outputDir);
+      return { ok: true, audioPath: filePath, recoveredAfterClientTimeout: true };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await delay(250);
+  }
+  throw new Error(`Genie TTS synthesize timed out and output file was not available: ${lastError}`);
 }
 
 async function changeAudioTempo(inputPath: string, outputPath: string, speed: number, ffmpegCommand: string, spawnImpl: typeof childProcess.spawn): Promise<void> {

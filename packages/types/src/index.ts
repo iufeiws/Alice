@@ -51,6 +51,54 @@ export type AgentEvent = {
   };
 };
 
+export type InboundAudioStreamFrame =
+  | InboundAudioStreamStartFrame
+  | InboundAudioStreamChunkFrame
+  | InboundAudioStreamEndFrame
+  | InboundAudioStreamAbortFrame;
+
+export type InboundAudioStreamStartFrame = {
+  type: "start";
+  streamId: string;
+  audio: {
+    filename?: string;
+    mimeType?: string;
+    sampleRateHz?: number;
+    channels?: number;
+    encoding?: string;
+  };
+  language?: string;
+  provider?: "tencent" | "openai_compatible";
+  prompt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type InboundAudioStreamChunkFrame = {
+  type: "chunk";
+  streamId: string;
+  sequence: number;
+  bytes: Uint8Array;
+  timing?: {
+    startMs?: number;
+    endMs?: number;
+    durationMs?: number;
+  };
+  metadata?: Record<string, unknown>;
+};
+
+export type InboundAudioStreamEndFrame = {
+  type: "end";
+  streamId: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type InboundAudioStreamAbortFrame = {
+  type: "abort";
+  streamId: string;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type InternalCard = {
   title: string;
   body?: string;

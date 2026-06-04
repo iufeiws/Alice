@@ -1372,6 +1372,42 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
   await fsp.unlink(result.filePath);
 });
 
+test("genie tts recovers generated file when synthesize response times out", async () => {
+  const calls: string[] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (pathname === "/synthesize") {
+      const body = JSON.parse(String(init?.body)) as { outputPath: string };
+      fs.mkdirSync(path.dirname(body.outputPath), { recursive: true });
+      fs.writeFileSync(body.outputPath, "wav");
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      throw error;
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieOutputDir: "generated/tts",
+    genieTimeoutMs: 5,
+    genieIdleShutdownMs: 0,
+    genieFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  const result = await synthesize({
+    text: "また後で",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"))
+  });
+
+  assert.deepEqual(calls, ["GET /health", "POST /synthesize"]);
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+  assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
+  await fsp.unlink(result.filePath);
+});
+
 test("genie tts exposes streaming PCM chunks through streamAudio", async () => {
   const calls: string[] = [];
   const requestBodies: unknown[] = [];

@@ -1,6 +1,6 @@
 # ASR 通用包装 Plugin 方案
 
-本文档定义 ASR（Automatic Speech Recognition，语音识别）通用包装 plugin 的目标、接口和 provider 接入边界。该 plugin 接收调用方传入的语音文件，调用已配置的 ASR 服务，将识别结果统一返回为文字。
+本文档定义 ASR（Automatic Speech Recognition，语音识别）通用包装 plugin 的目标、接口和 provider 接入边界。该 plugin 接收调用方传入的语音文件，或按流式入站协议接收音频帧，调用已配置的 ASR 服务，将识别结果统一返回为文字。
 
 ## 目标
 
@@ -15,7 +15,7 @@
 
 - 本阶段不实现科大讯飞 ASR。
 - 本阶段不实现本地部署 ASR。
-- 本阶段不实现实时流式识别。
+- 本阶段实现流式入站协议。腾讯云支持原生 WebSocket 实时识别；不支持原生流式的 provider 使用伪流式，在 `end` 后合并音频并调用文件式 ASR。
 - 本阶段不实现说话人分离、字级时间戳、翻译、摘要或语音增强。
 - 本阶段不提供跨 provider 的识别质量评测系统。
 - 本阶段不改变上游语音采集、上传和存储流程。
@@ -51,6 +51,12 @@ type AsrTranscribeResult = {
   durationMs?: number;
   requestId?: string;
   raw?: unknown;
+  rawStream?: {
+    streamId: string;
+    chunks: number;
+    bytes: number;
+    metadata?: Record<string, unknown>;
+  };
 };
 ```
 
@@ -71,6 +77,77 @@ type AsrTranscribeResult = {
 ```text
 audio file -> ASR plugin -> selected provider -> normalized text result
 ```
+
+## 流式入站协议
+
+流式入站协议用于上游边录边传音频。provider 层分两种能力：
+
+- `native_stream`：provider 原生支持实时流式识别。腾讯云配置 `appId` 后走 WebSocket 实时识别，`chunk` 会作为 binary message 发送，provider 返回的非稳态和稳态结果会作为 `partial` 返回。
+- `pseudo_stream`：provider 不支持或未配置原生流式。系统基于保守长停顿切段，达到阈值时先识别上一段并返回稳定 `partial`；`end` 时识别最后一段并汇总最终文本。OpenAI-compatible 当前走此模式。
+
+协议帧：
+
+```ts
+type InboundAudioStreamFrame =
+  | {
+      type: "start";
+      streamId: string;
+      audio: {
+        filename?: string;
+        mimeType?: string;
+        sampleRateHz?: number;
+        channels?: number;
+        encoding?: string;
+      };
+      language?: string;
+      provider?: "tencent" | "openai_compatible";
+      prompt?: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "chunk";
+      streamId: string;
+      sequence: number;
+      bytes: Uint8Array;
+      timing?: {
+        startMs?: number;
+        endMs?: number;
+        durationMs?: number;
+      };
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "end";
+      streamId: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "abort";
+      streamId: string;
+      reason?: string;
+      metadata?: Record<string, unknown>;
+    };
+```
+
+协议规则：
+
+- `start` 创建一个入站音频流 session。
+- `chunk.sequence` 必须从 `0` 开始连续递增；乱序 chunk 返回 `out_of_order_chunk`。
+- `chunk.timing`、`metadata`、文件名、MIME、采样率等都属于结构化元数据，禁止拼进转写文本。
+- 伪流式只在相邻 chunk 的 `next.startMs - previous.endMs >= pseudoStreamMinPauseMs` 时切段；默认阈值为 `1500ms`。没有 timing 时不做中途切段，只在 `end` 后整体识别。
+- `end` 关闭流，合并 chunk 二进制，并调用当前配置的 ASR provider。
+- `abort` 关闭流，不调用 ASR provider。
+- `end` 后返回的 `text` 必须是净化后的纯文本；如果 provider 返回 `[语音][0:0.020,0:5.000] 正文` 一类内容，进入下游前只保留正文。
+- 流元信息只允许出现在 `metadata` 或 `rawStream`，不能作为正文传给后续插件、核心或记忆。
+
+腾讯云原生流式规则：
+
+- 需要配置 `providers.tencent.appId`、`secretId`、`secretKey` 和 `engineModelType`。
+- WebSocket 地址为 `wss://asr.cloud.tencent.com/asr/v2/<appid>?...`。
+- 签名按腾讯云实时语音识别 WebSocket 文档要求，对除 `signature` 外的参数按字典序拼接，使用 `SecretKey` 做 HMAC-SHA1 后 Base64，再 URL encode。
+- `chunk.bytes` 作为 WebSocket binary message 发送；`end` 帧发送 `{"type":"end"}`。
+- 腾讯返回 `slice_type=1` 时作为非稳态 `partial`，`slice_type=2` 时作为稳态 `partial` 并参与最终文本汇总。
+- 腾讯返回的 `start_time`、`end_time`、`word_list` 等只保留在原始响应或元数据中，不拼进正文。
 
 ## Provider 优先级
 
@@ -108,7 +185,6 @@ OpenAI 兼容 API 是首要实现方案之一，用于接入硅基流动 API 和
 ```ts
 type OpenAiCompatibleAsrConfig = {
   apiPresetName: string;
-  model: string;
   responseFormat?: "json" | "text" | "verbose_json";
   retryCount?: number;
   retryBackoffMs?: number;
@@ -134,13 +210,17 @@ type OpenAiCompatibleAsrConfig = {
 type AsrPluginConfig = {
   enabled: boolean;
   defaultProvider: AsrProvider;
+  pseudoStreamMinPauseMs?: number;
   providers: {
     tencent?: {
+      appId?: string;
       secretId: string;
       secretKey: string;
       endpoint?: string;
       region?: string;
       engineModelType?: string;
+      realtimeVoiceFormat?: number;
+      realtimeNeedVad?: 0 | 1;
       pollIntervalMs?: number;
       timeoutMs?: number;
       retryCount?: number;
@@ -171,9 +251,13 @@ type AsrPluginConfig = {
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
+| `providers.tencent.appId` | 无 | 腾讯云实时 WebSocket ASR 所需 AppID；配置后腾讯流式入站走原生实时识别，不配置时走伪流式。 |
 | `providers.tencent.secretId` | 无 | 腾讯云 API 密钥对中的 SecretId。 |
 | `providers.tencent.secretKey` | 无 | 腾讯云 API 密钥对中的 SecretKey，用于签名请求。 |
 | `providers.tencent.endpoint` | `https://asr.tencentcloudapi.com` | 腾讯云 ASR API endpoint。 |
+| `pseudoStreamMinPauseMs` | `1500` | 伪流式保守长停顿切段阈值。只有相邻 chunk 的 timing 间隔达到该值才切段识别。 |
+| `providers.tencent.realtimeVoiceFormat` | 按音频类型推断 | 腾讯云实时 WebSocket `voice_format`；pcm=1、mp3=8、opus=10、wav=12、m4a=14、aac=16。 |
+| `providers.tencent.realtimeNeedVad` | `1` | 腾讯云实时 WebSocket `needvad`；1 开启 VAD，0 关闭。 |
 | `providers.openaiCompatible.retryCount` | `1` | OpenAI 兼容请求超时、网络错误或 5xx 时的重试次数。 |
 | `providers.openaiCompatible.retryBackoffMs` | `500` | OpenAI 兼容请求重试基础等待时间。第 N 次重试按 `retryBackoffMs * N` 等待。 |
 | `providers.tencent.timeoutMs` | `120000` | 腾讯云单次请求和整段 chunk 轮询的超时上限。 |
@@ -219,6 +303,7 @@ type AsrPluginConfig = {
 ## 验收标准
 
 - 调用方可以传入语音文件并拿到 `text`。
+- 调用方可以按 `start/chunk/end/abort` 流式入站协议提交音频，并在 `end` 后拿到 `text`。
 - 未指定 provider 时使用 `defaultProvider`。
 - 腾讯云 ASR provider 可以完成一次端到端识别，并返回归一化结果。
 - OpenAI 兼容 ASR provider 可以通过硅基流动 API 完成一次端到端识别，并返回归一化结果。

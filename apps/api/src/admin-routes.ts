@@ -362,7 +362,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/delete-latest-sql") {
-        deleteLatestMemorySqlRecord(context, response);
+        await deleteLatestMemorySqlRecord(context, request, response);
         return;
       }
 
@@ -1833,13 +1833,19 @@ function redoLastMemoryGitCommit(context: AdminRoutesContext, response: any): vo
   }
 }
 
-function deleteLatestMemorySqlRecord(context: AdminRoutesContext, response: any): void {
-  const entry = context.diaryStore.deleteLatestEntry();
+async function deleteLatestMemorySqlRecord(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const target = body.target === undefined ? "yesterdaySummary" : requiredString(body.target);
+  if (!isMemoryTarget(target)) {
+    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+    return;
+  }
+  const entry = context.memoryStore.deleteLatestEntry?.(target);
   if (!entry) {
     writeJson(response, 400, { ok: false, error: "no_memory_sql_record_to_delete" });
     return;
   }
-  context.appendLog("info", `memory sql delete latest diary entry: ${entry.localDate}`);
+  context.appendLog("info", `memory sql delete latest ${target} entry: ${entry.localDate ?? entry.id}`);
   writeJson(response, 200, { ok: true, entry, files: context.memoryStore.stats() });
 }
 

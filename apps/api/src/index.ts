@@ -2,7 +2,7 @@ import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot, type TokenPressurePreviewBaseline } from "../../../core/agent/src/index.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
-import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
+import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryDiaryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables, staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../core/agent/src/prompts.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
@@ -33,7 +33,6 @@ import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
 import { createAsrPlugin } from "../../../plugins/asr/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
-import { createDiaryStore } from "../../../packages/storage/src/diary-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
@@ -338,7 +337,7 @@ if (wechatCredentials) {
 const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
 const coreProfileStore = createCoreProfileStore(path.join(config.memoryFiles.root, "config", "core-profile.json"));
 const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
-const diaryStore = createDiaryStore(path.join(config.memoryFiles.root, "diary", "diary.sqlite"));
+const diaryStore = createMemoryDiaryStore(config.memoryFiles.root);
 memoryStore.ensure();
 const memoryInductionPromptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
 const sleepMemoryStateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));

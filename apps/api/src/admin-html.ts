@@ -402,9 +402,6 @@ export function renderAdminHtmlV2(): string {
               </label>
               <button type="button" id="memory-run-day">Run Selected Day</button>
               <button type="button" id="memory-clear-session" class="secondary">Clear Session</button>
-              <button type="button" id="memory-undo-last" class="secondary">撤销</button>
-              <button type="button" id="memory-redo-last" class="secondary">重做</button>
-              <button type="button" id="memory-delete-latest-sql" class="secondary">删除最新SQL记录</button>
             </div>
             <div class="memory-day-layout">
               <div class="memory-calendar" id="memoryCalendar"></div>
@@ -1281,10 +1278,7 @@ Timing:
 
       function renderMemoryPromptEditor() {
         const groups = [
-          ["commonLayers", "共同组", "persistent"],
-          ["persistentLayers", "长期记忆专属", "persistent"],
-          ["userPreferencesLayers", "用户偏好专属", "userPreferences"],
-          ["yesterdaySummaryLayers", "日记专属", "yesterdaySummary"]
+          ["commonLayers", "共同组", "persistent"]
         ];
         $("promptProfile").innerHTML = \`
           <div class="prompt-editor-grid">
@@ -1365,7 +1359,7 @@ Timing:
               <div>
                 <label>Tool</label>
                 <select data-field="toolName">
-                  \${["read_memory", "self_talk"].map((item) => \`<option value="\${item}" \${(layer.toolName || "read_memory") === item ? "selected" : ""}>\${item}</option>\`).join("")}
+                  \${["Read", "self_talk"].map((item) => \`<option value="\${item}" \${(layer.toolName || "Read") === item ? "selected" : ""}>\${item}</option>\`).join("")}
                 </select>
               </div>
               \` : ""}
@@ -1397,8 +1391,8 @@ Timing:
         root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
           layer.role = event.target.value;
           if (layer.role === "tool_request") {
-            layer.toolName = "read_memory";
-            if (!layer.toolArguments) layer.toolArguments = "{}";
+            layer.toolName = "Read";
+            if (!layer.toolArguments) layer.toolArguments = "{\\"file_path\\":\\"{{memorize/target/fileName}}\\"}";
           } else {
             delete layer.toolName;
             delete layer.toolCallId;
@@ -1695,14 +1689,15 @@ Timing:
         $("memoryFiles").innerHTML = files.map((file) => \`
           <details class="prompt-layer" open>
             <summary>
-              <span>\${escapeHtml(file.fileName)}</span>
+              <span>\${escapeHtml(memoryTargetDisplayName(file.target))} · \${escapeHtml(file.tableName || file.fileName)}</span>
               <span>
                 \${escapeHtml(file.lines)}/\${escapeHtml(file.maxLines)} lines · \${escapeHtml(file.bytes)}/\${escapeHtml(file.maxBytes)} bytes
                 <button type="button" class="secondary" data-memory-run="\${escapeAttr(file.target)}">Run</button>
               </span>
             </summary>
             <textarea data-memory-target="\${escapeAttr(file.target)}" rows="10">\${escapeHtml(file.content || "")}</textarea>
-            <button type="button" data-memory-save="\${escapeAttr(file.target)}">Save File</button>
+            <button type="button" data-memory-save="\${escapeAttr(file.target)}">Save SQL Record</button>
+            <button type="button" class="secondary" data-memory-delete-latest="\${escapeAttr(file.target)}">Delete Latest SQL Record</button>
           </details>
         \`).join("");
         document.querySelectorAll("[data-memory-run]").forEach((button) => button.addEventListener("click", async (event) => {
@@ -1718,7 +1713,7 @@ Timing:
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ target, content })
           }).then((res) => res.json());
-          $("memory-status").textContent = result.ok ? "Memory file saved." : "Memory file save failed: " + (result.error || "unknown error");
+          $("memory-status").textContent = result.ok ? "Memory SQL record saved." : "Memory SQL save failed: " + (result.error || "unknown error");
           if (result.ok && Array.isArray(result.files)) {
             const file = result.files.find((entry) => entry.target === target);
             const details = button.closest("details");
@@ -1727,6 +1722,16 @@ Timing:
             }
           }
         }));
+        document.querySelectorAll("[data-memory-delete-latest]").forEach((button) => button.addEventListener("click", async () => {
+          await deleteLatestMemorySqlRecord(button.dataset.memoryDeleteLatest);
+        }));
+      }
+
+      function memoryTargetDisplayName(target) {
+        if (target === "persistent") return "记忆";
+        if (target === "userPreferences") return "用户记忆";
+        if (target === "yesterdaySummary") return "日记";
+        return target || "Memory";
       }
 
       function renderMemorySleepDays(days) {
@@ -1939,23 +1944,23 @@ Timing:
       }
 
       async function undoLastMemoryRun() {
-        $("memory-status").textContent = "Undoing latest active long-term memory git commit...";
-        const result = await fetch("/admin/api/memory/undo-last", { method: "POST" }).then((res) => res.json());
-        $("memory-status").textContent = result.ok ? "Memory undo complete: " + (result.commit || "") : "Memory undo failed: " + (result.error || "unknown error");
+        $("memory-status").textContent = "Memory git undo is no longer available for SQL-backed memory.";
         await refreshMemory();
       }
 
       async function redoLastMemoryRun() {
-        $("memory-status").textContent = "Redoing latest undone long-term memory git commit...";
-        const result = await fetch("/admin/api/memory/redo-last", { method: "POST" }).then((res) => res.json());
-        $("memory-status").textContent = result.ok ? "Memory redo complete: " + (result.commit || "") : "Memory redo failed: " + (result.error || "unknown error");
+        $("memory-status").textContent = "Memory git redo is no longer available for SQL-backed memory.";
         await refreshMemory();
       }
 
-      async function deleteLatestMemorySqlRecord() {
-        $("memory-status").textContent = "Deleting latest memory SQL record...";
-        const result = await fetch("/admin/api/memory/delete-latest-sql", { method: "POST" }).then((res) => res.json());
-        $("memory-status").textContent = result.ok ? "Deleted latest SQL record: " + (result.entry?.localDate || result.entry?.id || "") : "Delete latest SQL record failed: " + (result.error || "unknown error");
+      async function deleteLatestMemorySqlRecord(target) {
+        $("memory-status").textContent = "Deleting latest " + memoryTargetDisplayName(target) + " SQL record...";
+        const result = await fetch("/admin/api/memory/delete-latest-sql", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ target })
+        }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Deleted latest " + memoryTargetDisplayName(target) + " SQL record: " + (result.entry?.localDate || result.entry?.id || "") : "Delete latest SQL record failed: " + (result.error || "unknown error");
         await refreshMemory();
       }
 
@@ -2809,9 +2814,6 @@ Timing:
       });
       $("memory-run-day").addEventListener("click", runMemoryDay);
       $("memory-clear-session").addEventListener("click", clearMemorySession);
-      $("memory-undo-last").addEventListener("click", undoLastMemoryRun);
-      $("memory-redo-last").addEventListener("click", redoLastMemoryRun);
-      $("memory-delete-latest-sql").addEventListener("click", deleteLatestMemorySqlRecord);
       $("memoryRunDate").addEventListener("change", async () => {
         memoryCalendarMonth = $("memoryRunDate").value.slice(0, 7);
         renderMemoryCalendar();

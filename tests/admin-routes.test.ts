@@ -439,7 +439,7 @@ test("admin plugin test runs japanese voice translation and tts with timing", as
   assert.equal(typeof body.result.timing.ttsMs, "number");
   assert.equal(typeof body.result.timing.totalMs, "number");
   assert.deepEqual(senderAgents, ["japanese-voice"]);
-  assert.deepEqual(capturedGenie, { language: "jp", modelDir: undefined, referenceAudio: undefined, referenceText: undefined });
+  assert.deepEqual(capturedGenie, { language: "jp", modelDir: undefined, referenceAudio: undefined, referenceText: undefined, splitText: false });
   fs.rmSync(voicePath, { force: true });
 });
 
@@ -587,17 +587,18 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
   assert.equal(body.ok, true);
   assert.equal(capturedPreset.name, "Memorize Custom");
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
-  const targetRequests = [seen[0], seen[2], seen[4]];
-  assert.deepEqual(targetRequests.map((input) => input.model), ["memorize-model", "memorize-model", "memorize-model"]);
-  assert.deepEqual(targetRequests.map((input) => input.temperature), [0.65, 0.65, 0.65]);
-  assert.deepEqual(targetRequests.map((input) => input.extraParams), [{ top_p: 0.9 }, { top_p: 0.9 }, { top_p: 0.9 }]);
-  assert.match(targetRequests[0].messages.map((entry) => entry.content).join("\n"), /custom memorize common prompt/);
-  assert.match(targetRequests[0].messages.map((entry) => entry.content).join("\n"), /persistent-only prompt/);
-  assert.match(targetRequests[1].messages.map((entry) => entry.content).join("\n"), /user-preferences-only prompt/);
-  assert.match(targetRequests[2].messages.map((entry) => entry.content).join("\n"), /diary-only prompt/);
+  const targetRequests = [seen[0]];
+  assert.deepEqual(targetRequests.map((input) => input.model), ["memorize-model"]);
+  assert.deepEqual(targetRequests.map((input) => input.temperature), [0.65]);
+  assert.deepEqual(targetRequests.map((input) => input.extraParams), [{ top_p: 0.9 }]);
+  const promptText = targetRequests[0].messages.map((entry) => entry.content).join("\n");
+  assert.match(promptText, /custom memorize common prompt/);
+  assert.doesNotMatch(promptText, /persistent-only prompt/);
+  assert.doesNotMatch(promptText, /user-preferences-only prompt/);
+  assert.doesNotMatch(promptText, /diary-only prompt/);
 });
 
-test("memory run-target runs only the selected memory file", async () => {
+test("memory run-target still processes all memory files in one workspace run", async () => {
   const root = makeTempDir("admin-memory-run-target");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
@@ -624,7 +625,11 @@ test("memory run-target runs only the selected memory file", async () => {
         windowStartAt,
         windowEndAt,
         messageCount: messages.length,
-        results: [{ target, ok: true, edited: true, toolCalls: [] }]
+        results: [
+          { target: "persistent", ok: true, edited: true, toolCalls: [] },
+          { target: "userPreferences", ok: true, edited: true, toolCalls: [] },
+          { target: "yesterdaySummary", ok: true, edited: true, toolCalls: [] }
+        ]
       };
     }
   });
@@ -636,7 +641,7 @@ test("memory run-target runs only the selected memory file", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(capturedTarget, "userPreferences");
   assert.equal(capturedMessages.length, 1);
-  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["userPreferences"]);
+  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
 });
 
 test("memory admin rejects concurrent run requests", async () => {
@@ -800,108 +805,65 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
   }]);
 });
 
-test("memory undo and redo walk memorize commits one at a time", async () => {
-  const root = makeTempDir("admin-memory-undo-redo");
+test("memory git undo and redo are unavailable for SQL-backed memory", async () => {
+  const root = makeTempDir("admin-memory-git-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
-
   memoryStore.writeTarget("persistent", "persistent v1\n");
-  memoryStore.writeTarget("userPreferences", "pref v1\n");
 
   let response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
-  assert.equal(response.statusCode, 200);
-  assert.equal(JSON.parse(response.body).message, "memorize userPreferences");
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "memory_git_unavailable");
   assert.equal(memoryStore.read().persistent, "persistent v1\n");
-  assert.equal(memoryStore.read().userPreferences, "");
-
-  response = createResponse();
-  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
-  assert.equal(response.statusCode, 200);
-  assert.equal(JSON.parse(response.body).message, "memorize persistent");
-  assert.equal(memoryStore.read().persistent, "");
-  assert.equal(memoryStore.read().userPreferences, "");
 
   response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/redo-last", {}), response);
-  assert.equal(response.statusCode, 200);
-  assert.equal(JSON.parse(response.body).message, 'Revert "memorize persistent"');
-  assert.equal(memoryStore.read().persistent, "persistent v1\n");
-  assert.equal(memoryStore.read().userPreferences, "");
-
-  response = createResponse();
-  await handler(createRequest("POST", "/admin/api/memory/redo-last", {}), response);
-  assert.equal(response.statusCode, 200);
-  assert.equal(JSON.parse(response.body).message, 'Revert "memorize userPreferences"');
-  assert.equal(memoryStore.read().persistent, "persistent v1\n");
-  assert.equal(memoryStore.read().userPreferences, "pref v1\n");
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "memory_git_unavailable");
 });
 
-test("memory undo aborts conflicted git revert without leaving conflict markers", async () => {
-  const root = makeTempDir("admin-memory-undo-conflict");
-  const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
-  const longTermDir = path.join(root, "long-term-memory");
-  const persistentPath = path.join(longTermDir, "persistent-memory.md");
-
-  memoryStore.writeTarget("persistent", "original memory\n");
-  fs.writeFileSync(persistentPath, "baseline changed the same line\n");
-  git(longTermDir, "add", "persistent-memory.md");
-  git(longTermDir, "commit", "-m", "memory baseline");
-
-  const response = createResponse();
-  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
-
-  assert.equal(response.statusCode, 500);
-  assert.match(JSON.parse(response.body).error, /could not revert|CONFLICT|error/i);
-  assert.equal(fs.existsSync(path.join(longTermDir, ".git", "REVERT_HEAD")), false);
-  assert.equal(fs.readFileSync(persistentPath, "utf8"), "baseline changed the same line\n");
-  assert.doesNotMatch(fs.readFileSync(persistentPath, "utf8"), /^(<<<<<<<|=======|>>>>>>>)$/m);
-  assert.equal(git(longTermDir, "status", "--porcelain"), "");
-});
-
-test("memory undo refuses dirty long-term memory git worktree", async () => {
-  const root = makeTempDir("admin-memory-undo-dirty");
-  const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
-  const longTermDir = path.join(root, "long-term-memory");
-
-  memoryStore.writeTarget("persistent", "persistent v1\n");
-  fs.writeFileSync(path.join(longTermDir, "persistent-memory.md"), "unsaved edit\n");
-
-  const response = createResponse();
-  await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
-
-  assert.equal(response.statusCode, 500);
-  assert.equal(JSON.parse(response.body).error, "memory_git_worktree_dirty");
-  assert.equal(fs.readFileSync(path.join(longTermDir, "persistent-memory.md"), "utf8"), "unsaved edit\n");
-});
-
-test("memory delete-latest-sql removes the latest diary entry", async () => {
+test("memory delete-latest-sql removes the latest entry for each SQL memory table", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
-  const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
   const handler = createApiRequestHandler({
-    ...baseContext(root, memoryStore, promptStore),
-    diaryStore
+    ...baseContext(root, memoryStore, promptStore)
   });
 
+  memoryStore.writeTarget("persistent", "older memory\n", { now: "2026-05-30T08:00:00.000Z" });
+  memoryStore.writeTarget("persistent", "latest memory\n", { now: "2026-06-01T08:00:00.000Z" });
+  memoryStore.writeTarget("userPreferences", "older pref\n", { now: "2026-05-30T08:00:00.000Z" });
+  memoryStore.writeTarget("userPreferences", "latest pref\n", { now: "2026-06-01T08:00:00.000Z" });
   memoryStore.writeTarget("yesterdaySummary", "older diary\n", { localDate: "2026-05-31", now: "2026-05-31T08:00:00.000Z" });
   memoryStore.writeTarget("yesterdaySummary", "latest diary\n", { localDate: "2026-06-01", now: "2026-06-01T08:00:00.000Z" });
 
-  const response = createResponse();
+  let response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", { target: "persistent" }), response);
+  let body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.entry.target, "persistent");
+  assert.equal(memoryStore.read().persistent, "older memory\n");
+
+  response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", { target: "userPreferences" }), response);
+  body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.entry.target, "userPreferences");
+  assert.equal(memoryStore.read().userPreferences, "older pref\n");
+
+  response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", {}), response);
-  const body = JSON.parse(response.body);
+  body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
+  assert.equal(body.entry.target, "yesterdaySummary");
   assert.equal(body.entry.localDate, "2026-06-01");
   assert.equal(memoryStore.read().yesterdaySummary, "older diary\n");
-  assert.equal(diaryStore.latestEntry()?.localDate, "2026-05-31");
 });
 
 test("memory delete-latest-sql reports when no diary entry exists", async () => {
@@ -1139,7 +1101,7 @@ function message(createdAt: string, contentText: string): StoredConversationMess
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

@@ -6,7 +6,7 @@
 
 - 平台插件：负责平台私有接收和发送实现，但必须把入站消息转换为统一的 `AgentEvent`，把消息生命周期转换为统一的 lifecycle event，并实现统一的 `ChannelPlugin.send(output)`。
 - 消息运行时：`apps/api/src/message-runtime.ts` 是 Core 侧聊天消息入口，负责写入 `messages` / `message_logs`、去抖、恢复 pending 会话、调用 `AgentCore`、落库 outbound 并驱动发送。
-- LLM 工具入口：`plugins/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`search_messages`、`send_chat`。
+- LLM 工具入口：`plugins/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`。
 - 持久化入口：`packages/storage/src/sqlite-store.ts` 的 `messages` 表保存当前聊天状态，`message_logs` 保存追加式事件和调试记录。
 
 ## 当前通用接口
@@ -171,10 +171,6 @@ LLM 不直接读取平台 API，而是通过 `plugins/messaging` 的工具读取
 
 除 preview 模式外，`check_chat` 会把返回的入站用户消息标记为 read，并同时标记 `coreProcessedAt`，避免同一批消息反复触发 Core。
 
-### `search_messages`
-
-`search_messages({ content, direction?, limit?, contextCount? })` 使用 `messages_fts` 搜索持久化消息。当前实现按目标 `plugin` 过滤，并返回命中附近的上下文块；如果 FTS 查询没有结果或失败，会回退到 `LIKE` 查询。
-
 ## LLM 出站方式
 
 LLM 发送聊天消息只能通过 `send_chat`：
@@ -276,7 +272,7 @@ export type ChannelSendResult = {
 
 - `GET /admin/api/message-logs` 展示 `messages`，即当前聊天历史状态。
 - `GET /admin/api/message-event-logs` 展示 `message_logs`，即追加式事件和调试记录。
-- 管理后台工具 preview 可显式选择目标平台调用 `check_chat`、`search_messages`、`send_chat`，但 request preview 禁止真正执行 `send_chat`。
+- 管理后台工具 preview 可显式选择目标平台调用 `check_chat`、`send_chat`，并保留后台消息搜索入口；request preview 禁止真正执行 `send_chat`。
 - 记忆归纳从 `messages` 按时间范围读取聊天记录；不要把 `logs/` 当作 Core 聊天历史来源。
 
 ## 新平台接入要求

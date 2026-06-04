@@ -114,7 +114,6 @@ target 解析规则：
 AgentCore 暴露的是通用工具，不是飞书专用工具：
 
 - `check_chat`
-- `search_messages`
 - `send_chat`
 
 兼容工具名仍存在：
@@ -125,7 +124,7 @@ AgentCore 暴露的是通用工具，不是飞书专用工具：
 当前行为要点：
 
 - `check_chat` 读取消息历史和未读上下文，并把读到的用户消息标记为已读。
-- `search_messages` 当前按目标 plugin 搜索，不按具体飞书会话强过滤。
+- 管理后台搜索入口仍可按目标 plugin 搜索消息，但不作为 LLM 可见工具暴露。
 - `send_chat` 支持文本、markdown、图片和 voice 模式。
 - voice 模式会先用默认 TTS 后端生成 opus，再通过飞书音频发送；对飞书还会发送括号包裹的 transcript 文本。
 - 发送失败会写入失败状态，并进入内存 retry queue，最多重试 3 次。

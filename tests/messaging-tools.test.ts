@@ -27,6 +27,7 @@ test("messaging tools expose merged check_chat and send_chat tools", () => {
   assert.ok(names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
+  assert.ok(!names.includes("search_messages"));
   const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
   const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
   assert.deepEqual(properties.scope, { type: "string", enum: ["today", "todayold", "recent", "new", "from_prefix", "range"] });

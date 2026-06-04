@@ -188,7 +188,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       checkChatCallsInLLMSession = 0;
     },
     listTools() {
-      return [checkChatTool, sendChatTool, searchMessagesTool];
+      return [checkChatTool, sendChatTool];
     },
     async execute(call) {
       if (call.toolName === "check_chat" || call.toolName === "check_feishu" || call.toolName === "check_wechat" || call.toolName === "view_messages") return viewMessages(call);

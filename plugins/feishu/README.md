@@ -90,9 +90,6 @@ AgentCore 向 LLM 暴露平台无关的聊天工具名：
   - 同一 LLM session 中后续调用返回全局第一条未读用户消息之后的上下文，并把读到的用户消息标记为已读。
   - 输出是给 LLM 的纯文本。相邻消息按类微信时间合并：小于 5 分钟间隔的消息共享一个 `[local time]` header，后面跟 `user/Alice:{content}[reaction][已撤回]` 行。
   - 没有新消息时返回 `nothing new`。
-- `search_messages`
-  - 参数：`content` 必填；`direction`、`limit`、`contextCount` 可选。
-  - 当前按目标 plugin 搜索消息，不按具体飞书会话过滤。
 - `send_chat`
   - 参数：`type: "message" | "markdown" | "image" | "voice"` 与 `content`；应先提供 `type`，再提供 `content`。
   - `message` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条文本消息。

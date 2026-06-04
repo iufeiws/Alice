@@ -71,7 +71,6 @@ AgentCore 的 active LLM session 有一个可扩展的 `mode`。Mode 是会话�
 当前运行时向 LLM 暴露平台无关的聊天工具名：
 
 - `check_chat()`：查看聊天记录。同一 LLM 会话内首次调用默认返回从最近一次 sleep_cocoon in 之后开始的消息；后续调用返回新增消息。`scope=from_prefix` 由 AgentCore 在固定前缀模式下内部注入游标。
-- `search_messages({ content, direction?, limit?, contextCount? })`：搜索持久化消息，并返回命中附近的上下文块。当前搜索按目标 plugin 过滤，尚未按具体会话过滤。
 - `send_chat({ type, content })`：发送消息到当前聊天会话。调用时应先提供 `type`，再提供 `content`。`message` 和 `voice` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条消息，并按内容字数节流发送；`voice` 模式会把每段 `content` 文字合成为语音后发送。
 - `selfie({ action, aspectRatio? })`：生成并发送一张 Alice 自拍；默认 `aspectRatio` 为 `3:4`，连续两次调用会被拒绝。
 - `wardrobe({ action, name? })`：查看或切换服装。`action="list"` 返回衣橱，可用 `name` 按服装名、id、group 或内容模糊过滤；`action="mirror"` 返回镜中当前服装；`action="switch"` 按服装名切换服装，不写壳切换提示。

@@ -1,8 +1,10 @@
 import type { MemorySummaryConfig } from "../../../packages/config/src/index.js";
 import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../packages/storage/src/diary-store.js";
+import * as sqlite from "../../../packages/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
+import { createWorkspaceFilesTools, formatReadOutput } from "../../../plugins/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";
@@ -25,6 +27,7 @@ export type MemorySnapshot = {
 export type MemoryFileStats = {
   target: MemoryTarget;
   fileName: string;
+  tableName: string;
   content: string;
   lines: number;
   bytes: number;
@@ -61,9 +64,21 @@ export type MemoryStore = {
   readTarget(target: MemoryTarget): string;
   write(snapshot: MemorySnapshot): MemorySnapshot;
   writeTarget(target: MemoryTarget, content: string, options?: MemoryWriteOptions): string;
+  commitWorkspaceSnapshot?(snapshot: MemorySnapshot, options?: MemoryWriteOptions & { runId?: string }): MemorySnapshot;
+  createWorkspaceDraft?(options?: { now?: string; runId?: string }): MemoryWorkspaceDraft;
+  deleteLatestEntry?(target: MemoryTarget): { id: number; target: MemoryTarget; localDate?: string; content: string } | undefined;
+  deleteLatestDiaryEntry?(): { id: number; localDate: string; content: string } | undefined;
   createDiaryDraft(): string;
   commitDiaryDraft(draftPath: string, options?: MemoryWriteOptions): string;
   stats(): MemoryFileStats[];
+};
+
+export type MemoryWorkspaceDraft = {
+  runId: string;
+  root: string;
+  files: Record<MemoryTarget, string>;
+  cleanup(): void;
+  readSnapshot(): MemorySnapshot;
 };
 
 export type MemoryWriteOptions = {
@@ -164,7 +179,7 @@ export const memoryFileLimits = {
 const targetFiles: Record<MemoryTarget, string> = {
   persistent: "persistent-memory.md",
   userPreferences: "user-preferences.md",
-  yesterdaySummary: "diary.sqlite"
+  yesterdaySummary: "diary.md"
 };
 
 type MemoryResultFile = "persistent-memory" | "user-preferences" | "diary";
@@ -188,7 +203,7 @@ const targetTitles: Record<MemoryTarget, string> = {
 };
 
 const maxMessagesPerSummary = 10_000;
-const memoryToolRoundLimit = 20;
+const memoryToolRoundLimit = 30;
 const memoryInductionMaxAttempts = 3;
 
 const fullwidthLettersAndDigits = "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ０１２３４５６７８９";
@@ -233,37 +248,106 @@ export const commonHalfwidthNormalizationMap: Readonly<Record<string, string>> =
 });
 
 export function createMarkdownMemoryStore(root: string): MemoryStore {
-  function filePath(target: MemoryTarget): string {
-    return path.join(root, targetDirectories[target], targetFiles[target]);
+  const longTermDbPath = memoryDatabasePath(root);
+  let longTermDb: any | undefined;
+
+  function db(): any {
+    if (!longTermDb) {
+      fs.mkdirSync(path.dirname(longTermDbPath), { recursive: true });
+      longTermDb = new sqlite.DatabaseSync(longTermDbPath);
+      longTermDb.exec("PRAGMA journal_mode = WAL");
+      initializeLongTermMemoryDb(longTermDb);
+    }
+    return longTermDb;
   }
-  const diaryStore = createOptionalDiaryStore(root);
+
+  function latestDiaryContent(): string {
+    thisEnsure();
+    const row = db().prepare(`
+      SELECT content
+      FROM diary_entries
+      ORDER BY local_date DESC, id DESC
+      LIMIT 1
+    `).get() as { content?: string } | undefined;
+    return row?.content ?? "";
+  }
+
+  function upsertDiaryContent(content: string, options?: MemoryWriteOptions): string {
+    const limited = enforceTargetLimit("yesterdaySummary", content);
+    const localDate = options?.localDate ?? options?.windowEndAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+    db().prepare(`
+      INSERT INTO diary_entries(local_date, content, created_at, updated_at, window_start_at, window_end_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(local_date) DO UPDATE SET
+        content = excluded.content,
+        updated_at = excluded.updated_at,
+        window_start_at = excluded.window_start_at,
+        window_end_at = excluded.window_end_at
+    `).run(
+      localDate,
+      limited,
+      options?.now ?? new Date().toISOString(),
+      options?.now ?? new Date().toISOString(),
+      options?.windowStartAt ?? null,
+      options?.windowEndAt ?? null
+    );
+    return limited;
+  }
+
+  function readLongTermTarget(target: "persistent" | "userPreferences"): string {
+    thisEnsure();
+    const tableName = longTermTableName(target);
+    const row = db().prepare(`
+      SELECT content
+      FROM ${tableName}
+      ORDER BY id DESC
+      LIMIT 1
+    `).get() as { content?: string } | undefined;
+    return row?.content ?? "";
+  }
+
+  function appendLongTermTarget(target: "persistent" | "userPreferences", content: string, options?: MemoryWriteOptions & { runId?: string }): string {
+    const limited = enforceTargetLimit(target, content);
+    const tableName = longTermTableName(target);
+    db().prepare(`
+      INSERT INTO ${tableName}(content, created_at, window_start_at, window_end_at, run_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      limited,
+      options?.now ?? new Date().toISOString(),
+      options?.windowStartAt ?? null,
+      options?.windowEndAt ?? null,
+      options?.runId ?? null
+    );
+    return limited;
+  }
+
+  function thisEnsure(): void {
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(path.join(root, "long-term-memory"), { recursive: true });
+    fs.mkdirSync(path.join(root, "diary"), { recursive: true });
+    fs.mkdirSync(path.join(root, "diary", "tmp"), { recursive: true });
+    fs.mkdirSync(path.join(root, "tmp", "memory-workspaces"), { recursive: true });
+    db();
+    migrateLegacyLongTermMarkdown(root, db());
+  }
 
   return {
     ensure() {
-      fs.mkdirSync(root, { recursive: true });
-      for (const target of ["persistent", "userPreferences"] as MemoryTarget[]) {
-        const dir = path.join(root, targetDirectories[target]);
-        fs.mkdirSync(dir, { recursive: true });
-        const fullPath = path.join(dir, targetFiles[target]);
-        if (!fs.existsSync(fullPath)) fs.writeFileSync(fullPath, "");
-      }
-      fs.mkdirSync(path.join(root, "diary"), { recursive: true });
-      fs.mkdirSync(path.join(root, "diary", "tmp"), { recursive: true });
-      ensureGitRepo(path.join(root, "long-term-memory"));
-      commitLongTermMemoryBaseline(root);
+      thisEnsure();
     },
     read() {
       this.ensure();
       return {
-        persistent: readFile(filePath("persistent")),
-        userPreferences: readFile(filePath("userPreferences")),
-        yesterdaySummary: diaryStore.latestEntry()?.content ?? ""
+        persistent: readLongTermTarget("persistent"),
+        userPreferences: readLongTermTarget("userPreferences"),
+        yesterdaySummary: latestDiaryContent()
       };
     },
     readTarget(target) {
       this.ensure();
       if (target === "yesterdaySummary") return "";
-      return readFile(filePath(target));
+      return readLongTermTarget(target);
     },
     write(snapshot) {
       this.ensure();
@@ -281,21 +365,89 @@ export function createMarkdownMemoryStore(root: string): MemoryStore {
           writeAtomic(options.diaryDraftPath, limited);
           return limited;
         }
-        const localDate = options?.localDate ?? options?.windowEndAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
-        diaryStore.upsertEntry({
-          localDate,
-          content: limited,
-          now: options?.now ?? new Date().toISOString(),
-          windowStartAt: options?.windowStartAt,
-          windowEndAt: options?.windowEndAt
-        });
+        return upsertDiaryContent(limited, options);
+      }
+      return appendLongTermTarget(target, limited, options);
+    },
+    commitWorkspaceSnapshot(snapshot, options) {
+      this.ensure();
+      const limited = enforceMemoryLimits(snapshot);
+      const database = db();
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        appendLongTermTarget("persistent", limited.persistent, options);
+        appendLongTermTarget("userPreferences", limited.userPreferences, options);
+        upsertDiaryContent(limited.yesterdaySummary, options);
+        database.exec("COMMIT");
         return limited;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
       }
-      writeAtomic(filePath(target), limited);
-      if (target === "persistent" || target === "userPreferences") {
-        commitLongTermMemory(root, target, targetFiles[target]);
+    },
+    deleteLatestEntry(target) {
+      this.ensure();
+      const database = db();
+      const entry = target === "yesterdaySummary"
+        ? database.prepare(`
+          SELECT id, local_date AS localDate, content
+          FROM diary_entries
+          ORDER BY local_date DESC, id DESC
+          LIMIT 1
+        `).get() as { id: number; localDate?: string; content: string } | undefined
+        : database.prepare(`
+          SELECT id, content
+          FROM ${longTermTableName(target)}
+          ORDER BY id DESC
+          LIMIT 1
+        `).get() as { id: number; localDate?: string; content: string } | undefined;
+      if (!entry) return undefined;
+      const tableName = target === "yesterdaySummary" ? "diary_entries" : longTermTableName(target);
+      database.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(entry.id);
+      return { ...entry, target };
+    },
+    deleteLatestDiaryEntry() {
+      const entry = this.deleteLatestEntry?.("yesterdaySummary");
+      return entry ? { id: entry.id, localDate: entry.localDate ?? "", content: entry.content } : undefined;
+    },
+    createWorkspaceDraft(options) {
+      this.ensure();
+      const runId = sanitizeRunId(options?.runId ?? `${Date.now()}-${process.pid}`);
+      let draftRoot = path.join(root, "tmp", "memory-workspaces", runId);
+      let suffix = 2;
+      while (fs.existsSync(draftRoot)) {
+        draftRoot = path.join(root, "tmp", "memory-workspaces", `${runId}-${suffix}`);
+        suffix += 1;
       }
-      return limited;
+      fs.mkdirSync(draftRoot, { recursive: true });
+      const files = {
+        persistent: "persistent-memory.md",
+        userPreferences: "user-preferences.md",
+        yesterdaySummary: "diary.md"
+      } satisfies Record<MemoryTarget, string>;
+      const snapshot = this.read();
+      writeAtomic(path.join(draftRoot, files.persistent), snapshot.persistent);
+      writeAtomic(path.join(draftRoot, files.userPreferences), snapshot.userPreferences);
+      writeAtomic(path.join(draftRoot, files.yesterdaySummary), "");
+      return {
+        runId: path.basename(draftRoot),
+        root: draftRoot,
+        files,
+        cleanup() {
+          try {
+            if (fs.existsSync(draftRoot)) fs.rmSync(draftRoot, { recursive: true, force: true });
+          } catch {
+            // Workspace cleanup is best-effort after SQL commit has succeeded.
+          }
+        },
+        readSnapshot() {
+          return {
+            persistent: readFile(path.join(draftRoot, files.persistent)),
+            userPreferences: readFile(path.join(draftRoot, files.userPreferences)),
+            yesterdaySummary: readFile(path.join(draftRoot, files.yesterdaySummary))
+          };
+        }
+      };
     },
     createDiaryDraft() {
       this.ensure();
@@ -328,6 +480,11 @@ export function createMarkdownMemoryStore(root: string): MemoryStore {
         return {
           target,
           fileName: path.join(targetDirectories[target], targetFiles[target]),
+          tableName: target === "persistent"
+            ? "persistent_memory_entries"
+            : target === "userPreferences"
+              ? "user_preferences_entries"
+              : "diary_entries",
           content,
           lines: content.trim() ? content.trim().split(/\r?\n/).length : 0,
           bytes: utf8ByteLength(content),
@@ -355,15 +512,22 @@ export function createMemoryInductionPromptStore(filePath: string): MemoryInduct
 }
 
 export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
-  const applyPatchInstructions = currentMemoryApplyPatchInstructions();
   return {
     commonLayers: [
       layer("common_scope", "共同规则", "system", 10, [
         "你是 Alice 的记忆维护子系统。",
-        "只通过 read_memory / apply_patch 工具工作。",
-        "read_memory 返回当前记忆文件的原始文本，不带行号。",
-        "普通回复不会保存；必须调用 apply_patch({ patch }) 编辑当前记忆文件。",
-        applyPatchInstructions
+        "只通过 Read / Edit / Glob / Grep / self_talk 工具工作。",
+        "当前记忆修改任务绑定到一个临时 workspace；所有 file_path 都必须使用 workspace-relative 路径，不要使用或输出本机绝对路径。",
+        "普通回复不会保存；必须用 Read 读取目标文件后，再用 Edit 精确替换文件内容。",
+        "本轮可编辑文件路径：",
+        "- 记忆 file_path={{memorize/files/persistent/filePath}}",
+        "- 用户记忆 file_path={{memorize/files/userPreferences/filePath}}",
+        "- 日记 file_path={{memorize/files/yesterdaySummary/filePath}}",
+        "写入边界：",
+        "- 记忆：长期有效的事实、关系连续性、项目长期背景、用户明确要求长期保留的信息；不要写单日流水账。",
+        "- 用户记忆：稳定偏好、语言/语气/交互方式/实现习惯/明确禁忌/长期约束；不要把一次性任务需求误判为偏好。",
+        "- 日记：只基于本次聊天记录写当天日记摘要，不沿用旧日记内容。",
+        currentMemoryEditInstructions()
       ].join("\n")),
       layer("common_quality", "质量标准", "system", 20, [
         "保留明确、稳定、有未来价值的信息。",
@@ -379,37 +543,19 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
       ].join("\n")),
       {
         id: "common_read_memory",
-        title: "Fake read_memory",
+        title: "Fake Read",
         role: "tool_request",
         enabled: true,
         order: 90,
         content: "",
-        toolName: "read_memory",
-        toolArguments: "{}",
-        thinking: "先读取当前绑定记忆目标，保持工具上下文一致。"
+        toolName: "Read",
+        toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}",
+        thinking: "先读取长期记忆文件，保持工具上下文一致。"
       }
     ],
-    persistentLayers: [
-      layer("persistent_goal", "长期记忆专属", "system", 10, [
-        "维护持久记忆文件。",
-        "只记录长期有效的事实、关系连续性、项目长期背景、用户明确要求长期保留的信息。",
-        "不要把单日流水账写入持久记忆。"
-      ].join("\n"))
-    ],
-    userPreferencesLayers: [
-      layer("preferences_goal", "用户偏好专属", "system", 10, [
-        "维护用户偏好文件。",
-        "只记录稳定偏好：语言、语气、交互方式、实现习惯、明确禁忌、长期约束。",
-        "不要把一次性任务需求误判为偏好。"
-      ].join("\n"))
-    ],
-    yesterdaySummaryLayers: [
-      layer("yesterday_goal", "日记专属", "system", 10, [
-        "维护 agent 日记。",
-        "只基于本次聊天记录写当天日记摘要。",
-        "不要沿用旧日记内容。"
-      ].join("\n"))
-    ]
+    persistentLayers: [],
+    userPreferencesLayers: [],
+    yesterdaySummaryLayers: []
   };
 }
 
@@ -597,23 +743,20 @@ export async function runMemoryInductionForMessages(
     };
   }
 
-  const targets = targetFilter ? [targetFilter] : ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
+  const targets = ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
   const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, startedAt, {
-    name: targetFilter ? targetFilter : "run",
+    name: "run",
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt,
     timezone: deps.timezone,
     nowIso: deps.nowIso
   });
   const ownsMemorySession = deps.memorySession === undefined;
-  for (const target of targets) {
-    const result = await runSingleMemoryInductionWithRetry({ ...deps, memorySession }, target);
-    results.push(result);
-    if (!result.ok) {
-      deps.log("warn", `Memorize ${target} failed: ${result.error ?? "unknown"}`);
-      break;
-    }
-    deps.log("info", `Memorize ${target} completed`);
+  const result = await runWorkspaceMemoryInductionWithRetry({ ...deps, memorySession }, targets);
+  results.push(...result);
+  for (const entry of result) {
+    if (entry.ok) deps.log("info", `Memorize ${entry.target} completed`);
+    else deps.log("warn", `Memorize ${entry.target} failed: ${entry.error ?? "unknown"}`);
   }
   if (ownsMemorySession) {
     clearMemoryInductionSession(memorySession, startedAt, results.every((entry) => entry.ok) ? "complete" : "failed");
@@ -627,6 +770,276 @@ export async function runMemoryInductionForMessages(
     messageCount: deps.messages.length,
     results
   };
+}
+
+async function runWorkspaceMemoryInductionWithRetry(
+  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
+    messages: StoredConversationMessage[];
+    windowStartAt?: string;
+    windowEndAt: string;
+    memorySession?: MemoryInductionSession;
+  },
+  targets: MemoryTarget[]
+): Promise<MemoryRunResult[]> {
+  let lastResult: MemoryRunResult[] | undefined;
+  for (let attempt = 1; attempt <= memoryInductionMaxAttempts; attempt += 1) {
+    try {
+      const result = await runWorkspaceMemoryInduction(deps, targets);
+      if (result.every((entry) => entry.ok) || attempt >= memoryInductionMaxAttempts) return result;
+      lastResult = result;
+      const error = result.find((entry) => !entry.ok)?.error ?? "unknown";
+      deps.log("warn", `Memorize workspace attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${error}, retrying`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastResult = targets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: message, toolCalls: [] }));
+      if (attempt >= memoryInductionMaxAttempts) return lastResult;
+      deps.log("warn", `Memorize workspace attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${message}, retrying`);
+    }
+  }
+  return lastResult ?? targets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: "unknown Memorize failure", toolCalls: [] }));
+}
+
+async function runWorkspaceMemoryInduction(
+  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
+    messages: StoredConversationMessage[];
+    windowStartAt?: string;
+    windowEndAt: string;
+    memorySession?: MemoryInductionSession;
+  },
+  targets: MemoryTarget[]
+): Promise<MemoryRunResult[]> {
+  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.nowIso(), {
+    name: targets.length === 1 ? targets[0] : "run",
+    windowStartAt: deps.windowStartAt,
+    windowEndAt: deps.windowEndAt,
+    timezone: deps.timezone,
+    nowIso: deps.nowIso
+  });
+  const draft = createMemoryWorkspaceDraft(deps.memoryStore, {
+    now: deps.nowIso(),
+    runId: String(Date.parse(deps.nowIso()) || Date.now())
+  });
+  const initialSnapshot = draft.readSnapshot();
+  const workspaceTools = createWorkspaceFilesTools({ root: draft.root });
+  const toolCalls: MemoryRunResult["toolCalls"] = [];
+  let edited = false;
+  session.activeTarget = targets[0];
+  const promptMessages = buildWorkspaceMemoryPromptMessages({ ...deps, draft }, targets, {
+    includeCommonLayers: session.messages.length === 0
+  });
+  const messages = session.messages.length > 0
+    ? [...session.messages, ...promptMessages]
+    : promptMessages;
+
+  try {
+    const loopResult = await runLLMToolLoop({
+      initialMessages: messages,
+      limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
+      buildRequest({ round, messages }) {
+        const request = {
+          model: deps.config.model,
+          temperature: deps.config.temperature,
+          maxTokens: 8192,
+          extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+          tools: memoryTools(),
+          messages
+        };
+        deps.onRound?.(targets[0], round + 1);
+        session.append?.({ type: "request", round: session.roundOffset + round, request });
+        return {
+          agentId: "memorize",
+          client: deps.llm,
+          messages,
+          model: deps.config.model,
+          temperature: deps.config.temperature,
+          maxTokens: 8192,
+          extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+          toolNames: [...memoryToolNames],
+          stream: deps.config.stream === true,
+          metadata: { target: targets.length === 1 ? targets[0] : "workspace" }
+        };
+      },
+      sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
+      afterRequest({ round, result }) {
+        session.append?.({ type: "response", round: session.roundOffset + round, response: result });
+      },
+      beforeTool({ round, call }) {
+        deps.onRound?.(targets[0], round + 1, call.function.name);
+      },
+      async executeTool(call): Promise<LLMToolLoopExecution> {
+        const input = parsePromptToolArguments(call.function.arguments);
+        if (call.function.name === "self_talk") {
+          const content = typeof input.content === "string" ? input.content : "";
+          const output = `爱丽丝听到自己说:\n${content}`;
+          toolCalls.push({ name: "self_talk", file: resultFileForToolInput(input, draft), input, ok: true, output });
+          return { message: { role: "tool", name: "self_talk", toolCallId: call.id, content: output } };
+        }
+        if (isWorkspaceFileTool(call.function.name)) {
+          const result = await workspaceTools.execute({ id: call.id, toolName: call.function.name, input });
+          const output = result.ok ? stringifyToolOutput(result.output) : `error: ${result.error ?? "unknown tool error"}`;
+          const file = resultFileForToolInput(input, draft);
+          toolCalls.push({ name: call.function.name, file, input, ok: result.ok, output: result.ok ? output : undefined, error: result.ok ? undefined : result.error });
+          if (result.ok && call.function.name === "Edit") edited = true;
+          return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: output } };
+        }
+        const error = `unknown tool: ${call.function.name}`;
+        toolCalls.push({ name: call.function.name, file: "persistent-memory", input, ok: false, error });
+        return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: `error: ${error}` } };
+      },
+      onMessagesChanged({ messages }) {
+        session.messages = messages;
+        session.append?.({ type: "final_messages", messages });
+      }
+    });
+    session.roundOffset += loopResult.rounds;
+    for (const target of targets) {
+      if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
+    }
+    session.activeTarget = undefined;
+
+    if (loopResult.stopReason !== "completed") {
+      return targets.map((target) => ({
+        target,
+        ok: false,
+        edited,
+        rounds: loopResult.rounds,
+        error: "model did not finish memory induction within tool round limit",
+        toolCalls,
+        response: loopResult.finalResult?.message
+      }));
+    }
+
+    const finalSnapshot = enforceMemoryLimits(draft.readSnapshot());
+    const committed = deps.memoryStore.commitWorkspaceSnapshot
+      ? deps.memoryStore.commitWorkspaceSnapshot(finalSnapshot, {
+        now: deps.nowIso(),
+        localDate: deps.windowEndAt.slice(0, 10),
+        windowStartAt: deps.windowStartAt,
+        windowEndAt: deps.windowEndAt,
+        runId: draft.runId
+      })
+      : deps.memoryStore.write(finalSnapshot);
+    session.append?.({
+      type: "memory_workspace_commit",
+      files: Object.values(draft.files),
+      runId: draft.runId,
+      lines: {
+        persistent: lineCount(committed.persistent),
+        userPreferences: lineCount(committed.userPreferences),
+        yesterdaySummary: lineCount(committed.yesterdaySummary)
+      }
+    });
+    return targets.map((target) => ({
+      target,
+      ok: true,
+      edited: initialSnapshot[target] !== finalSnapshot[target],
+      rounds: loopResult.rounds,
+      toolCalls,
+      response: loopResult.finalResult?.message
+    }));
+  } finally {
+    draft.cleanup();
+  }
+}
+
+function createMemoryWorkspaceDraft(memoryStore: MemoryStore, options: { now?: string; runId?: string }): MemoryWorkspaceDraft {
+  if (memoryStore.createWorkspaceDraft) return memoryStore.createWorkspaceDraft(options);
+  const root = path.join("/tmp", `alice-memory-workspace-${sanitizeRunId(options.runId ?? `${Date.now()}-${process.pid}`)}`);
+  fs.mkdirSync(root, { recursive: true });
+  const files = {
+    persistent: "persistent-memory.md",
+    userPreferences: "user-preferences.md",
+    yesterdaySummary: "diary.md"
+  } satisfies Record<MemoryTarget, string>;
+  const snapshot = memoryStore.read();
+  writeAtomic(path.join(root, files.persistent), snapshot.persistent);
+  writeAtomic(path.join(root, files.userPreferences), snapshot.userPreferences);
+  writeAtomic(path.join(root, files.yesterdaySummary), "");
+  return {
+    runId: path.basename(root),
+    root,
+    files,
+    cleanup() {
+      try {
+        if (fs.existsSync(root)) fs.rmSync(root, { recursive: true, force: true });
+      } catch {
+        // Workspace cleanup is best-effort.
+      }
+    },
+    readSnapshot() {
+      return {
+        persistent: readFile(path.join(root, files.persistent)),
+        userPreferences: readFile(path.join(root, files.userPreferences)),
+        yesterdaySummary: readFile(path.join(root, files.yesterdaySummary))
+      };
+    }
+  };
+}
+
+function buildWorkspaceMemoryPromptMessages(
+  deps: {
+    memoryStore: MemoryStore;
+    promptStore: Pick<MemoryInductionPromptStore, "get">;
+    messages: StoredConversationMessage[];
+    windowStartAt?: string;
+    windowEndAt: string;
+    timezone: string;
+    userName?: string;
+    draft: MemoryWorkspaceDraft;
+  },
+  targets: MemoryTarget[],
+  options?: { includeCommonLayers?: boolean }
+): LLMMessage[] {
+  const variables = memoryPromptVariables(deps, targets[0] ?? "persistent", deps.draft);
+  const prompts = deps.promptStore.get();
+  const layers = memoryPromptLayersForTargets(prompts, options);
+  const messages: LLMMessage[] = [];
+  for (const layer of layers) {
+    const message = promptLayerToMessage(layer, variables, {
+      defaultToolName: "Read",
+      toolCallIdPrefix: "memory_prompt",
+      allowedToolNames: ["Read", "self_talk"]
+    });
+    messages.push(message);
+    if (layer.role !== "tool_request") continue;
+    const call = message.toolCalls?.[0];
+    if (!call) continue;
+    messages.push({
+      role: "tool",
+      name: call.function.name,
+      toolCallId: call.id,
+      content: memoryPromptToolResult({ memoryStore: deps.memoryStore, draft: deps.draft }, targets[0] ?? "persistent", call.function.name, call.function.arguments)
+    });
+  }
+  return messages;
+}
+
+function memoryPromptLayersForTargets(
+  prompts: MemoryInductionPrompts,
+  options?: { includeCommonLayers?: boolean }
+): MemoryPromptLayer[] {
+  const sortEnabled = (layers: MemoryPromptLayer[]) => layers
+    .filter((item) => item.enabled !== false)
+    .sort((left, right) => left.order - right.order);
+  return [
+    ...(options?.includeCommonLayers === false ? [] : sortEnabled(prompts.commonLayers))
+  ];
+}
+
+function isWorkspaceFileTool(name: string): boolean {
+  return name === "Read" || name === "Edit" || name === "Glob" || name === "Grep";
+}
+
+function stringifyToolOutput(output: unknown): string {
+  if (typeof output === "string") return output;
+  return output === undefined ? "" : JSON.stringify(output);
+}
+
+function resultFileForToolInput(input: Record<string, unknown>, draft: MemoryWorkspaceDraft): MemoryResultFile {
+  const filePath = typeof input.file_path === "string" ? input.file_path : "";
+  if (filePath === draft.files.userPreferences) return "user-preferences";
+  if (filePath === draft.files.yesterdaySummary) return "diary";
+  return "persistent-memory";
 }
 
 async function runSingleMemoryInductionWithRetry(
@@ -941,9 +1354,9 @@ function buildMemoryPromptMessages(
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
     const message = promptLayerToMessage(layer, variables, {
-      defaultToolName: "read_memory",
+      defaultToolName: "Read",
       toolCallIdPrefix: "memory_prompt",
-      allowedToolNames: ["read_memory", "self_talk"]
+      allowedToolNames: ["Read", "self_talk"]
     });
     messages.push(message);
     if (layer.role !== "tool_request") continue;
@@ -979,7 +1392,7 @@ function memoryPromptLayers(
 }
 
 function memoryPromptToolResult(
-  deps: { memoryStore: MemoryStore; diaryDraftPath?: string },
+  deps: { memoryStore: MemoryStore; diaryDraftPath?: string; draft?: MemoryWorkspaceDraft },
   target: MemoryTarget,
   toolName: string,
   rawArguments = "{}"
@@ -989,8 +1402,26 @@ function memoryPromptToolResult(
     const content = typeof input.content === "string" ? input.content : "";
     return `爱丽丝听到自己说:\n${content}`;
   }
+  if (toolName === "Read") {
+    const input = parsePromptToolArguments(rawArguments);
+    const filePath = typeof input.file_path === "string" ? input.file_path : targetFiles[target];
+    const content = deps.draft
+      ? readDraftFile(deps.draft, filePath)
+      : readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath);
+    const offset = typeof input.offset === "number" ? input.offset : undefined;
+    const limit = typeof input.limit === "number" ? input.limit : undefined;
+    return formatReadOutput(content, { offset, limit });
+  }
   if (toolName !== "read_memory") return `error: unsupported prompt tool ${toolName}`;
   return formatReadMemoryResult(target, readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath));
+}
+
+function readDraftFile(draft: MemoryWorkspaceDraft, filePath: string): string {
+  if (path.isAbsolute(filePath)) return "";
+  const resolved = path.resolve(draft.root, filePath);
+  const relative = path.relative(draft.root, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return readFile(resolved);
 }
 
 function formatReadMemoryResult(target: MemoryTarget, content: string): string {
@@ -1030,12 +1461,15 @@ function memoryPromptVariables(
     userName?: string;
     memoryStore: MemoryStore;
     diaryDraftPath?: string;
+    draft?: MemoryWorkspaceDraft;
   },
-  target: MemoryTarget
+  target: MemoryTarget,
+  draft?: MemoryWorkspaceDraft
 ): LLMTextVariables {
-  const currentContent = readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath);
+  const workspaceDraft = draft ?? deps.draft;
+  const snapshot = workspaceDraft?.readSnapshot() ?? deps.memoryStore.read();
+  const currentContent = workspaceDraft ? snapshot[target] : readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath);
   const limits = memoryFileLimits[target];
-  const snapshot = deps.memoryStore.read();
   const memoryVariables = {
     persistent: {
       content: snapshot.persistent,
@@ -1065,8 +1499,29 @@ function memoryPromptVariables(
         target: {
           key: target,
           title: targetTitles[target],
-          fileName: target === "yesterdaySummary" ? "diary.sqlite" : targetFiles[target],
+          fileName: workspaceDraft?.files[target] ?? targetFiles[target],
           currentContent: currentContent || ""
+        },
+        workspace: workspaceDraft ? {
+          files: {
+            persistent: workspaceDraft.files.persistent,
+            userPreferences: workspaceDraft.files.userPreferences,
+            yesterdaySummary: workspaceDraft.files.yesterdaySummary
+          }
+        } : undefined,
+        files: {
+          persistent: {
+            filePath: workspaceDraft?.files.persistent ?? targetFiles.persistent,
+            description: "长期事实、关系连续性、项目长期背景"
+          },
+          userPreferences: {
+            filePath: workspaceDraft?.files.userPreferences ?? targetFiles.userPreferences,
+            description: "用户稳定偏好、交互方式、长期约束"
+          },
+          yesterdaySummary: {
+            filePath: workspaceDraft?.files.yesterdaySummary ?? targetFiles.yesterdaySummary,
+            description: "本轮窗口日记摘要"
+          }
         },
         limit: {
           lines: limits.lines,
@@ -1099,7 +1554,18 @@ function memoryLimitVariables(target: MemoryTarget): LLMTextVariables {
   };
 }
 
-export const memoryToolNames = ["read_memory", "self_talk", "apply_patch"] as const;
+export const memoryToolNames = ["Read", "Edit", "Glob", "Grep", "self_talk"] as const;
+
+function currentMemoryEditInstructions(): string {
+  return [
+    "Claude Code 风格文件工具规则：",
+    "- Read({ file_path, offset?, limit? }) 读取 workspace-relative 文件并返回带行号内容。",
+    "- Edit({ file_path, old_string, new_string, replace_all? }) 做精确字符串替换；必须先 Read 同一文件。",
+    "- old_string 必须完全匹配文件内容。多处匹配时请增加上下文，或确认全部替换时使用 replace_all。",
+    "- Glob/Grep 只用于在临时 workspace 内查找文件或内容。",
+    "- 完成前请确保 persistent-memory.md、user-preferences.md、diary.md 都是最终内容。"
+  ].join("\n");
+}
 
 function currentMemoryApplyPatchInstructions(): string {
   return [
@@ -1142,17 +1608,8 @@ function currentMemoryApplyPatchInstructions(): string {
 }
 
 export function memoryToolDefinitions(): ToolDefinition[] {
-  const applyPatchInstructions = currentMemoryApplyPatchInstructions();
   return [
-    {
-      name: "read_memory",
-      description: "读取当前归纳任务绑定的记忆文件",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false
-      }
-    },
+    ...createWorkspaceFilesTools({ root: process.cwd() }).listTools(),
     {
       name: "self_talk",
       description: "对自己说话",
@@ -1165,21 +1622,6 @@ export function memoryToolDefinitions(): ToolDefinition[] {
           }
         },
         required: ["content"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "apply_patch",
-      description: applyPatchInstructions,
-      inputSchema: {
-        type: "object",
-        properties: {
-          patch: {
-            type: "string",
-            description: "The full current-file patch text, including *** Begin Patch and *** End Patch."
-          }
-        },
-        required: ["patch"],
         additionalProperties: false
       }
     }
@@ -1462,11 +1904,30 @@ function writeMemoryInductionPrompts(filePath: string, prompts: MemoryInductionP
 function normalizeMemoryInductionPrompts(value: Partial<MemoryInductionPrompts>): MemoryInductionPrompts {
   const fallback = defaultMemoryInductionPrompts();
   return {
-    commonLayers: normalizePromptLayers(value.commonLayers, fallback.commonLayers),
-    persistentLayers: normalizePromptLayers(value.persistentLayers, fallback.persistentLayers),
-    userPreferencesLayers: normalizePromptLayers(value.userPreferencesLayers, fallback.userPreferencesLayers),
-    yesterdaySummaryLayers: normalizePromptLayers(value.yesterdaySummaryLayers, fallback.yesterdaySummaryLayers)
+    commonLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.commonLayers, fallback.commonLayers)),
+    persistentLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.persistentLayers, fallback.persistentLayers)),
+    userPreferencesLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.userPreferencesLayers, fallback.userPreferencesLayers)),
+    yesterdaySummaryLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.yesterdaySummaryLayers, fallback.yesterdaySummaryLayers))
   };
+}
+
+function migrateMemoryPromptLayers(layers: MemoryPromptLayer[]): MemoryPromptLayer[] {
+  return layers.map((layer) => {
+    if (layer.role !== "tool_request") return layer;
+    if (layer.toolName === "Read" && layer.toolArguments === "{\"file_path\":\"persistent-memory.md\"}") {
+      return {
+        ...layer,
+        toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+      };
+    }
+    if (layer.toolName !== "read_memory") return layer;
+    return {
+      ...layer,
+      title: layer.title === "Fake read_memory" ? "Fake Read" : layer.title,
+      toolName: "Read",
+      toolArguments: layer.toolArguments && layer.toolArguments !== "{}" ? layer.toolArguments : "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+    };
+  });
 }
 
 function layer(id: string, title: string, role: MemoryPromptLayer["role"], order: number, content: string): MemoryPromptLayer {
@@ -1477,6 +1938,129 @@ function readFile(filePath: string): string {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
 }
 
+function initializeLongTermMemoryDb(db: any): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS persistent_memory_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      window_start_at TEXT,
+      window_end_at TEXT,
+      run_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS persistent_memory_entries_latest_idx
+      ON persistent_memory_entries(id DESC);
+    CREATE TABLE IF NOT EXISTS user_preferences_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      window_start_at TEXT,
+      window_end_at TEXT,
+      run_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS user_preferences_entries_latest_idx
+      ON user_preferences_entries(id DESC);
+    CREATE TABLE IF NOT EXISTS diary_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      local_date TEXT NOT NULL UNIQUE,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      window_start_at TEXT,
+      window_end_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS diary_entries_local_date_idx ON diary_entries(local_date);
+    CREATE TABLE IF NOT EXISTS sleep_boundaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at TEXT NOT NULL UNIQUE,
+      occurred_at_utc TEXT,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_idx ON sleep_boundaries(occurred_at);
+    CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_utc_idx ON sleep_boundaries(occurred_at_utc);
+    CREATE TABLE IF NOT EXISTS sleep_preparation_boundaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at TEXT NOT NULL,
+      occurred_at_utc TEXT,
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_idx ON sleep_preparation_boundaries(occurred_at);
+    CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc);
+  `);
+}
+
+function longTermTableName(target: "persistent" | "userPreferences"): "persistent_memory_entries" | "user_preferences_entries" {
+  return target === "persistent" ? "persistent_memory_entries" : "user_preferences_entries";
+}
+
+function migrateLegacyLongTermMarkdown(root: string, db: any): void {
+  for (const target of ["persistent", "userPreferences"] as const) {
+    const tableName = longTermTableName(target);
+    const existing = db.prepare(`SELECT id FROM ${tableName} LIMIT 1`).get();
+    if (existing) continue;
+    const legacyEntry = readLegacyLongTermSqlEntry(db, target);
+    if (legacyEntry) {
+      db.prepare(`
+        INSERT INTO ${tableName}(content, created_at, window_start_at, window_end_at, run_id)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        enforceTargetLimit(target, legacyEntry.content),
+        legacyEntry.createdAt,
+        legacyEntry.windowStartAt,
+        legacyEntry.windowEndAt,
+        legacyEntry.runId
+      );
+      continue;
+    }
+    const legacyPath = path.join(root, "long-term-memory", targetFiles[target]);
+    if (!fs.existsSync(legacyPath)) continue;
+    const content = readFile(legacyPath);
+    if (!content) continue;
+    db.prepare(`
+      INSERT INTO ${tableName}(content, created_at, window_start_at, window_end_at, run_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(enforceTargetLimit(target, content), new Date().toISOString(), null, null, "legacy-markdown-import");
+  }
+}
+
+export function memoryDatabasePath(root: string): string {
+  return path.join(root, "long-term-memory", "long-term-memory.sqlite");
+}
+
+export function createMemoryDiaryStore(root: string): DiaryStore {
+  createMarkdownMemoryStore(root).ensure();
+  return createDiaryStore(memoryDatabasePath(root));
+}
+
+function readLegacyLongTermSqlEntry(db: any, target: "persistent" | "userPreferences"): { content: string; createdAt: string; windowStartAt?: string; windowEndAt?: string; runId?: string } | undefined {
+  try {
+    const row = db.prepare(`
+      SELECT content, created_at AS createdAt, window_start_at AS windowStartAt, window_end_at AS windowEndAt, run_id AS runId
+      FROM long_term_memory_entries
+      WHERE target = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(target) as { content?: string; createdAt?: string; windowStartAt?: string; windowEndAt?: string; runId?: string } | undefined;
+    if (!row?.content) return undefined;
+    return {
+      content: row.content,
+      createdAt: row.createdAt ?? new Date().toISOString(),
+      windowStartAt: row.windowStartAt || undefined,
+      windowEndAt: row.windowEndAt || undefined,
+      runId: row.runId || "legacy-long-term-table-import"
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeRunId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 120) || "run";
+}
+
 function writeAtomic(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -1485,7 +2069,7 @@ function writeAtomic(filePath: string, content: string): void {
 }
 
 function createOptionalDiaryStore(root: string): DiaryStore {
-  return createDiaryStore(path.join(root, "diary", "diary.sqlite"));
+  return createMemoryDiaryStore(root);
 }
 
 function ensureGitRepo(dir: string): void {

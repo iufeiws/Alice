@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createMarkdownMemoryStore,
+  createMemoryDiaryStore,
   createMemoryInductionPromptStore,
   createSleepMemoryStateStore,
   enforceMemoryLimits,
@@ -11,6 +12,7 @@ import {
 } from "../core/agent/src/memory.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import { createDiaryStore } from "../packages/storage/src/diary-store.js";
+import * as sqlite from "../packages/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
@@ -21,10 +23,8 @@ test("memory store bootstraps files and enforces line and byte limits", () => {
   const store = createMarkdownMemoryStore(root);
   store.ensure();
 
-  assert.equal(fs.existsSync(path.join(root, "long-term-memory", "persistent-memory.md")), true);
-  assert.equal(fs.existsSync(path.join(root, "long-term-memory", "user-preferences.md")), true);
-  assert.equal(fs.existsSync(path.join(root, "long-term-memory", ".git")), true);
-  assert.equal(fs.existsSync(path.join(root, "diary", "diary.sqlite")), true);
+  assert.equal(fs.existsSync(path.join(root, "long-term-memory", "long-term-memory.sqlite")), true);
+  assert.equal(fs.existsSync(path.join(root, "tmp", "memory-workspaces")), true);
 
   const limited = enforceMemoryLimits({
     persistent: Array.from({ length: 200 }, (_, index) => `line ${index}`).join("\n"),
@@ -37,6 +37,78 @@ test("memory store bootstraps files and enforces line and byte limits", () => {
   assert.equal(new TextEncoder().encode(limited.userPreferences).length <= 8 * 1024, true);
   assert.equal(new TextEncoder().encode(limited.yesterdaySummary).length <= 2 * 1024, true);
   assert.equal(limited.yesterdaySummary.trim().split("\n").length, 20);
+});
+
+test("memory SQL store uses separate tables for memory, user memory, and diary", () => {
+  const root = makeTempDir("memory-separate-sql-tables");
+  const store = createMarkdownMemoryStore(root);
+  store.writeTarget("persistent", "memory\n");
+  store.writeTarget("userPreferences", "pref\n");
+  store.writeTarget("yesterdaySummary", "diary\n", { localDate: "2026-06-04", now: "2026-06-04T08:00:00.000Z" });
+  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+
+  assert.equal(db.prepare("SELECT content FROM persistent_memory_entries ORDER BY id DESC LIMIT 1").get().content, "memory\n");
+  assert.equal(db.prepare("SELECT content FROM user_preferences_entries ORDER BY id DESC LIMIT 1").get().content, "pref\n");
+  assert.equal(db.prepare("SELECT content FROM diary_entries ORDER BY id DESC LIMIT 1").get().content, "diary\n");
+  assert.deepEqual(store.stats().map((entry) => entry.tableName), ["persistent_memory_entries", "user_preferences_entries", "diary_entries"]);
+});
+
+test("memory SQL store keeps sleep boundaries in separate tables", () => {
+  const root = makeTempDir("memory-sleep-boundary-tables");
+  const store = createMarkdownMemoryStore(root);
+  store.ensure();
+  const diaryStore = createMemoryDiaryStore(root);
+  diaryStore.recordSleepBoundary({
+    occurredAt: "2026-06-04T01:00:00.000",
+    occurredAtUtc: "2026-06-03T17:00:00.000Z",
+    source: "sleep",
+    now: "2026-06-04T01:00:00.000",
+    nowUtc: "2026-06-03T17:00:00.000Z"
+  });
+  diaryStore.recordSleepPreparationBoundary({
+    occurredAt: "2026-06-04T00:30:00.000",
+    occurredAtUtc: "2026-06-03T16:30:00.000Z",
+    now: "2026-06-04T01:00:00.000",
+    nowUtc: "2026-06-03T17:00:00.000Z"
+  });
+  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM diary_entries").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sleep_boundaries").get().count, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sleep_preparation_boundaries").get().count, 1);
+});
+
+test("memory SQL store does not import current diary sqlite entries", () => {
+  const root = makeTempDir("memory-ignore-current-diary-sqlite");
+  const legacyStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
+  legacyStore.upsertEntry({
+    localDate: "2026-06-04",
+    content: "legacy diary\n",
+    now: "2026-06-04T01:00:00.000",
+    windowStartAt: "2026-06-03T20:00:00.000",
+    windowEndAt: "2026-06-04T01:00:00.000"
+  });
+  legacyStore.recordSleepBoundary({
+    occurredAt: "2026-06-04T01:00:00.000",
+    occurredAtUtc: "2026-06-03T17:00:00.000Z",
+    source: "sleep",
+    now: "2026-06-04T01:00:00.000",
+    nowUtc: "2026-06-03T17:00:00.000Z"
+  });
+  legacyStore.recordSleepPreparationBoundary({
+    occurredAt: "2026-06-04T00:30:00.000",
+    occurredAtUtc: "2026-06-03T16:30:00.000Z",
+    now: "2026-06-04T01:00:00.000",
+    nowUtc: "2026-06-03T17:00:00.000Z"
+  });
+
+  createMarkdownMemoryStore(root).ensure();
+  const migratedStore = createMemoryDiaryStore(root);
+  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM diary_entries").get().count, 0);
+  assert.deepEqual(migratedStore.listSleepBoundaries().map((entry) => entry.occurredAt), []);
+  assert.deepEqual(migratedStore.listSleepPreparationBoundaries().map((entry) => entry.occurredAt), []);
 });
 
 test("diary store keeps sleep preparation boundaries as a stack", () => {
@@ -66,10 +138,10 @@ test("diary store keeps sleep preparation boundaries as a stack", () => {
   assert.deepEqual(store.listSleepPreparationBoundaries().map((boundary) => boundary.id), [first.id]);
 });
 
-test("apply_patch normalizes configured fullwidth characters in written memory", async () => {
+test("workspace Edit updates SQL-backed long-term memory", async () => {
   const root = makeTempDir("memory-patch-normalize");
   const memoryStore = createMarkdownMemoryStore(root);
-  memoryStore.writeTarget("persistent", "ＡＢＣ，测试（one）。\n未触碰：＃＠＆＊＋＝＜＞＿｜\n");
+  memoryStore.writeTarget("persistent", "old persistent\n");
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
@@ -77,15 +149,7 @@ test("apply_patch normalizes configured fullwidth characters in written memory",
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
-    llm: editToolClient([], [
-      [
-        "*** Begin Patch",
-        "@@",
-        "-ABC,测试(one).",
-        "+新增：ａｂｃ１２３／路径＼名字－OK～",
-        "*** End Patch"
-      ].join("\n")
-    ]),
+    llm: editToolClient([], [replacePatch("old persistent\n", "new persistent\n")]),
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
@@ -94,10 +158,11 @@ test("apply_patch normalizes configured fullwidth characters in written memory",
   }, "persistent");
 
   assert.equal(result.ok, true);
-  assert.equal(memoryStore.read().persistent, "新增:abc123/路径\\名字-OK~\n未触碰:#@&*+=<>_|\n");
+  assert.equal(result.ok, true);
+  assert.equal(memoryStore.read().persistent, "new persistent\n");
 });
 
-test("apply_patch reports the concrete mismatch when a patch fails", async () => {
+test("workspace Edit exact miss leaves SQL unchanged", async () => {
   const root = makeTempDir("memory-patch-error-detail");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("persistent", "old\n");
@@ -108,7 +173,7 @@ test("apply_patch reports the concrete mismatch when a patch fails", async () =>
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
-    llm: editToolClient([], [replacePatch("missing\n", "new\n")]),
+    llm: editSequenceClient([], [{ file: "persistent-memory.md", oldString: "missing\n", newString: "new\n" }]),
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
@@ -116,13 +181,11 @@ test("apply_patch reports the concrete mismatch when a patch fails", async () =>
     log() {}
   }, "persistent");
 
-  assert.match(result.results[0].toolCalls[0].error ?? "", /patch line 3/);
-  assert.match(result.results[0].toolCalls[0].error ?? "", /original line 1/);
-  assert.match(result.results[0].toolCalls[0].error ?? "", /expected "missing", actual "old"/);
+  assert.equal(result.ok, true);
   assert.equal(memoryStore.read().persistent, "old\n");
 });
 
-test("apply_patch handles markdown bullet lines with explicit patch markers", async () => {
+test("workspace Edit handles markdown bullet lines", async () => {
   const root = makeTempDir("memory-patch-markdown-bullet");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("persistent", "## 知识\n- old bullet\n- keep bullet\n");
@@ -152,7 +215,7 @@ test("apply_patch handles markdown bullet lines with explicit patch markers", as
   assert.equal(memoryStore.read().persistent, "## 知识\n- new bullet\n- keep bullet\n");
 });
 
-test("apply_patch uses Codex apply_patch chunks and searches by context after earlier edits", async () => {
+test("workspace Edit replaces multiple regions with exact strings", async () => {
   const root = makeTempDir("memory-patch-offset-search");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("persistent", [
@@ -164,26 +227,16 @@ test("apply_patch uses Codex apply_patch chunks and searches by context after ea
     "zeta"
   ].join("\n") + "\n");
 
-  const patch = [
-    "*** Begin Patch",
-    "@@ alpha",
-    "-beta",
-    "+beta",
-    "+inserted one",
-    "+inserted two",
-    "@@ epsilon",
-    "-zeta",
-    "+omega",
-    "*** End Patch"
-  ].join("\n");
-
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
-    llm: editToolClient([], [patch]),
+    llm: editSequenceClient([], [
+      { file: "persistent-memory.md", oldString: "beta\n", newString: "beta\ninserted one\ninserted two\n" },
+      { file: "persistent-memory.md", oldString: "zeta\n", newString: "omega\n" }
+    ]),
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
@@ -204,7 +257,7 @@ test("apply_patch uses Codex apply_patch chunks and searches by context after ea
   ].join("\n") + "\n");
 });
 
-test("apply_patch fails instead of guessing when reduced context is ambiguous", async () => {
+test("workspace Edit reports ambiguous exact matches without guessing", async () => {
   const root = makeTempDir("memory-patch-ambiguous-context");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("persistent", [
@@ -214,21 +267,13 @@ test("apply_patch fails instead of guessing when reduced context is ambiguous", 
     "keep"
   ].join("\n") + "\n");
 
-  const patch = [
-    "*** Begin Patch",
-    "@@",
-    "-item",
-    "+changed",
-    "*** End Patch"
-  ].join("\n");
-
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
-    llm: editToolClient([], [patch]),
+    llm: editSequenceClient([], [{ file: "persistent-memory.md", oldString: "item", newString: "changed" }]),
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
@@ -236,12 +281,12 @@ test("apply_patch fails instead of guessing when reduced context is ambiguous", 
     log() {}
   }, "persistent");
 
-  assert.equal(result.results[0].toolCalls[0].ok, false);
-  assert.match(result.results[0].toolCalls[0].error ?? "", /ambiguous/i);
+  assert.equal(result.results[0].ok, true);
+  assert.match(result.results[0].toolCalls.find((call) => !call.ok)?.error ?? "", /appears 2 times/i);
   assert.equal(memoryStore.read().persistent, "item\nkeep\nitem\nkeep\n");
 });
 
-test("three-step induction uses fake read and fixed no-file tools", async () => {
+test("workspace induction uses relative Read/Edit tools and commits all files at completion", async () => {
   const root = makeTempDir("memory-three-step");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("persistent", "old persistent\n");
@@ -272,34 +317,36 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
   });
 
   assert.equal(result.ok, true);
-  assert.equal(seen.length, 6);
-  const targetRequests = [seen[0], seen[2], seen[4]];
+  assert.equal(seen.length, 7);
+  const targetRequests = [seen[0]];
   for (const input of targetRequests) {
     assert.doesNotMatch(input.messages.map((entry) => entry.content).join("\n"), /当前任务：/);
-    assert.deepEqual(input.tools?.map((tool) => tool.function.name), ["read_memory", "self_talk", "apply_patch"]);
-    assert.deepEqual(input.tools?.[0].function.parameters, { type: "object", properties: {}, additionalProperties: false });
-    assert.deepEqual(Object.keys((input.tools?.[1].function.parameters?.properties as Record<string, unknown>) ?? {}), ["content"]);
-    assert.deepEqual(Object.keys((input.tools?.[2].function.parameters?.properties as Record<string, unknown>) ?? {}), ["patch"]);
-    const fakeReadIndex = input.messages.findIndex((entry) => entry.toolCalls?.[0]?.function.name === "read_memory");
+    assert.deepEqual(input.tools?.map((tool) => tool.function.name), ["Read", "Edit", "Glob", "Grep", "self_talk"]);
+    assert.deepEqual(Object.keys((input.tools?.[0].function.parameters?.properties as Record<string, unknown>) ?? {}), ["file_path", "offset", "limit"]);
+    assert.deepEqual(Object.keys((input.tools?.[1].function.parameters?.properties as Record<string, unknown>) ?? {}), ["file_path", "old_string", "new_string", "replace_all"]);
+    const promptText = input.messages.map((entry) => entry.content).join("\n");
+    assert.match(promptText, /记忆 file_path=persistent-memory\.md/);
+    assert.match(promptText, /用户记忆 file_path=user-preferences\.md/);
+    assert.match(promptText, /日记 file_path=diary\.md/);
+    const fakeReadIndex = input.messages.findIndex((entry) => entry.toolCalls?.[0]?.function.name === "Read");
     assert.notEqual(fakeReadIndex, -1);
-    assert.equal(input.messages[fakeReadIndex].toolCalls?.[0].function.arguments, "{}");
+    assert.equal(input.messages[fakeReadIndex].toolCalls?.[0].function.arguments, "{\"file_path\":\"persistent-memory.md\"}");
     assert.equal(input.messages[fakeReadIndex + 1].role, "tool");
-    assert.equal(input.messages[fakeReadIndex + 1].name, "read_memory");
-    assert.match(input.messages.map((entry) => entry.content).join("\n"), /聊天记录：\n\[2026-05-24 09:00:00\]\nY:hello/);
+    assert.equal(input.messages[fakeReadIndex + 1].name, "Read");
+    assert.match(promptText, /聊天记录：\n\[2026-05-24 09:00:00\]\nY:hello/);
+    assert.doesNotMatch(promptText, /[A-Z]:\\/);
   }
   const readResult = (input: LLMChatInput) => {
     const fakeReadIndexes = input.messages
-      .map((entry, index) => entry.toolCalls?.[0]?.function.name === "read_memory" ? index : -1)
+      .map((entry, index) => entry.toolCalls?.[0]?.function.name === "Read" ? index : -1)
       .filter((index) => index >= 0);
     return input.messages[fakeReadIndexes.at(-1)! + 1].content;
   };
-  assert.match(readResult(targetRequests[0]), /<persistent-memory>\nold persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
-  const userPreferencesPrompt = String(targetRequests[1].messages.at(-1)?.content ?? "");
-  const diaryPrompt = String(targetRequests[2].messages.at(-1)?.content ?? "");
-  assert.match(userPreferencesPrompt, /维护用户偏好文件/);
-  assert.match(diaryPrompt, /维护 agent 日记/);
-  assert.doesNotMatch(userPreferencesPrompt, /聊天记录：/);
-  assert.doesNotMatch(diaryPrompt, /聊天记录：/);
+  assert.match(readResult(targetRequests[0]), /old persistent/);
+  const userPreferencesPrompt = targetRequests[0].messages.map((entry) => entry.content ?? "").join("\n");
+  const diaryPrompt = userPreferencesPrompt;
+  assert.match(userPreferencesPrompt, /用户记忆：稳定偏好/);
+  assert.match(diaryPrompt, /日记：只基于本次聊天记录/);
   assert.doesNotMatch(diaryPrompt, /old yesterday/);
   assert.equal(memoryStore.read().persistent, "new persistent\n");
   assert.equal(memoryStore.read().userPreferences, "new pref\n");
@@ -321,6 +368,22 @@ test("long-term memory edits commit only after memorize loop completes", async (
     llm: {
       async chat() {
         calls += 1;
+        if (calls === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: "read_1",
+                type: "function",
+                function: {
+                  name: "Read",
+                  arguments: JSON.stringify({ file_path: "persistent-memory.md" })
+                }
+              }]
+            }
+          };
+        }
         return {
           message: {
             role: "assistant",
@@ -329,8 +392,8 @@ test("long-term memory edits commit only after memorize loop completes", async (
               id: `edit_${calls}`,
               type: "function",
               function: {
-                name: "apply_patch",
-                arguments: JSON.stringify({ patch: replacePatch("old persistent\n", "new persistent\n") })
+                name: "Edit",
+                arguments: JSON.stringify({ file_path: "persistent-memory.md", old_string: calls === 2 ? "old persistent\n" : "new persistent\n", new_string: "new persistent\n" })
               }
             }]
           }
@@ -344,7 +407,6 @@ test("long-term memory edits commit only after memorize loop completes", async (
   }, "persistent");
 
   assert.equal(result.ok, false);
-  assert.equal(result.results[0].edited, true);
   assert.equal(memoryStore.read().persistent, "old persistent\n");
 });
 
@@ -402,9 +464,9 @@ test("memorize uses follow-up extra params after first tool round", async () => 
             role: "assistant",
             content: "",
             toolCalls: [{
-              id: "edit_1",
+              id: "read_1",
               type: "function",
-              function: { name: "apply_patch", arguments: JSON.stringify({ patch: addPatch("memory\n") }) }
+              function: { name: "Read", arguments: JSON.stringify({ file_path: "persistent-memory.md" }) }
             }]
           }
         };
@@ -458,7 +520,7 @@ test("memorize local request sender uses chatStream when enabled", async () => {
   assert.equal(streamCalls, 1);
 });
 
-test("memorize retries a failed target before moving to the next target", async () => {
+test("memorize retries a failed workspace run before committing", async () => {
   const root = makeTempDir("memory-retry-serial");
   const memoryStore = createMarkdownMemoryStore(root);
   const attempts: string[] = [];
@@ -478,24 +540,19 @@ test("memorize retries a failed target before moving to the next target", async 
     llmRequestSender: async (input) => {
       const target = String(input.metadata?.target ?? "");
       attempts.push(target);
-      if (target === "persistent" && attempts.filter((entry) => entry === "persistent").length === 1) {
-        throw new Error("temporary persistent failure");
+      if (attempts.length === 1) {
+        throw new Error("temporary workspace failure");
       }
       if (finished.has(target)) return { message: { role: "assistant", content: "done" } };
       finished.add(target);
-      const patch = target === "persistent"
-        ? addPatch("new persistent\n")
-        : target === "userPreferences"
-          ? addPatch("new pref\n")
-          : addPatch("new yesterday\n");
       return {
         message: {
           role: "assistant",
           content: "",
           toolCalls: [{
-            id: `edit_${target}`,
+            id: `read_${target}`,
             type: "function",
-            function: { name: "apply_patch", arguments: JSON.stringify({ patch }) }
+            function: { name: "Read", arguments: JSON.stringify({ file_path: "persistent-memory.md" }) }
           }]
         }
       };
@@ -507,10 +564,8 @@ test("memorize retries a failed target before moving to the next target", async 
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(attempts, ["persistent", "persistent", "persistent", "userPreferences", "userPreferences", "yesterdaySummary", "yesterdaySummary"]);
-  assert.match(memoryStore.read().persistent, /new persistent/);
-  assert.match(memoryStore.read().userPreferences, /new pref/);
-  assert.match(memoryStore.read().yesterdaySummary, /new yesterday/);
+  assert.deepEqual(attempts, ["workspace", "workspace", "workspace"]);
+  assert.equal(result.ok, true);
 });
 
 test("memorize LLM session persists as metadata followed by transcript messages", async () => {
@@ -552,7 +607,7 @@ test("memorize LLM session persists as metadata followed by transcript messages"
   assert.equal(lines.some((entry) => entry.type === "request" || entry.type === "response"), false);
 });
 
-test("memory target-specific prompts append after common prompts", async () => {
+test("memory induction uses only common prompt layers", async () => {
   const root = makeTempDir("memory-target-append");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "prompts.json"));
@@ -588,11 +643,11 @@ test("memory target-specific prompts append after common prompts", async () => {
   });
 
   const contents = seen[0].messages.map((entry) => entry.content ?? "");
-  assert.deepEqual(contents.slice(0, 3), [
+  assert.deepEqual(contents.slice(0, 2), [
     "common system 100/10240 80/8192 20/2048",
-    "record [2026-05-24 09:00:00]\nY:hello",
-    "persistent append"
+    "record [2026-05-24 09:00:00]\nY:hello"
   ]);
+  assert.doesNotMatch(contents.join("\n"), /persistent append/);
 });
 
 test("memory self_talk echoes content in tool result", async () => {
@@ -633,11 +688,11 @@ test("memory self_talk echoes content in tool result", async () => {
             role: "assistant",
             content: "",
             toolCalls: [{
-              id: "edit_1",
+              id: "read_1",
               type: "function",
               function: {
-                name: "apply_patch",
-                arguments: JSON.stringify({ patch: addPatch("done\n") })
+                name: "Read",
+                arguments: JSON.stringify({ file_path: "persistent-memory.md" })
               }
             }]
           }
@@ -833,17 +888,42 @@ function memoryConfig() {
 }
 
 function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
+  const files = patches.length >= 3
+    ? ["persistent-memory.md", "user-preferences.md", "diary.md"]
+    : ["persistent-memory.md"];
+  const edits = patches.map((patch, index) => ({ file: files[index] ?? "persistent-memory.md", ...patchToEdit(patch) }));
+  return editSequenceClient(seen, edits);
+}
+
+function editSequenceClient(seen: LLMChatInput[], edits: Array<{ file: string; oldString: string; newString: string }>): LLMClient {
   let index = 0;
-  let finishNext = false;
+  let phase: "read" | "edit" | "done" = edits.length > 0 ? "read" : "done";
   return {
     async chat(input) {
       seen.push(input);
-      if (finishNext) {
-        finishNext = false;
+      if (phase === "done") {
         return { message: { role: "assistant", content: "done" } };
       }
-      const patch = patches[index++] ?? addPatch("fallback\n");
-      finishNext = true;
+      const edit = edits[index];
+      if (phase === "read") {
+        phase = "edit";
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: `read_${index + 1}`,
+              type: "function",
+              function: {
+                name: "Read",
+                arguments: JSON.stringify({ file_path: edit.file })
+              }
+            }]
+          }
+        };
+      }
+      index += 1;
+      phase = index >= edits.length ? "done" : "read";
       return {
         message: {
           role: "assistant",
@@ -852,13 +932,36 @@ function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
             id: `edit_${index}`,
             type: "function",
             function: {
-              name: "apply_patch",
-              arguments: JSON.stringify({ patch })
+              name: "Edit",
+              arguments: JSON.stringify({ file_path: edit.file, old_string: edit.oldString, new_string: edit.newString })
             }
           }]
         }
       };
     }
+  };
+}
+
+function patchToEdit(patch: string): { oldString: string; newString: string } {
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+  for (const line of patch.split(/\r?\n/)) {
+    if (line.startsWith("---")) continue;
+    if (line.startsWith("--")) {
+      oldLines.push(line.slice(1));
+      continue;
+    }
+    if (line.startsWith("-")) {
+      oldLines.push(line.slice(1));
+      continue;
+    }
+    if (line.startsWith("+")) {
+      newLines.push(line.slice(1));
+    }
+  }
+  return {
+    oldString: oldLines.length ? `${oldLines.join("\n")}\n` : "",
+    newString: newLines.length ? `${newLines.join("\n")}\n` : ""
   };
 }
 
@@ -903,7 +1006,7 @@ function message(createdAt: string, contentText: string): StoredConversationMess
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

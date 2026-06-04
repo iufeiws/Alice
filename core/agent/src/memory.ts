@@ -355,14 +355,15 @@ export function createMemoryInductionPromptStore(filePath: string): MemoryInduct
 }
 
 export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
+  const applyPatchInstructions = currentMemoryApplyPatchInstructions();
   return {
     commonLayers: [
       layer("common_scope", "共同规则", "system", 10, [
         "你是 Alice 的记忆维护子系统。",
         "只通过 read_memory / apply_patch 工具工作。",
-        "read_memory 返回的内容带“行号: ”前缀；行号仅用于定位，写 apply_patch 时不要包含行号前缀。",
-        "apply_patch 写入的是当前任务绑定文件，没有 file/path 参数。",
-        "必须调用 apply_patch({ patch }) 提交 unified diff patch；普通回复不会保存。"
+        "read_memory 返回当前记忆文件的原始文本，不带行号。",
+        "普通回复不会保存；必须调用 apply_patch({ patch }) 编辑当前记忆文件。",
+        applyPatchInstructions
       ].join("\n")),
       layer("common_quality", "质量标准", "system", 20, [
         "保留明确、稳定、有未来价值的信息。",
@@ -996,16 +997,10 @@ function formatReadMemoryResult(target: MemoryTarget, content: string): string {
   const file = targetResultFiles[target];
   return [
     `<${file}>`,
-    formatReadMemoryContentWithLineNumbers(content),
+    content.endsWith("\n") ? content.slice(0, -1) : content,
     `</${file}>`,
     `${lineCount(content)} line(s), ${utf8ByteLength(content)} byte(s)`
   ].join("\n");
-}
-
-function formatReadMemoryContentWithLineNumbers(content: string): string {
-  return splitPatchContentLines(content)
-    .map((line, index) => `${index + 1}: ${line}`)
-    .join("\n");
 }
 
 function readMemoryTargetForRun(memoryStore: MemoryStore, target: MemoryTarget, diaryDraftPath?: string): string {
@@ -1106,7 +1101,48 @@ function memoryLimitVariables(target: MemoryTarget): LLMTextVariables {
 
 export const memoryToolNames = ["read_memory", "self_talk", "apply_patch"] as const;
 
+function currentMemoryApplyPatchInstructions(): string {
+  return [
+    "apply_patch",
+    "Use the `apply_patch` tool to edit the current memory file. The patch language is a stripped-down, current-file diff format designed to be easy to parse and safe to apply.",
+    "",
+    "Envelope:",
+    "*** Begin Patch",
+    "[ one or more chunks for the current memory file ]",
+    "*** End Patch",
+    "",
+    "Do not include file operation headers such as `*** Add File:`, `*** Delete File:`, `*** Update File:`, or `*** Move to:`. This tool is already bound to the current memory file.",
+    "",
+    "Each chunk starts with `@@`, optionally followed by a context header. Within a chunk, every line starts with one of:",
+    "  context line",
+    "- removed line",
+    "+ added line",
+    "",
+    "The first character is the patch marker, not part of the file content. If the real file line itself starts with a marker-like character, include both the patch marker and the file content. Examples: to remove a Markdown bullet line `- old`, write `-- old`; to keep that bullet as context, write ` - old`; to keep a line that starts with one leading space, write two leading spaces.",
+    "",
+    "Context guidance:",
+    "By default, include about 3 lines of context immediately above and below each change. If that is not enough to uniquely identify the location, put a stable nearby heading or phrase after `@@`. If still ambiguous, use multiple `@@` chunks to move through the file by stable context.",
+    "",
+    "Grammar:",
+    "Patch := Begin { Hunk } End",
+    "Begin := \"*** Begin Patch\" NEWLINE",
+    "End := \"*** End Patch\" NEWLINE",
+    "Hunk := \"@@\" [ header ] NEWLINE { HunkLine } [ \"*** End of File\" NEWLINE ]",
+    "HunkLine := (\" \" | \"-\" | \"+\") text NEWLINE",
+    "",
+    "Example:",
+    "*** Begin Patch",
+    "@@ 用户偏好",
+    " - 旧的Markdown列表上下文",
+    "-- 旧的Markdown列表项",
+    "+- 新的Markdown列表项",
+    " - 后续Markdown列表上下文",
+    "*** End Patch"
+  ].join("\n");
+}
+
 export function memoryToolDefinitions(): ToolDefinition[] {
+  const applyPatchInstructions = currentMemoryApplyPatchInstructions();
   return [
     {
       name: "read_memory",
@@ -1134,13 +1170,13 @@ export function memoryToolDefinitions(): ToolDefinition[] {
     },
     {
       name: "apply_patch",
-      description: "把 unified diff patch 应用到当前归纳任务绑定的记忆文件",
+      description: applyPatchInstructions,
       inputSchema: {
         type: "object",
         properties: {
           patch: {
             type: "string",
-            description: "针对当前文件内容的 unified diff patch，例如包含 ---/+++ 与 @@ hunk 的补丁文本。"
+            description: "The full current-file patch text, including *** Begin Patch and *** End Patch."
           }
         },
         required: ["patch"],
@@ -1179,65 +1215,11 @@ function createMemoryLocalLLMRequestSender(llm: LLMClient | undefined): LLMReque
 }
 
 function applyMemoryPatch(content: string, patch: string): string {
-  const original = splitPatchContentLines(content);
-  const output: string[] = [];
-  const patchLines = patch.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  let patchIndex = 0;
-  let originalIndex = 0;
-  let sawHunk = false;
-
-  while (patchIndex < patchLines.length) {
-    const header = patchLines[patchIndex];
-    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
-    if (!match) {
-      patchIndex += 1;
-      continue;
-    }
-    sawHunk = true;
-    const oldStart = Number(match[1]);
-    const hunkStart = oldStart === 0 ? 0 : oldStart - 1;
-    if (hunkStart < originalIndex || hunkStart > original.length) {
-      throw new Error(
-        `invalid patch hunk range at patch line ${patchIndex + 1}: hunk starts at original line ${oldStart}, ` +
-        `but the next applicable original line is ${originalIndex + 1} and the file has ${original.length} line(s)`
-      );
-    }
-    output.push(...original.slice(originalIndex, hunkStart));
-    originalIndex = hunkStart;
-    patchIndex += 1;
-
-    while (patchIndex < patchLines.length && !patchLines[patchIndex].startsWith("@@ ")) {
-      const line = patchLines[patchIndex];
-      patchIndex += 1;
-      if (line === "\\ No newline at end of file") continue;
-      if (line.length === 0 && patchIndex >= patchLines.length) break;
-      const marker = line[0];
-      const text = line.slice(1);
-      if (marker === " ") {
-        assertPatchLine(original, originalIndex, text, patchIndex, "context");
-        output.push(text);
-        originalIndex += 1;
-        continue;
-      }
-      if (marker === "-") {
-        assertPatchLine(original, originalIndex, text, patchIndex, "removal");
-        originalIndex += 1;
-        continue;
-      }
-      if (marker === "+") {
-        output.push(text);
-        continue;
-      }
-      throw new Error(
-        `invalid patch line ${patchIndex}: expected a line starting with space, +, -, @@, or "\\ No newline at end of file"; ` +
-        `got ${formatPatchLineForError(line)}`
-      );
-    }
-  }
-
-  if (!sawHunk) throw new Error("patch must include at least one unified diff hunk");
-  output.push(...original.slice(originalIndex));
-  return output.length > 0 ? `${normalizeCommonHalfwidthCharacters(output.join("\n"))}\n` : "";
+  const originalLines = splitPatchContentLines(content);
+  const chunks = parseMemoryApplyPatchChunks(patch);
+  const replacements = computeMemoryPatchReplacements(originalLines, chunks);
+  const lines = applyMemoryPatchReplacements(originalLines, replacements);
+  return lines.length > 0 ? `${normalizeCommonHalfwidthCharacters(lines.join("\n"))}\n` : "";
 }
 
 function splitPatchContentLines(content: string): string[] {
@@ -1245,20 +1227,201 @@ function splitPatchContentLines(content: string): string[] {
   return content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
 }
 
-function assertPatchLine(original: string[], index: number, expected: string, patchLine: number, kind: "context" | "removal"): void {
-  const actual = original[index];
-  if (actual === expected) return;
+type MemoryPatchLine = {
+  kind: "context" | "addition" | "removal";
+  value: string;
+  patchLine: number;
+};
+
+type MemoryPatchChunk = {
+  changeContext?: string;
+  oldLines: string[];
+  newLines: string[];
+  isEndOfFile: boolean;
+  patchLine: number;
+  firstOldPatchLine: number;
+};
+
+function parseMemoryApplyPatchChunks(patch: string): MemoryPatchChunk[] {
+  const lines = normalizeApplyPatchText(patch).split("\n");
+  if (lines[0]?.trim() !== "*** Begin Patch") throw new Error("invalid patch: first line must be '*** Begin Patch'");
+  if (lines[lines.length - 1]?.trim() !== "*** End Patch") throw new Error("invalid patch: last line must be '*** End Patch'");
+
+  const chunks: MemoryPatchChunk[] = [];
+  let index = 1;
+  let parsedAnyChunk = false;
+  while (index < lines.length - 1) {
+    const line = lines[index];
+    if (line.trim().length === 0) {
+      index += 1;
+      continue;
+    }
+    if (line.startsWith("*** ")) {
+      throw new Error(`invalid patch hunk on line ${index + 1}: current-file apply_patch does not accept file operation headers`);
+    }
+    const parsed = parseMemoryApplyPatchChunk(lines, index, !parsedAnyChunk);
+    chunks.push(parsed.chunk);
+    parsedAnyChunk = true;
+    index = parsed.nextIndex;
+  }
+
+  if (chunks.length === 0) throw new Error("patch must include at least one update chunk");
+  return chunks;
+}
+
+function normalizeApplyPatchText(patch: string): string {
+  let text = patch.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  const heredoc = /^<<'?EOF'?\n([\s\S]*)\nEOF$/u.exec(text);
+  if (heredoc) text = heredoc[1].trim();
+  return text;
+}
+
+function parseMemoryApplyPatchChunk(lines: string[], startIndex: number, allowMissingContext: boolean): { chunk: MemoryPatchChunk; nextIndex: number } {
+  const firstLine = lines[startIndex];
+  const lineNumber = startIndex + 1;
+  let changeContext: string | undefined;
+  let index = startIndex;
+
+  if (firstLine === "@@") {
+    index += 1;
+  } else if (firstLine.startsWith("@@ ")) {
+    changeContext = firstLine.slice(3);
+    index += 1;
+  } else if (!allowMissingContext) {
+    throw new Error(`invalid patch hunk on line ${lineNumber}: expected update chunk to start with '@@'`);
+  }
+
+  const patchLines: MemoryPatchLine[] = [];
+  let isEndOfFile = false;
+  while (index < lines.length - 1) {
+    const line = lines[index];
+    if (line === "*** End of File") {
+      isEndOfFile = true;
+      index += 1;
+      break;
+    }
+    if (line.startsWith("*** ") || line === "@@" || line.startsWith("@@ ")) break;
+    const nextLineNumber = index + 1;
+    const marker = line[0];
+    if (line.length === 0) {
+      patchLines.push({ kind: "context", value: "", patchLine: nextLineNumber });
+      index += 1;
+      continue;
+    }
+    if (marker === " ") patchLines.push({ kind: "context", value: line.slice(1), patchLine: nextLineNumber });
+    else if (marker === "+") patchLines.push({ kind: "addition", value: line.slice(1), patchLine: nextLineNumber });
+    else if (marker === "-") patchLines.push({ kind: "removal", value: line.slice(1), patchLine: nextLineNumber });
+    else if (patchLines.length === 0) {
+      throw new Error(
+        `invalid patch hunk on line ${nextLineNumber}: every update line should start with ' ', '+', or '-'; got ${formatPatchLineForError(line)}`
+      );
+    } else {
+      break;
+    }
+    index += 1;
+  }
+
+  if (patchLines.length === 0) throw new Error(`invalid patch hunk on line ${lineNumber}: update chunk does not contain any lines`);
+  return {
+    chunk: {
+      changeContext,
+      oldLines: patchLines.filter((line) => line.kind !== "addition").map((line) => line.value),
+      newLines: patchLines.filter((line) => line.kind !== "removal").map((line) => line.value),
+      isEndOfFile,
+      patchLine: lineNumber,
+      firstOldPatchLine: patchLines.find((line) => line.kind !== "addition")?.patchLine ?? lineNumber
+    },
+    nextIndex: index
+  };
+}
+
+function computeMemoryPatchReplacements(lines: string[], chunks: MemoryPatchChunk[]): Array<[number, number, string[]]> {
+  const replacements: Array<[number, number, string[]]> = [];
+  let lineIndex = 0;
+
+  for (const chunk of chunks) {
+    if (chunk.changeContext !== undefined) {
+      const contextIndex = seekMemoryPatchSequence(lines, [chunk.changeContext], lineIndex, false);
+      if (contextIndex === undefined) {
+        throw new Error(`patch does not apply at patch line ${chunk.patchLine}: failed to find context ${formatPatchLineForError(chunk.changeContext)}`);
+      }
+      lineIndex = contextIndex + 1;
+    }
+
+    if (chunk.oldLines.length === 0) {
+      replacements.push([lineIndex, 0, chunk.newLines]);
+      continue;
+    }
+
+    let oldLines = chunk.oldLines;
+    let newLines = chunk.newLines;
+    let startIndex = seekMemoryPatchSequence(lines, oldLines, lineIndex, chunk.isEndOfFile);
+    if (startIndex === undefined && oldLines.at(-1) === "") {
+      oldLines = oldLines.slice(0, -1);
+      if (newLines.at(-1) === "") newLines = newLines.slice(0, -1);
+      startIndex = seekMemoryPatchSequence(lines, oldLines, lineIndex, chunk.isEndOfFile);
+    }
+    if (startIndex === undefined) {
+      throwMemoryApplyPatchMismatch(lines, chunk, lineIndex);
+    }
+    replacements.push([startIndex, oldLines.length, newLines]);
+    lineIndex = startIndex + oldLines.length;
+  }
+
+  return replacements.sort((left, right) => left[0] - right[0]);
+}
+
+function applyMemoryPatchReplacements(lines: string[], replacements: Array<[number, number, string[]]>): string[] {
+  const output = [...lines];
+  for (const [startIndex, oldLength, newLines] of [...replacements].reverse()) {
+    output.splice(startIndex, oldLength, ...newLines);
+  }
+  return output;
+}
+
+function seekMemoryPatchSequence(lines: string[], pattern: string[], start: number, endOfFile: boolean): number | undefined {
+  if (pattern.length === 0) return start;
+  if (pattern.length > lines.length) return undefined;
+  const searchStart = endOfFile && lines.length >= pattern.length ? lines.length - pattern.length : start;
+  const modes: Array<(value: string) => string> = [
+    (value) => value,
+    (value) => value.trimEnd(),
+    (value) => value.trim(),
+    normalizePatchSearchText
+  ];
+
+  for (const normalize of modes) {
+    const candidates: number[] = [];
+    for (let index = searchStart; index <= lines.length - pattern.length; index += 1) {
+      if (pattern.every((line, offset) => normalize(lines[index + offset]) === normalize(line))) candidates.push(index);
+    }
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) throw new Error(`ambiguous patch match for expected lines:\n${pattern.join("\n")}`);
+  }
+  return undefined;
+}
+
+function throwMemoryApplyPatchMismatch(lines: string[], chunk: MemoryPatchChunk, lineIndex: number): never {
+  const expected = chunk.oldLines[0] ?? "";
+  const actual = lines[lineIndex];
   if (actual === undefined) {
     throw new Error(
-      `patch does not apply at patch line ${patchLine}: ${kind} expected original line ${index + 1}, ` +
-      `but the file only has ${original.length} line(s); expected ${formatPatchLineForError(expected)}`
+      `patch does not apply at patch line ${chunk.firstOldPatchLine}: expected original line ${lineIndex + 1}, ` +
+      `but the file only has ${lines.length} line(s); expected ${formatPatchLineForError(expected)}`
     );
   }
-  if (normalizeCommonHalfwidthCharacters(actual) === normalizeCommonHalfwidthCharacters(expected)) return;
   throw new Error(
-    `patch does not apply at patch line ${patchLine}: ${kind} mismatch on original line ${index + 1}; ` +
-    `expected ${formatPatchLineForError(expected)}, actual ${formatPatchLineForError(actual)}`
+    `patch does not apply at patch line ${chunk.firstOldPatchLine}: expected lines starting at original line ${lineIndex + 1}; ` +
+    `expected ${formatPatchLineForError(expected)}, actual ${formatPatchLineForError(actual)}. ` +
+    `Remember that the first character of each hunk line is the patch marker; to match a file line starting with "-", write "--..." for a removal or " -..." for context.`
   );
+}
+
+function normalizePatchSearchText(value: string): string {
+  return normalizeCommonHalfwidthCharacters(value).trim().replace(/[\u2010-\u2015\u2212]/gu, "-")
+    .replace(/[\u2018\u2019\u201A\u201B]/gu, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/gu, "\"")
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/gu, " ");
 }
 
 function formatPatchLineForError(line: string): string {

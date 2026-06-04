@@ -79,11 +79,11 @@ test("apply_patch normalizes configured fullwidth characters in written memory",
     windowEndAt: "2026-05-24T06:00:00.000Z",
     llm: editToolClient([], [
       [
-        "--- a/memory.md",
-        "+++ b/memory.md",
-        "@@ -1,1 +1,1 @@",
+        "*** Begin Patch",
+        "@@",
         "-ABC,测试(one).",
-        "+新增：ａｂｃ１２３／路径＼名字－OK～"
+        "+新增：ａｂｃ１２３／路径＼名字－OK～",
+        "*** End Patch"
       ].join("\n")
     ]),
     config: memoryConfig(),
@@ -116,10 +116,129 @@ test("apply_patch reports the concrete mismatch when a patch fails", async () =>
     log() {}
   }, "persistent");
 
-  assert.match(result.results[0].toolCalls[0].error ?? "", /patch line 4/);
+  assert.match(result.results[0].toolCalls[0].error ?? "", /patch line 3/);
   assert.match(result.results[0].toolCalls[0].error ?? "", /original line 1/);
   assert.match(result.results[0].toolCalls[0].error ?? "", /expected "missing", actual "old"/);
   assert.equal(memoryStore.read().persistent, "old\n");
+});
+
+test("apply_patch handles markdown bullet lines with explicit patch markers", async () => {
+  const root = makeTempDir("memory-patch-markdown-bullet");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("persistent", "## 知识\n- old bullet\n- keep bullet\n");
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: editToolClient([], [[
+      "*** Begin Patch",
+      "@@ ## 知识",
+      "-- old bullet",
+      "+- new bullet",
+      " - keep bullet",
+      "*** End Patch"
+    ].join("\n")]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    userName: "Y",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.ok, true);
+  assert.equal(memoryStore.read().persistent, "## 知识\n- new bullet\n- keep bullet\n");
+});
+
+test("apply_patch uses Codex apply_patch chunks and searches by context after earlier edits", async () => {
+  const root = makeTempDir("memory-patch-offset-search");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("persistent", [
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "zeta"
+  ].join("\n") + "\n");
+
+  const patch = [
+    "*** Begin Patch",
+    "@@ alpha",
+    "-beta",
+    "+beta",
+    "+inserted one",
+    "+inserted two",
+    "@@ epsilon",
+    "-zeta",
+    "+omega",
+    "*** End Patch"
+  ].join("\n");
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: editToolClient([], [patch]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    userName: "Y",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.ok, true);
+  assert.equal(memoryStore.read().persistent, [
+    "alpha",
+    "beta",
+    "inserted one",
+    "inserted two",
+    "gamma",
+    "delta",
+    "epsilon",
+    "omega"
+  ].join("\n") + "\n");
+});
+
+test("apply_patch fails instead of guessing when reduced context is ambiguous", async () => {
+  const root = makeTempDir("memory-patch-ambiguous-context");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("persistent", [
+    "item",
+    "keep",
+    "item",
+    "keep"
+  ].join("\n") + "\n");
+
+  const patch = [
+    "*** Begin Patch",
+    "@@",
+    "-item",
+    "+changed",
+    "*** End Patch"
+  ].join("\n");
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: editToolClient([], [patch]),
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    userName: "Y",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.results[0].toolCalls[0].ok, false);
+  assert.match(result.results[0].toolCalls[0].error ?? "", /ambiguous/i);
+  assert.equal(memoryStore.read().persistent, "item\nkeep\nitem\nkeep\n");
 });
 
 test("three-step induction uses fake read and fixed no-file tools", async () => {
@@ -174,7 +293,7 @@ test("three-step induction uses fake read and fixed no-file tools", async () => 
       .filter((index) => index >= 0);
     return input.messages[fakeReadIndexes.at(-1)! + 1].content;
   };
-  assert.match(readResult(targetRequests[0]), /<persistent-memory>\n1: old persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
+  assert.match(readResult(targetRequests[0]), /<persistent-memory>\nold persistent\n<\/persistent-memory>\n1 line\(s\), 15 byte\(s\)/);
   const userPreferencesPrompt = String(targetRequests[1].messages.at(-1)?.content ?? "");
   const diaryPrompt = String(targetRequests[2].messages.at(-1)?.content ?? "");
   assert.match(userPreferencesPrompt, /维护用户偏好文件/);
@@ -746,10 +865,10 @@ function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
 function addPatch(content: string): string {
   const lines = content.trimEnd().split("\n");
   return [
-    "--- a/memory.md",
-    "+++ b/memory.md",
-    `@@ -0,0 +1,${lines.length} @@`,
-    ...lines.map((line) => `+${line}`)
+    "*** Begin Patch",
+    "@@",
+    ...lines.map((line) => `+${line}`),
+    "*** End Patch"
   ].join("\n");
 }
 
@@ -757,11 +876,11 @@ function replacePatch(from: string, to: string): string {
   const oldLines = from.trimEnd().split("\n");
   const newLines = to.trimEnd().split("\n");
   return [
-    "--- a/memory.md",
-    "+++ b/memory.md",
-    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    "*** Begin Patch",
+    "@@",
     ...oldLines.map((line) => `-${line}`),
-    ...newLines.map((line) => `+${line}`)
+    ...newLines.map((line) => `+${line}`),
+    "*** End Patch"
   ].join("\n");
 }
 

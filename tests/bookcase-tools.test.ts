@@ -68,7 +68,7 @@ test("bookcase tool returns a book and invalidates the LLM session", async () =>
   assert.match(output, /<message>.*重开.*<\/message>/);
 });
 
-test("bookcase tool sends system notices when drawing and returning books", async () => {
+test("bookcase tool sends system notices without persisting them as messages", async () => {
   const sent: string[] = [];
   const stored: Array<{ contentText: string; senderRole?: string }> = [];
   const logs: Array<{ status?: string; summary: string }> = [];
@@ -112,10 +112,7 @@ test("bookcase tool sends system notices when drawing and returning books", asyn
   });
 
   assert.deepEqual(sent, ["-少女已取书-", "-少女已还书-"]);
-  assert.deepEqual(stored, [
-    { contentText: "-少女已取书-", senderRole: "system" },
-    { contentText: "-少女已还书-", senderRole: "system" }
-  ]);
+  assert.deepEqual(stored, []);
   assert.deepEqual(logs, [
     { status: "sent", summary: "-少女已取书-" },
     { status: "sent", summary: "-少女已还书-" }
@@ -170,10 +167,7 @@ test("bookcase notice failures do not block draw or return transitions", async (
   assert.equal(returned.ok, true);
   assert.equal(returned.resetLLMSession, true);
   assert.equal(returned.clearFixedPrefix, true);
-  assert.deepEqual(failed, [
-    { id: 1, reason: "notice offline" },
-    { id: 2, reason: "notice offline" }
-  ]);
+  assert.deepEqual(failed, []);
   assert.deepEqual(logs, [
     { status: "send_failed", summary: "-少女已取书-", error: "notice offline" },
     { status: "send_failed", summary: "-少女已还书-", error: "notice offline" }

@@ -155,7 +155,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
 
   async function sendBookcaseNotice(call: ToolCall, text: string): Promise<void> {
     const target = resolveTarget(call);
-    if (!target || !deps.store || !deps.outputRouter) return;
+    if (!target || !deps.outputRouter) return;
     const output: AgentOutput = {
       id: createId("tool_out"),
       target: {
@@ -173,19 +173,8 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
         allowStreaming: false
       }
     };
-    const stored = deps.store.insertOutboundMessage({
-      plugin: output.target.plugin,
-      conversationId: output.target.sessionId,
-      senderRole: "system",
-      contentType: output.content.kind,
-      contentText: text,
-      contentJson: JSON.stringify(output.content),
-      createdAt: output.meta.createdAt,
-      createdAtUtc: output.meta.createdAtUtc
-    });
     try {
-      const sent = await deps.outputRouter.send(output);
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), utcIso(), extractSentMessageCreatedAtUtc(sent));
+      await deps.outputRouter.send(output);
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -198,7 +187,6 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       return;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      deps.store.markOutboundMessageFailed(stored.id, localIso(), reason, utcIso());
       deps.appendMessageLog?.({
         direction: "outbound",
         plugin: output.target.plugin,
@@ -374,20 +362,6 @@ function escapeXml(value: string): string {
     '"': "&quot;",
     "'": "&apos;"
   }[char] ?? char));
-}
-
-function extractSentMessageId(value: unknown): string | undefined {
-  if (value && typeof value === "object" && "messageId" in value) {
-    const messageId = (value as { messageId?: unknown }).messageId;
-    return typeof messageId === "string" ? messageId : undefined;
-  }
-  return undefined;
-}
-
-function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as { createdAtUtc?: unknown };
-  return typeof record.createdAtUtc === "string" ? record.createdAtUtc : undefined;
 }
 
 function randomFromSeed(seed: number): number {

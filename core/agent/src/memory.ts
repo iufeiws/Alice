@@ -1,11 +1,11 @@
 import type { MemorySummaryConfig } from "../../../packages/config/src/index.js";
-import { createDiaryStore, type DiaryStore } from "../../../packages/storage/src/diary-store.js";
+import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
-import { parseZonedIso } from "../../time/src/index.js";
+import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "./llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "./prompt-layer-parser.js";
@@ -83,6 +83,7 @@ export type MemorySummaryDeps = {
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
   stateStore: SleepMemoryStateStore;
+  diaryStore?: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
   messageStore: {
     listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string, limit?: number): StoredConversationMessage[];
     listMessagesChronological(limit?: number): StoredConversationMessage[];
@@ -92,11 +93,19 @@ export type MemorySummaryDeps = {
   config: MemorySummaryConfig;
   nowIso(): string;
   timezone: string;
-  sleepWindowStartAt?: string;
   userName?: string;
   sessionRoot?: string;
   onRound?(target: MemoryTarget, rounds: number, status?: string): void;
   log(level: "info" | "warn" | "error", message: string): void;
+};
+
+export type MemorySleepWindow = {
+  date: string;
+  startAt?: string;
+  endAt: string;
+  startAtUtc?: string;
+  endAtUtc?: string;
+  source: SleepBoundary["source"] | "calendar";
 };
 
 export type MemoryRunResult = {
@@ -121,18 +130,19 @@ export type MemoryRunSummary = {
 export type MemoryPromptPreview = {
   target: MemoryTarget;
   file: MemoryResultFile;
+  generatedAt: string;
   windowStartAt?: string;
   windowEndAt: string;
   messageCount: number;
-    request: {
-      model?: string;
-      temperature?: number;
-      maxTokens: number;
-      extraParams?: Record<string, unknown>;
-      followupExtraParams?: Record<string, unknown>;
-      tools: LLMToolSpec[];
-      messages: LLMMessage[];
-    };
+  request: {
+    model?: string;
+    temperature?: number;
+    maxTokens: number;
+    extraParams?: Record<string, unknown>;
+    followupExtraParams?: Record<string, unknown>;
+    tools: LLMToolSpec[];
+    messages: LLMMessage[];
+  };
 };
 
 export type MemoryInductionSession = {
@@ -421,6 +431,69 @@ export function createSleepMemoryStateStore(filePath: string): SleepMemoryStateS
   };
 }
 
+export function listMemorySleepWindows(input: {
+  diaryStore: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
+  timeZone: string;
+  messages?: StoredConversationMessage[];
+  now?: () => { iso: string; utcIso?: string };
+}): MemorySleepWindow[] {
+  const boundaries = input.diaryStore.listSleepBoundaries();
+  if (boundaries.length === 1) {
+    const boundary = boundaries[0];
+    const end = memoryBoundaryInstant(boundary, input.timeZone);
+    return [{
+      date: memorySleepBoundaryLocalDate(boundary, input.timeZone),
+      endAt: formatZonedIso(end, input.timeZone),
+      endAtUtc: end.toISOString(),
+      source: boundary.source
+    }];
+  }
+  return boundaries.slice(1).map((boundary, index) => {
+    const previous = boundaries[index];
+    const start = memoryBoundaryInstant(previous, input.timeZone);
+    const end = memoryBoundaryInstant(boundary, input.timeZone);
+    return {
+      date: memorySleepBoundaryLocalDate(boundary, input.timeZone),
+      startAt: formatZonedIso(start, input.timeZone),
+      endAt: formatZonedIso(end, input.timeZone),
+      startAtUtc: start.toISOString(),
+      endAtUtc: end.toISOString(),
+      source: boundary.source
+    };
+  }).reverse();
+}
+
+export function latestMemorySleepWindow(input: {
+  diaryStore: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
+  timeZone: string;
+  messages?: StoredConversationMessage[];
+  now?: () => { iso: string; utcIso?: string };
+}): MemorySleepWindow | undefined {
+  return listMemorySleepWindows(input)[0];
+}
+
+export function resolveMemorySleepWindowForDate(input: {
+  diaryStore: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
+  date: string;
+  timeZone: string;
+  messages?: StoredConversationMessage[];
+  now?: () => { iso: string; utcIso?: string };
+}): MemorySleepWindow | undefined {
+  return listMemorySleepWindows(input).find((window) => window.date === input.date);
+}
+
+function memorySleepBoundaryLocalDate(boundary: SleepBoundary, timeZone: string): string {
+  return formatZonedIso(memoryBoundaryInstant(boundary, timeZone), timeZone).slice(0, 10);
+}
+
+function memoryBoundaryInstant(boundary: SleepBoundary, timeZone: string): Date {
+  return boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : new Date(parseMemoryMessageCreatedAt(boundary.occurredAt, timeZone));
+}
+
+function parseMemoryMessageCreatedAt(value: string, timeZone: string): number {
+  return /Z$|[+-]\d{2}:\d{2}$/.test(value) ? new Date(value).getTime() : parseZonedIso(value, timeZone).getTime();
+}
+
 export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<boolean> {
   const currentInductionAt = deps.nowIso();
   const existing = deps.stateStore.read();
@@ -435,18 +508,36 @@ export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<
     return false;
   }
 
-  const windowStartAt = deps.sleepWindowStartAt ?? existing.lastInductionAt;
-  const messages = deps.messageStore.listMessagesByCreatedAtRange(windowStartAt, currentInductionAt, maxMessagesPerSummary);
+  const sleepWindow = deps.diaryStore ? latestMemorySleepWindow({
+    diaryStore: deps.diaryStore,
+    timeZone: deps.timezone,
+    messages: deps.messageStore.listMessagesChronological(10_000),
+    now: () => ({ iso: deps.nowIso() })
+  }) : undefined;
+  if (!sleepWindow) {
+    const reason = "sleep_window_not_found";
+    deps.stateStore.write({
+      ...existing,
+      currentInductionAt,
+      lastFailureAt: currentInductionAt,
+      lastFailure: reason
+    });
+    deps.log("warn", `sleep Memorize skipped: ${reason}`);
+    return false;
+  }
+  const windowStartAt = sleepWindow.startAt;
+  const windowEndAt = sleepWindow.endAt;
+  const messages = deps.messageStore.listMessagesByCreatedAtRange(windowStartAt, windowEndAt, maxMessagesPerSummary);
   if (messages.length === 0) {
     deps.stateStore.write({
       ...existing,
       currentInductionAt,
-      lastInductionAt: currentInductionAt,
+      lastInductionAt: windowEndAt,
       lastSuccessAt: currentInductionAt,
       lastFailureAt: undefined,
       lastFailure: undefined
     });
-    deps.log("info", `sleep Memorize advanced without messages: at=${currentInductionAt}`);
+    deps.log("info", `sleep Memorize advanced without messages: window=${windowStartAt ?? "(beginning)"} -> ${windowEndAt}`);
     return true;
   }
 
@@ -454,13 +545,13 @@ export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<
     ...deps,
     messages,
     windowStartAt,
-    windowEndAt: currentInductionAt
+    windowEndAt
   });
   if (result.ok) {
     deps.stateStore.write({
       ...existing,
       currentInductionAt,
-      lastInductionAt: currentInductionAt,
+      lastInductionAt: windowEndAt,
       lastSuccessAt: currentInductionAt,
       lastFailureAt: undefined,
       lastFailure: undefined
@@ -506,7 +597,7 @@ export async function runMemoryInductionForMessages(
   }
 
   const targets = targetFilter ? [targetFilter] : ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
-  const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
+  const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, startedAt, {
     name: targetFilter ? targetFilter : "run",
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt,
@@ -627,6 +718,7 @@ export function buildMemoryPromptPreview(
     timezone: string;
     userName?: string;
     config?: Partial<MemorySummaryConfig>;
+    generatedAt?: string;
   },
   target: MemoryTarget
 ): MemoryPromptPreview {
@@ -644,6 +736,7 @@ export function buildMemoryPromptPreview(
   return {
     target,
     file: targetResultFiles[target],
+    generatedAt: deps.generatedAt ?? new Date().toISOString(),
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt,
     messageCount: deps.messages.length,
@@ -669,7 +762,7 @@ async function runSingleMemoryInduction(
   target: MemoryTarget
 ): Promise<MemoryRunResult> {
   const toolCalls: MemoryRunResult["toolCalls"] = [];
-  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.windowEndAt, {
+  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.nowIso(), {
     name: target,
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt,

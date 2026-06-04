@@ -1450,7 +1450,7 @@ Timing:
         const result = await fetch("/admin/api/memory/prompts/preview", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompts: memoryPrompts, target })
+          body: JSON.stringify({ prompts: memoryPrompts, target, date: $("memoryRunDate")?.value })
         }).then(async (res) => ({ status: res.status, body: await res.json() }));
         if (!result.body.ok) {
           $("memoryPromptPreview").textContent = JSON.stringify(result.body, null, 2);
@@ -1470,7 +1470,7 @@ Timing:
         return renderLLMRequestBlock("Current Memorize Prompt Preview · " + memoryTargetLabel(preview.target), {
           ...request,
           source: "preview",
-          time: preview.windowEndAt,
+          time: preview.generatedAt,
           conversationId: preview.target,
           rawRequest: request
         });

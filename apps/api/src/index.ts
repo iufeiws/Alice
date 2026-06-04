@@ -935,13 +935,13 @@ async function runQueuedSleepMemoryInduction(): Promise<void> {
       memoryStore,
       promptStore: memoryInductionPromptStore,
       stateStore: sleepMemoryStateStore,
+      diaryStore,
       messageStore: store!,
       llm: memoryLLM,
       llmRequestSender: llmRequests.send,
       config: memoryConfig,
       nowIso: () => currentTime.now().iso,
       timezone: currentTime.timeZone,
-      sleepWindowStartAt: agentState.getSnapshot().sleepCocoonEnteredAt,
       sessionRoot: llmSessionsRoot(),
       log: appendLog
     });
@@ -1223,7 +1223,7 @@ function cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean } {
 
 function ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): MemoryInductionSession {
   if (!memoryConsoleSession || memoryConsoleSession.clearedAt) {
-    memoryConsoleSession = createMemoryInductionSession(llmSessionsRoot(), windowEndAt, {
+    memoryConsoleSession = createMemoryInductionSession(llmSessionsRoot(), currentTime.now().iso, {
       name: "console",
       windowStartAt,
       windowEndAt,

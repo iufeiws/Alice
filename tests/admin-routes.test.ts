@@ -792,7 +792,12 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(recorded, []);
-  assert.deepEqual(body.sleepDays, []);
+  assert.deepEqual(body.sleepDays, [{
+    date: "2026-05-31",
+    endAt: "2026-05-31T03:46:02.806",
+    endAtUtc: "2026-05-30T19:46:02.806Z",
+    source: "inferred_gap"
+  }]);
 });
 
 test("memory undo and redo walk memorize commits one at a time", async () => {

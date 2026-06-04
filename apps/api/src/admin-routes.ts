@@ -1,14 +1,14 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
 import { createOpenAICompatibleClient, type LLMClient } from "../../../core/llm/src/index.js";
 import type { LLMRequestSender } from "../../../core/agent/src/llm-tool-loop.js";
-import { formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { formatZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
-import type { DiaryStore, SleepBoundary } from "../../../packages/storage/src/diary-store.js";
+import type { DiaryStore } from "../../../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
 import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
-import { buildMemoryPromptPreview, type MemoryInductionPromptStore, type MemoryRunSummary, type MemoryStore, type MemoryTarget } from "../../../core/agent/src/memory.js";
+import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../core/agent/src/memory.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
 import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
 import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
@@ -164,7 +164,7 @@ export type AdminRoutesContext = {
   memoryStore: MemoryStore;
   diaryStore: DiaryStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
-  runMemoryInductionForMessages(messages: any[], windowStartAt: string, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
+  runMemoryInductionForMessages(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
   getDailyShell(): string;
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
@@ -1977,115 +1977,41 @@ function gitExecFileSync(args: string[], options: { cwd: string; encoding?: Buff
   return result.stdout?.toString() ?? "";
 }
 
-function memoryDayWindow(date: string, timeZone: string): { startAt: string; endAt: string; startAtUtc: string; endAtUtc: string; source: "calendar" } {
-  const startAt = `${date}T00:00:00.000`;
-  const startDate = parseZonedIso(startAt, timeZone);
-  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
-  const endAt = formatZonedIso(endDate, timeZone);
-  return { startAt, endAt, startAtUtc: startDate.toISOString(), endAtUtc: endDate.toISOString(), source: "calendar" };
-}
-
-function resolveMemorySleepWindow(
-  context: AdminRoutesContext,
-  date: string
-): { startAt: string; endAt: string; startAtUtc?: string; endAtUtc?: string; source: SleepBoundary["source"] | "calendar" } | undefined {
-  const sleepDays = ensureMemorySleepBoundaries(context);
-  const option = sleepDays.find((day) => day.date === date);
-  if (option) return { startAt: option.startAt, endAt: option.endAt, startAtUtc: option.startAtUtc, endAtUtc: option.endAtUtc, source: option.source };
-  return sleepDays.length === 0 ? memoryDayWindow(date, context.time.timeZone) : undefined;
-}
-
-function ensureMemorySleepBoundaries(context: AdminRoutesContext): Array<{
-  date: string;
-  startAt: string;
-  endAt: string;
-  startAtUtc?: string;
-  endAtUtc?: string;
-  source: SleepBoundary["source"];
-  messageCount?: number;
-}> {
-  if (!context.diaryStore.listSleepBoundaries().some((boundary) => boundary.source !== "sleep")) inferSleepBoundaries(context);
-  const boundaries = context.diaryStore.listSleepBoundaries();
-  return boundaries.slice(1).map((boundary, index) => {
-    const previous = boundaries[index];
-    const start = boundaryInstant(previous, context.time.timeZone);
-    const end = boundaryInstant(boundary, context.time.timeZone);
-    return {
-      date: sleepBoundaryLocalDate(boundary, context.time.timeZone),
-      startAt: formatZonedIso(start, context.time.timeZone),
-      endAt: formatZonedIso(end, context.time.timeZone),
-      startAtUtc: start.toISOString(),
-      endAtUtc: end.toISOString(),
-      source: boundary.source
-    };
-  }).reverse();
-}
-
-function inferSleepBoundaries(context: AdminRoutesContext): void {
-  const messages = context.store?.listMessagesChronological?.(10_000) ?? [];
-  if (messages.length === 0) return;
-  const segments = mergeSmallSleepSegments(splitMessagesByLongGap(messages, context.time.timeZone), context.time.timeZone);
-  for (const segment of segments) {
-    const occurredAt = segment[0].createdAt;
-    const occurredAtUtc = segment[0].createdAtUtc ?? new Date(parseMessageCreatedAt(occurredAt, context.time.timeZone)).toISOString();
-    const now = context.time.now();
-    context.diaryStore.recordSleepBoundary({
-      occurredAt,
-      occurredAtUtc,
-      source: segment === segments[0] ? "inferred_start" : "inferred_gap",
-      now: now.iso,
-      nowUtc: now.date.toISOString()
-    });
-  }
-}
-
-function splitMessagesByLongGap(messages: StoredConversationMessage[], timeZone: string): StoredConversationMessage[][] {
-  const segments: StoredConversationMessage[][] = [];
-  let current: StoredConversationMessage[] = [];
-  let previousTime: number | undefined;
-  for (const message of messages) {
-    const messageTime = parseMessageCreatedAt(message.createdAt, timeZone);
-    if (previousTime !== undefined && messageTime - previousTime > 6 * 60 * 60 * 1000 && current.length > 0) {
-      segments.push(current);
-      current = [];
+function resolveMemorySleepWindow(context: AdminRoutesContext, date: string): MemorySleepWindow | undefined {
+  return resolveMemorySleepWindowForDate({
+    diaryStore: context.diaryStore,
+    date,
+    timeZone: context.time.timeZone,
+    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
+    now: () => {
+      const now = context.time.now();
+      return { iso: now.iso, utcIso: now.date.toISOString() };
     }
-    current.push(message);
-    previousTime = messageTime;
-  }
-  if (current.length > 0) segments.push(current);
-  return segments;
+  });
 }
 
-function mergeSmallSleepSegments(segments: StoredConversationMessage[][], timeZone: string): StoredConversationMessage[][] {
-  const merged = segments.slice();
-  while (merged.length > 1) {
-    const index = merged.findIndex((segment) => segment.length <= 10);
-    if (index < 0) break;
-    const target = nearestSegmentIndex(merged, index, timeZone);
-    merged[target] = index < target ? merged[index].concat(merged[target]) : merged[target].concat(merged[index]);
-    merged.splice(index, 1);
-  }
-  return merged;
+function ensureMemorySleepBoundaries(context: AdminRoutesContext): MemorySleepWindow[] {
+  return listMemorySleepWindows({
+    diaryStore: context.diaryStore,
+    timeZone: context.time.timeZone,
+    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
+    now: () => {
+      const now = context.time.now();
+      return { iso: now.iso, utcIso: now.date.toISOString() };
+    }
+  });
 }
 
-function nearestSegmentIndex(segments: StoredConversationMessage[][], index: number, timeZone: string): number {
-  if (index === 0) return 1;
-  if (index === segments.length - 1) return index - 1;
-  const previousGap = parseMessageCreatedAt(segments[index][0].createdAt, timeZone) - parseMessageCreatedAt(segments[index - 1][segments[index - 1].length - 1].createdAt, timeZone);
-  const nextGap = parseMessageCreatedAt(segments[index + 1][0].createdAt, timeZone) - parseMessageCreatedAt(segments[index][segments[index].length - 1].createdAt, timeZone);
-  return previousGap <= nextGap ? index - 1 : index + 1;
-}
-
-function sleepBoundaryLocalDate(boundary: SleepBoundary, timeZone: string): string {
-  return formatZonedIso(boundaryInstant(boundary, timeZone), timeZone).slice(0, 10);
-}
-
-function boundaryInstant(boundary: SleepBoundary, timeZone: string): Date {
-  return boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : new Date(parseMessageCreatedAt(boundary.occurredAt, timeZone));
-}
-
-function parseMessageCreatedAt(value: string, timeZone: string): number {
-  return /Z$|[+-]\d{2}:\d{2}$/.test(value) ? new Date(value).getTime() : parseZonedIso(value, timeZone).getTime();
+function latestMemoryWindow(context: AdminRoutesContext): MemorySleepWindow | undefined {
+  return latestMemorySleepWindow({
+    diaryStore: context.diaryStore,
+    timeZone: context.time.timeZone,
+    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
+    now: () => {
+      const now = context.time.now();
+      return { iso: now.iso, utcIso: now.date.toISOString() };
+    }
+  });
 }
 
 
@@ -2100,11 +2026,13 @@ async function previewMemoryPrompts(context: AdminRoutesContext, request: any, r
     writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
     return;
   }
-  const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
-    ? body.date
-    : formatZonedIso(context.time.now().date, context.time.timeZone).slice(0, 10);
-  const startAt = `${date}T00:00:00.000`;
-  const endAt = formatZonedIso(new Date(parseZonedIso(startAt, context.time.timeZone).getTime() + 24 * 60 * 60 * 1000), context.time.timeZone);
+  const window = latestMemoryWindow(context);
+  if (!window) {
+    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
+    return;
+  }
+  const date = window.date;
+  const { startAt, endAt } = window;
   const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
   const prompts = body.prompts && typeof body.prompts === "object"
     ? body.prompts as ReturnType<MemoryInductionPromptStore["get"]>
@@ -2117,9 +2045,10 @@ async function previewMemoryPrompts(context: AdminRoutesContext, request: any, r
     windowEndAt: endAt,
     timezone: context.time.timeZone,
     userName: context.promptProfileStore.get().userName,
-    config: memorySummaryConfigForPreset(context, resolveMemorizeApiPreset(context))
+    config: memorySummaryConfigForPreset(context, resolveMemorizeApiPreset(context)),
+    generatedAt: context.time.now().iso
   }, target as MemoryTarget);
-  writeJson(response, 200, { ok: true, date, preview });
+  writeJson(response, 200, { ok: true, date, source: window.source, preview });
 }
 
 function isMemoryTarget(value: string): value is "persistent" | "userPreferences" | "yesterdaySummary" {

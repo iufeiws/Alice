@@ -4,7 +4,7 @@ import * as sqlite from "../../../packages/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
-import { createWorkspaceFilesTools, formatReadOutput } from "../../../plugins/workspace-files/src/index.js";
+import { createWorkspaceFilesTools, formatReadOutput } from "../../../tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";

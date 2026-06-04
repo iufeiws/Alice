@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWorkspaceFilesTools } from "../plugins/workspace-files/src/index.js";
+import { createWorkspaceFilesTools } from "../tools/workspace-files/src/index.js";
 
 const fs = await import("node:fs");
 const os = await import("node:os");

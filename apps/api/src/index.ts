@@ -716,6 +716,10 @@ const messageRuntime = createMessageRuntime({
     dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
     initiatedBehaviorRunStore.finalizeExpiredResponses(currentTime.now().date);
   },
+  getAgentInitiatedBehaviorPlans,
+  getRandomInitiatedBehaviorTarget() {
+    return getDefaultMessagingTarget();
+  },
   getSleepCocoonGoodnightEvent() {
     return maybeBuildSleepCocoonGoodnightEvent();
   },

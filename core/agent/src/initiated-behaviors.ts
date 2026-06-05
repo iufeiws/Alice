@@ -90,6 +90,15 @@ export type AgentInitiatedBehaviorRunStoreOptions = {
 };
 
 const responseWindowMs = 15 * 60 * 1000;
+const proactiveInitiationTypes = [
+  { id: "ritual", weight: 8, enabled: false },
+  { id: "review", weight: 2, enabled: false },
+  { id: "story", weight: 1, enabled: false },
+  { id: "care", weight: 4, enabled: true },
+  { id: "share", weight: 2, enabled: false },
+  { id: "invite", weight: 2, enabled: false },
+  { id: "real_world_suggestion", weight: 2, enabled: false }
+] as const;
 
 export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = [
   {
@@ -119,9 +128,7 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json",
     steps: [{ kind: "llm_instruction", promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json" }]
   },
-  randomizedPlan("idle_check_in", 0.08),
-  randomizedPlan("memory_reflection", 0.04),
-  randomizedPlan("topic_followup", 0.05)
+  ...proactiveInitiationTypes.map((entry) => randomizedPlan(entry.id, entry.weight, entry.enabled))
 ];
 
 export function agentInitiatedBehaviorPlanFromEvent(
@@ -149,6 +156,28 @@ export function agentInitiatedTriggerEventFromRaw(raw: unknown): string | undefi
   if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) return "sleep_cocoon.wake";
   if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) return "sleep_cocoon.force_wake";
   return undefined;
+}
+
+export function selectRandomizedAgentInitiatedBehaviorPlan(
+  plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans,
+  random: () => number = Math.random
+): AgentInitiatedBehaviorPlan | undefined {
+  const candidates = plans.filter((plan) => (
+    plan.kind === "randomized"
+    && plan.enabled
+    && plan.dryRun !== true
+    && typeof plan.weight === "number"
+    && Number.isFinite(plan.weight)
+    && plan.weight > 0
+  ));
+  const totalWeight = candidates.reduce((total, plan) => total + (plan.weight ?? 0), 0);
+  if (totalWeight <= 0) return undefined;
+  let roll = random() * totalWeight;
+  for (const plan of candidates) {
+    roll -= plan.weight ?? 0;
+    if (roll < 0) return plan;
+  }
+  return candidates.at(-1);
 }
 
 export function buildAgentInitiatedBehaviorMessages(
@@ -469,15 +498,36 @@ function defaultAgentInitiatedBehaviorPromptContent(id: string): string {
   if (id === "topic_followup") {
     return "对最近尚未结束的话题做一句自然、轻量的追问。";
   }
+  if (id === "ritual") {
+    return "判断当前是否适合发起一句仪式型问候, 例如生日、节日或周末问候。若适合, 给{{user}}发一句短促自然、有边界感的话。";
+  }
+  if (id === "review") {
+    return "根据最近对话里未闭环的话题、计划或情绪线索, 向{{user}}发起一句轻量回访。不要制造压力。";
+  }
+  if (id === "story") {
+    return "以第一人称视角讲述一小段名作故事, 末尾简短注明出处。只发一小段, 不要长篇复述。";
+  }
+  if (id === "care") {
+    return "对{{user}}发起一句低打扰的关怀型问候, 关注生活状态但不要追问过重。";
+  }
+  if (id === "share") {
+    return "结合{{user}}近期兴趣, 发起一句内容分享型消息。只在内容确实相关时分享, 不要随机热点。";
+  }
+  if (id === "invite") {
+    return "邀请{{user}}一起做一个轻任务或小活动, 语气自然, 允许对方轻松拒绝。";
+  }
+  if (id === "real_world_suggestion") {
+    return "给{{user}}一句现实世界里的轻量提议, 如吃饭、休息、散步或睡前提醒。不要替用户做决定。";
+  }
   return "";
 }
 
-function randomizedPlan(id: string, weight: number): AgentInitiatedBehaviorPlan {
+function randomizedPlan(id: string, weight: number, enabled = false): AgentInitiatedBehaviorPlan {
   const promptProfilePath = `core/prompt/initiated-behaviors/${id}.json`;
   return {
     id,
     kind: "randomized",
-    enabled: false,
+    enabled,
     weight,
     priority: 0,
     dryRun: false,

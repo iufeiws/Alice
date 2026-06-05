@@ -1140,6 +1140,269 @@ test("message runtime keeps going_to_sleep after processing and only postpones s
   assert.equal(controller.getSnapshot().sleepDurationMs, 8 * 60 * 60 * 1000);
 });
 
+test("message runtime triggers randomized initiated behavior on eligible idle timer transition", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-randomized-idle-hit"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  const sent: AgentOutput[] = [];
+  let current = new Date("2026-06-06T04:00:00.000Z");
+  let state = "idle" as "idle" | "waiting";
+  let tickCalls = 0;
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    senderRole: "assistant",
+    contentType: "text",
+    contentText: "last chat",
+    createdAt: "2026-06-06T00:00:00.000Z",
+    createdAtUtc: "2026-06-06T00:00:00.000Z"
+  });
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    now: () => current,
+    random: randomQueue([0.49, 0]),
+    getProcessNowTarget: () => ({
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "chat",
+      userId: "user",
+      sessionId: "session-1"
+    }),
+    agentState: {
+      canReplyToInbound: () => true,
+      canRunHeartbeat: () => true,
+      getInboundDelayMs: () => 0,
+      getSnapshot() {
+        return {
+          state,
+          intimacy: 50,
+          updatedAt: current.toISOString(),
+          nextTransitionAt: current.toISOString(),
+          responseDelayMs: 0
+        };
+      },
+      tick() {
+        tickCalls += 1;
+        return { state, intimacy: 50, updatedAt: current.toISOString(), responseDelayMs: 0 };
+      },
+      setState(nextState: any) {
+        state = nextState as "idle" | "waiting";
+        return { state, intimacy: 50, updatedAt: current.toISOString(), responseDelayMs: 0, reason: "randomized_initiated_behavior" };
+      },
+      onChange: () => () => {},
+      noteInboundMessage() {
+        return { state, intimacy: 50, updatedAt: current.toISOString(), responseDelayMs: 0 };
+      }
+    },
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [textOutput("session-1", "checking in")];
+      }
+    },
+    outputRouter: {
+      async sendAll(outputs) {
+        sent.push(...outputs);
+      }
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.resumeHeartbeat();
+  await waitFor(() => coreInputs.length === 1);
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs[0].type, "system.heartbeat");
+  assert.equal(coreInputs[0].payload.kind, "text");
+  assert.equal(coreInputs[0].payload.kind === "text" ? coreInputs[0].payload.text : "", "A randomized proactive event was triggered. Use messaging tools to inspect context before sending a short, low-interruption message.");
+  assert.deepEqual(coreInputs[0].meta.raw, {
+    agentInitiatedBehaviorId: "care",
+    randomizedInitiatedBehavior: true
+  });
+  assert.equal(tickCalls, 0);
+  assert.equal(state, "waiting");
+  assert.equal(sent.length, 1);
+  assert.equal(store.listMessagesForConversation("session-1", 10).filter((entry) => entry.direction === "outbound").length, 2);
+});
+
+test("message runtime does not trigger randomized initiated behavior when probability misses", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-randomized-idle-miss"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let current = new Date("2026-06-06T02:00:00.000Z");
+  let state = "idle" as "idle" | "waiting";
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    senderRole: "assistant",
+    contentType: "text",
+    contentText: "last chat",
+    createdAt: "2026-06-06T00:00:00.000Z",
+    createdAtUtc: "2026-06-06T00:00:00.000Z"
+  });
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    now: () => current,
+    random: randomQueue([0.25]),
+    getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
+    agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.resumeHeartbeat();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs.length, 0);
+});
+
+test("message runtime skips randomized initiated behavior while pending inbound exists", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-randomized-pending"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let current = new Date("2026-06-06T04:00:00.000Z");
+  let state = "idle" as "idle" | "waiting";
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 60_000,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    now: () => current,
+    random: randomQueue([0]),
+    getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
+    agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEventAt("session-1", "om_pending_random", "pending", "2026-06-06T04:00:00.000Z"));
+  runtime.resumeHeartbeat();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs.length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
+});
+
+test("message runtime skips randomized initiated behavior without target or message history", async () => {
+  for (const scenario of [
+    { name: "no-target", insertHistory: true, getTarget: undefined },
+    { name: "no-history", insertHistory: false, getTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }) }
+  ]) {
+    const store = createAliceStore(path.join(makeTempDir(`runtime-randomized-${scenario.name}`), "alice.sqlite"));
+    const coreInputs: AgentEvent[] = [];
+    let current = new Date("2026-06-06T04:00:00.000Z");
+    let state = "idle" as "idle" | "waiting";
+    if (scenario.insertHistory) {
+      store.insertOutboundMessage({
+        plugin: "feishu",
+        conversationId: "session-1",
+        senderRole: "assistant",
+        contentType: "text",
+        contentText: "last chat",
+        createdAt: "2026-06-06T00:00:00.000Z",
+        createdAtUtc: "2026-06-06T00:00:00.000Z"
+      });
+    }
+    const runtime = createMessageRuntime({
+      getDelayMs: () => 0,
+      getHeartbeatIntervalMs: () => 10,
+      startHeartbeatPaused: true,
+      now: () => current,
+      random: randomQueue([0, 0]),
+      getProcessNowTarget: scenario.getTarget,
+      agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
+      store,
+      core: {
+        async handleEvent(event) {
+          coreInputs.push(event);
+          return [];
+        }
+      },
+      outputRouter: { async sendAll() {} },
+      appendLog() {},
+      appendMessageLog(input) {
+        return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+      }
+    });
+
+    runtime.resumeHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    runtime.pauseHeartbeat();
+
+    assert.equal(coreInputs.length, 0, scenario.name);
+  }
+});
+
+test("message runtime evaluates randomized initiated behavior only once per idle timer transition", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-randomized-once"), "alice.sqlite"));
+  const coreInputs: AgentEvent[] = [];
+  let current = new Date("2026-06-06T04:00:00.000Z");
+  let state = "idle" as "idle" | "waiting";
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    senderRole: "assistant",
+    contentType: "text",
+    contentText: "last chat",
+    createdAt: "2026-06-06T00:00:00.000Z",
+    createdAtUtc: "2026-06-06T00:00:00.000Z"
+  });
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    startHeartbeatPaused: true,
+    now: () => current,
+    random: randomQueue([0, 0, 0, 0]),
+    getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
+    agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
+    store,
+    core: {
+      async handleEvent(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.resumeHeartbeat();
+  await waitFor(() => coreInputs.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  runtime.pauseHeartbeat();
+
+  assert.equal(coreInputs.length, 1);
+});
+
 test("message runtime processes all currently unprocessed messages for a session in one turn", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-process-all"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -1250,6 +1513,48 @@ function memoryStore(initial?: string): AgentStateStore & { content?: string } {
     },
     write(content) {
       this.content = content;
+    }
+  };
+}
+
+function randomQueue(values: number[]): () => number {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)] ?? 0;
+}
+
+function idleTransitionState(
+  getState: () => "idle" | "waiting",
+  setState: (state: "idle" | "waiting") => void,
+  getNow: () => Date,
+  inboundDelayMs = 0
+) {
+  return {
+    canReplyToInbound: () => true,
+    canRunHeartbeat: () => true,
+    getInboundDelayMs: () => inboundDelayMs,
+    getSnapshot() {
+      return {
+        state: getState(),
+        intimacy: 50,
+        updatedAt: getNow().toISOString(),
+        nextTransitionAt: getNow().toISOString(),
+        responseDelayMs: 0
+      };
+    },
+    tick() {
+      if (getState() === "idle") {
+        setState("waiting");
+        return { state: "waiting" as const, intimacy: 50, updatedAt: getNow().toISOString(), responseDelayMs: 0, reason: "idle_timer" };
+      }
+      return { state: getState(), intimacy: 50, updatedAt: getNow().toISOString(), responseDelayMs: 0 };
+    },
+    setState(state: any) {
+      setState(state as "idle" | "waiting");
+      return { state: getState(), intimacy: 50, updatedAt: getNow().toISOString(), responseDelayMs: 0, reason: "randomized_initiated_behavior" };
+    },
+    onChange: () => () => {},
+    noteInboundMessage() {
+      return { state: getState(), intimacy: 50, updatedAt: getNow().toISOString(), responseDelayMs: 0 };
     }
   };
 }

@@ -30,25 +30,50 @@
 
 ### 随机触发型
 
-随机触发型行为没有单个确定外部事件。当前只保留配置和运行记录展示，不实现自动触发器。
+随机触发型行为没有单个确定外部事件。触发入口绑定在 Agent state 的 `idle` 随机延迟到期点：当 heartbeat 发现 `idle` 的随机延迟已经到期时，先做一次随机判断，再决定是否进入普通 idle 状态 roll。普通 heartbeat、manual process-now、sleep cocoon 事件、waiting/away/sleeping 等状态转换都不触发随机事件。
 
-第一批候选：
+随机判断依赖 `messages` 表中最近一条对话记录的时间，不读取 append-only `message_logs`。设当前时间距离最近一条 conversation message 的时长为 `t`，则：
 
-| 行为 | 说明 |
-| --- | --- |
-| `idle_check_in` | 用户长时间未互动后，低概率发起轻量问候 |
-| `memory_reflection` | 在合适时机触发记忆或回顾相关主动行为 |
-| `topic_followup` | 对未结束话题做轻量追问 |
+```text
+p = min(t / 4小时, 1) / 2
+```
 
-随机触发型第一版只支持：
+当随机数小于 `p` 时，从启用的随机事件池中按 `weight` 加权抽取一种事件，并生成一条 `system.heartbeat` 事件交给 Agent Core。命中后不再执行 idle 的普通 `waiting/away/idle` roll；主动会话结束后状态落到 `waiting`。生成事件必须包含：
+
+```json
+{
+  "agentInitiatedBehaviorId": "<selected behavior id>",
+  "randomizedInitiatedBehavior": true
+}
+```
+
+随机事件池参考主动对话发起草案：
+
+| 行为 | 默认启用 | 权重 | 说明 |
+| --- | --- | ---: | --- |
+| `ritual` | 否 | 8 | 日常仪式、特殊日子或节日问候 |
+| `review` | 否 | 2 | 基于未闭环话题、计划或情绪线索轻量回访 |
+| `story` | 否 | 1 | 低频故事讲述 |
+| `care` | 是 | 4 | 低打扰关怀型问候 |
+| `share` | 否 | 2 | 与用户兴趣相关的内容分享 |
+| `invite` | 否 | 2 | 邀请用户一起做轻任务或小活动 |
+| `real_world_suggestion` | 否 | 2 | 饭点、休息、散步、睡前等现实世界轻量提议 |
+
+触发前必须满足：
+
+- 没有 pending user message 或正在处理中的 session。
+- 当前没有活跃 LLM session。
+- Agent 当前状态允许 heartbeat 运行。
+- 存在默认 messaging target。
+- `messages` 表中存在至少一条可解析时间的记录。
+
+随机触发型配置支持：
 
 - `enabled`
 - `weight`
 - `priority`
 - `dryRun`
 - prompt layers
-
-第一版只保留配置和展示，不接入 heartbeat 或时间点触发器。
 
 ## 行为计划模型
 
@@ -226,23 +251,23 @@ core/prompt/initiated-behaviors/topic_followup.json
 
 ## 随机触发型目标实现
 
-随机触发型行为当前只作为配置类型和统计类型存在，不在 heartbeat、时间点或空闲检查路径里自动触发。后续如果要实现，必须先重新定义触发来源和判定模型，不能复用当前 heartbeat 轮询。
+随机触发型行为由 `MessageRuntime` 在 `idle_timer` 到期转换时判断是否生成主动事件。行为语义仍由 Agent 行为模块和 prompt profile 决定；MessageRuntime 只负责在合适的状态转换点做概率判断、抽取已启用事件并生成 runtime event。
 
-候选配置示例：
+配置示例：
 
 ```ts
 {
-  id: "idle_check_in",
+  id: "care",
   kind: "randomized",
-  enabled: false,
-  weight: 0.08,
+  enabled: true,
+  weight: 4,
   priority: 0,
   dryRun: false,
-  promptProfilePath: "core/prompt/initiated-behaviors/idle_check_in.json",
+  promptProfilePath: "core/prompt/initiated-behaviors/care.json",
   steps: [
     {
       kind: "llm_instruction",
-      promptProfilePath: "core/prompt/initiated-behaviors/idle_check_in.json"
+      promptProfilePath: "core/prompt/initiated-behaviors/care.json"
     }
   ]
 }
@@ -257,7 +282,7 @@ core/prompt/initiated-behaviors/topic_followup.json
 
 ## 分层边界
 
-- API / MessageRuntime：产生事件驱动型 generated event；不拥有行为语义，不触发随机行为。
+- API / MessageRuntime：产生事件驱动型 generated event；不拥有行为语义；只在 `idle_timer` 到期转换时按配置生成随机主动事件。
 - Agent 行为模块：读取配置，匹配事件，生成 `AgentInitiatedBehaviorPlan`。
 - Prompt 存储：只保存 layer-based prompt profile，不保存运行记录。
 - Backend effect 执行层：执行 `sleep_cocoon` 等后台实际效果。
@@ -340,7 +365,7 @@ type AgentInitiatedBehaviorRun = {
 5. 增加行为配置读取层，先支持三条 sleep event config。
 6. 保留现有 raw flag 兼容入口，并映射到新的 `triggerEvent`。
 7. 增加 run 记录，记录整体行为和每个 step 的执行结果。
-8. 保留随机触发型配置展示，但不接入运行时触发器。
+8. 接入随机触发型 idle 到期触发器，只在 `idle_timer` 转换时判断一次。
 9. 增加 admin API：列表、Config、保存、runs、30 分钟 bucket 聚合。
 10. 将 admin 静态 UI 替换为真实配置和真实 prompt layers。
 
@@ -366,9 +391,11 @@ type AgentInitiatedBehaviorRun = {
 
 ### 随机触发型
 
-- 默认配置保持 disabled。
-- 当前没有随机选择器测试，因为运行时不应自动发起随机行为。
-- `weight` 和 `priority` 只验证为配置展示字段。
+- 默认随机池包含 `ritual/review/story/care/share/invite/real_world_suggestion`。
+- 默认只有 `care` enabled，其他类型保留配置。
+- 按 `weight` 加权抽取，并跳过 disabled、dryRun 和非正权重行为。
+- idle timer 到期且概率命中时生成 randomized initiated behavior event。
+- 有 pending inbound、LLM busy、无默认 target、无 message 记录时不触发。
 
 ### Admin
 
@@ -382,4 +409,4 @@ type AgentInitiatedBehaviorRun = {
 - 本文档是实现计划，不代表当前代码已经完成上述能力。
 - 当前代码仍保留 hardcoded sleep prompt 和 raw flag 解析。
 - `sleep_goodnight` 的后台 actual effect 是下一步目标，不是当前实现。
-- 随机触发型第一版不引入时间窗、min idle、max per day。
+- 随机触发型第一版只在 idle timer 到期时判断一次，不引入每日次数上限或额外勿扰窗口。

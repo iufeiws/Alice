@@ -1,6 +1,11 @@
 import type { AgentEvent, AgentOutput } from "../../../packages/types/src/index.js";
 import { createId, sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../packages/types/src/index.js";
-import type { AgentStateController } from "../../../core/agent/src/state.js";
+import type { AgentStateController, AgentStateSnapshot } from "../../../core/agent/src/state.js";
+import {
+  defaultAgentInitiatedBehaviorPlans,
+  selectRandomizedAgentInitiatedBehaviorPlan,
+  type AgentInitiatedBehaviorPlan
+} from "../../../core/agent/src/initiated-behaviors.js";
 import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type {
   InsertOutboundMessageInput,
@@ -18,6 +23,14 @@ export type MessageRuntimeDeps = {
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
   getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
+  getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
+  getRandomInitiatedBehaviorTarget?: () => {
+    plugin: string;
+    accountId?: string;
+    channelId?: string;
+    userId?: string;
+    sessionId: string;
+  } | undefined;
   onForceWake?: () => void;
   onInboundUserMessage?: (input: { sessionId: string; receivedAt: string; receivedAtUtc?: string }) => void;
   clearLLMSession?(reason: string): void;
@@ -39,10 +52,12 @@ export type MessageRuntimeDeps = {
   } | undefined;
   now?: () => Date;
   time?: CurrentTimeProvider;
+  random?: () => number;
   store: {
     insertMessageLog(input: Omit<StoredMessageLog, "id">): StoredMessageLog;
     upsertInboundMessage(input: UpsertInboundMessageInput): StoredConversationMessage;
     insertOutboundMessage(input: InsertOutboundMessageInput): StoredConversationMessage;
+    listMessages(limit: number): StoredConversationMessage[];
     listMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
     listUnprocessedCoreMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
     listPendingCoreConversations(): Array<{ conversationId: string }>;
@@ -115,6 +130,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const processingSessions = new Set<string>();
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
+  const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatPaused = deps.startHeartbeatPaused === true;
@@ -290,13 +306,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
 
   async function runHeartbeat(options: { force?: boolean } = {}): Promise<number> {
     const force = options.force ?? false;
+    const beforeTick = deps.agentState?.getSnapshot?.();
+    let processed = 0;
+    const randomizedInitiatedEvent = !force
+      && isIdleTransitionDue(beforeTick)
+      && canRunHeartbeat()
+      && !hasPendingUserMessages()
+      ? buildRandomizedInitiatedBehaviorEvent()
+      : undefined;
+    if (randomizedInitiatedEvent) {
+      const handled = await runGeneratedSession(randomizedInitiatedEvent, "randomized initiated behavior");
+      if (handled) processed += 1;
+      deps.agentState?.setState?.("waiting", { reason: "randomized_initiated_behavior" });
+      if (!force) scheduleHeartbeat();
+      return processed;
+    }
     deps.agentState?.tick();
     if (!force && !canRunHeartbeat()) {
       scheduleHeartbeat();
       return 0;
     }
     if (canRunHeartbeat()) deps.onHeartbeatTick?.();
-    let processed = 0;
     const sleepCocoonWakeEvent = !force && canRunHeartbeat()
       ? (deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.())
       : undefined;
@@ -476,6 +506,62 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     return pendingSessions.size > 0
       || processingSessions.size > 0
       || deps.store.listPendingCoreConversations().length > 0;
+  }
+
+  function isIdleTransitionDue(snapshot: AgentStateSnapshot | undefined): boolean {
+    if (snapshot?.state !== "idle" || !snapshot.nextTransitionAt) return false;
+    return parseZonedIso(snapshot.nextTransitionAt, time.timeZone).getTime() <= now().getTime();
+  }
+
+  function buildRandomizedInitiatedBehaviorEvent(): AgentEvent | undefined {
+    const lastMessage = deps.store.listMessages(1).at(-1);
+    if (!lastMessage) return undefined;
+    const lastMessageAt = messageTimestamp(lastMessage);
+    if (lastMessageAt === undefined) return undefined;
+    const elapsedMs = Math.max(0, now().getTime() - lastMessageAt);
+    const probability = Math.min(elapsedMs / (4 * 60 * 60 * 1000), 1) / 2;
+    if (random() >= probability) return undefined;
+    const plan = selectRandomizedAgentInitiatedBehaviorPlan(
+      deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans,
+      random
+    );
+    if (!plan) return undefined;
+    const target = deps.getRandomInitiatedBehaviorTarget?.() ?? deps.getProcessNowTarget?.();
+    if (!target) return undefined;
+    const receivedTime = time.now();
+    return {
+      id: createId("evt"),
+      source: {
+        plugin: target.plugin,
+        accountId: target.accountId,
+        channelId: target.channelId,
+        userId: target.userId
+      },
+      session: {
+        scope: "dm",
+        sessionId: target.sessionId
+      },
+      type: "system.heartbeat",
+      payload: {
+        kind: "text",
+        text: "A randomized proactive event was triggered. Use messaging tools to inspect context before sending a short, low-interruption message."
+      },
+      meta: {
+        receivedAt: receivedTime.iso,
+        receivedAtUtc: receivedTime.date.toISOString(),
+        raw: {
+          agentInitiatedBehaviorId: plan.id,
+          randomizedInitiatedBehavior: true
+        }
+      }
+    };
+  }
+
+  function messageTimestamp(message: StoredConversationMessage): number | undefined {
+    const utcTimestamp = message.createdAtUtc ? Date.parse(message.createdAtUtc) : Number.NaN;
+    if (Number.isFinite(utcTimestamp)) return utcTimestamp;
+    const localTimestamp = parseZonedIso(message.createdAt, time.timeZone).getTime();
+    return Number.isFinite(localTimestamp) ? localTimestamp : undefined;
   }
 
   function shouldProcessPending(pending: StoredConversationMessage[]): boolean {

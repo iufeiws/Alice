@@ -8,6 +8,7 @@ import {
   createAgentInitiatedBehaviorRunStore,
   defaultAgentInitiatedBehaviorPlans,
   resolveAgentInitiatedBehaviorAvailability,
+  selectRandomizedAgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorPlan
 } from "../core/agent/src/initiated-behaviors.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
@@ -97,7 +98,7 @@ test("initiated behavior prompt layers preserve assistant tool request layers", 
   }]);
 });
 
-test("default randomized behavior plans are disabled configuration entries", () => {
+test("default randomized behavior plans use proactive initiation types", () => {
   const randomizedPlans = defaultAgentInitiatedBehaviorPlans.filter((plan) => plan.kind === "randomized");
 
   assert.deepEqual(randomizedPlans.map((plan) => ({
@@ -106,15 +107,32 @@ test("default randomized behavior plans are disabled configuration entries", () 
     weight: plan.weight,
     priority: plan.priority
   })), [
-    { id: "idle_check_in", enabled: false, weight: 0.08, priority: 0 },
-    { id: "memory_reflection", enabled: false, weight: 0.04, priority: 0 },
-    { id: "topic_followup", enabled: false, weight: 0.05, priority: 0 }
+    { id: "ritual", enabled: false, weight: 8, priority: 0 },
+    { id: "review", enabled: false, weight: 2, priority: 0 },
+    { id: "story", enabled: false, weight: 1, priority: 0 },
+    { id: "care", enabled: true, weight: 4, priority: 0 },
+    { id: "share", enabled: false, weight: 2, priority: 0 },
+    { id: "invite", enabled: false, weight: 2, priority: 0 },
+    { id: "real_world_suggestion", enabled: false, weight: 2, priority: 0 }
   ]);
+});
+
+test("randomized behavior selection uses only enabled positive weight plans", () => {
+  const base = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const disabled = { ...base, id: "disabled", enabled: false, weight: 100 };
+  const dryRun = { ...base, id: "dry_run", enabled: true, dryRun: true, weight: 100 };
+  const zero = { ...base, id: "zero", enabled: true, weight: 0 };
+  const first = { ...base, id: "first", enabled: true, dryRun: false, weight: 1 };
+  const second = { ...base, id: "second", enabled: true, dryRun: false, weight: 3 };
+
+  assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, dryRun, zero], () => 0), undefined);
+  assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, first, second], () => 0)?.id, "first");
+  assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, first, second], () => 0.99)?.id, "second");
 });
 
 test("initiated behavior run store aggregates randomized thirty minute buckets", () => {
   const store = createAgentInitiatedBehaviorRunStore();
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
   const run = createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T00:10:00.000Z",
@@ -133,7 +151,7 @@ test("initiated behavior run store persists and marks 15 minute responses", () =
   const dir = path.join("/tmp", `initiated-behavior-runs-${process.pid}-${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "runs.sqlite");
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
   const store = createAgentInitiatedBehaviorRunStore({ dbPath });
   store.record(createAgentInitiatedBehaviorRun({
     plan,
@@ -159,7 +177,7 @@ test("initiated behavior run store does not count pending responses as missed in
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "runs.sqlite");
   const store = createAgentInitiatedBehaviorRunStore({ dbPath });
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
   store.record(createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T08:10:00.000",
@@ -178,7 +196,7 @@ test("initiated behavior run store does not count pending responses as missed in
 
 test("initiated behavior run store marks expired responses as missed", () => {
   const store = createAgentInitiatedBehaviorRunStore();
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
   store.record(createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T00:00:00.000Z",

@@ -682,9 +682,13 @@ export function renderAdminHtmlV2(): string {
         sleep_goodnight: "Event behavior with backend sleep_cocoon action=in before the LLM prompt.",
         sleep_morning: "Event behavior for the normal wake transition.",
         sleep_force_wake: "Event behavior for forced wake; distinct from ordinary morning.",
-        idle_check_in: "Randomized lightweight idle check-in.",
-        memory_reflection: "Randomized memory-oriented reflection.",
-        topic_followup: "Randomized follow-up for an unfinished recent topic."
+        ritual: "Randomized ritual initiation for dates, holidays, and lightweight greetings.",
+        review: "Randomized review initiation for open loops and recent context.",
+        story: "Randomized low-frequency first-person story snippet.",
+        care: "Randomized low-interruption care check-in.",
+        share: "Randomized content share tied to recent interests.",
+        invite: "Randomized invitation to a small shared activity.",
+        real_world_suggestion: "Randomized real-world suggestion such as food, rest, or sleep."
       };
       async function refreshInitiatedBehaviors() {
         try {

@@ -1,0 +1,12 @@
+{
+  "layers": [
+    {
+      "id": "instruction",
+      "title": "Real World Suggestion",
+      "role": "user",
+      "enabled": true,
+      "content": "给{{user}}一句现实世界里的轻量提议, 如吃饭、休息、散步或睡前提醒。不要替用户做决定。",
+      "order": 10
+    }
+  ]
+}

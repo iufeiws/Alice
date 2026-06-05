@@ -8,7 +8,7 @@
 apps/api/src/index.ts
 ```
 
-当前原型阶段这个文件有意保持单体结构。它会加载 `.env`、构建配置、创建 SQLite 与文件日志存储、接入 AgentCore 依赖、注册飞书/微信 Channel Plugin 与 messaging/media/shell Tool Plugin，并启动 HTTP 服务。
+当前原型阶段这个文件有意保持单体结构。它会加载 `.env`、构建配置、创建 SQLite 与文件日志存储、接入 AgentCore 依赖、注册飞书/微信 Channel Plugin 与 messaging/photo/shell Tool Plugin，并启动 HTTP 服务。
 
 ## 主要运行时职责
 
@@ -16,7 +16,7 @@ apps/api/src/index.ts
 - 服务管理后台 JSON API。
 - 创建 `AgentCore`。
 - 创建飞书与微信 Channel Plugin。
-- 创建 messaging、media 与 shell Tool Plugin。
+- 创建 messaging、photo 与 shell Tool Plugin。
 - 通过 `packages/storage` 持久化 Core 侧消息和消息事件日志。
 - 通过文件日志存储持久化系统日志。
 - 归档活跃 LLM 会话 transcript delta。

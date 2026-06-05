@@ -1,4 +1,4 @@
-# Bookcase Plugin
+# Bookcase Tools
 
 `bookcase` 提供讲故事用的书橱工具。
 

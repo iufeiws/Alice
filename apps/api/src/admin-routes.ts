@@ -172,7 +172,7 @@ export type AdminRoutesContext = {
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
-  mediaTools: ToolPlugin;
+  photoTools: ToolPlugin;
   shellTools: ToolPlugin;
   bookcaseTools: ToolPlugin;
   sleepCocoonTools: ToolPlugin;
@@ -2179,7 +2179,7 @@ function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: strin
   const profile = context.promptProfileStore.get();
   const plugins = [
     profile.visibleTools.feishu === false ? undefined : context.messagingTools,
-    profile.visibleTools.media === false ? undefined : context.mediaTools,
+    profile.visibleTools.photo === false || profile.visibleTools.media === false ? undefined : context.photoTools,
     profile.visibleTools.shell === false ? undefined : context.shellTools,
     context.sleepCocoonTools
   ].filter((plugin): plugin is ToolPlugin => Boolean(plugin));
@@ -2271,7 +2271,7 @@ async function previewToolResult(context: AdminRoutesContext, request: any, resp
 }
 
 function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
-  return [context.messagingTools, context.mediaTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools];
+  return [context.messagingTools, context.photoTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools];
 }
 
 function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {

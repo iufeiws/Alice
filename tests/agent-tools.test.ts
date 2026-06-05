@@ -1206,7 +1206,7 @@ test("agent core rejects two consecutive selfie tool calls", async () => {
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
     tools: [{
-      id: "media",
+      id: "photo",
       listTools() {
         return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
       },
@@ -1311,7 +1311,7 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
   assert.deepEqual(requests[0].tools, []);
 });
 
-test("agent core filters media tools when media visibility is disabled", async () => {
+test("agent core filters photo tools when photo visibility is disabled", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1328,7 +1328,7 @@ test("agent core filters media tools when media visibility is disabled", async (
     policy: createAllowAllPolicy(),
     getPromptProfile: () => ({
       userName: "user",
-      visibleTools: { feishu: true, media: false },
+      visibleTools: { feishu: true, photo: false },
       layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }]
     }),
     tools: [{
@@ -1340,7 +1340,7 @@ test("agent core filters media tools when media visibility is disabled", async (
         return { callId: call.id, ok: true, output: "history" };
       }
     }, {
-      id: "media",
+      id: "photo",
       listTools() {
         return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
       },

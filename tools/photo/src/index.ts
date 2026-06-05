@@ -12,7 +12,7 @@ const moduleApi = await import("node:module");
 const path = await import("node:path");
 const require = moduleApi.createRequire(import.meta.url);
 
-export type MediaToolTarget = {
+export type PhotoToolTarget = {
   plugin: string;
   accountId?: string;
   channelId?: string;
@@ -60,7 +60,7 @@ export type SelfieExecutorResult = {
 
 export type SelfieExecutor = (input: SelfieExecutorInput) => Promise<SelfieExecutorResult | void>;
 
-export type MediaToolsDeps = {
+export type PhotoToolsDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
@@ -81,7 +81,7 @@ export type MediaToolsDeps = {
   getSelfieContext?(): SelfieContext;
   getUserName?: () => string;
   getAppearanceDescription?: () => string;
-  getDefaultTarget?(): MediaToolTarget | undefined;
+  getDefaultTarget?(): PhotoToolTarget | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog?(input: {
     direction: "outbound";
@@ -104,7 +104,7 @@ const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
 const defaultFastSelfieRunner = path.resolve("Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
 
-export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
+export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const referenceDir = deps.selfieReferenceDir ?? "assets/selfie/references";
   const outputDir = deps.selfieOutputDir ?? "assets/generated/selfies";
@@ -123,13 +123,13 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
   const executor = deps.selfieExecutor ?? runAliceSelfieFastSkill;
 
   return {
-    id: "media",
+    id: "photo",
     listTools() {
       return [selfieTool];
     },
     async execute(call) {
       if (call.toolName === "selfie") return selfie(call);
-      return { callId: call.id, ok: false, error: `Unknown media tool: ${call.toolName}` };
+      return { callId: call.id, ok: false, error: `Unknown photo tool: ${call.toolName}` };
     }
   };
 
@@ -295,7 +295,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     };
   }
 
-  async function sendText(target: MediaToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
+  async function sendText(target: PhotoToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
     const now = time.now();
     return sendOutput({
       id: createId("tool_out"),
@@ -316,7 +316,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     }, senderRole);
   }
 
-  async function sendImage(target: MediaToolTarget, assetId: string): Promise<unknown> {
+  async function sendImage(target: PhotoToolTarget, assetId: string): Promise<unknown> {
     const now = time.now();
     return sendOutput({
       id: createId("tool_out"),
@@ -337,7 +337,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     });
   }
 
-  async function sendSelfieFailureNotice(target: MediaToolTarget): Promise<void> {
+  async function sendSelfieFailureNotice(target: PhotoToolTarget): Promise<void> {
     try {
       await sendText(target, "-大失败-", "system");
     } catch (error) {
@@ -378,7 +378,7 @@ export function createMediaTools(deps: MediaToolsDeps): ToolPlugin {
     }
   }
 
-  function resolveTarget(call: ToolCall): MediaToolTarget | undefined {
+  function resolveTarget(call: ToolCall): PhotoToolTarget | undefined {
     if (call.requester?.plugin && call.session?.sessionId) {
       return normalizeTarget({
         plugin: call.requester.plugin,
@@ -700,7 +700,7 @@ function normalizeAspectRatio(value: unknown): SelfieAspectRatio | undefined {
   return allowedAspectRatios.has(text as SelfieAspectRatio) ? text as SelfieAspectRatio : undefined;
 }
 
-function normalizeTarget(target: MediaToolTarget): MediaToolTarget {
+function normalizeTarget(target: PhotoToolTarget): PhotoToolTarget {
   if (target.plugin !== "feishu") return target;
   const normalizedChannelId = normalizeFeishuChatId(target.channelId);
   const normalizedUserId = normalizedChannelId ? target.userId : normalizeFeishuOpenId(target.userId ?? target.channelId);

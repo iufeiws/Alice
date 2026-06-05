@@ -26,6 +26,7 @@ export type PromptProfile = {
   appendLayers?: PromptLayer[];
   visibleTools: {
     feishu: boolean;
+    photo?: boolean;
     media?: boolean;
     shell?: boolean;
   };
@@ -84,7 +85,7 @@ export function defaultPromptProfile(): PromptProfile {
     userName: "user",
     visibleTools: {
       feishu: true,
-      media: true,
+      photo: true,
       shell: true
     },
     layers: [
@@ -291,7 +292,8 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     userName: nonEmptyString(profile.userName) ?? fallback.userName,
     visibleTools: {
       feishu: profile.visibleTools?.feishu !== false,
-      media: profile.visibleTools?.media !== false,
+      photo: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
+      media: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
       shell: profile.visibleTools?.shell !== false
     },
     layers: normalizePromptLayers(layers),

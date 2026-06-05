@@ -25,12 +25,12 @@ import { createSessionResolver } from "../../../core/session/src/index.js";
 import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
-import { createMediaTools } from "../../../plugins/media/src/index.js";
+import { createPhotoTools } from "../../../tools/photo/src/index.js";
 import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/index.js";
-import { createShellTools } from "../../../plugins/shell/src/index.js";
-import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
-import { createSleepCocoonTools } from "../../../plugins/sleep-cocoon/src/index.js";
+import { createShellTools } from "../../../tools/shell/src/index.js";
+import { createBookcaseTools } from "../../../tools/bookcase/src/index.js";
+import { createSleepCocoonTools } from "../../../tools/sleep-cocoon/src/index.js";
 import { createAsrInboundStreamSession, createAsrPlugin } from "../../../plugins/asr/src/index.js";
 import { attachWebRtcVoiceSignalingServer, createWebRtcVoicePlugin, createWeriftPeer, decodeAudioFileToOpusRtpFrames, defaultWebRtcVoiceConfig, type WebRtcVoiceCall } from "../../../plugins/webrtc-voice/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
@@ -436,23 +436,23 @@ const messagingTools = createMessagingTools({
   appendMessageLog,
   appendLog
 });
-const mediaTools = createMediaTools({
+const photoTools = createPhotoTools({
   store,
   outputRouter,
   time: currentTime,
-  selfieReferenceDir: config.media.selfieReferenceDir,
-  selfieOutputDir: config.media.selfieOutputDir,
-  selfieCodexCommand: config.media.selfieCodexCommand,
-  selfieCodexTimeoutMs: config.media.selfieCodexTimeoutMs,
-  selfieImageApiKey: config.media.selfieImageApiKey,
-  selfieImageApiBaseURL: config.media.selfieImageApiBaseURL,
-  selfieImageApiModel: config.media.selfieImageApiModel,
-  selfieImageApiSize: config.media.selfieImageApiSize,
-  selfieImageApiQuality: config.media.selfieImageApiQuality,
-  selfieImageApiOutputFormat: config.media.selfieImageApiOutputFormat,
-  selfieImageApiOutputCompression: config.media.selfieImageApiOutputCompression,
-  selfieImageApiTimeoutMs: config.media.selfieImageApiTimeoutMs,
-  selfieMaxBytes: config.media.selfieMaxBytes,
+  selfieReferenceDir: config.photo.selfieReferenceDir,
+  selfieOutputDir: config.photo.selfieOutputDir,
+  selfieCodexCommand: config.photo.selfieCodexCommand,
+  selfieCodexTimeoutMs: config.photo.selfieCodexTimeoutMs,
+  selfieImageApiKey: config.photo.selfieImageApiKey,
+  selfieImageApiBaseURL: config.photo.selfieImageApiBaseURL,
+  selfieImageApiModel: config.photo.selfieImageApiModel,
+  selfieImageApiSize: config.photo.selfieImageApiSize,
+  selfieImageApiQuality: config.photo.selfieImageApiQuality,
+  selfieImageApiOutputFormat: config.photo.selfieImageApiOutputFormat,
+  selfieImageApiOutputCompression: config.photo.selfieImageApiOutputCompression,
+  selfieImageApiTimeoutMs: config.photo.selfieImageApiTimeoutMs,
+  selfieMaxBytes: config.photo.selfieMaxBytes,
   getSelfieContext() {
     const daily = dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
     const profile = promptProfileStore.get();
@@ -500,7 +500,7 @@ const sleepCocoonTools = createSleepCocoonTools({
   },
   appendLog
 });
-const toolPlugins = [messagingTools, mediaTools, shellTools, bookcaseTools, sleepCocoonTools];
+const toolPlugins = [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools];
 const llmRequests = createLLMRequests({
   getTool: getLLMRequestToolDefinition,
   onRequestPrepared(input, request) {
@@ -755,7 +755,7 @@ const server = http.createServer(createApiRequestHandler({
   dailyShellStore,
   agentState,
   messagingTools,
-  mediaTools,
+  photoTools,
   shellTools,
   bookcaseTools,
   sleepCocoonTools,
@@ -2418,7 +2418,7 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
   const names = toolPlugins
     .filter((plugin) => {
       if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
-      if (plugin.id === "media") return profile.visibleTools.media !== false;
+      if (plugin.id === "photo") return profile.visibleTools.photo !== false && profile.visibleTools.media !== false;
       if (plugin.id === "shell") return profile.visibleTools.shell !== false;
       return true;
     })

@@ -6,7 +6,7 @@
 
 - 平台插件：负责平台私有接收和发送实现，但必须把入站消息转换为统一的 `AgentEvent`，把消息生命周期转换为统一的 lifecycle event，并实现统一的 `ChannelPlugin.send(output)`。
 - 消息运行时：`apps/api/src/message-runtime.ts` 是 Core 侧聊天消息入口，负责写入 `messages` / `message_logs`、去抖、恢复 pending 会话、调用 `AgentCore`、落库 outbound 并驱动发送。
-- LLM 工具入口：`plugins/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`。
+- Chat LLM 工具入口：`plugins/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`、`wait_chat`。它按约定保留在 `plugins/`，因为同一模块还承载语音合成和聊天格式化辅助导出。
 - 持久化入口：`packages/storage/src/sqlite-store.ts` 的 `messages` 表保存当前聊天状态，`message_logs` 保存追加式事件和调试记录。
 
 ## 当前通用接口
@@ -155,7 +155,7 @@ Heartbeat 会在入站去抖时间达到后处理 pending session：
 
 ## LLM 读取方式
 
-LLM 不直接读取平台 API，而是通过 `plugins/messaging` 的工具读取 `messages`。
+LLM 不直接读取平台 API，而是通过 `plugins/messaging` 的聊天工具读取 `messages`。
 
 ### `check_chat`
 

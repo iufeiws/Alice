@@ -73,7 +73,7 @@ export type AppConfig = {
   skills: {
     root: string;
   };
-  media: {
+  photo: {
     selfieReferenceDir: string;
     selfieOutputDir: string;
     selfieCodexCommand: string;
@@ -242,7 +242,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     skills: {
       root: "skills"
     },
-    media: {
+    photo: {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",
       selfieCodexCommand: env.SELFIE_CODEX_COMMAND ?? "codex",

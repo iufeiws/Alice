@@ -1,6 +1,6 @@
 # wait_chat 工具
 
-`wait_chat` 是 messaging/chat 工具集合的一部分，用来让模型显式表示“当前没有要发送的消息，等待下一次聊天变化”。它不是独立的通用 wait plugin，而应合并进现有 chat 工具边界，和 `check_chat` / `send_chat` 使用同一个 messaging tool plugin 暴露给 core。
+`wait_chat` 是 messaging/chat 工具集合的一部分，用来让模型显式表示“当前没有要发送的消息，等待下一次聊天变化”。它不是独立的通用 wait tool，而应合并进现有 chat 工具边界，和 `check_chat` / `send_chat` 使用同一个 messaging tool plugin 暴露给 core。
 
 核心语义有两个：
 
@@ -40,6 +40,7 @@ tools/wait
 
 原因：
 
+- `plugins/messaging` 按约定保留在 plugins 下；它同时承载 chat 工具、语音合成器和聊天格式化辅助导出。
 - `wait_chat` 的唤醒条件来自聊天消息变化和 heartbeat。
 - `wait_chat` 的续接结果来自 `check_chat`。
 - 它需要复用当前 messaging session、requester、cursor 和 `messageCursorId` 语义。

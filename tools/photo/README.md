@@ -1,4 +1,4 @@
-# Media Plugin 说明
+# Photo Tool 说明
 
 Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
 

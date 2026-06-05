@@ -89,7 +89,7 @@ node dist/scripts/backfill-sleep-memory.js
 OPENAI_API_KEY=...
 ```
 
-详细媒体工具配置和独立测速命令见 [plugins/media/README.md](/home/wyf98/Alice/plugins/media/README.md)。
+详细拍照工具配置和独立测速命令见 [tools/photo/README.md](/home/wyf98/Alice/tools/photo/README.md)。
 
 ## 微信 iLink
 

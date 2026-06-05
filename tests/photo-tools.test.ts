@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMediaTools, type SelfieExecutorInput } from "../plugins/media/src/index.js";
+import { createPhotoTools, type SelfieExecutorInput } from "../tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
@@ -10,7 +10,7 @@ const path = await import("node:path");
 
 test("selfie schema exposes action with 3:4 default", () => {
   const store = createAliceStore(path.join(makeTempDir("selfie-schema-db"), "alice.sqlite"));
-  const tools = createMediaTools({
+  const tools = createPhotoTools({
     store,
     outputRouter: { async send() {} },
     getSelfieContext: selfieContext,
@@ -36,7 +36,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -118,7 +118,7 @@ test("selfie default executor calls the fast runner", async () => {
   process.env.ALICE_SELFIE_FAST_RUNNER = runnerPath;
 
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -166,7 +166,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
   writeReferenceFiles(referenceRoot);
 
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -214,7 +214,7 @@ test("selfie sends start notice before required reference failures", async () =>
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -258,7 +258,7 @@ test("selfie cleans up temporary directory when codex does not create the reques
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -303,7 +303,7 @@ test("selfie rejects output directories outside assets", async () => {
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
   try {
-    const tools = createMediaTools({
+    const tools = createPhotoTools({
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: makeTempDir("selfie-outside"),

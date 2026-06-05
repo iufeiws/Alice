@@ -1005,7 +1005,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     dailyShellStore: { get: () => ({}), getConfig: () => ({}), render: () => "", reroll() {}, listSwitchLogs: () => [] },
     agentState: { getSnapshot: () => ({ state: "sleeping" }), setState() {} },
     messagingTools: emptyPlugin("messaging"),
-    mediaTools: emptyPlugin("media"),
+    photoTools: emptyPlugin("photo"),
     shellTools: emptyPlugin("shell"),
     bookcaseTools: emptyPlugin("bookcase"),
     sleepCocoonTools: emptyPlugin("sleep-cocoon"),

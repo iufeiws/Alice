@@ -1224,7 +1224,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
   return tools.filter((plugin) => {
     if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
-    if (plugin.id === "media") return profile.visibleTools.media !== false;
+    if (plugin.id === "photo") return profile.visibleTools.photo !== false && profile.visibleTools.media !== false;
     if (plugin.id === "shell") return profile.visibleTools.shell !== false;
     return true;
   });

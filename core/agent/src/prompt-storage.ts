@@ -23,7 +23,7 @@ export function migratePromptStorageFile(currentPath: string, legacyPath: string
       fs.renameSync(legacyPath, currentPath);
     } catch (error) {
       if (!isCrossDeviceRename(error)) throw error;
-      fs.copyFileSync(legacyPath, currentPath);
+      fs.writeFileSync(currentPath, fs.readFileSync(legacyPath));
       fs.rmSync(legacyPath);
     }
   }

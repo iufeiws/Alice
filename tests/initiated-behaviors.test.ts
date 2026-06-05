@@ -1,0 +1,224 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  buildAgentInitiatedBehaviorMessages,
+  createAgentInitiatedBehaviorRun,
+  createAgentInitiatedBehaviorRunStore,
+  defaultAgentInitiatedBehaviorPlans,
+  resolveAgentInitiatedBehaviorAvailability,
+  type AgentInitiatedBehaviorPlan
+} from "../core/agent/src/initiated-behaviors.js";
+import { createCurrentTimeProvider } from "../core/time/src/index.js";
+import type { AgentEvent } from "../packages/types/src/index.js";
+
+test("initiated behavior prompt layers are rendered by enabled order", () => {
+  const filePath = path.join("/tmp", `initiated-behavior-test-${process.pid}.json`);
+  fs.writeFileSync(filePath, JSON.stringify({
+    layers: [
+      { id: "second", title: "Second", role: "user", enabled: true, content: "second {{user}}", order: 20 },
+      { id: "disabled", title: "Disabled", role: "user", enabled: false, content: "disabled", order: 5 },
+      { id: "first", title: "First", role: "system", enabled: true, content: "first", order: 10 }
+    ]
+  }));
+  const plan: AgentInitiatedBehaviorPlan = {
+    id: "custom",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "custom.event",
+    steps: [{
+      kind: "llm_instruction",
+      promptProfilePath: filePath
+    }]
+  };
+  const event = textEvent();
+  const messages = buildAgentInitiatedBehaviorMessages(plan, {
+    userName: "YY",
+    visibleTools: { feishu: true },
+    layers: [],
+    appendLayers: []
+  }, {
+    event,
+    time: createCurrentTimeProvider("UTC")
+  });
+
+  assert.deepEqual(messages.map((message) => `${message.role}:${message.content}`), [
+    "system:first",
+    "user:second YY"
+  ]);
+});
+
+test("initiated behavior prompt layers preserve assistant tool request layers", () => {
+  const filePath = path.join("/tmp", `initiated-behavior-tool-test-${process.pid}.json`);
+  fs.writeFileSync(filePath, JSON.stringify({
+    layers: [
+      {
+        id: "fake_tool",
+        title: "Fake Tool",
+        role: "tool_request",
+        enabled: true,
+        content: "",
+        thinking: "checking chat for {{user}}",
+        toolName: "check_chat",
+        toolCallId: "call_check_chat",
+        toolArguments: "{\"target\":\"{{user}}\"}",
+        order: 10
+      }
+    ]
+  }));
+  const plan: AgentInitiatedBehaviorPlan = {
+    id: "custom",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "custom.event",
+    steps: [{ kind: "llm_instruction", promptProfilePath: filePath }]
+  };
+  const messages = buildAgentInitiatedBehaviorMessages(plan, {
+    userName: "YY",
+    visibleTools: { feishu: true },
+    layers: [],
+    appendLayers: []
+  }, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("UTC")
+  });
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].reasoningContent, "checking chat for YY");
+  assert.deepEqual(messages[0].toolCalls, [{
+    id: "call_check_chat",
+    type: "function",
+    function: {
+      name: "check_chat",
+      arguments: "{\"target\":\"YY\"}"
+    }
+  }]);
+});
+
+test("default randomized behavior plans are disabled configuration entries", () => {
+  const randomizedPlans = defaultAgentInitiatedBehaviorPlans.filter((plan) => plan.kind === "randomized");
+
+  assert.deepEqual(randomizedPlans.map((plan) => ({
+    id: plan.id,
+    enabled: plan.enabled,
+    weight: plan.weight,
+    priority: plan.priority
+  })), [
+    { id: "idle_check_in", enabled: false, weight: 0.08, priority: 0 },
+    { id: "memory_reflection", enabled: false, weight: 0.04, priority: 0 },
+    { id: "topic_followup", enabled: false, weight: 0.05, priority: 0 }
+  ]);
+});
+
+test("initiated behavior run store aggregates randomized thirty minute buckets", () => {
+  const store = createAgentInitiatedBehaviorRunStore();
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const run = createAgentInitiatedBehaviorRun({
+    plan,
+    triggeredAt: "2026-06-06T00:10:00.000Z",
+    trigger: "randomized",
+    result: "completed"
+  });
+  run.respondedWithin15m = true;
+  store.record(run);
+
+  const buckets = store.randomThirtyMinuteBuckets(new Date("2026-06-06T00:30:00.000Z"));
+  assert.equal(buckets.at(-2)?.total, 1);
+  assert.equal(buckets.at(-2)?.respondedWithin15m, 1);
+});
+
+test("initiated behavior run store persists and marks 15 minute responses", () => {
+  const dir = path.join("/tmp", `initiated-behavior-runs-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const dbPath = path.join(dir, "runs.sqlite");
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  const store = createAgentInitiatedBehaviorRunStore({ dbPath });
+  store.record(createAgentInitiatedBehaviorRun({
+    plan,
+    triggeredAt: "2026-06-06T08:00:00.000",
+    triggeredAtUtc: "2026-06-06T00:00:00.000Z",
+    trigger: "randomized",
+    result: "completed",
+    sessionId: "session"
+  }));
+
+  assert.equal(store.markRespondedWithin15m({
+    sessionId: "session",
+    respondedAt: "2026-06-06T00:10:00.000Z"
+  }), 1);
+
+  const reopened = createAgentInitiatedBehaviorRunStore({ dbPath });
+  assert.equal(reopened.list(1)[0].respondedWithin15m, true);
+  assert.equal(reopened.list(1)[0].triggeredAtUtc, "2026-06-06T00:00:00.000Z");
+});
+
+test("initiated behavior run store does not count pending responses as missed in buckets", () => {
+  const dir = path.join("/tmp", `initiated-behavior-runs-pending-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const dbPath = path.join(dir, "runs.sqlite");
+  const store = createAgentInitiatedBehaviorRunStore({ dbPath });
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  store.record(createAgentInitiatedBehaviorRun({
+    plan,
+    triggeredAt: "2026-06-06T08:10:00.000",
+    triggeredAtUtc: "2026-06-06T00:10:00.000Z",
+    trigger: "randomized",
+    result: "completed",
+    sessionId: "session"
+  }));
+
+  const buckets = store.randomThirtyMinuteBuckets(new Date("2026-06-06T00:20:00.000Z"));
+  const currentBucket = buckets.at(-1);
+  assert.equal(currentBucket?.total, 1);
+  assert.equal(currentBucket?.respondedWithin15m, 0);
+  assert.equal(currentBucket?.notRespondedWithin15m, 0);
+});
+
+test("initiated behavior run store marks expired responses as missed", () => {
+  const store = createAgentInitiatedBehaviorRunStore();
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "topic_followup")!;
+  store.record(createAgentInitiatedBehaviorRun({
+    plan,
+    triggeredAt: "2026-06-06T00:00:00.000Z",
+    trigger: "randomized",
+    result: "completed",
+    sessionId: "session"
+  }));
+
+  assert.equal(store.finalizeExpiredResponses(new Date("2026-06-06T00:16:00.000Z")), 1);
+  assert.equal(store.list(1)[0].respondedWithin15m, false);
+});
+
+test("initiated behavior availability is unavailable when sleep_cocoon is hidden", () => {
+  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "sleep_goodnight")!;
+  const availability = resolveAgentInitiatedBehaviorAvailability(plan, {
+    userName: "YY",
+    visibleTools: { feishu: true, sleep_cocoon: false },
+    layers: [],
+    appendLayers: []
+  }, [{
+    id: "sleep_cocoon",
+    listTools() {
+      return [{ name: "sleep_cocoon", description: "sleep", inputSchema: { type: "object" } }];
+    },
+    async execute() {
+      throw new Error("should not execute");
+    }
+  }]);
+
+  assert.equal(availability.status, "unavailable");
+  assert.equal(availability.reason, "tool_hidden:sleep_cocoon");
+});
+
+function textEvent(): AgentEvent {
+  return {
+    id: "evt",
+    type: "message.text",
+    source: { plugin: "test", userId: "user" },
+    session: { scope: "dm", sessionId: "session" },
+    payload: { kind: "text", text: "hi" },
+    meta: { receivedAt: "2026-06-06T00:00:00.000Z" }
+  };
+}

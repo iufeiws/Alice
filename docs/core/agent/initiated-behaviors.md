@@ -1,41 +1,385 @@
-# Agent 主动行为事件
+# Agent 主动行为实现计划
 
-本文档定义 Agent 主动行为事件的边界。它们不是聊天触发器，而是系统或运行时产生了一个事件，要求 agent 主动执行一段行为。
+本文档定义 Agent 主动行为的下一步实现计划。主动行为不是固定的一条 user prompt，而是由系统或运行时触发后，由 Agent 层解析并生成的一组可执行行为计划。
 
-主动行为可以表现为发消息、调用工具、进入状态，或这些动作的组合。当前第一批行为是 sleep cocoon 相关的晚安、早安、强制唤醒。
+主动行为可以包含后台实际效果、LLM 指令、记录动作和后续工具计划。prompt 只是行为计划中的一种 step，不代表行为本身。
 
-## 当前行为
+## 目标
 
-- `sleep_goodnight`：agent 感到困了，向用户说晚安，并调用 `sleep_cocoon({"action":"in"})` 入睡。
-- `sleep_morning`：agent 醒来后向用户说早安。
-- `sleep_force_wake`：用户强制唤醒 agent 后，agent 以刚醒的状态回应；它不是早安事件。
+- 将主动行为从硬编码 prompt 迁移为可配置行为计划。
+- 支持事件驱动型和随机触发型两类主动行为。
+- 将行为 prompt 存到 `core/prompt`，并沿用当前主 prompt 的 layer-based profile 结构。
+- 让 admin 能编辑行为配置和 prompt layers，但不拥有行为语义。
+- 为运行记录、15 分钟响应统计和 30 分钟随机触发聚合预留实现边界。
+
+## 行为分类
+
+### 事件驱动型
+
+事件驱动型行为由明确的 runtime 或系统事件触发。第一批行为仍是 sleep cocoon 相关行为：
+
+| 行为 | 触发事件 | 目标效果 |
+| --- | --- | --- |
+| `sleep_goodnight` | sleep cocoon 自动晚安检查 | 后台执行入睡效果，并让 Agent 对用户说晚安 |
+| `sleep_morning` | 睡眠状态变化后的 wake 事件 | 让 Agent 醒来后问候用户 |
+| `sleep_force_wake` | `/force_wake` 触发的强制唤醒事件 | 让 Agent 以刚醒状态回应，不等同于普通早安 |
+
+`sleep_goodnight` 的 `sleep_cocoon({"action":"in"})` 必须是后台实际效果，不应只写在 prompt 里等待模型自己调用工具。
+
+如果当前主 prompt profile 隐藏了 `sleep_cocoon` tool，则依赖该 backend effect 的行为不可用。`sleep_goodnight` 在这种状态下应记录为 `skipped/unavailable`，不执行 `sleep_cocoon({"action":"in"})`，也不继续注入晚安 prompt。
+
+### 随机触发型
+
+随机触发型行为没有单个确定外部事件。当前只保留配置和运行记录展示，不实现自动触发器。
+
+第一批候选：
+
+| 行为 | 说明 |
+| --- | --- |
+| `idle_check_in` | 用户长时间未互动后，低概率发起轻量问候 |
+| `memory_reflection` | 在合适时机触发记忆或回顾相关主动行为 |
+| `topic_followup` | 对未结束话题做轻量追问 |
+
+随机触发型第一版只支持：
+
+- `enabled`
+- `weight`
+- `priority`
+- `dryRun`
+- prompt layers
+
+第一版只保留配置和展示，不接入 heartbeat 或时间点触发器。
+
+## 行为计划模型
+
+目标模型：
+
+```ts
+type AgentInitiatedBehaviorKind = "event" | "randomized";
+
+type AgentInitiatedBehaviorPriority = number;
+
+type AgentInitiatedBehaviorPlan = {
+  id: string;
+  kind: AgentInitiatedBehaviorKind;
+  enabled: boolean;
+  triggerEvent?: string;
+  weight?: number;
+  priority?: AgentInitiatedBehaviorPriority;
+  dryRun?: boolean;
+  promptProfilePath?: string;
+  steps: AgentInitiatedBehaviorStep[];
+};
+```
+
+`AgentInitiatedBehaviorPlan` 不等同于 prompt。它是 Agent 层对一次主动行为的完整执行计划。
+
+### Step 类型
+
+第一版最小 step 集合：
+
+```ts
+type AgentInitiatedBehaviorStep =
+  | {
+      kind: "backend_effect";
+      effect: "sleep_cocoon";
+      arguments: Record<string, unknown>;
+    }
+  | {
+      kind: "llm_instruction";
+      promptProfilePath: string;
+    }
+  | {
+      kind: "record_only";
+      reason: string;
+    };
+```
+
+含义：
+
+- `backend_effect`：由后台直接执行实际效果，不依赖 LLM 自己调用工具。
+- `llm_instruction`：读取 layer-based prompt profile，组装为一次性 LLM message。
+- `record_only`：只记录行为命中或跳过原因，不启动实际效果或 LLM。
+
+backend effect 仍受当前主 prompt profile 的 tool 可见性约束。隐藏某个 tool 表示模型不可使用该 tool，也表示依赖该 tool 的 backend effect 在当前运行态不可用。
+
+## Prompt 存储
+
+行为 prompt 存到 `core/prompt`。存储结构参考当前主 prompt profile，使用 layer-based profile：
+
+```ts
+type AgentInitiatedBehaviorPromptProfile = {
+  layers: Array<{
+    id: string;
+    title: string;
+    role: "user" | "assistant" | "tool_request";
+    enabled: boolean;
+    content: string;
+    order: number;
+    thinking?: string;
+    toolName?: string;
+    toolCallId?: string;
+    toolArguments?: string;
+  }>;
+};
+```
+
+规则：
+
+- 每个主动行为可以有独立 prompt profile。
+- 主动行为 prompt profile 不能新增 `system` layer，避免覆盖或破坏主 prompt prefix。
+- `tool_request` layer 与主 Prompt 页 fake tool layer 使用同一结构，必须在 admin Config 和 assembled preview 中显示 `tool_calls`。
+- Agent 执行时按 `enabled` 和 `order` 组装 prompt messages。
+- 禁用 layer 后，该 layer 不进入 LLM messages。
+- prompt profile 只负责表达 LLM 指令，不负责后台实际效果。
+- admin 可以编辑 prompt layers，但不能用 prompt 覆盖行为语义。
+
+建议路径：
+
+```text
+core/prompt/initiated-behaviors/sleep_goodnight.json
+core/prompt/initiated-behaviors/sleep_morning.json
+core/prompt/initiated-behaviors/sleep_force_wake.json
+core/prompt/initiated-behaviors/idle_check_in.json
+core/prompt/initiated-behaviors/memory_reflection.json
+core/prompt/initiated-behaviors/topic_followup.json
+```
+
+## Sleep 行为目标实现
+
+### sleep_goodnight
+
+目标行为计划：
+
+```ts
+{
+  id: "sleep_goodnight",
+  kind: "event",
+  enabled: true,
+  triggerEvent: "sleep_cocoon.auto_goodnight_check",
+  promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json",
+  steps: [
+    {
+      kind: "backend_effect",
+      effect: "sleep_cocoon",
+      arguments: { action: "in" }
+    },
+    {
+      kind: "llm_instruction",
+      promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json"
+    }
+  ]
+}
+```
+
+实现要求：
+
+- 后台先执行 `sleep_cocoon({"action":"in"})` 的实际效果。
+- 如果主 prompt profile 隐藏了 `sleep_cocoon`，则该行为不可用，只记录 skipped/unavailable，不执行入睡，也不启动 LLM。
+- prompt layers 只负责让 Agent 对用户说晚安。
+- prompt 不需要要求模型调用 `sleep_cocoon` 才能产生入睡效果。
+
+### sleep_morning
+
+目标行为计划：
+
+```ts
+{
+  id: "sleep_morning",
+  kind: "event",
+  enabled: true,
+  triggerEvent: "sleep_cocoon.wake",
+  promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json",
+  steps: [
+    {
+      kind: "llm_instruction",
+      promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json"
+    }
+  ]
+}
+```
+
+### sleep_force_wake
+
+目标行为计划：
+
+```ts
+{
+  id: "sleep_force_wake",
+  kind: "event",
+  enabled: true,
+  triggerEvent: "sleep_cocoon.force_wake",
+  promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json",
+  steps: [
+    {
+      kind: "llm_instruction",
+      promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json"
+    }
+  ]
+}
+```
+
+实现要求：
+
+- 强制唤醒回应不应复用普通早安语义。
+- `/force_wake` 已经由 runtime 改变 Agent 状态；该行为只负责生成刚醒状态回应。
+
+## 随机触发型目标实现
+
+随机触发型行为当前只作为配置类型和统计类型存在，不在 heartbeat、时间点或空闲检查路径里自动触发。后续如果要实现，必须先重新定义触发来源和判定模型，不能复用当前 heartbeat 轮询。
+
+候选配置示例：
+
+```ts
+{
+  id: "idle_check_in",
+  kind: "randomized",
+  enabled: false,
+  weight: 0.08,
+  priority: 0,
+  dryRun: false,
+  promptProfilePath: "core/prompt/initiated-behaviors/idle_check_in.json",
+  steps: [
+    {
+      kind: "llm_instruction",
+      promptProfilePath: "core/prompt/initiated-behaviors/idle_check_in.json"
+    }
+  ]
+}
+```
+
+当前规则：
+
+- 默认配置中随机触发型行为保持 disabled。
+- 当前实现不提供随机选择器。
+- 当前实现不在 heartbeat 或任意固定时间点生成随机行为 event。
+- `weight` 和 `priority` 只作为 admin 配置展示字段保留。
 
 ## 分层边界
 
-- API / MessageRuntime：只负责产生和派发规范化 `AgentEvent`。
-- Agent 层：负责识别 `AgentEvent` 中对应的主动行为语义。
-- Agent 行为模块：负责把行为转换为一次性 LLM 指令或后续动作计划。
-- Chat loop：只执行已经构造好的 LLM/tool loop，不拥有行为语义。
-- Shell：不参与该设计。
+- API / MessageRuntime：产生事件驱动型 generated event；不拥有行为语义，不触发随机行为。
+- Agent 行为模块：读取配置，匹配事件，生成 `AgentInitiatedBehaviorPlan`。
+- Prompt 存储：只保存 layer-based prompt profile，不保存运行记录。
+- Backend effect 执行层：执行 `sleep_cocoon` 等后台实际效果。
+- Chat / LLM loop：只执行已构造好的 LLM messages，不决定主动行为语义。
+- Admin：编辑配置和 prompt layers，展示运行记录和统计，不直接修改运行事实。
+- Shell：不参与主动行为设计。
 
-## 事件来源
+## Admin 对接
 
-- 睡眠状态变化后的 wake 事件。
-- sleep cocoon 自动晚安检查。
-- `/force_wake` 触发的强制唤醒事件。
+Admin Config 需要能表达：
 
-后续可以扩展到其它 agent 主动行为，但新增前必须先写清楚行为语义、触发来源和分层边界。
+- `id`
+- `kind`
+- `enabled`
+- `triggerEvent`
+- `weight`
+- `priority`
+- `dryRun`
+- `prompt layers`
+- `steps`
 
-## 后续代码目标
+`sleep_goodnight` 的 Config 必须能表达：
 
-- 新增 `core/agent/src/initiated-behaviors.ts`。
-- 定义 `AgentInitiatedBehavior`。
-- 从 `AgentEvent` 解析主动行为。
-- 将主动行为转换为一次性 prompt message。
-- 从 `chat-loop.ts` 移除相关语义。
+- `triggerEvent = sleep_cocoon.auto_goodnight_check`
+- `backend_effect = sleep_cocoon action=in`
+- prompt layers 只负责晚安表达
+
+保存规则：
+
+- 保存 prompt 只修改 `core/prompt` 下的行为 prompt profile。
+- 保存行为配置不应吞掉 backend effect。
+- Recent runs 和 30 分钟图表来自 run 聚合，不从配置表推导。
+
+## Run 记录
+
+每次主动行为候选、跳过、dry-run、执行、失败都应写运行记录。
+
+运行记录当前使用 SQLite 持久化，表名为 `initiated_behavior_runs`。`steps` 以 JSON 字段保存，便于 admin 展示每个 step 的执行结果。
+
+目标模型：
+
+```ts
+type AgentInitiatedBehaviorRun = {
+  id: string;
+  behaviorId: string;
+  kind: AgentInitiatedBehaviorKind;
+  triggeredAt: string;
+  triggeredAtUtc?: string;
+  trigger: string;
+  dryRun: boolean;
+  result: "completed" | "skipped" | "dry_run" | "failed";
+  sessionId?: string;
+  respondedWithin15m?: boolean;
+  steps: Array<{
+    kind: AgentInitiatedBehaviorStep["kind"];
+    result: "completed" | "skipped" | "failed";
+    error?: string;
+  }>;
+  error?: string;
+};
+```
+
+统计规则：
+
+- `respondedWithin15m` 从行为触发后的用户响应计算。
+- 时间窗口计算以 `triggeredAtUtc` 为准；`triggeredAt` 保留为运行时展示时间，避免本地时区字符串和 UTC inbound message 混算。
+- 同 session 在触发后 15 分钟内收到用户 inbound message 时，`respondedWithin15m = true`。
+- 超过 15 分钟仍无响应时，查询或定时维护应补齐为 `false`。
+- 15 分钟响应比例从 run 记录聚合。
+- 30 分钟柱状图只统计随机触发型发起数。
+- 柱状图中深色段为 15 分钟内响应数，浅色段为 15 分钟内无响应数。
+- 仍在 15 分钟窗口内的 pending run 只计入 total，不计入浅色段。
+
+## 实施顺序
+
+1. 定义 `AgentInitiatedBehaviorPlan` 和最小 step 类型。
+2. 定义行为 prompt profile 文件结构，沿用主 prompt 的 layer schema。
+3. 将当前三条 hardcoded sleep prompt 迁移到 `core/prompt/initiated-behaviors/`。
+4. 将 `sleep_goodnight` 拆分为 backend effect 和晚安 prompt layers。
+5. 增加行为配置读取层，先支持三条 sleep event config。
+6. 保留现有 raw flag 兼容入口，并映射到新的 `triggerEvent`。
+7. 增加 run 记录，记录整体行为和每个 step 的执行结果。
+8. 保留随机触发型配置展示，但不接入运行时触发器。
+9. 增加 admin API：列表、Config、保存、runs、30 分钟 bucket 聚合。
+10. 将 admin 静态 UI 替换为真实配置和真实 prompt layers。
+
+## 测试计划
+
+### Prompt layer 存储
+
+- 行为 prompt profile 按 `enabled/order` 组装。
+- 禁用某个 layer 后，该 layer 不进入 LLM messages。
+- 修改 `core/prompt` 中行为 layer 后，下次行为执行使用新文本。
+
+### sleep_goodnight
+
+- 事件命中后执行 backend effect `sleep_cocoon action=in`。
+- LLM 请求包含 layer-based 晚安 prompt。
+- prompt 不要求模型调用 `sleep_cocoon` 也能产生入睡效果。
+- backend effect 失败时 run 记录为 `failed`。
+
+### sleep_morning / sleep_force_wake
+
+- 分别注入对应 layer-based prompt。
+- `sleep_force_wake` 不包含普通早安语义。
+
+### 随机触发型
+
+- 默认配置保持 disabled。
+- 当前没有随机选择器测试，因为运行时不应自动发起随机行为。
+- `weight` 和 `priority` 只验证为配置展示字段。
+
+### Admin
+
+- Config 页能编辑 prompt layers。
+- 保存 prompt 只改 `core/prompt` 的 layer profile。
+- 保存行为配置不丢失 backend effect。
+- Recent runs 和 30 分钟图表来自 run 聚合。
 
 ## 当前约束
 
-- 这一步只写文档，不修改运行时代码。
-- 现有代码里的 raw flag 名称暂不改。
-- 后续实现时再把 `chat-loop.ts` 中已有的 trigger 逻辑迁移到 agent 主动行为模块。
+- 本文档是实现计划，不代表当前代码已经完成上述能力。
+- 当前代码仍保留 hardcoded sleep prompt 和 raw flag 解析。
+- `sleep_goodnight` 的后台 actual effect 是下一步目标，不是当前实现。
+- 随机触发型第一版不引入时间窗、min idle、max per day。

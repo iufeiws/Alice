@@ -5,7 +5,7 @@ import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
 import type { SessionResolver } from "../../session/src/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
-import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin } from "../../../packages/types/src/index.js";
+import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptProfile } from "./prompts.js";
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
@@ -15,8 +15,15 @@ import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary 
 import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
 import type { LLMRequestSender } from "./llm-tool-loop.js";
 import {
-  agentInitiatedBehaviorFromEvent,
-  buildAgentInitiatedBehaviorMessages
+  agentInitiatedBehaviorPlanFromEvent,
+  agentInitiatedTriggerEventFromRaw,
+  buildAgentInitiatedBehaviorMessages,
+  createAgentInitiatedBehaviorRun,
+  defaultAgentInitiatedBehaviorPlans,
+  isToolVisibleInPromptProfile,
+  resolveAgentInitiatedBehaviorAvailability,
+  type AgentInitiatedBehaviorPlan,
+  type AgentInitiatedBehaviorRun
 } from "./initiated-behaviors.js";
 import {
   buildFixedPrefixAppendMessages,
@@ -144,6 +151,8 @@ export type AgentCoreDeps = {
   onLLMSessionCompleted?(result: { sentMessage: boolean }): void;
   initialLLMSession?: LLMSessionSnapshot;
   loadLLMSession?(): LLMSessionSnapshot | undefined;
+  getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
+  recordAgentInitiatedBehaviorRun?(run: AgentInitiatedBehaviorRun): void;
 };
 
 export interface AgentCore {
@@ -237,8 +246,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
 
       const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
-      const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
-      let initiatedBehavior = agentInitiatedBehaviorFromEvent(event);
+      const allToolPlugins = deps.tools ?? [];
+      const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
+      let initiatedBehavior = agentInitiatedBehaviorPlanFromEvent(
+        event,
+        deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans
+      );
       if (deps.loadLLMSession) {
         const persistedSession = deps.loadLLMSession();
         activeLLMSession = persistedSession?.staticPromptFingerprint
@@ -254,6 +267,61 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         memory: deps.getMemorySnapshot?.(),
         wakeBoundary: deps.getWakeBoundary?.()
       });
+      const initiatedBehaviorRunPlan = initiatedBehavior;
+      let initiatedBehaviorExecution: Awaited<ReturnType<typeof executeAgentInitiatedBehaviorBackendSteps>> | undefined;
+      const initiatedBehaviorLlmSteps = (
+        result: "completed" | "skipped" | "failed",
+        error?: string
+      ): AgentInitiatedBehaviorRun["steps"] => (initiatedBehaviorRunPlan?.steps ?? [])
+        .filter((step) => step.kind === "llm_instruction")
+        .map((step) => ({ kind: step.kind, result, error }));
+      const recordInitiatedBehaviorRun = (input: {
+        result: AgentInitiatedBehaviorRun["result"];
+        steps: AgentInitiatedBehaviorRun["steps"];
+        error?: string;
+      }) => {
+        if (!initiatedBehaviorRunPlan) return;
+        const triggeredTime = time.now();
+        deps.recordAgentInitiatedBehaviorRun?.(createAgentInitiatedBehaviorRun({
+          plan: initiatedBehaviorRunPlan,
+          triggeredAt: triggeredTime.iso,
+          triggeredAtUtc: triggeredTime.date.toISOString(),
+          trigger: initiatedBehaviorRunPlan.triggerEvent ?? agentInitiatedTriggerEventFromRaw(event.meta.raw) ?? initiatedBehaviorRunPlan.id,
+          result: input.result,
+          sessionId,
+          steps: input.steps,
+          error: input.error
+        }));
+      };
+      if (initiatedBehavior) {
+        const availability = resolveAgentInitiatedBehaviorAvailability(initiatedBehavior, promptProfile, allToolPlugins);
+        if (availability.status === "unavailable") {
+          recordInitiatedBehaviorRun({
+            result: "skipped",
+            steps: availability.steps.map((step) => ({
+              kind: step.kind,
+              result: step.status === "available" ? "skipped" : "failed",
+              error: step.reason
+            })),
+            error: availability.reason
+          });
+          initiatedBehavior = undefined;
+        }
+      }
+      if (initiatedBehavior) {
+        initiatedBehaviorExecution = await executeAgentInitiatedBehaviorBackendSteps(initiatedBehavior, event, sessionId, allToolPlugins);
+        if (initiatedBehaviorExecution.result === "failed" || initiatedBehaviorExecution.result === "dry_run" || initiatedBehaviorExecution.result === "skipped") {
+          recordInitiatedBehaviorRun({
+            result: initiatedBehaviorExecution.result,
+            steps: initiatedBehaviorExecution.steps,
+            error: initiatedBehaviorExecution.error
+          });
+          initiatedBehavior = undefined;
+        }
+      }
+      if (initiatedBehaviorRunPlan && !initiatedBehavior && (!initiatedBehaviorExecution || initiatedBehaviorExecution.result !== "completed")) {
+        return [];
+      }
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
@@ -296,7 +364,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                 return result;
               }),
-              ...buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile.userName),
+              ...buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext),
               ...mode.modeStaticMessages
             ];
           initiatedBehavior = undefined;
@@ -323,6 +391,16 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       };
       await ensureActiveLLMSession();
       if (!activeLLMSession || activeLLMSession.messages.length === 0) {
+        if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+          recordInitiatedBehaviorRun({
+            result: "skipped",
+            steps: [
+              ...initiatedBehaviorExecution.steps,
+              ...initiatedBehaviorLlmSteps("skipped", "llm_messages_empty")
+            ],
+            error: "llm_messages_empty"
+          });
+        }
         return [];
       }
       deps.onLLMHeartbeatStarted?.();
@@ -432,8 +510,54 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           onLLMRequestPrepared: deps.onLLMRequestPrepared,
           onLLMResponseReceived: deps.onLLMResponseReceived,
           onLLMLog: deps.onLLMLog
+        }).catch((error) => {
+          if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+            const message = error instanceof Error ? error.message : String(error);
+            recordInitiatedBehaviorRun({
+              result: "failed",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("failed", message)
+              ],
+              error: message
+            });
+          }
+          throw error;
         });
         sentMessage = llmResult.sentMessage;
+        if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+          if (llmResult.cancelled) {
+            recordInitiatedBehaviorRun({
+              result: "skipped",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("skipped", "llm_cancelled")
+              ],
+              error: "llm_cancelled"
+            });
+          } else if (!llmResult.finalResult) {
+            recordInitiatedBehaviorRun({
+              result: "failed",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("failed", "llm_result_missing")
+              ],
+              error: "llm_result_missing"
+            });
+          } else {
+            if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
+              applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+              noteLLMSessionUpdated();
+            }
+            recordInitiatedBehaviorRun({
+              result: "completed",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("completed")
+              ]
+            });
+          }
+        }
         if (llmResult.cancelled) {
           if (activeLLMSession) {
             deps.onLLMSessionCleared?.("admin_cancel");
@@ -649,12 +773,125 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   }
 }
 
+async function executeAgentInitiatedBehaviorBackendSteps(
+  plan: AgentInitiatedBehaviorPlan,
+  event: AgentEvent,
+  sessionId: string,
+  toolPlugins: ToolPlugin[]
+): Promise<{
+  result: AgentInitiatedBehaviorRun["result"];
+  steps: AgentInitiatedBehaviorRun["steps"];
+  error?: string;
+  toolResult?: ToolResult;
+}> {
+  const steps: AgentInitiatedBehaviorRun["steps"] = [];
+  let latestToolResult: ToolResult | undefined;
+  if (!plan.enabled) {
+    return { result: "skipped", steps: [{ kind: "record_only", result: "skipped", error: "behavior_disabled" }], error: "behavior_disabled" };
+  }
+  if (plan.dryRun) {
+    return {
+      result: "dry_run",
+      steps: plan.steps.map((step) => ({ kind: step.kind, result: "skipped" }))
+    };
+  }
+  for (const step of plan.steps) {
+    if (step.kind === "llm_instruction") continue;
+    if (step.kind === "record_only") {
+      steps.push({ kind: step.kind, result: "completed" });
+      continue;
+    }
+    if (step.effect !== "sleep_cocoon") {
+      const error = `unsupported_backend_effect:${step.effect}`;
+      steps.push({ kind: step.kind, result: "failed", error });
+      return { result: "failed", steps, error };
+    }
+    const plugin = findToolPlugin(toolPlugins, "sleep_cocoon");
+    if (!plugin) {
+      const error = "sleep_cocoon_tool_unavailable";
+      steps.push({ kind: step.kind, result: "failed", error });
+      return { result: "failed", steps, error };
+    }
+    try {
+      const result = await plugin.execute({
+        id: createId(`initiated_${plan.id}`),
+        toolName: "sleep_cocoon",
+        input: step.arguments,
+        requester: event.source,
+        session: { ...event.session, sessionId }
+      });
+      if (!result.ok) {
+        const error = result.error ?? "sleep_cocoon_backend_effect_failed";
+        steps.push({ kind: step.kind, result: "failed", error });
+        return { result: "failed", steps, error };
+      }
+      latestToolResult = result;
+      steps.push({ kind: step.kind, result: "completed" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      steps.push({ kind: step.kind, result: "failed", error: message });
+      return { result: "failed", steps, error: message };
+    }
+  }
+  return { result: "completed", steps, toolResult: latestToolResult };
+}
+
+function applyBackendToolSessionControlToActiveSession(
+  session: {
+    messages: LLMChatInput["messages"];
+    mode: string;
+    modeStaticMessages: LLMChatInput["messages"];
+    modeStaticTokenEstimate: number;
+    tokenPressurePreviewBaselines: Record<string, TokenPressurePreviewBaseline>;
+    modeStartedAt?: number;
+    modeExpiresAt?: number;
+    fixedPrefixKind?: string;
+    fixedPrefixCursorMessageId?: number;
+    lastCheckChatCursorMessageId?: number;
+  },
+  toolResult: ToolResult,
+  nowMs: number
+): void {
+  if (!toolResult.resetLLMSession) return;
+  if (toolResult.clearFixedPrefix) {
+    const mode = defaultChatAgentModeState();
+    session.mode = mode.mode;
+    session.modeStaticMessages = cloneLLMMessages(mode.modeStaticMessages);
+    session.modeStaticTokenEstimate = mode.modeStaticTokenEstimate;
+    session.tokenPressurePreviewBaselines = {};
+    session.modeStartedAt = undefined;
+    session.modeExpiresAt = undefined;
+    session.fixedPrefixKind = undefined;
+    session.fixedPrefixCursorMessageId = undefined;
+    return;
+  }
+  const fixedPrefixKind = typeof toolResult.fixedPrefixKind === "string" && toolResult.fixedPrefixKind
+    ? toolResult.fixedPrefixKind
+    : undefined;
+  const mode = fixedPrefixKind ? "fixed_prefix" : toolResult.llmSessionMode || "normal";
+  const modeStaticMessages = mode === "fixed_prefix"
+    ? cloneLLMMessages(session.messages)
+    : mode === "normal"
+      ? []
+      : cloneLLMMessages((toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? session.messages);
+  const modeStartedAt = mode === "normal" ? undefined : nowMs;
+  const ttlMs = Number.isFinite(toolResult.fixedPrefixTtlMs) ? Number(toolResult.fixedPrefixTtlMs) : 2 * 60 * 60 * 1000;
+  session.mode = mode;
+  session.modeStaticMessages = modeStaticMessages;
+  session.modeStaticTokenEstimate = estimateMessagesTokens(modeStaticMessages);
+  session.tokenPressurePreviewBaselines = {};
+  session.modeStartedAt = modeStartedAt;
+  session.modeExpiresAt = mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined;
+  session.fixedPrefixKind = fixedPrefixKind;
+  session.fixedPrefixCursorMessageId = mode === "fixed_prefix" ? session.lastCheckChatCursorMessageId : undefined;
+}
+
 function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
   return tools.filter((plugin) => {
-    if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
-    if (plugin.id === "photo") return profile.visibleTools.photo !== false && profile.visibleTools.media !== false;
-    if (plugin.id === "shell") return profile.visibleTools.shell !== false;
-    return true;
+    if (plugin.id === "messaging") return isToolVisibleInPromptProfile(profile, "messaging");
+    if (plugin.id === "photo") return isToolVisibleInPromptProfile(profile, "photo");
+    if (plugin.id === "shell") return isToolVisibleInPromptProfile(profile, "shell");
+    return plugin.listTools().some((tool) => isToolVisibleInPromptProfile(profile, tool.name));
   });
 }
 

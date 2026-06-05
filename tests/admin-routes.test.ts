@@ -75,6 +75,89 @@ test("llm api preset save accepts long timeout values", async () => {
   assert.equal(saved.presets[0].timeoutMs, 600_000);
 });
 
+test("initiated behavior config patch preserves tool request prompt layers", async () => {
+  const root = makeTempDir("admin-initiated-behavior-tool-layer");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = baseContext(root, memoryStore, promptStore);
+  let receivedPatch: unknown;
+  context.setAgentInitiatedBehaviorConfig = (_id: string, patch: unknown) => {
+    receivedPatch = patch;
+    return {
+      id: "sleep_morning",
+      kind: "event",
+      enabled: true,
+      triggerEvent: "sleep_cocoon.wake",
+      steps: []
+    };
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
+    promptProfile: {
+      layers: [{
+        id: "fake_check",
+        title: "Fake Check",
+        role: "tool_request",
+        enabled: true,
+        content: "",
+        order: 10,
+        thinking: "check first",
+        toolName: "check_chat",
+        toolCallId: "call_check",
+        toolArguments: "{\"target\":\"dm\"}"
+      }]
+    }
+  }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(receivedPatch, {
+    promptProfile: {
+      layers: [{
+        id: "fake_check",
+        title: "Fake Check",
+        role: "tool_request",
+        enabled: true,
+        content: "",
+        order: 10,
+        thinking: "check first",
+        toolName: "check_chat",
+        toolCallId: "call_check",
+        toolArguments: "{\"target\":\"dm\"}"
+      }]
+    }
+  });
+});
+
+test("initiated behavior config patch rejects system prompt layers", async () => {
+  const root = makeTempDir("admin-initiated-behavior-system-layer");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = baseContext(root, memoryStore, promptStore);
+  context.setAgentInitiatedBehaviorConfig = () => {
+    throw new Error("system layer should not reach setter");
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
+    promptProfile: {
+      layers: [{
+        id: "bad",
+        title: "Bad",
+        role: "system",
+        enabled: true,
+        content: "break prefix",
+        order: 10
+      }]
+    }
+  }), response);
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body, /invalid_initiated_behavior_prompt_layer_role/);
+});
+
 test("admin plugin list exposes tts config card state", async () => {
   const root = makeTempDir("admin-plugin-list");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");

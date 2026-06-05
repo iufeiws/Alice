@@ -19,6 +19,7 @@ export type MessageRuntimeDeps = {
   getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
   onForceWake?: () => void;
+  onInboundUserMessage?: (input: { sessionId: string; receivedAt: string; receivedAtUtc?: string }) => void;
   clearLLMSession?(reason: string): void;
   isLLMSessionActive?: () => boolean;
   setTypingIndicator?(input: {
@@ -167,6 +168,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         lastEventAt: receivedAt,
         lastEventAtUtc: receivedAtUtc,
         coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
+      });
+      deps.onInboundUserMessage?.({
+        sessionId: event.session.sessionId,
+        receivedAt,
+        receivedAtUtc
       });
       latestSessionEvents.set(event.session.sessionId, event);
       markPending(event.session.sessionId);

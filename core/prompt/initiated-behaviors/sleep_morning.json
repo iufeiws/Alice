@@ -1,0 +1,12 @@
+{
+  "layers": [
+    {
+      "id": "instruction",
+      "title": "Morning Reply",
+      "role": "user",
+      "enabled": true,
+      "content": "爱丽丝你醒了。对{{user}}说句早安吧",
+      "order": 10
+    }
+  ]
+}

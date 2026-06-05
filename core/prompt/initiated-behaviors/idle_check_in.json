@@ -1,0 +1,12 @@
+{
+  "layers": [
+    {
+      "id": "instruction",
+      "title": "Idle Check In",
+      "role": "user",
+      "enabled": true,
+      "content": "用户已经有一段时间没有互动。低打扰地向{{user}}发起一句轻量问候。",
+      "order": 10
+    }
+  ]
+}

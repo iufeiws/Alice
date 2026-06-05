@@ -1,0 +1,12 @@
+{
+  "layers": [
+    {
+      "id": "instruction",
+      "title": "Force Wake Reply",
+      "role": "user",
+      "enabled": true,
+      "content": "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊。",
+      "order": 10
+    }
+  ]
+}

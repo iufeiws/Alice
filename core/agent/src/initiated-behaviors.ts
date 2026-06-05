@@ -1,38 +1,617 @@
-import type { AgentEvent } from "../../../packages/types/src/index.js";
+import type { AgentEvent, ToolPlugin } from "../../../packages/types/src/index.js";
 import type { LLMChatInput } from "../../llm/src/index.js";
+import type { PromptLayer } from "./prompts.js";
+import { promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
+import { normalizePromptLayers, promptLayerToMessage } from "./prompt-layer-parser.js";
 
-export type AgentInitiatedBehavior =
-  | { kind: "sleep_goodnight" }
-  | { kind: "sleep_morning" }
-  | { kind: "sleep_force_wake" };
+const fs = await import("node:fs");
+const path = await import("node:path");
+const sqlite = await import("../../../packages/storage/src/sqlite-compat.js");
 
-export function agentInitiatedBehaviorFromEvent(event: AgentEvent): AgentInitiatedBehavior | undefined {
-  const raw = event.meta.raw;
+export type AgentInitiatedBehaviorKind = "event" | "randomized";
+export type AgentInitiatedBehaviorPriority = number;
+export type AgentInitiatedBehaviorStep =
+  | {
+      kind: "backend_effect";
+      effect: "sleep_cocoon";
+      arguments: Record<string, unknown>;
+    }
+  | {
+      kind: "llm_instruction";
+      promptProfilePath: string;
+    }
+  | {
+      kind: "record_only";
+      reason: string;
+    };
+
+export type AgentInitiatedBehaviorPlan = {
+  id: string;
+  kind: AgentInitiatedBehaviorKind;
+  enabled: boolean;
+  triggerEvent?: string;
+  weight?: number;
+  priority?: AgentInitiatedBehaviorPriority;
+  dryRun?: boolean;
+  promptProfilePath?: string;
+  steps: AgentInitiatedBehaviorStep[];
+};
+
+export type AgentInitiatedBehaviorPromptProfile = {
+  layers: PromptLayer[];
+};
+
+export type AgentInitiatedBehaviorRun = {
+  id: string;
+  behaviorId: string;
+  kind: AgentInitiatedBehaviorKind;
+  triggeredAt: string;
+  triggeredAtUtc?: string;
+  trigger: string;
+  dryRun: boolean;
+  result: "completed" | "skipped" | "dry_run" | "failed";
+  sessionId?: string;
+  respondedWithin15m?: boolean;
+  steps: Array<{
+    kind: AgentInitiatedBehaviorStep["kind"];
+    result: "completed" | "skipped" | "failed";
+    error?: string;
+  }>;
+  error?: string;
+};
+
+export type AgentInitiatedBehaviorRunStore = {
+  record(run: AgentInitiatedBehaviorRun): AgentInitiatedBehaviorRun;
+  list(limit?: number): AgentInitiatedBehaviorRun[];
+  markRespondedWithin15m(input: { sessionId: string; respondedAt: string | Date }): number;
+  finalizeExpiredResponses(now?: Date): number;
+  randomThirtyMinuteBuckets(now?: Date): Array<{
+    startAt: string;
+    total: number;
+    respondedWithin15m: number;
+    notRespondedWithin15m: number;
+  }>;
+};
+
+export type AgentInitiatedBehaviorAvailability = {
+  status: "available" | "unavailable";
+  reason?: string;
+  steps: Array<{
+    kind: AgentInitiatedBehaviorStep["kind"];
+    status: "available" | "unavailable";
+    reason?: string;
+  }>;
+};
+
+export type AgentInitiatedBehaviorRunStoreOptions = {
+  dbPath?: string;
+  filePath?: string;
+  limit?: number;
+};
+
+const responseWindowMs = 15 * 60 * 1000;
+
+export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = [
+  {
+    id: "sleep_goodnight",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "sleep_cocoon.auto_goodnight_check",
+    promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json",
+    steps: [
+      { kind: "backend_effect", effect: "sleep_cocoon", arguments: { action: "in" } },
+      { kind: "llm_instruction", promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json" }
+    ]
+  },
+  {
+    id: "sleep_morning",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "sleep_cocoon.wake",
+    promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json",
+    steps: [{ kind: "llm_instruction", promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json" }]
+  },
+  {
+    id: "sleep_force_wake",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "sleep_cocoon.force_wake",
+    promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json",
+    steps: [{ kind: "llm_instruction", promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json" }]
+  },
+  randomizedPlan("idle_check_in", 0.08),
+  randomizedPlan("memory_reflection", 0.04),
+  randomizedPlan("topic_followup", 0.05)
+];
+
+export function agentInitiatedBehaviorPlanFromEvent(
+  event: AgentEvent,
+  plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans
+): AgentInitiatedBehaviorPlan | undefined {
+  const explicitBehaviorId = agentInitiatedBehaviorIdFromRaw(event.meta.raw);
+  if (explicitBehaviorId) {
+    return plans.find((plan) => plan.enabled && plan.id === explicitBehaviorId);
+  }
+  const triggerEvent = agentInitiatedTriggerEventFromRaw(event.meta.raw);
+  if (!triggerEvent) return undefined;
+  return plans.find((plan) => plan.kind === "event" && plan.enabled && plan.triggerEvent === triggerEvent);
+}
+
+export function agentInitiatedBehaviorIdFromRaw(raw: unknown): string | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  if ((raw as { sleepCocoonGoodnight?: unknown }).sleepCocoonGoodnight) return { kind: "sleep_goodnight" };
-  if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) return { kind: "sleep_morning" };
-  if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) return { kind: "sleep_force_wake" };
+  const id = (raw as { agentInitiatedBehaviorId?: unknown }).agentInitiatedBehaviorId;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+export function agentInitiatedTriggerEventFromRaw(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  if ((raw as { sleepCocoonGoodnight?: unknown }).sleepCocoonGoodnight) return "sleep_cocoon.auto_goodnight_check";
+  if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) return "sleep_cocoon.wake";
+  if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) return "sleep_cocoon.force_wake";
   return undefined;
 }
 
 export function buildAgentInitiatedBehaviorMessages(
-  behavior: AgentInitiatedBehavior | undefined,
-  userName: string
+  plan: AgentInitiatedBehaviorPlan | undefined,
+  promptProfile: PromptProfile,
+  context: PromptRenderContext
 ): LLMChatInput["messages"] {
-  if (!behavior) return [];
-  const content = agentInitiatedBehaviorInstruction(behavior, userName);
-  return content ? [{ role: "user", content }] : [];
+  if (!plan || !plan.enabled || plan.dryRun) return [];
+  const variables = promptVariables(promptProfile, context);
+  return plan.steps.flatMap((step) => {
+    if (step.kind !== "llm_instruction") return [];
+    const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
+    return normalizePromptLayers(profile.layers)
+      .filter((layer) => layer.enabled)
+      .sort((left, right) => left.order - right.order)
+      .map((layer) => promptLayerToMessage(layer, variables, { toolCallIdPrefix: `initiated_${plan.id}` }));
+  });
 }
 
-function agentInitiatedBehaviorInstruction(behavior: AgentInitiatedBehavior, userName: string): string | undefined {
-  if (behavior.kind === "sleep_goodnight") {
-    return `爱丽丝你困了，对${userName}说晚安，然后使用 sleep_cocoon({"action":"in"}) 去睡觉。`;
+export function readAgentInitiatedBehaviorPromptProfile(filePath: string): AgentInitiatedBehaviorPromptProfile | undefined {
+  try {
+    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+    if (!fs.existsSync(resolved)) return undefined;
+    return normalizeAgentInitiatedBehaviorPromptProfile(JSON.parse(fs.readFileSync(resolved, "utf8")));
+  } catch {
+    return undefined;
   }
-  if (behavior.kind === "sleep_morning") {
-    return `爱丽丝你醒了? 对${userName}说句早安吧`;
+}
+
+export function defaultAgentInitiatedBehaviorPromptProfile(id: string): AgentInitiatedBehaviorPromptProfile {
+  const content = defaultAgentInitiatedBehaviorPromptContent(id);
+  return {
+    layers: [{
+      id: "instruction",
+      title: "Instruction",
+      role: "user",
+      enabled: true,
+      order: 10,
+      content
+    }]
+  };
+}
+
+export function normalizeAgentInitiatedBehaviorPromptProfile(value: unknown): AgentInitiatedBehaviorPromptProfile {
+  const raw = value && typeof value === "object" ? value as Partial<AgentInitiatedBehaviorPromptProfile> : {};
+  return { layers: normalizePromptLayers(raw.layers ?? [], []) };
+}
+
+export function resolveAgentInitiatedBehaviorAvailability(
+  plan: AgentInitiatedBehaviorPlan,
+  promptProfile: PromptProfile,
+  tools: ToolPlugin[]
+): AgentInitiatedBehaviorAvailability {
+  const steps = plan.steps.map((step) => {
+    if (step.kind !== "backend_effect") return { kind: step.kind, status: "available" as const };
+    if (step.effect !== "sleep_cocoon") {
+      return { kind: step.kind, status: "unavailable" as const, reason: `unsupported_backend_effect:${step.effect}` };
+    }
+    if (!isToolVisibleInPromptProfile(promptProfile, "sleep_cocoon")) {
+      return { kind: step.kind, status: "unavailable" as const, reason: "tool_hidden:sleep_cocoon" };
+    }
+    if (!findToolByName(tools, "sleep_cocoon")) {
+      return { kind: step.kind, status: "unavailable" as const, reason: "tool_missing:sleep_cocoon" };
+    }
+    return { kind: step.kind, status: "available" as const };
+  });
+  const unavailable = steps.find((step) => step.status === "unavailable");
+  return {
+    status: unavailable ? "unavailable" : "available",
+    reason: unavailable?.reason,
+    steps
+  };
+}
+
+export function isToolVisibleInPromptProfile(promptProfile: PromptProfile, toolName: string): boolean {
+  const visibleTools = promptProfile.visibleTools as Record<string, unknown>;
+  if (toolName === "messaging" || toolName === "check_chat" || toolName === "send_chat" || toolName === "wait_chat") {
+    return visibleTools.feishu !== false && visibleTools[toolName] !== false;
   }
-  if (behavior.kind === "sleep_force_wake") {
-    return `爱丽丝你被${userName}强制唤醒了。短短回应${userName}，语气带一点刚醒的迷糊，避免普通晨间问候。`;
+  if (toolName === "photo" || toolName === "media") {
+    return visibleTools.photo !== false && visibleTools.media !== false && visibleTools[toolName] !== false;
   }
+  if (toolName === "shell") {
+    return visibleTools.shell !== false;
+  }
+  return visibleTools[toolName] !== false;
+}
+
+export function createAgentInitiatedBehaviorRunStore(options: number | AgentInitiatedBehaviorRunStoreOptions = 1_000): AgentInitiatedBehaviorRunStore {
+  const limit = typeof options === "number" ? options : options.limit ?? 1_000;
+  const dbPath = typeof options === "number" ? undefined : options.dbPath ?? options.filePath;
+  if (dbPath) return createSqliteAgentInitiatedBehaviorRunStore(dbPath, limit);
+  return createMemoryAgentInitiatedBehaviorRunStore(limit);
+}
+
+function createMemoryAgentInitiatedBehaviorRunStore(limit: number): AgentInitiatedBehaviorRunStore {
+  const runs: AgentInitiatedBehaviorRun[] = [];
+  const finalize = (now = new Date()): number => {
+    let count = 0;
+    const nowMs = now.getTime();
+    for (const run of runs) {
+      if (run.respondedWithin15m !== undefined) continue;
+      if (run.result !== "completed") continue;
+      const triggeredAt = runTriggeredTimestamp(run);
+      if (!Number.isFinite(triggeredAt)) continue;
+      if (nowMs - triggeredAt <= responseWindowMs) continue;
+      run.respondedWithin15m = false;
+      count += 1;
+    }
+    return count;
+  };
+  return {
+    record(run) {
+      runs.unshift(run);
+      if (runs.length > limit) runs.length = limit;
+      return run;
+    },
+    list(count = 100) {
+      return runs.slice(0, Math.max(0, Math.floor(count)));
+    },
+    markRespondedWithin15m(input) {
+      const respondedAt = input.respondedAt instanceof Date ? input.respondedAt : new Date(input.respondedAt);
+      const respondedAtMs = respondedAt.getTime();
+      if (!Number.isFinite(respondedAtMs)) return 0;
+      let count = 0;
+      for (const run of runs) {
+        if (run.sessionId !== input.sessionId) continue;
+        if (run.respondedWithin15m !== undefined) continue;
+        if (run.result !== "completed") continue;
+        const triggeredAt = runTriggeredTimestamp(run);
+        if (!Number.isFinite(triggeredAt)) continue;
+        if (respondedAtMs < triggeredAt || respondedAtMs - triggeredAt > responseWindowMs) continue;
+        run.respondedWithin15m = true;
+        count += 1;
+      }
+      return count;
+    },
+    finalizeExpiredResponses(now = new Date()) {
+      return finalize(now);
+    },
+    randomThirtyMinuteBuckets(now = new Date()) {
+      finalize(now);
+      const bucketCount = 48;
+      const bucketMs = 30 * 60 * 1000;
+      const end = Math.floor(now.getTime() / bucketMs) * bucketMs + bucketMs;
+      return Array.from({ length: bucketCount }, (_, index) => {
+        const start = end - (bucketCount - index) * bucketMs;
+        const stop = start + bucketMs;
+        const bucketRuns = runs.filter((run) => {
+          const timestamp = runTriggeredTimestamp(run);
+          return run.kind === "randomized" && Number.isFinite(timestamp) && timestamp >= start && timestamp < stop && run.result === "completed";
+        });
+        const respondedWithin15m = bucketRuns.filter((run) => run.respondedWithin15m === true).length;
+        const notRespondedWithin15m = bucketRuns.filter((run) => run.respondedWithin15m === false).length;
+        return {
+          startAt: new Date(start).toISOString(),
+          total: bucketRuns.length,
+          respondedWithin15m,
+          notRespondedWithin15m
+        };
+      });
+    }
+  };
+}
+
+function createSqliteAgentInitiatedBehaviorRunStore(dbPath: string, limit: number): AgentInitiatedBehaviorRunStore {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db: any = new sqlite.DatabaseSync(dbPath);
+  initializeRunDb(db);
+  return {
+    record(run) {
+      db.prepare(`
+        INSERT OR REPLACE INTO initiated_behavior_runs(
+          id, behavior_id, kind, triggered_at, triggered_at_utc, trigger, dry_run, result,
+          session_id, responded_within_15m, steps_json, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        run.id,
+        run.behaviorId,
+        run.kind,
+        run.triggeredAt,
+        run.triggeredAtUtc ?? null,
+        run.trigger,
+        run.dryRun ? 1 : 0,
+        run.result,
+        run.sessionId ?? null,
+        booleanToSql(run.respondedWithin15m),
+        JSON.stringify(run.steps ?? []),
+        run.error ?? null
+      );
+      pruneRuns(db, limit);
+      return run;
+    },
+    list(count = 100) {
+      return db.prepare(`
+        SELECT ${runSelectColumns()}
+        FROM initiated_behavior_runs
+        ORDER BY COALESCE(triggered_at_utc, triggered_at) DESC, rowid DESC
+        LIMIT ?
+      `).all(Math.max(0, Math.floor(count))).map(rowToRun).filter(Boolean);
+    },
+    markRespondedWithin15m(input) {
+      const respondedAt = input.respondedAt instanceof Date ? input.respondedAt : new Date(input.respondedAt);
+      const respondedAtMs = respondedAt.getTime();
+      if (!Number.isFinite(respondedAtMs)) return 0;
+      const rows = db.prepare(`
+        SELECT id, COALESCE(triggered_at_utc, triggered_at) AS triggeredAt
+        FROM initiated_behavior_runs
+        WHERE session_id = ?
+          AND result = 'completed'
+          AND responded_within_15m IS NULL
+      `).all(input.sessionId);
+      const ids = rows
+        .filter((row: { id: string; triggeredAt: string }) => {
+          const triggeredAt = Date.parse(row.triggeredAt);
+          return Number.isFinite(triggeredAt)
+            && respondedAtMs >= triggeredAt
+            && respondedAtMs - triggeredAt <= responseWindowMs;
+        })
+        .map((row: { id: string }) => row.id);
+      if (ids.length === 0) return 0;
+      const update = db.prepare("UPDATE initiated_behavior_runs SET responded_within_15m = 1 WHERE id = ?");
+      for (const id of ids) update.run(id);
+      return ids.length;
+    },
+    finalizeExpiredResponses(now = new Date()) {
+      const nowMs = now.getTime();
+      if (!Number.isFinite(nowMs)) return 0;
+      const rows = db.prepare(`
+        SELECT id, COALESCE(triggered_at_utc, triggered_at) AS triggeredAt
+        FROM initiated_behavior_runs
+        WHERE result = 'completed'
+          AND responded_within_15m IS NULL
+      `).all();
+      const ids = rows
+        .filter((row: { id: string; triggeredAt: string }) => {
+          const triggeredAt = Date.parse(row.triggeredAt);
+          return Number.isFinite(triggeredAt) && nowMs - triggeredAt > responseWindowMs;
+        })
+        .map((row: { id: string }) => row.id);
+      if (ids.length === 0) return 0;
+      const update = db.prepare("UPDATE initiated_behavior_runs SET responded_within_15m = 0 WHERE id = ?");
+      for (const id of ids) update.run(id);
+      return ids.length;
+    },
+    randomThirtyMinuteBuckets(now = new Date()) {
+      this.finalizeExpiredResponses(now);
+      const bucketCount = 48;
+      const bucketMs = 30 * 60 * 1000;
+      const end = Math.floor(now.getTime() / bucketMs) * bucketMs + bucketMs;
+      const randomizedRuns = db.prepare(`
+        SELECT COALESCE(triggered_at_utc, triggered_at) AS triggeredAt, responded_within_15m AS respondedWithin15m
+        FROM initiated_behavior_runs
+        WHERE kind = 'randomized'
+          AND result = 'completed'
+      `).all();
+      return Array.from({ length: bucketCount }, (_, index) => {
+        const start = end - (bucketCount - index) * bucketMs;
+        const stop = start + bucketMs;
+        const bucketRuns = randomizedRuns.filter((run: { triggeredAt: string }) => {
+          const timestamp = Date.parse(run.triggeredAt);
+          return Number.isFinite(timestamp) && timestamp >= start && timestamp < stop;
+        });
+        const respondedWithin15m = bucketRuns.filter((run: { respondedWithin15m: number | null }) => run.respondedWithin15m === 1).length;
+        const notRespondedWithin15m = bucketRuns.filter((run: { respondedWithin15m: number | null }) => run.respondedWithin15m === 0).length;
+        return {
+          startAt: new Date(start).toISOString(),
+          total: bucketRuns.length,
+          respondedWithin15m,
+          notRespondedWithin15m
+        };
+      });
+    }
+  };
+}
+
+export function createAgentInitiatedBehaviorRun(input: {
+  plan: AgentInitiatedBehaviorPlan;
+  triggeredAt: string;
+  triggeredAtUtc?: string;
+  trigger: string;
+  result: AgentInitiatedBehaviorRun["result"];
+  sessionId?: string;
+  steps?: AgentInitiatedBehaviorRun["steps"];
+  error?: string;
+}): AgentInitiatedBehaviorRun {
+  return {
+    id: `initiated_behavior_${Date.parse(input.triggeredAt) || Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    behaviorId: input.plan.id,
+    kind: input.plan.kind,
+    triggeredAt: input.triggeredAt,
+    triggeredAtUtc: input.triggeredAtUtc,
+    trigger: input.trigger,
+    dryRun: input.plan.dryRun === true,
+    result: input.result,
+    sessionId: input.sessionId,
+    steps: input.steps ?? [],
+    error: input.error
+  };
+}
+
+function defaultAgentInitiatedBehaviorPromptContent(id: string): string {
+  if (id === "sleep_goodnight") {
+    return "爱丽丝你已经开始入睡流程了。对{{user}}说晚安，语气简短温柔。不要要求或声称自己还需要执行额外动作。";
+  }
+  if (id === "sleep_morning") {
+    return "爱丽丝你醒了。对{{user}}说句早安，语气自然。";
+  }
+  if (id === "sleep_force_wake") {
+    return "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊，避免普通晨间问候。";
+  }
+  if (id === "idle_check_in") {
+    return "用户已经有一段时间没有互动。低打扰地向{{user}}发起一句轻量问候。";
+  }
+  if (id === "memory_reflection") {
+    return "根据当前上下文，轻量发起一条与近期记忆或回顾有关的自然消息。";
+  }
+  if (id === "topic_followup") {
+    return "对最近尚未结束的话题做一句自然、轻量的追问。";
+  }
+  return "";
+}
+
+function randomizedPlan(id: string, weight: number): AgentInitiatedBehaviorPlan {
+  const promptProfilePath = `core/prompt/initiated-behaviors/${id}.json`;
+  return {
+    id,
+    kind: "randomized",
+    enabled: false,
+    weight,
+    priority: 0,
+    dryRun: false,
+    promptProfilePath,
+    steps: [{ kind: "llm_instruction", promptProfilePath }]
+  };
+}
+
+function findToolByName(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {
+  return tools.find((plugin) => plugin.listTools().some((tool) => tool.name === toolName));
+}
+
+function initializeRunDb(db: any): void {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS initiated_behavior_runs (
+      id TEXT PRIMARY KEY,
+      behavior_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      triggered_at TEXT NOT NULL,
+      triggered_at_utc TEXT,
+      trigger TEXT NOT NULL,
+      dry_run INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      session_id TEXT,
+      responded_within_15m INTEGER,
+      steps_json TEXT NOT NULL,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS initiated_behavior_runs_triggered_at_idx ON initiated_behavior_runs(triggered_at);
+    CREATE INDEX IF NOT EXISTS initiated_behavior_runs_behavior_idx ON initiated_behavior_runs(behavior_id, triggered_at);
+    CREATE INDEX IF NOT EXISTS initiated_behavior_runs_session_response_idx ON initiated_behavior_runs(session_id, responded_within_15m, triggered_at);
+    CREATE INDEX IF NOT EXISTS initiated_behavior_runs_random_bucket_idx ON initiated_behavior_runs(kind, result, triggered_at);
+  `);
+  const columns = db.prepare("PRAGMA table_info(initiated_behavior_runs)").all().map((row: any) => row.name);
+  if (!columns.includes("triggered_at_utc")) db.exec("ALTER TABLE initiated_behavior_runs ADD COLUMN triggered_at_utc TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS initiated_behavior_runs_triggered_at_utc_idx ON initiated_behavior_runs(triggered_at_utc)");
+}
+
+function pruneRuns(db: any, limit: number): void {
+  if (!Number.isFinite(limit) || limit <= 0) return;
+  db.prepare(`
+    DELETE FROM initiated_behavior_runs
+    WHERE id NOT IN (
+      SELECT id
+      FROM initiated_behavior_runs
+      ORDER BY COALESCE(triggered_at_utc, triggered_at) DESC, rowid DESC
+      LIMIT ?
+    )
+  `).run(Math.max(0, Math.floor(limit)));
+}
+
+function runSelectColumns(): string {
+  return [
+    "id",
+    "behavior_id AS behaviorId",
+    "kind",
+    "triggered_at AS triggeredAt",
+    "triggered_at_utc AS triggeredAtUtc",
+    "trigger",
+    "dry_run AS dryRun",
+    "result",
+    "session_id AS sessionId",
+    "responded_within_15m AS respondedWithin15m",
+    "steps_json AS stepsJson",
+    "error"
+  ].join(", ");
+}
+
+function rowToRun(row: unknown): AgentInitiatedBehaviorRun | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as Record<string, unknown>;
+  let steps: unknown = [];
+  try {
+    steps = typeof value.stepsJson === "string" ? JSON.parse(value.stepsJson) : [];
+  } catch {
+    steps = [];
+  }
+  return normalizeRun({
+    id: value.id,
+    behaviorId: value.behaviorId,
+    kind: value.kind,
+    triggeredAt: value.triggeredAt,
+    triggeredAtUtc: value.triggeredAtUtc,
+    trigger: value.trigger,
+    dryRun: value.dryRun === 1 || value.dryRun === true,
+    result: value.result,
+    sessionId: value.sessionId,
+    respondedWithin15m: sqlToBoolean(value.respondedWithin15m),
+    steps,
+    error: value.error
+  });
+}
+
+function booleanToSql(value: boolean | undefined): number | null {
+  if (value === true) return 1;
+  if (value === false) return 0;
+  return null;
+}
+
+function sqlToBoolean(value: unknown): boolean | undefined {
+  if (value === 1 || value === true) return true;
+  if (value === 0 || value === false) return false;
   return undefined;
+}
+
+function normalizeRun(value: unknown): AgentInitiatedBehaviorRun | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<AgentInitiatedBehaviorRun>;
+  if (typeof raw.id !== "string" || typeof raw.behaviorId !== "string" || typeof raw.triggeredAt !== "string") return undefined;
+  if (raw.kind !== "event" && raw.kind !== "randomized") return undefined;
+  if (raw.result !== "completed" && raw.result !== "skipped" && raw.result !== "dry_run" && raw.result !== "failed") return undefined;
+  return {
+    id: raw.id,
+    behaviorId: raw.behaviorId,
+    kind: raw.kind,
+    triggeredAt: raw.triggeredAt,
+    triggeredAtUtc: typeof raw.triggeredAtUtc === "string" ? raw.triggeredAtUtc : undefined,
+    trigger: typeof raw.trigger === "string" ? raw.trigger : raw.behaviorId,
+    dryRun: raw.dryRun === true,
+    result: raw.result,
+    sessionId: typeof raw.sessionId === "string" ? raw.sessionId : undefined,
+    respondedWithin15m: typeof raw.respondedWithin15m === "boolean" ? raw.respondedWithin15m : undefined,
+    steps: Array.isArray(raw.steps) ? raw.steps.filter((step) => (
+      step
+      && typeof step === "object"
+      && ((step as { kind?: unknown }).kind === "backend_effect" || (step as { kind?: unknown }).kind === "llm_instruction" || (step as { kind?: unknown }).kind === "record_only")
+      && ((step as { result?: unknown }).result === "completed" || (step as { result?: unknown }).result === "skipped" || (step as { result?: unknown }).result === "failed")
+    )) as AgentInitiatedBehaviorRun["steps"] : [],
+    error: typeof raw.error === "string" ? raw.error : undefined
+  };
+}
+
+function runTriggeredTimestamp(run: Pick<AgentInitiatedBehaviorRun, "triggeredAt" | "triggeredAtUtc">): number {
+  const timestamp = Date.parse(run.triggeredAtUtc ?? run.triggeredAt);
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
 }

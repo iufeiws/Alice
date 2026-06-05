@@ -1,0 +1,19 @@
+{
+  "behaviors": {
+    "sleep_force_wake": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "sleep_cocoon.force_wake"
+    },
+    "sleep_goodnight": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "sleep_cocoon.auto_goodnight_check"
+    },
+    "sleep_morning": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "sleep_cocoon.wake"
+    }
+  }
+}

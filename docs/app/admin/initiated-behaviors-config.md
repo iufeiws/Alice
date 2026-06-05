@@ -7,6 +7,9 @@
 - 在后台管理器主导航新增主动行为配置入口。
 - 支持两类行为配置：事件驱动型和随机触发型。
 - 让用户能启用、禁用、调整触发条件、查看最近触发记录。
+- 让用户能编辑 layer-based prompt profile，而不是单条 prompt textarea。
+- 让用户能看到行为 steps，尤其是 `sleep_goodnight` 的后台 `sleep_cocoon action=in` effect。
+- 让用户能看到 runtime availability；如果主 prompt profile 隐藏了 backend effect 依赖的 tool，行为显示为 unavailable。
 - 保持行为语义归 Agent 层所有，admin 只管理配置和观测。
 - 后续新增主动行为时，不要求重写整个页面布局。
 
@@ -54,37 +57,31 @@ Tool Preview
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `enabled` | switch | 是否启用该行为 |
-| `eventSources` | readonly/list | 该行为接受哪些规范化 `AgentEvent` |
-| `promptInstruction` | textarea | 追加给本次 LLM loop 的一次性指令 |
-| `toolPlan` | readonly/list | 预期可调用动作，例如 `sleep_cocoon({"action":"in"})` |
-| `cooldownMinutes` | number | 防止同一行为短时间重复触发 |
-| `allowedChannels` | multi-select | 允许在哪些通道主动发起 |
+| `triggerEvent` | select/text | 该行为匹配的规范化事件 |
+| `steps` | readonly/structured list | 行为计划步骤，例如 backend effect、LLM instruction、record only |
+| `promptLayers` | layer editor | 参考主 prompt 的 `layers[]` 编辑器 |
 | `dryRun` | switch | 只记录触发，不执行 LLM/tool loop |
 
 ### 随机触发型
 
-随机触发型行为没有单个确定外部事件，而是由调度器按概率、时间窗、上下文状态或冷却时间触发。它们应该和事件驱动型分开管理，避免把“概率调度”混进事件语义。
+随机触发型行为没有单个确定外部事件。当前 admin 只保留配置展示，不定义运行时触发器，也不把它挂到 heartbeat 或固定时间点。
 
 候选例子：
 
 | 行为 | 触发模型 | 说明 |
 | --- | --- | --- |
-| `idle_check_in` | 空闲窗口 + 概率 | 用户长时间未互动后低概率问候 |
-| `memory_reflection` | 时间窗 + 状态条件 | 在合适时间主动整理或回顾 |
-| `topic_followup` | 上下文条件 + 冷却 | 对未结束话题做轻量追问 |
+| `idle_check_in` | 未接入 | 用户长时间未互动后低概率问候 |
+| `memory_reflection` | 未接入 | 在合适时间主动整理或回顾 |
+| `topic_followup` | 未接入 | 对未结束话题做轻量追问 |
 
 推荐配置项：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `enabled` | switch | 是否启用该行为 |
-| `scheduleWindow` | time range | 可触发的本地时间段 |
-| `minIdleMinutes` | number | 至少空闲多久后允许触发 |
-| `probability` | slider/number | 每次调度检查触发概率 |
-| `maxPerDay` | number | 每日最多触发次数 |
-| `cooldownMinutes` | number | 两次触发之间的最短间隔 |
-| `contextFilters` | structured list | 允许或拒绝触发的上下文条件 |
-| `promptInstruction` | textarea | 触发后进入 LLM loop 的一次性指令 |
+| `weight` | number | 后续触发模型可能使用的权重，当前只展示 |
+| `priority` | number | 后续冲突处理可能使用的整数优先级，当前只展示 |
+| `promptLayers` | layer editor | 触发后进入 LLM loop 的 layer-based prompt |
 | `dryRun` | switch | 只记录候选命中，不执行 |
 
 ## 页面方案：表格 + Config 入口
@@ -106,11 +103,11 @@ Behavior table
 ┌─────────┬────────┬──────────┬───────────────────┬────────────┬─────────────────┬──────────┬────────┬────────┐
 │ Enabled │ Weight │ Priority │ Behavior          │ Type       │ Source/Schedule │ 15m resp │ Health │ Config │
 ├─────────┼────────┼──────────┼───────────────────┼────────────┼─────────────────┼──────────┼────────┼────────┤
-│ on      │ -      │ high     │ sleep_goodnight   │ event      │ sleep check     │ 94%      │ ok     │ Config │
-│ on      │ -      │ normal   │ sleep_morning     │ event      │ wake            │ 100%     │ ok     │ Config │
-│ on      │ -      │ high     │ sleep_force_wake  │ event      │ /force_wake     │ 100%     │ ready  │ Config │
-│ off     │ 0.08   │ low      │ idle_check_in     │ randomized │ idle window     │ 42%      │ off    │ Config │
-│ off     │ 0.04   │ low      │ memory_reflection │ randomized │ time window     │ 61%      │ off    │ Config │
+│ on      │ -      │ -        │ sleep_goodnight   │ event      │ sleep check     │ 94%      │ ok     │ Config │
+│ on      │ -      │ -        │ sleep_morning     │ event      │ wake            │ 100%     │ ok     │ Config │
+│ on      │ -      │ -        │ sleep_force_wake  │ event      │ /force_wake     │ 100%     │ ready  │ Config │
+│ off     │ 0.08   │ 0        │ idle_check_in     │ randomized │ idle window     │ 42%      │ off    │ Config │
+│ off     │ 0.04   │ 0        │ memory_reflection │ randomized │ time window     │ 61%      │ off    │ Config │
 └─────────┴────────┴──────────┴───────────────────┴────────────┴─────────────────┴──────────┴────────┴────────┘
 
 Recent runs
@@ -162,31 +159,22 @@ Randomized event chart, 30 minute buckets
 
 | 字段 | 说明 |
 | --- | --- |
-| `Enabled` | 真实 switch 控件；第一版可先 disabled 展示 |
+| `Enabled` | 真实 switch 控件；切换后保存 enabled override |
 | `Weight` | 随机触发权重；事件触发型固定显示 `-` |
-| `Priority` | 行为调度或冲突处理优先级，例如 `high`、`normal`、`low` |
-| `Behavior` | 行为 id 和一句短说明 |
+| `Priority` | 随机触发配置优先级，整数；事件触发型固定显示 `-` |
+| `Behavior` | 行为 id |
 | `Type` | `event` 或 `randomized` |
-| `Source / Schedule` | 事件来源或随机调度摘要 |
+| `Source / Schedule` | 事件来源；随机触发型当前显示 `randomized` |
 | `15m response` | 该行为触发后 15 分钟内收到用户响应的比例 |
 | `Last run` | 最近一次触发时间，没有则 `never` |
-| `Health` | `ok`、`planned`、`disabled`、`dry_run`、`failed` |
+| `Health` | `ok`、`planned`、`disabled`、`dry_run`、`failed`、`unavailable` |
 | `Config` | 进入该行为配置的按钮 |
-
-可选扩展字段：
-
-| 字段 | 说明 |
-| --- | --- |
-| `Cooldown` | 冷却时间摘要 |
-| `Daily limit` | 随机触发型每日上限 |
-| `Dry run` | 是否只记录不执行 |
-| `Updated` | 配置最后更新时间 |
 
 表格行为：
 
 - 点击 `Config` 进入该行为配置。
 - 行本身不展开详情。
-- 行内 switch 只改启用状态，不打开详情；如果第一版不接功能，switch 必须 disabled。
+- 行内 switch 只改启用状态，不打开详情。
 - 表格不直接编辑 prompt、时间窗、概率等复杂字段。
 
 ### Config 页面
@@ -204,11 +192,15 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 ┌──────────────────────────────────────┬──────────────────────────────────────┐
 │ Type                                  │ Event                                │
 │ [event v]                             │ triggerEvent                         │
-│ Enabled  Cooldown  Dry run            │   sleep_cocoon.auto_goodnight_check  │
-│ Allowed channels                      │                                      │
+│                                      │   sleep_cocoon.auto_goodnight_check  │
 ├──────────────────────────────────────┴──────────────────────────────────────┤
-│ Prompt Instruction                                                           │
-│ [textarea]                                                                   │
+│ Steps                                                                        │
+│ backend_effect  sleep_cocoon  {"action":"in"}                                │
+│ llm_instruction core/prompt/initiated-behaviors/sleep_goodnight.json         │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Prompt Layers                                                                │
+│ [layer list: enabled, role, title, order]                                     │
+│ [selected layer content editor]                                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Recent runs for this behavior                                                │
 │ small vertical scroll area                                                   │
@@ -221,8 +213,7 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 ┌──────────────────────────────────────┬──────────────────────────────────────┐
 │ Type                                  │ Randomized                           │
 │ [randomized v]                        │ Weight       0.08                    │
-│ Enabled  Cooldown  Dry run            │ Priority     low                     │
-│ Allowed channels                      │                                      │
+│                                      │ Priority     0                       │
 └──────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
@@ -230,13 +221,16 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 
 - 顶部标题区显示行为 id、类型 badge、启用状态、短说明和操作按钮。
 - 不要在右上角放 `Runtime Summary` 或独立详情摘要。
-- `Prompt Instruction` 前面放 `Type` 选择行。
-- `Type` 左侧是类型选择和通用控制：`enabled`、`cooldownMinutes`、`dryRun`、`allowedChannels`。
+- `Prompt Layers` 前面放 `Type` 选择行和 `Steps` 区。
+- `Type` 左侧只放类型选择。
 - `Type` 选择 `event` 时，右侧只展示 `triggerEvent`。
 - `Type` 选择 `randomized` 时，右侧只展示 `weight` 和 `priority`。
-- `Prompt Instruction` 独占一整行，避免长文本挤在右侧栏里。
+- `Steps` 展示行为计划的实际执行步骤；`sleep_goodnight` 必须展示 backend effect `sleep_cocoon action=in`。
+- `Steps` 同时展示 runtime dependency status；如果 `sleep_cocoon` 被主 prompt profile 隐藏，显示 `tool_hidden:sleep_cocoon`，并且 Health 为 `unavailable`。
+- `Prompt Layers` 使用和主 Prompt 页一致的 layer-based 编辑思路：layer list + selected layer content editor。
+- prompt layer 只负责 LLM 指令；后台实际效果必须保留在 `Steps`，不能被 prompt 文本替代。
 - 当前行为的 Recent runs 放在 Config 页底部，是固定高度可上下滚动小区域。
-- 桌面端 `Type` 行使用左右两列；窄屏按 `Type`、类型特定字段、`Prompt Instruction`、Recent runs 顺序纵向堆叠。
+- 桌面端 `Type` 行使用左右两列；窄屏按 `Type`、类型特定字段、`Steps`、`Prompt Layers`、Recent runs 顺序纵向堆叠。
 
 通用区域：
 
@@ -244,11 +238,8 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 | --- | --- | --- |
 | `id` | readonly | 行为 id，不可编辑 |
 | `kind` | select | `event` 或 `randomized` |
-| `enabled` | switch | 是否启用 |
-| `dryRun` | switch | 是否只记录不执行 |
-| `cooldownMinutes` | number | 冷却时间 |
-| `allowedChannels` | multi-select | 允许主动发起的通道 |
-| `promptInstruction` | textarea | 一次性 LLM 指令 |
+| `steps` | structured list | 行为计划步骤 |
+| `promptLayers` | layer editor | layer-based LLM 指令 |
 
 事件驱动型区域：
 
@@ -261,17 +252,95 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 | 字段 | 控件 | 说明 |
 | --- | --- | --- |
 | `weight` | number | 随机触发权重 |
-| `priority` | select | 调度或冲突处理优先级 |
+| `priority` | number | 调度或冲突处理优先级 |
+
+### Prompt Layers 编辑器
+
+行为 prompt 的编辑器参考当前主 Prompt 页的 layer 模型，不提供单独的 `promptInstruction` textarea。
+
+每个行为 prompt profile 存在 `core/prompt/initiated-behaviors/{behavior_id}.json`，结构为：
+
+```ts
+type InitiatedBehaviorPromptProfile = {
+  layers: Array<{
+    id: string;
+    title: string;
+    role: "user" | "assistant" | "tool_request";
+    enabled: boolean;
+    content: string;
+    order: number;
+    thinking?: string;
+    toolName?: string;
+    toolCallId?: string;
+    toolArguments?: string;
+  }>;
+};
+```
+
+UI 结构：
+
+```text
+Prompt Layers
+[Add Layer] [Add Tool Request]
+
+▾ 晚安表达 [user]
+  Title    [晚安表达]
+  Role     [user v]
+  Enabled  [x]
+  Content  [textarea]
+  [Up] [Down] [Delete]
+
+▾ fake check_chat [tool_request]
+  Title           [fake check_chat]
+  Role            [tool_request v]
+  Enabled         [x]
+  Tool Name       [check_chat v]
+  Tool Call ID    [call_check]
+  Tool Arguments  [textarea]
+  Thinking / Assistant Tool Call Content [textarea]
+  [Up] [Down] [Delete]
+```
+
+规则：
+
+- Prompt Layers 编辑形态照主 Prompt 页：每个 layer 是一个可展开的 details/card，不使用左侧列表加右侧编辑器。
+- layer 按 `order` 排序展示。
+- `enabled=false` 的 layer 不进入 LLM messages。
+- `role` 只允许 `user`、`assistant`、`tool_request`；这里不能选择 `system`，避免主动行为 prompt 破坏主 prompt prefix。
+- `tool_request` layer 必须展示并保存 `toolName`、`toolCallId`、`toolArguments`、`thinking`，不能降级成普通文本或隐藏 fake tool。
+- Config 页必须显示 enabled/order 后组装出的 preview messages，包括 `content`、`reasoning_content`、`tool_calls`。
+- 保存 prompt layers 只修改对应 `core/prompt/initiated-behaviors/{behavior_id}.json`。
+- 删除或修改 prompt layer 不能删除 `steps` 中的 backend effect。
+- `sleep_goodnight` 的后台入睡效果显示在 `Steps`，prompt layers 只表达晚安话术。
+
+### Steps 展示
+
+Steps 是行为语义的一部分，admin 可以展示并在未来提供受控编辑，但不能让普通 prompt 编辑覆盖它。
+
+第一版 Config 页至少展示：
+
+| 字段 | 说明 |
+| --- | --- |
+| `kind` | `backend_effect`、`llm_instruction`、`record_only` |
+| `effect` | backend effect 名称，例如 `sleep_cocoon` |
+| `arguments` | backend effect 参数 |
+| `promptProfilePath` | LLM instruction 使用的 prompt profile 路径 |
+
+`sleep_goodnight` 示例：
+
+```text
+backend_effect   sleep_cocoon   {"action":"in"}
+llm_instruction  core/prompt/initiated-behaviors/sleep_goodnight.json
+```
 
 Config 底部操作：
 
-| 操作 | 第一版行为 |
+| 操作 | 行为 |
 | --- | --- |
-| `Save` | 接 API 前 disabled |
-| `Test Behavior` | 接 API 前 disabled |
-| `Reset` | 接 API 前 disabled |
+| `Save` | 保存 plan override 和 prompt layers |
+| `Reset` | 丢弃未保存修改并重新加载当前行为 |
 
-第一版如果暂时不接功能，Config 入口可以 disabled，或进入只读配置预览。所有会修改配置或触发运行的控件必须 disabled，并明确是 draft UI。
+不放没有接入的假按钮。后续新增 `Test Behavior` 前必须先接真实 API。
 
 ### Recent runs
 
@@ -295,7 +364,7 @@ Recent runs 是运行事实，不是配置表。它在主列表页下方占一�
 - 不允许在 runs 表格里直接修改配置。
 - 默认展示全局最近运行记录。
 - 可以通过表格行或过滤器限制为某个行为，但不要因此改变配置状态。
-- dry-run 也要记录，避免随机触发调试时没有证据。
+- dry-run 也要记录，避免手动测试时没有证据。
 
 ### 响应统计柱状图
 
@@ -356,19 +425,21 @@ Config page
   Type row
   Event: triggerEvent
   Randomized: weight and priority
-  Prompt Instruction
+  Steps
+  Prompt Layers
   Recent runs for this behavior
 ```
 
 页面控件规则：
 
 - 开关使用真实 switch 控件。
-- prompt 指令使用 textarea。
 - `triggerEvent` 使用 select 或短文本输入。
 - `weight` 使用 number input。
-- `priority` 使用 select。
+- `priority` 使用 number input。
+- prompt 使用 layer-based editor，不使用单独 prompt textarea。
+- steps 使用 structured list 展示，不能被 prompt editor 覆盖。
 - `Recent runs` 是固定高度的小滚动区，只做观察，不允许在日志表格里直接修改配置。
-- 第一版不接功能时，所有会改变配置或触发运行的控件都必须 disabled。
+- `kind`、`triggerEvent`、`weight`、`priority`、prompt layers 都必须是真实可编辑控件。
 - 主列表不做内联配置；复杂配置通过 `Config` 按钮进入。
 - Config 页不使用 modal；它占用主工作区，并提供返回 `Initiated Behaviors` 的入口。
 
@@ -382,22 +453,23 @@ type InitiatedBehaviorConfig = {
   kind: InitiatedBehaviorKind;
   enabled: boolean;
   weight?: number;
-  priority?: "high" | "normal" | "low";
+  priority?: number;
   triggerEvent?: string;
-  promptInstruction: string;
-  cooldownMinutes?: number;
-  allowedChannels?: string[];
-  dryRun?: boolean;
+  promptProfilePath: string;
+  steps: InitiatedBehaviorStep[];
 };
+
+type InitiatedBehaviorStep =
+  | { kind: "backend_effect"; effect: "sleep_cocoon"; arguments: Record<string, unknown> }
+  | { kind: "llm_instruction"; promptProfilePath: string }
+  | { kind: "record_only"; reason: string };
 ```
 
 ## API 草案
 
 ```text
 GET  /admin/api/initiated-behaviors
-PUT  /admin/api/initiated-behaviors
-GET  /admin/api/initiated-behaviors/runs
-POST /admin/api/initiated-behaviors/:behaviorId/test
+PATCH /admin/api/initiated-behaviors/:behaviorId
 ```
 
 响应草案：
@@ -435,19 +507,19 @@ type InitiatedBehaviorResponseBucket = {
 };
 ```
 
-`test` 接口用于 admin 手动验证单个行为。事件驱动型 test 应模拟规范化 `AgentEvent`；随机触发型 test 应绕过概率，只验证条件、prompt 构造和 dry-run/执行路径。
+`test` 接口用于 admin 手动验证单个行为。事件驱动型 test 应模拟规范化 `AgentEvent`；随机触发型当前没有自动触发，只验证 prompt 构造和 dry-run/执行路径。
 
-## 存储建议
+## 存储
 
-第一版可以使用 JSON 配置文件：
+行为配置后续可以使用 JSON 配置文件：
 
 ```text
 apps/api/admin-ui/initiated-behaviors.json
 ```
 
-这和当前 admin UI 配置文件习惯接近，便于快速落地。
+这和当前 admin UI 配置文件习惯接近，便于快速落地；运行记录不写入配置文件。
 
-如果随机触发型行为正式上线，运行记录建议进入 SQLite 或 append-only event log，而不是只写配置 JSON：
+运行记录使用 SQLite，表名：
 
 ```text
 initiated_behavior_runs
@@ -462,23 +534,22 @@ initiated_behavior_runs
 ## 实施顺序
 
 1. 新增 admin 主导航 `Initiated Behaviors`。
-2. 新增静态表格，表格包含 `Enabled`、`Weight`、`Priority`、`Behavior`、`Type`、`Source / Schedule`、`15m response`、`Last run`、`Health`、`Config`。
-3. 表格先展示 core 文档已有的三个事件驱动型 sleep 行为。
+2. 新增真实表格，表格包含 `Enabled`、`Weight`、`Priority`、`Behavior`、`Type`、`Source / Schedule`、`15m response`、`Last run`、`Health`、`Config`。
+3. 表格读取真实 API 返回的行为计划。
 4. 事件触发型的 `Weight` 固定显示 `-`。
 5. 随机触发型先以 `planned` / `disabled` 示例行展示，不接入调度器。
-6. `Config` 按钮第一版可以 disabled，或进入只读配置预览。
-7. 新增 Config 页静态布局：Header、Type row、事件型 `triggerEvent`、随机型 `weight` / `priority`、Prompt Instruction、当前行为 Recent runs。
+6. `Config` 按钮进入真实配置页。
+7. 新增 Config 页：Header、Type row、事件型 `triggerEvent`、随机型 `weight` / `priority`、Steps、Prompt Layers、当前行为 Recent runs。
 8. 增加固定高度、可上下滚动的 Recent runs 小区域。
 9. 增加 30 分钟粒度柱状图，展示随机事件发起总数、15 分钟响应数和 15 分钟无响应数。
-10. 接入 `GET /admin/api/initiated-behaviors` 后，把静态数据替换为真实配置和聚合数据。
-11. 接入保存 API 后，再开放 `enabled`、`weight`、`priority`、`cooldownMinutes`、`dryRun` 等编辑。
+10. `GET /admin/api/initiated-behaviors` 返回真实配置和聚合数据。
+11. 保存 API 开放 `enabled`、`kind`、`triggerEvent`、`weight`、`priority`、prompt layers 编辑。
 12. 增加 `Recent runs` 观测接口。
-13. 等随机调度器设计完成后，再评估是否增加更多随机触发字段。
+13. 随机触发器需要重新设计后再接入；当前不挂 heartbeat 或固定时间点。
 
 ## 开放问题
 
 - 主动行为配置应归 `apps/api` 的 admin 配置文件，还是归 `core/agent` 包提供默认 schema 后由 admin 保存覆盖？
-- `promptInstruction` 是否允许完全由 admin 编辑，还是只能编辑少量变量和模板片段？
+- Steps 是否允许 admin 编辑，还是第一版只读展示？
 - 随机触发型是否需要全局 master switch，防止所有随机行为一次性禁用？
-- `allowedChannels` 应该使用 channel 类型、具体 session，还是 plugin/account/channel 三级目标？
 - dry-run 结果是否需要写入和真实触发同一张 runs 表？

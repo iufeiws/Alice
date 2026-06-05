@@ -1,0 +1,12 @@
+{
+  "layers": [
+    {
+      "id": "instruction",
+      "title": "Memory Reflection",
+      "role": "user",
+      "enabled": true,
+      "content": "根据当前上下文，轻量发起一条与近期记忆或回顾有关的自然消息。",
+      "order": 10
+    }
+  ]
+}

@@ -9,6 +9,7 @@ export function renderAdminHtmlV2(): string {
     <title>Alice Admin</title>
     <style>
       :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      *, *::before, *::after { box-sizing: border-box; }
       html, body { height: 100%; }
       body { margin: 0; background: #f5f6f8; color: #17202a; overflow: hidden; }
       .shell { display: grid; grid-template-columns: 360px 1fr; grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "aside main" "terminal terminal"; height: 100vh; overflow: hidden; }
@@ -28,7 +29,7 @@ export function renderAdminHtmlV2(): string {
       .pane.active { display: block; }
       .qr-box { width: 220px; min-height: 220px; border: 1px solid #d7dce3; border-radius: 8px; display: grid; place-items: center; background: #f8fafc; margin-top: 10px; overflow: hidden; }
       .qr-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-      section { background: #fff; border: 1px solid #d7dce3; border-radius: 8px; padding: 16px; }
+      section { background: #fff; border: 1px solid #d7dce3; border-radius: 8px; padding: 16px; max-width: 100%; }
       h2 { font-size: 15px; margin: 0 0 14px; }
       label { display: block; font-size: 12px; font-weight: 700; margin: 12px 0 6px; }
       input, textarea, select { box-sizing: border-box; width: 100%; border: 1px solid #c4cad2; border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; color: #17202a; }
@@ -157,32 +158,33 @@ export function renderAdminHtmlV2(): string {
       .plugin-preset-editor.active { display: grid; gap: 10px; }
       .plugin-public-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
       .plugin-events { max-height: 280px; }
-      .behavior-layout { display: grid; gap: 16px; align-items: start; }
+      #main-initiated-behaviors { max-width: 100%; overflow: hidden; }
+      .behavior-layout { width: 100%; max-width: 100%; min-width: 0; display: grid; gap: 16px; align-items: start; }
       .behavior-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
       .behavior-toolbar h2 { margin: 0 0 4px; }
       .behavior-toolbar label { margin: 0; min-width: 220px; }
-      .behavior-table-wrap { overflow-x: auto; border: 1px solid #d7dce3; border-radius: 8px; }
-      .behavior-table { width: 100%; border-collapse: collapse; min-width: 1060px; font-size: 12px; }
-      .behavior-table th, .behavior-table td { border-bottom: 1px solid #e4e7eb; padding: 9px 10px; text-align: left; vertical-align: middle; }
+      .behavior-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; border: 1px solid #d7dce3; border-radius: 8px; }
+      .behavior-table { --column-indent: clamp(6px, 0.9vw, 14px); width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+      .behavior-table th, .behavior-table td { border-bottom: 1px solid #e4e7eb; padding: 8px var(--column-indent); text-align: left; vertical-align: middle; overflow-wrap: anywhere; word-break: break-word; }
       .behavior-table th { color: #667085; font-weight: 800; background: #f8fafc; }
       .behavior-table tr:last-child td { border-bottom: 0; }
-      .behavior-table button { margin: 0; padding: 6px 9px; }
+      .behavior-table button { margin: 0; padding: 6px 9px; max-width: 100%; white-space: normal; }
       .behavior-row:hover td { background: #f8fafc; }
       .behavior-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 800; }
-      .behavior-kind { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
+      .behavior-kind { display: inline-flex; max-width: 100%; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; overflow-wrap: anywhere; }
       .behavior-kind.event { background: #ecfdf3; color: #067647; }
       .behavior-kind.randomized { background: #fff4e5; color: #b54708; }
-      .behavior-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
+      .behavior-status { display: inline-flex; max-width: 100%; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; overflow-wrap: anywhere; }
       .behavior-status.on { background: #e8f1ff; color: #1d4ed8; }
       .behavior-recent { margin-top: 16px; }
-      .behavior-recent-scroll { max-height: 150px; overflow-y: auto; border: 1px solid #d7dce3; border-radius: 8px; }
-      .behavior-recent-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      .behavior-recent-table th, .behavior-recent-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
+      .behavior-recent-scroll { width: 100%; max-width: 100%; min-width: 0; max-height: 150px; overflow: auto; border: 1px solid #d7dce3; border-radius: 8px; }
+      .behavior-recent-table { --column-indent: clamp(6px, 0.8vw, 12px); width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+      .behavior-recent-table th, .behavior-recent-table td { border-bottom: 1px solid #e4e7eb; padding: 7px var(--column-indent); text-align: left; overflow-wrap: anywhere; word-break: break-word; }
       .behavior-recent-table th { color: #667085; font-weight: 800; background: #f8fafc; position: sticky; top: 0; }
-      .behavior-chart { margin-top: 16px; }
-      .behavior-chart-bars { min-width: 520px; height: 160px; display: flex; align-items: end; gap: 8px; border-bottom: 1px solid #d4dce8; padding-bottom: 1px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 52px, #e7ebf2 53px); overflow-x: auto; }
-      .behavior-chart-bar-wrap { flex: 0 0 22px; height: 140px; display: flex; align-items: end; }
-      .behavior-chart-bar { width: 100%; display: flex; flex-direction: column-reverse; min-height: 2px; border-radius: 4px 4px 0 0; overflow: hidden; background: #e5e7eb; }
+      .behavior-chart { width: 100%; max-width: 100%; min-width: 0; margin-top: 16px; }
+      .behavior-chart-bars { width: 100%; min-width: 0; height: 160px; display: flex; align-items: end; gap: 5px; border-bottom: 1px solid #d4dce8; padding-bottom: 1px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 52px, #e7ebf2 53px); overflow-x: auto; }
+      .behavior-chart-bar-wrap { flex: 0 0 10px; height: 140px; display: flex; align-items: end; }
+      .behavior-chart-bar { width: 100%; display: flex; flex-direction: column-reverse; min-height: 2px; border-radius: 2px 2px 0 0; overflow: hidden; background: #e5e7eb; }
       .behavior-chart-responded { background: rgba(29, 78, 216, 0.92); }
       .behavior-chart-missed { background: rgba(147, 197, 253, 0.75); }
       .behavior-config { margin-top: 0; }
@@ -195,7 +197,18 @@ export function renderAdminHtmlV2(): string {
       .behavior-config-box h2 { margin-bottom: 8px; }
       .behavior-config-row { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 10px; }
       .behavior-config-row input[type="checkbox"] { width: auto; margin: 8px 0 0; }
-      .behavior-config textarea { min-height: 150px; }
+      .behavior-steps { margin-top: 14px; }
+      .behavior-step-list { display: grid; gap: 8px; }
+      .behavior-step-item { border: 1px solid #d7dce3; border-radius: 8px; padding: 10px; background: #f8fafc; font-size: 12px; }
+      .behavior-step-item strong { display: block; margin-bottom: 4px; }
+      .behavior-layer-grid { display: grid; grid-template-columns: minmax(260px, 0.75fr) minmax(320px, 1.25fr); gap: 14px; align-items: start; margin-top: 14px; }
+      .behavior-layer-list { display: grid; gap: 8px; }
+      .behavior-layer-item { width: 100%; border: 1px solid #d7dce3; border-radius: 8px; padding: 9px; background: #fff; color: #17202a; font-size: 12px; text-align: left; margin: 0; cursor: pointer; }
+      .behavior-layer-item.active { border-color: #2563eb; box-shadow: 0 0 0 1px #2563eb inset; }
+      .behavior-layer-item.disabled { color: #98a2b3; background: #f8fafc; }
+      .behavior-layer-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: #667085; }
+      .behavior-layer-editor textarea { min-height: 160px; }
+      .behavior-layer-preview .logs { max-height: 380px; overflow: auto; }
       .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
       .memory-controls label { margin: 0; min-width: 180px; }
       .memory-day-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 16px; }
@@ -501,10 +514,10 @@ export function renderAdminHtmlV2(): string {
             <div class="behavior-toolbar">
               <div>
                 <h2>Initiated Behaviors</h2>
-                <p class="muted">Static draft UI. Configuration is not connected to runtime yet.</p>
+                <p class="muted">Runtime plans and layer-based prompt profiles from core/prompt.</p>
               </div>
               <label for="behaviorTypeFilter">Type
-                <select id="behaviorTypeFilter" disabled>
+                <select id="behaviorTypeFilter">
                   <option value="all">all</option>
                   <option value="event">event</option>
                   <option value="randomized">randomized</option>
@@ -514,6 +527,18 @@ export function renderAdminHtmlV2(): string {
             <div class="behavior-layout">
               <div class="behavior-table-wrap">
                 <table class="behavior-table" aria-label="Initiated behaviors">
+                  <colgroup>
+                    <col style="width: 6%" />
+                    <col style="width: 5%" />
+                    <col style="width: 5%" />
+                    <col style="width: 15%" />
+                    <col style="width: 8%" />
+                    <col style="width: 19%" />
+                    <col style="width: 9%" />
+                    <col style="width: 11%" />
+                    <col style="width: 9%" />
+                    <col style="width: 8%" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>Enabled</th>
@@ -528,67 +553,8 @@ export function renderAdminHtmlV2(): string {
                       <th>Config</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    <tr class="behavior-row" data-behavior-row="sleep_goodnight">
-                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
-                      <td>-</td>
-                      <td>high</td>
-                      <td><span class="behavior-id">sleep_goodnight</span><div class="muted">Goodnight and enter sleep cocoon.</div></td>
-                      <td><span class="behavior-kind event">event</span></td>
-                      <td>sleep_cocoon.auto_goodnight_check</td>
-                      <td>94%</td>
-                      <td>today 21:43</td>
-                      <td><span class="behavior-status on">ok</span></td>
-                      <td><button type="button" data-behavior-config="sleep_goodnight">Config</button></td>
-                    </tr>
-                    <tr class="behavior-row" data-behavior-row="sleep_morning">
-                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
-                      <td>-</td>
-                      <td>normal</td>
-                      <td><span class="behavior-id">sleep_morning</span><div class="muted">Say morning after wake event.</div></td>
-                      <td><span class="behavior-kind event">event</span></td>
-                      <td>wake state transition</td>
-                      <td>100%</td>
-                      <td>today 08:12</td>
-                      <td><span class="behavior-status on">ok</span></td>
-                      <td><button type="button" data-behavior-config="sleep_morning">Config</button></td>
-                    </tr>
-                    <tr class="behavior-row" data-behavior-row="sleep_force_wake">
-                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
-                      <td>-</td>
-                      <td>high</td>
-                      <td><span class="behavior-id">sleep_force_wake</span><div class="muted">Respond as just woken by user.</div></td>
-                      <td><span class="behavior-kind event">event</span></td>
-                      <td>/force_wake</td>
-                      <td>100%</td>
-                      <td>never</td>
-                      <td><span class="behavior-status on">ready</span></td>
-                      <td><button type="button" data-behavior-config="sleep_force_wake">Config</button></td>
-                    </tr>
-                    <tr class="behavior-row" data-behavior-row="idle_check_in">
-                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
-                      <td>0.08</td>
-                      <td>low</td>
-                      <td><span class="behavior-id">idle_check_in</span><div class="muted">Low probability check-in after user idle time.</div></td>
-                      <td><span class="behavior-kind randomized">randomized</span></td>
-                      <td>idle window</td>
-                      <td>42%</td>
-                      <td>never</td>
-                      <td><span class="behavior-status">planned</span></td>
-                      <td><button type="button" data-behavior-config="idle_check_in">Config</button></td>
-                    </tr>
-                    <tr class="behavior-row" data-behavior-row="memory_reflection">
-                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
-                      <td>0.04</td>
-                      <td>low</td>
-                      <td><span class="behavior-id">memory_reflection</span><div class="muted">Occasional memory-oriented reflection prompt.</div></td>
-                      <td><span class="behavior-kind randomized">randomized</span></td>
-                      <td>time window</td>
-                      <td>61%</td>
-                      <td>never</td>
-                      <td><span class="behavior-status">planned</span></td>
-                      <td><button type="button" data-behavior-config="memory_reflection">Config</button></td>
-                    </tr>
+                  <tbody id="behaviorTableBody">
+                    <tr><td colspan="10" class="muted">Loading initiated behaviors...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -599,27 +565,15 @@ export function renderAdminHtmlV2(): string {
                     <thead>
                       <tr><th>Time</th><th>Behavior</th><th>Type</th><th>Trigger</th><th>Result</th><th>15m</th><th>Session</th></tr>
                     </thead>
-                    <tbody>
-                      <tr><td>today 21:43</td><td>sleep_goodnight</td><td>event</td><td>sleep cocoon</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
-                      <tr><td>today 18:30</td><td>idle_check_in</td><td>randomized</td><td>idle window</td><td>completed</td><td>no</td><td>demo-session</td></tr>
-                      <tr><td>today 16:00</td><td>memory_reflection</td><td>randomized</td><td>time window</td><td>dry run</td><td>yes</td><td>demo-session</td></tr>
-                      <tr><td>today 08:12</td><td>sleep_morning</td><td>event</td><td>wake</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
-                      <tr><td>yesterday 22:18</td><td>sleep_goodnight</td><td>event</td><td>sleep cocoon</td><td>dry run</td><td>no</td><td>demo-session</td></tr>
-                      <tr><td>yesterday 17:30</td><td>idle_check_in</td><td>randomized</td><td>idle window</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
+                    <tbody id="behaviorRunsBody">
+                      <tr><td colspan="7" class="muted">Loading runs...</td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
               <div class="behavior-chart">
                 <h2>Randomized Response, 30 Minute Buckets</h2>
-                <div class="behavior-chart-bars" aria-label="Randomized response chart">
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 34px"></span><span class="behavior-chart-missed" style="height: 18px"></span></div></div>
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 18px"></span><span class="behavior-chart-missed" style="height: 36px"></span></div></div>
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 50px"></span><span class="behavior-chart-missed" style="height: 18px"></span></div></div>
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 28px"></span><span class="behavior-chart-missed" style="height: 42px"></span></div></div>
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 58px"></span><span class="behavior-chart-missed" style="height: 26px"></span></div></div>
-                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 42px"></span><span class="behavior-chart-missed" style="height: 16px"></span></div></div>
-                </div>
+                <div id="behaviorChartBars" class="behavior-chart-bars" aria-label="Randomized response chart"></div>
                 <div class="usage-legend"><span><i class="usage-swatch behavior-chart-responded"></i>responded within 15m</span><span><i class="usage-swatch behavior-chart-missed"></i>no response within 15m</span></div>
               </div>
             </div>
@@ -632,31 +586,37 @@ export function renderAdminHtmlV2(): string {
                 <p class="muted" id="behaviorConfigSummary">Goodnight and enter sleep cocoon.</p>
               </div>
               <div class="behavior-config-actions">
-                <button type="button" disabled>Save</button>
-                <button type="button" class="secondary" disabled>Test</button>
-                <button type="button" class="secondary" disabled>Reset</button>
+                <button type="button" id="behaviorConfigSave">Save</button>
+                <button type="button" id="behaviorConfigReset" class="secondary">Reset</button>
               </div>
             </div>
             <div class="behavior-config-grid">
               <div class="behavior-config-box">
                 <h2>Type</h2>
                 <label for="behaviorConfigType">Type</label>
-                <select id="behaviorConfigType" disabled>
+                <select id="behaviorConfigType">
                   <option value="event">event</option>
                   <option value="randomized">randomized</option>
                 </select>
-                <div class="behavior-config-row">
-                  <label>Enabled <input id="behaviorConfigEnabled" type="checkbox" disabled /></label>
-                  <label for="behaviorConfigCooldown">Cooldown <input id="behaviorConfigCooldown" disabled /></label>
-                  <label>Dry run <input id="behaviorConfigDryRun" type="checkbox" disabled /></label>
-                </div>
-                <label for="behaviorConfigChannels">Allowed channels</label>
-                <input id="behaviorConfigChannels" disabled />
               </div>
               <div class="behavior-config-box" id="behaviorConfigSpecific"></div>
             </div>
-            <label for="behaviorConfigPrompt">Prompt Instruction</label>
-            <textarea id="behaviorConfigPrompt" disabled></textarea>
+            <div class="behavior-steps">
+              <h2>Steps</h2>
+              <div id="behaviorConfigSteps" class="behavior-step-list"></div>
+            </div>
+            <div class="behavior-config-box">
+              <h2>Prompt Layers</h2>
+              <div class="prompt-actions">
+                <button type="button" id="behaviorLayerAdd">Add Layer</button>
+                <button type="button" id="behaviorToolLayerAdd" class="secondary">Add Tool Request</button>
+              </div>
+              <div id="behaviorPromptLayerList"></div>
+            </div>
+            <div class="behavior-config-box behavior-layer-preview">
+              <h2>Assembled Prompt Preview</h2>
+              <div id="behaviorPromptPreview" class="logs">No prompt layers.</div>
+            </div>
             <div class="behavior-recent">
               <h2>Recent Runs For This Behavior</h2>
               <div id="behaviorConfigRuns" class="behavior-recent-scroll"></div>
@@ -713,95 +673,385 @@ export function renderAdminHtmlV2(): string {
       const $ = (id) => document.getElementById(id);
       let terminalAutoRefreshPaused = false;
       let terminalRefreshInFlight = false;
-      const initiatedBehaviorDrafts = {
-        sleep_goodnight: {
-          title: "sleep_goodnight",
-          summary: "Goodnight and enter sleep cocoon.",
-          kind: "event",
-          weight: "-",
-          priority: "high",
-          enabled: "on",
-          triggerEvent: "sleep_cocoon.auto_goodnight_check",
-          cooldown: "60 minutes",
-          prompt: "爱丽丝你困了，对Y说晚安，然后使用 sleep_cocoon({\"action\":\"in\"}) 去睡觉。",
-          dryRun: "off",
-          channels: "dm, group"
-        },
-        sleep_morning: {
-          title: "sleep_morning",
-          summary: "Say morning after wake event.",
-          kind: "event",
-          weight: "-",
-          priority: "normal",
-          enabled: "on",
-          triggerEvent: "wake state transition",
-          cooldown: "180 minutes",
-          prompt: "爱丽丝你醒了? 对Y说句早安吧",
-          dryRun: "off",
-          channels: "dm, group"
-        },
-        sleep_force_wake: {
-          title: "sleep_force_wake",
-          summary: "Respond as just woken by user.",
-          kind: "event",
-          weight: "-",
-          priority: "high",
-          enabled: "on",
-          triggerEvent: "/force_wake",
-          cooldown: "15 minutes",
-          prompt: "爱丽丝你被Y强制唤醒了。短短回应Y，语气带一点刚醒的迷糊，避免普通晨间问候。",
-          dryRun: "off",
-          channels: "dm, group"
-        },
-        idle_check_in: {
-          title: "idle_check_in",
-          summary: "Low probability check-in after user idle time.",
-          kind: "randomized",
-          weight: "0.08",
-          priority: "low",
-          enabled: "off",
-          cooldown: "360 minutes",
-          prompt: "",
-          dryRun: "on",
-          channels: "dm"
-        },
-        memory_reflection: {
-          title: "memory_reflection",
-          summary: "Occasional memory-oriented reflection prompt.",
-          kind: "randomized",
-          weight: "0.04",
-          priority: "low",
-          enabled: "off",
-          cooldown: "1440 minutes",
-          prompt: "",
-          dryRun: "on",
-          channels: "dm"
-        }
+      let initiatedBehaviorPayload = { plans: [], runs: [], buckets: [] };
+      let behaviorConfigId = "";
+      let behaviorConfigLayers = [];
+      let behaviorConfigLayerIndex = 0;
+      const behaviorLayerRoles = ["user", "assistant", "tool_request"];
+      const initiatedBehaviorSummaries = {
+        sleep_goodnight: "Event behavior with backend sleep_cocoon action=in before the LLM prompt.",
+        sleep_morning: "Event behavior for the normal wake transition.",
+        sleep_force_wake: "Event behavior for forced wake; distinct from ordinary morning.",
+        idle_check_in: "Randomized lightweight idle check-in.",
+        memory_reflection: "Randomized memory-oriented reflection.",
+        topic_followup: "Randomized follow-up for an unfinished recent topic."
       };
+      async function refreshInitiatedBehaviors() {
+        try {
+          const response = await fetch("/admin/api/initiated-behaviors");
+          initiatedBehaviorPayload = await response.json();
+        } catch (error) {
+          initiatedBehaviorPayload = { plans: [], runs: [], buckets: [] };
+          $("behaviorTableBody").innerHTML = '<tr><td colspan="10" class="muted">Failed to load initiated behaviors.</td></tr>';
+          $("behaviorRunsBody").innerHTML = '<tr><td colspan="7" class="muted">Failed to load runs.</td></tr>';
+          $("behaviorChartBars").innerHTML = "";
+          return;
+        }
+        renderInitiatedBehaviorList();
+      }
+      function renderInitiatedBehaviorList() {
+        const typeFilter = $("behaviorTypeFilter")?.value || "all";
+        const plans = (initiatedBehaviorPayload.plans || []).filter((plan) => typeFilter === "all" || plan.kind === typeFilter);
+        const runs = initiatedBehaviorPayload.runs || [];
+        $("behaviorTableBody").innerHTML = plans.map((plan) => {
+          const responseRatio = behaviorResponseRatio(plan.id, runs);
+          const lastRun = runs.find((run) => run.behaviorId === plan.id);
+          const source = plan.kind === "event" ? (plan.triggerEvent || "-") : "randomized";
+          const weight = plan.kind === "event" ? "-" : valueOrDash(plan.weight);
+          const priority = plan.kind === "event" ? "-" : valueOrDash(plan.priority);
+          const health = plan.availability?.status === "unavailable" ? "unavailable" : plan.enabled ? "ok" : "disabled";
+          return '<tr class="behavior-row" data-behavior-row="' + escapeAttr(plan.id) + '">' +
+            '<td><label class="plugin-switch" title="Toggle behavior"><input type="checkbox" data-behavior-enabled="' + escapeAttr(plan.id) + '" ' + (plan.enabled ? "checked " : "") + '/><span class="plugin-switch-visual"></span></label></td>' +
+            '<td>' + escapeHtml(weight) + '</td>' +
+            '<td>' + escapeHtml(priority) + '</td>' +
+            '<td><span class="behavior-id">' + escapeHtml(plan.id) + '</span></td>' +
+            '<td><span class="behavior-kind ' + escapeAttr(plan.kind) + '">' + escapeHtml(plan.kind) + '</span></td>' +
+            '<td>' + escapeHtml(source) + '</td>' +
+            '<td>' + escapeHtml(responseRatio) + '</td>' +
+            '<td>' + escapeHtml(lastRun ? formatAdminTime(lastRun.triggeredAt) : "never") + '</td>' +
+            '<td><span class="behavior-status ' + (health === "ok" ? "on" : "") + '">' + escapeHtml(health) + '</span></td>' +
+            '<td><button type="button" data-behavior-config="' + escapeAttr(plan.id) + '">Config</button></td>' +
+          '</tr>';
+        }).join("") || '<tr><td colspan="10" class="muted">No initiated behavior plans.</td></tr>';
+        document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
+        document.querySelectorAll("[data-behavior-enabled]").forEach((input) => input.addEventListener("change", () => setInitiatedBehaviorEnabled(input.dataset.behaviorEnabled, input.checked, input)));
+        renderInitiatedBehaviorRuns(runs);
+        renderInitiatedBehaviorChart(initiatedBehaviorPayload.buckets || []);
+      }
+      async function setInitiatedBehaviorEnabled(id, enabled, input) {
+        if (!id) return;
+        input.disabled = true;
+        try {
+          const response = await fetch("/admin/api/initiated-behaviors/" + encodeURIComponent(id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled })
+          });
+          if (!response.ok) throw new Error(await response.text());
+          await refreshInitiatedBehaviors();
+        } catch (error) {
+          input.checked = !enabled;
+          input.disabled = false;
+          alert("Failed to update behavior: " + (error && error.message ? error.message : String(error)));
+        }
+      }
+      function renderInitiatedBehaviorRuns(runs) {
+        $("behaviorRunsBody").innerHTML = (runs || []).map((run) =>
+          '<tr><td>' + escapeHtml(formatAdminTime(run.triggeredAt)) + '</td><td>' + escapeHtml(run.behaviorId) + '</td><td>' + escapeHtml(run.kind) + '</td><td>' + escapeHtml(run.trigger || "-") + '</td><td>' + escapeHtml(run.result || "-") + '</td><td>' + escapeHtml(formatBool(run.respondedWithin15m)) + '</td><td>' + escapeHtml(run.sessionId || "-") + '</td></tr>'
+        ).join("") || '<tr><td colspan="7" class="muted">No runs recorded.</td></tr>';
+      }
+      function renderInitiatedBehaviorChart(buckets) {
+        const maxTotal = Math.max(1, ...(buckets || []).map((bucket) => Number(bucket.total) || 0));
+        $("behaviorChartBars").innerHTML = (buckets || []).map((bucket) => {
+          const responded = Number(bucket.respondedWithin15m) || 0;
+          const missed = Number(bucket.notRespondedWithin15m) || 0;
+          const respondedHeight = Math.max(0, Math.round((responded / maxTotal) * 84));
+          const missedHeight = Math.max(0, Math.round((missed / maxTotal) * 84));
+          const title = formatAdminTime(bucket.startAt) + " total " + valueOrDash(bucket.total);
+          return '<div class="behavior-chart-bar-wrap" title="' + escapeAttr(title) + '"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: ' + respondedHeight + 'px"></span><span class="behavior-chart-missed" style="height: ' + missedHeight + 'px"></span></div></div>';
+        }).join("");
+      }
       function openInitiatedBehaviorConfig(id) {
-        const detail = initiatedBehaviorDrafts[id];
+        const detail = (initiatedBehaviorPayload.plans || []).find((plan) => plan.id === id);
         if (!detail) return;
-        $("behaviorListPanel").classList.add("pane");
-        $("behaviorListPanel").classList.remove("active");
+        behaviorConfigId = id;
+        behaviorConfigLayers = cloneBehaviorLayers(detail.promptProfile?.layers || []);
+        behaviorConfigLayerIndex = 0;
+        $("behaviorListPanel").style.display = "none";
         $("behaviorConfigPanel").classList.add("active");
-        $("behaviorConfigTitle").textContent = detail.title;
-        $("behaviorConfigSummary").textContent = detail.summary;
+        $("behaviorConfigPanel").style.display = "block";
+        $("behaviorConfigTitle").textContent = detail.id;
+        $("behaviorConfigSummary").textContent = initiatedBehaviorSummaries[detail.id] || "";
         $("behaviorConfigType").value = detail.kind;
-        $("behaviorConfigEnabled").checked = detail.enabled === "on";
-        $("behaviorConfigCooldown").value = detail.cooldown;
-        $("behaviorConfigDryRun").checked = detail.dryRun === "on";
-        $("behaviorConfigChannels").value = detail.channels;
-        $("behaviorConfigPrompt").value = detail.prompt;
+        $("behaviorConfigType").onchange = renderBehaviorConfigSpecific;
         const triggerLabel = detail.kind === "event" ? (detail.triggerEvent || "event") : "randomized";
-        $("behaviorConfigSpecific").innerHTML = detail.kind === "event"
-          ? '<h2>Event</h2><label for="behaviorConfigTriggerEvent">triggerEvent</label><input id="behaviorConfigTriggerEvent" value="' + escapeAttr(detail.triggerEvent || "") + '" disabled />'
-          : '<h2>Randomized</h2><label for="behaviorConfigWeight">Weight</label><input id="behaviorConfigWeight" value="' + escapeAttr(detail.weight) + '" disabled /><label for="behaviorConfigPriority">Priority</label><select id="behaviorConfigPriority" disabled><option ' + (detail.priority === "high" ? "selected" : "") + ">high</option><option " + (detail.priority === "normal" ? "selected" : "") + ">normal</option><option " + (detail.priority === "low" ? "selected" : "") + ">low</option></select>";
-        $("behaviorConfigRuns").innerHTML = '<table class="behavior-recent-table"><thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>15m</th><th>Session</th></tr></thead><tbody><tr><td>today 21:43</td><td>' + escapeHtml(triggerLabel) + '</td><td>completed</td><td>yes</td><td>demo-session</td></tr><tr><td>yesterday 22:18</td><td>' + escapeHtml(triggerLabel) + '</td><td>dry run</td><td>no</td><td>demo-session</td></tr></tbody></table>';
+        renderBehaviorConfigSpecific(detail);
+        $("behaviorConfigSteps").innerHTML = (detail.steps || []).map((step, index) => {
+          const status = detail.availability?.steps?.[index];
+          return '<div class="behavior-step-item"><strong>' + escapeHtml(step.kind) + '</strong><div>' + escapeHtml(formatBehaviorStepDetail(step)) + '</div>' + (step.arguments ? '<div class="muted">' + escapeHtml(JSON.stringify(step.arguments)) + '</div>' : "") + (status ? '<div class="muted">' + escapeHtml(status.status + (status.reason ? ": " + status.reason : "")) + '</div>' : "") + '</div>';
+        }).join("") || '<p class="muted">No steps configured.</p>';
+        renderBehaviorLayerEditor();
+        const runs = (initiatedBehaviorPayload.runs || []).filter((run) => run.behaviorId === id);
+        $("behaviorConfigRuns").innerHTML = '<table class="behavior-recent-table"><thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>15m</th><th>Session</th></tr></thead><tbody>' + (runs.map((run) => '<tr><td>' + escapeHtml(formatAdminTime(run.triggeredAt)) + '</td><td>' + escapeHtml(run.trigger || triggerLabel) + '</td><td>' + escapeHtml(run.result || "-") + '</td><td>' + escapeHtml(formatBool(run.respondedWithin15m)) + '</td><td>' + escapeHtml(run.sessionId || "-") + '</td></tr>').join("") || '<tr><td colspan="5" class="muted">No runs recorded.</td></tr>') + '</tbody></table>';
+      }
+      function renderBehaviorConfigSpecific(detail) {
+        const current = detail || (initiatedBehaviorPayload.plans || []).find((plan) => plan.id === behaviorConfigId) || {};
+        const kind = $("behaviorConfigType").value;
+        $("behaviorConfigSpecific").innerHTML = kind === "event"
+          ? '<h2>Event</h2><label for="behaviorConfigTriggerEvent">triggerEvent</label><input id="behaviorConfigTriggerEvent" value="' + escapeAttr(current.triggerEvent || "") + '" />'
+          : '<h2>Randomized</h2><label for="behaviorConfigWeight">Weight</label><input id="behaviorConfigWeight" type="number" step="0.01" value="' + escapeAttr(valueOrDash(current.weight) === "-" ? "0" : valueOrDash(current.weight)) + '" /><label for="behaviorConfigPriority">Priority</label><input id="behaviorConfigPriority" type="number" step="1" value="' + escapeAttr(valueOrDash(current.priority) === "-" ? "0" : valueOrDash(current.priority)) + '" />';
+      }
+      function cloneBehaviorLayers(layers) {
+        return (layers || []).map((layer, index) => ({
+          id: layer.id || "layer_" + (index + 1),
+          title: layer.title || layer.id || "Layer " + (index + 1),
+          role: behaviorLayerRoles.includes(layer.role) ? layer.role : "user",
+          enabled: layer.enabled !== false,
+          content: layer.content || "",
+          order: Number.isFinite(Number(layer.order)) ? Number(layer.order) : (index + 1) * 10,
+          toolName: layer.role === "tool_request" ? (layer.toolName || "check_chat") : undefined,
+          toolCallId: layer.role === "tool_request" ? (layer.toolCallId || "") : undefined,
+          toolArguments: layer.role === "tool_request" ? (layer.toolArguments || "{}") : undefined,
+          thinking: (layer.role === "assistant" || layer.role === "tool_request") ? (layer.thinking || "") : undefined
+        }));
+      }
+      function syncCurrentBehaviorLayerFromEditor() {
+        // Behavior prompt layers are edited directly in their details blocks, matching the main Prompt page.
+      }
+      function renderBehaviorLayerEditor() {
+        const layers = [...behaviorConfigLayers].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+        $("behaviorPromptLayerList").innerHTML = layers.map((layer, index) => renderBehaviorPromptLayer(layer, index, layers.length)).join("") || '<p class="muted">No prompt layers yet.</p>';
+        layers.forEach((layer, index) => bindBehaviorPromptLayer(layer, index, layers));
+        renderBehaviorPromptPreview();
+      }
+      function addBehaviorLayer(role = "user") {
+        const nextIndex = behaviorConfigLayers.length + 1;
+        const normalizedRole = role === "tool_request" ? "tool_request" : "user";
+        const layer = {
+          id: "layer_" + nextIndex,
+          title: "Layer " + nextIndex,
+          role: normalizedRole,
+          enabled: true,
+          order: nextIndex * 10
+        };
+        if (normalizedRole === "tool_request") {
+          behaviorConfigLayers.push({ ...layer, content: "", thinking: "", toolName: "check_chat", toolArguments: "{}" });
+        } else {
+          behaviorConfigLayers.push({ ...layer, content: "" });
+        }
+        renderBehaviorLayerEditor();
+      }
+      function renderBehaviorPromptLayer(layer, index, count) {
+        const role = behaviorLayerRoles.includes(layer.role) ? layer.role : "user";
+        const isToolRequest = role === "tool_request";
+        const showsThinking = role === "assistant" || isToolRequest;
+        const showsContent = !isToolRequest;
+        return \`
+          <details class="prompt-layer" data-behavior-layer-id="\${escapeAttr(layer.id)}" open>
+            <summary>\${escapeHtml(layer.title || "Untitled Layer")}<span>[\${escapeHtml(role)}]\${layer.enabled ? "" : " disabled"}</span></summary>
+            <div class="row">
+              <div>
+                <label>Title</label>
+                <input data-field="title" value="\${escapeAttr(layer.title)}" />
+              </div>
+              <div>
+                <label>Role</label>
+                <select data-field="role">
+                  \${behaviorLayerRoles.map((item) => \`<option value="\${item}" \${role === item ? "selected" : ""}>\${item}</option>\`).join("")}
+                </select>
+              </div>
+              <label><input data-field="enabled" type="checkbox" \${layer.enabled ? "checked" : ""} /> Enabled</label>
+            </div>
+            \${isToolRequest ? \`<div class="row">
+              <div>
+                <label>Tool Name</label>
+                <select data-field="toolName">
+                  \${renderToolOptions(layer.toolName)}
+                </select>
+              </div>
+              <div>
+                <label>Tool Call ID</label>
+                <input data-field="toolCallId" value="\${escapeAttr(layer.toolCallId || "")}" placeholder="call_1" />
+              </div>
+              <div></div>
+            </div>
+            <label>Tool Arguments</label>
+            <textarea data-field="toolArguments" rows="3">\${escapeHtml(layer.toolArguments || "")}</textarea>
+            <p class="muted">Tool result is generated by actually running this request when the LLM request is built. It is not editable.</p>\` : ""}
+            \${showsThinking ? \`<label>\${isToolRequest ? "Thinking / Assistant Tool Call Content" : "Thinking / Assistant Content"}</label>
+            <textarea data-field="thinking" rows="3">\${escapeHtml(layer.thinking || "")}</textarea>\` : ""}
+            \${showsContent ? \`<label>Content</label>
+            <textarea data-field="content" rows="7">\${escapeHtml(layer.content || "")}</textarea>\` : ""}
+            <div class="prompt-actions">
+              <button type="button" data-action="up" \${index === 0 ? "disabled" : ""}>Up</button>
+              <button type="button" data-action="down" \${index === count - 1 ? "disabled" : ""}>Down</button>
+              <button type="button" data-action="delete" class="secondary">Delete</button>
+            </div>
+          </details>
+        \`;
+      }
+      function bindBehaviorPromptLayer(layer, index, sortedLayers) {
+        const root = document.querySelector('[data-behavior-layer-id="' + cssEscape(layer.id) + '"]');
+        if (!root) return;
+        root.querySelector('[data-field="title"]').addEventListener("input", (event) => {
+          layer.title = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
+          layer.role = behaviorLayerRoles.includes(event.target.value) ? event.target.value : "user";
+          if (layer.role !== "tool_request") {
+            delete layer.toolName;
+            delete layer.toolCallId;
+            delete layer.toolArguments;
+          } else {
+            layer.toolName = layer.toolName || "check_chat";
+            layer.toolArguments = layer.toolArguments || "{}";
+          }
+          if (layer.role !== "assistant" && layer.role !== "tool_request") delete layer.thinking;
+          renderBehaviorLayerEditor();
+        });
+        root.querySelector('[data-field="enabled"]').addEventListener("change", (event) => {
+          layer.enabled = event.target.checked;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="toolName"]')?.addEventListener("change", (event) => {
+          layer.toolName = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="toolCallId"]')?.addEventListener("input", (event) => {
+          layer.toolCallId = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="thinking"]')?.addEventListener("input", (event) => {
+          layer.thinking = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="toolArguments"]')?.addEventListener("input", (event) => {
+          layer.toolArguments = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="content"]')?.addEventListener("input", (event) => {
+          layer.content = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-action="delete"]').addEventListener("click", () => {
+          behaviorConfigLayers = behaviorConfigLayers.filter((item) => item.id !== layer.id);
+          renderBehaviorLayerEditor();
+        });
+        root.querySelector('[data-action="up"]').addEventListener("click", () => moveBehaviorPromptLayer(index, -1, sortedLayers));
+        root.querySelector('[data-action="down"]').addEventListener("click", () => moveBehaviorPromptLayer(index, 1, sortedLayers));
+      }
+      function moveBehaviorPromptLayer(index, delta, sortedLayers) {
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= sortedLayers.length) return;
+        const currentOrder = sortedLayers[index].order;
+        sortedLayers[index].order = sortedLayers[nextIndex].order;
+        sortedLayers[nextIndex].order = currentOrder;
+        renderBehaviorLayerEditor();
+      }
+      function renderBehaviorPromptPreview() {
+        const messages = behaviorConfigLayers
+          .filter((layer) => layer.enabled !== false)
+          .sort((left, right) => (Number(left.order) || 0) - (Number(right.order) || 0))
+          .map((layer) => behaviorLayerToPreviewMessage(layer));
+        $("behaviorPromptPreview").innerHTML = messages.length
+          ? renderLLMRequestBlock("Initiated Behavior Prompt · " + behaviorConfigId, {
+            source: "initiated-behavior-config",
+            model: "preview",
+            temperature: "",
+            messages,
+            tools: []
+          })
+          : "No enabled prompt layers.";
+      }
+      function behaviorLayerToPreviewMessage(layer) {
+        if (layer.role === "tool_request") {
+          return {
+            role: "assistant",
+            content: renderPromptPreviewText(layer.content || ""),
+            reasoningContent: renderPromptPreviewText(layer.thinking || layer.content || ""),
+            toolCalls: [{
+              id: layer.toolCallId || "initiated_" + behaviorConfigId + "_" + layer.id,
+              type: "function",
+              function: {
+                name: layer.toolName || "check_chat",
+                arguments: renderPromptPreviewText(layer.toolArguments || "{}")
+              }
+            }]
+          };
+        }
+        return {
+          role: layer.role === "assistant" ? "assistant" : "user",
+          content: renderPromptPreviewText(layer.content || ""),
+          reasoningContent: layer.role === "assistant" && layer.thinking ? renderPromptPreviewText(layer.thinking) : undefined
+        };
+      }
+      function renderPromptPreviewText(value) {
+        return String(value || "").replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (_, key) => {
+          const resolved = promptVariables && Object.prototype.hasOwnProperty.call(promptVariables, key) ? promptVariables[key] : undefined;
+          if (resolved === undefined || resolved === null) return "{{" + key + "}}";
+          return typeof resolved === "string" ? resolved : JSON.stringify(resolved);
+        });
+      }
+      function bindBehaviorLayerEditorEvents() {
+        // Behavior prompt layer events are bound after each render, matching the main Prompt page.
+      }
+      async function saveBehaviorConfig() {
+        if (!behaviorConfigId) return;
+        syncCurrentBehaviorLayerFromEditor();
+        const detail = (initiatedBehaviorPayload.plans || []).find((plan) => plan.id === behaviorConfigId);
+        const kind = $("behaviorConfigType").value === "randomized" ? "randomized" : "event";
+        const body = {
+          kind,
+          promptProfile: { layers: behaviorConfigLayers }
+        };
+        if (typeof detail?.enabled === "boolean") body.enabled = detail.enabled;
+        if (kind === "event") {
+          body.triggerEvent = $("behaviorConfigTriggerEvent")?.value || "";
+        } else {
+          body.weight = Number($("behaviorConfigWeight")?.value) || 0;
+          body.priority = Number($("behaviorConfigPriority")?.value) || 0;
+        }
+        $("behaviorConfigSave").disabled = true;
+        try {
+          const response = await fetch("/admin/api/initiated-behaviors/" + encodeURIComponent(behaviorConfigId), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw new Error(await response.text());
+          await refreshInitiatedBehaviors();
+          openInitiatedBehaviorConfig(behaviorConfigId);
+        } catch (error) {
+          alert("Failed to save behavior: " + (error && error.message ? error.message : String(error)));
+        } finally {
+          $("behaviorConfigSave").disabled = false;
+        }
+      }
+      function resetBehaviorConfig() {
+        if (behaviorConfigId) openInitiatedBehaviorConfig(behaviorConfigId);
       }
       function closeInitiatedBehaviorConfig() {
         $("behaviorConfigPanel").classList.remove("active");
-        $("behaviorListPanel").classList.remove("pane");
-        $("behaviorListPanel").classList.add("active");
+        $("behaviorConfigPanel").style.display = "none";
+        $("behaviorListPanel").style.display = "block";
+      }
+      function behaviorResponseRatio(id, runs) {
+        const scoped = (runs || []).filter((run) => run.behaviorId === id && typeof run.respondedWithin15m === "boolean");
+        if (!scoped.length) return "-";
+        const responded = scoped.filter((run) => run.respondedWithin15m === true).length;
+        return Math.round((responded / scoped.length) * 100) + "%";
+      }
+      function formatBehaviorStepDetail(step) {
+        if (step.kind === "backend_effect") return step.effect || "";
+        if (step.kind === "llm_instruction") return step.promptProfilePath || "";
+        if (step.kind === "record_only") return step.reason || "";
+        return "";
+      }
+      function valueOrDash(value) {
+        if (value === undefined || value === null || value === "") return "-";
+        return String(value);
+      }
+      function formatBool(value) {
+        if (value === true) return "yes";
+        if (value === false) return "no";
+        return "-";
+      }
+      function formatAdminTime(value) {
+        if (!value) return "-";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString();
       }
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
@@ -844,6 +1094,12 @@ export function renderAdminHtmlV2(): string {
       }));
       document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
       $("behaviorBack").addEventListener("click", closeInitiatedBehaviorConfig);
+      $("behaviorTypeFilter").addEventListener("change", renderInitiatedBehaviorList);
+      $("behaviorConfigSave").addEventListener("click", saveBehaviorConfig);
+      $("behaviorConfigReset").addEventListener("click", resetBehaviorConfig);
+      $("behaviorLayerAdd").addEventListener("click", () => addBehaviorLayer("user"));
+      $("behaviorToolLayerAdd").addEventListener("click", () => addBehaviorLayer("tool_request"));
+      bindBehaviorLayerEditorEvents();
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
@@ -851,6 +1107,7 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "token-usage") await refreshTokenUsage();
         if (button.dataset.mainTab === "memory") await refreshMemory();
         if (button.dataset.mainTab === "plugins") await refreshPlugins();
+        if (button.dataset.mainTab === "initiated-behaviors") await refreshInitiatedBehaviors();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
       document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.addEventListener("click", async () => {

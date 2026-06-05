@@ -29,6 +29,7 @@ export type PromptProfile = {
     photo?: boolean;
     media?: boolean;
     shell?: boolean;
+    [toolName: string]: boolean | undefined;
   };
 };
 
@@ -290,14 +291,16 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     : typeof rawProfile.fakeCheckChatReasoningContent === "string"
       ? (fallback.appendLayers ?? []).map((layer) => ({ ...layer, thinking: rawProfile.fakeCheckChatReasoningContent as string }))
       : [];
+  const visibleTools = {
+    ...profile.visibleTools,
+    feishu: profile.visibleTools?.feishu !== false,
+    photo: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
+    media: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
+    shell: profile.visibleTools?.shell !== false
+  };
   return {
     userName: nonEmptyString(profile.userName) ?? fallback.userName,
-    visibleTools: {
-      feishu: profile.visibleTools?.feishu !== false,
-      photo: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
-      media: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
-      shell: profile.visibleTools?.shell !== false
-    },
+    visibleTools,
     layers: normalizePromptLayers(layers),
     appendLayers: normalizePromptLayers(appendLayers ?? [])
   };

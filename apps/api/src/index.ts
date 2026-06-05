@@ -1,5 +1,12 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
 import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot, type TokenPressurePreviewBaseline } from "../../../core/agent/src/index.js";
+import {
+  createAgentInitiatedBehaviorRunStore,
+  defaultAgentInitiatedBehaviorPlans,
+  normalizeAgentInitiatedBehaviorPromptProfile,
+  type AgentInitiatedBehaviorPromptProfile,
+  type AgentInitiatedBehaviorPlan
+} from "../../../core/agent/src/initiated-behaviors.js";
 import { createAgentStateController, createJsonAgentStateStore } from "../../../core/agent/src/state.js";
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryDiaryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
@@ -190,6 +197,23 @@ type ActiveLLMSession = {
   responses?: LLMResponseLogEntry[];
 };
 
+type AgentInitiatedBehaviorOverrides = Record<string, {
+  enabled?: boolean;
+  kind?: AgentInitiatedBehaviorPlan["kind"];
+  triggerEvent?: string;
+  weight?: number;
+  priority?: number;
+}>;
+
+type AgentInitiatedBehaviorConfigPatch = {
+  enabled?: boolean;
+  kind?: AgentInitiatedBehaviorPlan["kind"];
+  triggerEvent?: string;
+  weight?: number;
+  priority?: number;
+  promptProfile?: AgentInitiatedBehaviorPromptProfile;
+};
+
 type LLMSessionRoundInfo = {
   status: "running" | "finished" | "interrupted";
   round: number;
@@ -346,6 +370,36 @@ if (wechatCredentials) {
   });
 }
 const promptProfileStore = createPromptProfileStore(promptStoragePath(config.memoryFiles.root, "prompt-profile.json", ["config", "prompt-profile.json"]));
+const agentInitiatedBehaviorConfigPath = promptStoragePath(config.memoryFiles.root, "initiated-behaviors.config.json", ["config", "initiated-behaviors.config.json"]);
+let agentInitiatedBehaviorOverrides = readAgentInitiatedBehaviorOverrides(agentInitiatedBehaviorConfigPath);
+const getAgentInitiatedBehaviorPlans = () => applyAgentInitiatedBehaviorOverrides(defaultAgentInitiatedBehaviorPlans, agentInitiatedBehaviorOverrides);
+const setAgentInitiatedBehaviorConfig = (id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined => {
+  const basePlan = defaultAgentInitiatedBehaviorPlans.find((plan) => plan.id === id);
+  if (!basePlan) return undefined;
+  const override = {
+    ...(agentInitiatedBehaviorOverrides[id] ?? {})
+  };
+  if (typeof patch.enabled === "boolean") override.enabled = patch.enabled;
+  if (patch.kind === "event" || patch.kind === "randomized") override.kind = patch.kind;
+  if (typeof patch.triggerEvent === "string") override.triggerEvent = patch.triggerEvent.trim() || undefined;
+  if (typeof patch.weight === "number" && Number.isFinite(patch.weight)) override.weight = patch.weight;
+  if (typeof patch.priority === "number" && Number.isFinite(patch.priority)) override.priority = patch.priority;
+  agentInitiatedBehaviorOverrides = {
+    ...agentInitiatedBehaviorOverrides,
+    [id]: override
+  };
+  writeAgentInitiatedBehaviorOverrides(agentInitiatedBehaviorConfigPath, agentInitiatedBehaviorOverrides);
+  if (patch.promptProfile && basePlan.promptProfilePath) {
+    writeAgentInitiatedBehaviorPromptProfile(basePlan.promptProfilePath, patch.promptProfile);
+  }
+  return getAgentInitiatedBehaviorPlans().find((plan) => plan.id === id);
+};
+const setAgentInitiatedBehaviorEnabled = (id: string, enabled: boolean): AgentInitiatedBehaviorPlan | undefined => {
+  return setAgentInitiatedBehaviorConfig(id, { enabled });
+};
+const initiatedBehaviorRunStore = createAgentInitiatedBehaviorRunStore({
+  dbPath: path.join(config.memoryFiles.root, "state", "initiated-behavior-runs.sqlite")
+});
 const coreProfileStore = createCoreProfileStore(path.join(config.memoryFiles.root, "config", "core-profile.json"));
 const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const diaryStore = createMemoryDiaryStore(config.memoryFiles.root);
@@ -565,6 +619,10 @@ const core = createAgentCore({
   getWakeBoundary: () => diaryStore.latestWakeBoundary(),
   state: agentState,
   time: currentTime,
+  getAgentInitiatedBehaviorPlans,
+  recordAgentInitiatedBehaviorRun(run) {
+    initiatedBehaviorRunStore.record(run);
+  },
   loadLLMSession: loadActiveLLMSessionTranscript,
   onLLMRequestPrepared: appendLLMRequestLog,
   onLLMResponseReceived: appendLLMResponseLog,
@@ -656,6 +714,7 @@ const messageRuntime = createMessageRuntime({
   },
   onHeartbeatTick() {
     dailyShellStore.get(currentTime.now().date, currentTime.timeZone);
+    initiatedBehaviorRunStore.finalizeExpiredResponses(currentTime.now().date);
   },
   getSleepCocoonGoodnightEvent() {
     return maybeBuildSleepCocoonGoodnightEvent();
@@ -664,6 +723,13 @@ const messageRuntime = createMessageRuntime({
     const event = pendingSleepCocoonMorningEvent;
     pendingSleepCocoonMorningEvent = undefined;
     return event;
+  },
+  onInboundUserMessage(input) {
+    const count = initiatedBehaviorRunStore.markRespondedWithin15m({
+      sessionId: input.sessionId,
+      respondedAt: input.receivedAtUtc ?? input.receivedAt
+    });
+    if (count > 0) appendLog("info", `initiated behavior response marked: session=${input.sessionId} count=${count}`);
   },
   onForceWake() {
     pendingSleepCocoonMorningEvent = buildSleepCocoonGeneratedEvent("sleep_cocoon_force_wake", { sleepCocoonForceWake: true });
@@ -706,6 +772,10 @@ const server = http.createServer(createApiRequestHandler({
   feishuPairingStore,
   coreProfileStore,
   promptProfileStore,
+  getAgentInitiatedBehaviorPlans,
+  setAgentInitiatedBehaviorEnabled,
+  setAgentInitiatedBehaviorConfig,
+  initiatedBehaviorRunStore,
   memoryStore,
   diaryStore,
   memoryInductionPromptStore,
@@ -969,6 +1039,66 @@ function readPromptApiProfile(): PromptApiProfile {
   } catch {
     return {};
   }
+}
+
+function readAgentInitiatedBehaviorOverrides(filePath: string): AgentInitiatedBehaviorOverrides {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    const rawBehaviors = value.behaviors && typeof value.behaviors === "object" && !Array.isArray(value.behaviors)
+      ? value.behaviors as Record<string, unknown>
+      : {};
+    const overrides: AgentInitiatedBehaviorOverrides = {};
+    for (const [id, raw] of Object.entries(rawBehaviors)) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const entry = raw as Record<string, unknown>;
+      overrides[id] = {};
+      if (typeof entry.enabled === "boolean") overrides[id].enabled = entry.enabled;
+      if (entry.kind === "event" || entry.kind === "randomized") overrides[id].kind = entry.kind;
+      if (typeof entry.triggerEvent === "string") overrides[id].triggerEvent = entry.triggerEvent;
+      if (typeof entry.weight === "number" && Number.isFinite(entry.weight)) overrides[id].weight = entry.weight;
+      if (typeof entry.priority === "number" && Number.isFinite(entry.priority)) overrides[id].priority = entry.priority;
+    }
+    return overrides;
+  } catch (error) {
+    appendLog("warn", `initiated behavior config read failed: ${error instanceof Error ? error.message : String(error)}`);
+    return {};
+  }
+}
+
+function writeAgentInitiatedBehaviorOverrides(filePath: string, overrides: AgentInitiatedBehaviorOverrides): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const payload = { behaviors: overrides };
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(payload, null, 2)}\n`);
+  fs.renameSync(tmpPath, filePath);
+}
+
+function writeAgentInitiatedBehaviorPromptProfile(filePath: string, profile: AgentInitiatedBehaviorPromptProfile): void {
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  const normalized = normalizeAgentInitiatedBehaviorPromptProfile(profile);
+  const tmpPath = `${resolved}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(normalized, null, 2)}\n`);
+  fs.renameSync(tmpPath, resolved);
+}
+
+function applyAgentInitiatedBehaviorOverrides(
+  plans: AgentInitiatedBehaviorPlan[],
+  overrides: AgentInitiatedBehaviorOverrides
+): AgentInitiatedBehaviorPlan[] {
+  return plans.map((plan) => {
+    const override = overrides[plan.id];
+    if (!override) return plan;
+    return {
+      ...plan,
+      ...(typeof override.enabled === "boolean" ? { enabled: override.enabled } : {}),
+      ...(override.kind ? { kind: override.kind } : {}),
+      ...(typeof override.triggerEvent === "string" ? { triggerEvent: override.triggerEvent } : {}),
+      ...(typeof override.weight === "number" ? { weight: override.weight } : {}),
+      ...(typeof override.priority === "number" ? { priority: override.priority } : {})
+    };
+  });
 }
 
 function readLLMApiPresets(): LLMApiPreset[] {

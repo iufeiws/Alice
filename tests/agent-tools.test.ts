@@ -749,7 +749,9 @@ test("agent core injects fixed prefix cursor into model requested from_prefix ch
 
 test("agent core appends sleep cocoon goodnight instruction from heartbeat event", async () => {
   const requests: LLMChatInput[] = [];
-  const sessionUpdates: Array<{ mode?: string; messages: LLMChatInput["messages"] }> = [];
+  const sleepCalls: Array<Record<string, unknown>> = [];
+  const behaviorRuns: Array<{ result: string; steps: Array<{ kind: string; result: string }>; error?: string }> = [];
+  const sessionUpdates: Array<{ mode?: string; fixedPrefixKind?: string; messages: LLMChatInput["messages"] }> = [];
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -777,7 +779,15 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
         return [{ name: "sleep_cocoon", description: "sleep", inputSchema: { type: "object" } }];
       },
       async execute(call) {
-        return { callId: call.id, ok: true, output: "ok" };
+        sleepCalls.push(call.input);
+        return {
+          callId: call.id,
+          ok: true,
+          resetLLMSession: true,
+          fixedPrefixKind: "sleep_cocoon",
+          fixedPrefixTtlMs: 60_000,
+          output: "ok"
+        };
       }
     }],
     getPromptProfile: () => ({
@@ -794,16 +804,93 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
       appendLayers: []
     }),
     onLLMSessionUpdated(session) {
-      sessionUpdates.push({ mode: session.mode, messages: session.messages });
+      sessionUpdates.push({ mode: session.mode, fixedPrefixKind: session.fixedPrefixKind, messages: session.messages });
+    },
+    recordAgentInitiatedBehaviorRun(run) {
+      behaviorRuns.push(run);
     }
   });
 
   await core.handleEvent(event);
 
   assert.equal(requests.length, 1);
-  assert.equal(sessionUpdates.at(-1)?.mode, "normal");
+  assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
+  assert.equal(sessionUpdates.at(-1)?.fixedPrefixKind, "sleep_cocoon");
+  assert.deepEqual(sleepCalls, [{ action: "in" }]);
+  assert.deepEqual(behaviorRuns.map((run) => ({
+    result: run.result,
+    steps: run.steps.map((step) => ({ kind: step.kind, result: step.result })),
+    error: run.error
+  })), [{
+    result: "completed",
+    steps: [
+      { kind: "backend_effect", result: "completed" },
+      { kind: "llm_instruction", result: "completed" }
+    ],
+    error: undefined
+  }]);
   assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("对YY说晚安")), true);
-  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), true);
+  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), false);
+});
+
+test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async () => {
+  const requests: LLMChatInput[] = [];
+  const sleepCalls: Array<Record<string, unknown>> = [];
+  const behaviorRuns: Array<{ result: string; error?: string }> = [];
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      return { message: { role: "assistant", content: "晚安" } };
+    }
+  };
+  const event = {
+    ...textEvent(),
+    type: "system.heartbeat" as const,
+    meta: {
+      receivedAt: "2026-05-26T00:00:00.000Z",
+      raw: { sleepCocoonGoodnight: true }
+    }
+  };
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [{
+      id: "sleep_cocoon",
+      listTools() {
+        return [{ name: "sleep_cocoon", description: "sleep", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        sleepCalls.push(call.input);
+        return { callId: call.id, ok: true, output: "ok" };
+      }
+    }],
+    getPromptProfile: () => ({
+      userName: "YY",
+      visibleTools: { feishu: true, sleep_cocoon: false },
+      layers: [{
+        id: "base",
+        title: "Base",
+        role: "system",
+        enabled: true,
+        order: 1,
+        content: "base prompt"
+      }],
+      appendLayers: []
+    }),
+    recordAgentInitiatedBehaviorRun(run) {
+      behaviorRuns.push(run);
+    }
+  });
+
+  await core.handleEvent(event);
+
+  assert.equal(requests.length, 0);
+  assert.deepEqual(sleepCalls, []);
+  assert.deepEqual(behaviorRuns.map((run) => ({ result: run.result, error: run.error })), [{ result: "skipped", error: "tool_hidden:sleep_cocoon" }]);
 });
 
 test("agent core appends sleep cocoon morning instruction from heartbeat event", async () => {

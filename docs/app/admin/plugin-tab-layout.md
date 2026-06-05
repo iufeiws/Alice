@@ -8,6 +8,7 @@
 - 新增插件时只新增插件元数据、配置 schema、资源 schema 和处理器。
 - Plugin 页卡片布局、Config 面板布局和通用 API 路由不因新增插件而改变。
 - 所有 API key 配置复用后台已保存的 API preset，插件配置只保存 preset 名称或 id。
+- 插件配置统一保存到 `config/plugin/{plugin_id}/config.json`。
 - 插件资源统一保存到 `assets/plugin/{plugin_id}/...`。
 
 ## 页面入口
@@ -151,6 +152,21 @@ API key 规则：
 - 插件配置只保存 preset 名称或 id。
 - 插件配置不保存 API key、baseURL 等密钥字段。
 - `apiPresetSelect` 的选项来自后台统一 API preset 存储。
+
+## 通用资源规则
+
+插件配置统一保存到：
+
+```text
+config/plugin/{plugin_id}/config.json
+```
+
+规则：
+
+- `config/` 是本机运行配置目录，不进入 Git。
+- 插件配置只保存开关、provider/preset 选择和小型结构化参数。
+- 插件配置不保存模型、音频、图片等大文件内容；大文件必须走资源上传。
+- 新增插件的 admin 保存路径必须默认写入该目录。历史 `plugins/{plugin_id}/config.json` 只能作为迁移读取来源。
 
 ## 通用资源规则
 

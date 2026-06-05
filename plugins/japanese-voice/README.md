@@ -6,13 +6,13 @@ Use `plugins/tts` for new code, config, admin routes, runtime wiring, tests, and
 
 Compatibility behavior:
 
-- If `plugins/tts/config.json` is missing, Alice may read `plugins/japanese-voice/config.json`.
+- If `config/plugin/tts/config.json` is missing, Alice may read `plugins/japanese-voice/config.json`.
 - Legacy flat voice fields are still accepted as migration input:
   - `voice.language`
   - `voice.modelDir`
   - `voice.referenceAudio`
   - `voice.referenceText`
-- New admin saves write only `plugins/tts/config.json`.
+- New admin saves write only `config/plugin/tts/config.json`.
 - New model assets should live under `assets/tts/preset/{modelConfigName}/`.
 - Existing files under `assets/plugin/japanese-voice/` can remain as legacy migration sources.
 

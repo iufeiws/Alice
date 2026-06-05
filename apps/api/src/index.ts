@@ -768,10 +768,10 @@ const server = http.createServer(createApiRequestHandler({
   runtime: runtimeState,
   pluginConfigs: {
     tts: {
-      configPath: "plugins/tts/config.json"
+      configPath: "config/plugin/tts/config.json"
     },
     asr: {
-      configPath: "plugins/asr/config.json"
+      configPath: "config/plugin/asr/config.json"
     }
   },
   llmRequestSender: llmRequests.send,

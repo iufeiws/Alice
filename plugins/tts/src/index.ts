@@ -151,7 +151,8 @@ export type TtsSynthesizer = VoiceSynthesizer & {
   stream?(input: TtsStreamInput): AsyncIterable<TtsStreamChunk>;
 };
 
-const defaultConfigPath = "plugins/tts/config.json";
+const defaultConfigPath = "config/plugin/tts/config.json";
+const legacyTtsConfigPath = "plugins/tts/config.json";
 const legacyConfigPath = "plugins/japanese-voice/config.json";
 const ttsPresetAssetRoot = path.join("assets", "tts", "preset");
 
@@ -217,12 +218,16 @@ function resolveTtsConfigReadPath(configPath = defaultConfigPath): string | unde
   const resolved = path.resolve(configPath);
   if (fs.existsSync(resolved)) return resolved;
   const defaultResolved = path.resolve(defaultConfigPath);
+  const legacyTtsResolved = path.resolve(legacyTtsConfigPath);
   const legacyResolved = path.resolve(legacyConfigPath);
+  if (resolved === defaultResolved && fs.existsSync(legacyTtsResolved)) return legacyTtsResolved;
   if (resolved === defaultResolved && fs.existsSync(legacyResolved)) return legacyResolved;
   const parsed = path.parse(resolved);
-  const expectedSuffix = path.join("plugins", "tts", "config.json");
+  const expectedSuffix = path.join("config", "plugin", "tts", "config.json");
   if (resolved.endsWith(expectedSuffix)) {
     const root = resolved.slice(0, -expectedSuffix.length);
+    const siblingLegacyTts = path.join(root || parsed.root, "plugins", "tts", "config.json");
+    if (fs.existsSync(siblingLegacyTts)) return siblingLegacyTts;
     const siblingLegacy = path.join(root || parsed.root, "plugins", "japanese-voice", "config.json");
     if (fs.existsSync(siblingLegacy)) return siblingLegacy;
   }

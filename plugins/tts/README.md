@@ -9,9 +9,9 @@ It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio
 - Plugin id: `tts`
 - Admin id: `tts`
 - Display name: `TTS`
-- Config path: `plugins/tts/config.json`
+- Config path: `config/plugin/tts/config.json`
 - Canonical asset root: `assets/tts/preset/`
-- Legacy config fallback: `plugins/japanese-voice/config.json`
+- Legacy config fallback: `plugins/tts/config.json`, then `plugins/japanese-voice/config.json`
 
 The original outgoing text remains the `send_chat` transcript and persisted message content. Translation output is transient and is used only for synthesis.
 
@@ -65,7 +65,7 @@ assets/tts/preset/{name}/reference.*
 assets/tts/preset/{name}/reference.txt
 ```
 
-Legacy flat fields such as `translationEnabled`, `apiPresetName`, `prompt`, `voice.language`, `voice.modelDir`, `voice.referenceAudio`, and `voice.referenceText` are still read as migration input.
+Legacy config files under `plugins/tts/config.json` and `plugins/japanese-voice/config.json` are still read as migration input when the canonical config is missing. Legacy flat fields such as `translationEnabled`, `apiPresetName`, `prompt`, `voice.language`, `voice.modelDir`, `voice.referenceAudio`, and `voice.referenceText` are also still accepted.
 
 ## Admin Settings Layout
 

@@ -313,7 +313,12 @@ type AsrPluginConfig = {
 
 ## 后续问题
 
-- ASR plugin 的配置文件最终放在 `plugins/asr/config.json`，还是统一接入后台 Plugin registry？
-- 是否需要把音频文件统一复制到 `assets/plugin/asr/` 后再调用 provider？
-- OpenAI 兼容 ASR 的默认 `model` 是否由 API preset 决定，还是由 ASR plugin 配置单独指定？
 - 是否需要为长音频增加异步任务接口和轮询状态？
+
+## 已确定存储规则
+
+- ASR plugin 配置文件保存到 `config/plugin/asr/config.json`。
+- `config/` 是本机运行配置目录，必须被 Git 排除。
+- 后台 Plugin registry 读写该配置路径；历史 `plugins/asr/config.json` 只作为迁移读取来源。
+- 测试音频等资源文件保存到 `assets/plugin/asr/...`，配置文件只保存资源路径。
+- OpenAI 兼容 ASR 的模型名由 API preset 的 `model` 字段决定，ASR plugin 配置不重复保存模型名。

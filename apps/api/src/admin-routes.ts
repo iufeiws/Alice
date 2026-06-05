@@ -1372,7 +1372,7 @@ function publicAsrConfig(config: AsrPluginConfig): AsrPluginConfig {
 }
 
 function asrConfigPath(context: AdminRoutesContext): string {
-  return context.pluginConfigs?.asr?.configPath ?? "plugins/asr/config.json";
+  return context.pluginConfigs?.asr?.configPath ?? "config/plugin/asr/config.json";
 }
 
 function asrConfigMtime(context: AdminRoutesContext): string | undefined {
@@ -1824,7 +1824,7 @@ function isPluginAssetPath(pluginId: string, value: string): boolean {
 }
 
 function ttsConfigPath(context: AdminRoutesContext): string {
-  return context.pluginConfigs?.tts?.configPath ?? "plugins/tts/config.json";
+  return context.pluginConfigs?.tts?.configPath ?? "config/plugin/tts/config.json";
 }
 
 function ttsConfigMtime(context: AdminRoutesContext): string | undefined {

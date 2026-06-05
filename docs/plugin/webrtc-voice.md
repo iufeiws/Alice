@@ -258,7 +258,7 @@ Core reply text
 - 使用现有 `tts.voiceSynthesizer`。
 - 不直接调用 Genie service 绕过 TTS plugin。
 - 不复制 `tts/config.json` 的 voice 参数。
-- TTS 使用 TTS plugin 现有行为：按 `plugins/tts/config.json` 的翻译设置和当前 `voice.modelConfigName` 生成 Genie override。
+- TTS 使用 TTS plugin 现有行为：按 `config/plugin/tts/config.json` 的翻译设置和当前 `voice.modelConfigName` 生成 Genie override。
 - TTS 失败时，按错误策略通知浏览器；不得把失败文本伪装为已播放音频。
 
 播放队列要求：

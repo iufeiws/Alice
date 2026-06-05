@@ -76,7 +76,7 @@ test("llm api preset save accepts long timeout values", async () => {
 
 test("admin plugin list exposes tts config card state", async () => {
   const root = makeTempDir("admin-plugin-list");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
@@ -106,7 +106,7 @@ test("admin plugin list exposes tts config card state", async () => {
 
 test("admin plugin list reads legacy japanese voice config when tts config is missing", async () => {
   const root = makeTempDir("admin-plugin-legacy-config");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   const legacyConfigPath = path.join(root, "plugins", "japanese-voice", "config.json");
   fs.mkdirSync(path.dirname(legacyConfigPath), { recursive: true });
   fs.writeFileSync(legacyConfigPath, `${JSON.stringify({
@@ -135,7 +135,7 @@ test("admin plugin list reads legacy japanese voice config when tts config is mi
 
 test("admin plugin list exposes ASR config card state", async () => {
   const root = makeTempDir("admin-asr-plugin-list");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
@@ -170,7 +170,7 @@ test("admin plugin list exposes ASR config card state", async () => {
 
 test("admin plugin config patch writes tts config with preset reference only", async () => {
   const root = makeTempDir("admin-plugin-config");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -236,7 +236,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
 
 test("admin TTS config schema exposes voice language and language model folder", async () => {
   const root = makeTempDir("admin-tts-config-schema");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
@@ -268,7 +268,7 @@ test("admin TTS config schema exposes voice language and language model folder",
 
 test("admin plugin test can run tts with translation disabled", async () => {
   const root = makeTempDir("admin-plugin-test-no-translate");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   const voicePath = path.join("assets", "generated", "tts", `voice-${path.basename(root)}.opus`);
   let capturedText = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -315,7 +315,7 @@ test("admin plugin test can run tts with translation disabled", async () => {
 
 test("admin plugin config patch writes ASR config with preset references only", async () => {
   const root = makeTempDir("admin-asr-plugin-config");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -368,7 +368,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
 
 test("admin ASR plugin config schema groups general and provider settings", async () => {
   const root = makeTempDir("admin-asr-plugin-schema-groups");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -396,7 +396,7 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
 
 test("admin plugin enable and disable update tts config", async () => {
   const root = makeTempDir("admin-plugin-switch");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -425,7 +425,7 @@ test("admin plugin enable and disable update tts config", async () => {
 
 test("admin plugin enable and disable update ASR config", async () => {
   const root = makeTempDir("admin-asr-plugin-switch");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -453,7 +453,7 @@ test("admin plugin enable and disable update ASR config", async () => {
 
 test("admin plugin model folder upload flattens files under plugin model root", async () => {
   const root = makeTempDir("admin-plugin-asset");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
   writePreset(root, "voice");
@@ -485,7 +485,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
 
 test("admin plugin ASR test audio upload stores plugin asset path", async () => {
   const root = makeTempDir("admin-asr-plugin-asset");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -518,7 +518,7 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
 
 test("admin plugin test runs tts translation and tts with prompt variables and timing", async () => {
   const root = makeTempDir("admin-plugin-test");
-  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   const ttsOutputDir = path.join("assets", "generated", "tts");
   const voiceFileName = `voice-${path.basename(root)}.opus`;
   const voicePath = path.join(ttsOutputDir, voiceFileName);
@@ -591,7 +591,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
 
 test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   const root = makeTempDir("admin-asr-plugin-test");
-  const configPath = path.join(root, "plugins", "asr", "config.json");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   const audioPath = path.join("assets", "plugin", "asr", `test-${path.basename(root)}.wav`);
   let capturedAudioFile = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });

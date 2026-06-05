@@ -22,7 +22,7 @@
 | Plugin id | `tts` |
 | Admin id | `tts` |
 | Display name | `TTS` |
-| Config path | `plugins/tts/config.json` |
+| Config path | `config/plugin/tts/config.json` |
 | Asset root | `assets/tts/preset/` |
 | Legacy config fallback | `plugins/japanese-voice/config.json` |
 | Legacy plugin path | `plugins/japanese-voice` compatibility only |
@@ -33,7 +33,7 @@
 send_chat(type=voice, text)
   -> messaging tools preserve original transcript
   -> injected tts.voiceSynthesizer
-  -> read plugins/tts/config.json
+  -> read config/plugin/tts/config.json
   -> optionally render translation prompt variables
   -> optionally translate text through apiPresetName
   -> synthesize translated text through Genie/MOSS
@@ -153,7 +153,7 @@ assets/tts/preset/{配置名}/reference.txt
 - `voice.newModelConfigName` 保存时创建或切换编辑目标，但不改变 active preset。
 - `voice.currentModel.*` 是 admin 展示层字段。
 - `voice.currentModel.referenceText` 在 admin payload 中展开为文本内容；保存后写入 `assets/tts/preset/{preset}/reference.txt`，config 不保存路径。
-- 真实 `plugins/tts/config.json` 不写入 admin-only 字段：`translationEditPresetName`、`currentTranslation`、`newTranslationPresetName`、`voice.modelEditPresetName`、`voice.currentModel`、`voice.newModelConfigName`。
+- 真实 `config/plugin/tts/config.json` 不写入 admin-only 字段：`translationEditPresetName`、`currentTranslation`、`newTranslationPresetName`、`voice.modelEditPresetName`、`voice.currentModel`、`voice.newModelConfigName`。
 - 模型上传当前会扁平化写入 `assets/tts/preset/{配置名}/model/{fileName}`，不保留上传时的相对目录。
 
 保存边界：
@@ -167,7 +167,7 @@ assets/tts/preset/{配置名}/reference.txt
 
 兼容读取：
 
-- 优先读 `plugins/tts/config.json`。
+- 优先读 `config/plugin/tts/config.json`。
 - 如果新 config 不存在，可以读 `plugins/japanese-voice/config.json`。
 - 旧 flat 字段仍可作为迁移输入：
   - `voice.language`
@@ -177,7 +177,7 @@ assets/tts/preset/{配置名}/reference.txt
 
 新写入：
 
-- 只写 `plugins/tts/config.json`。
+- 只写 `config/plugin/tts/config.json`。
 - 使用 `translationPresets` 和 `voice.modelConfigs`。
 - 模型资产写到 `assets/tts/preset/{配置名}/`。
 

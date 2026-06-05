@@ -193,7 +193,8 @@ export type AsrInboundStreamSession = {
   accept(frame: Exclude<InboundAudioStreamFrame, InboundAudioStreamStartFrame>): Promise<AsrInboundStreamAcceptResult>;
 };
 
-const defaultConfigPath = "plugins/asr/config.json";
+const defaultConfigPath = "config/plugin/asr/config.json";
+const legacyConfigPath = "plugins/asr/config.json";
 
 export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
   return {
@@ -583,7 +584,7 @@ function voiceFormatForStream(start: InboundAudioStreamStartFrame): number {
 }
 
 export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginConfig {
-  const resolved = path.resolve(configPath);
+  const resolved = resolveAsrConfigReadPath(configPath);
   const parsed = parseJsonObject(fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}");
   const providers = parseJsonObject(parsed.providers);
   return {
@@ -596,6 +597,21 @@ export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginCo
       tencent: parseTencentConfig(providers.tencent)
     }
   };
+}
+
+function resolveAsrConfigReadPath(configPath = defaultConfigPath): string {
+  const resolved = path.resolve(configPath);
+  if (fs.existsSync(resolved)) return resolved;
+  const defaultResolved = path.resolve(defaultConfigPath);
+  const legacyResolved = path.resolve(legacyConfigPath);
+  if (resolved === defaultResolved && fs.existsSync(legacyResolved)) return legacyResolved;
+  const expectedSuffix = path.join("config", "plugin", "asr", "config.json");
+  if (resolved.endsWith(expectedSuffix)) {
+    const root = resolved.slice(0, -expectedSuffix.length);
+    const siblingLegacy = path.join(root || path.parse(resolved).root, "plugins", "asr", "config.json");
+    if (fs.existsSync(siblingLegacy)) return siblingLegacy;
+  }
+  return resolved;
 }
 
 export async function transcribeWithAsrPlugin(

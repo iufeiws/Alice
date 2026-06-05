@@ -310,7 +310,14 @@ agentState.onChange((snapshot) => {
     void triggerSleepMemoryInduction();
   }
   if (previousAgentBehaviorState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
-    const daily = dailyShellStore.reroll(currentTime.now().date, currentTime.timeZone);
+    const now = currentTime.now();
+    diaryStore.recordWakeBoundary({
+      occurredAt: now.iso,
+      occurredAtUtc: now.date.toISOString(),
+      now: now.iso,
+      nowUtc: now.date.toISOString()
+    });
+    const daily = dailyShellStore.reroll(now.date, currentTime.timeZone);
     appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
     pendingSleepCocoonMorningEvent = buildSleepCocoonGeneratedEvent("sleep_cocoon_morning", { sleepCocoonMorning: true });
   }
@@ -552,6 +559,7 @@ const core = createAgentCore({
   getDailyShellRaw: () => dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
   getAppearanceDescription: () => coreProfileStore.get().appearanceDescription,
   getMemorySnapshot: () => memoryStore.read(),
+  getWakeBoundary: () => diaryStore.latestWakeBoundary(),
   state: agentState,
   time: currentTime,
   loadLLMSession: loadActiveLLMSessionTranscript,
@@ -2448,7 +2456,8 @@ async function buildPromptPreviewMessages(
     dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
     dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
     appearanceDescription: coreProfileStore.get().appearanceDescription,
-    memory: memoryStore.read()
+    memory: memoryStore.read(),
+    wakeBoundary: diaryStore.latestWakeBoundary()
   };
   const runPreviewTool = async (layer: Parameters<typeof buildPromptMessagesWithToolResults>[2] extends (layer: infer T, call: any) => any ? T : never, call: Parameters<Parameters<typeof buildPromptMessagesWithToolResults>[2]>[1]) => {
     if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {

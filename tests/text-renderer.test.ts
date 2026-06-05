@@ -38,6 +38,18 @@ test("buildLLMTextVariables derives configured-zone values from UTC source", () 
   assert.equal(variables.weekday, "星期三");
 });
 
+test("buildLLMTextVariables exposes latest wake boundary date and weekday", () => {
+  const variables = buildLLMTextVariables({
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-06-02T16:15:23.000Z")),
+    wakeBoundary: {
+      occurredAt: "2026-06-03T07:30:00.000",
+      occurredAtUtc: "2026-06-02T23:30:00.000Z"
+    }
+  });
+
+  assert.equal(renderLLMText("{{wakeBoundary/occurredAt}} {{wakeBoundary/date}} {{wakeBoundary/weekday}}", variables), "2026-06-03T07:30:00.000 2026-06-03 星期三");
+});
+
 test("buildLLMTextVariables exposes memory limit placeholders", () => {
   const variables = buildLLMTextVariables({
     memory: {

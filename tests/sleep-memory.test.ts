@@ -71,11 +71,18 @@ test("memory SQL store keeps sleep boundaries in separate tables", () => {
     now: "2026-06-04T01:00:00.000",
     nowUtc: "2026-06-03T17:00:00.000Z"
   });
+  diaryStore.recordWakeBoundary({
+    occurredAt: "2026-06-04T07:00:00.000",
+    occurredAtUtc: "2026-06-03T23:00:00.000Z",
+    now: "2026-06-04T07:00:00.000",
+    nowUtc: "2026-06-03T23:00:00.000Z"
+  });
   const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
 
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM diary_entries").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sleep_boundaries").get().count, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sleep_preparation_boundaries").get().count, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM wake_boundaries").get().count, 1);
 });
 
 test("memory SQL store does not import current diary sqlite entries", () => {
@@ -136,6 +143,34 @@ test("diary store keeps sleep preparation boundaries as a stack", () => {
   assert.equal(deleted?.id, second.id);
   assert.equal(store.latestSleepPreparationBoundary()?.id, first.id);
   assert.deepEqual(store.listSleepPreparationBoundaries().map((boundary) => boundary.id), [first.id]);
+});
+
+test("diary store records wake boundaries in a separate table", () => {
+  const root = makeTempDir("diary-wake-boundaries");
+  const store = createDiaryStore(path.join(root, "diary.sqlite"));
+
+  const first = store.recordWakeBoundary({
+    occurredAt: "2026-05-25T07:00:00.000",
+    occurredAtUtc: "2026-05-24T23:00:00.000Z",
+    now: "2026-05-25T07:00:00.000",
+    nowUtc: "2026-05-24T23:00:00.000Z"
+  });
+  const duplicate = store.recordWakeBoundary({
+    occurredAt: "2026-05-25T07:00:00.000",
+    occurredAtUtc: "2026-05-24T23:00:00.000Z",
+    now: "2026-05-25T07:01:00.000",
+    nowUtc: "2026-05-24T23:01:00.000Z"
+  });
+  const second = store.recordWakeBoundary({
+    occurredAt: "2026-05-26T08:00:00.000",
+    occurredAtUtc: "2026-05-26T00:00:00.000Z",
+    now: "2026-05-26T08:00:00.000",
+    nowUtc: "2026-05-26T00:00:00.000Z"
+  });
+
+  assert.equal(duplicate.id, first.id);
+  assert.equal(store.latestWakeBoundary()?.id, second.id);
+  assert.deepEqual(store.listWakeBoundaries().map((boundary) => boundary.id), [first.id, second.id]);
 });
 
 test("workspace Edit updates SQL-backed long-term memory", async () => {

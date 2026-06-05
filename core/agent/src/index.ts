@@ -11,7 +11,7 @@ import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolRe
 import type { AgentStateController, AgentStateSnapshot } from "./state.js";
 import type { DailyShell } from "./shells.js";
 import type { MemorySnapshot } from "./memory.js";
-import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
+import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../text-renderer/src/index.js";
 import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
 import type { LLMRequestSender } from "./llm-tool-loop.js";
 import {
@@ -128,6 +128,7 @@ export type AgentCoreDeps = {
   getDailyShellRaw?: () => DailyShell;
   getAppearanceDescription?: () => string;
   getMemorySnapshot?: () => MemorySnapshot;
+  getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): void;
@@ -250,7 +251,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         dailyShell: deps.getDailyShell?.(),
         dailyShellRaw: deps.getDailyShellRaw?.(),
         appearanceDescription: deps.getAppearanceDescription?.(),
-        memory: deps.getMemorySnapshot?.()
+        memory: deps.getMemorySnapshot?.(),
+        wakeBoundary: deps.getWakeBoundary?.()
       });
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
@@ -471,7 +473,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       dailyShell: deps.getDailyShell?.(),
       dailyShellRaw: deps.getDailyShellRaw?.(),
       appearanceDescription: deps.getAppearanceDescription?.(),
-      memory: deps.getMemorySnapshot?.()
+      memory: deps.getMemorySnapshot?.(),
+      wakeBoundary: deps.getWakeBoundary?.()
     });
   }
 

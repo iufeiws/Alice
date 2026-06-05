@@ -32,6 +32,14 @@ export type SleepPreparationBoundary = {
   createdAtUtc?: string;
 };
 
+export type WakeBoundary = {
+  id: number;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  createdAt: string;
+  createdAtUtc?: string;
+};
+
 export type DiaryStore = {
   upsertEntry(input: {
     localDate: string;
@@ -50,6 +58,9 @@ export type DiaryStore = {
   deleteLatestSleepPreparationBoundary(): SleepPreparationBoundary | undefined;
   latestSleepPreparationBoundary(): SleepPreparationBoundary | undefined;
   listSleepPreparationBoundaries(limit?: number): SleepPreparationBoundary[];
+  recordWakeBoundary(input: { occurredAt: string; occurredAtUtc?: string; now: string; nowUtc?: string }): WakeBoundary;
+  latestWakeBoundary(): WakeBoundary | undefined;
+  listWakeBoundaries(limit?: number): WakeBoundary[];
 };
 
 export function createDiaryStore(dbPath: string): DiaryStore {
@@ -164,6 +175,34 @@ export function createDiaryStore(dbPath: string): DiaryStore {
         ORDER BY id ASC
         LIMIT ?
       `).all(limit).map((row: unknown) => normalizeSleepPreparationBoundary(row)!).filter(Boolean);
+    },
+    recordWakeBoundary(input) {
+      db.prepare(`
+        INSERT OR IGNORE INTO wake_boundaries(occurred_at, occurred_at_utc, created_at, created_at_utc)
+        VALUES (?, ?, ?, ?)
+      `).run(input.occurredAt, input.occurredAtUtc ?? null, input.now, input.nowUtc ?? null);
+      return normalizeWakeBoundary(db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM wake_boundaries
+        WHERE occurred_at = ?
+        LIMIT 1
+      `).get(input.occurredAt))!;
+    },
+    latestWakeBoundary() {
+      return normalizeWakeBoundary(db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM wake_boundaries
+        ORDER BY COALESCE(occurred_at_utc, occurred_at) DESC, id DESC
+        LIMIT 1
+      `).get());
+    },
+    listWakeBoundaries(limit = 10_000) {
+      return db.prepare(`
+        SELECT id, occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc, created_at AS createdAt, created_at_utc AS createdAtUtc
+        FROM wake_boundaries
+        ORDER BY COALESCE(occurred_at_utc, occurred_at) ASC, id ASC
+        LIMIT ?
+      `).all(limit).map((row: unknown) => normalizeWakeBoundary(row)!).filter(Boolean);
     }
   };
 }
@@ -197,6 +236,14 @@ function initialize(db: DatabaseSync): void {
       created_at_utc TEXT
     );
     CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_idx ON sleep_preparation_boundaries(occurred_at);
+    CREATE TABLE IF NOT EXISTS wake_boundaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at TEXT NOT NULL UNIQUE,
+      occurred_at_utc TEXT,
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
+    );
+    CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_idx ON wake_boundaries(occurred_at);
   `);
   const columns = db.prepare("PRAGMA table_info(sleep_boundaries)").all().map((row: any) => row.name);
   addColumnIfMissing(db, columns, "occurred_at_utc", "ALTER TABLE sleep_boundaries ADD COLUMN occurred_at_utc TEXT");
@@ -206,6 +253,10 @@ function initialize(db: DatabaseSync): void {
   addColumnIfMissing(db, preparationColumns, "occurred_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN occurred_at_utc TEXT");
   addColumnIfMissing(db, preparationColumns, "created_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN created_at_utc TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc)");
+  const wakeColumns = db.prepare("PRAGMA table_info(wake_boundaries)").all().map((row: any) => row.name);
+  addColumnIfMissing(db, wakeColumns, "occurred_at_utc", "ALTER TABLE wake_boundaries ADD COLUMN occurred_at_utc TEXT");
+  addColumnIfMissing(db, wakeColumns, "created_at_utc", "ALTER TABLE wake_boundaries ADD COLUMN created_at_utc TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_utc_idx ON wake_boundaries(occurred_at_utc)");
 }
 
 function addColumnIfMissing(db: DatabaseSync, columns: string[], name: string, statement: string): void {
@@ -242,6 +293,18 @@ function normalizeSleepBoundary(row: unknown): SleepBoundary | undefined {
 function normalizeSleepPreparationBoundary(row: unknown): SleepPreparationBoundary | undefined {
   if (!row || typeof row !== "object") return undefined;
   const value = row as SleepPreparationBoundary;
+  return {
+    id: Number(value.id),
+    occurredAt: value.occurredAt,
+    occurredAtUtc: value.occurredAtUtc || undefined,
+    createdAt: value.createdAt,
+    createdAtUtc: value.createdAtUtc || undefined
+  };
+}
+
+function normalizeWakeBoundary(row: unknown): WakeBoundary | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as WakeBoundary;
   return {
     id: Number(value.id),
     occurredAt: value.occurredAt,

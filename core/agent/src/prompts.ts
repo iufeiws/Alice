@@ -1,7 +1,7 @@
 import type { LLMMessage } from "../../llm/src/index.js";
 import type { CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../packages/types/src/index.js";
-import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables } from "../../text-renderer/src/index.js";
+import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables, type LLMTextWakeBoundary } from "../../text-renderer/src/index.js";
 import type { DailyShell } from "./shells.js";
 import type { MemorySnapshot } from "./memory.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "./prompt-layer-parser.js";
@@ -39,6 +39,7 @@ export type PromptRenderContext = {
   dailyShellRaw?: DailyShell;
   appearanceDescription?: string;
   memory?: MemorySnapshot;
+  wakeBoundary?: LLMTextWakeBoundary;
 };
 
 export type PromptProfileStore = {
@@ -271,7 +272,8 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     dailyShell: context.dailyShell ?? "",
     dailyShellRaw: context.dailyShellRaw,
     appearanceDescription: context.appearanceDescription,
-    memory: context.memory
+    memory: context.memory,
+    wakeBoundary: context.wakeBoundary
   });
 }
 

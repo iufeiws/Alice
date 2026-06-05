@@ -24,6 +24,11 @@ export type LLMTextDailyShell = {
   outfit: LLMTextShellOption;
 };
 
+export type LLMTextWakeBoundary = {
+  occurredAt: string;
+  occurredAtUtc?: string;
+};
+
 export type LLMTextContextInput = {
   userName?: string;
   time?: CurrentTimeProvider;
@@ -36,6 +41,7 @@ export type LLMTextContextInput = {
     userPreferences?: string;
     yesterdaySummary?: string;
   };
+  wakeBoundary?: LLMTextWakeBoundary;
   extra?: LLMTextVariables;
 };
 
@@ -86,6 +92,12 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
         count: 0,
         content: ""
       }
+    },
+    wakeBoundary: {
+      occurredAt: "",
+      occurredAtUtc: "",
+      date: "",
+      weekday: ""
     }
   };
   if (input.time) {
@@ -120,6 +132,9 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   if (input.event) {
     variables.session = input.event.session.sessionId;
     variables.channel = input.event.source.channelId ?? input.event.source.userId ?? input.event.session.sessionId;
+  }
+  if (input.wakeBoundary) {
+    variables.wakeBoundary = wakeBoundaryVariable(input.wakeBoundary, input.time?.timeZone ?? "UTC");
   }
   return {
     ...variables,
@@ -182,6 +197,34 @@ function optionVariable(option: LLMTextShellOption): LLMTextVariables {
     ...(option.group ? { group: option.group } : {}),
     ...(option.imageUrl ? { imageUrl: option.imageUrl } : {})
   };
+}
+
+function wakeBoundaryVariable(boundary: LLMTextWakeBoundary, timeZone: string): LLMTextVariables {
+  const instant = boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : undefined;
+  const canFormatInstant = !!instant && Number.isFinite(instant.getTime());
+  const fallbackDate = boundary.occurredAt.slice(0, 10);
+  return {
+    occurredAt: boundary.occurredAt,
+    occurredAtUtc: boundary.occurredAtUtc ?? "",
+    date: canFormatInstant ? formatLocalDate(instant, timeZone) : fallbackDate,
+    weekday: canFormatInstant ? formatWeekday(instant, timeZone) : weekdayForLocalDate(fallbackDate)
+  };
+}
+
+function weekdayForLocalDate(localDate: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) return "";
+  return formatWeekday(new Date(`${localDate}T12:00:00.000Z`), "UTC");
+}
+
+function formatLocalDate(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function resolveVariablePath(variables: LLMTextVariables, path: string): LLMTextValue {

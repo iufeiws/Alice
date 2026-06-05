@@ -1989,6 +1989,15 @@ function initializeLongTermMemoryDb(db: any): void {
     );
     CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_idx ON sleep_preparation_boundaries(occurred_at);
     CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc);
+    CREATE TABLE IF NOT EXISTS wake_boundaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at TEXT NOT NULL UNIQUE,
+      occurred_at_utc TEXT,
+      created_at TEXT NOT NULL,
+      created_at_utc TEXT
+    );
+    CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_idx ON wake_boundaries(occurred_at);
+    CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_utc_idx ON wake_boundaries(occurred_at_utc);
   `);
 }
 

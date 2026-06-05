@@ -9,14 +9,15 @@ export function renderAdminHtmlV2(): string {
     <title>Alice Admin</title>
     <style>
       :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; background: #f5f6f8; color: #17202a; }
-      .shell { display: grid; grid-template-columns: 360px 1fr; min-height: 100vh; }
+      html, body { height: 100%; }
+      body { margin: 0; background: #f5f6f8; color: #17202a; overflow: hidden; }
+      .shell { display: grid; grid-template-columns: 360px 1fr; grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "aside main" "terminal terminal"; height: 100vh; overflow: hidden; }
       .shell.collapsed { grid-template-columns: 48px 1fr; }
-      aside { border-right: 1px solid #d7dce3; background: #fff; min-width: 0; overflow: auto; }
+      aside { grid-area: aside; border-right: 1px solid #d7dce3; background: #fff; min-width: 0; min-height: 0; overflow: auto; }
       .collapsed aside .panel-body, .collapsed aside .tabbar, .collapsed aside h1 { display: none; }
       .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e2e6eb; }
       h1 { font-size: 18px; margin: 0; }
-      main { min-width: 0; padding: 18px 22px; }
+      main { grid-area: main; min-width: 0; min-height: 0; padding: 18px 22px; overflow: auto; }
       .tabbar { display: flex; gap: 8px; padding: 12px 16px 0; }
       .main-tabs { padding: 0 0 14px; }
       .tab { border: 1px solid #c8d0da; background: #fff; color: #17202a; border-radius: 6px; padding: 8px 10px; font-weight: 700; cursor: pointer; }
@@ -78,6 +79,19 @@ export function renderAdminHtmlV2(): string {
       .shell-group-add { width: 28px; height: 28px; display: inline-grid; place-items: center; margin: 0; padding: 0; font-size: 17px; line-height: 1; }
       .logs { max-height: calc(100vh - 150px); overflow: auto; background: #111827; color: #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
       .logs pre { color: #17202a; }
+      .admin-terminal { grid-area: terminal; min-height: 0; padding: 0; background: #0b1220; color: #e5e7eb; border: 0; border-top: 1px solid #263244; border-radius: 0; box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.04); }
+      .admin-terminal-head { height: 38px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: #111827; border-bottom: 1px solid #263244; overflow-x: auto; cursor: pointer; }
+      .admin-terminal-title { flex: 0 0 auto; margin-right: 8px; font-size: 12px; letter-spacing: 0; text-transform: uppercase; color: #cbd5e1; }
+      .terminal-tab { margin: 0; padding: 5px 9px; border-radius: 4px; background: transparent; color: #cbd5e1; border: 1px solid transparent; font-size: 12px; }
+      .terminal-tab.active { background: #1f2937; color: #fff; border-color: #374151; }
+      .terminal-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+      .terminal-action { margin: 0; width: 28px; height: 28px; padding: 0; border-radius: 4px; display: inline-grid; place-items: center; background: #1f2937; color: #e5e7eb; }
+      .admin-terminal-body { height: clamp(220px, 32vh, 45vh); min-height: 0; }
+      .terminal-pane { display: none; height: 100%; min-height: 0; }
+      .terminal-pane.active { display: block; }
+      .terminal-pane .logs { height: 100%; max-height: none; box-sizing: border-box; border-radius: 0; background: #0b1220; }
+      .admin-terminal.collapsed .admin-terminal-body { display: none; }
+      .admin-terminal.collapsed .terminal-tab:not(.active) { display: none; }
       .llm-split { display: grid; grid-template-rows: minmax(280px, 1fr) minmax(280px, 1fr); gap: 12px; height: calc(100vh - 145px); }
       .llm-window { min-height: 0; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
       .llm-window h2 { margin: 0; }
@@ -164,7 +178,7 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } .admin-terminal-body { height: 40vh; } }
     </style>
   </head>
   <body>
@@ -346,15 +360,11 @@ export function renderAdminHtmlV2(): string {
         <div class="tabbar main-tabs">
           <button class="tab active" data-main-tab="prompts" type="button">Prompt</button>
           <button class="tab" data-main-tab="shells" type="button">Shell</button>
-          <button class="tab" data-main-tab="llm-request" type="button">Prompt Preview</button>
           <button class="tab" data-main-tab="llm-chain" type="button">LLM Sessions</button>
           <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
           <button class="tab" data-main-tab="memory" type="button">Memory</button>
           <button class="tab" data-main-tab="plugins" type="button">Plugin</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
-          <button class="tab" data-main-tab="messages" type="button">Message Log</button>
-          <button class="tab" data-main-tab="events" type="button">Event Log</button>
-          <button class="tab" data-main-tab="system" type="button">System Log</button>
         </div>
         <section id="main-prompts" class="pane active">
           <div id="promptProfile">Loading...</div>
@@ -471,17 +481,44 @@ export function renderAdminHtmlV2(): string {
             </div>
           </div>
         </section>
-        <section id="main-messages" class="pane"><div id="messageLogs" class="logs">Loading...</div></section>
-        <section id="main-events" class="pane"><div id="eventLogs" class="logs">Loading...</div></section>
-        <section id="main-system" class="pane"><div id="logs" class="logs">Loading...</div></section>
       </main>
+      <section id="adminTerminal" class="admin-terminal" aria-label="Terminal logs">
+        <div class="admin-terminal-head">
+          <strong class="admin-terminal-title">Terminal</strong>
+          <button class="terminal-tab active" data-terminal-tab="system" type="button" aria-label="System Log">System</button>
+          <button class="terminal-tab" data-terminal-tab="messages" type="button" aria-label="Message Log">Message</button>
+          <button class="terminal-tab" data-terminal-tab="events" type="button" aria-label="Event Log">Event</button>
+          <div class="terminal-actions">
+            <button id="terminalRefresh" class="terminal-action" type="button" title="Refresh logs" aria-label="Refresh logs">↻</button>
+            <button id="terminalCollapse" class="terminal-action" type="button" title="Collapse terminal" aria-label="Collapse terminal">⌄</button>
+          </div>
+        </div>
+        <div class="admin-terminal-body">
+          <div id="terminal-system" class="terminal-pane active"><div id="logs" class="logs">Loading...</div></div>
+          <div id="terminal-messages" class="terminal-pane"><div id="messageLogs" class="logs">Loading...</div></div>
+          <div id="terminal-events" class="terminal-pane"><div id="eventLogs" class="logs">Loading...</div></div>
+        </div>
+      </section>
     </div>
     <script>
       const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-request,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-tool-preview,#main-messages,#main-events,#main-system").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-tool-preview").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
+      }
+      function setTerminalTab(name) {
+        document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.classList.toggle("active", button.dataset.terminalTab === name));
+        document.querySelectorAll("#terminal-system,#terminal-messages,#terminal-events").forEach((pane) => pane.classList.remove("active"));
+        $("terminal-" + name).classList.add("active");
+      }
+      function toggleTerminalCollapsed() {
+        const terminal = $("adminTerminal");
+        terminal.classList.toggle("collapsed");
+        const collapsed = terminal.classList.contains("collapsed");
+        $("terminalCollapse").textContent = collapsed ? "^" : "⌄";
+        $("terminalCollapse").setAttribute("title", collapsed ? "Expand terminal" : "Collapse terminal");
+        $("terminalCollapse").setAttribute("aria-label", collapsed ? "Expand terminal" : "Collapse terminal");
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
       document.querySelectorAll("[data-channel-tab]").forEach((button) => button.addEventListener("click", () => {
@@ -492,13 +529,19 @@ export function renderAdminHtmlV2(): string {
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
-        if (button.dataset.mainTab === "llm-request") await refreshLLMRequests();
         if (button.dataset.mainTab === "llm-chain") await refreshLLMChain();
         if (button.dataset.mainTab === "token-usage") await refreshTokenUsage();
         if (button.dataset.mainTab === "memory") await refreshMemory();
         if (button.dataset.mainTab === "plugins") await refreshPlugins();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
+      document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.addEventListener("click", () => setTerminalTab(button.dataset.terminalTab)));
+      $("terminalRefresh").addEventListener("click", refreshLogs);
+      $("terminalCollapse").addEventListener("click", toggleTerminalCollapsed);
+      document.querySelector(".admin-terminal-head").addEventListener("click", (event) => {
+        if (event.target.closest("button")) return;
+        toggleTerminalCollapsed();
+      });
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
 
       async function refresh() {

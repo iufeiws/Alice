@@ -25,7 +25,6 @@ memory-files/diary/*.sqlite*
 memory-files/diary/tmp/
 memory-files/long-term-memory/
 prompt/*
-!prompt/.gitkeep
 .env
 .DS_Store
 npm-debug.log*

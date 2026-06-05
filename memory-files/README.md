@@ -29,7 +29,7 @@ memory-files/state/sleep-memory-state.json
 Memorize prompt 配置保存到：
 
 ```text
-prompt/memorize-prompts.json
+core/prompt/memorize-prompts.json
 ```
 
 Core 与 Memorize 的原始 LLM 会话逐次保存为 JSONL，按会话创建时的 UTC 日期和时间命名：
@@ -70,8 +70,8 @@ memory-files/message/messages.sqlite
 Prompt profile 保存到：
 
 ```text
-prompt/prompt-profile.json
-prompt/prompt-api-profile.json
+core/prompt/prompt-profile.json
+core/prompt/prompt-api-profile.json
 ```
 
 每日 shell、shell 配置和服装图片保存在：
@@ -83,7 +83,7 @@ memory-files/shell/
 每日 shell 的 prompt 模板保存到：
 
 ```text
-prompt/shell-prompt-template.txt
+core/prompt/shell-prompt-template.txt
 ```
 
 ## 当前未使用部分

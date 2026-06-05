@@ -732,7 +732,7 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
-  assert.equal(fs.existsSync(path.join(root, "prompt", "prompt-api-profile.json")), true);
+  assert.equal(fs.existsSync(path.join(root, "core", "prompt", "prompt-api-profile.json")), true);
   assert.equal(fs.existsSync(path.join(root, "config", "prompt-api-profile.json")), false);
   assert.equal(capturedPreset.name, "Memorize Custom");
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);

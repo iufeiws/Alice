@@ -41,7 +41,7 @@ createAgentCore(deps: AgentCoreDeps): AgentCore
 - AgentCore 会维护活跃 LLM 会话；静态 prompt 指纹变化、后台清理或 shutdown 会清理该会话。
 - 每分钟最多发起 10 次 LLM 请求；单次事件最多 12 轮 LLM 请求、20 次 tool call。相同 tool call 连续重复 3 次或 `send_chat` 达到 5 次也会停止继续递归。
 
-活跃 prompt 来自 `memory-files/config/prompt-profile.json` 中可编辑的 prompt profile。管理后台可修改层顺序、层内容、层角色、用户名和可见工具组。
+活跃 prompt 来自 `prompt/prompt-profile.json` 中可编辑的 prompt profile。管理后台可修改层顺序、层内容、层角色、用户名和可见工具组。
 
 Prompt 层支持运行时变量：
 

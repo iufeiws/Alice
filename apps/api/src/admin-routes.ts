@@ -10,6 +10,7 @@ import type { AgentBehaviorState, AgentStateController } from "../../../core/age
 import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../core/agent/src/memory.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
+import { promptStoragePath } from "../../../core/agent/src/prompt-storage.js";
 import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
 import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } from "./http-utils.js";
@@ -3328,7 +3329,7 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
 }
 
 function promptApiProfilePath(context: AdminRoutesContext): string {
-  return path.join(context.config.memoryFiles.root, "config", "prompt-api-profile.json");
+  return promptStoragePath(context.config.memoryFiles.root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]);
 }
 
 async function saveFeishuConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {

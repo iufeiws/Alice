@@ -1,4 +1,5 @@
 import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";
+import { promptStoragePath } from "./prompt-storage.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -59,6 +60,7 @@ export type DailyShellStore = {
 };
 
 export type DailyShellStoreOptions = {
+  promptTemplatePath?: string;
   onSwitch?(entry: ShellSwitchLogEntry): void;
 };
 
@@ -78,7 +80,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
     personalitiesDir: path.join(shellDir, "personalities"),
     relationshipsDir: path.join(shellDir, "relationships"),
     outfitsDir: path.join(shellDir, "outfits"),
-    promptTemplate: path.join(shellDir, "prompt-template.txt"),
+    promptTemplate: options.promptTemplatePath ?? promptStoragePath(rootDir, "shell-prompt-template.txt", ["shell", "prompt-template.txt"]),
     settings: path.join(shellDir, "settings.json"),
     daily: path.join(shellDir, "daily-shell.json"),
     switchLog: path.join(shellDir, "switch-log.jsonl")

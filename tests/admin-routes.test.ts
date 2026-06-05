@@ -7,6 +7,7 @@ import {
   createMemoryInductionPromptStore,
   runMemoryInductionForMessages
 } from "../core/agent/src/memory.js";
+import { promptStoragePath } from "../core/agent/src/prompt-storage.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import { createDiaryStore } from "../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
@@ -18,7 +19,7 @@ const childProcess = await import("node:child_process");
 test("llm api preset save stores extra params as part of the preset", async () => {
   const root = makeTempDir("admin-llm-preset-extra");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = baseContext(root, memoryStore, promptStore);
   const handler = createApiRequestHandler(context);
 
@@ -54,7 +55,7 @@ test("llm api preset save stores extra params as part of the preset", async () =
 test("llm api preset save accepts long timeout values", async () => {
   const root = makeTempDir("admin-llm-preset-timeout");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -85,7 +86,7 @@ test("admin plugin list exposes tts config card state", async () => {
   })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -116,7 +117,7 @@ test("admin plugin list reads legacy japanese voice config when tts config is mi
   })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -148,7 +149,7 @@ test("admin plugin list exposes ASR config card state", async () => {
   })}\n`);
   writePreset(root, "asr");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -179,7 +180,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
   })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -240,7 +241,7 @@ test("admin TTS config schema exposes voice language and language model folder",
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -275,7 +276,7 @@ test("admin plugin test can run tts with translation disabled", async () => {
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, translationEnabled: false, prompt: "Translate:" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let llmCalls = 0;
   const context = {
     ...baseContext(root, memoryStore, promptStore),
@@ -324,7 +325,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
   })}\n`);
   writePreset(root, "asr-openai");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -376,7 +377,7 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createApiRequestHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -405,7 +406,7 @@ test("admin plugin enable and disable update tts config", async () => {
   })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -433,7 +434,7 @@ test("admin plugin enable and disable update ASR config", async () => {
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -458,7 +459,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -493,7 +494,7 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -544,7 +545,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
   })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const senderAgents: string[] = [];
   const systemPrompts: string[] = [];
   const context = {
@@ -609,7 +610,7 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   })}\n`);
   writePreset(root, "asr");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: {
@@ -664,7 +665,7 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
   })}\n`);
 
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   promptStore.save({
     commonLayers: [
       { id: "common", title: "Common", role: "system", enabled: true, order: 10, content: "custom memorize common prompt" }
@@ -731,6 +732,8 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
+  assert.equal(fs.existsSync(path.join(root, "prompt", "prompt-api-profile.json")), true);
+  assert.equal(fs.existsSync(path.join(root, "config", "prompt-api-profile.json")), false);
   assert.equal(capturedPreset.name, "Memorize Custom");
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
   const targetRequests = [seen[0]];
@@ -747,7 +750,7 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
 test("memory run-target still processes all memory files in one workspace run", async () => {
   const root = makeTempDir("admin-memory-run-target");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let capturedTarget = "";
   let capturedMessages: StoredConversationMessage[] = [];
   const handler = createApiRequestHandler({
@@ -793,7 +796,7 @@ test("memory run-target still processes all memory files in one workspace run", 
 test("memory admin rejects concurrent run requests", async () => {
   const root = makeTempDir("admin-memory-run-concurrent");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let activeRuns = 0;
   let maxActiveRuns = 0;
   const calls: Array<{ target?: string }> = [];
@@ -859,7 +862,7 @@ test("memory admin rejects concurrent run requests", async () => {
 test("memory admin manual run requires sleeping state by default", async () => {
   const root = makeTempDir("admin-memory-run-sleep-only");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let calls = 0;
   const handler = createApiRequestHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -889,7 +892,7 @@ test("memory admin manual run requires sleeping state by default", async () => {
 test("memory clear-session clears the console memorize session", async () => {
   const root = makeTempDir("admin-memory-clear-session");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let cleared = false;
   const handler = createApiRequestHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -910,7 +913,7 @@ test("memory clear-session clears the console memorize session", async () => {
 test("memory windows do not reseed sleep boundaries from persisted sleep system messages", async () => {
   const root = makeTempDir("admin-memory-no-persisted-sleep-boundary-reseed");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const recorded: Array<{ occurredAt: string; source: string; now: string }> = [];
   const boundaries = [
     { occurredAt: "2026-05-31T03:46:02.806", source: "inferred_gap" }
@@ -954,7 +957,7 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
 test("memory git undo and redo are unavailable for SQL-backed memory", async () => {
   const root = makeTempDir("admin-memory-git-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
   memoryStore.writeTarget("persistent", "persistent v1\n");
 
@@ -973,7 +976,7 @@ test("memory git undo and redo are unavailable for SQL-backed memory", async () 
 test("memory delete-latest-sql removes the latest entry for each SQL memory table", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createApiRequestHandler({
     ...baseContext(root, memoryStore, promptStore)
   });
@@ -1015,7 +1018,7 @@ test("memory delete-latest-sql removes the latest entry for each SQL memory tabl
 test("memory delete-latest-sql reports when no diary entry exists", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql-empty");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
   const handler = createApiRequestHandler({
     ...baseContext(root, memoryStore, promptStore),

@@ -4,6 +4,7 @@ import { createAgentStateController, createJsonAgentStateStore } from "../../../
 import { createCoreProfileStore } from "../../../core/agent/src/core-profile.js";
 import { clearMemoryInductionSession as clearActiveMemoryInductionSession, createMarkdownMemoryStore, createMemoryDiaryStore, createMemoryInductionPromptStore, createMemoryInductionSession, createSleepMemoryStateStore, memoryToolDefinitions, runMemoryInductionForMessages, runSleepMemoryInduction, type MemoryInductionSession } from "../../../core/agent/src/memory.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, createPromptProfileStore, promptVariables, staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../core/agent/src/prompts.js";
+import { promptStoragePath } from "../../../core/agent/src/prompt-storage.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
   appendLLMSessionJsonlMessages,
@@ -344,14 +345,16 @@ if (wechatCredentials) {
     loggedInAt: currentTime.now().iso
   });
 }
-const promptProfileStore = createPromptProfileStore(path.join(config.memoryFiles.root, "config", "prompt-profile.json"));
+const promptProfileStore = createPromptProfileStore(promptStoragePath(config.memoryFiles.root, "prompt-profile.json", ["config", "prompt-profile.json"]));
 const coreProfileStore = createCoreProfileStore(path.join(config.memoryFiles.root, "config", "core-profile.json"));
 const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const diaryStore = createMemoryDiaryStore(config.memoryFiles.root);
 memoryStore.ensure();
-const memoryInductionPromptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
+const memoryInductionPromptStore = createMemoryInductionPromptStore(promptStoragePath(config.memoryFiles.root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+promptStoragePath(config.memoryFiles.root, "memory-induction-prompts.json", ["config", "memory-induction-prompts.json"]);
 const sleepMemoryStateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));
 const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
+  promptTemplatePath: promptStoragePath(config.memoryFiles.root, "shell-prompt-template.txt", ["shell", "prompt-template.txt"]),
   onSwitch(entry) {
     appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
   }
@@ -955,7 +958,7 @@ function resolvePromptApiPreset(kind: "core" | "memorize"): LLMApiPreset | undef
 }
 
 function readPromptApiProfile(): PromptApiProfile {
-  const filePath = path.join(config.memoryFiles.root, "config", "prompt-api-profile.json");
+  const filePath = promptStoragePath(config.memoryFiles.root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]);
   if (!fs.existsSync(filePath)) return {};
   try {
     const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;

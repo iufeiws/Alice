@@ -87,14 +87,14 @@ Tool Preview
 | `promptInstruction` | textarea | 触发后进入 LLM loop 的一次性指令 |
 | `dryRun` | switch | 只记录候选命中，不执行 |
 
-## 页面方案：表格 + 详情抽屉
+## 页面方案：表格 + Config 入口
 
-第一版采用本方案。主界面用一张行为表格管理所有行为，类型只是表格里的一个字段。点击行后打开详情抽屉或右侧详情面板。
+第一版主界面用一张行为表格管理所有行为，类型只是表格里的一个字段。配置不在列表旁边展开详情面板，而是在每行提供 `Config` 按钮进入单个行为配置页或配置区域。
 
 这个页面优先服务两件事：
 
 - 快速看清所有主动行为当前是否启用、由什么触发、最近是否运行、运行是否健康。
-- 选中一行后再编辑该行为的触发条件、prompt 指令、冷却时间和 dry-run 状态。
+- 从列表进入单个行为配置，不在主列表页直接编辑复杂触发条件。
 
 ```text
 Initiated Behaviors
@@ -102,27 +102,34 @@ Initiated Behaviors
 Toolbar
   [Search behavior] [Type: all v] [Status: all v] [Dry run only]
 
-┌──────────────────────────────────────────────────────────────┬─────────────────────────────┐
-│ Behavior table                                                │ Detail panel                 │
-│                                                              │                             │
-│ Enabled  Behavior          Type        Source       Last run │ sleep_goodnight             │
-│ on       sleep_goodnight   event       sleep check  21:43    │ event · enabled             │
-│ on       sleep_morning     event       wake         08:12    │                             │
-│ on       sleep_force_wake  event       /force_wake  never    │ Trigger                     │
-│ off      idle_check_in     randomized  idle window  never    │   sleep cocoon auto check   │
-│ off      memory_reflection randomized  time window  never    │                             │
-│                                                              │ Configuration               │
-│ Recent runs                                                  │   enabled                   │
-│   time behavior trigger result session                       │   cooldown                  │
-│                                                              │   promptInstruction         │
-└──────────────────────────────────────────────────────────────┴─────────────────────────────┘
+Behavior table
+┌─────────┬────────┬──────────┬───────────────────┬────────────┬─────────────────┬──────────┬────────┬────────┐
+│ Enabled │ Weight │ Priority │ Behavior          │ Type       │ Source/Schedule │ 15m resp │ Health │ Config │
+├─────────┼────────┼──────────┼───────────────────┼────────────┼─────────────────┼──────────┼────────┼────────┤
+│ on      │ -      │ high     │ sleep_goodnight   │ event      │ sleep check     │ 94%      │ ok     │ Config │
+│ on      │ -      │ normal   │ sleep_morning     │ event      │ wake            │ 100%     │ ok     │ Config │
+│ on      │ -      │ high     │ sleep_force_wake  │ event      │ /force_wake     │ 100%     │ ready  │ Config │
+│ off     │ 0.08   │ low      │ idle_check_in     │ randomized │ idle window     │ 42%      │ off    │ Config │
+│ off     │ 0.04   │ low      │ memory_reflection │ randomized │ time window     │ 61%      │ off    │ Config │
+└─────────┴────────┴──────────┴───────────────────┴────────────┴─────────────────┴──────────┴────────┴────────┘
+
+Recent runs
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ small vertical scroll area                                                   │
+│ time  behavior  type  trigger  result  respondedWithin15m  session           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Randomized event chart, 30 minute buckets
+  total randomized initiations
+  responded within 15m: dark segment
+  no response within 15m: light segment
 ```
 
 选择这个结构不是因为它理想，而是因为其它结构不适合作为第一版：
 
 - 卡片分组页会把每个行为做成独立卡片，信息密度低，后续行为数量增加后难以快速扫描运行状态。
 - 策略编辑器太接近底层配置，会把第一版 admin 页面变成规则文件编辑器，误操作成本高。
-- 主动行为的核心工作流是“查看状态 -> 选中一行 -> 查看或编辑详情 -> 看运行记录”，表格 + 详情面板最少引入额外结构。
+- 主动行为的核心工作流是“查看状态 -> 进入配置 -> 看运行记录和响应统计”，主列表不应该承载复杂编辑器。
 
 ### 页面布局
 
@@ -132,22 +139,22 @@ Toolbar
 | --- | --- |
 | 顶部工具栏 | 搜索、类型过滤、启用状态过滤、dry-run 过滤、刷新 |
 | 行为表格 | 展示所有主动行为的关键状态，是主操作入口 |
-| 详情面板 | 展示和编辑当前选中行为的配置 |
-| Recent runs | 展示最近运行记录，只观察，不直接修改配置 |
+| Recent runs | 小型可上下滚动运行记录，只观察，不直接修改配置 |
+| 响应统计柱状图 | 以 30 分钟为粒度展示随机事件发起和 15 分钟响应情况 |
 
 桌面端：
 
-- 左侧或中间主体为行为表格。
-- 右侧为 sticky 详情面板。
-- Recent runs 放在表格下方，跟随当前筛选或当前选中行为刷新。
+- 主体顶部是行为表格。
+- Recent runs 放在表格下方，是一个固定高度的小滚动区。
+- 柱状图放在 Recent runs 下方，形态参考 Token Usage 的柱状图。
 
 窄屏：
 
-- 表格在上，详情面板在下。
+- 表格在上。
 - 表格允许横向滚动。
-- Recent runs 放在详情面板之后。
+- Recent runs 和柱状图在表格之后纵向排列。
 
-不要使用 modal 作为主要编辑入口。详情面板可以是右侧固定面板，也可以是页面内右栏；移动端再自然堆叠。
+不要使用主列表内联展开配置。点击 `Config` 后再进入单个行为配置页、配置子视图或专门配置区域。
 
 ### 表格字段
 
@@ -156,11 +163,15 @@ Toolbar
 | 字段 | 说明 |
 | --- | --- |
 | `Enabled` | 真实 switch 控件；第一版可先 disabled 展示 |
+| `Weight` | 随机触发权重；事件触发型固定显示 `-` |
+| `Priority` | 行为调度或冲突处理优先级，例如 `high`、`normal`、`low` |
 | `Behavior` | 行为 id 和一句短说明 |
 | `Type` | `event` 或 `randomized` |
 | `Source / Schedule` | 事件来源或随机调度摘要 |
+| `15m response` | 该行为触发后 15 分钟内收到用户响应的比例 |
 | `Last run` | 最近一次触发时间，没有则 `never` |
 | `Health` | `ok`、`planned`、`disabled`、`dry_run`、`failed` |
+| `Config` | 进入该行为配置的按钮 |
 
 可选扩展字段：
 
@@ -173,21 +184,66 @@ Toolbar
 
 表格行为：
 
-- 点击行选中行为并更新详情面板。
-- `Enter` / `Space` 也可以选中行。
+- 点击 `Config` 进入该行为配置。
+- 行本身不展开详情。
 - 行内 switch 只改启用状态，不打开详情；如果第一版不接功能，switch 必须 disabled。
 - 表格不直接编辑 prompt、时间窗、概率等复杂字段。
 
-### 详情面板
+### Config 页面
 
-详情面板按行为类型展示不同配置块。
+`Config` 按钮进入单个行为配置页或配置区域，按行为类型展示不同配置块。
+
+Config 页不使用 modal，也不从主列表 inline 展开。它占用 `Initiated Behaviors` 主工作区，顶部提供返回入口，保存前后都留在当前行为配置页。
+
+```text
+← Initiated Behaviors
+
+sleep_goodnight                                      event · enabled
+Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
+
+┌──────────────────────────────────────┬──────────────────────────────────────┐
+│ Type                                  │ Event                                │
+│ [event v]                             │ triggerEvent                         │
+│ Enabled  Cooldown  Dry run            │   sleep_cocoon.auto_goodnight_check  │
+│ Allowed channels                      │                                      │
+├──────────────────────────────────────┴──────────────────────────────────────┤
+│ Prompt Instruction                                                           │
+│ [textarea]                                                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Recent runs for this behavior                                                │
+│ small vertical scroll area                                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+当 `Type` 选择 `randomized` 时，右侧从 `triggerEvent` 切换为随机调度字段：
+
+```text
+┌──────────────────────────────────────┬──────────────────────────────────────┐
+│ Type                                  │ Randomized                           │
+│ [randomized v]                        │ Weight       0.08                    │
+│ Enabled  Cooldown  Dry run            │ Priority     low                     │
+│ Allowed channels                      │                                      │
+└──────────────────────────────────────┴──────────────────────────────────────┘
+```
+
+布局规则：
+
+- 顶部标题区显示行为 id、类型 badge、启用状态、短说明和操作按钮。
+- 不要在右上角放 `Runtime Summary` 或独立详情摘要。
+- `Prompt Instruction` 前面放 `Type` 选择行。
+- `Type` 左侧是类型选择和通用控制：`enabled`、`cooldownMinutes`、`dryRun`、`allowedChannels`。
+- `Type` 选择 `event` 时，右侧只展示 `triggerEvent`。
+- `Type` 选择 `randomized` 时，右侧只展示 `weight` 和 `priority`。
+- `Prompt Instruction` 独占一整行，避免长文本挤在右侧栏里。
+- 当前行为的 Recent runs 放在 Config 页底部，是固定高度可上下滚动小区域。
+- 桌面端 `Type` 行使用左右两列；窄屏按 `Type`、类型特定字段、`Prompt Instruction`、Recent runs 顺序纵向堆叠。
 
 通用区域：
 
 | 字段 | 控件 | 说明 |
 | --- | --- | --- |
 | `id` | readonly | 行为 id，不可编辑 |
-| `kind` | readonly/badge | `event` 或 `randomized` |
+| `kind` | select | `event` 或 `randomized` |
 | `enabled` | switch | 是否启用 |
 | `dryRun` | switch | 是否只记录不执行 |
 | `cooldownMinutes` | number | 冷却时间 |
@@ -198,21 +254,16 @@ Toolbar
 
 | 字段 | 控件 | 说明 |
 | --- | --- | --- |
-| `eventSources` | readonly/list | 规范化 `AgentEvent` 来源 |
-| `toolPlan` | readonly/list | 预期工具动作 |
-| `lastEventAt` | readonly | 最近一次来源事件时间 |
+| `triggerEvent` | select/text | 规范化 `AgentEvent` 来源 |
 
 随机触发型区域：
 
 | 字段 | 控件 | 说明 |
 | --- | --- | --- |
-| `scheduleWindow` | time range | 可触发本地时间窗 |
-| `minIdleMinutes` | number | 最短空闲时间 |
-| `probability` | slider + number | 每次检查触发概率 |
-| `maxPerDay` | number | 每日最多触发次数 |
-| `contextFilters` | structured list | 上下文条件 |
+| `weight` | number | 随机触发权重 |
+| `priority` | select | 调度或冲突处理优先级 |
 
-详情面板底部操作：
+Config 底部操作：
 
 | 操作 | 第一版行为 |
 | --- | --- |
@@ -220,11 +271,11 @@ Toolbar
 | `Test Behavior` | 接 API 前 disabled |
 | `Reset` | 接 API 前 disabled |
 
-第一版如果暂时不接功能，详情面板仍要把字段布局做对，但所有编辑型控件 disabled，并明确是 draft UI。
+第一版如果暂时不接功能，Config 入口可以 disabled，或进入只读配置预览。所有会修改配置或触发运行的控件必须 disabled，并明确是 draft UI。
 
 ### Recent runs
 
-Recent runs 是运行事实，不是配置表。
+Recent runs 是运行事实，不是配置表。它在主列表页下方占一个小区域，固定高度，可上下滚动。
 
 字段：
 
@@ -235,15 +286,31 @@ Recent runs 是运行事实，不是配置表。
 | `Type` | `event` 或 `randomized` |
 | `Trigger` | 事件来源或调度命中原因 |
 | `Result` | `completed`、`skipped`、`dry_run`、`failed` |
+| `Responded within 15m` | 触发后 15 分钟内是否有用户响应 |
 | `Session` | 关联 session id |
 | `Error` | 失败原因，可折叠展示 |
 
 规则：
 
 - 不允许在 runs 表格里直接修改配置。
-- 如果选中某个行为，可以默认只展示该行为最近运行记录。
-- 可以提供 `Show all runs` 切换回全局记录。
+- 默认展示全局最近运行记录。
+- 可以通过表格行或过滤器限制为某个行为，但不要因此改变配置状态。
 - dry-run 也要记录，避免随机触发调试时没有证据。
+
+### 响应统计柱状图
+
+Recent runs 下方展示一个柱状图，形态参考 Token Usage 页面。
+
+图表规则：
+
+- 只统计随机触发型行为。
+- 横轴精度为 30 分钟。
+- 每个柱表示该 30 分钟窗口内随机事件发起总数。
+- 深色段表示 15 分钟内有用户响应的数量。
+- 浅色段表示 15 分钟内无用户响应的数量。
+- 深色段 + 浅色段 = 该窗口随机事件发起总数。
+- 图例必须明确区分 `responded within 15m` 和 `no response within 15m`。
+- 图表数据来自运行记录聚合，不从配置表推导。
 
 ## 推荐页面结构
 
@@ -259,18 +326,15 @@ Toolbar
 
 Behavior table
   Enabled
+  Weight
+  Priority
   Behavior
   Type
   Source / Schedule
+  15m response
   Last run
   Health
-
-Detail panel
-  Summary
-  Trigger
-  Configuration
-  Prompt instruction
-  Actions
+  Config
 
 Recent runs
   Time
@@ -278,19 +342,35 @@ Recent runs
   Type
   Trigger
   Result
+  Responded within 15m
   Session
+
+Randomized response chart
+  30 minute buckets
+  Randomized initiations total
+  Responded within 15m
+  No response within 15m
+
+Config page
+  Header
+  Type row
+  Event: triggerEvent
+  Randomized: weight and priority
+  Prompt Instruction
+  Recent runs for this behavior
 ```
 
 页面控件规则：
 
 - 开关使用真实 switch 控件。
-- 概率使用 slider + number input 双控件。
-- 时间窗使用 start/end time inputs。
 - prompt 指令使用 textarea。
-- `eventSources`、`lastRunAt`、`runtimeStatus` 使用 readonly 字段。
-- `Recent runs` 只做观察，不允许在日志表格里直接修改配置。
+- `triggerEvent` 使用 select 或短文本输入。
+- `weight` 使用 number input。
+- `priority` 使用 select。
+- `Recent runs` 是固定高度的小滚动区，只做观察，不允许在日志表格里直接修改配置。
 - 第一版不接功能时，所有会改变配置或触发运行的控件都必须 disabled。
-- 表格选中行可以本地更新详情面板，不需要 API。
+- 主列表不做内联配置；复杂配置通过 `Config` 按钮进入。
+- Config 页不使用 modal；它占用主工作区，并提供返回 `Initiated Behaviors` 的入口。
 
 ## 配置模型草案
 
@@ -301,35 +381,13 @@ type InitiatedBehaviorConfig = {
   id: string;
   kind: InitiatedBehaviorKind;
   enabled: boolean;
+  weight?: number;
+  priority?: "high" | "normal" | "low";
+  triggerEvent?: string;
   promptInstruction: string;
   cooldownMinutes?: number;
   allowedChannels?: string[];
   dryRun?: boolean;
-  event?: EventDrivenBehaviorConfig;
-  randomized?: RandomizedBehaviorConfig;
-};
-
-type EventDrivenBehaviorConfig = {
-  eventSources: string[];
-  toolPlan?: Array<{
-    tool: string;
-    arguments: Record<string, unknown>;
-  }>;
-};
-
-type RandomizedBehaviorConfig = {
-  scheduleWindow?: {
-    startLocalTime: string;
-    endLocalTime: string;
-  };
-  minIdleMinutes?: number;
-  probability: number;
-  maxPerDay?: number;
-  contextFilters?: Array<{
-    field: string;
-    operator: "equals" | "not_equals" | "exists" | "missing";
-    value?: unknown;
-  }>;
 };
 ```
 
@@ -352,6 +410,7 @@ type InitiatedBehaviorsAdminResponse = {
     lastCheckedAt?: string;
   };
   recentRuns: InitiatedBehaviorRun[];
+  responseBuckets: InitiatedBehaviorResponseBucket[];
 };
 
 type InitiatedBehaviorRun = {
@@ -361,9 +420,18 @@ type InitiatedBehaviorRun = {
   triggeredAt: string;
   trigger: string;
   dryRun: boolean;
-  result: "completed" | "skipped" | "failed";
+  result: "completed" | "skipped" | "dry_run" | "failed";
+  respondedWithin15m?: boolean;
   sessionId?: string;
   error?: string;
+};
+
+type InitiatedBehaviorResponseBucket = {
+  bucketStart: string;
+  bucketMinutes: 30;
+  randomizedInitiations: number;
+  respondedWithin15m: number;
+  noResponseWithin15m: number;
 };
 ```
 
@@ -394,14 +462,18 @@ initiated_behavior_runs
 ## 实施顺序
 
 1. 新增 admin 主导航 `Initiated Behaviors`。
-2. 新增静态表格 + 详情面板，所有保存和测试控件 disabled。
+2. 新增静态表格，表格包含 `Enabled`、`Weight`、`Priority`、`Behavior`、`Type`、`Source / Schedule`、`15m response`、`Last run`、`Health`、`Config`。
 3. 表格先展示 core 文档已有的三个事件驱动型 sleep 行为。
-4. 随机触发型先以 `planned` / `disabled` 示例行展示，不接入调度器。
-5. 增加本地行选择交互，让详情面板随选中行为变化。
-6. 接入 `GET /admin/api/initiated-behaviors` 后，把静态数据替换为真实配置。
-7. 接入保存 API 后，再开放 `enabled`、`cooldownMinutes`、`dryRun` 等编辑。
-8. 增加 `Recent runs` 观测接口。
-9. 等随机调度器设计完成后，再开放概率、时间窗和每日上限配置。
+4. 事件触发型的 `Weight` 固定显示 `-`。
+5. 随机触发型先以 `planned` / `disabled` 示例行展示，不接入调度器。
+6. `Config` 按钮第一版可以 disabled，或进入只读配置预览。
+7. 新增 Config 页静态布局：Header、Type row、事件型 `triggerEvent`、随机型 `weight` / `priority`、Prompt Instruction、当前行为 Recent runs。
+8. 增加固定高度、可上下滚动的 Recent runs 小区域。
+9. 增加 30 分钟粒度柱状图，展示随机事件发起总数、15 分钟响应数和 15 分钟无响应数。
+10. 接入 `GET /admin/api/initiated-behaviors` 后，把静态数据替换为真实配置和聚合数据。
+11. 接入保存 API 后，再开放 `enabled`、`weight`、`priority`、`cooldownMinutes`、`dryRun` 等编辑。
+12. 增加 `Recent runs` 观测接口。
+13. 等随机调度器设计完成后，再评估是否增加更多随机触发字段。
 
 ## 开放问题
 

@@ -157,35 +157,45 @@ export function renderAdminHtmlV2(): string {
       .plugin-preset-editor.active { display: grid; gap: 10px; }
       .plugin-public-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
       .plugin-events { max-height: 280px; }
-      .behavior-layout { display: grid; grid-template-columns: minmax(520px, 1.4fr) minmax(320px, 0.8fr); gap: 16px; align-items: start; }
+      .behavior-layout { display: grid; gap: 16px; align-items: start; }
       .behavior-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
       .behavior-toolbar h2 { margin: 0 0 4px; }
       .behavior-toolbar label { margin: 0; min-width: 220px; }
       .behavior-table-wrap { overflow-x: auto; border: 1px solid #d7dce3; border-radius: 8px; }
-      .behavior-table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 12px; }
+      .behavior-table { width: 100%; border-collapse: collapse; min-width: 1060px; font-size: 12px; }
       .behavior-table th, .behavior-table td { border-bottom: 1px solid #e4e7eb; padding: 9px 10px; text-align: left; vertical-align: middle; }
       .behavior-table th { color: #667085; font-weight: 800; background: #f8fafc; }
       .behavior-table tr:last-child td { border-bottom: 0; }
-      .behavior-row { cursor: pointer; }
+      .behavior-table button { margin: 0; padding: 6px 9px; }
       .behavior-row:hover td { background: #f8fafc; }
-      .behavior-row.active td { background: #eaf2ff; }
       .behavior-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 800; }
       .behavior-kind { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
       .behavior-kind.event { background: #ecfdf3; color: #067647; }
       .behavior-kind.randomized { background: #fff4e5; color: #b54708; }
       .behavior-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
       .behavior-status.on { background: #e8f1ff; color: #1d4ed8; }
-      .behavior-detail { border: 1px solid #d7dce3; border-radius: 8px; padding: 14px; background: #fff; position: sticky; top: 12px; }
-      .behavior-detail-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-      .behavior-detail-head h2 { margin: 0 0 4px; overflow-wrap: anywhere; }
-      .behavior-detail-grid { display: grid; gap: 10px; margin: 12px 0; }
-      .behavior-detail-field { border-top: 1px solid #e4e7eb; padding-top: 9px; }
-      .behavior-detail-field strong { display: block; font-size: 11px; color: #667085; text-transform: uppercase; margin-bottom: 3px; }
-      .behavior-detail-field span { font-size: 13px; overflow-wrap: anywhere; }
       .behavior-recent { margin-top: 16px; }
+      .behavior-recent-scroll { max-height: 150px; overflow-y: auto; border: 1px solid #d7dce3; border-radius: 8px; }
       .behavior-recent-table { width: 100%; border-collapse: collapse; font-size: 12px; }
       .behavior-recent-table th, .behavior-recent-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
-      .behavior-recent-table th { color: #667085; font-weight: 800; }
+      .behavior-recent-table th { color: #667085; font-weight: 800; background: #f8fafc; position: sticky; top: 0; }
+      .behavior-chart { margin-top: 16px; }
+      .behavior-chart-bars { min-width: 520px; height: 160px; display: flex; align-items: end; gap: 8px; border-bottom: 1px solid #d4dce8; padding-bottom: 1px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 52px, #e7ebf2 53px); overflow-x: auto; }
+      .behavior-chart-bar-wrap { flex: 0 0 22px; height: 140px; display: flex; align-items: end; }
+      .behavior-chart-bar { width: 100%; display: flex; flex-direction: column-reverse; min-height: 2px; border-radius: 4px 4px 0 0; overflow: hidden; background: #e5e7eb; }
+      .behavior-chart-responded { background: rgba(29, 78, 216, 0.92); }
+      .behavior-chart-missed { background: rgba(147, 197, 253, 0.75); }
+      .behavior-config { margin-top: 0; }
+      .behavior-config.pane.active { display: block; }
+      .behavior-config-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      .behavior-config-title h2 { margin: 0 0 4px; overflow-wrap: anywhere; }
+      .behavior-config-actions button { margin-top: 0; }
+      .behavior-config-grid { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(260px, 1fr); gap: 14px; align-items: start; margin-bottom: 14px; }
+      .behavior-config-box { border: 1px solid #d7dce3; border-radius: 8px; padding: 12px; background: #fff; }
+      .behavior-config-box h2 { margin-bottom: 8px; }
+      .behavior-config-row { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 10px; }
+      .behavior-config-row input[type="checkbox"] { width: auto; margin: 8px 0 0; }
+      .behavior-config textarea { min-height: 150px; }
       .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
       .memory-controls label { margin: 0; min-width: 180px; }
       .memory-day-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 16px; }
@@ -207,7 +217,7 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row, .behavior-layout { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane, .behavior-detail { position: static; } .admin-terminal-body { height: 40vh; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row, .behavior-layout, .behavior-config-grid { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } .admin-terminal-body { height: 40vh; } }
     </style>
   </head>
   <body>
@@ -487,111 +497,171 @@ export function renderAdminHtmlV2(): string {
           <p class="muted" id="plugin-status"></p>
         </section>
         <section id="main-initiated-behaviors" class="pane">
-          <div class="behavior-toolbar">
-            <div>
-              <h2>Initiated Behaviors</h2>
-              <p class="muted">Static draft UI. Configuration is not connected to runtime yet.</p>
+          <div id="behaviorListPanel">
+            <div class="behavior-toolbar">
+              <div>
+                <h2>Initiated Behaviors</h2>
+                <p class="muted">Static draft UI. Configuration is not connected to runtime yet.</p>
+              </div>
+              <label for="behaviorTypeFilter">Type
+                <select id="behaviorTypeFilter" disabled>
+                  <option value="all">all</option>
+                  <option value="event">event</option>
+                  <option value="randomized">randomized</option>
+                </select>
+              </label>
             </div>
-            <label for="behaviorTypeFilter">Type
-              <select id="behaviorTypeFilter" disabled>
-                <option value="all">all</option>
-                <option value="event">event-driven</option>
-                <option value="randomized">randomized</option>
-              </select>
-            </label>
-          </div>
-          <div class="behavior-layout">
-            <div>
+            <div class="behavior-layout">
               <div class="behavior-table-wrap">
                 <table class="behavior-table" aria-label="Initiated behaviors">
                   <thead>
                     <tr>
                       <th>Enabled</th>
+                      <th>Weight</th>
+                      <th>Priority</th>
                       <th>Behavior</th>
                       <th>Type</th>
                       <th>Source / Schedule</th>
+                      <th>15m response</th>
                       <th>Last run</th>
                       <th>Health</th>
+                      <th>Config</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr class="behavior-row active" data-behavior-row="sleep_goodnight" tabindex="0">
+                    <tr class="behavior-row" data-behavior-row="sleep_goodnight">
                       <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td>-</td>
+                      <td>high</td>
                       <td><span class="behavior-id">sleep_goodnight</span><div class="muted">Goodnight and enter sleep cocoon.</div></td>
                       <td><span class="behavior-kind event">event</span></td>
-                      <td>sleep cocoon auto check</td>
+                      <td>sleep_cocoon.auto_goodnight_check</td>
+                      <td>94%</td>
                       <td>today 21:43</td>
                       <td><span class="behavior-status on">ok</span></td>
+                      <td><button type="button" data-behavior-config="sleep_goodnight">Config</button></td>
                     </tr>
-                    <tr class="behavior-row" data-behavior-row="sleep_morning" tabindex="0">
+                    <tr class="behavior-row" data-behavior-row="sleep_morning">
                       <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td>-</td>
+                      <td>normal</td>
                       <td><span class="behavior-id">sleep_morning</span><div class="muted">Say morning after wake event.</div></td>
                       <td><span class="behavior-kind event">event</span></td>
                       <td>wake state transition</td>
+                      <td>100%</td>
                       <td>today 08:12</td>
                       <td><span class="behavior-status on">ok</span></td>
+                      <td><button type="button" data-behavior-config="sleep_morning">Config</button></td>
                     </tr>
-                    <tr class="behavior-row" data-behavior-row="sleep_force_wake" tabindex="0">
+                    <tr class="behavior-row" data-behavior-row="sleep_force_wake">
                       <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td>-</td>
+                      <td>high</td>
                       <td><span class="behavior-id">sleep_force_wake</span><div class="muted">Respond as just woken by user.</div></td>
                       <td><span class="behavior-kind event">event</span></td>
                       <td>/force_wake</td>
+                      <td>100%</td>
                       <td>never</td>
                       <td><span class="behavior-status on">ready</span></td>
+                      <td><button type="button" data-behavior-config="sleep_force_wake">Config</button></td>
                     </tr>
-                    <tr class="behavior-row" data-behavior-row="idle_check_in" tabindex="0">
+                    <tr class="behavior-row" data-behavior-row="idle_check_in">
                       <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td>0.08</td>
+                      <td>low</td>
                       <td><span class="behavior-id">idle_check_in</span><div class="muted">Low probability check-in after user idle time.</div></td>
                       <td><span class="behavior-kind randomized">randomized</span></td>
-                      <td>10:00-22:00 · idle 180m · p 0.08</td>
+                      <td>idle window</td>
+                      <td>42%</td>
                       <td>never</td>
                       <td><span class="behavior-status">planned</span></td>
+                      <td><button type="button" data-behavior-config="idle_check_in">Config</button></td>
                     </tr>
-                    <tr class="behavior-row" data-behavior-row="memory_reflection" tabindex="0">
+                    <tr class="behavior-row" data-behavior-row="memory_reflection">
                       <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td>0.04</td>
+                      <td>low</td>
                       <td><span class="behavior-id">memory_reflection</span><div class="muted">Occasional memory-oriented reflection prompt.</div></td>
                       <td><span class="behavior-kind randomized">randomized</span></td>
-                      <td>20:00-23:00 · max 1/day</td>
+                      <td>time window</td>
+                      <td>61%</td>
                       <td>never</td>
                       <td><span class="behavior-status">planned</span></td>
+                      <td><button type="button" data-behavior-config="memory_reflection">Config</button></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
               <div class="behavior-recent">
                 <h2>Recent Runs</h2>
-                <table class="behavior-recent-table">
-                  <thead>
-                    <tr><th>Time</th><th>Behavior</th><th>Trigger</th><th>Result</th><th>Session</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>today 21:43</td><td>sleep_goodnight</td><td>sleep cocoon</td><td>completed</td><td>demo-session</td></tr>
-                    <tr><td>today 08:12</td><td>sleep_morning</td><td>wake</td><td>completed</td><td>demo-session</td></tr>
-                    <tr><td>yesterday 22:18</td><td>sleep_goodnight</td><td>sleep cocoon</td><td>dry run</td><td>demo-session</td></tr>
-                  </tbody>
-                </table>
+                <div class="behavior-recent-scroll">
+                  <table class="behavior-recent-table">
+                    <thead>
+                      <tr><th>Time</th><th>Behavior</th><th>Type</th><th>Trigger</th><th>Result</th><th>15m</th><th>Session</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>today 21:43</td><td>sleep_goodnight</td><td>event</td><td>sleep cocoon</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
+                      <tr><td>today 18:30</td><td>idle_check_in</td><td>randomized</td><td>idle window</td><td>completed</td><td>no</td><td>demo-session</td></tr>
+                      <tr><td>today 16:00</td><td>memory_reflection</td><td>randomized</td><td>time window</td><td>dry run</td><td>yes</td><td>demo-session</td></tr>
+                      <tr><td>today 08:12</td><td>sleep_morning</td><td>event</td><td>wake</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
+                      <tr><td>yesterday 22:18</td><td>sleep_goodnight</td><td>event</td><td>sleep cocoon</td><td>dry run</td><td>no</td><td>demo-session</td></tr>
+                      <tr><td>yesterday 17:30</td><td>idle_check_in</td><td>randomized</td><td>idle window</td><td>completed</td><td>yes</td><td>demo-session</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="behavior-chart">
+                <h2>Randomized Response, 30 Minute Buckets</h2>
+                <div class="behavior-chart-bars" aria-label="Randomized response chart">
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 34px"></span><span class="behavior-chart-missed" style="height: 18px"></span></div></div>
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 18px"></span><span class="behavior-chart-missed" style="height: 36px"></span></div></div>
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 50px"></span><span class="behavior-chart-missed" style="height: 18px"></span></div></div>
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 28px"></span><span class="behavior-chart-missed" style="height: 42px"></span></div></div>
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 58px"></span><span class="behavior-chart-missed" style="height: 26px"></span></div></div>
+                  <div class="behavior-chart-bar-wrap"><div class="behavior-chart-bar"><span class="behavior-chart-responded" style="height: 42px"></span><span class="behavior-chart-missed" style="height: 16px"></span></div></div>
+                </div>
+                <div class="usage-legend"><span><i class="usage-swatch behavior-chart-responded"></i>responded within 15m</span><span><i class="usage-swatch behavior-chart-missed"></i>no response within 15m</span></div>
               </div>
             </div>
-            <aside class="behavior-detail" aria-label="Behavior detail">
-              <div class="behavior-detail-head">
-                <div>
-                  <h2 id="behaviorDetailTitle">sleep_goodnight</h2>
-                  <p class="muted" id="behaviorDetailSummary">Goodnight and enter sleep cocoon.</p>
-                </div>
-                <span id="behaviorDetailKind" class="behavior-kind event">event</span>
-              </div>
-              <div class="behavior-detail-grid">
-                <div class="behavior-detail-field"><strong>Enabled</strong><span id="behaviorDetailEnabled">on</span></div>
-                <div class="behavior-detail-field"><strong>Source / Schedule</strong><span id="behaviorDetailSource">sleep cocoon auto check</span></div>
-                <div class="behavior-detail-field"><strong>Cooldown</strong><span id="behaviorDetailCooldown">60 minutes</span></div>
-                <div class="behavior-detail-field"><strong>Prompt Instruction</strong><span id="behaviorDetailPrompt">Say goodnight, then call sleep_cocoon with action=in.</span></div>
-                <div class="behavior-detail-field"><strong>Dry Run</strong><span id="behaviorDetailDryRun">off</span></div>
-              </div>
-              <button type="button" disabled>Save Draft</button>
-              <button type="button" class="secondary" disabled>Test Behavior</button>
-              <p class="muted">Controls are disabled until the configuration API is implemented.</p>
-            </aside>
           </div>
+          <section id="behaviorConfigPanel" class="behavior-config pane">
+            <div class="behavior-config-head">
+              <button type="button" id="behaviorBack" class="secondary">← Initiated Behaviors</button>
+              <div class="behavior-config-title">
+                <h2 id="behaviorConfigTitle">sleep_goodnight</h2>
+                <p class="muted" id="behaviorConfigSummary">Goodnight and enter sleep cocoon.</p>
+              </div>
+              <div class="behavior-config-actions">
+                <button type="button" disabled>Save</button>
+                <button type="button" class="secondary" disabled>Test</button>
+                <button type="button" class="secondary" disabled>Reset</button>
+              </div>
+            </div>
+            <div class="behavior-config-grid">
+              <div class="behavior-config-box">
+                <h2>Type</h2>
+                <label for="behaviorConfigType">Type</label>
+                <select id="behaviorConfigType" disabled>
+                  <option value="event">event</option>
+                  <option value="randomized">randomized</option>
+                </select>
+                <div class="behavior-config-row">
+                  <label>Enabled <input id="behaviorConfigEnabled" type="checkbox" disabled /></label>
+                  <label for="behaviorConfigCooldown">Cooldown <input id="behaviorConfigCooldown" disabled /></label>
+                  <label>Dry run <input id="behaviorConfigDryRun" type="checkbox" disabled /></label>
+                </div>
+                <label for="behaviorConfigChannels">Allowed channels</label>
+                <input id="behaviorConfigChannels" disabled />
+              </div>
+              <div class="behavior-config-box" id="behaviorConfigSpecific"></div>
+            </div>
+            <label for="behaviorConfigPrompt">Prompt Instruction</label>
+            <textarea id="behaviorConfigPrompt" disabled></textarea>
+            <div class="behavior-recent">
+              <h2>Recent Runs For This Behavior</h2>
+              <div id="behaviorConfigRuns" class="behavior-recent-scroll"></div>
+            </div>
+          </section>
         </section>
         <section id="main-tool-preview" class="pane">
           <div class="tool-preview-grid">
@@ -648,66 +718,90 @@ export function renderAdminHtmlV2(): string {
           title: "sleep_goodnight",
           summary: "Goodnight and enter sleep cocoon.",
           kind: "event",
+          weight: "-",
+          priority: "high",
           enabled: "on",
-          source: "sleep cocoon auto check",
+          triggerEvent: "sleep_cocoon.auto_goodnight_check",
           cooldown: "60 minutes",
-          prompt: "Say goodnight, then call sleep_cocoon with action=in.",
-          dryRun: "off"
+          prompt: "爱丽丝你困了，对Y说晚安，然后使用 sleep_cocoon({\"action\":\"in\"}) 去睡觉。",
+          dryRun: "off",
+          channels: "dm, group"
         },
         sleep_morning: {
           title: "sleep_morning",
           summary: "Say morning after wake event.",
           kind: "event",
+          weight: "-",
+          priority: "normal",
           enabled: "on",
-          source: "wake state transition",
+          triggerEvent: "wake state transition",
           cooldown: "180 minutes",
-          prompt: "Greet the user in a morning state after the wake event.",
-          dryRun: "off"
+          prompt: "爱丽丝你醒了? 对Y说句早安吧",
+          dryRun: "off",
+          channels: "dm, group"
         },
         sleep_force_wake: {
           title: "sleep_force_wake",
           summary: "Respond as just woken by user.",
           kind: "event",
+          weight: "-",
+          priority: "high",
           enabled: "on",
-          source: "/force_wake",
+          triggerEvent: "/force_wake",
           cooldown: "15 minutes",
-          prompt: "Respond as just woken by the user's force-wake action. Do not treat it as sleep_morning.",
-          dryRun: "off"
+          prompt: "爱丽丝你被Y强制唤醒了。短短回应Y，语气带一点刚醒的迷糊，避免普通晨间问候。",
+          dryRun: "off",
+          channels: "dm, group"
         },
         idle_check_in: {
           title: "idle_check_in",
           summary: "Low probability check-in after user idle time.",
           kind: "randomized",
+          weight: "0.08",
+          priority: "low",
           enabled: "off",
-          source: "10:00-22:00 · idle 180m · p 0.08",
           cooldown: "360 minutes",
-          prompt: "If context allows, make a short low-pressure check-in.",
-          dryRun: "on"
+          prompt: "",
+          dryRun: "on",
+          channels: "dm"
         },
         memory_reflection: {
           title: "memory_reflection",
           summary: "Occasional memory-oriented reflection prompt.",
           kind: "randomized",
+          weight: "0.04",
+          priority: "low",
           enabled: "off",
-          source: "20:00-23:00 · max 1/day",
           cooldown: "1440 minutes",
-          prompt: "Prepare a lightweight reflection using recent memory context.",
-          dryRun: "on"
+          prompt: "",
+          dryRun: "on",
+          channels: "dm"
         }
       };
-      function selectInitiatedBehavior(id) {
+      function openInitiatedBehaviorConfig(id) {
         const detail = initiatedBehaviorDrafts[id];
         if (!detail) return;
-        document.querySelectorAll("[data-behavior-row]").forEach((row) => row.classList.toggle("active", row.dataset.behaviorRow === id));
-        $("behaviorDetailTitle").textContent = detail.title;
-        $("behaviorDetailSummary").textContent = detail.summary;
-        $("behaviorDetailKind").textContent = detail.kind;
-        $("behaviorDetailKind").className = "behavior-kind " + detail.kind;
-        $("behaviorDetailEnabled").textContent = detail.enabled;
-        $("behaviorDetailSource").textContent = detail.source;
-        $("behaviorDetailCooldown").textContent = detail.cooldown;
-        $("behaviorDetailPrompt").textContent = detail.prompt;
-        $("behaviorDetailDryRun").textContent = detail.dryRun;
+        $("behaviorListPanel").classList.add("pane");
+        $("behaviorListPanel").classList.remove("active");
+        $("behaviorConfigPanel").classList.add("active");
+        $("behaviorConfigTitle").textContent = detail.title;
+        $("behaviorConfigSummary").textContent = detail.summary;
+        $("behaviorConfigType").value = detail.kind;
+        $("behaviorConfigEnabled").checked = detail.enabled === "on";
+        $("behaviorConfigCooldown").value = detail.cooldown;
+        $("behaviorConfigDryRun").checked = detail.dryRun === "on";
+        $("behaviorConfigChannels").value = detail.channels;
+        $("behaviorConfigPrompt").value = detail.prompt;
+        const triggerLabel = detail.kind === "event" ? (detail.triggerEvent || "event") : "randomized";
+        $("behaviorConfigSpecific").innerHTML = detail.kind === "event"
+          ? '<h2>Event</h2><label for="behaviorConfigTriggerEvent">triggerEvent</label><input id="behaviorConfigTriggerEvent" value="' + escapeAttr(detail.triggerEvent || "") + '" disabled />'
+          : '<h2>Randomized</h2><label for="behaviorConfigWeight">Weight</label><input id="behaviorConfigWeight" value="' + escapeAttr(detail.weight) + '" disabled /><label for="behaviorConfigPriority">Priority</label><select id="behaviorConfigPriority" disabled><option ' + (detail.priority === "high" ? "selected" : "") + ">high</option><option " + (detail.priority === "normal" ? "selected" : "") + ">normal</option><option " + (detail.priority === "low" ? "selected" : "") + ">low</option></select>";
+        $("behaviorConfigRuns").innerHTML = '<table class="behavior-recent-table"><thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>15m</th><th>Session</th></tr></thead><tbody><tr><td>today 21:43</td><td>' + escapeHtml(triggerLabel) + '</td><td>completed</td><td>yes</td><td>demo-session</td></tr><tr><td>yesterday 22:18</td><td>' + escapeHtml(triggerLabel) + '</td><td>dry run</td><td>no</td><td>demo-session</td></tr></tbody></table>';
+      }
+      function closeInitiatedBehaviorConfig() {
+        $("behaviorConfigPanel").classList.remove("active");
+        $("behaviorListPanel").classList.remove("pane");
+        $("behaviorListPanel").classList.add("active");
       }
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
@@ -748,14 +842,8 @@ export function renderAdminHtmlV2(): string {
         document.querySelectorAll("#channel-feishu,#channel-wechat").forEach((pane) => pane.classList.remove("active"));
         $("channel-" + button.dataset.channelTab).classList.add("active");
       }));
-      document.querySelectorAll("[data-behavior-row]").forEach((row) => {
-        row.addEventListener("click", () => selectInitiatedBehavior(row.dataset.behaviorRow));
-        row.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          selectInitiatedBehavior(row.dataset.behaviorRow);
-        });
-      });
+      document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
+      $("behaviorBack").addEventListener("click", closeInitiatedBehaviorConfig);
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();

@@ -15,6 +15,10 @@ import { buildLLMTextVariables, type LLMTextVariables } from "../../text-rendere
 import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
 import type { LLMRequestSender } from "./llm-tool-loop.js";
 import {
+  agentInitiatedBehaviorFromEvent,
+  buildAgentInitiatedBehaviorMessages
+} from "./initiated-behaviors.js";
+import {
   buildFixedPrefixAppendMessages,
   buildWaitChatResumeMessages,
   checkChatCursorFromResult,
@@ -233,7 +237,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
       const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
       const toolPlugins = filterVisibleTools(deps.tools ?? [], promptProfile);
-      let sleepCocoonInstruction = sleepCocoonGeneratedInstruction(event, promptProfile.userName);
+      let initiatedBehavior = agentInitiatedBehaviorFromEvent(event);
       if (deps.loadLLMSession) {
         const persistedSession = deps.loadLLMSession();
         activeLLMSession = persistedSession?.staticPromptFingerprint
@@ -251,7 +255,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
-        if (sleepCocoonInstruction && activeLLMSession && !applyModeStateToNewSession) {
+        if (initiatedBehavior && activeLLMSession && !applyModeStateToNewSession) {
           deps.onLLMSessionCleared?.("mode_transition");
           activeLLMSession = undefined;
         }
@@ -290,10 +294,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                 return result;
               }),
-              ...(sleepCocoonInstruction ? [{ role: "user" as const, content: sleepCocoonInstruction }] : []),
+              ...buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile.userName),
               ...mode.modeStaticMessages
             ];
-          sleepCocoonInstruction = undefined;
+          initiatedBehavior = undefined;
           activeLLMSession = {
             messages: promptMessages,
             staticPromptFingerprint: fingerprint,
@@ -662,21 +666,6 @@ function isTokenPressurePreviewBaseline(value: unknown): value is TokenPressureP
     && Number.isFinite(entry.inputTokens)
     && typeof entry.previewTokens === "number"
     && Number.isFinite(entry.previewTokens);
-}
-
-function sleepCocoonGeneratedInstruction(event: AgentEvent, userName: string): string | undefined {
-  const raw = event.meta.raw;
-  if (!raw || typeof raw !== "object") return undefined;
-  if ((raw as { sleepCocoonGoodnight?: unknown }).sleepCocoonGoodnight) {
-    return `爱丽丝你困了，对${userName}说晚安，然后使用 sleep_cocoon({"action":"in"}) 去睡觉。`;
-  }
-  if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) {
-    return `爱丽丝你醒了? 对${userName}说句早安吧`;
-  }
-  if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) {
-    return `爱丽丝你被${userName}强制唤醒了。短短回应${userName}，语气带一点刚醒的迷糊，避免普通晨间问候。`;
-  }
-  return undefined;
 }
 
 function buildReply(

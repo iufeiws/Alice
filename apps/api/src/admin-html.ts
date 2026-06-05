@@ -157,6 +157,35 @@ export function renderAdminHtmlV2(): string {
       .plugin-preset-editor.active { display: grid; gap: 10px; }
       .plugin-public-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
       .plugin-events { max-height: 280px; }
+      .behavior-layout { display: grid; grid-template-columns: minmax(520px, 1.4fr) minmax(320px, 0.8fr); gap: 16px; align-items: start; }
+      .behavior-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+      .behavior-toolbar h2 { margin: 0 0 4px; }
+      .behavior-toolbar label { margin: 0; min-width: 220px; }
+      .behavior-table-wrap { overflow-x: auto; border: 1px solid #d7dce3; border-radius: 8px; }
+      .behavior-table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 12px; }
+      .behavior-table th, .behavior-table td { border-bottom: 1px solid #e4e7eb; padding: 9px 10px; text-align: left; vertical-align: middle; }
+      .behavior-table th { color: #667085; font-weight: 800; background: #f8fafc; }
+      .behavior-table tr:last-child td { border-bottom: 0; }
+      .behavior-row { cursor: pointer; }
+      .behavior-row:hover td { background: #f8fafc; }
+      .behavior-row.active td { background: #eaf2ff; }
+      .behavior-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 800; }
+      .behavior-kind { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
+      .behavior-kind.event { background: #ecfdf3; color: #067647; }
+      .behavior-kind.randomized { background: #fff4e5; color: #b54708; }
+      .behavior-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; }
+      .behavior-status.on { background: #e8f1ff; color: #1d4ed8; }
+      .behavior-detail { border: 1px solid #d7dce3; border-radius: 8px; padding: 14px; background: #fff; position: sticky; top: 12px; }
+      .behavior-detail-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+      .behavior-detail-head h2 { margin: 0 0 4px; overflow-wrap: anywhere; }
+      .behavior-detail-grid { display: grid; gap: 10px; margin: 12px 0; }
+      .behavior-detail-field { border-top: 1px solid #e4e7eb; padding-top: 9px; }
+      .behavior-detail-field strong { display: block; font-size: 11px; color: #667085; text-transform: uppercase; margin-bottom: 3px; }
+      .behavior-detail-field span { font-size: 13px; overflow-wrap: anywhere; }
+      .behavior-recent { margin-top: 16px; }
+      .behavior-recent-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .behavior-recent-table th, .behavior-recent-table td { border-bottom: 1px solid #e4e7eb; padding: 7px 6px; text-align: left; }
+      .behavior-recent-table th { color: #667085; font-weight: 800; }
       .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
       .memory-controls label { margin: 0; min-width: 180px; }
       .memory-day-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 16px; }
@@ -178,7 +207,7 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } .admin-terminal-body { height: 40vh; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row, .behavior-layout { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane, .behavior-detail { position: static; } .admin-terminal-body { height: 40vh; } }
     </style>
   </head>
   <body>
@@ -364,6 +393,7 @@ export function renderAdminHtmlV2(): string {
           <button class="tab" data-main-tab="token-usage" type="button">Token Usage</button>
           <button class="tab" data-main-tab="memory" type="button">Memory</button>
           <button class="tab" data-main-tab="plugins" type="button">Plugin</button>
+          <button class="tab" data-main-tab="initiated-behaviors" type="button">Initiated Behaviors</button>
           <button class="tab" data-main-tab="tool-preview" type="button">Tool Preview</button>
         </div>
         <section id="main-prompts" class="pane active">
@@ -456,6 +486,113 @@ export function renderAdminHtmlV2(): string {
           </section>
           <p class="muted" id="plugin-status"></p>
         </section>
+        <section id="main-initiated-behaviors" class="pane">
+          <div class="behavior-toolbar">
+            <div>
+              <h2>Initiated Behaviors</h2>
+              <p class="muted">Static draft UI. Configuration is not connected to runtime yet.</p>
+            </div>
+            <label for="behaviorTypeFilter">Type
+              <select id="behaviorTypeFilter" disabled>
+                <option value="all">all</option>
+                <option value="event">event-driven</option>
+                <option value="randomized">randomized</option>
+              </select>
+            </label>
+          </div>
+          <div class="behavior-layout">
+            <div>
+              <div class="behavior-table-wrap">
+                <table class="behavior-table" aria-label="Initiated behaviors">
+                  <thead>
+                    <tr>
+                      <th>Enabled</th>
+                      <th>Behavior</th>
+                      <th>Type</th>
+                      <th>Source / Schedule</th>
+                      <th>Last run</th>
+                      <th>Health</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="behavior-row active" data-behavior-row="sleep_goodnight" tabindex="0">
+                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td><span class="behavior-id">sleep_goodnight</span><div class="muted">Goodnight and enter sleep cocoon.</div></td>
+                      <td><span class="behavior-kind event">event</span></td>
+                      <td>sleep cocoon auto check</td>
+                      <td>today 21:43</td>
+                      <td><span class="behavior-status on">ok</span></td>
+                    </tr>
+                    <tr class="behavior-row" data-behavior-row="sleep_morning" tabindex="0">
+                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td><span class="behavior-id">sleep_morning</span><div class="muted">Say morning after wake event.</div></td>
+                      <td><span class="behavior-kind event">event</span></td>
+                      <td>wake state transition</td>
+                      <td>today 08:12</td>
+                      <td><span class="behavior-status on">ok</span></td>
+                    </tr>
+                    <tr class="behavior-row" data-behavior-row="sleep_force_wake" tabindex="0">
+                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" checked disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td><span class="behavior-id">sleep_force_wake</span><div class="muted">Respond as just woken by user.</div></td>
+                      <td><span class="behavior-kind event">event</span></td>
+                      <td>/force_wake</td>
+                      <td>never</td>
+                      <td><span class="behavior-status on">ready</span></td>
+                    </tr>
+                    <tr class="behavior-row" data-behavior-row="idle_check_in" tabindex="0">
+                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td><span class="behavior-id">idle_check_in</span><div class="muted">Low probability check-in after user idle time.</div></td>
+                      <td><span class="behavior-kind randomized">randomized</span></td>
+                      <td>10:00-22:00 · idle 180m · p 0.08</td>
+                      <td>never</td>
+                      <td><span class="behavior-status">planned</span></td>
+                    </tr>
+                    <tr class="behavior-row" data-behavior-row="memory_reflection" tabindex="0">
+                      <td><label class="plugin-switch" title="Preview only"><input type="checkbox" disabled /><span class="plugin-switch-visual"></span></label></td>
+                      <td><span class="behavior-id">memory_reflection</span><div class="muted">Occasional memory-oriented reflection prompt.</div></td>
+                      <td><span class="behavior-kind randomized">randomized</span></td>
+                      <td>20:00-23:00 · max 1/day</td>
+                      <td>never</td>
+                      <td><span class="behavior-status">planned</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="behavior-recent">
+                <h2>Recent Runs</h2>
+                <table class="behavior-recent-table">
+                  <thead>
+                    <tr><th>Time</th><th>Behavior</th><th>Trigger</th><th>Result</th><th>Session</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>today 21:43</td><td>sleep_goodnight</td><td>sleep cocoon</td><td>completed</td><td>demo-session</td></tr>
+                    <tr><td>today 08:12</td><td>sleep_morning</td><td>wake</td><td>completed</td><td>demo-session</td></tr>
+                    <tr><td>yesterday 22:18</td><td>sleep_goodnight</td><td>sleep cocoon</td><td>dry run</td><td>demo-session</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="behavior-detail" aria-label="Behavior detail">
+              <div class="behavior-detail-head">
+                <div>
+                  <h2 id="behaviorDetailTitle">sleep_goodnight</h2>
+                  <p class="muted" id="behaviorDetailSummary">Goodnight and enter sleep cocoon.</p>
+                </div>
+                <span id="behaviorDetailKind" class="behavior-kind event">event</span>
+              </div>
+              <div class="behavior-detail-grid">
+                <div class="behavior-detail-field"><strong>Enabled</strong><span id="behaviorDetailEnabled">on</span></div>
+                <div class="behavior-detail-field"><strong>Source / Schedule</strong><span id="behaviorDetailSource">sleep cocoon auto check</span></div>
+                <div class="behavior-detail-field"><strong>Cooldown</strong><span id="behaviorDetailCooldown">60 minutes</span></div>
+                <div class="behavior-detail-field"><strong>Prompt Instruction</strong><span id="behaviorDetailPrompt">Say goodnight, then call sleep_cocoon with action=in.</span></div>
+                <div class="behavior-detail-field"><strong>Dry Run</strong><span id="behaviorDetailDryRun">off</span></div>
+              </div>
+              <button type="button" disabled>Save Draft</button>
+              <button type="button" class="secondary" disabled>Test Behavior</button>
+              <p class="muted">Controls are disabled until the configuration API is implemented.</p>
+            </aside>
+          </div>
+        </section>
         <section id="main-tool-preview" class="pane">
           <div class="tool-preview-grid">
             <div>
@@ -485,15 +622,17 @@ export function renderAdminHtmlV2(): string {
       <section id="adminTerminal" class="admin-terminal" aria-label="Terminal logs">
         <div class="admin-terminal-head">
           <strong class="admin-terminal-title">Terminal</strong>
+          <button class="terminal-tab" data-terminal-tab="active-session" type="button" aria-label="Active Session">Active Session</button>
           <button class="terminal-tab active" data-terminal-tab="system" type="button" aria-label="System Log">System</button>
           <button class="terminal-tab" data-terminal-tab="messages" type="button" aria-label="Message Log">Message</button>
           <button class="terminal-tab" data-terminal-tab="events" type="button" aria-label="Event Log">Event</button>
           <div class="terminal-actions">
             <button id="terminalRefresh" class="terminal-action" type="button" title="Refresh logs" aria-label="Refresh logs">↻</button>
-            <button id="terminalCollapse" class="terminal-action" type="button" title="Collapse terminal" aria-label="Collapse terminal">⌄</button>
+            <button id="terminalCollapse" class="terminal-action" type="button" title="Pause terminal refresh" aria-label="Pause terminal refresh">Ⅱ</button>
           </div>
         </div>
         <div class="admin-terminal-body">
+          <div id="terminal-active-session" class="terminal-pane"><div id="activeSessionLogs" class="logs">Loading...</div></div>
           <div id="terminal-system" class="terminal-pane active"><div id="logs" class="logs">Loading...</div></div>
           <div id="terminal-messages" class="terminal-pane"><div id="messageLogs" class="logs">Loading...</div></div>
           <div id="terminal-events" class="terminal-pane"><div id="eventLogs" class="logs">Loading...</div></div>
@@ -502,23 +641,106 @@ export function renderAdminHtmlV2(): string {
     </div>
     <script>
       const $ = (id) => document.getElementById(id);
+      let terminalAutoRefreshPaused = false;
+      let terminalRefreshInFlight = false;
+      const initiatedBehaviorDrafts = {
+        sleep_goodnight: {
+          title: "sleep_goodnight",
+          summary: "Goodnight and enter sleep cocoon.",
+          kind: "event",
+          enabled: "on",
+          source: "sleep cocoon auto check",
+          cooldown: "60 minutes",
+          prompt: "Say goodnight, then call sleep_cocoon with action=in.",
+          dryRun: "off"
+        },
+        sleep_morning: {
+          title: "sleep_morning",
+          summary: "Say morning after wake event.",
+          kind: "event",
+          enabled: "on",
+          source: "wake state transition",
+          cooldown: "180 minutes",
+          prompt: "Greet the user in a morning state after the wake event.",
+          dryRun: "off"
+        },
+        sleep_force_wake: {
+          title: "sleep_force_wake",
+          summary: "Respond as just woken by user.",
+          kind: "event",
+          enabled: "on",
+          source: "/force_wake",
+          cooldown: "15 minutes",
+          prompt: "Respond as just woken by the user's force-wake action. Do not treat it as sleep_morning.",
+          dryRun: "off"
+        },
+        idle_check_in: {
+          title: "idle_check_in",
+          summary: "Low probability check-in after user idle time.",
+          kind: "randomized",
+          enabled: "off",
+          source: "10:00-22:00 · idle 180m · p 0.08",
+          cooldown: "360 minutes",
+          prompt: "If context allows, make a short low-pressure check-in.",
+          dryRun: "on"
+        },
+        memory_reflection: {
+          title: "memory_reflection",
+          summary: "Occasional memory-oriented reflection prompt.",
+          kind: "randomized",
+          enabled: "off",
+          source: "20:00-23:00 · max 1/day",
+          cooldown: "1440 minutes",
+          prompt: "Prepare a lightweight reflection using recent memory context.",
+          dryRun: "on"
+        }
+      };
+      function selectInitiatedBehavior(id) {
+        const detail = initiatedBehaviorDrafts[id];
+        if (!detail) return;
+        document.querySelectorAll("[data-behavior-row]").forEach((row) => row.classList.toggle("active", row.dataset.behaviorRow === id));
+        $("behaviorDetailTitle").textContent = detail.title;
+        $("behaviorDetailSummary").textContent = detail.summary;
+        $("behaviorDetailKind").textContent = detail.kind;
+        $("behaviorDetailKind").className = "behavior-kind " + detail.kind;
+        $("behaviorDetailEnabled").textContent = detail.enabled;
+        $("behaviorDetailSource").textContent = detail.source;
+        $("behaviorDetailCooldown").textContent = detail.cooldown;
+        $("behaviorDetailPrompt").textContent = detail.prompt;
+        $("behaviorDetailDryRun").textContent = detail.dryRun;
+      }
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
-        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-tool-preview").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-initiated-behaviors,#main-tool-preview").forEach((pane) => pane.classList.remove("active"));
         $(kind === "left" ? "left-" + name : "main-" + name).classList.add("active");
       }
       function setTerminalTab(name) {
         document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.classList.toggle("active", button.dataset.terminalTab === name));
-        document.querySelectorAll("#terminal-system,#terminal-messages,#terminal-events").forEach((pane) => pane.classList.remove("active"));
+        document.querySelectorAll("#terminal-active-session,#terminal-system,#terminal-messages,#terminal-events").forEach((pane) => pane.classList.remove("active"));
         $("terminal-" + name).classList.add("active");
       }
       function toggleTerminalCollapsed() {
         const terminal = $("adminTerminal");
         terminal.classList.toggle("collapsed");
-        const collapsed = terminal.classList.contains("collapsed");
-        $("terminalCollapse").textContent = collapsed ? "^" : "⌄";
-        $("terminalCollapse").setAttribute("title", collapsed ? "Expand terminal" : "Collapse terminal");
-        $("terminalCollapse").setAttribute("aria-label", collapsed ? "Expand terminal" : "Collapse terminal");
+      }
+      function updateTerminalAutoRefreshButton() {
+        $("terminalCollapse").textContent = terminalAutoRefreshPaused ? "▶" : "Ⅱ";
+        $("terminalCollapse").setAttribute("title", terminalAutoRefreshPaused ? "Resume terminal refresh" : "Pause terminal refresh");
+        $("terminalCollapse").setAttribute("aria-label", terminalAutoRefreshPaused ? "Resume terminal refresh" : "Pause terminal refresh");
+      }
+      function toggleTerminalAutoRefreshPaused() {
+        terminalAutoRefreshPaused = !terminalAutoRefreshPaused;
+        updateTerminalAutoRefreshButton();
+      }
+      async function refreshTerminal() {
+        if (terminalRefreshInFlight) return;
+        terminalRefreshInFlight = true;
+        try {
+          await refreshLogs();
+          await refreshActiveSessionTerminal();
+        } finally {
+          terminalRefreshInFlight = false;
+        }
       }
       document.querySelectorAll("[data-left-tab]").forEach((button) => button.addEventListener("click", () => setTabs("left", button.dataset.leftTab)));
       document.querySelectorAll("[data-channel-tab]").forEach((button) => button.addEventListener("click", () => {
@@ -526,6 +748,14 @@ export function renderAdminHtmlV2(): string {
         document.querySelectorAll("#channel-feishu,#channel-wechat").forEach((pane) => pane.classList.remove("active"));
         $("channel-" + button.dataset.channelTab).classList.add("active");
       }));
+      document.querySelectorAll("[data-behavior-row]").forEach((row) => {
+        row.addEventListener("click", () => selectInitiatedBehavior(row.dataset.behaviorRow));
+        row.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          selectInitiatedBehavior(row.dataset.behaviorRow);
+        });
+      });
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);
         if (button.dataset.mainTab === "shells") await refreshShellEditor();
@@ -535,14 +765,22 @@ export function renderAdminHtmlV2(): string {
         if (button.dataset.mainTab === "plugins") await refreshPlugins();
         if (button.dataset.mainTab === "tool-preview") await refreshToolPreviewTools();
       }));
-      document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.addEventListener("click", () => setTerminalTab(button.dataset.terminalTab)));
-      $("terminalRefresh").addEventListener("click", refreshLogs);
-      $("terminalCollapse").addEventListener("click", toggleTerminalCollapsed);
+      document.querySelectorAll("[data-terminal-tab]").forEach((button) => button.addEventListener("click", async () => {
+        setTerminalTab(button.dataset.terminalTab);
+        if (button.dataset.terminalTab === "active-session") await refreshActiveSessionTerminal();
+      }));
+      $("terminalRefresh").addEventListener("click", async () => {
+        await refreshTerminal();
+      });
+      $("terminalCollapse").addEventListener("click", toggleTerminalAutoRefreshPaused);
       document.querySelector(".admin-terminal-head").addEventListener("click", (event) => {
         if (event.target.closest("button")) return;
         toggleTerminalCollapsed();
       });
       $("collapse").addEventListener("click", () => $("shell").classList.toggle("collapsed"));
+      setInterval(() => {
+        if (!terminalAutoRefreshPaused) refreshTerminal();
+      }, 1000);
 
       async function refresh() {
         const config = await fetch("/admin/api/config").then((res) => res.json());
@@ -584,7 +822,7 @@ export function renderAdminHtmlV2(): string {
         $("pairings").textContent = JSON.stringify(pairings.contacts, null, 2);
         await refreshLLMRequests();
         await refreshTokenUsage();
-        await refreshLogs();
+        await refreshTerminal();
       }
 
       async function refreshLLMRequests() {
@@ -603,6 +841,12 @@ export function renderAdminHtmlV2(): string {
         $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || [], requestPayload.memorySessions || []);
         bindLLMSessionDetails("llmChainSessions");
         $("llmChainSessions").scrollTop = $("llmChainSessions").scrollHeight;
+      }
+
+      async function refreshActiveSessionTerminal() {
+        const payload = await fetch("/admin/api/llm-requests").then((res) => res.json());
+        $("activeSessionLogs").innerHTML = renderActiveSessionTerminalRows(payload.activeSession);
+        $("activeSessionLogs").scrollTop = $("activeSessionLogs").scrollHeight;
       }
 
       async function refreshTokenUsage() {
@@ -1229,6 +1473,51 @@ Timing:
 
       function renderActiveLLMSession(session) {
         return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} rounds=\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} messages=\${escapeHtml(session.messageCount ?? 0)}</div>\`;
+      }
+
+      function renderActiveSessionTerminalRows(session) {
+        if (!session) return '<div class="log-line">Active session: none</div>';
+        const status = isActiveSessionWaiting(session) ? "waiting" : "ready";
+        const latest = latestActiveSessionMessage(session);
+        const message = status === "waiting" ? "waiting" : latest.summary;
+        const meta = [
+          "session=" + (session.id || ""),
+          "mode=" + (session.mode || "normal"),
+          "messages=" + (session.messageCount ?? (Array.isArray(session.messages) ? session.messages.length : 0)),
+          session.updatedAt ? "updated=" + session.updatedAt : ""
+        ].filter(Boolean).join(" ");
+        return \`<div class="log-line">[\${escapeHtml(status)}] \${escapeHtml(meta)} · \${escapeHtml(latest.role)} · \${escapeHtml(message)}</div>\`;
+      }
+
+      function isActiveSessionWaiting(session) {
+        if (session.currentRound && session.currentRound.status === "running") return true;
+        const requestRound = typeof session.latestRequest?.round === "number" ? session.latestRequest.round : undefined;
+        const responseRound = typeof session.latestResponse?.round === "number" ? session.latestResponse.round : undefined;
+        return typeof requestRound === "number" && (typeof responseRound !== "number" || requestRound > responseRound);
+      }
+
+      function latestActiveSessionMessage(session) {
+        const messages = Array.isArray(session.messages) ? session.messages : [];
+        const latest = messages[messages.length - 1];
+        if (!latest) return { role: "none", summary: "No messages in active session." };
+        return {
+          role: latest.role || "unknown",
+          summary: summarizeLLMMessageForRow(latest)
+        };
+      }
+
+      function summarizeLLMMessageForRow(message) {
+        if (typeof message.content === "string" && message.content.trim()) return compactLogText(message.content);
+        if (Array.isArray(message.toolCalls) && message.toolCalls.length) {
+          return "tool_calls: " + message.toolCalls.map((call) => call.function?.name || call.name || call.id || "unknown").join(", ");
+        }
+        if (message.reasoningContent) return compactLogText(message.reasoningContent);
+        return JSON.stringify(message);
+      }
+
+      function compactLogText(value) {
+        const text = String(value || "").replace(/\\s+/g, " ").trim();
+        return text.length > 240 ? text.slice(0, 237) + "..." : text;
       }
 
       function renderLLMSessionGroups(activeSession, clearedSessions, memorySessions) {
@@ -3172,7 +3461,6 @@ Timing:
         await refreshLLMRequests();
       }
       refresh();
-      setInterval(refreshLogs, 3000);
     </script>
   </body>
 </html>`;

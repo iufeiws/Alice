@@ -16,7 +16,8 @@
 
 - 新增全局底部终端，视觉和交互参考 VS Code Terminal 面板。
 - 终端支持展开、收起、最小化三种常用状态。
-- 终端内提供 `Message`、`Event`、`System` 三个 tab。
+- 终端内提供 `Active Session`、`Message`、`Event`、`System` 四个 tab。
+- 终端每秒自动刷新；右侧暂停按钮只暂停自动刷新，不负责收放。
 - 从主导航移除 `Message Log`、`Event Log`、`System Log`。
 - 保留现有日志数据源和渲染内容，不改变后端 API。
 - 不影响左侧配置面板的现有收缩按钮。
@@ -38,7 +39,7 @@
 │                                                              │
 │                                                              │
 ├──────────────────────────────────────────────────────────────┤
-│ TERMINAL  Message | Event | System              [_] [^/v]    │
+│ TERMINAL  Active Session | Message | Event | System [_] [^/v]│
 │ ──────────────────────────────────────────────────────────── │
 │ log line                                                     │
 │ log line                                                     │
@@ -66,15 +67,18 @@
 标题栏包含：
 
 - 标题：`Terminal`
-- tab：`Message`、`Event`、`System`
-- 刷新按钮：复用现有 `refreshLogs()` 行为。
-- 展开/收起按钮。
+- tab：`Active Session`、`Message`、`Event`、`System`
+- 刷新按钮：立即刷新 Terminal 全部内容。
+- 暂停刷新按钮：暂停或恢复每秒自动刷新。
+- 展开/收起：点击标题栏空白区域切换，不占用暂停按钮。
 
 默认行为：
 
 - 页面首次加载时终端默认展开。
 - 当前 tab 默认 `System`，因为系统日志最适合作为运行时总览。
-- 用户点击 `Message`、`Event`、`System` 时只切换终端内部内容，不切换主内容页。
+- 用户点击 `Active Session`、`Message`、`Event`、`System` 时只切换终端内部内容，不切换主内容页。
+- `Active Session` 每行显示当前 active LLM session 的最新 message；如果最新 request 还没有对应 response，则显示 `waiting`。
+- Terminal 默认每秒自动刷新一次；暂停后保留当前内容，直到用户手动刷新或恢复自动刷新。
 - 用户切换主内容 tab 时，终端保持当前展开状态和当前日志 tab。
 
 滚动行为：
@@ -89,6 +93,7 @@
 
 | 终端 tab | 元素 | 接口 |
 | --- | --- | --- |
+| Active Session | `activeSessionLogs` | `GET /admin/api/llm-requests` |
 | Message | `messageLogs` | `GET /admin/api/message-logs` |
 | Event | `eventLogs` | `GET /admin/api/message-event-logs` |
 | System | `logs` | `GET /admin/api/logs` |
@@ -119,13 +124,15 @@ apps/api/src/admin-html.ts
 <div id="adminTerminal" class="admin-terminal">
   <div class="admin-terminal-head">
     <strong>Terminal</strong>
+    <button data-terminal-tab="active-session">Active Session</button>
     <button data-terminal-tab="system">System</button>
     <button data-terminal-tab="messages">Message</button>
     <button data-terminal-tab="events">Event</button>
     <button id="terminalRefresh" type="button">Refresh</button>
-    <button id="terminalCollapse" type="button">Collapse</button>
+    <button id="terminalCollapse" type="button">Pause</button>
   </div>
   <div class="admin-terminal-body">
+    <div id="terminal-active-session" class="terminal-pane"><div id="activeSessionLogs" class="logs">Loading...</div></div>
     <div id="terminal-system" class="terminal-pane active"><div id="logs" class="logs">Loading...</div></div>
     <div id="terminal-messages" class="terminal-pane"><div id="messageLogs" class="logs">Loading...</div></div>
     <div id="terminal-events" class="terminal-pane"><div id="eventLogs" class="logs">Loading...</div></div>
@@ -148,9 +155,11 @@ apps/api/src/admin-html.ts
 
 - 主导航中不再出现 `Message Log`、`Event Log`、`System Log`。
 - 页面底部出现 `Terminal` 面板。
-- 终端里可以在 `Message`、`Event`、`System` 三类日志之间切换。
+- 终端里可以在 `Active Session`、`Message`、`Event`、`System` 四类内容之间切换。
+- `Active Session` 可以显示当前 session 的最新 message；等待 LLM 返回时显示 `waiting`。
 - 三类日志内容和迁移前一致。
 - 终端可收缩，收缩后不遮挡主内容操作。
 - 切换主内容 tab 不会重置终端当前 tab。
 - 页面首次加载和点击刷新都能正常调用现有日志接口。
+- Terminal 默认每秒自动刷新；点击暂停按钮后停止自动刷新，再点击恢复。
 - TypeScript/typecheck 通过。

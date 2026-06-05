@@ -6,7 +6,7 @@ import type {
   InboundAudioStreamChunkFrame,
   InboundAudioStreamStartFrame
 } from "../../../packages/types/src/index.js";
-import type { VoiceSynthesizer } from "../../messaging/src/index.js";
+import type { VoiceSynthesizer } from "../../tts/src/index.js";
 import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
 
 const childProcess = await import("node:child_process");

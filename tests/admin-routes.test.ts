@@ -74,9 +74,9 @@ test("llm api preset save accepts long timeout values", async () => {
   assert.equal(saved.presets[0].timeoutMs, 600_000);
 });
 
-test("admin plugin list exposes japanese voice config card state", async () => {
+test("admin plugin list exposes tts config card state", async () => {
   const root = makeTempDir("admin-plugin-list");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
@@ -88,20 +88,49 @@ test("admin plugin list exposes japanese voice config card state", async () => {
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { japaneseVoice: { configPath } }
+    pluginConfigs: { tts: { configPath } }
   };
   const handler = createApiRequestHandler(context);
 
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins", {}), response);
   const body = JSON.parse(response.body);
-  const japaneseVoice = body.plugins.find((plugin: { id: string }) => plugin.id === "japanese-voice");
+  const tts = body.plugins.find((plugin: { id: string }) => plugin.id === "tts");
 
   assert.equal(response.statusCode, 200);
-  assert.equal(japaneseVoice.status, "enabled");
-  assert.equal(japaneseVoice.health, "healthy");
-  assert.equal(japaneseVoice.configurable, true);
-  assert.equal(japaneseVoice.switchable, true);
+  assert.equal(tts.status, "enabled");
+  assert.equal(tts.health, "healthy");
+  assert.equal(tts.configurable, true);
+  assert.equal(tts.switchable, true);
+});
+
+test("admin plugin list reads legacy japanese voice config when tts config is missing", async () => {
+  const root = makeTempDir("admin-plugin-legacy-config");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
+  const legacyConfigPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  fs.mkdirSync(path.dirname(legacyConfigPath), { recursive: true });
+  fs.writeFileSync(legacyConfigPath, `${JSON.stringify({
+    enabled: true,
+    apiPresetName: "voice",
+    prompt: "Translate:"
+  })}\n`);
+  writePreset(root, "voice");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), response);
+  const body = JSON.parse(response.body);
+  const tts = body.plugins.find((plugin: { id: string }) => plugin.id === "tts");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(tts.status, "enabled");
+  assert.equal(tts.configSource, configPath);
 });
 
 test("admin plugin list exposes ASR config card state", async () => {
@@ -139,9 +168,9 @@ test("admin plugin list exposes ASR config card state", async () => {
   assert.equal(asr.switchable, true);
 });
 
-test("admin plugin config patch writes japanese voice config with preset reference only", async () => {
+test("admin plugin config patch writes tts config with preset reference only", async () => {
   const root = makeTempDir("admin-plugin-config");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -153,22 +182,29 @@ test("admin plugin config patch writes japanese voice config with preset referen
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { japaneseVoice: { configPath } }
+    pluginConfigs: { tts: { configPath } }
   };
   const handler = createApiRequestHandler(context);
+  const modelConfigName = `zh-${path.basename(root)}`;
 
   const response = createResponse();
-  await handler(createRequest("PATCH", "/admin/api/plugins/japanese-voice/config", {
+  await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
     enabled: true,
-    translationEnabled: false,
-    prompt: "New prompt",
-    apiPresetName: "voice",
+    newTranslationPresetName: "main",
+    currentTranslation: {
+      translationEnabled: false,
+      prompt: "New prompt",
+      apiPresetName: "voice"
+    },
     voice: {
-      modelDir: "assets/plugin/japanese-voice/model",
-      referenceText: "これは参照テキストです。",
-      speed: 1.2,
-      partSilenceSeconds: 0.45,
-      splitText: false
+      newModelConfigName: modelConfigName,
+      currentModel: {
+        language: "zh",
+        referenceText: "これは参照テキストです。",
+        speed: 1.2,
+        partSilenceSeconds: 0.45,
+        splitText: false
+      }
     }
   }), response);
   const body = JSON.parse(response.body);
@@ -176,23 +212,63 @@ test("admin plugin config patch writes japanese voice config with preset referen
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
-  assert.equal(body.configValue.apiPresetName, "voice");
-  assert.equal(body.configValue.api_preset, undefined);
+  assert.equal(body.configValue.translationPresetName, "default");
+  assert.equal(body.configValue.translationPresets.main.apiPresetName, "voice");
+  assert.equal(body.configValue.voice.modelConfigs[modelConfigName].language, "zh");
   assert.equal(saved.enabled, true);
-  assert.equal(saved.translationEnabled, false);
-  assert.equal(saved.prompt, "New prompt");
-  assert.equal(saved.apiPresetName, "voice");
+  assert.equal(saved.translationPresetName, "default");
+  assert.equal(saved.translationPresets.main.translationEnabled, false);
+  assert.equal(saved.translationPresets.main.prompt, "New prompt");
+  assert.equal(saved.translationPresets.main.apiPresetName, "voice");
   assert.equal(saved.api_preset, undefined);
-  assert.equal(saved.voice.modelDir, "assets/plugin/japanese-voice/model");
-  assert.equal(saved.voice.referenceText, "これは参照テキストです。");
-  assert.equal(saved.voice.speed, 1.2);
-  assert.equal(saved.voice.partSilenceSeconds, 0.45);
-  assert.equal(saved.voice.splitText, false);
+  assert.equal(saved.voice.modelConfigName, "jp");
+  assert.equal(saved.voice.newModelConfigName, undefined);
+  assert.equal(saved.voice.currentModel, undefined);
+  assert.equal(saved.voice.modelConfigs[modelConfigName].language, "zh");
+  assert.equal(saved.voice.modelConfigs[modelConfigName].modelDir, undefined);
+  assert.equal(saved.voice.modelConfigs[modelConfigName].referenceText, undefined);
+  assert.equal(saved.voice.modelConfigs[modelConfigName].speed, 1.2);
+  assert.equal(saved.voice.modelConfigs[modelConfigName].partSilenceSeconds, 0.45);
+  assert.equal(saved.voice.modelConfigs[modelConfigName].splitText, false);
+  assert.equal(fs.readFileSync(path.join("assets", "tts", "preset", modelConfigName, "reference.txt"), "utf8"), "これは参照テキストです。");
+  fs.rmSync(path.join("assets", "tts", "preset", modelConfigName), { recursive: true, force: true });
 });
 
-test("admin plugin test can run japanese voice tts with translation disabled", async () => {
+test("admin TTS config schema exposes voice language and language model folder", async () => {
+  const root = makeTempDir("admin-tts-config-schema");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/tts/config", {}), response);
+  const body = JSON.parse(response.body);
+  const configField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.modelEditPresetName");
+  const languageField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.language");
+  const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.modelDir");
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model", "general"]);
+  assert.equal(configField.type, "select");
+  assert.equal(configField.group, "model");
+  assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["jp"]);
+  assert.equal(languageField.type, "select");
+  assert.equal(languageField.group, "model");
+  assert.deepEqual(languageField.options.map((option: { value: string }) => option.value), ["jp", "zh", "en"]);
+  assert.equal(modelField.label, "Model Folder");
+  assert.equal(modelField.group, "model");
+});
+
+test("admin plugin test can run tts with translation disabled", async () => {
   const root = makeTempDir("admin-plugin-test-no-translate");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   const voicePath = path.join("assets", "generated", "tts", `voice-${path.basename(root)}.opus`);
   let capturedText = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -208,7 +284,7 @@ test("admin plugin test can run japanese voice tts with translation disabled", a
       tts: { mossOutputDir: path.join("assets", "generated", "tts") }
     },
     pluginConfigs: {
-      japaneseVoice: {
+      tts: {
         configPath,
         testVoiceSynthesizer: async ({ text }: { text: string }) => {
           capturedText = text;
@@ -225,7 +301,7 @@ test("admin plugin test can run japanese voice tts with translation disabled", a
   const handler = createApiRequestHandler(context);
 
   const response = createResponse();
-  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/test", { text: "晚点见" }), response);
+  await handler(createRequest("POST", "/admin/api/plugins/tts/test", { text: "晚点见" }), response);
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
@@ -318,9 +394,9 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.tencent.engineModelType").group, "tencent");
 });
 
-test("admin plugin enable and disable update japanese voice config", async () => {
+test("admin plugin enable and disable update tts config", async () => {
   const root = makeTempDir("admin-plugin-switch");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: false,
@@ -332,17 +408,17 @@ test("admin plugin enable and disable update japanese voice config", async () =>
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { japaneseVoice: { configPath } }
+    pluginConfigs: { tts: { configPath } }
   };
   const handler = createApiRequestHandler(context);
 
   const enableResponse = createResponse();
-  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/enable", {}), enableResponse);
+  await handler(createRequest("POST", "/admin/api/plugins/tts/enable", {}), enableResponse);
   assert.equal(enableResponse.statusCode, 200);
   assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, true);
 
   const disableResponse = createResponse();
-  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/disable", {}), disableResponse);
+  await handler(createRequest("POST", "/admin/api/plugins/tts/disable", {}), disableResponse);
   assert.equal(disableResponse.statusCode, 200);
   assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, false);
 });
@@ -377,7 +453,7 @@ test("admin plugin enable and disable update ASR config", async () => {
 
 test("admin plugin model folder upload flattens files under plugin model root", async () => {
   const root = makeTempDir("admin-plugin-asset");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
   writePreset(root, "voice");
@@ -385,26 +461,26 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { japaneseVoice: { configPath } }
+    pluginConfigs: { tts: { configPath } }
   };
   const handler = createApiRequestHandler(context);
 
   const response = createResponse();
   const fileName = `model-${path.basename(root)}.onnx`;
-  await handler(createRawRequest("POST", "/admin/api/plugins/japanese-voice/assets/model", Buffer.from("model"), {
+  await handler(createRawRequest("POST", "/admin/api/plugins/tts/assets/model", Buffer.from("model"), {
     "x-file-name": encodeURIComponent(fileName),
     "x-relative-dir": encodeURIComponent("uploaded-folder/nested")
   }), response);
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const expectedAssetPath = `assets/plugin/japanese-voice/model/${fileName}`;
+  const expectedAssetPath = `assets/tts/preset/jp/model/${fileName}`;
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.assetPath, expectedAssetPath);
-  assert.equal(saved.voice.modelDir, "assets/plugin/japanese-voice/model");
-  assert.equal(fs.readFileSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), "utf8"), "model");
-  assert.equal(fs.existsSync(path.join("assets", "plugin", "japanese-voice", "model", "uploaded-folder", "nested", fileName)), false);
-  fs.rmSync(path.join("assets", "plugin", "japanese-voice", "model", fileName), { force: true });
+  assert.equal(saved.voice.modelConfigs.jp.modelDir, undefined);
+  assert.equal(fs.readFileSync(path.join("assets", "tts", "preset", "jp", "model", fileName), "utf8"), "model");
+  assert.equal(fs.existsSync(path.join("assets", "tts", "preset", "jp", "model", "uploaded-folder", "nested", fileName)), false);
+  fs.rmSync(path.join("assets", "tts", "preset", "jp", "model", fileName), { force: true });
 });
 
 test("admin plugin ASR test audio upload stores plugin asset path", async () => {
@@ -440,20 +516,37 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
   fs.rmSync(path.join("assets", "plugin", "asr", "test-audio", fileName), { force: true });
 });
 
-test("admin plugin test runs japanese voice translation and tts with timing", async () => {
+test("admin plugin test runs tts translation and tts with prompt variables and timing", async () => {
   const root = makeTempDir("admin-plugin-test");
-  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const configPath = path.join(root, "plugins", "tts", "config.json");
   const ttsOutputDir = path.join("assets", "generated", "tts");
   const voiceFileName = `voice-${path.basename(root)}.opus`;
   const voicePath = path.join(ttsOutputDir, voiceFileName);
   let capturedGenie: unknown;
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(ttsOutputDir, { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    translationPresetName: "main",
+    translationPresets: {
+      main: {
+        translationEnabled: true,
+        apiPresetName: "voice",
+        prompt: "Translate for {{user}} at {{date}}:"
+      }
+    },
+    voice: {
+      modelConfigName: "zh-main",
+      modelConfigs: {
+        "zh-main": { language: "zh", splitText: false }
+      }
+    }
+  })}\n`);
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
   const senderAgents: string[] = [];
+  const systemPrompts: string[] = [];
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     config: {
@@ -461,7 +554,7 @@ test("admin plugin test runs japanese voice translation and tts with timing", as
       tts: { mossOutputDir: ttsOutputDir }
     },
     pluginConfigs: {
-      japaneseVoice: {
+      tts: {
         configPath,
         testVoiceSynthesizer: async ({ text, genie }: { text: string; genie?: unknown }) => {
           capturedGenie = genie;
@@ -472,13 +565,14 @@ test("admin plugin test runs japanese voice translation and tts with timing", as
     },
     llmRequestSender: async (input: any) => {
       senderAgents.push(input.agentId);
+      systemPrompts.push(String(input.messages[0]?.content ?? ""));
       return { message: { role: "assistant", content: "また後で" } };
     }
   };
   const handler = createApiRequestHandler(context);
 
   const response = createResponse();
-  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/test", { text: "晚点见" }), response);
+  await handler(createRequest("POST", "/admin/api/plugins/tts/test", { text: "晚点见" }), response);
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
@@ -489,8 +583,9 @@ test("admin plugin test runs japanese voice translation and tts with timing", as
   assert.equal(typeof body.result.timing.translationMs, "number");
   assert.equal(typeof body.result.timing.ttsMs, "number");
   assert.equal(typeof body.result.timing.totalMs, "number");
-  assert.deepEqual(senderAgents, ["japanese-voice"]);
-  assert.deepEqual(capturedGenie, { language: "jp", modelDir: undefined, referenceAudio: undefined, referenceText: undefined, splitText: false });
+  assert.deepEqual(senderAgents, ["tts"]);
+  assert.deepEqual(systemPrompts, ["Translate for user at 2026-05-24:"]);
+  assert.deepEqual(capturedGenie, { language: "zh", modelDir: "assets/tts/preset/zh-main/model", referenceAudio: undefined, referenceText: undefined, splitText: false });
   fs.rmSync(voicePath, { force: true });
 });
 

@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "translationPresetName": "jp",
+  "translationPresets": {
+    "default": {
+      "translationEnabled": true,
+      "apiPresetName": "deepseek-v4-flash-nothink",
+      "prompt": "你是一个日语语音合成预处理助手。请严格按以下规则翻译用户给与的文本：\n\n1. 理解原意将整个输入文本翻译成自然、口语化的日语。避免机械翻译\n2. 将英文单词转换成对应的片假名外来语读音（基于标准日语发音规则）。\n3. 数字、符号等也需转写为假名读法。\n4. 输出需适合日语语音演绎。\n5. 对专有名词优先使用日语中自然的读法。\n6. 最终仅输出一行翻译后的文本，不附带任何解释、原文或额外标记。\n7. 对于日语要输出原文不变\n\n"
+    },
+    "jp": {
+      "translationEnabled": true,
+      "apiPresetName": "deepseek-v4-flash-nothink",
+      "prompt": "你是一个日语语音合成预处理助手。请严格按以下规则翻译用户给与的文本：\n\n1. 理解原意将整个输入文本翻译成自然、口语化的日语。避免机械翻译\n2. 将英文单词转换成对应的片假名外来语读音（基于标准日语发音规则）。\n3. 数字、符号等也需转写为假名读法。\n4. 输出需适合日语语音演绎。\n5. 对专有名词优先使用日语中自然的读法。\n6. 最终仅输出一行翻译后的文本，不附带任何解释、原文或额外标记。\n7. 对于日语要输出原文不变\n\n"
+    }
+  },
+  "translationEnabled": true,
+  "apiPresetName": "deepseek-v4-flash-nothink",
+  "prompt": "你是一个日语语音合成预处理助手。请严格按以下规则翻译用户给与的文本：\n\n1. 理解原意将整个输入文本翻译成自然、口语化的日语。避免机械翻译\n2. 将英文单词转换成对应的片假名外来语读音（基于标准日语发音规则）。\n3. 数字、符号等也需转写为假名读法。\n4. 输出需适合日语语音演绎。\n5. 对专有名词优先使用日语中自然的读法。\n6. 最终仅输出一行翻译后的文本，不附带任何解释、原文或额外标记。\n7. 对于日语要输出原文不变\n\n",
+  "voice": {
+    "modelConfigName": "jp",
+    "modelConfigs": {
+      "jp": {
+        "language": "jp",
+        "speed": 1.15,
+        "partSilenceSeconds": 0.25,
+        "splitText": true
+      }
+    }
+  }
+}

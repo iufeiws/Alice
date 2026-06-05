@@ -17,8 +17,8 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, formatCheckChatMessages, type VoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
-import { japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig, translateJapaneseVoiceText, type JapaneseVoicePluginConfig } from "../../../plugins/japanese-voice/src/index.js";
+import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
@@ -85,18 +85,40 @@ type AdminPluginSummary = {
   lastUsedAt?: string;
 };
 
-type JapaneseVoiceAdminConfig = {
+type TtsAdminConfig = {
   enabled: boolean;
-  translationEnabled: boolean;
-  apiPresetName?: string;
-  prompt: string;
+  translationPresetName?: string;
+  translationEditPresetName?: string;
+  newTranslationPresetName?: string;
+  translationPresets?: Record<string, {
+    translationEnabled?: boolean;
+    apiPresetName?: string;
+    prompt?: string;
+  }>;
+  currentTranslation?: {
+    translationEnabled?: boolean;
+    apiPresetName?: string;
+    prompt?: string;
+  };
   voice: {
-    modelDir?: string;
-    referenceAudio?: string;
-    referenceText?: string;
-    speed?: number;
-    partSilenceSeconds?: number;
-    splitText?: boolean;
+    modelConfigName?: string;
+    modelEditPresetName?: string;
+    newModelConfigName?: string;
+    modelConfigs?: Record<string, {
+      language?: "jp" | "zh" | "en";
+      speed?: number;
+      partSilenceSeconds?: number;
+      splitText?: boolean;
+    }>;
+    currentModel?: {
+      language?: "jp" | "zh" | "en";
+      speed?: number;
+      partSilenceSeconds?: number;
+      splitText?: boolean;
+      modelDir?: string;
+      referenceAudio?: string;
+      referenceText?: string;
+    };
   };
 };
 
@@ -194,7 +216,7 @@ export type AdminRoutesContext = {
   };
   runtime: { feishuStarted: boolean; wechatStarted: boolean };
   pluginConfigs?: {
-    japaneseVoice?: {
+    tts?: {
       configPath?: string;
       testVoiceSynthesizer?: VoiceSynthesizer;
     };
@@ -724,7 +746,7 @@ async function handleAdminPluginApi(context: AdminRoutesContext, request: any, r
     return true;
   }
 
-  const pluginId = parts[3];
+  const pluginId = normalizeAdminPluginId(parts[3]);
   const action = parts[4];
   if (!pluginId || !action) return false;
 
@@ -772,17 +794,22 @@ function listAdminPlugins(context: AdminRoutesContext): AdminPluginSummary[] {
 }
 
 function findAdminPlugin(context: AdminRoutesContext, pluginId: string): AdminPluginSummary | undefined {
-  return findAdminPluginEntry(context, pluginId)?.summary(context);
+  return findAdminPluginEntry(context, normalizeAdminPluginId(pluginId))?.summary(context);
 }
 
 function findAdminPluginEntry(context: AdminRoutesContext, pluginId: string): AdminPluginRegistryEntry | undefined {
-  return adminPluginRegistry(context).find((entry) => entry.summary(context).id === pluginId);
+  const normalizedPluginId = normalizeAdminPluginId(pluginId);
+  return adminPluginRegistry(context).find((entry) => entry.summary(context).id === normalizedPluginId);
+}
+
+function normalizeAdminPluginId(pluginId: string): string {
+  return pluginId === "japanese-voice" ? "tts" : pluginId;
 }
 
 function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryEntry[] {
   return [
     asrPluginEntry(),
-    japaneseVoicePluginEntry(),
+    ttsPluginEntry(),
     feishuPluginEntry(),
     wechatPluginEntry()
   ];
@@ -927,17 +954,40 @@ async function uploadAdminPluginAsset(context: AdminRoutesContext, request: any,
 
 function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPluginRegistryEntry): unknown {
   const plugin = entry.summary(context);
+  const configValue = entry.config?.(context) ?? {};
+  const configSchema = withDynamicPluginConfigSchema(plugin.id, entry.configSchema ?? { fields: [] }, configValue);
   return {
     plugin: {
       ...plugin,
       version: "local"
     },
-    configSchema: entry.configSchema ?? { fields: [] },
-    configValue: entry.config?.(context) ?? {},
+    configSchema,
+    configValue,
     apiPresets: publicLLMApiPresets(readLLMApiPresets(context)),
     routePreview: entry.routePreview ?? [],
     runtimeAccess: entry.runtimeAccess ?? [],
     testSchema: entry.testSchema
+  };
+}
+
+function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<AdminPluginRegistryEntry["configSchema"]>, configValue: unknown): NonNullable<AdminPluginRegistryEntry["configSchema"]> {
+  if (pluginId !== "tts") return schema;
+  const config = configValue as TtsAdminConfig;
+  const translationNames = Object.keys(config.translationPresets ?? {});
+  const modelNames = Object.keys(config.voice.modelConfigs ?? {});
+  return {
+    ...schema,
+    fields: schema.fields.map((field) => field.key === "translationPresetName" || field.key === "translationEditPresetName"
+      ? {
+        ...field,
+        options: translationNames.map((name) => ({ value: name, label: name }))
+      }
+      : field.key === "voice.modelConfigName" || field.key === "voice.modelEditPresetName"
+      ? {
+        ...field,
+        options: modelNames.map((name) => ({ value: name, label: name }))
+      }
+      : field)
   };
 }
 
@@ -1025,45 +1075,61 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
   };
 }
 
-function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
+function ttsPluginEntry(): AdminPluginRegistryEntry {
   return {
     summary(context) {
-      return japaneseVoicePluginSummary(context);
+      return ttsPluginSummary(context);
     },
     config(context) {
-      return publicJapaneseVoiceConfig(readJapaneseVoiceConfigForAdmin(context));
+      return publicTtsConfig(readTtsConfigForAdmin(context));
     },
     patch(context, patch) {
-      const result = updateJapaneseVoiceConfig(context, patch);
-      return "error" in result ? result : { config: publicJapaneseVoiceConfig(result.config) };
+      const result = updateTtsConfig(context, patch);
+      return "error" in result ? result : { config: publicTtsConfig(result.config) };
     },
     setEnabled(context, enabled) {
-      const result = updateJapaneseVoiceConfig(context, { enabled });
-      return "error" in result ? result : { config: publicJapaneseVoiceConfig(result.config) };
+      const result = updateTtsConfig(context, { enabled });
+      return "error" in result ? result : { config: publicTtsConfig(result.config) };
     },
     reload(context) {
-      return { config: publicJapaneseVoiceConfig(readJapaneseVoiceConfigForAdmin(context)) };
+      return { config: publicTtsConfig(readTtsConfigForAdmin(context)) };
     },
     test(context, input) {
-      return testJapaneseVoicePlugin(context, input);
+      return testTtsPlugin(context, input);
     },
     uploadAsset(context, assetKey, request) {
-      return uploadGenericPluginAsset(context, "japanese-voice", assetKey, request);
+      return uploadGenericPluginAsset(context, "tts", assetKey, request);
     },
     configSchema: {
+      groups: [
+        { key: "translation", label: "翻译预设" },
+        { key: "model", label: "模型预设" },
+        { key: "general", label: "公共设置" }
+      ],
       fields: [
-        { key: "enabled", label: "Enabled", type: "switch", description: "Enable or disable this plugin route." },
-        { key: "translationEnabled", label: "Translate Text", type: "switch", description: "Translate text before Japanese TTS. Disable to send the original text directly to the Japanese voice model." },
-        { key: "voice.referenceAudio", label: "Reference Audio", type: "fileUpload", assetKey: "reference-audio", accept: "audio/*", description: "Plugin-owned reference audio under assets/plugin/{plugin_id}/." },
-        { key: "prompt", label: "Prompt", type: "textarea", description: "Prompt used by this plugin before it calls the selected API preset." },
-        { key: "voice.modelDir", label: "Voice Model Folder", type: "folderUpload", assetKey: "model", description: "Plugin-owned model folder under assets/plugin/{plugin_id}/." },
-        { key: "apiPresetName", label: "API Preset", type: "apiPresetSelect", description: "Select a saved API preset. The plugin does not store API keys." },
-        { key: "voice.referenceText", label: "Reference Text", type: "textarea", description: "Stored directly in this plugin config file." },
-        { key: "voice.speed", label: "Voice Speed", type: "number", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
-        { key: "voice.splitText", label: "Split Text", type: "switch", description: "Whether this plugin lets Genie split one TTS text into multiple synthesized parts. Default is off." },
-        { key: "voice.partSilenceSeconds", label: "Part Silence", type: "number", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
-        { key: "targetRoute", label: "Target Route", type: "readonly", description: "send_chat.voice.before_tts" },
-        { key: "persistTranslation", label: "Persist Translation", type: "readonly", description: "Translations are transient and never written to message log." }
+        { key: "translationEditPresetName", label: "Translation Preset", type: "select", group: "translation", options: [], description: "Select the translation preset to edit." },
+        { key: "newTranslationPresetName", label: "Create or Rename", type: "text", group: "translation", description: "Enter a translation preset name and save to create/switch to it." },
+        { key: "currentTranslation.translationEnabled", label: "Translate Text", type: "switch", group: "translation", description: "Translate text before TTS. Disable to send the original text directly to the selected voice model." },
+        { key: "currentTranslation.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "translation", description: "Select a saved API preset. The plugin does not store API keys." },
+        { key: "currentTranslation.prompt", label: "Prompt", type: "textarea", group: "translation", description: "Prompt used by this plugin before it calls the selected API preset." },
+        { key: "voice.modelEditPresetName", label: "Model Preset", type: "select", group: "model", options: [], description: "Select the model preset to edit." },
+        { key: "voice.newModelConfigName", label: "Create or Rename", type: "text", group: "model", description: "Enter a model preset name and save to create/switch to it." },
+        { key: "voice.currentModel.language", label: "Voice Language", type: "select", group: "model", options: [
+          { value: "jp", label: "Japanese" },
+          { value: "zh", label: "Chinese" },
+          { value: "en", label: "English" }
+        ], description: "Genie language used for this TTS voice route." },
+        { key: "voice.currentModel.modelDir", label: "Model Folder", type: "folderUpload", group: "model", assetKey: "model", description: "Genie model folder for the selected model config." },
+        { key: "voice.currentModel.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
+        { key: "voice.currentModel.referenceText", label: "Reference Text", type: "textarea", group: "model", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
+        { key: "voice.currentModel.speed", label: "Voice Speed", type: "number", group: "model", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
+        { key: "voice.currentModel.splitText", label: "Split Text", type: "switch", group: "model", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
+        { key: "voice.currentModel.partSilenceSeconds", label: "Part Silence", type: "number", group: "model", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
+        { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
+        { key: "voice.modelConfigName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
+        { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
+        { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
+        { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
     },
     routePreview: [
@@ -1335,25 +1401,25 @@ function optionalNumberFromUnknown(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? Math.round(parsed) : undefined;
 }
 
-function japaneseVoicePluginSummary(context: AdminRoutesContext, config = readJapaneseVoiceConfigForAdmin(context)): AdminPluginSummary {
+function ttsPluginSummary(context: AdminRoutesContext, config = readTtsConfigForAdmin(context)): AdminPluginSummary {
   const presetExists = !config.apiPresetName || readLLMApiPresets(context).some((entry) => entry.name === config.apiPresetName);
   const missingConfig = config.enabled && (!config.apiPresetName || !presetExists);
   return {
-    id: "japanese-voice",
-    name: "Japanese Voice",
+    id: "tts",
+    name: "TTS",
     kind: "voice",
     status: missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
     health: missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
     description: "Translate send_chat voice text through a selected API preset before the normal TTS route.",
     configurable: true,
     switchable: true,
-    configSource: japaneseVoiceConfigPath(context),
-    lastLoadedAt: japaneseVoiceConfigMtime(context)
+    configSource: ttsConfigPath(context),
+    lastLoadedAt: ttsConfigMtime(context)
   };
 }
 
-async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> {
-  const config = readJapaneseVoiceConfigForAdmin(context);
+async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> {
+  const config = readTtsConfigForAdmin(context);
   const text = requiredString(input.text) || "晚点见。";
   if (Array.from(text).length > 240) return { error: "text_too_long" };
 
@@ -1366,7 +1432,7 @@ async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Recor
     if (!preset) return { error: "invalid_api_preset" };
     if (!preset.baseURL || !preset.apiKey) return { error: "incomplete_api_preset" };
     const translationStartedAt = Date.now();
-    const translated = await translateJapaneseVoiceText(text, config, {
+    const translated = await translateTtsText(text, config, {
       baseSynthesizer: async () => {
         throw new Error("not used");
       },
@@ -1382,22 +1448,26 @@ async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Recor
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
+      promptVariables: () => buildLLMTextVariables({
+        userName: context.promptProfileStore.get().userName,
+        time: context.time
+      }),
       appendLog: context.appendLog
     });
     translationMs = Date.now() - translationStartedAt;
     if (!translated) return { error: "translation_failed" };
     translatedText = translated;
   } else {
-    context.appendLog?.("info", `japanese voice admin test translation skipped: disabled chars=${Array.from(text).length}`);
+    context.appendLog?.("info", `tts admin test translation skipped: disabled chars=${Array.from(text).length}`);
   }
 
   const ttsStartedAt = Date.now();
-  const configuredSynthesizer = context.pluginConfigs?.japaneseVoice?.testVoiceSynthesizer;
-  const synthesizer = configuredSynthesizer ?? createJapaneseVoiceFallbackTtsSynthesizer(context);
+  const configuredSynthesizer = context.pluginConfigs?.tts?.testVoiceSynthesizer;
+  const synthesizer = configuredSynthesizer ?? createTtsFallbackTtsSynthesizer(context);
   let voice: Awaited<ReturnType<VoiceSynthesizer>>;
   let ttsMs = 0;
   try {
-    voice = await synthesizer({ text: translatedText, time: context.time, genie: japaneseVoiceGenieOverrides(config) });
+    voice = await synthesizer({ text: translatedText, time: context.time, genie: ttsGenieOverrides(config) });
     ttsMs = Date.now() - ttsStartedAt;
   } finally {
     if (!configuredSynthesizer) await synthesizer.shutdown?.();
@@ -1422,7 +1492,7 @@ async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Recor
   };
 }
 
-function createJapaneseVoiceFallbackTtsSynthesizer(context: AdminRoutesContext): VoiceSynthesizer {
+function createTtsFallbackTtsSynthesizer(context: AdminRoutesContext): VoiceSynthesizer {
   const remote = createGenieTtsVoiceSynthesizer({
     ...context.config.tts,
     backend: "genie-tts",
@@ -1445,59 +1515,211 @@ function createJapaneseVoiceFallbackTtsSynthesizer(context: AdminRoutesContext):
   return createFallbackVoiceSynthesizer(remote, local, { appendLog: context.appendLog });
 }
 
-function updateJapaneseVoiceConfig(
+function updateTtsConfig(
   context: AdminRoutesContext,
   patch: Record<string, unknown>
-): { config: JapaneseVoicePluginConfig } | { error: string } {
-  const current = readJapaneseVoiceConfigForAdmin(context);
+): { config: TtsPluginConfig } | { error: string } {
+  const current = readTtsConfigForAdmin(context);
   const currentVoice = current.voice ?? {};
   if ("api_preset" in patch) return { error: "invalid_plugin_config" };
+  const currentTranslationPresets = current.translationPresets ?? {};
+  const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
+  const editTranslationPresetName = safeTtsPresetName(optionalString(patch.newTranslationPresetName) || optionalString(patch.translationEditPresetName) || activeTranslationPresetName, "default");
+  const currentTranslation = currentTranslationPresets[editTranslationPresetName] ?? currentTranslationPresets[activeTranslationPresetName] ?? {};
+  const translationPatch = patch.currentTranslation && typeof patch.currentTranslation === "object" && !Array.isArray(patch.currentTranslation)
+    ? patch.currentTranslation as Record<string, unknown>
+    : {};
+  const shouldUpdateTranslationPreset = Object.keys(translationPatch).length > 0 || optionalString(patch.newTranslationPresetName) !== undefined;
+  const nextTranslation: TtsTranslationPreset = {
+    translationEnabled: translationPatch.translationEnabled === undefined ? currentTranslation.translationEnabled ?? current.translationEnabled : booleanFromUnknown(translationPatch.translationEnabled),
+    apiPresetName: translationPatch.apiPresetName === undefined ? currentTranslation.apiPresetName ?? current.apiPresetName : optionalString(translationPatch.apiPresetName),
+    prompt: translationPatch.prompt === undefined ? currentTranslation.prompt ?? current.prompt : requiredString(translationPatch.prompt)
+  };
   const voicePatch = patch.voice && typeof patch.voice === "object" && !Array.isArray(patch.voice)
     ? patch.voice as Record<string, unknown>
     : {};
-  const next: JapaneseVoicePluginConfig = {
+  const currentModelConfigs = currentVoice.modelConfigs ?? {};
+  const activeModelConfigName = safeTtsPresetName(optionalString(voicePatch.modelConfigName) || currentVoice.modelConfigName || Object.keys(currentModelConfigs)[0] || "jp", "jp");
+  const editModelConfigName = safeTtsPresetName(optionalString(voicePatch.newModelConfigName) || optionalString(voicePatch.modelEditPresetName) || activeModelConfigName, "jp");
+  const currentModel = currentModelConfigs[editModelConfigName] ?? currentModelConfigs[activeModelConfigName] ?? {};
+  const modelPatch = voicePatch.currentModel && typeof voicePatch.currentModel === "object" && !Array.isArray(voicePatch.currentModel)
+    ? voicePatch.currentModel as Record<string, unknown>
+    : {};
+  const shouldUpdateModelPreset = Object.keys(modelPatch).length > 0 || optionalString(voicePatch.newModelConfigName) !== undefined;
+  const nextModel = {
+    language: modelPatch.language === undefined ? currentModel.language ?? "jp" : ttsLanguageFromUnknown(modelPatch.language),
+    speed: modelPatch.speed === undefined ? currentModel.speed : optionalSpeedValue(modelPatch.speed),
+    partSilenceSeconds: modelPatch.partSilenceSeconds === undefined ? currentModel.partSilenceSeconds : optionalPartSilenceSecondsValue(modelPatch.partSilenceSeconds),
+    splitText: modelPatch.splitText === undefined ? currentModel.splitText ?? false : booleanFromUnknown(modelPatch.splitText)
+  };
+  const referenceText = modelPatch.referenceText === undefined ? undefined : optionalString(modelPatch.referenceText);
+  if (referenceText !== undefined) writeTtsPresetReferenceText(editModelConfigName, referenceText);
+  const nextTranslationPresets = shouldUpdateTranslationPreset
+    ? { ...currentTranslationPresets, [editTranslationPresetName]: nextTranslation }
+    : currentTranslationPresets;
+  const activeTranslation = nextTranslationPresets[activeTranslationPresetName] ?? nextTranslation;
+  const nextModelConfigs = shouldUpdateModelPreset
+    ? { ...currentModelConfigs, [editModelConfigName]: nextModel }
+    : currentModelConfigs;
+  const next: TtsPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
-    translationEnabled: patch.translationEnabled === undefined ? current.translationEnabled : booleanFromUnknown(patch.translationEnabled),
-    apiPresetName: patch.apiPresetName === undefined ? current.apiPresetName : optionalString(patch.apiPresetName),
+    translationPresetName: activeTranslationPresetName,
+    translationPresets: nextTranslationPresets,
+    translationEnabled: activeTranslation.translationEnabled ?? true,
+    apiPresetName: activeTranslation.apiPresetName,
     api_preset: current.api_preset,
-    prompt: patch.prompt === undefined ? current.prompt : requiredString(patch.prompt),
+    prompt: activeTranslation.prompt ?? current.prompt,
     voice: {
-      modelDir: voicePatch.modelDir === undefined ? currentVoice.modelDir : optionalString(voicePatch.modelDir),
-      referenceAudio: voicePatch.referenceAudio === undefined ? currentVoice.referenceAudio : optionalString(voicePatch.referenceAudio),
-      referenceText: voicePatch.referenceText === undefined ? currentVoice.referenceText : optionalString(voicePatch.referenceText),
-      speed: voicePatch.speed === undefined ? currentVoice.speed : optionalSpeedValue(voicePatch.speed),
-      partSilenceSeconds: voicePatch.partSilenceSeconds === undefined ? currentVoice.partSilenceSeconds : optionalPartSilenceSecondsValue(voicePatch.partSilenceSeconds),
-      splitText: voicePatch.splitText === undefined ? currentVoice.splitText ?? false : booleanFromUnknown(voicePatch.splitText)
+      modelConfigName: activeModelConfigName,
+      modelConfigs: nextModelConfigs
     }
   };
 
-  const validationError = validateJapaneseVoiceConfig(next);
+  const validationError = validateTtsConfig(next);
   if (validationError) return { error: validationError };
-  if (next.translationEnabled && next.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.apiPresetName)) {
+  const presetToValidate = shouldUpdateTranslationPreset ? nextTranslation : activeTranslation;
+  if ((shouldUpdateTranslationPreset || "translationPresetName" in patch || "enabled" in patch) && (presetToValidate.translationEnabled ?? true) && presetToValidate.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === presetToValidate.apiPresetName)) {
     return { error: "invalid_api_preset" };
   }
-  writeJapaneseVoiceConfig(context, next);
+  writeTtsConfig(context, next);
   return { config: next };
 }
 
-function validateJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): string | undefined {
+function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   const voice = config.voice ?? {};
-  for (const value of [voice.modelDir, voice.referenceAudio]) {
-    if (value && !isPluginAssetPath("japanese-voice", value)) return "invalid_asset_path";
+  for (const model of Object.values(voice.modelConfigs ?? {})) {
+    if (model.speed !== undefined && (model.speed < 0.5 || model.speed > 2)) return "invalid_voice_speed";
+    if (model.partSilenceSeconds !== undefined && (model.partSilenceSeconds < 0 || model.partSilenceSeconds > 3)) return "invalid_part_silence";
   }
-  if (voice.speed !== undefined && (voice.speed < 0.5 || voice.speed > 2)) return "invalid_voice_speed";
-  if (voice.partSilenceSeconds !== undefined && (voice.partSilenceSeconds < 0 || voice.partSilenceSeconds > 3)) return "invalid_part_silence";
   return undefined;
 }
 
-function readJapaneseVoiceConfigForAdmin(context: AdminRoutesContext): JapaneseVoicePluginConfig {
-  return readJapaneseVoicePluginConfig(japaneseVoiceConfigPath(context));
+function isTtsVoiceAssetPath(value: string): boolean {
+  return isTtsModelAssetPath(value) || isPluginAssetPath("tts", value) || isPluginAssetPath("japanese-voice", value);
 }
 
-function writeJapaneseVoiceConfig(context: AdminRoutesContext, config: JapaneseVoicePluginConfig): void {
-  const filePath = japaneseVoiceConfigPath(context);
+function ttsLanguageFromUnknown(value: unknown): "jp" | "zh" | "en" {
+  return value === "zh" || value === "en" ? value : "jp";
+}
+
+function safeTtsModelConfigName(value: string): string {
+  return value.trim().replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "jp";
+}
+
+function safeTtsPresetName(value: string, fallback: string): string {
+  return value.trim().replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || fallback;
+}
+
+function isLikelyAssetPath(value: string): boolean {
+  return value.startsWith("assets/") || value.startsWith("tts/") || value.startsWith("plugin/") || path.isAbsolute(value);
+}
+
+function isTtsModelAssetPath(value: string): boolean {
+  const root = path.resolve("assets", "tts", "model");
+  const fullPath = path.resolve(value);
+  const relative = path.relative(root, fullPath);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function migrateTtsVoiceModelConfigAssets(modelConfigName: string, model: TtsVoiceModelConfig): TtsVoiceModelConfig {
+  const safeName = safeTtsModelConfigName(modelConfigName);
+  const baseDir = path.join("assets", "tts", "model", safeName);
+  const next: TtsVoiceModelConfig = { ...model };
+
+  if (model.modelDir) {
+    const target = path.join(baseDir, "model");
+    copyAssetPathIfPresent(model.modelDir, target);
+    next.modelDir = normalizeAssetPath(target);
+  }
+  if (model.referenceAudio) {
+    const extension = isLikelyAssetPath(model.referenceAudio) ? path.extname(model.referenceAudio) || ".wav" : ".wav";
+    const target = path.join(baseDir, `reference${extension}`);
+    copyAssetPathIfPresent(model.referenceAudio, target);
+    next.referenceAudio = normalizeAssetPath(target);
+  }
+  if (model.referenceText) {
+    const target = path.join(baseDir, "reference.txt");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (isLikelyAssetPath(model.referenceText)) {
+      copyAssetPathIfPresent(model.referenceText, target);
+    } else {
+      fs.writeFileSync(target, model.referenceText);
+    }
+    next.referenceText = normalizeAssetPath(target);
+  }
+
+  return next;
+}
+
+function copyAssetPathIfPresent(sourcePath: string, targetPath: string): void {
+  if (!isLikelyAssetPath(sourcePath)) return;
+  const source = path.resolve(sourcePath);
+  const target = path.resolve(targetPath);
+  if (source === target) return;
+  if (!fs.existsSync(source)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const stat = fs.statSync(source) as { isFile(): boolean; isDirectory?: () => boolean };
+  if (typeof stat.isDirectory === "function" ? stat.isDirectory() : !stat.isFile()) {
+    (fs as any).cpSync(source, target, { recursive: true });
+  } else {
+    fs.writeFileSync(target, fs.readFileSync(source));
+  }
+}
+
+function normalizeAssetPath(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function ttsPresetRoot(modelConfigName: string): string {
+  return path.join("assets", "tts", "preset", safeTtsPresetName(modelConfigName, "jp"));
+}
+
+function ttsPresetModelDir(modelConfigName: string): string {
+  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName), "model"));
+}
+
+function ttsPresetReferenceTextPath(modelConfigName: string): string {
+  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName), "reference.txt"));
+}
+
+function ttsPresetReferenceAudioPath(modelConfigName: string): string | undefined {
+  const root = ttsPresetRoot(modelConfigName);
+  for (const candidate of ["reference.wav", "reference.mp3", "reference.ogg", "reference.opus", "reference.m4a"]) {
+    const filePath = path.join(root, candidate);
+    if (fs.existsSync(filePath)) return normalizeAssetPath(filePath);
+  }
+  try {
+    const match = fs.readdirSync(root).find((entry) => /^reference\.[\w-]+$/i.test(entry));
+    return match ? normalizeAssetPath(path.join(root, match)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readTtsPresetReferenceText(modelConfigName: string): string | undefined {
+  const filePath = ttsPresetReferenceTextPath(modelConfigName);
+  try {
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function writeTtsPresetReferenceText(modelConfigName: string, value: string): void {
+  const filePath = ttsPresetReferenceTextPath(modelConfigName);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(publicJapaneseVoiceConfig(config), null, 2)}\n`);
+  fs.writeFileSync(filePath, value);
+}
+
+function readTtsConfigForAdmin(context: AdminRoutesContext): TtsPluginConfig {
+  return readTtsPluginConfig(ttsConfigPath(context));
+}
+
+function writeTtsConfig(context: AdminRoutesContext, config: TtsPluginConfig): void {
+  const filePath = ttsConfigPath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(canonicalTtsConfig(config), null, 2)}\n`);
 }
 
 async function uploadGenericPluginAsset(
@@ -1505,34 +1727,60 @@ async function uploadGenericPluginAsset(
   pluginId: string,
   assetKey: string,
   request: any
-): Promise<{ config: JapaneseVoiceAdminConfig; assetPath: string } | { error: string; statusCode?: number }> {
-  const config = readJapaneseVoiceConfigForAdmin(context);
+): Promise<{ config: TtsAdminConfig; assetPath: string } | { error: string; statusCode?: number }> {
+  const config = readTtsConfigForAdmin(context);
   const fileName = safePluginAssetFileName(decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? ""));
   const relativeDir = decodeHeaderFileName(optionalString(request.headers?.["x-relative-dir"]) ?? "");
   const maxBytes = assetKey === "model" ? maxPluginModelAssetUploadBytes : maxPluginAssetUploadBytes;
   const body = await readRawBody(request, { maxBytes });
   if (body.length === 0) return { error: "empty_upload" };
 
-  const assetPath = resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
+  const presetName = decodeHeaderFileName(optionalString(request.headers?.["x-preset-name"]) ?? "");
+  const assetPath = pluginId === "tts"
+    ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName)
+    : resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
   fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
   fs.writeFileSync(assetPath.fullPath, body);
 
-  const next: JapaneseVoicePluginConfig = {
+  const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
+  const modelConfigs = config.voice?.modelConfigs ?? {};
+  const currentModel = modelConfigs[modelConfigName] ?? {};
+  const next: TtsPluginConfig = {
     ...config,
     voice: {
       ...config.voice,
-      ...voiceAssetPatch(assetKey, assetPath.assetPath)
+      modelConfigName,
+      modelConfigs: {
+        ...modelConfigs,
+        [modelConfigName]: {
+          ...currentModel
+        }
+      }
     }
   };
-  writeJapaneseVoiceConfig(context, next);
-  return { config: publicJapaneseVoiceConfig(next), assetPath: assetPath.assetPath };
+  writeTtsConfig(context, next);
+  return { config: publicTtsConfig(next), assetPath: assetPath.assetPath };
 }
 
-function voiceAssetPatch(assetKey: string, assetPath: string): Partial<JapaneseVoicePluginConfig["voice"]> {
-  if (assetKey === "model") return { modelDir: path.join("assets", "plugin", "japanese-voice", "model").split(path.sep).join("/") };
-  if (assetKey === "reference-audio") return { referenceAudio: assetPath };
-  if (assetKey === "reference-text") return { referenceText: assetPath };
-  return {};
+function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string): { fullPath: string; assetPath: string } {
+  const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
+  const root = path.resolve("assets", "tts", "preset", modelConfigName);
+  const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
+  const baseRelativeDir = assetKey === "model" ? "model" : "";
+  const outputName = assetKey === "reference-text"
+    ? "reference.txt"
+    : assetKey === "reference-audio"
+      ? `reference${path.extname(effectiveFileName) || ".wav"}`
+      : effectiveFileName;
+  const fullPath = path.resolve(root, baseRelativeDir, outputName);
+  const relative = path.relative(root, fullPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new HttpJsonError(400, "invalid_asset_path");
+  }
+  return {
+    fullPath,
+    assetPath: path.join("assets", "tts", "preset", modelConfigName, relative).split(path.sep).join("/")
+  };
 }
 
 function resolvePluginAssetPathForUpload(pluginId: string, assetKey: string, fileName: string, relativeDir: string): { fullPath: string; assetPath: string } {
@@ -1575,13 +1823,13 @@ function isPluginAssetPath(pluginId: string, value: string): boolean {
   return !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function japaneseVoiceConfigPath(context: AdminRoutesContext): string {
-  return context.pluginConfigs?.japaneseVoice?.configPath ?? "plugins/japanese-voice/config.json";
+function ttsConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.tts?.configPath ?? "plugins/tts/config.json";
 }
 
-function japaneseVoiceConfigMtime(context: AdminRoutesContext): string | undefined {
+function ttsConfigMtime(context: AdminRoutesContext): string | undefined {
   try {
-    const stats = fs.statSync(japaneseVoiceConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
+    const stats = fs.statSync(ttsConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
     if (stats.mtime instanceof Date) return stats.mtime.toISOString();
     if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
     return undefined;
@@ -1590,17 +1838,62 @@ function japaneseVoiceConfigMtime(context: AdminRoutesContext): string | undefin
   }
 }
 
-function publicJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): JapaneseVoiceAdminConfig {
+function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
+  const translationPresets = config.translationPresets ?? {};
+  const translationPresetName = config.translationPresetName ?? Object.keys(translationPresets)[0] ?? "default";
+  const currentTranslation = translationPresets[translationPresetName] ?? {};
+  const voice = config.voice ?? {};
+  const modelConfigs = voice.modelConfigs ?? {};
+  const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
+  const currentModel = modelConfigs[modelConfigName] ?? {};
   return {
     enabled: config.enabled,
-    translationEnabled: config.translationEnabled,
-    apiPresetName: config.apiPresetName,
-    prompt: config.prompt,
-    voice: { ...config.voice }
+    translationPresetName,
+    translationEditPresetName: translationPresetName,
+    newTranslationPresetName: "",
+    translationPresets,
+    currentTranslation: {
+      translationEnabled: currentTranslation.translationEnabled ?? config.translationEnabled,
+      apiPresetName: currentTranslation.apiPresetName ?? config.apiPresetName,
+      prompt: currentTranslation.prompt ?? config.prompt
+    },
+    voice: {
+      modelConfigName,
+      modelEditPresetName: modelConfigName,
+      newModelConfigName: "",
+      modelConfigs,
+      currentModel: {
+        ...currentModel,
+        modelDir: ttsPresetModelDir(modelConfigName),
+        referenceAudio: ttsPresetReferenceAudioPath(modelConfigName),
+        referenceText: readTtsPresetReferenceText(modelConfigName)
+      }
+    }
   };
 }
 
-function japaneseVoiceConfigSchema(): unknown {
+function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
+  const translationPresets = config.translationPresets ?? {};
+  const translationPresetName = config.translationPresetName ?? Object.keys(translationPresets)[0] ?? "default";
+  const voice = config.voice ?? {};
+  const modelConfigs = voice.modelConfigs ?? {};
+  const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
+  return {
+    enabled: config.enabled,
+    translationPresetName,
+    translationPresets,
+    translationEnabled: config.translationEnabled,
+    apiPresetName: config.apiPresetName,
+    api_preset: undefined,
+    prompt: config.prompt,
+    voice: {
+      modelConfigName,
+      modelConfigs
+    }
+  };
+}
+
+function ttsConfigSchema(): unknown {
   return {
     type: "object",
     properties: {

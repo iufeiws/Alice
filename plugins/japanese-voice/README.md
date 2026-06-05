@@ -1,29 +1,19 @@
-# Japanese Voice Translation Plugin
+# Legacy Japanese Voice Plugin Path
 
-This plugin is a fixed send chat voice route for Japanese voice output.
+`plugins/japanese-voice` is now only a compatibility path.
 
-When enabled, send chat voice text is translated with the plugin's fixed Flash LLM API preset and prompt before it reaches the normal TTS synthesizer. The plugin passes Japanese Genie-TTS overrides (`language: "jp"`, model dir, reference audio, reference text) on that synthesis request instead of changing global TTS config. After TTS succeeds, the existing send chat voice flow continues unchanged.
+Use `plugins/tts` for new code, config, admin routes, runtime wiring, tests, and docs. The canonical plugin id and admin id are both `tts`, and the display name is `TTS`.
 
-The translated text is not written to message log. The original send chat text remains the transcript and persisted chat content.
+Compatibility behavior:
 
-## Config
+- If `plugins/tts/config.json` is missing, Alice may read `plugins/japanese-voice/config.json`.
+- Legacy flat voice fields are still accepted as migration input:
+  - `voice.language`
+  - `voice.modelDir`
+  - `voice.referenceAudio`
+  - `voice.referenceText`
+- New admin saves write only `plugins/tts/config.json`.
+- New model assets should live under `assets/tts/preset/{modelConfigName}/`.
+- Existing files under `assets/plugin/japanese-voice/` can remain as legacy migration sources.
 
-The config lives in this plugin folder:
-
-```text
-plugins/japanese-voice/config.json
-```
-
-Fields:
-
-- `enabled`: switch for the plugin route.
-- `apiPresetName`: saved API preset name. The plugin config stores only this preset reference, not API keys.
-- `prompt`: fixed translation prompt. The target language is fixed here.
-- `voice.referenceAudio`: plugin-owned reference audio path under `assets/plugin/japanese-voice/`.
-- `voice.referenceText`: reference text stored directly in this config file.
-- `voice.modelDir`: plugin-owned model directory. Folder uploads are flattened into `assets/plugin/japanese-voice/model/`.
-- `voice.speed`: optional Genie playback speed multiplier from `0.5` to `2.0`.
-- `voice.splitText`: whether Genie should split one TTS text into multiple synthesized parts. Default is `false`.
-- `voice.partSilenceSeconds`: optional silence inserted between split Genie audio parts, from `0` to `3` seconds. The Genie service default is `0.67`.
-
-The plugin sends `prompt` as a system message and the original text as the user message.
+See `plugins/tts/README.md` for the current TTS config shape and admin settings layout.

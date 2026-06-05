@@ -1,8 +1,8 @@
 # WebRTC Voice Plugin 方案
 
-本文档定义 `webrtc_voice` plugin 的首版设计。该 plugin 让用户在浏览器打开通话页后，通过 WebRTC 和 Alice 进行实时语音通话。它负责浏览器连接、WebRTC 信令、双向音频 track、流式 ASR 入站、`TalkRuntime` 入站接入，以及 Core 回复后的日语 TTS 出站播放。
+本文档定义 `webrtc_voice` plugin 的首版设计。该 plugin 让用户在浏览器打开通话页后，通过 WebRTC 和 Alice 进行实时语音通话。它负责浏览器连接、WebRTC 信令、双向音频 track、流式 ASR 入站、`TalkRuntime` 入站接入，以及 Core 回复后的 TTS 出站播放。
 
-当前实现状态：服务端 WebRTC peer、outbound audio track、ASR stream 和日语 TTS 播放队列先以可测试核心接口落地；`TalkRuntimeIngress.openSession()`、`ingestInput()` 和 `closeSession()` 暂不实际调用，只发出 `talk_runtime.*.todo` 状态。后续接入真实 `TalkRuntime` 时，必须把这些 todo 状态替换为正式入站事件。
+当前实现状态：服务端 WebRTC peer、outbound audio track、ASR stream 和 TTS 播放队列先以可测试核心接口落地；`TalkRuntimeIngress.openSession()`、`ingestInput()` 和 `closeSession()` 暂不实际调用，只发出 `talk_runtime.*.todo` 状态。后续接入真实 `TalkRuntime` 时，必须把这些 todo 状态替换为正式入站事件。
 
 首版强制使用服务端 WebRTC outbound audio track 播放 TTS 音频。不得把普通 HTTP 音频 URL 或浏览器 `<audio src>` 当作正式出站实现；URL 只能作为 debug、回放或后台检查的辅助手段。
 
@@ -13,14 +13,14 @@
 - 服务端在同一个 `RTCPeerConnection` 中创建 outbound audio track，并把 Alice 回复音频推给浏览器。
 - 调用现有 ASR plugin 的流式入站能力，把用户语音转换成待送入 `TalkRuntime` 的事件候选。
 - 把 ASR partial 映射为 `audio.transcript.delta`，把 ASR final 映射为 `audio.transcript.final`。
-- 调用现有 `japanese_voice.voiceSynthesizer`，让 Core 回复先走日语 jp TTS，再通过 WebRTC outbound audio track 播放。
+- 调用现有 `tts.voiceSynthesizer`，让 Core 回复按 TTS plugin 当前模型配置合成后，再通过 WebRTC outbound audio track 播放。
 - `TalkRuntime` 入站当前标记为待实现；通话事实不得直接写 `messages` / `message_logs`。
 
 ## 非目标
 
 - 不新增 ASR provider。
 - 不新增 TTS provider。
-- 不重新实现 japanese voice 翻译、jp Genie 参数或 voice model 配置。
+- 不重新实现 TTS 翻译、Genie 参数或 voice model 配置。
 - 不把 ASR partial 当作稳定历史或普通聊天消息。
 - 不把浏览器原始音频二进制写入 SQLite。
 - 不在首版实现把实时通话完整投影到 `MessageRuntime` 或 `messages`。
@@ -30,7 +30,7 @@
 
 - 用户打开 `/plugins/webrtc-voice/call`，授权麦克风后开始和 Alice 语音通话。
 - 用户说话时，浏览器通过 WebRTC 上传麦克风音频，服务端持续送入 ASR stream。
-- Alice 根据稳定转写片段响应；回复文本经 `japanese_voice` 转日语并 TTS 合成。
+- Alice 根据稳定转写片段响应；回复文本经 `tts` 按当前 TTS 配置翻译和合成。
 - 浏览器通过 WebRTC 接收服务端 outbound audio track 并播放 Alice 语音。
 - 用户在 Alice 播放中再次说话或点击打断时，当前播放队列停止，并向 `TalkRuntime` 发送 `input.interrupted`。
 
@@ -45,7 +45,7 @@ Browser call page
      -> ASR plugin streaming session
      -> talk_runtime.ingress.todo
      -> Core realtime handling
-     -> japanese_voice.voiceSynthesizer
+     -> tts.voiceSynthesizer
      -> TTS audio decode/transcode
      -> server outbound audio track
   -> Browser remote audio playback
@@ -60,7 +60,7 @@ Browser call page
 | WebRTC server peer | 接收浏览器 microphone track，创建并维护 outbound audio track。 |
 | WebRTC voice plugin | 管理通话 session、ASR stream、TalkRuntime 入站 todo 状态、TTS 播放队列和打断。 |
 | ASR plugin | 复用现有流式入站协议，返回 partial/final 识别结果。 |
-| Japanese voice plugin | 复用现有 `japanese_voice.voiceSynthesizer`，使用 `language: "jp"` 的 Genie override。 |
+| TTS plugin | 复用现有 `tts.voiceSynthesizer`，由 TTS plugin 根据当前 model config 传入 Genie override。 |
 | TalkRuntime | 接收实时入站事件、保序、去重、更新实时上下文并触发 Core。 |
 
 ## Plugin 标识
@@ -245,8 +245,8 @@ Core 产生可播放回复文本后，plugin 执行：
 
 ```text
 Core reply text
-  -> japanese_voice.voiceSynthesizer({ text, time })
-  -> japanese voice translation + jp Genie TTS
+  -> tts.voiceSynthesizer({ text, time })
+  -> TTS translation + selected model config Genie/MOSS TTS
   -> generated audio file
   -> decode/transcode to outbound WebRTC audio frames
   -> enqueue frames
@@ -255,10 +255,10 @@ Core reply text
 
 调用要求：
 
-- 使用现有 `japanese_voice.voiceSynthesizer`。
-- 不直接调用 Genie service 绕过 japanese voice plugin。
-- 不复制 `japanese-voice/config.json` 的 voice 参数。
-- TTS 使用 japanese voice plugin 现有行为：翻译到适合日语朗读的文本，并传入 `language: "jp"` 的 Genie override。
+- 使用现有 `tts.voiceSynthesizer`。
+- 不直接调用 Genie service 绕过 TTS plugin。
+- 不复制 `tts/config.json` 的 voice 参数。
+- TTS 使用 TTS plugin 现有行为：按 `plugins/tts/config.json` 的翻译设置和当前 `voice.modelConfigName` 生成 Genie override。
 - TTS 失败时，按错误策略通知浏览器；不得把失败文本伪装为已播放音频。
 
 播放队列要求：
@@ -397,7 +397,7 @@ type WebRtcVoicePluginConfig = {
 | `inbound_track_missing` | 未收到麦克风 track | 关闭通话。 |
 | `outbound_track_failed` | 服务端 outbound audio track 创建或推帧失败 | 停止播放并保留通话入站能力，必要时关闭通话。 |
 | `asr_stream_failed` | ASR stream 失败 | 通知浏览器；无法恢复时关闭通话。 |
-| `tts_failed` | japanese voice TTS 失败 | 跳过该播放 item，通知浏览器。 |
+| `tts_failed` | TTS 失败 | 跳过该播放 item，通知浏览器。 |
 | `playback_interrupted` | 播放被用户或 barge-in 打断 | 停止当前 item 并写入 `input.interrupted`。 |
 | `session_closed` | 通话已关闭仍收到事件 | 忽略事件并记录 debug。 |
 
@@ -431,7 +431,7 @@ type WebRtcVoicePluginConfig = {
 - 麦克风音频 chunk 会进入 ASR stream。
 - ASR partial 映射为 `audio.transcript.delta`，不触发稳定 Core 输入。
 - ASR final 当前发出 `talk_runtime.ingress.todo`；待实现：映射为 `audio.transcript.final`，进入 `TalkRuntime` 并可触发 Core。
-- Core 回复文本经 `japanese_voice.voiceSynthesizer` 合成后，通过服务端 outbound audio track 播放。
+- Core 回复文本经 `tts.voiceSynthesizer` 合成后，通过服务端 outbound audio track 播放。
 - 正式播放路径不得依赖 HTTP 音频 URL。
 - 播放中断会停止当前 outbound 帧推送、清空播放队列，并发出 `talk_runtime.interrupt.todo`；待实现：写入 `input.interrupted`。
 - 挂断或断网会 abort ASR stream、停止 outbound track、关闭 PeerConnection，并发出 `talk_runtime.close.todo`；待实现：调用 `talkRuntime.closeSession()`。

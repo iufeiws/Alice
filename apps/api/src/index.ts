@@ -26,8 +26,8 @@ import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createPhotoTools } from "../../../tools/photo/src/index.js";
-import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools } from "../../../plugins/messaging/src/index.js";
-import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/index.js";
+import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createTtsPlugin } from "../../../plugins/tts/src/index.js";
 import { createShellTools } from "../../../tools/shell/src/index.js";
 import { createBookcaseTools } from "../../../tools/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../tools/sleep-cocoon/src/index.js";
@@ -349,8 +349,7 @@ const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
     appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
   }
 });
-const baseVoiceSynthesizer = createConfiguredVoiceSynthesizer(config.tts, { appendLog });
-const japaneseVoiceRemoteGenieSynthesizer = createGenieTtsVoiceSynthesizer({
+const ttsRemoteGenieSynthesizer = createGenieTtsVoiceSynthesizer({
   ...config.tts,
   backend: "genie-tts",
   genieBaseURL: "http://192.168.0.103:8767",
@@ -358,7 +357,7 @@ const japaneseVoiceRemoteGenieSynthesizer = createGenieTtsVoiceSynthesizer({
   genieIdleShutdownMs: 0,
   genieUseStreamForSynthesis: true
 }, { appendLog });
-const japaneseVoiceLocalGenieSynthesizer = createGenieTtsVoiceSynthesizer({
+const ttsLocalGenieSynthesizer = createGenieTtsVoiceSynthesizer({
   ...config.tts,
   backend: "genie-tts",
   genieBaseURL: undefined,
@@ -366,18 +365,22 @@ const japaneseVoiceLocalGenieSynthesizer = createGenieTtsVoiceSynthesizer({
   genieIdleShutdownMs: config.tts.genieIdleShutdownMs,
   genieUseStreamForSynthesis: true
 }, { appendLog });
-const japaneseVoiceGenieSynthesizer = createFallbackVoiceSynthesizer(
-  japaneseVoiceRemoteGenieSynthesizer,
-  japaneseVoiceLocalGenieSynthesizer,
+const ttsGenieSynthesizer = createFallbackVoiceSynthesizer(
+  ttsRemoteGenieSynthesizer,
+  ttsLocalGenieSynthesizer,
   { appendLog }
 );
-appendLog("info", "japanese voice tts configured: remote Genie stream=http://192.168.0.103:8767/stream synthesize_via_stream=true fallback=local-genie");
-const japaneseVoicePlugin = createJapaneseVoicePlugin({
-  baseSynthesizer: japaneseVoiceGenieSynthesizer,
+appendLog("info", "tts configured: remote Genie stream=http://192.168.0.103:8767/stream synthesize_via_stream=true fallback=local-genie");
+const ttsPlugin = createTtsPlugin({
+  baseSynthesizer: ttsGenieSynthesizer,
   llmRequestSender: (input) => llmRequests.send(input),
   resolveApiPreset(name) {
     return readLLMApiPresets().find((entry) => entry.name === name);
   },
+  promptVariables: () => buildLLMTextVariables({
+    userName: promptProfileStore.get().userName,
+    time: currentTime
+  }),
   appendLog
 });
 const asrPlugin = createAsrPlugin({
@@ -414,7 +417,7 @@ const webRtcVoicePlugin = createWebRtcVoicePlugin({
       appendLog
     });
   },
-  voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
+  voiceSynthesizer: ttsPlugin.voiceSynthesizer,
   decodeAudioFileToFrames(input) {
     return decodeAudioFileToOpusRtpFrames(input);
   },
@@ -426,7 +429,7 @@ const messagingTools = createMessagingTools({
   store,
   outputRouter,
   time: currentTime,
-  voiceSynthesizer: japaneseVoicePlugin.voiceSynthesizer,
+  voiceSynthesizer: ttsPlugin.voiceSynthesizer,
   getUserName: () => promptProfileStore.get().userName,
   getShellSwitchLogs: () => dailyShellStore.listSwitchLogs(500),
   getSleepCocoonEnteredAt: () => diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
@@ -764,8 +767,8 @@ const server = http.createServer(createApiRequestHandler({
   wechatStateStore,
   runtime: runtimeState,
   pluginConfigs: {
-    japaneseVoice: {
-      configPath: "plugins/japanese-voice/config.json"
+    tts: {
+      configPath: "plugins/tts/config.json"
     },
     asr: {
       configPath: "plugins/asr/config.json"
@@ -816,7 +819,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     appendLog("info", `shutdown requested: ${signal}`);
     scheduler.stop();
     try {
-      await japaneseVoicePlugin.voiceSynthesizer.shutdown?.();
+      await ttsPlugin.voiceSynthesizer.shutdown?.();
       await messageRuntime.flushAll();
       await core.stop();
     } finally {

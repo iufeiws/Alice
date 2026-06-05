@@ -134,6 +134,14 @@ export function renderAdminHtmlV2(): string {
       .plugin-config-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
       .plugin-config-head button { margin-top: 0; }
       .plugin-config-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+      .plugin-config-sections { display: grid; gap: 16px; }
+      .plugin-config-section { border-top: 1px solid #e4e7eb; padding-top: 12px; }
+      .plugin-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+      .plugin-section-head h2 { margin: 0; }
+      .plugin-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px; align-items: end; }
+      .plugin-preset-editor { display: none; margin-top: 12px; }
+      .plugin-preset-editor.active { display: grid; gap: 10px; }
+      .plugin-public-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
       .plugin-events { max-height: 280px; }
       .memory-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
       .memory-controls label { margin: 0; min-width: 180px; }
@@ -156,7 +164,7 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } }
     </style>
   </head>
   <body>
@@ -633,6 +641,10 @@ export function renderAdminHtmlV2(): string {
       }
 
       function renderPluginConfig(payload) {
+        if (payload.plugin && payload.plugin.id === "tts") {
+          renderTtsPluginConfig(payload);
+          return;
+        }
         const config = payload.configValue || {};
         const fields = (payload.configSchema && payload.configSchema.fields) || [];
         const groups = (payload.configSchema && payload.configSchema.groups) || [];
@@ -656,6 +668,127 @@ export function renderAdminHtmlV2(): string {
           <h2>Recent Events</h2>
           <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
         \`;
+        bindPluginConfigForm();
+      }
+
+      function renderTtsPluginConfig(payload) {
+        const config = payload.configValue || {};
+        const fields = (payload.configSchema && payload.configSchema.fields) || [];
+        const apiPresets = payload.apiPresets || [];
+        const field = (key) => fields.find((item) => item.key === key);
+        const render = (key) => field(key) ? renderPluginFieldContainer(field(key), config, apiPresets) : "";
+        $("pluginConfigBody").innerHTML = \`
+          <form id="pluginConfigForm" class="plugin-config-sections" data-plugin-id="\${escapeAttr(payload.plugin.id)}" data-plugin-save-mode="section">
+            <section class="plugin-config-section" data-plugin-config-section="translation">
+              <div class="plugin-section-head">
+                <h2>Translation</h2>
+                \${render("currentTranslation.translationEnabled")}
+              </div>
+              <div class="plugin-preset-row">
+                \${render("translationEditPresetName")}
+                <button type="button" class="secondary" data-plugin-preset-toggle="translation">Modify</button>
+              </div>
+              <div class="plugin-preset-editor" data-plugin-preset-editor="translation">
+                \${render("newTranslationPresetName")}
+                \${render("currentTranslation.apiPresetName")}
+                \${render("currentTranslation.prompt")}
+              </div>
+              <div class="prompt-actions">
+                <button type="button" data-plugin-section-save="translation">Save Translation Preset</button>
+              </div>
+            </section>
+            <section class="plugin-config-section" data-plugin-config-section="model">
+              <div class="plugin-section-head">
+                <h2>Model</h2>
+              </div>
+              <div class="plugin-preset-row">
+                \${render("voice.modelEditPresetName")}
+                <button type="button" class="secondary" data-plugin-preset-toggle="model">Modify</button>
+              </div>
+              <div class="plugin-preset-editor" data-plugin-preset-editor="model">
+                \${render("voice.newModelConfigName")}
+                \${render("voice.currentModel.language")}
+                \${render("voice.currentModel.modelDir")}
+                \${render("voice.currentModel.referenceAudio")}
+                \${render("voice.currentModel.referenceText")}
+                \${render("voice.currentModel.speed")}
+                \${render("voice.currentModel.splitText")}
+                \${render("voice.currentModel.partSilenceSeconds")}
+              </div>
+              <div class="prompt-actions">
+                <button type="button" data-plugin-section-save="model">Save Model Preset</button>
+              </div>
+            </section>
+            <section class="plugin-config-section" data-plugin-config-section="common">
+              <div class="plugin-section-head"><h2>Common</h2></div>
+              <div class="plugin-public-grid">
+                \${render("translationPresetName")}
+                \${render("voice.modelConfigName")}
+                \${render("enabled")}
+                \${render("targetRoute")}
+                \${render("persistTranslation")}
+              </div>
+              <div class="prompt-actions">
+                <button type="button" data-plugin-section-save="common">Save Common Settings</button>
+              </div>
+            </section>
+            <div class="prompt-actions">
+              <button type="button" id="pluginConfigReload" class="secondary">Reload</button>
+              <button type="button" id="pluginConfigLogs" class="secondary">Load Events</button>
+            </div>
+          </form>
+          <h2>Route</h2>
+          <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
+          <h2>Runtime Access</h2>
+          <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
+          \${renderPluginTestBox(payload)}
+          <h2>Recent Events</h2>
+          <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
+        \`;
+        bindPluginConfigForm();
+        document.querySelectorAll("[data-plugin-preset-toggle]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const key = button.dataset.pluginPresetToggle;
+            const editor = document.querySelector('[data-plugin-preset-editor="' + cssEscape(key) + '"]');
+            editor?.classList.toggle("active");
+            button.textContent = editor?.classList.contains("active") ? "Hide" : "Modify";
+          });
+        });
+        const translationEditSelect = document.querySelector('[data-plugin-field="translationEditPresetName"]');
+        if (translationEditSelect) {
+          translationEditSelect.addEventListener("change", () => {
+            const preset = (config.translationPresets || {})[translationEditSelect.value] || {};
+            setPluginFieldValue("currentTranslation.translationEnabled", preset.translationEnabled ?? true);
+            setPluginFieldValue("currentTranslation.apiPresetName", preset.apiPresetName || "");
+            setPluginFieldValue("currentTranslation.prompt", preset.prompt || "");
+            setPluginFieldValue("newTranslationPresetName", "");
+          });
+        }
+        const modelEditSelect = document.querySelector('[data-plugin-field="voice.modelEditPresetName"]');
+        if (modelEditSelect) {
+          modelEditSelect.addEventListener("change", () => {
+            const preset = ((config.voice || {}).modelConfigs || {})[modelEditSelect.value] || {};
+            setPluginFieldValue("voice.currentModel.language", preset.language || "jp");
+            setPluginFieldValue("voice.currentModel.speed", preset.speed ?? "");
+            setPluginFieldValue("voice.currentModel.splitText", preset.splitText ?? false);
+            setPluginFieldValue("voice.currentModel.partSilenceSeconds", preset.partSilenceSeconds ?? "");
+            setPluginFieldValue("voice.currentModel.referenceText", "");
+            setPluginFieldValue("voice.newModelConfigName", "");
+          });
+        }
+      }
+
+      function setPluginFieldValue(field, value) {
+        const input = document.querySelector('[data-plugin-field="' + cssEscape(field) + '"]');
+        if (!input) return;
+        if (input.type === "checkbox") {
+          input.checked = Boolean(value);
+        } else {
+          input.value = value ?? "";
+        }
+      }
+
+      function bindPluginConfigForm() {
         $("pluginConfigForm").addEventListener("submit", savePluginConfig);
         document.querySelectorAll("[data-plugin-upload]").forEach((input) => input.addEventListener("change", uploadPluginAsset));
         if ($("pluginConfigGroup")) $("pluginConfigGroup").addEventListener("change", applyPluginConfigGroupFilter);
@@ -667,6 +800,7 @@ export function renderAdminHtmlV2(): string {
           await openPluginConfig(pluginId);
         });
         $("pluginConfigLogs").addEventListener("click", () => loadPluginEvents($("pluginConfigForm").dataset.pluginId));
+        document.querySelectorAll("[data-plugin-section-save]").forEach((button) => button.addEventListener("click", savePluginConfigSection));
         if ($("pluginConfigTest")) $("pluginConfigTest").addEventListener("click", () => runPluginTest($("pluginConfigForm").dataset.pluginId));
       }
 
@@ -743,13 +877,12 @@ export function renderAdminHtmlV2(): string {
       async function savePluginConfig(event) {
         event.preventDefault();
         const form = event.currentTarget;
+        if (form.dataset.pluginSaveMode === "section") {
+          $("plugin-status").textContent = "Use the section save buttons for this plugin.";
+          return;
+        }
         const pluginId = form.dataset.pluginId;
-        const body = {};
-        form.querySelectorAll("[data-plugin-field]").forEach((input) => {
-          if (input.type === "file") return;
-          const value = input.type === "checkbox" ? input.checked : input.type === "number" && input.value !== "" ? Number(input.value) : input.value;
-          setValueAtPath(body, input.dataset.pluginField, value);
-        });
+        const body = pluginConfigBodyFrom(form);
         const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
@@ -759,19 +892,73 @@ export function renderAdminHtmlV2(): string {
         if (result.ok) await openPluginConfig(pluginId);
       }
 
+      async function savePluginConfigSection(event) {
+        const button = event.currentTarget;
+        const section = button.closest("[data-plugin-config-section]");
+        const form = button.closest("form");
+        const pluginId = form.dataset.pluginId;
+        const sectionName = button.dataset.pluginSectionSave || "section";
+        const body = pluginConfigBodyFrom(section);
+        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        }).then((res) => res.json());
+        $("plugin-status").textContent = result.ok ? sectionName + " saved." : "Save failed: " + (result.error || "unknown error");
+        if (result.ok) await openPluginConfig(pluginId);
+      }
+
+      function pluginConfigBodyFrom(root) {
+        const body = {};
+        root.querySelectorAll("[data-plugin-field]").forEach((input) => {
+          if (input.type === "file") return;
+          const value = input.type === "checkbox" ? input.checked : input.type === "number" && input.value !== "" ? Number(input.value) : input.value;
+          setValueAtPath(body, input.dataset.pluginField, value);
+        });
+        return body;
+      }
+
+      async function switchPluginModelConfig(event) {
+        const input = event.currentTarget;
+        const form = input.closest("form");
+        const pluginId = form.dataset.pluginId;
+        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ voice: { modelConfigName: input.value } })
+        }).then((res) => res.json());
+        $("plugin-status").textContent = result.ok ? "Model config switched." : "Switch failed: " + (result.error || "unknown error");
+        if (result.ok) await openPluginConfig(pluginId);
+      }
+
+      async function switchPluginTranslationPreset(event) {
+        const input = event.currentTarget;
+        const form = input.closest("form");
+        const pluginId = form.dataset.pluginId;
+        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ translationPresetName: input.value })
+        }).then((res) => res.json());
+        $("plugin-status").textContent = result.ok ? "Translation preset switched." : "Switch failed: " + (result.error || "unknown error");
+        if (result.ok) await openPluginConfig(pluginId);
+      }
+
       async function uploadPluginAsset(event) {
         const input = event.currentTarget;
         const files = Array.from(input.files || []);
         if (!files.length) return;
         const pluginId = $("pluginConfigForm").dataset.pluginId;
         const assetKey = input.dataset.pluginUpload;
+        const presetName = document.querySelector('[data-plugin-field="voice.modelEditPresetName"]')?.value || document.querySelector('[data-plugin-field="voice.modelConfigName"]')?.value || "";
         for (const file of files) {
           const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/assets/" + encodeURIComponent(assetKey), {
             method: "POST",
             headers: {
               "content-type": file.type || "application/octet-stream",
               "x-file-name": encodeURIComponent(file.name || "asset"),
-              "x-relative-dir": encodeURIComponent(file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(0, -1).join("/") : "")
+              "x-relative-dir": encodeURIComponent(file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(0, -1).join("/") : ""),
+              "x-preset-name": encodeURIComponent(presetName)
             },
             body: file
           }).then((res) => res.json());

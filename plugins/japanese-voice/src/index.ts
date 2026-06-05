@@ -20,6 +20,7 @@ export type JapaneseVoiceApiPreset = {
 
 export type JapaneseVoicePluginConfig = {
   enabled: boolean;
+  translationEnabled: boolean;
   apiPresetName?: string;
   api_preset: JapaneseVoiceApiPreset;
   prompt: string;
@@ -87,6 +88,7 @@ export function readJapaneseVoicePluginConfig(configPath = defaultConfigPath): J
   const voice = parseJsonObject(parsed.voice);
   return {
     enabled: booleanValue(parsed.enabled, false),
+    translationEnabled: booleanValue(parsed.translationEnabled, true),
     apiPresetName: stringValue(parsed.apiPresetName) || stringValue(preset.name),
     api_preset: {
       name: stringValue(preset.name),
@@ -116,12 +118,15 @@ export function createJapaneseVoiceTranslationSynthesizer(
 ): JapaneseVoiceSynthesizer {
   const base = deps.baseSynthesizer;
   const synthesize = (async (input) => {
-    const translated = await translateJapaneseVoiceText(input.text, config, deps);
-    return base({
+    const ttsText = await resolveJapaneseVoiceTtsText(input.text, config, deps);
+    deps.appendLog?.("info", `japanese voice tts start: chars=${Array.from(ttsText).length}`);
+    const result = await base({
       ...input,
-      text: translated || input.text,
+      text: ttsText,
       genie: japaneseVoiceGenieOverrides(config)
     });
+    deps.appendLog?.("info", `japanese voice tts complete: asset=${result.assetId}`);
+    return result;
   }) as JapaneseVoiceSynthesizer;
 
   synthesize.stream = (input) => streamJapaneseVoiceText(input, config, deps);
@@ -142,12 +147,15 @@ function createJapaneseVoiceRoutingSynthesizer(deps: JapaneseVoicePluginDeps): J
   const synthesize = (async (input) => {
     const config = readJapaneseVoicePluginConfig(deps.configPath);
     if (!config.enabled) return base(input);
-    const translated = await translateJapaneseVoiceText(input.text, config, deps);
-    return base({
+    const ttsText = await resolveJapaneseVoiceTtsText(input.text, config, deps);
+    deps.appendLog?.("info", `japanese voice tts start: chars=${Array.from(ttsText).length}`);
+    const result = await base({
       ...input,
-      text: translated || input.text,
+      text: ttsText,
       genie: japaneseVoiceGenieOverrides(config)
     });
+    deps.appendLog?.("info", `japanese voice tts complete: asset=${result.assetId}`);
+    return result;
   }) as JapaneseVoiceSynthesizer;
 
   synthesize.stream = (input) => {
@@ -177,6 +185,16 @@ export function japaneseVoiceGenieOverrides(config: JapaneseVoicePluginConfig): 
     ...(voice.partSilenceSeconds !== undefined ? { partSilenceSeconds: voice.partSilenceSeconds } : {}),
     splitText: voice.splitText ?? false
   };
+}
+
+export async function resolveJapaneseVoiceTtsText(text: string, config: JapaneseVoicePluginConfig, deps: JapaneseVoicePluginDeps): Promise<string> {
+  if (!config.translationEnabled) {
+    deps.appendLog?.("info", `japanese voice translation skipped: disabled chars=${Array.from(text).length}`);
+    return text;
+  }
+  const translated = await translateJapaneseVoiceText(text, config, deps);
+  if (!translated) throw new Error("japanese voice translation failed; no fallback configured");
+  return translated;
 }
 
 export async function translateJapaneseVoiceText(text: string, config: JapaneseVoicePluginConfig, deps: JapaneseVoicePluginDeps): Promise<string | undefined> {
@@ -214,13 +232,13 @@ export async function translateJapaneseVoiceText(text: string, config: JapaneseV
       });
     const translated = result.message.content.trim();
     if (!translated) {
-      deps.appendLog?.("warn", "japanese voice translation returned empty text; using original text");
+      deps.appendLog?.("warn", "japanese voice translation returned empty text");
       return undefined;
     }
     deps.appendLog?.("info", `japanese voice translation complete: chars=${Array.from(translated).length}`);
     return translated;
   } catch (error) {
-    deps.appendLog?.("warn", `japanese voice translation failed; using original text: ${error instanceof Error ? error.message : String(error)}`);
+    deps.appendLog?.("warn", `japanese voice translation failed: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
 }
@@ -234,30 +252,55 @@ export async function* streamJapaneseVoiceText(
   if (!config.enabled) throw new Error("japanese voice stream is disabled");
   if (!deps.baseSynthesizer.streamAudio) throw new Error("japanese voice stream requires a streaming Genie TTS synthesizer");
 
-  let sequence = 0;
-  for await (const sourcePart of splitJapaneseVoiceStreamParts(input.text)) {
-    const sourceChars = Array.from(sourcePart).length;
-    yield { type: "translation_started", sequence, sourceChars };
-    const translated = await translateJapaneseVoiceText(sourcePart, config, deps);
-    const ttsText = translated || sourcePart;
-    yield { type: "translation_done", sequence, translatedChars: Array.from(ttsText).length };
-    const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...streamGenie } = japaneseVoiceGenieOverrides(config);
-    for await (const chunk of deps.baseSynthesizer.streamAudio({
-      text: ttsText,
-      time: input.time,
-      genie: { ...streamGenie, splitText: false }
-    })) {
-      yield {
-        type: "audio",
-        sequence,
-        chunk,
-        contentType: "audio/L16; rate=32000; channels=1"
-      };
-    }
-    yield { type: "part_done", sequence };
-    sequence += 1;
+  const sequence = 0;
+  const sourceText = await collectJapaneseVoiceStreamText(input.text);
+  const sourceChars = Array.from(sourceText).length;
+  if (!sourceText.trim()) {
+    deps.appendLog?.("info", `japanese voice stream skipped: empty input stream=${input.streamId ?? ""}`);
+    yield { type: "done" };
+    return;
   }
+
+  if (config.translationEnabled) {
+    deps.appendLog?.("info", `japanese voice stream translation start: stream=${input.streamId ?? ""} chars=${sourceChars}`);
+    yield { type: "translation_started", sequence, sourceChars };
+  }
+  const ttsText = await resolveJapaneseVoiceTtsText(sourceText, config, deps);
+  const ttsChars = Array.from(ttsText).length;
+  if (config.translationEnabled) {
+    deps.appendLog?.("info", `japanese voice stream translation complete: stream=${input.streamId ?? ""} chars=${ttsChars}`);
+    yield { type: "translation_done", sequence, translatedChars: ttsChars };
+  }
+
+  const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...streamGenie } = japaneseVoiceGenieOverrides(config);
+  deps.appendLog?.("info", `japanese voice stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars}`);
+  let audioChunks = 0;
+  let audioBytes = 0;
+  for await (const chunk of deps.baseSynthesizer.streamAudio({
+    text: ttsText,
+    time: input.time,
+    genie: streamGenie
+  })) {
+    audioChunks += 1;
+    audioBytes += chunk.byteLength;
+    yield {
+      type: "audio",
+      sequence,
+      chunk,
+      contentType: "audio/L16; rate=32000; channels=1"
+    };
+  }
+  deps.appendLog?.("info", `japanese voice stream tts complete: stream=${input.streamId ?? ""} chunks=${audioChunks} bytes=${audioBytes}`);
+  yield { type: "part_done", sequence };
   yield { type: "done" };
+}
+
+export async function collectJapaneseVoiceStreamText(text: AsyncIterable<string> | Iterable<string> | string): Promise<string> {
+  let collected = "";
+  for await (const chunk of iterateTextChunks(text)) {
+    collected += chunk;
+  }
+  return collected.trim();
 }
 
 export async function* splitJapaneseVoiceStreamParts(

@@ -160,6 +160,7 @@ test("admin plugin config patch writes japanese voice config with preset referen
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/japanese-voice/config", {
     enabled: true,
+    translationEnabled: false,
     prompt: "New prompt",
     apiPresetName: "voice",
     voice: {
@@ -178,6 +179,7 @@ test("admin plugin config patch writes japanese voice config with preset referen
   assert.equal(body.configValue.apiPresetName, "voice");
   assert.equal(body.configValue.api_preset, undefined);
   assert.equal(saved.enabled, true);
+  assert.equal(saved.translationEnabled, false);
   assert.equal(saved.prompt, "New prompt");
   assert.equal(saved.apiPresetName, "voice");
   assert.equal(saved.api_preset, undefined);
@@ -186,6 +188,53 @@ test("admin plugin config patch writes japanese voice config with preset referen
   assert.equal(saved.voice.speed, 1.2);
   assert.equal(saved.voice.partSilenceSeconds, 0.45);
   assert.equal(saved.voice.splitText, false);
+});
+
+test("admin plugin test can run japanese voice tts with translation disabled", async () => {
+  const root = makeTempDir("admin-plugin-test-no-translate");
+  const configPath = path.join(root, "plugins", "japanese-voice", "config.json");
+  const voicePath = path.join("assets", "generated", "tts", `voice-${path.basename(root)}.opus`);
+  let capturedText = "";
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(path.dirname(voicePath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, translationEnabled: false, prompt: "Translate:" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(path.join(root, "config", "memorize-prompts.json"));
+  let llmCalls = 0;
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    config: {
+      ...baseContext(root, memoryStore, promptStore).config,
+      tts: { mossOutputDir: path.join("assets", "generated", "tts") }
+    },
+    pluginConfigs: {
+      japaneseVoice: {
+        configPath,
+        testVoiceSynthesizer: async ({ text }: { text: string }) => {
+          capturedText = text;
+          fs.writeFileSync(voicePath, `voice:${text}`);
+          return { assetId: "generated/tts/voice.opus", filePath: voicePath };
+        }
+      }
+    },
+    llmRequestSender: async () => {
+      llmCalls += 1;
+      return { message: { role: "assistant", content: "また後で" } };
+    }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/japanese-voice/test", { text: "晚点见" }), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.result.output, "晚点见");
+  assert.equal(body.result.timing.translationMs, 0);
+  assert.equal(capturedText, "晚点见");
+  assert.equal(llmCalls, 0);
+  fs.rmSync(voicePath, { force: true });
 });
 
 test("admin plugin config patch writes ASR config with preset references only", async () => {

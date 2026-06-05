@@ -17,7 +17,7 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { createConfiguredVoiceSynthesizer, formatCheckChatMessages, type VoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, formatCheckChatMessages, type VoiceSynthesizer } from "../../../plugins/messaging/src/index.js";
 import { japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig, translateJapaneseVoiceText, type JapaneseVoicePluginConfig } from "../../../plugins/japanese-voice/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
@@ -87,6 +87,7 @@ type AdminPluginSummary = {
 
 type JapaneseVoiceAdminConfig = {
   enabled: boolean;
+  translationEnabled: boolean;
   apiPresetName?: string;
   prompt: string;
   voice: {
@@ -1052,6 +1053,7 @@ function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
     configSchema: {
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", description: "Enable or disable this plugin route." },
+        { key: "translationEnabled", label: "Translate Text", type: "switch", description: "Translate text before Japanese TTS. Disable to send the original text directly to the Japanese voice model." },
         { key: "voice.referenceAudio", label: "Reference Audio", type: "fileUpload", assetKey: "reference-audio", accept: "audio/*", description: "Plugin-owned reference audio under assets/plugin/{plugin_id}/." },
         { key: "prompt", label: "Prompt", type: "textarea", description: "Prompt used by this plugin before it calls the selected API preset." },
         { key: "voice.modelDir", label: "Voice Model Folder", type: "folderUpload", assetKey: "model", description: "Plugin-owned model folder under assets/plugin/{plugin_id}/." },
@@ -1066,7 +1068,7 @@ function japaneseVoicePluginEntry(): AdminPluginRegistryEntry {
     },
     routePreview: [
       "send_chat.voice",
-      "plugin.translate",
+      "plugin.translate_optional",
       "default_tts.synthesize",
       "channel.audio.send"
     ],
@@ -1354,39 +1356,44 @@ async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Recor
   const config = readJapaneseVoiceConfigForAdmin(context);
   const text = requiredString(input.text) || "晚点见。";
   if (Array.from(text).length > 240) return { error: "text_too_long" };
-  if (!config.apiPresetName) return { error: "missing_api_preset" };
-  const preset = readLLMApiPresets(context).find((entry) => entry.name === config.apiPresetName);
-  if (!preset) return { error: "invalid_api_preset" };
-  if (!preset.baseURL || !preset.apiKey) return { error: "incomplete_api_preset" };
 
   const totalStartedAt = Date.now();
-  const translationStartedAt = Date.now();
-  const translatedText = await translateJapaneseVoiceText(text, config, {
-    baseSynthesizer: async () => {
-      throw new Error("not used");
-    },
-    llmRequestSender: context.llmRequestSender,
-    llm: createOpenAICompatibleClient({
-      baseURL: preset.baseURL,
-      apiKey: preset.apiKey,
-      model: preset.model,
-      temperature: preset.temperature,
-      timeoutMs: preset.timeoutMs,
-      extraParams: preset.extraParams
-    }),
-    resolveApiPreset(name) {
-      return readLLMApiPresets(context).find((entry) => entry.name === name);
-    },
-    appendLog: context.appendLog
-  });
-  const translationMs = Date.now() - translationStartedAt;
-  if (!translatedText) return { error: "translation_failed" };
+  let translatedText = text;
+  let translationMs = 0;
+  if (config.translationEnabled) {
+    if (!config.apiPresetName) return { error: "missing_api_preset" };
+    const preset = readLLMApiPresets(context).find((entry) => entry.name === config.apiPresetName);
+    if (!preset) return { error: "invalid_api_preset" };
+    if (!preset.baseURL || !preset.apiKey) return { error: "incomplete_api_preset" };
+    const translationStartedAt = Date.now();
+    const translated = await translateJapaneseVoiceText(text, config, {
+      baseSynthesizer: async () => {
+        throw new Error("not used");
+      },
+      llmRequestSender: context.llmRequestSender,
+      llm: createOpenAICompatibleClient({
+        baseURL: preset.baseURL,
+        apiKey: preset.apiKey,
+        model: preset.model,
+        temperature: preset.temperature,
+        timeoutMs: preset.timeoutMs,
+        extraParams: preset.extraParams
+      }),
+      resolveApiPreset(name) {
+        return readLLMApiPresets(context).find((entry) => entry.name === name);
+      },
+      appendLog: context.appendLog
+    });
+    translationMs = Date.now() - translationStartedAt;
+    if (!translated) return { error: "translation_failed" };
+    translatedText = translated;
+  } else {
+    context.appendLog?.("info", `japanese voice admin test translation skipped: disabled chars=${Array.from(text).length}`);
+  }
 
   const ttsStartedAt = Date.now();
   const configuredSynthesizer = context.pluginConfigs?.japaneseVoice?.testVoiceSynthesizer;
-  const synthesizer = configuredSynthesizer ?? createConfiguredVoiceSynthesizer(context.config.tts, {
-    appendLog: context.appendLog
-  });
+  const synthesizer = configuredSynthesizer ?? createJapaneseVoiceFallbackTtsSynthesizer(context);
   let voice: Awaited<ReturnType<VoiceSynthesizer>>;
   let ttsMs = 0;
   try {
@@ -1415,6 +1422,29 @@ async function testJapaneseVoicePlugin(context: AdminRoutesContext, input: Recor
   };
 }
 
+function createJapaneseVoiceFallbackTtsSynthesizer(context: AdminRoutesContext): VoiceSynthesizer {
+  const remote = createGenieTtsVoiceSynthesizer({
+    ...context.config.tts,
+    backend: "genie-tts",
+    genieBaseURL: "http://192.168.0.103:8767",
+    genieBaseURLExplicit: true,
+    genieIdleShutdownMs: 0,
+    genieUseStreamForSynthesis: true
+  }, {
+    appendLog: context.appendLog
+  });
+  const local = createGenieTtsVoiceSynthesizer({
+    ...context.config.tts,
+    backend: "genie-tts",
+    genieBaseURL: undefined,
+    genieBaseURLExplicit: false,
+    genieUseStreamForSynthesis: true
+  }, {
+    appendLog: context.appendLog
+  });
+  return createFallbackVoiceSynthesizer(remote, local, { appendLog: context.appendLog });
+}
+
 function updateJapaneseVoiceConfig(
   context: AdminRoutesContext,
   patch: Record<string, unknown>
@@ -1427,6 +1457,7 @@ function updateJapaneseVoiceConfig(
     : {};
   const next: JapaneseVoicePluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    translationEnabled: patch.translationEnabled === undefined ? current.translationEnabled : booleanFromUnknown(patch.translationEnabled),
     apiPresetName: patch.apiPresetName === undefined ? current.apiPresetName : optionalString(patch.apiPresetName),
     api_preset: current.api_preset,
     prompt: patch.prompt === undefined ? current.prompt : requiredString(patch.prompt),
@@ -1442,7 +1473,7 @@ function updateJapaneseVoiceConfig(
 
   const validationError = validateJapaneseVoiceConfig(next);
   if (validationError) return { error: validationError };
-  if (next.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.apiPresetName)) {
+  if (next.translationEnabled && next.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.apiPresetName)) {
     return { error: "invalid_api_preset" };
   }
   writeJapaneseVoiceConfig(context, next);
@@ -1562,6 +1593,7 @@ function japaneseVoiceConfigMtime(context: AdminRoutesContext): string | undefin
 function publicJapaneseVoiceConfig(config: JapaneseVoicePluginConfig): JapaneseVoiceAdminConfig {
   return {
     enabled: config.enabled,
+    translationEnabled: config.translationEnabled,
     apiPresetName: config.apiPresetName,
     prompt: config.prompt,
     voice: { ...config.voice }
@@ -1573,6 +1605,7 @@ function japaneseVoiceConfigSchema(): unknown {
     type: "object",
     properties: {
       enabled: { type: "boolean" },
+      translationEnabled: { type: "boolean" },
       apiPresetName: { type: "string" },
       prompt: { type: "string" },
       voice: { type: "object" }

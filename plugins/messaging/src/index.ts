@@ -44,6 +44,7 @@ export type TTSConfig = {
   genieTimeoutMs?: number;
   genieIdleShutdownMs?: number;
   genieFfmpegCommand?: string;
+  genieUseStreamForSynthesis?: boolean;
   mossBaseURL?: string;
   mossBaseURLExplicit?: boolean;
   mossHost?: string;
@@ -83,6 +84,10 @@ export type VoiceSynthesizer = ((input: VoiceSynthesisInput) => Promise<VoiceSyn
   noteActivity?(): void;
   prepare?(): Promise<void>;
   shutdown?(): Promise<void>;
+};
+
+export type FallbackVoiceSynthesizerDeps = {
+  appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
 
 export type MessagingToolsDeps = {
@@ -1093,6 +1098,73 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
   return synthesize;
 }
 
+export function createFallbackVoiceSynthesizer(
+  primary: VoiceSynthesizer,
+  fallback: VoiceSynthesizer,
+  deps: FallbackVoiceSynthesizerDeps = {}
+): VoiceSynthesizer {
+  let useFallback = false;
+  const synthesize = (async (request) => {
+    if (useFallback) return fallback(request);
+    try {
+      return await primary(request);
+    } catch (error) {
+      useFallback = true;
+      deps.appendLog?.("warn", `voice tts primary failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      return fallback(request);
+    }
+  }) as VoiceSynthesizer;
+  synthesize.streamAudio = async function* (request) {
+    if (useFallback) {
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      yield* fallback.streamAudio(request);
+      return;
+    }
+    if (!primary.streamAudio) {
+      useFallback = true;
+      deps.appendLog?.("warn", "voice tts primary stream unavailable; falling back to local Genie");
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      yield* fallback.streamAudio(request);
+      return;
+    }
+    let yielded = false;
+    try {
+      for await (const chunk of primary.streamAudio(request)) {
+        yielded = true;
+        yield chunk;
+      }
+    } catch (error) {
+      if (yielded) throw error;
+      useFallback = true;
+      deps.appendLog?.("warn", `voice tts primary stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      yield* fallback.streamAudio(request);
+    }
+  };
+  synthesize.noteActivity = () => {
+    primary.noteActivity?.();
+    fallback.noteActivity?.();
+  };
+  synthesize.prepare = async () => {
+    if (useFallback) {
+      await fallback.prepare?.();
+      return;
+    }
+    try {
+      await primary.prepare?.();
+    } catch (error) {
+      useFallback = true;
+      deps.appendLog?.("warn", `voice tts primary prepare failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      await fallback.prepare?.();
+    }
+  };
+  synthesize.shutdown = async () => {
+    await primary.shutdown?.();
+    await fallback.shutdown?.();
+  };
+  return synthesize;
+}
+
 function getGenieReadinessError(input: TTSConfig): string | undefined {
   if (input.genieBaseURLExplicit) return undefined;
   const dataDir = input.genieDataDir ?? "assets/tts/genie/GenieData";
@@ -1333,7 +1405,8 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     outputDir: input.genieOutputDir ?? input.mossOutputDir ?? "assets/generated/tts",
     timeoutMs: input.genieTimeoutMs ?? input.mossTimeoutMs ?? 120_000,
     idleShutdownMs: input.genieIdleShutdownMs ?? input.mossIdleShutdownMs ?? 15 * 60 * 1000,
-    ffmpegCommand: input.genieFfmpegCommand ?? input.mossFfmpegCommand ?? "ffmpeg-static"
+    ffmpegCommand: input.genieFfmpegCommand ?? input.mossFfmpegCommand ?? "ffmpeg-static",
+    useStreamForSynthesis: input.genieUseStreamForSynthesis ?? false
   };
   let ownedProcess: ReturnType<typeof childProcess.spawn> | undefined;
   let starting: Promise<void> | undefined;
@@ -1352,6 +1425,34 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     const speed = genieSpeedValue(request.genie?.speed);
     await ensureGenieService();
     try {
+      if (config.useStreamForSynthesis) {
+        deps.appendLog?.("info", `genie tts synthesize via stream start: url=${config.baseURL}/stream chars=${Array.from(text).length}`);
+        const pcm = await collectGenieStreamPcm({
+          text,
+          genie: request.genie,
+          baseURL: config.baseURL,
+          timeoutMs: config.timeoutMs,
+          fetchImpl,
+          setTimer,
+          clearTimer,
+          appendLog: deps.appendLog,
+          onChunk: noteActivity
+        });
+        deps.appendLog?.("info", `genie tts synthesize via stream complete: bytes=${pcm.byteLength}`);
+        writePcmL16Wav(wavPath, pcm, 32_000, 1);
+        validateGeneratedVoice(wavPath, outputDir.fullPath);
+        const conversionWavPath = speed === 1 ? wavPath : speedAdjustedWavPath;
+        if (speed !== 1) {
+          await changeAudioTempo(wavPath, speedAdjustedWavPath, speed, config.ffmpegCommand, spawnImpl);
+          validateGeneratedVoice(speedAdjustedWavPath, outputDir.fullPath);
+        }
+        await validateVoiceLoudness(conversionWavPath, config.ffmpegCommand, spawnImpl);
+        await convertWavToOpus(conversionWavPath, opusPath, config.ffmpegCommand, spawnImpl);
+        validateGeneratedVoice(opusPath, outputDir.fullPath);
+        await validateVoiceLoudness(opusPath, config.ffmpegCommand, spawnImpl);
+        noteActivity();
+        return { assetId: opusAssetId, filePath: opusPath };
+      }
       const requestBody = {
         text,
         outputPath: wavPath,
@@ -1393,32 +1494,18 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     const speed = genieSpeedValue(request.genie?.speed);
     if (speed !== 1) throw new Error("Genie TTS stream does not support speed adjustment");
     await ensureGenieService();
-    const controller = new AbortController();
-    const timeout = setTimer(() => controller.abort(), config.timeoutMs);
-    timeout.unref?.();
-    try {
-      const response = await fetchImpl(`${config.baseURL}/stream`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          text,
-          ...genieRequestOverrides({ ...request.genie, splitText: false }, deps.appendLog)
-        })
-      });
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(`Genie TTS stream HTTP ${response.status}: ${errorText.slice(0, 500)}`);
-      }
-      if (!response.body) throw new Error("Genie TTS stream response had no body");
-      for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
-        if (!chunk.byteLength) continue;
-        noteActivity();
-        yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-      }
-    } finally {
-      clearTimer(timeout);
-      controller.abort();
+    for await (const chunk of streamGeniePcm({
+      text,
+      genie: request.genie,
+      baseURL: config.baseURL,
+      timeoutMs: config.timeoutMs,
+      fetchImpl,
+      setTimer,
+      clearTimer,
+      appendLog: deps.appendLog
+    })) {
+      noteActivity();
+      yield chunk;
     }
   };
   synthesize.prepare = async () => {
@@ -1608,6 +1695,55 @@ async function postJson(url: string, body: Record<string, unknown>, timeoutMs: n
   return parsed ?? {};
 }
 
+async function* streamGeniePcm(input: {
+  text: string;
+  genie?: VoiceSynthesisInput["genie"];
+  baseURL: string;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+  setTimer: typeof setTimeout;
+  clearTimer: typeof clearTimeout;
+  appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+}): AsyncIterable<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = input.setTimer(() => controller.abort(), input.timeoutMs);
+  timeout.unref?.();
+  try {
+    const response = await input.fetchImpl(`${input.baseURL}/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        text: input.text,
+        ...genieRequestOverrides(input.genie, input.appendLog)
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`Genie TTS stream HTTP ${response.status}: ${errorText.slice(0, 500)}`);
+    }
+    if (!response.body) throw new Error("Genie TTS stream response had no body");
+    for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+      if (!chunk.byteLength) continue;
+      yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    }
+  } finally {
+    input.clearTimer(timeout);
+    controller.abort();
+  }
+}
+
+async function collectGenieStreamPcm(input: Parameters<typeof streamGeniePcm>[0] & { onChunk?(): void }): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of streamGeniePcm(input)) {
+    input.onChunk?.();
+    chunks.push(chunk);
+  }
+  const pcm = concatUint8Arrays(chunks);
+  if (pcm.byteLength === 0) throw new Error("Genie TTS stream returned no audio");
+  return pcm;
+}
+
 function isAbortLikeError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const value = error as { name?: unknown; code?: unknown; message?: unknown };
@@ -1740,6 +1876,36 @@ function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return output;
+}
+
+function writePcmL16Wav(filePath: string, pcm: Uint8Array, sampleRate: number, channels: number): void {
+  if (pcm.byteLength === 0) throw new Error("PCM audio is empty");
+  const bitsPerSample = 16;
+  const blockAlign = channels * bitsPerSample / 8;
+  const byteRate = sampleRate * blockAlign;
+  const output = new Uint8Array(44 + pcm.byteLength);
+  const view = new DataView(output.buffer);
+  writeAscii(output, 0, "RIFF");
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  writeAscii(output, 8, "WAVE");
+  writeAscii(output, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(output, 36, "data");
+  view.setUint32(40, pcm.byteLength, true);
+  output.set(pcm, 44);
+  fs.writeFileSync(filePath, output);
+}
+
+function writeAscii(output: Uint8Array, offset: number, text: string): void {
+  for (let index = 0; index < text.length; index += 1) {
+    output[offset + index] = text.charCodeAt(index);
+  }
 }
 
 function readInt16LE(bytes: Uint8Array, offset: number): number {

@@ -26,7 +26,7 @@ import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createMediaTools } from "../../../plugins/media/src/index.js";
-import { createConfiguredVoiceSynthesizer, createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools } from "../../../plugins/messaging/src/index.js";
 import { createJapaneseVoicePlugin } from "../../../plugins/japanese-voice/src/index.js";
 import { createShellTools } from "../../../plugins/shell/src/index.js";
 import { createBookcaseTools } from "../../../plugins/bookcase/src/index.js";
@@ -350,8 +350,30 @@ const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
   }
 });
 const baseVoiceSynthesizer = createConfiguredVoiceSynthesizer(config.tts, { appendLog });
+const japaneseVoiceRemoteGenieSynthesizer = createGenieTtsVoiceSynthesizer({
+  ...config.tts,
+  backend: "genie-tts",
+  genieBaseURL: "http://192.168.0.103:8767",
+  genieBaseURLExplicit: true,
+  genieIdleShutdownMs: 0,
+  genieUseStreamForSynthesis: true
+}, { appendLog });
+const japaneseVoiceLocalGenieSynthesizer = createGenieTtsVoiceSynthesizer({
+  ...config.tts,
+  backend: "genie-tts",
+  genieBaseURL: undefined,
+  genieBaseURLExplicit: false,
+  genieIdleShutdownMs: config.tts.genieIdleShutdownMs,
+  genieUseStreamForSynthesis: true
+}, { appendLog });
+const japaneseVoiceGenieSynthesizer = createFallbackVoiceSynthesizer(
+  japaneseVoiceRemoteGenieSynthesizer,
+  japaneseVoiceLocalGenieSynthesizer,
+  { appendLog }
+);
+appendLog("info", "japanese voice tts configured: remote Genie stream=http://192.168.0.103:8767/stream synthesize_via_stream=true fallback=local-genie");
 const japaneseVoicePlugin = createJapaneseVoicePlugin({
-  baseSynthesizer: baseVoiceSynthesizer,
+  baseSynthesizer: japaneseVoiceGenieSynthesizer,
   llmRequestSender: (input) => llmRequests.send(input),
   resolveApiPreset(name) {
     return readLLMApiPresets().find((entry) => entry.name === name);

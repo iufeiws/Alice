@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../core/time/src/index.js";
 import { formatToolResultForLLM } from "../core/text-renderer/src/index.js";
-import { createConfiguredVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
-import { createJapaneseVoicePlugin, createJapaneseVoiceTranslationSynthesizer, japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig } from "../plugins/japanese-voice/src/index.js";
+import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMessagingTools, createMossOnnxVoiceSynthesizer } from "../plugins/messaging/src/index.js";
+import { collectJapaneseVoiceStreamText, createJapaneseVoicePlugin, createJapaneseVoiceTranslationSynthesizer, japaneseVoiceGenieOverrides, readJapaneseVoicePluginConfig } from "../plugins/japanese-voice/src/index.js";
 import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
 import type { AgentOutput } from "../packages/types/src/index.js";
 
@@ -860,6 +860,7 @@ test("japanese voice plugin translates before tts while preserving original send
   let generatedPath = "";
   const voiceSynthesizer = createJapaneseVoiceTranslationSynthesizer({
     enabled: true,
+    translationEnabled: true,
     api_preset: {
       baseURL: "https://example.invalid/v1",
       apiKey: "test-key",
@@ -920,6 +921,37 @@ test("japanese voice plugin translates before tts while preserving original send
   assert.doesNotMatch(String(result.output), /また後で会いましょう/);
 });
 
+test("japanese voice plugin can skip translation and send original text to jp tts", async () => {
+  const dir = makeTempDir("messaging-japanese-voice-no-translate");
+  const synthesizedTexts: string[] = [];
+  let llmCalls = 0;
+  const voiceSynthesizer = createJapaneseVoiceTranslationSynthesizer({
+    enabled: true,
+    translationEnabled: false,
+    api_preset: {
+      baseURL: "",
+      model: "flash"
+    },
+    prompt: "Translate to Japanese.\nText:"
+  }, {
+    baseSynthesizer: async ({ text }) => {
+      synthesizedTexts.push(text);
+      const filePath = path.join(dir, "voice.wav");
+      fs.writeFileSync(filePath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath };
+    },
+    llmRequestSender: async () => {
+      llmCalls += 1;
+      return { message: { role: "assistant", content: "日本語" } };
+    }
+  });
+
+  await voiceSynthesizer({ text: "原文", time: createCurrentTimeProvider("UTC") });
+
+  assert.equal(llmCalls, 0);
+  assert.deepEqual(synthesizedTexts, ["原文"]);
+});
+
 test("japanese voice plugin config reads switch, api preset, and prompt from plugin folder config", () => {
   const dir = makeTempDir("japanese-voice-config");
   const configPath = path.join(dir, "config.json");
@@ -935,6 +967,7 @@ test("japanese voice plugin config reads switch, api preset, and prompt from plu
   const config = readJapaneseVoicePluginConfig(configPath);
 
   assert.equal(config.enabled, true);
+  assert.equal(config.translationEnabled, true);
   assert.equal(config.apiPresetName, "fixed-flash");
   assert.equal(config.api_preset.apiKey, undefined);
   assert.equal(config.api_preset.baseURL, "");
@@ -983,17 +1016,21 @@ test("japanese voice plugin switch is read from plugin config at synthesis time"
   assert.deepEqual(synthesizedTexts, ["原文", "日本語"]);
 });
 
-test("japanese voice stream buffers text, translates each part, and yields ordered Genie audio chunks", async () => {
+test("japanese voice stream translates the full conversation once and yields Genie audio chunks", async () => {
   const dir = makeTempDir("japanese-voice-stream");
   const configPath = path.join(dir, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
     apiPresetName: "fixed-flash",
-    prompt: "Translate to Japanese.\nText:"
+    prompt: "Translate to Japanese.\nText:",
+    voice: {
+      splitText: true
+    }
   }));
   const translatedInputs: string[] = [];
   const streamedTexts: string[] = [];
   const streamedGenie: unknown[] = [];
+  const logs: string[] = [];
   const plugin = createJapaneseVoicePlugin({
     configPath,
     baseSynthesizer: Object.assign(async () => {
@@ -1017,7 +1054,8 @@ test("japanese voice stream buffers text, translates each part, and yields order
         apiKey: "test-key",
         model: "flash"
       };
-    }
+    },
+    appendLog: (_level, message) => logs.push(message)
   });
 
   const events = [];
@@ -1030,15 +1068,10 @@ test("japanese voice stream buffers text, translates each part, and yields order
     events.push(event);
   }
 
-  assert.deepEqual(translatedInputs, ["第一句第一句啊。", "第二句第二句啊。"]);
-  assert.deepEqual(streamedTexts, ["ja:1", "ja:2"]);
-  assert.equal(streamedGenie.every((genie: any) => genie?.speed === undefined && genie?.splitText === false), true);
+  assert.deepEqual(translatedInputs, ["第一句第一句啊。第二句第二句啊。"]);
+  assert.deepEqual(streamedTexts, ["ja:1"]);
+  assert.equal(streamedGenie.every((genie: any) => genie?.speed === undefined && genie?.splitText === true), true);
   assert.deepEqual(events.map((event) => event.type), [
-    "translation_started",
-    "translation_done",
-    "audio",
-    "audio",
-    "part_done",
     "translation_started",
     "translation_done",
     "audio",
@@ -1048,15 +1081,20 @@ test("japanese voice stream buffers text, translates each part, and yields order
   ]);
   assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, Array.from(event.chunk)]), [
     [0, [1, 1]],
-    [0, [1, 2]],
-    [1, [2, 1]],
-    [1, [2, 2]]
+    [0, [1, 2]]
   ]);
+  assert.equal(logs.some((message) => message.includes("japanese voice stream tts complete") && message.includes("chunks=2")), true);
+});
+
+test("japanese voice stream text collection preserves full conversation order", async () => {
+  const text = await collectJapaneseVoiceStreamText(["第一句", "。", "第二句"]);
+  assert.equal(text, "第一句。第二句");
 });
 
 test("japanese voice passes Genie language and plugin voice assets as per-request overrides", () => {
   const overrides = japaneseVoiceGenieOverrides({
     enabled: true,
+    translationEnabled: true,
     apiPresetName: "fixed-flash",
     api_preset: {
       baseURL: "",
@@ -1449,8 +1487,110 @@ test("genie tts exposes streaming PCM chunks through streamAudio", async () => {
   }
 
   assert.deepEqual(calls, ["GET /health", "POST /stream"]);
-  assert.deepEqual(requestBodies, [{ text: "また後で", language: "jp", splitText: false }]);
+  assert.deepEqual(requestBodies, [{ text: "また後で", language: "jp", splitText: true }]);
   assert.deepEqual(chunks, [[1, 2], [3, 4]]);
+});
+
+test("genie tts can synthesize an opus asset from remote stream audio", async () => {
+  const calls: string[] = [];
+  const requestBodies: Array<Record<string, unknown>> = [];
+  const ffmpegArgs: string[][] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (pathname === "/stream") {
+      requestBodies.push(JSON.parse(String(init?.body)));
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0xff, 0x3f, 0x00, 0x40]));
+          controller.close();
+        }
+      }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const ffmpegSpawn = fakeFfmpegSpawn();
+  const spawn = ((command: string, args: readonly string[]) => {
+    if (command === "ffmpeg") ffmpegArgs.push([...args]);
+    return ffmpegSpawn(command, args);
+  }) as any;
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieOutputDir: "generated/tts",
+    genieIdleShutdownMs: 0,
+    genieFfmpegCommand: "ffmpeg",
+    genieUseStreamForSynthesis: true
+  }, { fetch: fakeFetch as typeof fetch, spawn });
+
+  const result = await synthesize({
+    text: "また後で",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    genie: {
+      language: "jp",
+      speed: 1.15,
+      splitText: true
+    }
+  });
+
+  assert.deepEqual(calls, ["GET /health", "POST /stream"]);
+  assert.deepEqual(requestBodies, [{ text: "また後で", language: "jp", splitText: true }]);
+  assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+  assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
+  assert.ok(ffmpegArgs.some((args) => args.includes("-filter:a") && args.includes("atempo=1.15")));
+  await fsp.unlink(result.filePath);
+});
+
+test("fallback voice synthesizer uses local synthesis when remote synthesis fails", async () => {
+  const logs: string[] = [];
+  const calls: string[] = [];
+  const remote = Object.assign(async () => {
+    calls.push("remote");
+    throw new Error("remote offline");
+  }, {}) as any;
+  const local = Object.assign(async () => {
+    calls.push("local");
+    return { assetId: "generated/tts/local.opus", filePath: "assets/generated/tts/local.opus" };
+  }, {}) as any;
+  const synthesize = createFallbackVoiceSynthesizer(remote, local, {
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  const result = await synthesize({ text: "また後で", time: createCurrentTimeProvider("UTC") });
+
+  assert.deepEqual(calls, ["remote", "local"]);
+  assert.equal(result.assetId, "generated/tts/local.opus");
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), true);
+});
+
+test("fallback voice synthesizer streams from local when remote stream fails before audio", async () => {
+  const calls: string[] = [];
+  const remote = Object.assign(async () => {
+    throw new Error("not used");
+  }, {
+    async *streamAudio() {
+      calls.push("remote");
+      throw new Error("remote stream offline");
+    }
+  }) as any;
+  const local = Object.assign(async () => {
+    throw new Error("not used");
+  }, {
+    async *streamAudio() {
+      calls.push("local");
+      yield new Uint8Array([9, 1]);
+    }
+  }) as any;
+  const synthesize = createFallbackVoiceSynthesizer(remote, local);
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudio!({ text: "また後で", time: createCurrentTimeProvider("UTC") })) {
+    chunks.push(Array.from(chunk));
+  }
+
+  assert.deepEqual(calls, ["remote", "local"]);
+  assert.deepEqual(chunks, [[9, 1]]);
 });
 
 test("genie tts owned service shuts down on idle timeout", async () => {

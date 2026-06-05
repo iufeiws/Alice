@@ -45,9 +45,10 @@ createAgentCore(deps: AgentCoreDeps): AgentCore
 
 Prompt 层支持运行时变量：
 
-- `{{date_time}}`：本地日期和时间，格式为 `YYYY-MM-DD HH:mm:ss`
-- `{{time}}`：本地时间，格式为 `HH:mm:ss`
-- `{{date}}`：本地日期，格式为 `YYYY-MM-DD`
+- `{{date_time}}`：配置时区日期和时间，格式为 `YYYY-MM-DD HH:mm:ss`
+- `{{time}}`：配置时区时间，格式为 `HH:mm:ss`
+- `{{date}}`：配置时区日期，格式为 `YYYY-MM-DD`
+- `{{weekday}}`：配置时区星期，例如 `星期六`
 - `{{timezone}}`：当前时区
 - `{{user}}`
 - `{{session}}`

@@ -53,6 +53,8 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
     time_utc: "",
     date: "",
     date_utc: "",
+    weekday: "",
+    weekday_utc: "",
     timezone: "",
     session: "",
     channel: "",
@@ -95,6 +97,8 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
     variables.date_time_utc = utc.slice(0, 19).replace("T", " ");
     variables.time_utc = utc.slice(11, 19);
     variables.date_utc = utc.slice(0, 10);
+    variables.weekday = formatWeekday(now.date, input.time.timeZone);
+    variables.weekday_utc = formatWeekday(now.date, "UTC");
     variables.timezone = input.time.timeZone;
   }
   variables.user = input.userName?.trim() || "user";
@@ -121,6 +125,10 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
     ...variables,
     ...(input.extra ?? {})
   };
+}
+
+function formatWeekday(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { timeZone, weekday: "long" }).format(date);
 }
 
 export function renderLLMText(content: string, variables: LLMTextVariables = {}): string {

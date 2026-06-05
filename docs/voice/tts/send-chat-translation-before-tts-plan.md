@@ -13,7 +13,7 @@
 - Genie per-request override，包括语言、模型目录、参考音频、参考文本、语速、分段设置。
 - WebRTC voice 复用的 `tts.voiceSynthesizer`。
 
-`plugins/messaging` 不拥有 TTS 实现，只调用注入的 `VoiceSynthesizer`。
+`tools/messaging` 不拥有 TTS 实现，只调用注入的 `VoiceSynthesizer`。
 
 ## Canonical Names
 

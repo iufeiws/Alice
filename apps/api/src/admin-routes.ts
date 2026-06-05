@@ -17,7 +17,7 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { formatCheckChatMessages } from "../../../plugins/messaging/src/index.js";
+import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
 import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";

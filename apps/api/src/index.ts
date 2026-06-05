@@ -26,7 +26,7 @@ import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createPhotoTools } from "../../../tools/photo/src/index.js";
-import { createMessagingTools } from "../../../plugins/messaging/src/index.js";
+import { createMessagingTools } from "../../../tools/messaging/src/index.js";
 import { createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createTtsPlugin } from "../../../plugins/tts/src/index.js";
 import { createShellTools } from "../../../tools/shell/src/index.js";
 import { createBookcaseTools } from "../../../tools/bookcase/src/index.js";

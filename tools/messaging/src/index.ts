@@ -5,7 +5,7 @@ import { parseZonedIso } from "../../../core/time/src/index.js";
 import type { OutputRouter } from "../../../core/output-router/src/index.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId, sanitizeMessageText, summarizeAudioText } from "../../../packages/types/src/index.js";
-import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../tts/src/index.js";
+import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import type {
   AliceStore,
   InsertOutboundMessageInput,

@@ -29,7 +29,7 @@
 `wait_chat` 应合并进：
 
 ```text
-plugins/messaging/src/index.ts
+tools/messaging/src/index.ts
 ```
 
 而不是新增：
@@ -40,7 +40,7 @@ tools/wait
 
 原因：
 
-- `plugins/messaging` 按约定保留在 plugins 下；它同时承载 chat 工具、语音合成器和聊天格式化辅助导出。
+- `tools/messaging` 是 chat 工具包；TTS 实现由 `plugins/tts` 提供，messaging 只调用注入的语音合成器。
 - `wait_chat` 的唤醒条件来自聊天消息变化和 heartbeat。
 - `wait_chat` 的续接结果来自 `check_chat`。
 - 它需要复用当前 messaging session、requester、cursor 和 `messageCursorId` 语义。

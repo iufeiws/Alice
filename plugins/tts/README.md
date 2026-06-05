@@ -2,7 +2,7 @@
 
 `plugins/tts` is the canonical outbound voice synthesis plugin.
 
-It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio events, and the preset settings used by `send_chat` voice output and WebRTC voice playback. `plugins/messaging` should only call an injected `VoiceSynthesizer`.
+It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio events, and the preset settings used by `send_chat` voice output and WebRTC voice playback. `tools/messaging` should only call an injected `VoiceSynthesizer`.
 
 ## Runtime Boundary
 

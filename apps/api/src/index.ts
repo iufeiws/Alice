@@ -45,6 +45,7 @@ import { createId, type ToolDefinition } from "../../../packages/types/src/index
 import { createLLMRequests } from "./llm-requests.js";
 import { acquireSingletonLock } from "./singleton-lock.js";
 import { updateEnvFile } from "./env-file.js";
+import { createHttpShutdownController } from "./http-shutdown.js";
 
 const http = await import("node:http");
 const fs = await import("node:fs");
@@ -758,6 +759,10 @@ const server = http.createServer(createApiRequestHandler({
   appendLog,
   appendMessageLog
 }));
+const httpShutdown = createHttpShutdownController(server);
+(server as any).on?.("connection", (socket: any) => {
+  httpShutdown.trackConnection(socket);
+});
 attachWebRtcVoiceSignalingServer({
   server: server as any,
   plugin: webRtcVoicePlugin,
@@ -794,7 +799,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
       await core.stop();
     } finally {
       serviceLock.release();
-      server.close(() => process.exit(0));
+      const result = await httpShutdown.close({ forceAfterMs: 2_000 });
+      if (result.forced) appendLog("warn", `http shutdown forced: remaining_connections=${result.remainingConnections}`);
+      process.exit(0);
     }
   });
 }

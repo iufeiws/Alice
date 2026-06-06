@@ -185,7 +185,9 @@ export type AdminRoutesContext = {
   llmRequestLogs: unknown[];
   llmResponseLogs: unknown[];
   getActiveLLMSession(): unknown;
+  getActiveTalkLLMSession?(): unknown;
   getClearedLLMSessions(): unknown[];
+  getTalkLLMSessions?(): unknown[];
   getMemoryLLMSessions(): unknown[];
   getLLMSession(id: string): unknown;
   store: {
@@ -661,7 +663,9 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
         writeJson(response, 200, {
           activeSession: context.getActiveLLMSession(),
+          talkActiveSession: context.getActiveTalkLLMSession?.(),
           clearedSessions: context.getClearedLLMSessions(),
+          talkSessions: context.getTalkLLMSessions?.() ?? [],
           memorySessions: context.getMemoryLLMSessions(),
           profilePreview: await context.getLLMRequestProfilePreview(resolvePromptApiPreset(context, "chat")),
           talkProfilePreview: await context.getTalkLLMRequestProfilePreview?.(resolvePromptApiPreset(context, "talk")),

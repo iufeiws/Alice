@@ -25,7 +25,7 @@ import {
 } from "../../../core/agent/src/llm-session-log.js";
 import { createDailyShellStore } from "../../../core/agent/src/shells.js";
 import { buildLLMTextVariables, renderLLMValue } from "../../../core/text-renderer/src/index.js";
-import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult } from "../../../core/llm/src/index.js";
+import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult, type LLMMessage, type LLMToolCall } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../core/policy/src/index.js";
 import { createIntentRouter } from "../../../core/router/src/index.js";
@@ -42,6 +42,7 @@ import { createSleepCocoonTools } from "../../../tools/sleep-cocoon/src/index.js
 import { createAsrInboundStreamSession, createAsrPlugin } from "../../../plugins/asr/src/index.js";
 import { attachWebRtcVoiceSignalingServer, createWebRtcVoicePlugin, createWeriftPeer, decodeAudioFileToOpusRtpFrames, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, encodePcmL16ToOpusRtpFrames, type WebRtcVoiceCall, type WebRtcVoiceStatusEvent } from "../../../plugins/webrtc-voice/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
+import { createTalkStore } from "../../../packages/storage/src/talk-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
 import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
@@ -54,6 +55,7 @@ import { createLLMRequests } from "./llm-requests.js";
 import { acquireSingletonLock } from "./singleton-lock.js";
 import { updateEnvFile } from "./env-file.js";
 import { createHttpShutdownController } from "./http-shutdown.js";
+import { createTalkRuntime } from "./talk-runtime.js";
 
 const http = await import("node:http");
 const https = await import("node:https");
@@ -95,6 +97,7 @@ type MessageLogEntry = {
 
 type LLMRequestLogEntry = {
   id: number;
+  agentId?: "chat" | "talk";
   sessionId?: number;
   time: string;
   timeUtc?: string;
@@ -147,6 +150,7 @@ type PromptApiProfile = {
 
 type LLMResponseLogEntry = {
   id: number;
+  agentId?: "chat" | "talk";
   sessionId?: number;
   requestId?: number;
   time: string;
@@ -168,6 +172,7 @@ type LLMSessionTurn = {
 
 type ActiveLLMSession = {
   id: number;
+  agentId?: "chat" | "talk";
   startedAt: string;
   startedAtUtc?: string;
   updatedAt: string;
@@ -293,6 +298,17 @@ store = createAliceStore("data/alice.sqlite", {
   messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
+const talkRuntime = createTalkRuntime({
+  store: createTalkStore(path.join("data", "talk.sqlite")),
+  time: currentTime,
+  runAgentLoop: runTalkAgentLoopForSession,
+  interruptAgentLoop(sessionId) {
+    rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+    llmRequests.cancelActive("talk_interrupt");
+  }
+});
+const activeTalkAgentLoops = new Set<string>();
+const activeTalkConversationStartIndexes = new Map<string, number>();
 tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"), { time: currentTime });
 systemLogStore = createFileLogStore("logs/system", { getTimeZone: () => currentTime.timeZone });
 for (const entry of systemLogStore.listRecent(500)) {
@@ -485,6 +501,19 @@ const webRtcVoicePlugin = createWebRtcVoicePlugin({
   encodePcmL16StreamToFrames(input) {
     return encodePcmL16StreamToOpusRtpFrames(input);
   },
+  talkRuntime,
+  async testAsr() {
+    const testAudioPath = asrPlugin.config.testAudioPath;
+    if (!testAudioPath) return { ok: false, error: "missing_asr_test_audio", message: "ASR test audio is not configured" };
+    const result = await asrPlugin.transcribe({
+      audioFile: testAudioPath,
+      filename: path.basename(testAudioPath),
+      language: webRtcVoicePlugin.config.language
+    });
+    return "ok" in result && result.ok === false
+      ? { ok: false, error: result.error, message: result.message ?? result.error }
+      : { ok: true };
+  },
   emitStatus(event) {
     appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
     broadcastWebRtcVoiceStatus(event);
@@ -572,11 +601,11 @@ const toolPlugins = [messagingTools, photoTools, shellTools, bookcaseTools, slee
 const llmRequests = createLLMRequests({
   getTool: getLLMRequestToolDefinition,
   onRequestPrepared(input, request) {
-    if (input.agentId === "chat") appendLLMRequestLog(request);
+    if (input.agentId === "chat" || input.agentId === "talk") appendLLMRequestLog(request, input.agentId);
   },
   onResponseReceived(input, request, result) {
-    if (input.agentId === "chat") {
-      appendLLMResponseLog(result);
+    if (input.agentId === "chat" || input.agentId === "talk") {
+      appendLLMResponseLog(result, input.agentId);
       return;
     }
     appendLLMUsageLog(result, result.model ?? request.model);
@@ -762,8 +791,10 @@ const requestHandler = createApiRequestHandler({
   messageLogs,
   llmRequestLogs,
   llmResponseLogs,
-  getActiveLLMSession: () => getActiveLLMSessionSnapshot(),
+  getActiveLLMSession: () => activeLLMSession?.agentId === "talk" ? undefined : getActiveLLMSessionSnapshot(),
+  getActiveTalkLLMSession: () => activeLLMSession?.agentId === "talk" ? getActiveLLMSessionSnapshot() : undefined,
   getClearedLLMSessions,
+  getTalkLLMSessions,
   getMemoryLLMSessions,
   getLLMSession,
   store,
@@ -1035,6 +1066,212 @@ function currentChatLLMConfig() {
   };
 }
 
+function currentTalkLLMConfig() {
+  const preset = resolvePromptApiPreset("talk");
+  if (!preset) {
+    return {
+      client: activeLLM,
+      model: undefined,
+      temperature: undefined,
+      extraParams: {},
+      followupExtraParams: {},
+      stream: false
+    };
+  }
+  return {
+    client: createLLMClientFromPreset(preset) ?? createStubLLMClient(),
+    model: preset.model,
+    temperature: preset.temperature,
+    extraParams: preset.extraParams,
+    followupExtraParams: preset.followupExtraParams,
+    stream: preset.stream
+  };
+}
+
+async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
+  if (activeTalkAgentLoops.has(sessionId)) return;
+  activeTalkAgentLoops.add(sessionId);
+  try {
+    appendLog("info", `talk loop start: session=${sessionId}`);
+    const profile = talkPromptProfileStore.get();
+    const event = buildTalkAgentEvent(sessionId);
+    const context = {
+      event,
+      time: currentTime,
+      dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+      dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
+      appearanceDescription: coreProfileStore.get().appearanceDescription,
+      memory: memoryStore.read(),
+      wakeBoundary: diaryStore.latestWakeBoundary()
+    };
+    const variables = promptVariables(profile, context);
+    const runPromptTool = async (_layer: unknown, call: Parameters<typeof executeTalkToolCall>[1]) => executeTalkToolCall(event, call, variables);
+    const promptMessages: LLMMessage[] = await buildPromptMessagesWithToolResults(profile, context, runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]);
+    const talkMessages = talkRuntime.buildNextLoopMessages(sessionId);
+    const initialTalkMessages = talkMessages.length ? talkMessages : [{
+      role: "user" as const,
+      content: "A realtime voice call has just connected. Start with a short, natural voice greeting."
+    }];
+    activeTalkConversationStartIndexes.set(sessionId, promptMessages.length);
+    let messages: LLMMessage[] = [
+      ...promptMessages,
+      ...initialTalkMessages
+    ];
+    const config = currentTalkLLMConfig();
+    const toolNames = visibleToolNames(profile);
+    for (let round = 0; round < 6; round += 1) {
+      const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
+      let streamedContent = "";
+      const result = await llmRequests.send({
+        agentId: "talk",
+        client: config.client,
+        messages,
+        model: config.model,
+        temperature: config.temperature,
+        extraParams: round === 0 ? config.extraParams : config.followupExtraParams,
+        toolNames,
+        toolVariables: variables,
+        round,
+        stream: config.stream !== false,
+        streamHandlers: {
+          onContentDelta(delta) {
+            streamedContent += delta;
+            talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
+          }
+        }
+      });
+      const calls = result.message.toolCalls ?? [];
+      if (calls.length === 0) {
+        if (!streamedContent && result.message.content) {
+          talkRuntime.appendAssistantDelta({ sessionId, outputId, delta: result.message.content });
+        }
+        talkRuntime.finishAssistantOutput({ sessionId, outputId });
+        appendLog("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
+        return;
+      }
+      messages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: result.message.content,
+          reasoningContent: result.message.reasoningContent,
+          toolCalls: calls
+        },
+        ...await Promise.all(calls.map(async (call) => ({
+          role: "tool" as const,
+          toolCallId: call.id,
+          name: call.function.name,
+          content: formatToolResultForLLM(await executeTalkLLMToolCall(event, call))
+        })))
+      ];
+    }
+    appendLog("warn", `talk loop stopped after round limit: session=${sessionId}`);
+  } catch (error) {
+    appendLog("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    activeTalkAgentLoops.delete(sessionId);
+  }
+}
+
+function buildTalkAgentEvent(sessionId: string) {
+  const now = currentTime.now();
+  return {
+    id: `talk_${sessionId}_${now.epochMs}`,
+    source: {
+      plugin: "webrtc_voice",
+      channelId: sessionId,
+      userId: sessionId
+    },
+    session: {
+      scope: "dm",
+      sessionId
+    },
+    type: "message.text",
+    payload: {
+      kind: "text",
+      text: "A realtime voice call event was received."
+    },
+    meta: {
+      receivedAt: now.iso,
+      receivedAtUtc: now.date.toISOString()
+    }
+  } as const;
+}
+
+async function executeTalkLLMToolCall(event: ReturnType<typeof buildTalkAgentEvent>, call: LLMToolCall) {
+  return executeTalkToolCall(event, {
+    id: call.id,
+    toolName: call.function.name,
+    input: parseToolArguments(call.function.arguments),
+    requester: event.source,
+    session: event.session
+  }, promptVariables(talkPromptProfileStore.get(), {
+    event,
+    time: currentTime,
+    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
+    dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
+    appearanceDescription: coreProfileStore.get().appearanceDescription,
+    memory: memoryStore.read(),
+    wakeBoundary: diaryStore.latestWakeBoundary()
+  }));
+}
+
+async function executeTalkToolCall(
+  _event: ReturnType<typeof buildTalkAgentEvent>,
+  call: {
+    id: string;
+    toolName: string;
+    input: Record<string, unknown>;
+    requester?: ReturnType<typeof buildTalkAgentEvent>["source"];
+    session?: ReturnType<typeof buildTalkAgentEvent>["session"];
+  },
+  _variables: ReturnType<typeof promptVariables>
+) {
+  if (isOutboundMessagingTool(call.toolName)) {
+    return {
+      callId: call.id,
+      ok: false,
+      error: "Talk loop outputs through TalkRuntime voice chunks; do not use messaging send tools."
+    };
+  }
+  const plugin = toolPlugins.find((entry) => entry.listTools().some((tool) => tool.name === call.toolName));
+  if (!plugin) {
+    return {
+      callId: call.id,
+      ok: false,
+      error: `Unknown tool: ${call.toolName}`
+    };
+  }
+  try {
+    return await plugin.execute({
+      id: call.id,
+      toolName: call.toolName,
+      input: call.input,
+      requester: call.requester,
+      session: call.session
+    });
+  } catch (error) {
+    return {
+      callId: call.id,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function isOutboundMessagingTool(name: string): boolean {
+  return name === "send_chat" || name === "send_feishu" || name === "send_wechat";
+}
+
+function parseToolArguments(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 function createLLMClientFromPreset(preset: LLMApiPreset): ReturnType<typeof createOpenAICompatibleClient> | undefined {
   if (!preset.baseURL || !preset.apiKey) return undefined;
   return createOpenAICompatibleClient({
@@ -1214,14 +1451,15 @@ async function runQueuedSleepMemoryInduction(): Promise<void> {
   }
 }
 
-function appendLLMRequestLog(input: LLMChatInput): void {
+function appendLLMRequestLog(input: LLMChatInput, agentId: "chat" | "talk" = "chat"): void {
   const rawRequest = buildRawLLMRequest(input);
   const previous = llmRequestLogs[llmRequestLogs.length - 1]?.rawRequest;
   const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
   const now = currentTime.now();
-  const sessionId = ensureActiveLLMSession(now.iso).id;
+  const sessionId = ensureActiveLLMSession(now.iso, agentId).id;
   const entry = {
     id: nextLLMRequestLogId,
+    agentId,
     sessionId,
     time: now.iso,
     timeUtc: now.date.toISOString(),
@@ -1234,7 +1472,7 @@ function appendLLMRequestLog(input: LLMChatInput): void {
     diffFromPrevious
   };
   llmRequestLogs.push(entry);
-  noteActiveLLMRequest(entry);
+  noteActiveLLMRequest(entry, agentId);
   nextLLMRequestLogId += 1;
   if (llmRequestLogs.length > 50) {
     llmRequestLogs.splice(0, llmRequestLogs.length - 50);
@@ -1338,11 +1576,12 @@ function estimateDeepSeekTokens(text: string): number {
   return Math.round(tokens);
 }
 
-function appendLLMResponseLog(result: LLMChatResult): void {
-  appendLLMUsageLog(result, result.model ?? resolvePromptApiPreset("chat")?.model);
+function appendLLMResponseLog(result: LLMChatResult, agentId = "chat"): void {
+  appendLLMUsageLog(result, result.model ?? resolvePromptApiPreset(agentId === "talk" ? "talk" : "chat")?.model);
   const now = currentTime.now();
   const entry = {
     id: nextLLMResponseLogId,
+    agentId: agentId === "talk" ? "talk" as const : "chat" as const,
     sessionId: activeLLMSession?.id,
     requestId: activeLLMSession?.requestIds.at(-1),
     time: now.iso,
@@ -1354,19 +1593,19 @@ function appendLLMResponseLog(result: LLMChatResult): void {
   };
   llmResponseLogs.push(entry);
   noteActiveLLMResponse(entry);
-  recordTokenUsage(entry, result);
+  recordTokenUsage(entry, result, agentId);
   nextLLMResponseLogId += 1;
   if (llmResponseLogs.length > 50) {
     llmResponseLogs.splice(0, llmResponseLogs.length - 50);
   }
 }
 
-function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult): void {
+function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult, agentId = "chat"): void {
   recordTokenUsageEvent({
     createdAt: entry.time,
     createdAtUtc: entry.timeUtc,
-    agentId: "chat",
-    model: result.model ?? resolvePromptApiPreset("chat")?.model,
+    agentId,
+    model: result.model ?? resolvePromptApiPreset(agentId === "talk" ? "talk" : "chat")?.model,
     sessionId: entry.sessionId,
     requestId: entry.requestId,
     responseId: entry.id,
@@ -1499,17 +1738,21 @@ function clearMemoryInductionSession(): void {
   memoryConsoleSession = undefined;
 }
 
-function ensureActiveLLMSession(time: string): ActiveLLMSession {
+function ensureActiveLLMSession(time: string, agentId: "chat" | "talk" = "chat"): ActiveLLMSession {
+  if (activeLLMSession && (activeLLMSession.agentId ?? "chat") !== agentId) {
+    activeLLMSession = undefined;
+  }
   if (!activeLLMSession) {
     const timeUtc = parseZonedIso(time, currentTime.timeZone).toISOString();
     const sessionId = utcTimestamp(timeUtc) ?? nextLLMSessionId;
     activeLLMSession = {
       id: sessionId,
+      agentId,
       startedAt: time,
       startedAtUtc: timeUtc,
       updatedAt: time,
       updatedAtUtc: timeUtc,
-      archiveFilePath: createLLMSessionFilePath(timeUtc),
+      archiveFilePath: createLLMSessionFilePath(timeUtc, agentId),
       requestIds: [],
       responseIds: [],
       messages: [],
@@ -1521,11 +1764,12 @@ function ensureActiveLLMSession(time: string): ActiveLLMSession {
     writeLLMSessionFile(activeLLMSession);
     writeCurrentLLMSessionPointer(activeLLMSession);
   }
+  activeLLMSession.agentId = agentId;
   return activeLLMSession;
 }
 
-function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
-  const session = ensureActiveLLMSession(entry.time);
+function noteActiveLLMRequest(entry: LLMRequestLogEntry, agentId: "chat" | "talk" = "chat"): void {
+  const session = ensureActiveLLMSession(entry.time, agentId);
   entry.sessionId = session.id;
   session.updatedAt = entry.time;
   session.updatedAtUtc = entry.timeUtc;
@@ -1553,7 +1797,12 @@ function noteActiveLLMRequest(entry: LLMRequestLogEntry): void {
     extraParams: cloneJsonObject(entry.extraParams),
     messageCount: entry.messages.length
   };
-  writeLLMSessionMetadata(session);
+  if (agentId === "talk") {
+    session.messages = cloneLLMMessages(entry.messages);
+    writeLLMSessionFile(session);
+  } else {
+    writeLLMSessionMetadata(session);
+  }
 }
 
 function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
@@ -1578,6 +1827,36 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
     usage: entry.usage,
     toolCallCount: entry.message.toolCalls?.length ?? 0
   };
+  if (entry.agentId === "talk") {
+    activeLLMSession.messages = [...activeLLMSession.messages, cloneLLMMessages([entry.message])[0]];
+    appendLLMSessionMessages(activeLLMSession, [entry.message]);
+  }
+  writeLLMSessionMetadata(activeLLMSession);
+}
+
+function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: string): void {
+  if (!activeLLMSession || activeLLMSession.agentId !== "talk") return;
+  const conversationStartIndex = activeTalkConversationStartIndexes.get(talkSessionId);
+  if (conversationStartIndex === undefined) return;
+  const preservedPrefix = activeLLMSession.messages.slice(0, conversationStartIndex);
+  const runtimeMessages = talkRuntime.buildNextLoopMessages(talkSessionId);
+  const current = currentTime.now();
+  activeLLMSession.updatedAt = current.iso;
+  activeLLMSession.updatedAtUtc = current.date.toISOString();
+  activeLLMSession.messages = cloneLLMMessages([
+    ...preservedPrefix,
+    ...runtimeMessages
+  ]);
+  activeLLMSession.currentRound = activeLLMSession.currentRound
+    ? {
+      ...activeLLMSession.currentRound,
+      status: "interrupted",
+      finishedAt: current.iso,
+      finishedAtUtc: current.date.toISOString()
+    }
+    : activeLLMSession.currentRound;
+  activeLLMSession.reason = "talk_interrupt";
+  writeLLMSessionFile(activeLLMSession);
   writeLLMSessionMetadata(activeLLMSession);
 }
 
@@ -1712,8 +1991,8 @@ function currentLLMSessionPointerPath(): string {
   return path.join(llmSessionsRoot(), "current.json");
 }
 
-function createLLMSessionFilePath(time: string): string {
-  return createLLMSessionJsonlFilePath(llmSessionsRoot(), time || currentTime.now().iso, { type: "chat" });
+function createLLMSessionFilePath(time: string, agentId: "chat" | "talk" = "chat"): string {
+  return createLLMSessionJsonlFilePath(llmSessionsRoot(), time || currentTime.now().iso, { type: agentId });
 }
 
 function relativeLLMSessionPath(filePath: string): string {
@@ -1742,10 +2021,11 @@ function clearCurrentLLMSessionPointer(): void {
 }
 
 function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
+  const agentId = session.agentId ?? "chat";
   const last = session.messages.at(-1);
   return {
     type: "llm_session",
-    agent: "chat",
+    agent: agentId,
     schemaVersion: 1,
     sessionId: session.id,
     sessionCreatedAtUtc: session.startedAtUtc,
@@ -1781,7 +2061,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
 }
 
 function writeLLMSessionFile(session: ActiveLLMSession): void {
-  const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAtUtc ?? session.startedAt);
+  const filePath = session.archiveFilePath ?? createLLMSessionFilePath(session.startedAtUtc ?? session.startedAt, session.agentId ?? "chat");
   session.archiveFilePath = filePath;
   session.archiveMetadata = sessionMetadata(session);
   writeLLMSessionJsonl(filePath, session.archiveMetadata, session.messages);
@@ -1862,11 +2142,13 @@ function readLLMSessionFile(filePath: string): ActiveLLMSession | undefined {
     const metadata = parsed.metadata;
     if (metadata.agent === "memorize") return undefined;
     if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
+    const agentId = metadata.agent === "talk" ? "talk" : "chat";
     const messages = parsed.messages;
     const staticPromptMessageCount = messageCountFromMetadata(metadata.staticPromptMessageCount, messages.length);
     const modeStaticMessages = modeStaticMessagesFromMetadata(metadata, messages);
     return {
       id: metadata.sessionId,
+      agentId,
       startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
       startedAtUtc: typeof metadata.startedAtUtc === "string" ? metadata.startedAtUtc : undefined,
       updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
@@ -2044,10 +2326,24 @@ function parseTokenPressurePreviewBaselines(value: unknown): Record<string, Toke
 function getClearedLLMSessions(): unknown[] {
   const latestById = new Map<number, ActiveLLMSession>();
   for (const session of readAllLLMSessions()) {
+    if ((session.agentId ?? "chat") !== "chat") continue;
     latestById.set(session.id, session);
   }
   return [...latestById.values()]
     .filter((session) => Boolean(session.clearedAt))
+    .sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")))
+    .slice(-50)
+    .map(summarizeLLMSession);
+}
+
+function getTalkLLMSessions(): unknown[] {
+  const latestById = new Map<number, ActiveLLMSession>();
+  for (const session of readAllLLMSessions()) {
+    if (session.agentId !== "talk") continue;
+    latestById.set(session.id, session);
+  }
+  return [...latestById.values()]
+    .filter((session) => session.id !== activeLLMSession?.id)
     .sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")))
     .slice(-50)
     .map(summarizeLLMSession);
@@ -2142,6 +2438,7 @@ function summarizeLLMSession(session: ActiveLLMSession): unknown {
   const latestMessage = session.messages.at(-1);
   return {
     id: session.id,
+    agentId: session.agentId ?? "chat",
     startedAt: session.startedAt,
     updatedAt: session.updatedAt,
     requestIds: session.requestIds,
@@ -2607,6 +2904,10 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
     appearanceDescription: coreProfileStore.get().appearanceDescription,
     memory: memoryStore.read()
   });
+  return llmRequests.buildTools(visibleToolNames(profile), variables);
+}
+
+function visibleToolNames(profile: ReturnType<typeof promptProfileStore.get>): string[] {
   const names = toolPlugins
     .filter((plugin) => {
       if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
@@ -2615,7 +2916,7 @@ function visibleToolSpecs(profile: ReturnType<typeof promptProfileStore.get>): L
       return true;
     })
     .flatMap((plugin) => plugin.listTools().map((tool) => tool.name));
-  return llmRequests.buildTools(names, variables);
+  return names;
 }
 
 function getLLMRequestToolDefinition(name: string): ToolDefinition | undefined {

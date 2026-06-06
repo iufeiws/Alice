@@ -680,6 +680,9 @@ export function renderVoiceCallHtml(): string {
     }
 
     function applyBackendStatus(state, detail) {
+      if (state === "asr.preflight.started") setPhase("preloading", "正在检查语音识别");
+      if (state === "asr.preflight.ready") setPhase("preloading", "语音识别可用");
+      if (state === "asr.preflight.failed") showError("语音识别不可用", detail || "ASR 测试失败。");
       if (state === "webrtc.answer.created") setPhase("connecting");
       if (state === "webrtc.connection" && detail === "connected") markConnected();
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");

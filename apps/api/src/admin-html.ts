@@ -1187,7 +1187,7 @@ export function renderAdminHtmlV2(): string {
 
       async function refreshLLMChain() {
         const requestPayload = await fetch("/admin/api/llm-requests").then((res) => res.json());
-        $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || [], requestPayload.memorySessions || []);
+        $("llmChainSessions").innerHTML = renderLLMSessionGroups(requestPayload.activeSession, requestPayload.clearedSessions || [], requestPayload.memorySessions || [], requestPayload.talkActiveSession, requestPayload.talkSessions || []);
         bindLLMSessionDetails("llmChainSessions");
         $("llmChainSessions").scrollTop = $("llmChainSessions").scrollHeight;
       }
@@ -1870,18 +1870,27 @@ Timing:
         return text.length > 240 ? text.slice(0, 237) + "..." : text;
       }
 
-      function renderLLMSessionGroups(activeSession, clearedSessions, memorySessions) {
+      function renderLLMSessionGroups(activeSession, clearedSessions, memorySessions, talkActiveSession, talkSessions) {
         const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
         const activeGroup = activeSession
           ? renderLLMSessionShell(activeSession, "Active Session")
           : "";
         const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Chat Saved Session")).join("");
+        const talkActive = talkActiveSession ? renderActiveLLMSession(talkActiveSession) : '<div class="log-line">Talk active session: none</div>';
+        const talkActiveGroup = talkActiveSession
+          ? renderLLMSessionShell(talkActiveSession, "Talk Active Session")
+          : "";
+        const talk = sortedLLMSessions(talkSessions).map((session) => renderLLMSessionShell(session, "Talk Saved Session")).join("");
         const memory = sortedLLMSessions(memorySessions).map((session) => renderLLMSessionShell(session, "Memorize")).join("");
         return [
           '<h2>Chat</h2>',
           archived || '<div class="log-line">Chat saved sessions: none</div>',
           active,
           activeGroup,
+          '<h2>Talk</h2>',
+          talk || '<div class="log-line">Talk saved sessions: none</div>',
+          talkActive,
+          talkActiveGroup,
           '<h2>Memorize</h2>',
           memory || '<div class="log-line">Memorize sessions: none</div>'
         ].join("");

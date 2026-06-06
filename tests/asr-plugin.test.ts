@@ -437,6 +437,61 @@ test("ASR pseudo stream cuts on conservative long pauses and returns stable part
   ]);
 });
 
+test("ASR openai-compatible pseudo stream wraps PCM16 chunks as wav files", async () => {
+  const receivedFiles: Array<{ name: string; type: string; size: number }> = [];
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "openai",
+        responseFormat: "json"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "pcm-stream",
+    audio: {
+      filename: "call.pcm",
+      mimeType: "audio/pcm",
+      sampleRateHz: 16000,
+      channels: 1,
+      encoding: "pcm16"
+    }
+  }, config, {
+    resolveApiPreset() {
+      return {
+        name: "openai",
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "secret",
+        model: "whisper-1",
+        timeoutMs: 60_000,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      const file = form.get("file") as File;
+      receivedFiles.push({ name: file.name, type: file.type, size: file.size });
+      return jsonResponse({ text: "はい" });
+    }
+  });
+
+  await session.accept({
+    type: "chunk",
+    streamId: "pcm-stream",
+    sequence: 0,
+    bytes: new Uint8Array([1, 0, 2, 0])
+  });
+  const result = await session.accept({ type: "end", streamId: "pcm-stream" });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(receivedFiles, [{ name: "call.wav", type: "audio/wav", size: 48 }]);
+});
+
 test("ASR inbound stream protocol rejects out-of-order chunks and supports abort", async () => {
   const config: AsrPluginConfig = {
     enabled: true,

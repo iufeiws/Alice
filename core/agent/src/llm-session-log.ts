@@ -12,7 +12,7 @@ export function createLLMSessionFilePath(root: string, time: string, options?: {
   const utc = normalizeUtcTime(time);
   const date = utc.slice(0, 10);
   const clock = utc.slice(11, 23).replace(/[:.]/g, "-") || "00-00-00-000";
-  const dir = path.join(root, options?.type ?? options?.namespace ?? "core", date);
+  const dir = path.join(root, options?.type ?? options?.namespace ?? "chat", date);
   fs.mkdirSync(dir, { recursive: true });
   let filePath = path.join(dir, `${clock}.jsonl`);
   let suffix = 2;

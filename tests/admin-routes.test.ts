@@ -8,6 +8,7 @@ import {
   runMemoryInductionForMessages
 } from "../core/agent/src/memory.js";
 import { promptStoragePath } from "../core/agent/src/prompt-storage.js";
+import { createPromptProfileStore } from "../core/agent/src/prompts.js";
 import type { LLMChatInput, LLMClient } from "../core/llm/src/index.js";
 import { createDiaryStore } from "../packages/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../packages/storage/src/sqlite-store.js";
@@ -58,9 +59,9 @@ test("llm api preset save stores extra params as part of the preset", async () =
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
-    name: "Core Custom",
-    baseURL: "https://core.example.test/v1",
-    model: "core-custom",
+    name: "Chat Custom",
+    baseURL: "https://chat.example.test/v1",
+    model: "chat-custom",
     temperature: "0.4",
     timeoutMs: "90000",
     stream: true,
@@ -74,9 +75,9 @@ test("llm api preset save stores extra params as part of the preset", async () =
   assert.equal(body.ok, true);
   assert.equal(context.config.llm.timeoutMs, 60_000);
   assert.deepEqual(saved.presets[0], {
-    name: "Core Custom",
-    baseURL: "https://core.example.test/v1",
-    model: "core-custom",
+    name: "Chat Custom",
+    baseURL: "https://chat.example.test/v1",
+    model: "chat-custom",
     temperature: 0.4,
     timeoutMs: 90_000,
     stream: true,
@@ -94,8 +95,8 @@ test("llm api preset save accepts long timeout values", async () => {
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
     name: "Long Timeout",
-    baseURL: "https://core.example.test/v1",
-    model: "core-custom",
+    baseURL: "https://chat.example.test/v1",
+    model: "chat-custom",
     temperature: "0.4",
     timeoutMs: "600000",
     stream: true,
@@ -106,6 +107,87 @@ test("llm api preset save accepts long timeout values", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(saved.presets[0].timeoutMs, 600_000);
+});
+
+test("prompt api profile saves chat binding and migrates legacy core binding", async () => {
+  const root = makeTempDir("admin-prompt-api-profile-chat");
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
+    presets: [
+      {
+        name: "Chat Custom",
+        baseURL: "https://chat.example.test/v1",
+        model: "chat-custom",
+        temperature: 0.4,
+        timeoutMs: 90_000,
+        stream: true,
+        extraParams: {},
+        followupExtraParams: {}
+      },
+      {
+        name: "Talk Custom",
+        baseURL: "https://talk.example.test/v1",
+        model: "talk-custom",
+        temperature: 0.3,
+        timeoutMs: 90_000,
+        stream: true,
+        extraParams: {},
+        followupExtraParams: {}
+      },
+      {
+        name: "Memorize Custom",
+        baseURL: "https://memorize.example.test/v1",
+        model: "memorize-custom",
+        temperature: 0.5,
+        timeoutMs: 90_000,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      }
+    ]
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/prompt-api-profile", {
+    corePresetName: "Chat Custom",
+    talkPresetName: "Talk Custom",
+    memorizePresetName: "Memorize Custom"
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(promptStoragePath(root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.deepEqual(saved, {
+    chatPresetName: "Chat Custom",
+    talkPresetName: "Talk Custom",
+    memorizePresetName: "Memorize Custom"
+  });
+});
+
+test("talk prompt profile saves independently from chat prompt profile", async () => {
+  const root = makeTempDir("admin-talk-prompt-profile");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = baseContext(root, memoryStore, promptStore);
+  context.promptProfileStore = createPromptProfileStore(path.join(root, "chat-prompt-profile.json"));
+  context.talkPromptProfileStore = createPromptProfileStore(path.join(root, "talk-prompt-profile.json"));
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/talk-prompt-profile", {
+    userName: "talk-user",
+    visibleTools: {},
+    layers: [{ id: "talk-role", role: "system", enabled: true, order: 10, content: "talk" }]
+  }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(context.talkPromptProfileStore.get().userName, "talk-user");
+  assert.equal(context.talkPromptProfileStore.get().layers[0]?.id, "talk-role");
+  assert.notEqual(context.promptProfileStore.get().userName, "talk-user");
 });
 
 test("initiated behavior config patch preserves tool request prompt layers", async () => {
@@ -1217,6 +1299,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     feishuPairingStore: { list: () => [] },
     coreProfileStore: { get: () => ({ appearanceDescription: "" }) },
     promptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
+    talkPromptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
     memoryStore,
     diaryStore: {
       listSleepBoundaries: () => [
@@ -1228,7 +1311,19 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     memoryInductionPromptStore: promptStore,
     runMemoryInductionForMessages: async () => ({ ok: false, startedAt: "", windowEndAt: "", messageCount: 0, results: [] }),
     getDailyShell: () => "",
-    dailyShellStore: { get: () => ({}), getConfig: () => ({}), render: () => "", reroll() {}, listSwitchLogs: () => [] },
+    dailyShellStore: {
+      get: () => ({
+        date: "2026-05-24",
+        createdAt: "2026-05-24T06:00:00.000Z",
+        personality: { id: "default", name: "Default", content: "" },
+        relationship: { id: "default", name: "Default", content: "" },
+        outfit: { id: "default", name: "Default", content: "" }
+      }),
+      getConfig: () => ({}),
+      render: () => "",
+      reroll() {},
+      listSwitchLogs: () => []
+    },
     agentState: { getSnapshot: () => ({ state: "sleeping" }), setState() {} },
     messagingTools: emptyPlugin("messaging"),
     photoTools: emptyPlugin("photo"),

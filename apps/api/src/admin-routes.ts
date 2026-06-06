@@ -58,7 +58,10 @@ type LLMApiPreset = {
 };
 
 type PromptApiProfile = {
+  chatPresetName?: string;
+  /** @deprecated accepted only for old prompt-api-profile.json/request bodies. */
   corePresetName?: string;
+  talkPresetName?: string;
   memorizePresetName?: string;
 };
 
@@ -193,6 +196,7 @@ export type AdminRoutesContext = {
   } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
+  getTalkLLMRequestProfilePreview?(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
   cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
@@ -201,6 +205,7 @@ export type AdminRoutesContext = {
   feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
   coreProfileStore: CoreProfileStore;
   promptProfileStore: PromptProfileStore;
+  talkPromptProfileStore: PromptProfileStore;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
   setAgentInitiatedBehaviorEnabled?: (id: string, enabled: boolean) => AgentInitiatedBehaviorPlan | undefined;
   setAgentInitiatedBehaviorConfig?: (id: string, patch: {
@@ -462,6 +467,15 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/admin/api/talk-prompt-profile") {
+        writeJson(response, 200, {
+          profile: context.talkPromptProfileStore.get(),
+          variables: getPromptVariablePreview(context, context.talkPromptProfileStore),
+          tools: getVisiblePromptTools(context, context.talkPromptProfileStore)
+        });
+        return;
+      }
+
       if (request.method === "GET" && request.url === "/admin/api/initiated-behaviors") {
         context.initiatedBehaviorRunStore?.finalizeExpiredResponses(context.time.now().date);
         const plans = context.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans;
@@ -597,6 +611,11 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
         return;
       }
 
+      if (request.method === "PUT" && request.url === "/admin/api/talk-prompt-profile") {
+        await saveTalkPromptProfile(context, request, response);
+        return;
+      }
+
       if (request.method === "GET" && request.url === "/admin/api/shell") {
         writeJson(response, 200, getShellConfig(context));
         return;
@@ -644,7 +663,8 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
           activeSession: context.getActiveLLMSession(),
           clearedSessions: context.getClearedLLMSessions(),
           memorySessions: context.getMemoryLLMSessions(),
-          profilePreview: await context.getLLMRequestProfilePreview(resolvePromptApiPreset(context, "core")),
+          profilePreview: await context.getLLMRequestProfilePreview(resolvePromptApiPreset(context, "chat")),
+          talkProfilePreview: await context.getTalkLLMRequestProfilePreview?.(resolvePromptApiPreset(context, "talk")),
           messagePreview: await context.getLLMRequestPreview(),
           actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
         });
@@ -785,7 +805,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "GET" && request.url === "/admin/api/config/llm-presets") {
-        const active = resolvePromptApiPreset(context, "core");
+        const active = resolvePromptApiPreset(context, "chat");
         writeJson(response, 200, {
           presets: publicLLMApiPresets(readLLMApiPresets(context)),
           active: active ? publicLLMApiPreset(active) : undefined,
@@ -2159,14 +2179,26 @@ async function savePromptProfile(context: AdminRoutesContext, request: any, resp
   });
 }
 
+async function saveTalkPromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const profile = context.talkPromptProfileStore.save(body as PromptProfile);
+  context.appendLog("info", `talk prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
+  writeJson(response, 200, {
+    ok: true,
+    profile,
+    variables: getPromptVariablePreview(context, context.talkPromptProfileStore)
+  });
+}
+
 async function savePromptApiProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = normalizePromptApiProfile(body);
   const presetNames = new Set(readLLMApiPresets(context).map((entry) => entry.name));
-  if (profile.corePresetName && !presetNames.has(profile.corePresetName)) return writeJson(response, 400, { ok: false, error: "core_preset_not_found" });
+  if (profile.chatPresetName && !presetNames.has(profile.chatPresetName)) return writeJson(response, 400, { ok: false, error: "chat_preset_not_found" });
+  if (profile.talkPresetName && !presetNames.has(profile.talkPresetName)) return writeJson(response, 400, { ok: false, error: "talk_preset_not_found" });
   if (profile.memorizePresetName && !presetNames.has(profile.memorizePresetName)) return writeJson(response, 400, { ok: false, error: "memorize_preset_not_found" });
   writePromptApiProfile(context, profile);
-  context.appendLog("info", `prompt api profile saved: core=${profile.corePresetName ?? "(current)"} memorize=${profile.memorizePresetName ?? "(current)"}`);
+  context.appendLog("info", `prompt api profile saved: chat=${profile.chatPresetName ?? "(current)"} talk=${profile.talkPresetName ?? "(current)"} memorize=${profile.memorizePresetName ?? "(current)"}`);
   writeJson(response, 200, { ok: true, profile });
 }
 
@@ -2610,10 +2642,10 @@ function isMemoryTarget(value: string): value is "persistent" | "userPreferences
   return value === "persistent" || value === "userPreferences" || value === "yesterdaySummary";
 }
 
-function getPromptVariablePreview(context: AdminRoutesContext): LLMTextVariables {
+function getPromptVariablePreview(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): LLMTextVariables {
   const target = resolvePromptPreviewTarget(context);
   const receivedTime = context.time.now();
-  return promptVariables(context.promptProfileStore.get(), {
+  return promptVariables(store.get(), {
     time: context.time,
     dailyShell: context.getDailyShell(),
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
@@ -2667,8 +2699,8 @@ function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugin: stri
   return { plugin: "wechat", accountId: "main", channelId: "preview", userId: "preview", sessionId: "preview" };
 }
 
-function getVisiblePromptTools(context: AdminRoutesContext): Array<{ name: string; description?: string }> {
-  const profile = context.promptProfileStore.get();
+function getVisiblePromptTools(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): Array<{ name: string; description?: string }> {
+  const profile = store.get();
   const plugins = [context.messagingTools, context.photoTools, context.shellTools, context.sleepCocoonTools];
   return plugins.flatMap((plugin) => plugin.listTools().filter((tool) => isToolVisibleInPromptProfile(profile, tool.name)).map((tool) => ({
     name: tool.name,
@@ -3473,15 +3505,21 @@ function writePromptApiProfile(context: AdminRoutesContext, profile: PromptApiPr
 }
 
 function normalizePromptApiProfile(value: Record<string, unknown>): PromptApiProfile {
+  const chatPresetName = optionalString(value.chatPresetName) ?? optionalString(value.corePresetName);
   return {
-    corePresetName: optionalString(value.corePresetName),
+    chatPresetName,
+    talkPresetName: optionalString(value.talkPresetName),
     memorizePresetName: optionalString(value.memorizePresetName)
   };
 }
 
-function resolvePromptApiPreset(context: AdminRoutesContext, kind: "core" | "memorize"): LLMApiPreset | undefined {
+function resolvePromptApiPreset(context: AdminRoutesContext, kind: "chat" | "talk" | "memorize"): LLMApiPreset | undefined {
   const profile = readPromptApiProfile(context);
-  const name = kind === "core" ? profile.corePresetName : profile.memorizePresetName;
+  const name = kind === "chat"
+    ? profile.chatPresetName ?? profile.corePresetName
+    : kind === "talk"
+      ? profile.talkPresetName
+      : profile.memorizePresetName;
   if (!name) return undefined;
   return readLLMApiPresets(context).find((entry) => entry.name === name);
 }
@@ -3755,7 +3793,8 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
     api: context.config.api,
     llm: {
       provider: "api-preset",
-      corePresetName: apiProfile.corePresetName,
+      chatPresetName: apiProfile.chatPresetName ?? apiProfile.corePresetName,
+      talkPresetName: apiProfile.talkPresetName,
       memorizePresetName: apiProfile.memorizePresetName,
       presets: publicLLMApiPresets(readLLMApiPresets(context))
     },

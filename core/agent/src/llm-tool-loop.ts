@@ -1,6 +1,6 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "../../llm/src/index.js";
 
-export type LLMRequestAgentId = "core" | "memorize" | string;
+export type LLMRequestAgentId = "chat" | "memorize" | string;
 
 export type LLMRequestSenderInput = {
   agentId: LLMRequestAgentId;

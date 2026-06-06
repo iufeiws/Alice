@@ -138,7 +138,10 @@ type LLMApiPreset = {
 };
 
 type PromptApiProfile = {
+  chatPresetName?: string;
+  /** @deprecated read-only compatibility for old prompt-api-profile.json files. */
   corePresetName?: string;
+  talkPresetName?: string;
   memorizePresetName?: string;
 };
 
@@ -373,6 +376,7 @@ if (wechatCredentials) {
   });
 }
 const promptProfileStore = createPromptProfileStore(promptStoragePath(config.memoryFiles.root, "prompt-profile.json", ["config", "prompt-profile.json"]));
+const talkPromptProfileStore = createPromptProfileStore(promptStoragePath(config.memoryFiles.root, "talk-prompt-profile.json", ["config", "talk-prompt-profile.json"]));
 const agentInitiatedBehaviorConfigPath = promptStoragePath(config.memoryFiles.root, "initiated-behaviors.config.json", ["config", "initiated-behaviors.config.json"]);
 let agentInitiatedBehaviorOverrides = readAgentInitiatedBehaviorOverrides(agentInitiatedBehaviorConfigPath);
 const getAgentInitiatedBehaviorPlans = () => applyAgentInitiatedBehaviorOverrides(defaultAgentInitiatedBehaviorPlans, agentInitiatedBehaviorOverrides);
@@ -568,10 +572,10 @@ const toolPlugins = [messagingTools, photoTools, shellTools, bookcaseTools, slee
 const llmRequests = createLLMRequests({
   getTool: getLLMRequestToolDefinition,
   onRequestPrepared(input, request) {
-    if (input.agentId === "core") appendLLMRequestLog(request);
+    if (input.agentId === "chat") appendLLMRequestLog(request);
   },
   onResponseReceived(input, request, result) {
-    if (input.agentId === "core") {
+    if (input.agentId === "chat") {
       appendLLMResponseLog(result);
       return;
     }
@@ -587,7 +591,7 @@ const llmRequests = createLLMRequests({
   },
   onLog(event) {
     const mode = event.stream ? "stream" : "non-stream";
-    const fallbackModel = event.agentId === "memorize" ? resolvePromptApiPreset("memorize")?.model : resolvePromptApiPreset("core")?.model;
+    const fallbackModel = event.agentId === "memorize" ? resolvePromptApiPreset("memorize")?.model : resolvePromptApiPreset("chat")?.model;
     if (event.kind === "call_start") {
       appendLog("info", `llm call start: agent=${event.agentId} round=${event.round} mode=${mode} model=${event.model ?? fallbackModel}`);
     }
@@ -601,7 +605,7 @@ const core = createAgentCore({
   config,
   llm: activeLLM,
   llmRequestSender: llmRequests.send,
-  getLLMConfig: currentCoreLLMConfig,
+  getLLMConfig: currentChatLLMConfig,
   isLLMRunCancelled: () => llmRequests.isCancelRequested(),
   outputRouter,
   intentRouter: createIntentRouter(),
@@ -643,7 +647,7 @@ const core = createAgentCore({
   },
   onLLMLog(event) {
     const mode = event.stream ? "stream" : "non-stream";
-    const fallbackModel = resolvePromptApiPreset("core")?.model;
+    const fallbackModel = resolvePromptApiPreset("chat")?.model;
     if (event.kind === "call_start") {
       appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
     }
@@ -765,6 +769,7 @@ const requestHandler = createApiRequestHandler({
   store,
   getLLMRequestPreview,
   getLLMRequestProfilePreview,
+  getTalkLLMRequestProfilePreview,
   getTokenUsageReport,
   clearLLMChainCache,
   cancelActiveLLMRun,
@@ -773,6 +778,7 @@ const requestHandler = createApiRequestHandler({
   feishuPairingStore,
   coreProfileStore,
   promptProfileStore,
+  talkPromptProfileStore,
   getAgentInitiatedBehaviorPlans,
   setAgentInitiatedBehaviorEnabled,
   setAgentInitiatedBehaviorConfig,
@@ -858,7 +864,7 @@ const requestHandler = createApiRequestHandler({
   },
   llmRequestSender: llmRequests.send,
   messageRuntime,
-  getLLM: () => currentCoreLLMConfig().client ?? activeLLM,
+  getLLM: () => currentChatLLMConfig().client ?? activeLLM,
   time: currentTime,
   setTimeZone(timeZone) {
     currentTime.setTimeZone(timeZone);
@@ -1007,8 +1013,8 @@ function formatLogArg(value: unknown): string {
   }
 }
 
-function currentCoreLLMConfig() {
-  const preset = resolvePromptApiPreset("core");
+function currentChatLLMConfig() {
+  const preset = resolvePromptApiPreset("chat");
   if (!preset) {
     return {
       client: activeLLM,
@@ -1041,9 +1047,13 @@ function createLLMClientFromPreset(preset: LLMApiPreset): ReturnType<typeof crea
   });
 }
 
-function resolvePromptApiPreset(kind: "core" | "memorize"): LLMApiPreset | undefined {
+function resolvePromptApiPreset(kind: "chat" | "talk" | "memorize"): LLMApiPreset | undefined {
   const profile = readPromptApiProfile();
-  const name = kind === "core" ? profile.corePresetName : profile.memorizePresetName;
+  const name = kind === "chat"
+    ? profile.chatPresetName ?? profile.corePresetName
+    : kind === "talk"
+      ? profile.talkPresetName
+      : profile.memorizePresetName;
   if (!name) return undefined;
   return readLLMApiPresets().find((entry) => entry.name === name);
 }
@@ -1053,8 +1063,15 @@ function readPromptApiProfile(): PromptApiProfile {
   if (!fs.existsSync(filePath)) return {};
   try {
     const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    const chatPresetName = typeof value.chatPresetName === "string" && value.chatPresetName
+      ? value.chatPresetName
+      : typeof value.corePresetName === "string" && value.corePresetName
+        ? value.corePresetName
+        : undefined;
     return {
+      chatPresetName,
       corePresetName: typeof value.corePresetName === "string" && value.corePresetName ? value.corePresetName : undefined,
+      talkPresetName: typeof value.talkPresetName === "string" && value.talkPresetName ? value.talkPresetName : undefined,
       memorizePresetName: typeof value.memorizePresetName === "string" && value.memorizePresetName ? value.memorizePresetName : undefined
     };
   } catch {
@@ -1322,7 +1339,7 @@ function estimateDeepSeekTokens(text: string): number {
 }
 
 function appendLLMResponseLog(result: LLMChatResult): void {
-  appendLLMUsageLog(result, result.model ?? resolvePromptApiPreset("core")?.model);
+  appendLLMUsageLog(result, result.model ?? resolvePromptApiPreset("chat")?.model);
   const now = currentTime.now();
   const entry = {
     id: nextLLMResponseLogId,
@@ -1348,8 +1365,8 @@ function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult): vo
   recordTokenUsageEvent({
     createdAt: entry.time,
     createdAtUtc: entry.timeUtc,
-    agentId: "core",
-    model: result.model ?? resolvePromptApiPreset("core")?.model,
+    agentId: "chat",
+    model: result.model ?? resolvePromptApiPreset("chat")?.model,
     sessionId: entry.sessionId,
     requestId: entry.requestId,
     responseId: entry.id,
@@ -1696,7 +1713,7 @@ function currentLLMSessionPointerPath(): string {
 }
 
 function createLLMSessionFilePath(time: string): string {
-  return createLLMSessionJsonlFilePath(llmSessionsRoot(), time || currentTime.now().iso);
+  return createLLMSessionJsonlFilePath(llmSessionsRoot(), time || currentTime.now().iso, { type: "chat" });
 }
 
 function relativeLLMSessionPath(filePath: string): string {
@@ -1728,6 +1745,7 @@ function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
   const last = session.messages.at(-1);
   return {
     type: "llm_session",
+    agent: "chat",
     schemaVersion: 1,
     sessionId: session.id,
     sessionCreatedAtUtc: session.startedAtUtc,
@@ -2281,8 +2299,15 @@ async function getLLMRequestProfilePreview(apiPreset?: { model?: string; tempera
   return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
 }
 
-async function buildLLMRequestPreviewFromProfile(apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
-  const profile = promptProfileStore.get();
+async function getTalkLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
+  const profilePreview = await buildLLMRequestPreviewFromProfile(apiPreset, talkPromptProfileStore.get());
+  return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
+}
+
+async function buildLLMRequestPreviewFromProfile(
+  apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> },
+  profile = promptProfileStore.get()
+): Promise<LLMRequestPreview | undefined> {
   const target = getDefaultMessagingTarget();
   const previewTime = currentTime.now();
   const previewEvent = {
@@ -2565,9 +2590,9 @@ async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview |
     source: "preview",
     conversationId: latestInbound.conversationId,
     time: latestInbound.lastEventAt || latestInbound.createdAt,
-    model: resolvePromptApiPreset("core")?.model,
-    temperature: resolvePromptApiPreset("core")?.temperature,
-    extraParams: resolvePromptApiPreset("core")?.extraParams ?? {},
+    model: resolvePromptApiPreset("chat")?.model,
+    temperature: resolvePromptApiPreset("chat")?.temperature,
+    extraParams: resolvePromptApiPreset("chat")?.extraParams ?? {},
     messages: await buildPromptPreviewMessages(profile, previewEvent, true),
     tools: visibleToolSpecs(profile)
   };

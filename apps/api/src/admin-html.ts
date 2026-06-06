@@ -455,7 +455,7 @@ export function renderAdminHtmlV2(): string {
               <select id="tokenUsageModel"><option value="all">all</option></select>
             </label>
             <label for="tokenUsageAgent">Agent
-              <select id="tokenUsageAgent"><option value="all">all</option><option value="core">core</option><option value="memorize">memorize</option></select>
+              <select id="tokenUsageAgent"><option value="all">all</option><option value="chat">chat</option><option value="talk">talk</option><option value="memorize">memorize</option></select>
             </label>
             <button type="button" id="tokenUsageRefresh">Refresh</button>
           </div>
@@ -1875,11 +1875,11 @@ Timing:
         const activeGroup = activeSession
           ? renderLLMSessionShell(activeSession, "Active Session")
           : "";
-        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Core Saved Session")).join("");
+        const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Chat Saved Session")).join("");
         const memory = sortedLLMSessions(memorySessions).map((session) => renderLLMSessionShell(session, "Memorize")).join("");
         return [
-          '<h2>Core</h2>',
-          archived || '<div class="log-line">Core saved sessions: none</div>',
+          '<h2>Chat</h2>',
+          archived || '<div class="log-line">Chat saved sessions: none</div>',
           active,
           activeGroup,
           '<h2>Memorize</h2>',
@@ -2028,9 +2028,11 @@ Timing:
       }
 
       let promptProfile = null;
+      let talkPromptProfile = null;
       let promptVariables = {};
+      let talkPromptVariables = {};
       let promptTools = [];
-      let promptEditorMode = "core";
+      let promptEditorMode = "chat";
       let promptSideView = "preview";
       let memoryPrompts = null;
       let lastMemoryPromptPreviewTarget = "persistent";
@@ -2045,6 +2047,9 @@ Timing:
         promptProfile = payload.profile;
         promptVariables = payload.variables || {};
         promptTools = payload.tools || [];
+        const talkPayload = await fetch("/admin/api/talk-prompt-profile").then((res) => res.json());
+        talkPromptProfile = talkPayload.profile;
+        talkPromptVariables = talkPayload.variables || {};
         const memoryPayload = await fetch("/admin/api/memory/prompts").then((res) => res.json());
         memoryPrompts = memoryPayload.prompts || {};
         promptApiProfile = memoryPayload.apiProfile || promptApiProfile || {};
@@ -2056,29 +2061,32 @@ Timing:
       }
 
       function renderPromptProfile() {
-        if (!promptProfile || !memoryPrompts) return;
+        if (!promptProfile || !talkPromptProfile || !memoryPrompts) return;
         if (promptEditorMode === "memory") {
           renderMemoryPromptEditor();
           return;
         }
-        const layers = [...promptProfile.layers].sort((a, b) => a.order - b.order);
-        if (!Array.isArray(promptProfile.appendLayers)) promptProfile.appendLayers = [];
-        const appendLayers = [...promptProfile.appendLayers].sort((a, b) => a.order - b.order);
+        const activeProfile = promptEditorMode === "talk" ? talkPromptProfile : promptProfile;
+        const isTalk = promptEditorMode === "talk";
+        const layers = [...activeProfile.layers].sort((a, b) => a.order - b.order);
+        if (!Array.isArray(activeProfile.appendLayers)) activeProfile.appendLayers = [];
+        const appendLayers = [...activeProfile.appendLayers].sort((a, b) => a.order - b.order);
         $("promptProfile").innerHTML = \`
           <div class="prompt-editor-grid">
             <div class="subtabs prompt-mode-cell">
-              <button class="tab active" id="prompt-mode-core" type="button">Core</button>
+              <button class="tab \${!isTalk ? "active" : ""}" id="prompt-mode-chat" type="button">Chat</button>
+              <button class="tab \${isTalk ? "active" : ""}" id="prompt-mode-talk" type="button">Talk</button>
               <button class="tab" id="prompt-mode-memory" type="button">Memorize</button>
             </div>
-            <div class="prompt-api-cell">\${renderPromptApiPresetPicker("core")}</div>
+            <div class="prompt-api-cell">\${renderPromptApiPresetPicker(isTalk ? "talk" : "chat")}</div>
             <div class="prompt-edit-cell">
-              <h2>Prompt Profile</h2>
+              <h2>\${isTalk ? "Talk Prompt Profile" : "Prompt Profile"}</h2>
               <label for="promptUserName">User Name</label>
-              <input id="promptUserName" autocomplete="off" value="\${escapeAttr(promptProfile.userName || "user")}" />
+              <input id="promptUserName" autocomplete="off" value="\${escapeAttr(activeProfile.userName || "user")}" />
               <h2>Visible Tools</h2>
-              <label><input id="toolFeishuVisible" type="checkbox" \${promptProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
-              <label><input id="toolPhotoVisible" type="checkbox" \${promptProfile.visibleTools?.photo === false || promptProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
-              <label><input id="toolShellVisible" type="checkbox" \${promptProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
+              <label><input id="toolFeishuVisible" type="checkbox" \${activeProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
+              <label><input id="toolPhotoVisible" type="checkbox" \${activeProfile.visibleTools?.photo === false || activeProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
+              <label><input id="toolShellVisible" type="checkbox" \${activeProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
               <p class="muted">check_chat · send_chat · wardrobe · selfie</p>
               <h2>Initial Layers</h2>
               <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
@@ -2089,27 +2097,28 @@ Timing:
               <button type="button" id="prompt-append-add">Add Append Layer</button>
               <button type="button" id="prompt-save">Save Prompt Profile</button>
             </div>
-            \${renderPromptSidePane("core", "Core Preview", "Save Prompt Profile to refresh preview.")}
+            \${renderPromptSidePane(isTalk ? "talk" : "chat", isTalk ? "Talk Preview" : "Chat Preview", "Save Prompt Profile to refresh preview.")}
           </div>
         \`;
-        $("prompt-mode-core").addEventListener("click", () => { promptEditorMode = "core"; renderPromptProfile(); });
+        $("prompt-mode-chat").addEventListener("click", () => { promptEditorMode = "chat"; renderPromptProfile(); });
+        $("prompt-mode-talk").addEventListener("click", () => { promptEditorMode = "talk"; renderPromptProfile(); });
         $("prompt-mode-memory").addEventListener("click", () => { promptEditorMode = "memory"; renderPromptProfile(); });
-        bindPromptSideToggle("core");
-        bindPromptApiPresetPicker("core");
-        $("promptUserName").addEventListener("input", () => { promptProfile.userName = $("promptUserName").value; });
-        $("toolFeishuVisible").addEventListener("change", () => { promptProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
-        $("toolPhotoVisible").addEventListener("change", () => { promptProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete promptProfile.visibleTools.media; });
-        $("toolShellVisible").addEventListener("change", () => { promptProfile.visibleTools.shell = $("toolShellVisible").checked; });
+        bindPromptSideToggle(isTalk ? "talk" : "chat");
+        bindPromptApiPresetPicker(isTalk ? "talk" : "chat");
+        $("promptUserName").addEventListener("input", () => { activeProfile.userName = $("promptUserName").value; });
+        $("toolFeishuVisible").addEventListener("change", () => { activeProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
+        $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
+        $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
         layers.forEach((layer, index) => bindPromptLayer(layer, index, "layers"));
         appendLayers.forEach((layer, index) => bindPromptLayer(layer, index, "appendLayers"));
         $("prompt-add").addEventListener("click", () => {
-          const order = Math.max(0, ...promptProfile.layers.map((layer) => Number(layer.order) || 0)) + 10;
-          promptProfile.layers.push({ id: "layer_" + Date.now(), title: "New Layer", role: "user", enabled: true, content: "", order });
+          const order = Math.max(0, ...activeProfile.layers.map((layer) => Number(layer.order) || 0)) + 10;
+          activeProfile.layers.push({ id: "layer_" + Date.now(), title: "New Layer", role: "user", enabled: true, content: "", order });
           renderPromptProfile();
         });
         $("prompt-append-add").addEventListener("click", () => {
-          const order = Math.max(0, ...promptProfile.appendLayers.map((layer) => Number(layer.order) || 0)) + 10;
-          promptProfile.appendLayers.push({ id: "append_layer_" + Date.now(), title: "New Append Layer", role: "tool_request", enabled: true, content: "", order, toolName: "check_chat", toolArguments: "{}" });
+          const order = Math.max(0, ...activeProfile.appendLayers.map((layer) => Number(layer.order) || 0)) + 10;
+          activeProfile.appendLayers.push({ id: "append_layer_" + Date.now(), title: "New Append Layer", role: "tool_request", enabled: true, content: "", order, toolName: "check_chat", toolArguments: "{}" });
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);
@@ -2128,9 +2137,10 @@ Timing:
       }
 
       function renderPromptSideContent(mode, placeholder) {
-        const elementId = mode === "memory" ? "memoryPromptPreview" : "corePromptPreview";
+        const elementId = mode === "memory" ? "memoryPromptPreview" : mode === "talk" ? "talkPromptPreview" : "chatPromptPreview";
         if (promptSideView === "variables") {
-          return \`<pre id="\${elementId}">\${escapeHtml(JSON.stringify(promptVariables, null, 2))}</pre>\`;
+          const variables = mode === "talk" ? talkPromptVariables : promptVariables;
+          return \`<pre id="\${elementId}">\${escapeHtml(JSON.stringify(variables, null, 2))}</pre>\`;
         }
         return \`<div id="\${elementId}" class="logs">\${escapeHtml(placeholder)}</div>\`;
       }
@@ -2141,7 +2151,7 @@ Timing:
           renderPromptProfile();
           if (promptSideView !== "preview") return;
           if (mode === "memory") await refreshMemoryPromptPreview(lastMemoryPromptPreviewTarget);
-          else await refreshCorePromptPreview();
+          else await refreshChatPromptPreview(mode);
         });
       }
 
@@ -2152,7 +2162,8 @@ Timing:
         $("promptProfile").innerHTML = \`
           <div class="prompt-editor-grid">
             <div class="subtabs prompt-mode-cell">
-              <button class="tab" id="prompt-mode-core" type="button">Core</button>
+              <button class="tab" id="prompt-mode-chat" type="button">Chat</button>
+              <button class="tab" id="prompt-mode-talk" type="button">Talk</button>
               <button class="tab active" id="prompt-mode-memory" type="button">Memorize</button>
             </div>
             <div class="prompt-api-cell">\${renderPromptApiPresetPicker("memorize")}</div>
@@ -2167,7 +2178,8 @@ Timing:
             \${renderPromptSidePane("memory", "Prompt Preview", "Save a Memorize group to refresh its preview.")}
           </div>
         \`;
-        $("prompt-mode-core").addEventListener("click", () => { promptEditorMode = "core"; renderPromptProfile(); });
+        $("prompt-mode-chat").addEventListener("click", () => { promptEditorMode = "chat"; renderPromptProfile(); });
+        $("prompt-mode-talk").addEventListener("click", () => { promptEditorMode = "talk"; renderPromptProfile(); });
         $("prompt-mode-memory").addEventListener("click", () => { promptEditorMode = "memory"; renderPromptProfile(); });
         bindPromptSideToggle("memory");
         bindPromptApiPresetPicker("memorize");
@@ -2186,9 +2198,10 @@ Timing:
 
       function renderPromptApiPresetPicker(mode) {
         const isMemorize = mode === "memorize";
-        const selected = isMemorize ? promptApiProfile.memorizePresetName : promptApiProfile.corePresetName;
-        const label = isMemorize ? "Memorize API Preset" : "Core API Preset";
-        const buttonLabel = isMemorize ? "Save Memorize API Binding" : "Save Core API Binding";
+        const isTalk = mode === "talk";
+        const selected = isMemorize ? promptApiProfile.memorizePresetName : isTalk ? promptApiProfile.talkPresetName : (promptApiProfile.chatPresetName || promptApiProfile.corePresetName);
+        const label = isMemorize ? "Memorize API Preset" : isTalk ? "Talk API Preset" : "Chat API Preset";
+        const buttonLabel = isMemorize ? "Save Memorize API Binding" : isTalk ? "Save Talk API Binding" : "Save Chat API Binding";
         return \`
           <div class="row">
             <div>
@@ -2353,7 +2366,11 @@ Timing:
       function renderLLMApiPresetControls() {
         if ($("llmPresetSelect")) $("llmPresetSelect").innerHTML = renderLLMApiPresetOptions($("llmPresetSelect").value || "");
         if ($("promptApiPresetSelect")) {
-          const selected = promptEditorMode === "memory" ? promptApiProfile.memorizePresetName : promptApiProfile.corePresetName;
+          const selected = promptEditorMode === "memory"
+            ? promptApiProfile.memorizePresetName
+            : promptEditorMode === "talk"
+              ? promptApiProfile.talkPresetName
+              : (promptApiProfile.chatPresetName || promptApiProfile.corePresetName);
           $("promptApiPresetSelect").innerHTML = renderLLMApiPresetOptions(selected || "");
         }
       }
@@ -2493,11 +2510,13 @@ Timing:
       async function savePromptApiProfile(mode) {
         const selected = $("promptApiPresetSelect")?.value || undefined;
         const profile = {
-          corePresetName: promptApiProfile.corePresetName || undefined,
+          chatPresetName: promptApiProfile.chatPresetName || promptApiProfile.corePresetName || undefined,
+          talkPresetName: promptApiProfile.talkPresetName || undefined,
           memorizePresetName: promptApiProfile.memorizePresetName || undefined
         };
         if (mode === "memorize") profile.memorizePresetName = selected;
-        else profile.corePresetName = selected;
+        else if (mode === "talk") profile.talkPresetName = selected;
+        else profile.chatPresetName = selected;
         const result = await fetch("/admin/api/prompt-api-profile", {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -2507,7 +2526,7 @@ Timing:
         if (result.profile) promptApiProfile = result.profile;
         if (result.ok) {
           if (mode === "memorize") await refreshMemoryPromptPreview(lastMemoryPromptPreviewTarget);
-          else await refreshCorePromptPreview();
+          else await refreshChatPromptPreview(mode);
         }
       }
 
@@ -2986,6 +3005,7 @@ Timing:
       }
 
       function bindPromptLayer(layer, index, collection) {
+        const activeProfile = promptEditorMode === "talk" ? talkPromptProfile : promptProfile;
         const root = document.querySelector('[data-layer-collection="' + cssEscape(collection) + '"][data-layer-id="' + cssEscape(layer.id) + '"]');
         if (!root) return;
         root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
@@ -3006,7 +3026,7 @@ Timing:
         root.querySelector('[data-field="toolArguments"]')?.addEventListener("input", (event) => { layer.toolArguments = event.target.value; });
         root.querySelector('[data-field="content"]')?.addEventListener("input", (event) => { layer.content = event.target.value; });
         root.querySelector('[data-action="delete"]').addEventListener("click", () => {
-          promptProfile[collection] = promptProfile[collection].filter((item) => item.id !== layer.id);
+          activeProfile[collection] = activeProfile[collection].filter((item) => item.id !== layer.id);
           renderPromptProfile();
         });
         root.querySelector('[data-action="up"]').addEventListener("click", () => movePromptLayer(index, -1, collection));
@@ -3014,7 +3034,8 @@ Timing:
       }
 
       function movePromptLayer(index, delta, collection) {
-        const layers = [...promptProfile[collection]].sort((a, b) => a.order - b.order);
+        const activeProfile = promptEditorMode === "talk" ? talkPromptProfile : promptProfile;
+        const layers = [...activeProfile[collection]].sort((a, b) => a.order - b.order);
         const nextIndex = index + delta;
         if (nextIndex < 0 || nextIndex >= layers.length) return;
         const currentOrder = layers[index].order;
@@ -3024,27 +3045,33 @@ Timing:
       }
 
       async function savePromptProfile() {
-        const result = await fetch("/admin/api/prompt-profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(promptProfile) }).then((res) => res.json());
+        const isTalk = promptEditorMode === "talk";
+        const body = isTalk ? talkPromptProfile : promptProfile;
+        const result = await fetch(isTalk ? "/admin/api/talk-prompt-profile" : "/admin/api/prompt-profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("prompt-status").textContent = result.ok ? "Prompt profile saved." : "Prompt profile save failed.";
         if (result.profile) {
-          promptProfile = result.profile;
-          promptVariables = result.variables || {};
+          if (isTalk) talkPromptProfile = result.profile;
+          else promptProfile = result.profile;
+          if (isTalk) talkPromptVariables = result.variables || {};
+          else promptVariables = result.variables || {};
           renderPromptProfile();
-          await refreshCorePromptPreview();
+          await refreshChatPromptPreview(isTalk ? "talk" : "chat");
         }
         await refreshLLMRequests();
       }
 
-      async function refreshCorePromptPreview() {
-        if (!$("corePromptPreview")) return;
+      async function refreshChatPromptPreview(mode = "chat") {
+        const elementId = mode === "talk" ? "talkPromptPreview" : "chatPromptPreview";
+        const element = $(elementId);
+        if (!element) return;
         if (promptSideView === "variables") {
-          $("corePromptPreview").outerHTML = renderPromptSideContent("core", "Save Prompt Profile to refresh preview.");
+          element.outerHTML = renderPromptSideContent(mode, "Save Prompt Profile to refresh preview.");
           return;
         }
-        $("corePromptPreview").textContent = "Loading preview...";
+        element.textContent = "Loading preview...";
         const payload = await fetch("/admin/api/llm-requests").then((res) => res.json());
-        const preview = payload.profilePreview;
-        $("corePromptPreview").innerHTML = preview ? renderLLMRequestBlock("Current Prompt Profile Prebuild", preview) : "No Core prompt preview available.";
+        const preview = mode === "talk" ? payload.talkProfilePreview : payload.profilePreview;
+        element.innerHTML = preview ? renderLLMRequestBlock(mode === "talk" ? "Current Talk Prompt Profile Prebuild" : "Current Prompt Profile Prebuild", preview) : "No " + (mode === "talk" ? "Talk" : "Chat") + " prompt preview available.";
       }
 
       let shellData = null;

@@ -37,8 +37,8 @@ test("singleton lock rejects another running process in the same memory root", (
 
 test("LLM session files use type and UTC creation time in path and metadata", () => {
   const root = makeTempDir("llm-session-path");
-  const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "core" });
-  assert.equal(path.relative(root, filePath), path.join("core", "2026-06-03", "06-19-01-271.jsonl"));
+  const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "chat" });
+  assert.equal(path.relative(root, filePath), path.join("chat", "2026-06-03", "06-19-01-271.jsonl"));
   writeLLMSessionJsonl(filePath, {
     type: "llm_session",
     schemaVersion: 1,
@@ -438,7 +438,7 @@ test("token usage store records events and aggregates cache hit rate by hour", (
   const store = createTokenUsageStore(path.join(dir, "logs", "token_usage", "token-usage.sqlite"));
   store.insert({
     createdAt: "2026-05-30T10:05:00.000",
-    agentId: "core",
+    agentId: "chat",
     model: "deepseek-chat",
     sessionId: 1,
     requestId: 1,
@@ -452,7 +452,7 @@ test("token usage store records events and aggregates cache hit rate by hour", (
   });
   store.insert({
     createdAt: "2026-05-30T10:35:00.000",
-    agentId: "core",
+    agentId: "chat",
     model: "deepseek-chat",
     inputTokens: 50,
     outputTokens: 10,
@@ -471,7 +471,7 @@ test("token usage store records events and aggregates cache hit rate by hour", (
   const report = store.report({
     since: "2026-05-30T10:00:00.000",
     bucket: "hour",
-    agentId: "core",
+    agentId: "chat",
     model: "deepseek-chat"
   });
   assert.equal(report.summary.requests, 2);
@@ -489,13 +489,13 @@ test("token usage store aggregates by day and keeps unknown usage rows", () => {
   const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
   store.insert({
     createdAt: "2026-05-29T23:59:00.000",
-    agentId: "core",
+    agentId: "chat",
     model: "unknown-usage",
     finishReason: "stop"
   });
   store.insert({
     createdAt: "2026-05-30T00:01:00.000",
-    agentId: "core",
+    agentId: "chat",
     model: "unknown-usage",
     outputTokens: 3
   });
@@ -628,7 +628,7 @@ test("LLMRequests cancels the active request signal", async () => {
   });
 
   const pending = requests.send({
-    agentId: "core",
+    agentId: "chat",
     client,
     messages: [],
     model: "core-model",

@@ -37,6 +37,7 @@ export type ChatAgentLoopSession = {
 
 export type ChatAgentLoopInput = {
   llmInput: {
+    agentId?: string;
     messages: LLMChatInput["messages"];
     client?: LLMClient;
     model?: string;
@@ -114,7 +115,7 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
     buildRequest({ round, messages }) {
       streamingToolSender = createStreamingSendMessageHandler(input.event, toolMap);
       return {
-        agentId: "core",
+        agentId: input.llmInput.agentId ?? "chat",
         client: input.llmInput.client ?? input.llm,
         messages,
         model: input.llmInput.model,

@@ -1,4 +1,5 @@
 {
-  "corePresetName": "Core",
+  "chatPresetName": "Core",
+  "talkPresetName": "Core",
   "memorizePresetName": "Memorize"
 }

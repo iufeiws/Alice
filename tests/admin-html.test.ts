@@ -94,14 +94,15 @@ test("plugin config fields can be split by schema-driven group selector", () => 
   assert.match(html, /pluginConfigGroup"\)\.addEventListener\("change", applyPluginConfigGroupFilter/);
 });
 
-test("core prompt editor keeps variables in preview side pane", () => {
+test("chat prompt editor keeps variables in preview side pane", () => {
   const html = renderAdminHtmlV2();
 
   assert.match(html, /grid-template-areas: "mode preview" "api preview" "editor preview"/);
   assert.match(html, /function renderPromptSidePane\(mode, previewTitle, placeholder\)/);
   assert.match(html, /id="promptSideToggle"/);
   assert.match(html, /变量解析树/);
-  assert.match(html, /renderPromptSidePane\("core", "Core Preview"/);
+  assert.match(html, /renderPromptSidePane\(isTalk \? "talk" : "chat", isTalk \? "Talk Preview" : "Chat Preview"/);
+  assert.match(html, /id="prompt-mode-talk"/);
   assert.match(html, /renderPromptSidePane\("memory", "Prompt Preview"/);
   assert.match(html, /return `<pre id="\$\{elementId\}">/);
   assert.match(html, /\.prompt-preview-pane > pre \{ max-height: calc\(100vh - 210px\); overflow: auto; \}/);
@@ -136,19 +137,21 @@ test("memorize prompt editor does not show variables primer in edit pane", () =>
   assert.doesNotMatch(html, /\{\{memorize\/window\/startAt\}\}/);
 });
 
-test("core and memorize previews share llm request block renderer", () => {
+test("chat and memorize previews share llm request block renderer", () => {
   const html = renderAdminHtmlV2();
 
-  assert.match(html, /renderLLMRequestBlock\("Current Prompt Profile Prebuild", preview\)/);
+  assert.match(html, /renderLLMRequestBlock\(mode === "talk" \? "Current Talk Prompt Profile Prebuild" : "Current Prompt Profile Prebuild", preview\)/);
   assert.match(html, /renderLLMRequestBlock\("Current Memorize Prompt Preview/);
   assert.match(html, /<div class="log-line">tools\\n/);
   assert.doesNotMatch(html, /<div class="log-line">metadata\\n/);
   assert.doesNotMatch(html, /tool: feishu\\n/);
 });
 
-test("token usage filter includes memorize agent", () => {
+test("token usage filter includes chat, talk, and memorize agents", () => {
   const html = renderAdminHtmlV2();
 
+  assert.match(html, /<option value="chat">chat<\/option>/);
+  assert.match(html, /<option value="talk">talk<\/option>/);
   assert.match(html, /<option value="memorize">memorize<\/option>/);
 });
 

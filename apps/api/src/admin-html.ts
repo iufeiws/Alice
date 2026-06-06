@@ -649,7 +649,7 @@ export function renderAdminHtmlV2(): string {
           </div>
         </section>
       </main>
-      <section id="adminTerminal" class="admin-terminal" aria-label="Terminal logs">
+      <section id="adminTerminal" class="admin-terminal collapsed" aria-label="Terminal logs">
         <div class="admin-terminal-head">
           <strong class="admin-terminal-title">Terminal</strong>
           <button class="terminal-tab" data-terminal-tab="active-session" type="button" aria-label="Active Session">Active Session</button>
@@ -1826,16 +1826,9 @@ Timing:
 
       function renderActiveSessionTerminalRows(session) {
         if (!session) return '<div class="log-line">Active session: none</div>';
-        const status = isActiveSessionWaiting(session) ? "waiting" : "ready";
+        if (isActiveSessionWaiting(session)) return '<div class="log-line">waiting</div>';
         const latest = latestActiveSessionMessage(session);
-        const message = status === "waiting" ? "waiting" : latest.summary;
-        const meta = [
-          "session=" + (session.id || ""),
-          "mode=" + (session.mode || "normal"),
-          "messages=" + (session.messageCount ?? (Array.isArray(session.messages) ? session.messages.length : 0)),
-          session.updatedAt ? "updated=" + session.updatedAt : ""
-        ].filter(Boolean).join(" ");
-        return \`<div class="log-line">[\${escapeHtml(status)}] \${escapeHtml(meta)} · \${escapeHtml(latest.role)} · \${escapeHtml(message)}</div>\`;
+        return \`<div class="log-line">[\${escapeHtml(latest.role)}] \${escapeHtml(latest.summary)}</div>\`;
       }
 
       function isActiveSessionWaiting(session) {
@@ -1846,6 +1839,12 @@ Timing:
       }
 
       function latestActiveSessionMessage(session) {
+        if (session.latestMessage) {
+          return {
+            role: session.latestMessage.role || "unknown",
+            summary: summarizeLLMMessageForRow(session.latestMessage)
+          };
+        }
         const messages = Array.isArray(session.messages) ? session.messages : [];
         const latest = messages[messages.length - 1];
         if (!latest) return { role: "none", summary: "No messages in active session." };

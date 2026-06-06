@@ -74,10 +74,10 @@
 
 默认行为：
 
-- 页面首次加载时终端默认展开。
+- 页面首次加载时终端默认收起，只显示标题栏。
 - 当前 tab 默认 `System`，因为系统日志最适合作为运行时总览。
 - 用户点击 `Active Session`、`Message`、`Event`、`System` 时只切换终端内部内容，不切换主内容页。
-- `Active Session` 每行显示当前 active LLM session 的最新 message；如果最新 request 还没有对应 response，则显示 `waiting`。
+- `Active Session` 每行只显示当前 active LLM session 的最新 message；如果最新 request 还没有对应 response，则显示 `waiting`，不要显示 session 元信息代替 message。
 - Terminal 默认每秒自动刷新一次；暂停后保留当前内容，直到用户手动刷新或恢复自动刷新。
 - 用户切换主内容 tab 时，终端保持当前展开状态和当前日志 tab。
 
@@ -93,7 +93,7 @@
 
 | 终端 tab | 元素 | 接口 |
 | --- | --- | --- |
-| Active Session | `activeSessionLogs` | `GET /admin/api/llm-requests` |
+| Active Session | `activeSessionLogs` | `GET /admin/api/llm-requests` 的 `activeSession.latestMessage` |
 | Message | `messageLogs` | `GET /admin/api/message-logs` |
 | Event | `eventLogs` | `GET /admin/api/message-event-logs` |
 | System | `logs` | `GET /admin/api/logs` |
@@ -156,7 +156,7 @@ apps/api/src/admin-html.ts
 - 主导航中不再出现 `Message Log`、`Event Log`、`System Log`。
 - 页面底部出现 `Terminal` 面板。
 - 终端里可以在 `Active Session`、`Message`、`Event`、`System` 四类内容之间切换。
-- `Active Session` 可以显示当前 session 的最新 message；等待 LLM 返回时显示 `waiting`。
+- `Active Session` 可以显示当前 active session 的最新 message；等待 LLM 返回时显示 `waiting`，默认不能只显示 session 摘要。
 - 三类日志内容和迁移前一致。
 - 终端可收缩，收缩后不遮挡主内容操作。
 - 切换主内容 tab 不会重置终端当前 tab。

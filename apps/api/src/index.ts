@@ -2104,6 +2104,7 @@ function readMemoryLLMSessionFile(filePath: string, includeTurns: boolean): any 
 
 function summarizeLLMSession(session: ActiveLLMSession): unknown {
   const roundCount = llmSessionRoundCount(session);
+  const latestMessage = session.messages.at(-1);
   return {
     id: session.id,
     startedAt: session.startedAt,
@@ -2117,6 +2118,7 @@ function summarizeLLMSession(session: ActiveLLMSession): unknown {
     currentRound: session.currentRound,
     latestRequest: session.latestRequestInfo,
     latestResponse: session.latestResponseInfo,
+    latestMessage: latestMessage ? cloneLLMMessages([latestMessage])[0] : undefined,
     staticPromptMessageCount: session.staticPromptMessageCount ?? 0,
     mode: session.mode ?? "normal",
     modeStaticMessageCount: session.modeStaticMessages?.length ?? 0,

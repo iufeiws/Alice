@@ -13,13 +13,26 @@ import { createRecentMessageDeduper } from "./dedupe.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import { createId, sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
 
+const TYPING_EMOJI_TYPE = "hourglass";
+const REMOVE_TYPING_REACTION_ATTEMPTS = 3;
+const REMOVE_TYPING_REACTION_RETRY_DELAY_MS = 250;
+
+type FeishuTypingSessionState = {
+  latestMessageId?: string;
+  typingMessageId?: string;
+  typingReactionId?: string;
+  emojiType: string;
+};
+
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
   ingestAudioMessage(raw: FeishuAudioMessageEvent): Promise<void>;
+  setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }): Promise<void>;
 } {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const bindings = createInMemoryFeishuBindingStore();
   const deduper = createRecentMessageDeduper();
+  const typingSessions = new Map<string, FeishuTypingSessionState>();
   const monitor = createFeishuMonitor(config, {
     log: deps.log,
     time,
@@ -45,60 +58,77 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       await monitor.start();
     },
     async stop() {
+      await clearTypingIndicators();
       await monitor.stop();
     },
     async send(output: AgentOutput) {
       const plan = renderForFeishu(output);
+      let result: void | { messageId?: string };
       if (deps.outbound) {
-        return deps.outbound.send(plan);
+        result = await deps.outbound.send(plan);
+        noteOutboundMessage(output.target.sessionId, result?.messageId);
+        return result;
       }
 
       if (plan.kind === "text") {
-        return monitor.sendText({
+        result = await monitor.sendText({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           text: plan.text
         });
+        noteOutboundMessage(output.target.sessionId, result.messageId);
+        return result;
       }
 
       if (plan.kind === "markdown") {
-        return monitor.sendMarkdown({
+        result = await monitor.sendMarkdown({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           markdown: plan.markdown
         });
+        noteOutboundMessage(output.target.sessionId, result.messageId);
+        return result;
       }
 
       if (plan.kind === "image") {
-        return monitor.sendImage({
+        result = await monitor.sendImage({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           assetId: plan.assetId
         });
+        noteOutboundMessage(output.target.sessionId, result.messageId);
+        return result;
       }
 
       if (plan.kind === "audio") {
-        return monitor.sendAudio({
+        result = await monitor.sendAudio({
           receiveIdType: plan.receiveIdType,
           receiveId: plan.receiveId,
           assetId: plan.assetId,
           duration: plan.duration,
           filename: plan.filename
         });
+        noteOutboundMessage(output.target.sessionId, result.messageId);
+        return result;
       }
 
-      return monitor.sendFile({
+      result = await monitor.sendFile({
         receiveIdType: plan.receiveIdType,
         receiveId: plan.receiveId,
         assetId: plan.assetId,
         filename: plan.filename
       });
+      noteOutboundMessage(output.target.sessionId, result.messageId);
+      return result;
     },
     async ingestTextMessage(raw: FeishuTextMessageEvent) {
       await receiveTextMessage(raw);
     },
     async ingestAudioMessage(raw: FeishuAudioMessageEvent) {
       await receiveAudioMessage(raw);
+    },
+    async setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }) {
+      await setTyping(input);
     }
   };
 
@@ -128,6 +158,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         deps.log?.("warn", `[feishu] duplicate message ignored: ${dedupeKey}`);
         return;
       }
+      noteInboundMessage(event.session.sessionId, event.source.rawMessageId);
       queueTextMessage(event);
     } catch (error) {
       deps.log?.("error", `[feishu] failed to receive message: ${error instanceof Error ? error.message : String(error)}`);
@@ -273,6 +304,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     }
 
     const event = await audioMessageEventToAgentEvent(raw, stored.assetId, transcript, bindings, time);
+    noteInboundMessage(event.session.sessionId, event.source.rawMessageId);
     const decision = checkFeishuEventPolicy(config, event);
     if (decision.allowed && config.dmPolicy === "pairing" && event.session.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
       deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
@@ -285,7 +317,105 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     await deps.onEvent(event);
   }
 
+  function getTypingState(sessionId: string): FeishuTypingSessionState {
+    const existing = typingSessions.get(sessionId);
+    if (existing) return existing;
+    const created = { emojiType: TYPING_EMOJI_TYPE };
+    typingSessions.set(sessionId, created);
+    return created;
+  }
+
+  function noteInboundMessage(sessionId: string, messageId: string | undefined): void {
+    if (!messageId) return;
+    getTypingState(sessionId).latestMessageId = messageId;
+  }
+
+  function noteOutboundMessage(sessionId: string | undefined, messageId: string | undefined): void {
+    if (!sessionId || !messageId) return;
+    getTypingState(sessionId).latestMessageId = messageId;
+  }
+
+  async function setTyping(input: { sessionId?: string; typing: boolean }): Promise<void> {
+    if (!input.sessionId) {
+      deps.log?.("warn", "[feishu] typing ignored: missing session id");
+      return;
+    }
+    const state = getTypingState(input.sessionId);
+    if (!input.typing) {
+      await clearTypingIndicator(input.sessionId, state);
+      return;
+    }
+    if (!state.latestMessageId) {
+      deps.log?.("warn", `[feishu] typing ignored: missing recent message for ${input.sessionId}`);
+      return;
+    }
+    if (state.typingMessageId === state.latestMessageId && state.typingReactionId) {
+      return;
+    }
+    if (state.typingMessageId || state.typingReactionId) {
+      await clearTypingIndicator(input.sessionId, state);
+    }
+    try {
+      const result = await reactionClient().addReaction({
+        messageId: state.latestMessageId,
+        emojiType: state.emojiType
+      });
+      if (!result.reactionId) {
+        deps.log?.("warn", `[feishu] typing start failed: reaction id missing for ${state.latestMessageId}`);
+        return;
+      }
+      state.typingMessageId = state.latestMessageId;
+      state.typingReactionId = result.reactionId;
+      deps.log?.("info", `[feishu] typing started: ${input.sessionId}`);
+    } catch (error) {
+      deps.log?.("warn", `[feishu] typing start failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function clearTypingIndicators(): Promise<void> {
+    await Promise.all([...typingSessions.entries()].map(([sessionId, state]) => clearTypingIndicator(sessionId, state)));
+  }
+
+  async function clearTypingIndicator(sessionId: string, state: FeishuTypingSessionState): Promise<void> {
+    const messageId = state.typingMessageId;
+    const reactionId = state.typingReactionId;
+    state.typingMessageId = undefined;
+    state.typingReactionId = undefined;
+    if (!messageId || !reactionId) return;
+    try {
+      await removeTypingReactionWithRetry({ messageId, reactionId });
+      deps.log?.("info", `[feishu] typing stopped: ${sessionId}`);
+    } catch (error) {
+      deps.log?.("warn", `[feishu] typing stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function reactionClient() {
+    return deps.reactionClient ?? monitor;
+  }
+
+  async function removeTypingReactionWithRetry(input: { messageId: string; reactionId: string }): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= REMOVE_TYPING_REACTION_ATTEMPTS; attempt += 1) {
+      try {
+        await reactionClient().removeReaction(input);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < REMOVE_TYPING_REACTION_ATTEMPTS) {
+          deps.log?.("warn", `[feishu] typing stop retry ${attempt}/${REMOVE_TYPING_REACTION_ATTEMPTS} failed: ${error instanceof Error ? error.message : String(error)}`);
+          await delay(REMOVE_TYPING_REACTION_RETRY_DELAY_MS);
+        }
+      }
+    }
+    throw lastError;
+  }
+
   return plugin;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function audioMessageEventToAgentEvent(

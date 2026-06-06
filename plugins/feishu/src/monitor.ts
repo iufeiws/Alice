@@ -12,6 +12,8 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     sendImage: client.sendImage,
     sendAudio: client.sendAudio,
     sendFile: client.sendFile,
-    downloadAudioResource: client.downloadAudioResource
+    downloadAudioResource: client.downloadAudioResource,
+    addReaction: client.addReaction,
+    removeReaction: client.removeReaction
   };
 }

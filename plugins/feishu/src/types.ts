@@ -116,7 +116,18 @@ export type FeishuSendPlan =
     };
 
 export type FeishuOutboundClient = {
-  send(plan: FeishuSendPlan): Promise<void>;
+  send(plan: FeishuSendPlan): Promise<void | FeishuSendResult>;
+};
+
+export type FeishuSendResult = {
+  messageId?: string;
+  createdAt?: string;
+  createdAtUtc?: string;
+};
+
+export type FeishuReactionClient = {
+  addReaction(input: { messageId: string; emojiType: string }): Promise<{ reactionId?: string }>;
+  removeReaction(input: { messageId: string; reactionId: string }): Promise<void>;
 };
 
 export type FeishuStoredAudioAsset = {
@@ -152,6 +163,7 @@ export type FeishuPluginDeps = {
   onLifecycleEvent?(event: FeishuMessageLifecycleEvent): Promise<void>;
   log?(level: "info" | "warn" | "error", message: string): void;
   outbound?: FeishuOutboundClient;
+  reactionClient?: FeishuReactionClient;
   pairingStore?: FeishuPairingStore;
   storeAudioAsset?: FeishuAudioAssetStore;
   asr?: FeishuAsrTranscriber;

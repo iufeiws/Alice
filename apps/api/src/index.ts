@@ -735,6 +735,15 @@ const messageRuntime = createMessageRuntime({
   outputRouter,
   isLLMSessionActive: () => llmSessionBusy,
   async setTypingIndicator(input) {
+    if (input.plugin === "feishu") {
+      await feishu.setTyping({
+        userId: input.userId,
+        channelId: input.channelId,
+        sessionId: input.sessionId,
+        typing: input.typing
+      });
+      return;
+    }
     if (input.plugin !== "wechat") return;
     await wechat.setTyping({
       userId: input.userId ?? input.channelId,

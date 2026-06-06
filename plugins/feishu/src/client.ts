@@ -1,6 +1,6 @@
 import type { FeishuConfig } from "../../../packages/config/src/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
@@ -13,13 +13,7 @@ export type FeishuClient = {
   sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
   sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
   downloadAudioResource(input: { messageId: string; fileKey: string }): Promise<FeishuStoredAudioAsset>;
-};
-
-export type FeishuSendResult = {
-  messageId?: string;
-  createdAt?: string;
-  createdAtUtc?: string;
-};
+} & FeishuReactionClient;
 
 export type FeishuClientDeps = {
   onMessage(data: unknown): Promise<void>;
@@ -212,6 +206,32 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         filename,
         mimeType: "audio/opus"
       };
+    },
+    async addReaction(input) {
+      assertStarted(client);
+      const result = await client.im.v1.messageReaction.create({
+        path: {
+          message_id: input.messageId
+        },
+        data: {
+          reaction_type: {
+            emoji_type: input.emojiType
+          }
+        }
+      });
+      const reactionId = result?.reaction_id ?? result?.data?.reaction_id;
+      deps.log?.("info", `[feishu] added ${input.emojiType} reaction to ${input.messageId}`);
+      return { reactionId };
+    },
+    async removeReaction(input) {
+      assertStarted(client);
+      await client.im.v1.messageReaction.delete({
+        path: {
+          message_id: input.messageId,
+          reaction_id: input.reactionId
+        }
+      });
+      deps.log?.("info", `[feishu] removed reaction ${input.reactionId} from ${input.messageId}`);
     }
   };
 }

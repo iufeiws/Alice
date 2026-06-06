@@ -4,7 +4,7 @@ import { createRecentMessageDeduper } from "../plugins/feishu/src/dedupe.js";
 import { createFeishuPlugin } from "../plugins/feishu/src/index.js";
 import type { FeishuAudioMessageEvent, FeishuTextMessageEvent } from "../plugins/feishu/src/types.js";
 import type { FeishuConfig } from "../packages/config/src/index.js";
-import type { AgentEvent } from "../packages/types/src/index.js";
+import type { AgentEvent, AgentOutput } from "../packages/types/src/index.js";
 
 test("recent message deduper rejects repeated keys inside ttl", () => {
   const deduper = createRecentMessageDeduper({ ttlMs: 1000 });
@@ -154,6 +154,149 @@ test("feishu plugin does not forward inbound audio when asr returns no transcrip
   assert.ok(warnings.some((message) => message.includes("ignored audio om_empty: asr empty_transcription")));
 });
 
+test("feishu plugin starts and stops typing on the latest inbound message", async () => {
+  const reactions: Array<{ action: "add" | "remove"; messageId: string; emojiType?: string; reactionId?: string }> = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    reactionClient: {
+      async addReaction(input) {
+        reactions.push({ action: "add", ...input });
+        return { reactionId: "reaction-1" };
+      },
+      async removeReaction(input) {
+        reactions.push({ action: "remove", ...input });
+      }
+    }
+  });
+
+  await plugin.ingestTextMessage(rawTextMessage("om_typing", "hello"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: false });
+
+  assert.deepEqual(reactions, [
+    { action: "add", messageId: "om_typing", emojiType: "hourglass" },
+    { action: "remove", messageId: "om_typing", reactionId: "reaction-1" }
+  ]);
+});
+
+test("feishu plugin moves typing reaction when latest outbound message changes", async () => {
+  let nextReaction = 1;
+  const reactions: Array<{ action: "add" | "remove"; messageId: string; emojiType?: string; reactionId?: string }> = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    outbound: {
+      async send() {
+        return { messageId: "om_outbound" };
+      }
+    },
+    reactionClient: {
+      async addReaction(input) {
+        const reactionId = `reaction-${nextReaction++}`;
+        reactions.push({ action: "add", ...input });
+        return { reactionId };
+      },
+      async removeReaction(input) {
+        reactions.push({ action: "remove", ...input });
+      }
+    }
+  });
+
+  await plugin.ingestTextMessage(rawTextMessage("om_inbound", "hello"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.send(textOutput("feishu:dm:oc_chat", "ok"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+
+  assert.deepEqual(reactions, [
+    { action: "add", messageId: "om_inbound", emojiType: "hourglass" },
+    { action: "remove", messageId: "om_inbound", reactionId: "reaction-1" },
+    { action: "add", messageId: "om_outbound", emojiType: "hourglass" }
+  ]);
+});
+
+test("feishu plugin clears active typing reactions on stop", async () => {
+  const reactions: Array<{ action: "add" | "remove"; messageId: string; emojiType?: string; reactionId?: string }> = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    reactionClient: {
+      async addReaction(input) {
+        reactions.push({ action: "add", ...input });
+        return { reactionId: "reaction-stop" };
+      },
+      async removeReaction(input) {
+        reactions.push({ action: "remove", ...input });
+      }
+    }
+  });
+
+  await plugin.ingestTextMessage(rawTextMessage("om_stop", "hello"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.stop();
+
+  assert.deepEqual(reactions, [
+    { action: "add", messageId: "om_stop", emojiType: "hourglass" },
+    { action: "remove", messageId: "om_stop", reactionId: "reaction-stop" }
+  ]);
+});
+
+test("feishu plugin retries typing reaction removal", async () => {
+  let removeAttempts = 0;
+  const warnings: string[] = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    },
+    reactionClient: {
+      async addReaction() {
+        return { reactionId: "reaction-retry" };
+      },
+      async removeReaction() {
+        removeAttempts += 1;
+        if (removeAttempts < 3) throw new Error(`temporary failure ${removeAttempts}`);
+      }
+    }
+  });
+
+  await plugin.ingestTextMessage(rawTextMessage("om_retry", "hello"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: false });
+
+  assert.equal(removeAttempts, 3);
+  assert.equal(warnings.filter((message) => message.includes("typing stop retry")).length, 2);
+  assert.equal(warnings.some((message) => message.includes("typing stop failed")), false);
+});
+
+test("feishu plugin typing failures warn without throwing", async () => {
+  const warnings: string[] = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    },
+    reactionClient: {
+      async addReaction() {
+        throw new Error("invalid reaction type");
+      },
+      async removeReaction() {
+        throw new Error("not expected");
+      }
+    }
+  });
+
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+  await plugin.ingestTextMessage(rawTextMessage("om_warn", "hello"));
+  await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+
+  assert.ok(warnings.some((message) => message.includes("typing ignored: missing recent message")));
+  assert.ok(warnings.some((message) => message.includes("typing start failed: invalid reaction type")));
+});
+
 function feishuConfig(): FeishuConfig {
   return {
     enabled: true,
@@ -215,6 +358,28 @@ function rawAudioMessage(messageId: string): FeishuAudioMessageEvent {
           open_id: "ou_user"
         }
       }
+    }
+  };
+}
+
+function textOutput(sessionId: string, text: string): AgentOutput {
+  return {
+    id: `out_${sessionId}`,
+    target: {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "oc_chat",
+      userId: "ou_user",
+      sessionId
+    },
+    content: {
+      kind: "text",
+      text
+    },
+    meta: {
+      createdAt: "2026-02-02T02:40:00.000Z",
+      createdAtUtc: "2026-02-02T02:40:00.000Z",
+      urgency: "normal"
     }
   };
 }

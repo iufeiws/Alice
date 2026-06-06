@@ -40,7 +40,7 @@ import { createShellTools } from "../../../tools/shell/src/index.js";
 import { createBookcaseTools } from "../../../tools/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../tools/sleep-cocoon/src/index.js";
 import { createAsrInboundStreamSession, createAsrPlugin } from "../../../plugins/asr/src/index.js";
-import { attachWebRtcVoiceSignalingServer, createWebRtcVoicePlugin, createWeriftPeer, decodeAudioFileToOpusRtpFrames, defaultWebRtcVoiceConfig, type WebRtcVoiceCall } from "../../../plugins/webrtc-voice/src/index.js";
+import { attachWebRtcVoiceSignalingServer, createWebRtcVoicePlugin, createWeriftPeer, decodeAudioFileToOpusRtpFrames, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, encodePcmL16ToOpusRtpFrames, type WebRtcVoiceCall, type WebRtcVoiceStatusEvent } from "../../../plugins/webrtc-voice/src/index.js";
 import { createAliceStore, type StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 import { createTokenUsageStore, type TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
 import { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
@@ -56,8 +56,11 @@ import { updateEnvFile } from "./env-file.js";
 import { createHttpShutdownController } from "./http-shutdown.js";
 
 const http = await import("node:http");
+const https = await import("node:https");
 const fs = await import("node:fs");
 const path = await import("node:path");
+const os = await import("node:os");
+const childProcess = await import("node:child_process");
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -439,23 +442,25 @@ const asrPlugin = createAsrPlugin({
   appendLog
 });
 const webRtcVoiceCalls = new Map<string, WebRtcVoiceCall>();
-const pendingWebRtcAudio = new Map<string, Uint8Array[]>();
+type WebRtcVoiceClient = { send(message: unknown): void };
+const webRtcVoiceClients = new Set<WebRtcVoiceClient>();
+const broadcastWebRtcVoiceStatus = (event: WebRtcVoiceStatusEvent) => {
+  const message = { type: "status", state: event.state, detail: event.detail };
+  for (const client of webRtcVoiceClients) {
+    try {
+      client.send(message);
+    } catch (error) {
+      webRtcVoiceClients.delete(client);
+      appendLog("warn", `webrtc voice status broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+};
 const webRtcVoicePlugin = createWebRtcVoicePlugin({
   config: defaultWebRtcVoiceConfig(),
   async createPeer(input) {
     return createWeriftPeer({
       ...input,
-      onStatus: (event) => appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`),
-      async onInboundAudioChunk(bytes) {
-        const call = webRtcVoiceCalls.get(input.callId);
-        if (!call) {
-          const pending = pendingWebRtcAudio.get(input.callId) ?? [];
-          pending.push(bytes);
-          pendingWebRtcAudio.set(input.callId, pending);
-          return;
-        }
-        await call.acceptInboundAudioChunk(bytes);
-      }
+      onStatus: (event) => appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`)
     });
   },
   createAsrSession(start) {
@@ -470,8 +475,15 @@ const webRtcVoicePlugin = createWebRtcVoicePlugin({
   decodeAudioFileToFrames(input) {
     return decodeAudioFileToOpusRtpFrames(input);
   },
+  encodePcmL16ToFrames(input) {
+    return encodePcmL16ToOpusRtpFrames(input);
+  },
+  encodePcmL16StreamToFrames(input) {
+    return encodePcmL16StreamToOpusRtpFrames(input);
+  },
   emitStatus(event) {
     appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
+    broadcastWebRtcVoiceStatus(event);
   }
 });
 const messagingTools = createMessagingTools({
@@ -740,7 +752,7 @@ const scheduler = createDailyScheduler(createDailyMaintenanceTasks({
 }));
 
 const runtimeState = { feishuStarted: false, wechatStarted: false };
-const server = http.createServer(createApiRequestHandler({
+const requestHandler = createApiRequestHandler({
   config,
   logs,
   messageLogs,
@@ -853,22 +865,34 @@ const server = http.createServer(createApiRequestHandler({
   },
   appendLog,
   appendMessageLog
-}));
+});
+const server = http.createServer(requestHandler);
+const httpsServer = config.api.httpsEnabled
+  ? https.createServer(createApiHttpsOptions(), requestHandler)
+  : undefined;
 const httpShutdown = createHttpShutdownController(server);
 (server as any).on?.("connection", (socket: any) => {
   httpShutdown.trackConnection(socket);
 });
-attachWebRtcVoiceSignalingServer({
-  server: server as any,
-  plugin: webRtcVoicePlugin,
-  appendLog,
-  async onCallCreated(call) {
-    webRtcVoiceCalls.set(call.callId, call);
-    const pending = pendingWebRtcAudio.get(call.callId) ?? [];
-    pendingWebRtcAudio.delete(call.callId);
-    for (const chunk of pending) await call.acceptInboundAudioChunk(chunk);
-  }
+const httpsShutdown = httpsServer ? createHttpShutdownController(httpsServer) : undefined;
+httpsServer?.on?.("connection", (socket: any) => {
+  httpsShutdown?.trackConnection(socket);
 });
+const onWebRtcVoiceCallCreated = async (call: WebRtcVoiceCall) => {
+  webRtcVoiceCalls.set(call.callId, call);
+};
+for (const signalingServer of [server, httpsServer].filter(Boolean)) {
+  attachWebRtcVoiceSignalingServer({
+    server: signalingServer as any,
+    plugin: webRtcVoicePlugin,
+    appendLog,
+    onCallCreated: onWebRtcVoiceCallCreated,
+    onClientConnected(client) {
+      webRtcVoiceClients.add(client);
+      return () => webRtcVoiceClients.delete(client);
+    }
+  });
+}
 
 await core.start();
 scheduler.start();
@@ -879,6 +903,10 @@ appendLog("info", `agent core started: llm=api-preset feishu=${runtimeState.feis
 
 server.listen(config.api.port, config.api.host, () => {
   console.log(`[api] listening on http://${config.api.host}:${config.api.port}`);
+});
+httpsServer?.listen(config.api.httpsPort, config.api.httpsHost, () => {
+  console.log(`[api] listening on https://${config.api.httpsHost}:${config.api.httpsPort}`);
+  console.log(`[api] voicecall LAN URL: https://${localLanAddress() ?? config.api.httpsHost}:${config.api.httpsPort}/plugins/webrtc-voice/call`);
 });
 
 let shutdownStarted = false;
@@ -894,8 +922,12 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
       await core.stop();
     } finally {
       serviceLock.release();
-      const result = await httpShutdown.close({ forceAfterMs: 2_000 });
-      if (result.forced) appendLog("warn", `http shutdown forced: remaining_connections=${result.remainingConnections}`);
+      const [httpResult, httpsResult] = await Promise.all([
+        httpShutdown.close({ forceAfterMs: 2_000 }),
+        httpsShutdown?.close({ forceAfterMs: 2_000 })
+      ]);
+      if (httpResult.forced) appendLog("warn", `http shutdown forced: remaining_connections=${httpResult.remainingConnections}`);
+      if (httpsResult?.forced) appendLog("warn", `https shutdown forced: remaining_connections=${httpsResult.remainingConnections}`);
       process.exit(0);
     }
   });
@@ -2675,6 +2707,72 @@ function summarizePreviewReactions(raw: string): string {
   } catch {
     return "";
   }
+}
+
+function createApiHttpsOptions(): { cert: Buffer; key: Buffer } {
+  const explicitCertPath = process.env.API_HTTPS_CERT_PATH;
+  const explicitKeyPath = process.env.API_HTTPS_KEY_PATH;
+  if (explicitCertPath && explicitKeyPath) {
+    return {
+      cert: fs.readFileSync(explicitCertPath),
+      key: fs.readFileSync(explicitKeyPath)
+    };
+  }
+
+  const certDir = path.join(config.memoryFiles.root, "state", "api-https-cert");
+  const certPath = path.join(certDir, "cert.pem");
+  const keyPath = path.join(certDir, "key.pem");
+  const altNames = apiHttpsCertificateAltNames();
+  fs.mkdirSync(certDir, { recursive: true });
+  if (!fs.existsSync(certPath) || !fs.existsSync(keyPath) || !certificateMatchesAltNames(certPath, altNames)) {
+    childProcess.execFileSync("openssl", [
+      "req",
+      "-x509",
+      "-newkey", "rsa:2048",
+      "-nodes",
+      "-keyout", keyPath,
+      "-out", certPath,
+      "-days", "30",
+      "-subj", "/CN=alice-api-lan",
+      "-addext", `subjectAltName=${altNames.join(",")}`
+    ], { stdio: "ignore" });
+  }
+  return {
+    cert: fs.readFileSync(certPath),
+    key: fs.readFileSync(keyPath)
+  };
+}
+
+function apiHttpsCertificateAltNames(): string[] {
+  const names = new Set(["DNS:localhost", "IP:127.0.0.1"]);
+  const hostname = os.hostname();
+  if (hostname) names.add(`DNS:${hostname}`);
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.internal || entry.family !== "IPv4") continue;
+      names.add(`IP:${entry.address}`);
+    }
+  }
+  return [...names];
+}
+
+function certificateMatchesAltNames(certPath: string, altNames: string[]): boolean {
+  try {
+    const output = childProcess.execFileSync("openssl", ["x509", "-in", certPath, "-noout", "-ext", "subjectAltName"], { encoding: "utf8" });
+    return altNames.every((name) => output.includes(name.replace(/^IP:/, "IP Address:")));
+  } catch {
+    return false;
+  }
+}
+
+function localLanAddress(): string | undefined {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.internal || entry.family !== "IPv4") continue;
+      return entry.address;
+    }
+  }
+  return undefined;
 }
 
 function loadDotEnv(path: string): void {

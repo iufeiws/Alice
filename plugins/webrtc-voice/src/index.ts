@@ -11,10 +11,23 @@ import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
 
 const childProcess = await import("node:child_process");
 const crypto = await import("node:crypto");
+const dgram = await import("node:dgram");
 const moduleApi = await import("node:module");
 const nodeBuffer: any = (await import("node:buffer")).Buffer;
 const require = moduleApi.createRequire(import.meta.url);
 const voiceTime = createCurrentTimeProvider("Asia/Tokyo");
+const defaultTestSpeakText = [
+  "これは疑似ストリーミング音声のテストです。",
+  "最初の文が再生されている間に、次の文を順番に合成します。",
+  "途中で割り込みボタンを押すと、残りの文は再生されません。",
+  "聞こえ方と停止の反応を確認してください。"
+].join("");
+const defaultWebRtcInboundPcmAudio = {
+  sampleRateHz: 16_000,
+  channels: 1,
+  encoding: "pcm_s16le",
+  chunkMs: 100
+} as const;
 
 export type WebRtcVoiceConfig = {
   enabled: boolean;
@@ -94,22 +107,16 @@ export type EncodePcmL16Input = {
   frameMs: number;
 };
 
+export type EncodePcmL16StreamInput = Omit<EncodePcmL16Input, "pcm"> & {
+  chunks: AsyncIterable<Uint8Array>;
+};
+
 export type WebRtcVoiceTtsStreamEvent =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
   | { type: "audio"; sequence: number; chunk: Uint8Array; contentType: string }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
-
-export type WebRtcVoiceVadState = {
-  speechActive: boolean;
-  speechScore: number;
-  noiseFloor: number;
-  lastSpeechAt: number;
-  silenceStartedAt: number;
-};
-
-export type WebRtcVoiceVadDecision = "candidate" | "active" | "inactive" | "none";
 
 export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
   stream?(input: {
@@ -119,60 +126,6 @@ export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
     streamId?: string;
   }): AsyncIterable<WebRtcVoiceTtsStreamEvent>;
 };
-
-export function stepWebRtcVoiceVad(input: {
-  state: WebRtcVoiceVadState;
-  rms: number;
-  nowMs: number;
-  minSpeechFrames?: number;
-  silenceMs?: number;
-}): WebRtcVoiceVadDecision {
-  const state = input.state;
-  const minSpeechFrames = input.minSpeechFrames ?? 3;
-  const silenceMs = input.silenceMs ?? 1500;
-  if (!state.speechActive && state.speechScore === 0) state.noiseFloor = state.noiseFloor * 0.96 + input.rms * 0.04;
-  const threshold = Math.max(3.5, state.noiseFloor * 1.4);
-  if (input.rms >= threshold) {
-    state.speechScore = Math.min(8, state.speechScore + 2);
-    if (!state.speechActive && state.speechScore >= minSpeechFrames) {
-      state.speechActive = true;
-      state.lastSpeechAt = input.nowMs;
-      state.silenceStartedAt = 0;
-      return "active";
-    }
-    if (state.speechActive && state.speechScore >= 2) {
-      state.lastSpeechAt = input.nowMs;
-      state.silenceStartedAt = 0;
-    }
-    return "candidate";
-  }
-  if (state.speechScore > 0 && input.rms >= threshold * 0.65) {
-    state.speechScore = Math.min(8, state.speechScore + 1);
-    if (!state.speechActive && state.speechScore >= minSpeechFrames) {
-      state.speechActive = true;
-      state.lastSpeechAt = input.nowMs;
-      state.silenceStartedAt = 0;
-      return "active";
-    }
-    if (state.speechActive && state.speechScore >= 2) {
-      state.lastSpeechAt = input.nowMs;
-      state.silenceStartedAt = 0;
-    }
-    return "candidate";
-  }
-  state.speechScore = Math.max(0, state.speechScore - 1);
-  if (state.speechActive) {
-    state.silenceStartedAt ||= input.nowMs;
-    const referenceSilenceStartedAt = Math.max(state.silenceStartedAt, state.lastSpeechAt || state.silenceStartedAt);
-    if (input.nowMs - referenceSilenceStartedAt >= silenceMs) {
-      state.speechActive = false;
-      state.silenceStartedAt = 0;
-      state.lastSpeechAt = 0;
-      return "inactive";
-    }
-  }
-  return "none";
-}
 
 export type WebRtcVoiceStatusEvent = {
   state: string;
@@ -191,6 +144,7 @@ export type WebRtcVoiceDeps = {
   voiceSynthesizer: WebRtcVoiceSynthesizer;
   decodeAudioFileToFrames(input: DecodeAudioFileInput): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
   encodePcmL16ToFrames?(input: EncodePcmL16Input): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
+  encodePcmL16StreamToFrames?(input: EncodePcmL16StreamInput): AsyncIterable<ServerAudioFrame>;
   emitStatus?(event: WebRtcVoiceStatusEvent): void;
   now?(): Date;
   sleep?(ms: number): Promise<void>;
@@ -216,6 +170,7 @@ export type PlaybackItem = {
   filePath: string;
   status: "queued" | "playing" | "played" | "interrupted" | "failed";
   createdAt: string;
+  framesWritten: number;
 };
 
 export type WebRtcVoiceCall = {
@@ -304,12 +259,7 @@ export function defaultWebRtcVoiceConfig(): WebRtcVoiceConfig {
     signalingPath: "/plugins/webrtc-voice/signaling",
     accountId: "main",
     language: "ja",
-    inboundAudio: {
-      sampleRateHz: 48000,
-      channels: 1,
-      encoding: "opus",
-      chunkMs: 20
-    },
+    inboundAudio: { ...defaultWebRtcInboundPcmAudio },
     outboundAudio: {
       sampleRateHz: 48000,
       channels: 1,
@@ -332,7 +282,6 @@ export async function createWeriftPeer(input: {
   callId: string;
   userId: string;
   iceServers: WebRtcVoiceConfig["iceServers"];
-  onInboundAudioChunk?(bytes: Uint8Array): void | Promise<void>;
   onLocalIceCandidate?(candidate: unknown): void;
   onStatus?(event: WebRtcVoiceStatusEvent): void;
 }): Promise<ServerWebRtcPeer> {
@@ -346,8 +295,10 @@ export async function createWeriftPeer(input: {
   });
   let outboundReady = false;
   const waiters: Array<() => void> = [];
+  const outboundSsrc = crypto.randomInt(1, 0x7fffffff);
   let outboundTrack: any;
   let outboundSender: any;
+  let outboundPacketsWritten = 0;
   const markOutboundReady = (reason: string) => {
     if (outboundReady) return;
     outboundReady = true;
@@ -364,15 +315,6 @@ export async function createWeriftPeer(input: {
   peer.iceConnectionStateChange.subscribe((state: string) => {
     input.onStatus?.({ state: "webrtc.ice_connection", detail: state });
   });
-  peer.onTrack.subscribe((track: any) => {
-    if (track.kind !== "audio") return;
-    input.onStatus?.({ state: "webrtc.inbound_track", detail: input.callId });
-    track.onReceiveRtp.subscribe((rtp: { payload?: Buffer | Uint8Array }) => {
-      const payload = rtp.payload ? new Uint8Array(rtp.payload) : new Uint8Array();
-      if (payload.byteLength) void input.onInboundAudioChunk?.(payload);
-    });
-  });
-
   return {
     async createAnswer(offerSdp) {
       await peer.setRemoteDescription({ type: "offer", sdp: offerSdp });
@@ -417,9 +359,13 @@ export async function createWeriftPeer(input: {
             payloadType: frame.payloadType ?? 111,
             sequenceNumber: sequence,
             timestamp,
-            ssrc: 0
+            ssrc: outboundSsrc
           }), nodeBuffer.from(frame.rtpPayload));
           outboundTrack.writeRtp(packet);
+          outboundPacketsWritten += 1;
+          if (outboundPacketsWritten === 1 || outboundPacketsWritten % 50 === 0) {
+            input.onStatus?.({ state: "webrtc.outbound_audio.packets_written", detail: String(outboundPacketsWritten) });
+          }
           return true;
         },
         stop() {
@@ -466,13 +412,32 @@ export async function encodePcmL16ToOpusRtpFrames(input: EncodePcmL16Input & { f
   }));
 }
 
+export async function* encodePcmL16StreamToOpusRtpFrames(input: EncodePcmL16StreamInput & { ffmpegCommand?: string }): AsyncIterable<ServerAudioFrame> {
+  const timestampIncrement = Math.round(input.sampleRateHz * input.frameMs / 1000);
+  let index = 0;
+  for await (const packet of runFfmpegPcmL16StreamToOpusPackets(input.chunks, input.inputSampleRateHz, input.inputChannels, input.ffmpegCommand ?? "ffmpeg-static")) {
+    if (isOpusHeaderPacket(packet)) continue;
+    yield {
+      sequence: index,
+      pcm: new Int16Array(),
+      sampleRateHz: input.sampleRateHz,
+      channels: input.channels,
+      durationMs: input.frameMs,
+      rtpPayload: packet,
+      rtpTimestampIncrement: timestampIncrement,
+      payloadType: 111
+    };
+    index += 1;
+  }
+}
+
 export function attachWebRtcVoiceSignalingServer(input: {
   server: { on(event: "upgrade", listener: (request: any, socket: any, head: any) => void): unknown };
   plugin: WebRtcVoicePlugin;
   path?: string;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   onCallCreated?(call: WebRtcVoiceCall): void;
-  onClientConnected?(client: { send(message: unknown): void }): void;
+  onClientConnected?(client: { send(message: unknown): void }): void | (() => void);
 }): void {
   const signalingPath = input.path ?? input.plugin.config.signalingPath;
   input.server.on("upgrade", (request: any, socket: any) => {
@@ -485,13 +450,22 @@ export function attachWebRtcVoiceSignalingServer(input: {
       let call: WebRtcVoiceCall | undefined;
       let wsBuffer = nodeBuffer.alloc(0);
       const send = (message: unknown) => sendWebSocketFrame(socket, JSON.stringify(message));
-      input.onClientConnected?.({ send });
+      const cleanupClient = input.onClientConnected?.({ send });
+      let cleanedUp = false;
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        cleanupClient?.();
+      };
+      socket.on("close", cleanup);
+      socket.on("end", cleanup);
+      socket.on("error", cleanup);
       socket.on("data", async (chunk: any) => {
         try {
           const decoded = readWebSocketTextFrames(nodeBuffer.concat([wsBuffer, chunk]));
           wsBuffer = decoded.rest;
           for (const text of decoded.messages) {
-            const message = JSON.parse(text) as { type?: string; sdp?: string; candidate?: unknown; reason?: string };
+            const message = JSON.parse(text) as { type?: string; sdp?: string; candidate?: unknown; reason?: string; text?: unknown };
             if (message.type === "offer" && message.sdp) {
               let answerSent = false;
               const pendingCandidates: unknown[] = [];
@@ -520,12 +494,8 @@ export function attachWebRtcVoiceSignalingServer(input: {
               }
             } else if (message.type === "speak-test") {
               try {
-                await call?.playReplyText([
-                  "これは疑似ストリーミング音声のテストです。",
-                  "最初の文が再生されている間に、次の文を順番に合成します。",
-                  "途中で割り込みボタンを押すと、残りの文は再生されません。",
-                  "聞こえ方と停止の反応を確認してください。"
-                ].join(""), "manual-test");
+                const testText = typeof message.text === "string" && message.text.trim() ? message.text.trim() : defaultTestSpeakText;
+                await call?.playReplyText(testText, "manual-test");
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 input.appendLog?.("error", `webrtc voice tts failed: ${message}`);
@@ -628,15 +598,16 @@ function createCallState(
     async setSpeechActive(active) {
       if (closed || speechActive === active) return;
       speechActive = active;
-      deps.emitStatus?.({ state: active ? "speech.active" : "speech.inactive", detail: active ? "speaking" : "not speaking" });
-      if (active && deps.config.bargeIn.enabled && playbackQueue.length) {
-        deps.emitStatus?.({ state: "tts.barge_in", detail: playbackQueue[0]?.outputId });
-        this.interrupt("barge_in", playbackQueue[0]?.outputId);
+      deps.emitStatus?.({ state: active ? "push_to_talk.active" : "push_to_talk.released", detail: active ? "pressed" : "released" });
+      const activePlayback = playbackQueue.find((item) => item.status === "playing" && item.framesWritten > 0);
+      if (active && deps.config.bargeIn.enabled && activePlayback) {
+        deps.emitStatus?.({ state: "tts.barge_in", detail: activePlayback.outputId });
+        this.interrupt("barge_in", activePlayback.outputId);
       }
       if (!active) {
         const result = await this.endInboundAudio();
         if (result) {
-          restartAsrStream(result.ok ? "speech_inactive" : result.error);
+          restartAsrStream(result.ok ? "push_to_talk_released" : result.error);
         }
       }
     },
@@ -650,7 +621,8 @@ function createCallState(
         assetId: "",
         filePath: "",
         status: "queued",
-        createdAt
+        createdAt,
+        framesWritten: 0
       };
       playbackQueue.push(item);
       item.status = "playing";
@@ -665,50 +637,177 @@ function createCallState(
           frameCount: 0
         };
       }
-      if (deps.voiceSynthesizer.stream && deps.encodePcmL16ToFrames) {
+      if (deps.voiceSynthesizer.stream && (deps.encodePcmL16StreamToFrames || deps.encodePcmL16ToFrames)) {
         deps.emitStatus?.({ state: "tts.stream.started", detail: outputId });
-        for await (const event of deps.voiceSynthesizer.stream({
+        const ttsEvents = deps.voiceSynthesizer.stream({
           text,
           time: voiceTime,
           source: "send_chat.voice",
           streamId: outputId
-        })) {
-          if (generation !== playbackGeneration || !playbackQueue.includes(item)) break;
-          if (event.type === "translation_started") {
-            deps.emitStatus?.({ state: "tts.stream.translation_started", detail: `${event.sequence}:${event.sourceChars}` });
-            continue;
-          }
-          if (event.type === "translation_done") {
-            deps.emitStatus?.({ state: "tts.stream.translation_done", detail: `${event.sequence}:${event.translatedChars}` });
-            continue;
-          }
-          if (event.type === "part_done") {
-            deps.emitStatus?.({ state: "tts.stream.part_done", detail: String(event.sequence) });
-            continue;
-          }
-          if (event.type === "done") {
-            deps.emitStatus?.({ state: "tts.stream.done", detail: outputId });
-            break;
-          }
-          if (event.type !== "audio") continue;
-          const frames = await deps.encodePcmL16ToFrames({
-            pcm: event.chunk,
-            inputSampleRateHz: 32_000,
-            inputChannels: 1,
-            sampleRateHz: deps.config.outboundAudio.sampleRateHz,
-            channels: deps.config.outboundAudio.channels,
-            frameMs: deps.config.outboundAudio.frameMs
-          });
-          for (const frame of frames) {
-            if (generation !== playbackGeneration || !playbackQueue.includes(item)) break;
+        });
+        if (deps.encodePcmL16StreamToFrames) {
+          let audioChunks = 0;
+          let audioBytes = 0;
+          let encodedFrames = 0;
+          const pcmChunks = async function* () {
+            for await (const event of ttsEvents) {
+              if (generation !== playbackGeneration || !playbackQueue.includes(item)) break;
+              if (event.type === "translation_started") {
+                deps.emitStatus?.({ state: "tts.stream.translation_started", detail: `${event.sequence}:${event.sourceChars}` });
+                continue;
+              }
+              if (event.type === "translation_done") {
+                deps.emitStatus?.({ state: "tts.stream.translation_done", detail: `${event.sequence}:${event.translatedChars}` });
+                continue;
+              }
+              if (event.type === "part_done") {
+                deps.emitStatus?.({ state: "tts.stream.part_done", detail: String(event.sequence) });
+                continue;
+              }
+              if (event.type === "done") {
+                deps.emitStatus?.({ state: "tts.stream.done", detail: outputId });
+                break;
+              }
+              if (event.type !== "audio") continue;
+              audioChunks += 1;
+              audioBytes += event.chunk.byteLength;
+              if (audioChunks === 1 || audioChunks % 20 === 0) {
+                deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}` });
+              }
+              yield event.chunk;
+            }
+          };
+          const frameQueue = createAsyncQueue<ServerAudioFrame>();
+          const producer = (async () => {
+            try {
+              for await (const frame of deps.encodePcmL16StreamToFrames!({
+                chunks: pcmChunks(),
+                inputSampleRateHz: 32_000,
+                inputChannels: 1,
+                sampleRateHz: deps.config.outboundAudio.sampleRateHz,
+                channels: deps.config.outboundAudio.channels,
+                frameMs: deps.config.outboundAudio.frameMs
+              })) {
+                encodedFrames += 1;
+                frameQueue.push(frame);
+                if (encodedFrames === 1 || encodedFrames % 50 === 0) {
+                  deps.emitStatus?.({ state: "tts.queue.encoded", detail: `chunks=${audioChunks} encoded=${encodedFrames} queued=${frameQueue.length}` });
+                }
+              }
+              frameQueue.close();
+              deps.emitStatus?.({ state: "tts.queue.producer_done", detail: `chunks=${audioChunks} encoded=${encodedFrames} queued=${frameQueue.length}` });
+            } catch (error) {
+              frameQueue.fail(error);
+            }
+          })();
+          const minBufferedFrames = Math.max(20, Math.ceil(1200 / deps.config.outboundAudio.frameMs));
+          deps.emitStatus?.({ state: "tts.queue.waiting", detail: `min=${minBufferedFrames} queued=${frameQueue.length}` });
+          await frameQueue.waitFor(() => frameQueue.length >= minBufferedFrames || frameQueue.closed);
+          deps.emitStatus?.({ state: "tts.queue.ready", detail: `queued=${frameQueue.length} closed=${frameQueue.closed ? "true" : "false"}` });
+          let playbackStartedAt = deps.now?.().getTime() ?? Date.now();
+          let playbackFrameCount = 0;
+          while (generation === playbackGeneration && playbackQueue.includes(item)) {
+            let frame = frameQueue.shift();
+            if (!frame) {
+              if (frameQueue.closed) break;
+              deps.emitStatus?.({ state: "tts.queue.underrun", detail: `sent=${frameCount} encoded=${encodedFrames} chunks=${audioChunks}` });
+              let keepaliveFrames = 0;
+              while (generation === playbackGeneration && playbackQueue.includes(item) && !frameQueue.closed) {
+                frame = frameQueue.shift();
+                if (frame) break;
+                const silenceFrame = createOpusSilenceFrame(deps.config);
+                const written = await outboundTrack.writeFrame({
+                  ...silenceFrame,
+                  sequence: outboundFrameSequence++
+                });
+                if (written) {
+                  playbackFrameCount += 1;
+                  keepaliveFrames += 1;
+                  if (keepaliveFrames === 1 || keepaliveFrames % 50 === 0) {
+                    deps.emitStatus?.({ state: "tts.queue.rtp_keepalive", detail: `keepalive=${keepaliveFrames} sent=${frameCount} encoded=${encodedFrames} chunks=${audioChunks}` });
+                  }
+                }
+                const silenceTargetAt = playbackStartedAt + playbackFrameCount * silenceFrame.durationMs;
+                const silenceDelayMs = silenceTargetAt - (deps.now?.().getTime() ?? Date.now());
+                if (silenceDelayMs > 0) await (deps.sleep ?? sleep)(silenceDelayMs);
+              }
+              if (!frame) continue;
+              deps.emitStatus?.({ state: "tts.queue.resumed", detail: `queued=${frameQueue.length} sent=${frameCount} keepalive=${keepaliveFrames}` });
+            }
             const written = await outboundTrack.writeFrame({
               ...frame,
               sequence: outboundFrameSequence++
             });
-            if (written) frameCount += 1;
-            await (deps.sleep ?? sleep)(frame.durationMs);
+            if (written) {
+              frameCount += 1;
+              playbackFrameCount += 1;
+              item.framesWritten = frameCount;
+              if (frameCount === 1 || frameCount % 50 === 0) {
+                deps.emitStatus?.({ state: "tts.stream.frames_sent", detail: `chunks=${audioChunks} sent=${frameCount} queued=${frameQueue.length}` });
+              }
+            }
+            const targetAt = playbackStartedAt + playbackFrameCount * frame.durationMs;
+            const delayMs = targetAt - (deps.now?.().getTime() ?? Date.now());
+            if (delayMs > 0) await (deps.sleep ?? sleep)(delayMs);
           }
-          deps.emitStatus?.({ state: "tts.stream.frames_sent", detail: `${event.sequence}:${frameCount}` });
+          for (let index = 0; index < Math.ceil(500 / deps.config.outboundAudio.frameMs); index += 1) {
+            if (generation !== playbackGeneration || !playbackQueue.includes(item) || frameCount === 0) break;
+            const silenceFrame = createOpusSilenceFrame(deps.config);
+            const written = await outboundTrack.writeFrame({
+              ...silenceFrame,
+              sequence: outboundFrameSequence++
+            });
+            if (!written) continue;
+            playbackFrameCount += 1;
+            const targetAt = playbackStartedAt + playbackFrameCount * silenceFrame.durationMs;
+            const delayMs = targetAt - (deps.now?.().getTime() ?? Date.now());
+            if (delayMs > 0) await (deps.sleep ?? sleep)(delayMs);
+          }
+          if (frameCount > 0) deps.emitStatus?.({ state: "tts.queue.rtp_keepalive_done", detail: `sent=${frameCount}` });
+          await producer;
+          deps.emitStatus?.({ state: "tts.stream.frames_sent", detail: `chunks=${audioChunks} sent=${frameCount} encoded=${encodedFrames}` });
+        } else if (deps.encodePcmL16ToFrames) {
+          for await (const event of ttsEvents) {
+            if (generation !== playbackGeneration || !playbackQueue.includes(item)) break;
+            if (event.type === "translation_started") {
+              deps.emitStatus?.({ state: "tts.stream.translation_started", detail: `${event.sequence}:${event.sourceChars}` });
+              continue;
+            }
+            if (event.type === "translation_done") {
+              deps.emitStatus?.({ state: "tts.stream.translation_done", detail: `${event.sequence}:${event.translatedChars}` });
+              continue;
+            }
+            if (event.type === "part_done") {
+              deps.emitStatus?.({ state: "tts.stream.part_done", detail: String(event.sequence) });
+              continue;
+            }
+            if (event.type === "done") {
+              deps.emitStatus?.({ state: "tts.stream.done", detail: outputId });
+              break;
+            }
+            if (event.type !== "audio") continue;
+            const frames = await deps.encodePcmL16ToFrames({
+              pcm: event.chunk,
+              inputSampleRateHz: 32_000,
+              inputChannels: 1,
+              sampleRateHz: deps.config.outboundAudio.sampleRateHz,
+              channels: deps.config.outboundAudio.channels,
+              frameMs: deps.config.outboundAudio.frameMs
+            });
+            for (const frame of frames) {
+              if (generation !== playbackGeneration || !playbackQueue.includes(item)) break;
+              const written = await outboundTrack.writeFrame({
+                ...frame,
+                sequence: outboundFrameSequence++
+              });
+              if (written) {
+                frameCount += 1;
+                item.framesWritten = frameCount;
+              }
+              await (deps.sleep ?? sleep)(frame.durationMs);
+            }
+            deps.emitStatus?.({ state: "tts.stream.frames_sent", detail: `${event.sequence}:${frameCount}` });
+          }
         }
         const interrupted = generation !== playbackGeneration || !playbackQueue.includes(item);
         item.status = interrupted ? "interrupted" : frameCount > 0 ? "played" : "failed";
@@ -758,7 +857,10 @@ function createCallState(
             ...frame,
             sequence: outboundFrameSequence++
           });
-          if (written) frameCount += 1;
+          if (written) {
+            frameCount += 1;
+            item.framesWritten = frameCount;
+          }
           await (deps.sleep ?? sleep)(frame.durationMs);
         }
         deps.emitStatus?.({ state: "tts.part.frames_sent", detail: `${partIndex + 1}/${parts.length}:${frameCount}` });
@@ -904,31 +1006,44 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; max-width: 760px; }
     button { margin-right: 8px; padding: 8px 12px; }
-    #status { margin-top: 16px; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+    #status, #finalTranscript { margin-top: 16px; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+    #partialTranscript { min-height: 28px; margin-top: 12px; padding: 8px; border: 1px solid #bbb; }
+    #finalTranscript { min-height: 64px; padding: 8px; border: 1px solid #bbb; }
+    .label { margin-top: 12px; font-size: 12px; color: #555; }
     .error { color: #b00020; }
   </style>
 </head>
 <body>
   <main>
     <button id="callButton" type="button">Call</button>
+    <button id="talkButton" type="button" disabled>Hold to talk</button>
     <button id="testSpeakButton" type="button">Test voice</button>
     <button id="interruptButton" type="button">Interrupt voice</button>
     <button id="hangupButton" type="button">Hang up</button>
+    <textarea id="testSpeakText" rows="5" style="display:block; width:100%; box-sizing:border-box; margin:12px 0; font-family:ui-monospace, monospace;">${escapeHtml(defaultTestSpeakText)}</textarea>
     <audio id="remoteAudio" autoplay playsinline controls></audio>
+    <div class="label">Current transcript</div>
+    <div id="partialTranscript"></div>
+    <div class="label">Final transcripts</div>
+    <div id="finalTranscript"></div>
     <div id="status"></div>
   </main>
   <script type="module">
     const signalingPath = ${JSON.stringify(signalingPath)};
+    const inboundAudio = ${JSON.stringify(config.inboundAudio)};
     const remoteAudio = document.getElementById("remoteAudio");
     remoteAudio.autoplay = true;
     remoteAudio.muted = false;
     remoteAudio.volume = 1;
     const status = document.getElementById("status");
+    const partialTranscript = document.getElementById("partialTranscript");
+    const finalTranscript = document.getElementById("finalTranscript");
+    const talkButton = document.getElementById("talkButton");
+    const testSpeakText = document.getElementById("testSpeakText");
     let peer;
     let socket;
+    let localStream;
     let speechActive = false;
-    let silenceStartedAt = 0;
-    let vadTimer;
     let pcmSource;
     let pcmProcessor;
     let pendingRemoteIce = [];
@@ -936,6 +1051,22 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
       const prefix = new Date().toLocaleTimeString();
       status.textContent += "[" + prefix + "] " + line + "\\n";
       status.className = error ? "error" : "";
+    }
+    function updateTranscript(message) {
+      if (message.type !== "status") return;
+      if (message.state === "asr.partial") {
+        partialTranscript.textContent = message.detail || "";
+        return;
+      }
+      if (message.state !== "talk_runtime.ingress.todo") return;
+      const prefix = "audio.transcript.final: ";
+      const detail = String(message.detail || "");
+      if (!detail.startsWith(prefix)) return;
+      const text = detail.slice(prefix.length).trim();
+      if (!text) return;
+      const time = new Date().toLocaleTimeString();
+      finalTranscript.textContent += "[" + time + "] " + text + "\\n";
+      partialTranscript.textContent = "";
     }
     document.getElementById("callButton").addEventListener("click", async () => {
       try {
@@ -946,7 +1077,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
         if (!window.isSecureContext) {
           log("this page is not a secure context; use HTTPS or localhost for microphone access", true);
         }
-        const localStream = await navigator.mediaDevices.getUserMedia({
+        localStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
@@ -958,12 +1089,11 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack?.getSettings) {
           const settings = audioTrack.getSettings();
-          log("audio processing requested: noiseSuppression=true echoCancellation=true autoGainControl=true; actual sampleRate=" + (settings.sampleRate || "unknown"));
+          log("audio processing requested: noiseSuppression=true echoCancellation=true autoGainControl=true; actual sampleRate=" + (settings.sampleRate || "unknown") + "; asr target=" + inboundAudio.encoding + "/" + inboundAudio.sampleRateHz + "Hz/" + inboundAudio.channels + "ch");
         }
         startPcmStreaming(localStream);
-        startVad(localStream);
         peer = new RTCPeerConnection({ iceServers: ${JSON.stringify(config.iceServers)} });
-        for (const track of localStream.getAudioTracks()) peer.addTrack(track, localStream);
+        peer.addTransceiver("audio", { direction: "recvonly" });
         peer.addEventListener("connectionstatechange", () => log("peer connection: " + peer.connectionState));
         peer.addEventListener("iceconnectionstatechange", () => log("ice connection: " + peer.iceConnectionState));
         peer.addEventListener("track", (event) => {
@@ -978,7 +1108,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
         wsUrl.searchParams.set("callId", crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
         socket = new WebSocket(wsUrl);
         socket.addEventListener("open", async () => {
-          log("signaling connected; creating offer and starting ASR stream");
+          log("signaling connected; creating offer");
           const offer = await peer.createOffer();
           await peer.setLocalDescription(offer);
           socket.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
@@ -988,6 +1118,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
           if (message.type === "answer") {
             await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
             log("answer applied");
+            talkButton.disabled = false;
             for (const candidate of pendingRemoteIce.splice(0)) {
               await peer.addIceCandidate(candidate).catch((error) => log("queued ice failed: " + error.message, true));
             }
@@ -996,11 +1127,18 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
             if (peer.remoteDescription) await peer.addIceCandidate(message.candidate).catch((error) => log("ice failed: " + error.message, true));
             else pendingRemoteIce.push(message.candidate);
           }
-          if (message.type === "status") log(message.state + (message.detail ? ": " + message.detail : ""));
+          if (message.type === "status") {
+            updateTranscript(message);
+            log(message.state + (message.detail ? ": " + message.detail : ""));
+          }
           if (message.type === "error") log(message.error + (message.message ? ": " + message.message : ""), true);
         });
         socket.addEventListener("error", () => log("signaling websocket error", true));
-        socket.addEventListener("close", () => log("signaling closed"));
+        socket.addEventListener("close", () => {
+          stopTalking();
+          talkButton.disabled = true;
+          log("signaling closed");
+        });
         peer.addEventListener("icecandidate", (event) => {
           if (event.candidate) socket?.send(JSON.stringify({ type: "ice", candidate: event.candidate }));
         });
@@ -1008,9 +1146,33 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
         log(error && error.message ? error.message : String(error), true);
       }
     });
+    talkButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      startTalking();
+    });
+    talkButton.addEventListener("pointerup", (event) => {
+      event.preventDefault();
+      stopTalking();
+    });
+    talkButton.addEventListener("pointerleave", () => stopTalking());
+    talkButton.addEventListener("pointercancel", () => stopTalking());
+    talkButton.addEventListener("keydown", (event) => {
+      if (event.code !== "Space" && event.code !== "Enter") return;
+      if (event.repeat) return;
+      event.preventDefault();
+      startTalking();
+    });
+    talkButton.addEventListener("keyup", (event) => {
+      if (event.code !== "Space" && event.code !== "Enter") return;
+      event.preventDefault();
+      stopTalking();
+    });
     document.getElementById("hangupButton").addEventListener("click", () => {
+      stopTalking();
+      talkButton.disabled = true;
       socket?.send(JSON.stringify({ type: "hangup", reason: "manual" }));
       peer?.close();
+      for (const track of localStream?.getTracks?.() || []) track.stop();
     });
     document.getElementById("testSpeakButton").addEventListener("click", () => {
       void remoteAudio.play().catch((error) => log("audio play failed before test voice: " + error.message, true));
@@ -1019,7 +1181,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
         log("test voice not sent; signaling is not open", true);
         return;
       }
-      socket.send(JSON.stringify({ type: "speak-test" }));
+      socket.send(JSON.stringify({ type: "speak-test", text: testSpeakText.value }));
     });
     setInterval(() => {
       if (!remoteAudio.srcObject) return;
@@ -1029,105 +1191,29 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
       log("interrupt requested");
       socket?.send(JSON.stringify({ type: "interrupt" }));
     });
-    function startVad(stream) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) {
-        log("Web Audio is unavailable; speech state detection disabled", true);
-        return;
-      }
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.fftSize);
-      let noiseFloor = 6;
-      let speechScore = 0;
-      let speechCandidateLogged = false;
-      let lastSpeechAt = 0;
-      let lastMeterLogAt = 0;
-      const minSpeechFrames = Math.max(3, Math.ceil(${JSON.stringify(config.bargeIn.minSpeechMs)} / 200));
-      const silenceMs = 1500;
-      clearInterval(vadTimer);
-      vadTimer = setInterval(() => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (const value of data) {
-          const centered = value - 128;
-          sum += centered * centered;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const now = Date.now();
-        if (!speechActive && speechScore === 0) noiseFloor = noiseFloor * 0.96 + rms * 0.04;
-        const threshold = Math.max(3.5, noiseFloor * 1.4);
-        if (now - lastMeterLogAt >= 1000) {
-          lastMeterLogAt = now;
-          log("mic level: rms=" + rms.toFixed(1) + " threshold=" + threshold.toFixed(1) + " noise=" + noiseFloor.toFixed(1) + " active=" + speechActive);
-        }
-        if (rms >= threshold) {
-          speechScore = Math.min(8, speechScore + 2);
-          if (!speechCandidateLogged) {
-            speechCandidateLogged = true;
-            log("voice detected; confirming speech");
-          }
-          if (!speechActive && speechScore >= minSpeechFrames) {
-            speechActive = true;
-            lastSpeechAt = now;
-            silenceStartedAt = 0;
-            speechCandidateLogged = false;
-            log("speaking; realtime transcription active; interrupting TTS if playing");
-            socket?.send(JSON.stringify({ type: "speech-state", active: true }));
-          } else if (speechActive && speechScore >= 2) {
-            lastSpeechAt = now;
-            silenceStartedAt = 0;
-          }
-        } else {
-          if (speechScore > 0 && rms >= threshold * 0.65) {
-            speechScore = Math.min(8, speechScore + 1);
-            if (!speechActive && speechScore >= minSpeechFrames) {
-              speechActive = true;
-              lastSpeechAt = now;
-              silenceStartedAt = 0;
-              speechCandidateLogged = false;
-              log("speaking; realtime transcription active; interrupting TTS if playing");
-              socket?.send(JSON.stringify({ type: "speech-state", active: true }));
-            } else if (speechActive && speechScore >= 2) {
-              lastSpeechAt = now;
-              silenceStartedAt = 0;
-            }
-            return;
-          }
-          speechScore = Math.max(0, speechScore - 1);
-          if (!speechActive && speechCandidateLogged && speechScore === 0) {
-            log("voice candidate dropped");
-            speechCandidateLogged = false;
-          }
-          if (speechActive) {
-            silenceStartedAt ||= now;
-            const referenceSilenceStartedAt = Math.max(silenceStartedAt, lastSpeechAt || silenceStartedAt);
-            if (now - referenceSilenceStartedAt >= silenceMs) {
-              speechActive = false;
-              silenceStartedAt = 0;
-              lastSpeechAt = 0;
-              log("not speaking");
-              socket?.send(JSON.stringify({ type: "speech-state", active: false }));
-            }
-          }
-        }
-      }, 100);
+    function startTalking() {
+      if (speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
+      speechActive = true;
+      talkButton.textContent = "Talking";
+      log("talk started");
+      socket.send(JSON.stringify({ type: "speech-state", active: true }));
+    }
+    function stopTalking() {
+      if (!speechActive) return;
+      speechActive = false;
+      talkButton.textContent = "Hold to talk";
+      log("talk stopped");
+      socket?.send(JSON.stringify({ type: "speech-state", active: false }));
     }
     function startPcmStreaming(stream) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const audioContext = new AudioContext();
       pcmSource = audioContext.createMediaStreamSource(stream);
       pcmProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-      let pcmNoiseFloor = 0.004;
       pcmProcessor.onaudioprocess = (event) => {
         if (!speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
         const input = event.inputBuffer.getChannelData(0);
-        const denoised = noiseGate(input, pcmNoiseFloor);
-        pcmNoiseFloor = estimateNoiseFloor(input, pcmNoiseFloor);
-        const pcm = downsampleToPcm16(denoised, audioContext.sampleRate, 16000);
+        const pcm = downsampleToPcm16(input, audioContext.sampleRate, inboundAudio.sampleRateHz);
         if (!pcm.byteLength) return;
         let binary = "";
         const bytes = new Uint8Array(pcm.buffer);
@@ -1136,24 +1222,6 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
       };
       pcmSource.connect(pcmProcessor);
       pcmProcessor.connect(audioContext.destination);
-    }
-    function estimateNoiseFloor(input, previous) {
-      let sum = 0;
-      for (const sample of input) sum += sample * sample;
-      const rms = Math.sqrt(sum / Math.max(1, input.length));
-      if (speechActive && rms > previous * 2.5) return previous;
-      return previous * 0.98 + rms * 0.02;
-    }
-    function noiseGate(input, floor) {
-      const threshold = Math.max(0.006, floor * 2.2);
-      let sum = 0;
-      for (const sample of input) sum += sample * sample;
-      const rms = Math.sqrt(sum / Math.max(1, input.length));
-      if (rms < threshold) return new Float32Array(input.length);
-      const output = new Float32Array(input.length);
-      const gain = Math.min(1, Math.max(0.25, (rms - threshold) / Math.max(rms, 0.0001)));
-      for (let index = 0; index < input.length; index += 1) output[index] = input[index] * gain;
-      return output;
     }
     function downsampleToPcm16(input, sourceRate, targetRate) {
       const ratio = sourceRate / targetRate;
@@ -1187,6 +1255,62 @@ function splitTtsPseudoStreamParts(text: string): string[] {
     .map((part) => part.trim())
     .filter((part) => part && !/^\n+$/.test(part));
   return parts.length ? parts : [normalized];
+}
+
+function createAsyncQueue<T>() {
+  const items: T[] = [];
+  const waiters: Array<() => void> = [];
+  let closed = false;
+  let error: unknown;
+  const notify = () => {
+    for (const waiter of waiters.splice(0)) waiter();
+  };
+  return {
+    get length() {
+      return items.length;
+    },
+    get closed() {
+      return closed;
+    },
+    push(item: T) {
+      if (closed) return;
+      items.push(item);
+      notify();
+    },
+    shift() {
+      if (error) throw error;
+      return items.shift();
+    },
+    close() {
+      closed = true;
+      notify();
+    },
+    fail(cause: unknown) {
+      error = cause;
+      closed = true;
+      notify();
+    },
+    async waitFor(predicate: () => boolean) {
+      while (!predicate()) {
+        if (error) throw error;
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
+      if (error) throw error;
+    }
+  };
+}
+
+function createOpusSilenceFrame(config: WebRtcVoiceConfig): ServerAudioFrame {
+  return {
+    sequence: 0,
+    pcm: new Int16Array(),
+    sampleRateHz: config.outboundAudio.sampleRateHz,
+    channels: config.outboundAudio.channels,
+    durationMs: config.outboundAudio.frameMs,
+    rtpPayload: new Uint8Array([0xf8, 0xff, 0xfe]),
+    rtpTimestampIncrement: Math.round(config.outboundAudio.sampleRateHz * config.outboundAudio.frameMs / 1000),
+    payloadType: 111
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1277,6 +1401,7 @@ async function runFfmpegToOggOpus(filePath: string, ffmpegCommand: string): Prom
       "-c:a", "libopus",
       "-application", "voip",
       "-frame_duration", "20",
+      "-page_duration", "20000",
       "-f", "opus",
       "pipe:1"
     ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -1307,6 +1432,7 @@ async function runFfmpegPcmL16ToOggOpus(pcm: Uint8Array, sampleRateHz: number, c
       "-c:a", "libopus",
       "-application", "voip",
       "-frame_duration", "20",
+      "-page_duration", "20000",
       "-f", "opus",
       "pipe:1"
     ], { stdio: ["pipe", "pipe", "pipe"] });
@@ -1323,6 +1449,141 @@ async function runFfmpegPcmL16ToOggOpus(pcm: Uint8Array, sampleRateHz: number, c
   });
 }
 
+async function* runFfmpegPcmL16StreamToOpusPackets(chunks: AsyncIterable<Uint8Array>, sampleRateHz: number, channels: number, ffmpegCommand: string): AsyncIterable<Uint8Array> {
+  const command = resolveFfmpegCommand(ffmpegCommand);
+  const socket = dgram.createSocket("udp4");
+  await new Promise<void>((resolve, reject) => {
+    socket.once("error", reject);
+    socket.bind(0, "127.0.0.1", () => {
+      socket.off("error", reject);
+      resolve();
+    });
+  });
+  const address = socket.address();
+  if (typeof address === "string") {
+    socket.close();
+    throw new Error("ffmpeg RTP socket did not bind to an IP port");
+  }
+  const packetQueue = createAsyncQueue<Uint8Array>();
+  socket.on("message", (message) => {
+    const payload = parseRtpPayload(message);
+    if (payload.byteLength) packetQueue.push(payload);
+  });
+  const child = childProcess.spawn(command, [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-fflags", "nobuffer",
+    "-flags", "low_delay",
+    "-analyzeduration", "0",
+    "-probesize", "32",
+    "-f", "s16le",
+    "-ar", String(sampleRateHz),
+    "-ac", String(channels),
+    "-i", "pipe:0",
+    "-ac", "1",
+    "-ar", "48000",
+    "-c:a", "libopus",
+    "-application", "voip",
+    "-frame_duration", "20",
+    "-flush_packets", "1",
+    "-f", "rtp",
+    `rtp://127.0.0.1:${address.port}?pkt_size=1200`
+  ], { stdio: ["pipe", "ignore", "pipe"] });
+  const stderr: any[] = [];
+  let settled = false;
+  const closePromise = new Promise<void>((resolve, reject) => {
+    child.stderr.on("data", (chunk: any) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      settled = true;
+      socket.close();
+      if (code === 0) {
+        packetQueue.close();
+        resolve();
+      } else {
+        const error = new Error(`ffmpeg pcm opus RTP stream transcode failed: ${nodeBuffer.concat(stderr).toString("utf8").slice(0, 500)}`);
+        packetQueue.fail(error);
+        reject(error);
+      }
+    });
+  });
+  const writer = (async () => {
+    try {
+      for await (const chunk of chunks) {
+        if (!chunk.byteLength || child.stdin.destroyed) continue;
+        await writeChildStdin(child.stdin, nodeBuffer.from(chunk));
+      }
+      if (!child.stdin.destroyed) child.stdin.end();
+    } catch (error) {
+      if (!child.stdin.destroyed) child.stdin.destroy(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
+  })();
+  try {
+    while (!packetQueue.closed || packetQueue.length > 0) {
+      const packet = packetQueue.shift();
+      if (packet) {
+        yield packet;
+        continue;
+      }
+      await packetQueue.waitFor(() => packetQueue.length > 0 || packetQueue.closed);
+    }
+    await writer;
+    await closePromise;
+  } finally {
+    if (!settled) {
+      child.kill("SIGTERM");
+      await closePromise.catch(() => undefined);
+    }
+    try {
+      socket.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+function parseRtpPayload(packet: Buffer): Uint8Array {
+  if (packet.length < 12) return new Uint8Array();
+  const version = packet[0] >> 6;
+  if (version !== 2) return new Uint8Array();
+  const csrcCount = packet[0] & 0x0f;
+  const hasExtension = Boolean(packet[0] & 0x10);
+  let offset = 12 + csrcCount * 4;
+  if (offset > packet.length) return new Uint8Array();
+  if (hasExtension) {
+    if (offset + 4 > packet.length) return new Uint8Array();
+    const extensionLengthWords = nodeBuffer.from(packet).readUInt16BE(offset + 2);
+    offset += 4 + extensionLengthWords * 4;
+    if (offset > packet.length) return new Uint8Array();
+  }
+  return new Uint8Array(packet.subarray(offset));
+}
+
+function writeChildStdin(stream: NodeJS.WritableStream, chunk: Buffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      stream.off?.("error", onError);
+      stream.off?.("drain", onDrain);
+    };
+    stream.on?.("error", onError);
+    if (stream.write(chunk)) {
+      cleanup();
+      resolve();
+    } else {
+      stream.on?.("drain", onDrain);
+    }
+  });
+}
+
 function resolveFfmpegCommand(command: string): string {
   if (command !== "ffmpeg-static") return command;
   try {
@@ -1331,6 +1592,41 @@ function resolveFfmpegCommand(command: string): string {
   } catch {
     return "ffmpeg";
   }
+}
+
+type OggOpusParserState = {
+  buffer: Buffer;
+  pending: Buffer;
+};
+
+function appendOggOpusPackets(state: OggOpusParserState, chunk: Buffer | Uint8Array): Uint8Array[] {
+  const packets: Uint8Array[] = [];
+  const buffer = nodeBuffer.concat([state.buffer, nodeBuffer.from(chunk)]);
+  let offset = 0;
+  while (offset + 27 <= buffer.length) {
+    if (buffer.subarray(offset, offset + 4).toString("ascii") !== "OggS") throw new Error("invalid ogg opus stream");
+    const pageSegments = buffer[offset + 26];
+    const segmentTableStart = offset + 27;
+    const dataStart = segmentTableStart + pageSegments;
+    if (dataStart > buffer.length) break;
+    const laces = Array.from(buffer.subarray(segmentTableStart, dataStart)) as number[];
+    const pageDataLength = laces.reduce((sum, value) => sum + value, 0);
+    const pageEnd = dataStart + pageDataLength;
+    if (pageEnd > buffer.length) break;
+    const pageData = buffer.subarray(dataStart, pageEnd);
+    let pageOffset = 0;
+    for (const lace of laces) {
+      state.pending = nodeBuffer.concat([state.pending, pageData.subarray(pageOffset, pageOffset + lace)]);
+      pageOffset += lace;
+      if (lace < 255) {
+        packets.push(new Uint8Array(state.pending));
+        state.pending = nodeBuffer.alloc(0);
+      }
+    }
+    offset = pageEnd;
+  }
+  state.buffer = buffer.subarray(offset);
+  return packets;
 }
 
 function parseOggOpusPackets(buffer: any): Uint8Array[] {

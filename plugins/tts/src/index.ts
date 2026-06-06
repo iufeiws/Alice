@@ -962,16 +962,19 @@ export function createTtsRemoteAwareVoiceSynthesizer(
   synthesize.streamAudio = async function* (request) {
     const remote = selectedRemote();
     if (!remote?.streamAudio) {
+      deps.appendLog?.("info", "tts remote-aware stream using local Genie: remote unavailable");
       if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
       yield* local.streamAudio(request);
       return;
     }
     let yielded = false;
     try {
+      deps.appendLog?.("info", `tts remote-aware stream using remote Genie: chars=${Array.from(request.text).length}`);
       for await (const chunk of remote.streamAudio(request)) {
         yielded = true;
         yield chunk;
       }
+      deps.appendLog?.("info", "tts remote-aware stream remote complete");
     } catch (error) {
       if (yielded) throw error;
       if (isRemoteGenieProtocolError(error)) throw error;
@@ -1399,7 +1402,11 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     noteActivity();
     const speed = genieSpeedValue(request.genie?.speed);
     if (speed !== 1) throw new Error("Genie TTS stream does not support speed adjustment");
+    deps.appendLog?.("info", `genie tts stream prepare: baseURL=${config.baseURL} explicit=${config.baseURLExplicit ? "true" : "false"} chars=${Array.from(text).length}`);
     await ensureGenieService();
+    deps.appendLog?.("info", `genie tts stream open: url=${config.baseURL}/${config.baseURLExplicit ? "stream-input" : "stream"} chars=${Array.from(text).length}`);
+    let chunks = 0;
+    let bytes = 0;
     for await (const chunk of streamGeniePcm({
       text,
       genie: request.genie,
@@ -1412,8 +1419,14 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       appendLog: deps.appendLog
     })) {
       noteActivity();
+      chunks += 1;
+      bytes += chunk.byteLength;
+      if (chunks === 1 || chunks % 20 === 0) {
+        deps.appendLog?.("info", `genie tts stream chunk: chunks=${chunks} bytes=${bytes}`);
+      }
       yield chunk;
     }
+    deps.appendLog?.("info", `genie tts stream complete: chunks=${chunks} bytes=${bytes}`);
   };
   synthesize.prepare = async () => {
     noteActivity();

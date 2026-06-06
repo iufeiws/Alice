@@ -60,6 +60,9 @@ export type AppConfig = {
   api: {
     host: string;
     port: number;
+    httpsEnabled: boolean;
+    httpsHost: string;
+    httpsPort: number;
   };
   llm: LLMConfig;
   memorySummary: MemorySummaryConfig;
@@ -174,7 +177,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
     },
     api: {
       host: env.API_HOST ?? "127.0.0.1",
-      port: numberValue(env.API_PORT, 3030)
+      port: numberValue(env.API_PORT, 3030),
+      httpsEnabled: bool(env.API_HTTPS_ENABLED, true),
+      httpsHost: env.API_HTTPS_HOST ?? env.API_HOST ?? "0.0.0.0",
+      httpsPort: numberValue(env.API_HTTPS_PORT, 3443)
     },
     llm: {
       provider: llmBaseURL && llmApiKey ? "openai-compatible" : "stub",

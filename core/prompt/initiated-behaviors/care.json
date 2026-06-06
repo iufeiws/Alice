@@ -5,7 +5,7 @@
       "title": "Care Initiation",
       "role": "user",
       "enabled": true,
-      "content": "对{{user}}发起一句低打扰的关怀型问候, 关注生活状态但不要追问过重。",
+      "content": "来问一下{{user}}现在在做什么吧",
       "order": 10
     }
   ]

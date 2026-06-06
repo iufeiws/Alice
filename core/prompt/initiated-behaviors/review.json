@@ -5,7 +5,7 @@
       "title": "Review Initiation",
       "role": "user",
       "enabled": true,
-      "content": "根据最近对话里未闭环的话题、计划或情绪线索, 向{{user}}发起一句轻量回访。不要制造压力。",
+      "content": "根据最近对话里未闭环的话题、计划或情绪, 向{{user}}发起一次callback",
       "order": 10
     }
   ]

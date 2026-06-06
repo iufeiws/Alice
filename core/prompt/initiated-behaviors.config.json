@@ -14,6 +14,24 @@
       "enabled": true,
       "kind": "event",
       "triggerEvent": "sleep_cocoon.wake"
+    },
+    "care": {
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 4,
+      "priority": 0
+    },
+    "real_world_suggestion": {
+      "enabled": false,
+      "kind": "randomized",
+      "weight": 2,
+      "priority": 0
+    },
+    "review": {
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 2,
+      "priority": 0
     }
   }
 }

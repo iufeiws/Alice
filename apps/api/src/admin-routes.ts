@@ -26,6 +26,7 @@ import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } 
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
+import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
 import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
@@ -404,6 +405,10 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
 
       if (request.method === "GET" && request.url === "/admin") {
         writeHtml(response, 200, renderAdminHtmlV2());
+        return;
+      }
+
+      if (handleVoiceCallRoute(request, response)) {
         return;
       }
 

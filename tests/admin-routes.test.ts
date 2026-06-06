@@ -16,6 +16,39 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 const childProcess = await import("node:child_process");
 
+test("voice call app page renders outside the plugin page", async () => {
+  const root = makeTempDir("voice-call-page");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/voice-call", {}), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body, /Alice Voice Call/);
+  assert.match(response.body, /class="voice-call-app"/);
+  assert.match(response.body, /\/voice-call\/api\/config/);
+  assert.match(response.body, /\/voice-call\/assets\/alice-default-portrait\.png/);
+});
+
+test("voice call app config defines frontend and signaling routes", async () => {
+  const root = makeTempDir("voice-call-config");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/voice-call/api/config", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.routes.page, "/voice-call");
+  assert.equal(body.routes.config, "/voice-call/api/config");
+  assert.equal(body.routes.signaling, "/plugins/webrtc-voice/signaling");
+  assert.equal(body.ui.portraitUrl, "/voice-call/assets/alice-default-portrait.png");
+});
+
 test("llm api preset save stores extra params as part of the preset", async () => {
   const root = makeTempDir("admin-llm-preset-extra");
   const memoryStore = createMarkdownMemoryStore(root);

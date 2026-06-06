@@ -1593,6 +1593,158 @@ test("genie tts can synthesize an opus asset from remote stream audio", async ()
   await fsp.unlink(result.filePath);
 });
 
+test("genie remote stream uploads missing model and retries original stream-input request", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-upload");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const calls: string[] = [];
+  const streamQueries: Array<Record<string, string>> = [];
+  const streamBodies: string[] = [];
+  const uploadBodies: Uint8Array[] = [];
+  let streamAttempts = 0;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamAttempts += 1;
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      streamBodies.push(String(init?.body));
+      if (streamAttempts === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "MODEL_NOT_UPLOADED",
+          modelDir: path.resolve("assets", fixture.modelDir),
+          uploadUrl: `/models/upload?modelDir=${encodeURIComponent(path.resolve("assets", fixture.modelDir))}`
+        }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([7, 8]));
+          controller.close();
+        }
+      }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+    }
+    if (parsed.pathname === "/models/upload") {
+      assert.equal(init?.headers && (init.headers as Record<string, string>)["content-type"], "application/zip");
+      uploadBodies.push(init?.body as Uint8Array);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudio!({
+      text: "第一段。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "zh",
+        modelDir: fixture.modelDir,
+        referenceText: "参照テキスト"
+      }
+    })) {
+      chunks.push(Array.from(chunk));
+    }
+
+    assert.deepEqual(calls, ["GET /health", "POST /stream-input", "POST /models/upload", "POST /stream-input"]);
+    assert.equal(streamQueries.length, 2);
+    assert.equal(streamQueries[0].language, "zh");
+    assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.deepEqual(streamQueries[1], streamQueries[0]);
+    assert.deepEqual(streamBodies, [
+      `${JSON.stringify({ text: "第一段。", referenceText: "参照テキスト" })}\n`,
+      `${JSON.stringify({ text: "第一段。", referenceText: "参照テキスト" })}\n`
+    ]);
+    assert.equal(uploadBodies.length, 1);
+    assert.deepEqual(Array.from(uploadBodies[0].slice(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+    const zipText = new TextDecoder().decode(uploadBodies[0]);
+    assert.equal(zipText.includes("model/t2s_encoder_fp32.onnx"), true);
+    assert.equal(zipText.includes("reference.wav"), true);
+    assert.equal(zipText.includes("reference.txt"), true);
+    assert.deepEqual(chunks, [[7, 8]]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("genie remote stream uploads missing reference files and retries original stream-input request", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-reference-missing");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const calls: string[] = [];
+  const streamQueries: Array<Record<string, string>> = [];
+  const uploadBodies: Uint8Array[] = [];
+  let streamAttempts = 0;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamAttempts += 1;
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      if (streamAttempts === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "REFERENCE_NOT_UPLOADED",
+          error: "reference files are missing"
+        }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([9, 10]));
+          controller.close();
+        }
+      }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+    }
+    if (parsed.pathname === "/models/upload") {
+      assert.equal(parsed.searchParams.get("modelDir"), path.resolve("assets", fixture.modelDir));
+      assert.equal(init?.headers && (init.headers as Record<string, string>)["content-type"], "application/zip");
+      uploadBodies.push(init?.body as Uint8Array);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    throw new Error("unexpected request");
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudio!({
+      text: "第一段。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "zh",
+        modelDir: fixture.modelDir
+      }
+    })) {
+      chunks.push(Array.from(chunk));
+    }
+    assert.deepEqual(calls, ["GET /health", "POST /stream-input", "POST /models/upload", "POST /stream-input"]);
+    assert.equal(streamQueries.length, 2);
+    assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.deepEqual(streamQueries[1], streamQueries[0]);
+    assert.equal(uploadBodies.length, 1);
+    const zipText = new TextDecoder().decode(uploadBodies[0]);
+    assert.equal(zipText.includes("model/t2s_encoder_fp32.onnx"), true);
+    assert.equal(zipText.includes("reference.wav"), true);
+    assert.equal(zipText.includes("reference.txt"), true);
+    assert.deepEqual(chunks, [[9, 10]]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("fallback voice synthesizer uses local synthesis when remote synthesis fails", async () => {
   const logs: string[] = [];
   const calls: string[] = [];
@@ -1696,6 +1848,58 @@ test("genie tts owned service shuts down on idle timeout", async () => {
 
     assert.deepEqual(calls, ["GET /health", "GET /health", "POST /shutdown"]);
   } finally {
+    fixture.cleanup();
+  }
+});
+
+test("genie tts local service receives reference text content instead of text path", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-reference-text-content");
+  const referenceTextPath = path.join(fixture.root, "reference.txt");
+  fs.writeFileSync(referenceTextPath, "明示的な参照テキスト\n");
+  const calls: string[] = [];
+  let healthCalls = 0;
+  let spawnArgs: readonly string[] = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const pathname = new URL(String(url)).pathname;
+    calls.push(`${init?.method ?? "GET"} ${pathname}`);
+    if (pathname === "/health") {
+      healthCalls += 1;
+      return new Response(JSON.stringify({ ok: healthCalls > 1 }), { status: healthCalls > 1 ? 200 : 503 });
+    }
+    if (pathname === "/shutdown") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const fakeSpawn = ((_command: string, args: readonly string[]) => {
+    spawnArgs = args;
+    const child = new events.EventEmitter() as any;
+    child.stdout = new events.EventEmitter();
+    child.stderr = new events.EventEmitter();
+    child.exitCode = null;
+    child.kill = () => true;
+    return child;
+  }) as any;
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieDataDir: fixture.modelDir,
+    genieModelDir: fixture.modelDir,
+    genieReferenceAudio: fixture.referenceAudio,
+    genieReferenceText: path.relative("assets", referenceTextPath).split(path.sep).join("/"),
+    genieOutputDir: "generated/tts",
+    genieTimeoutMs: 1_000,
+    genieIdleShutdownMs: 0
+  }, {
+    fetch: fakeFetch as typeof fetch,
+    spawn: fakeSpawn
+  });
+
+  try {
+    await synthesize.prepare?.();
+    const referenceTextIndex = spawnArgs.indexOf("--reference-text");
+    assert.notEqual(referenceTextIndex, -1);
+    assert.equal(spawnArgs[referenceTextIndex + 1], "明示的な参照テキスト");
+    assert.deepEqual(calls, ["GET /health", "GET /health"]);
+  } finally {
+    await synthesize.shutdown?.();
     fixture.cleanup();
   }
 });

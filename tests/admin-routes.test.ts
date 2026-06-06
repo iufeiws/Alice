@@ -274,6 +274,10 @@ test("admin plugin config patch writes tts config with preset reference only", a
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
     enabled: true,
+    remote: {
+      enabled: false,
+      baseURL: "10.0.0.8"
+    },
     newTranslationPresetName: "main",
     currentTranslation: {
       translationEnabled: false,
@@ -297,9 +301,11 @@ test("admin plugin config patch writes tts config with preset reference only", a
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configValue.translationPresetName, "default");
+  assert.deepEqual(body.configValue.remote, { enabled: false, baseURL: "http://10.0.0.8:8767" });
   assert.equal(body.configValue.translationPresets.main.apiPresetName, "voice");
   assert.equal(body.configValue.voice.modelConfigs[modelConfigName].language, "zh");
   assert.equal(saved.enabled, true);
+  assert.deepEqual(saved.remote, { enabled: false, baseURL: "http://10.0.0.8:8767" });
   assert.equal(saved.translationPresetName, "default");
   assert.equal(saved.translationPresets.main.translationEnabled, false);
   assert.equal(saved.translationPresets.main.prompt, "New prompt");
@@ -337,6 +343,8 @@ test("admin TTS config schema exposes voice language and language model folder",
   const configField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.modelEditPresetName");
   const languageField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.language");
   const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.modelDir");
+  const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "remote.enabled");
+  const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "remote.baseURL");
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model", "general"]);
@@ -348,6 +356,10 @@ test("admin TTS config schema exposes voice language and language model folder",
   assert.deepEqual(languageField.options.map((option: { value: string }) => option.value), ["jp", "zh", "en"]);
   assert.equal(modelField.label, "Model Folder");
   assert.equal(modelField.group, "model");
+  assert.equal(remoteEnabledField.type, "switch");
+  assert.equal(remoteEnabledField.group, "general");
+  assert.equal(remoteUrlField.type, "text");
+  assert.equal(remoteUrlField.group, "general");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {

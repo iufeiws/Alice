@@ -28,7 +28,7 @@ import { updateEnvFile } from "./env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
-import { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
+import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
@@ -97,6 +97,10 @@ type AdminPluginSummary = {
 
 type TtsAdminConfig = {
   enabled: boolean;
+  remote?: {
+    enabled?: boolean;
+    baseURL?: string;
+  };
   translationPresetName?: string;
   translationEditPresetName?: string;
   newTranslationPresetName?: string;
@@ -1290,6 +1294,8 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
         { key: "voice.modelConfigName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
+        { key: "remote.enabled", label: "Remote Genie", type: "switch", group: "general", description: "Use the LAN Genie TTS service before falling back to local Genie." },
+        { key: "remote.baseURL", label: "Remote Genie IP/URL", type: "text", group: "general", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
         { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
@@ -1655,26 +1661,12 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
 }
 
 function createTtsFallbackTtsSynthesizer(context: AdminRoutesContext): VoiceSynthesizer {
-  const remote = createGenieTtsVoiceSynthesizer({
+  return createTtsRemoteAwareVoiceSynthesizer({
     ...context.config.tts,
-    backend: "genie-tts",
-    genieBaseURL: "http://192.168.0.103:8767",
-    genieBaseURLExplicit: true,
-    genieIdleShutdownMs: 0,
-    genieUseStreamForSynthesis: true
+    ttsConfigPath: ttsConfigPath(context)
   }, {
     appendLog: context.appendLog
   });
-  const local = createGenieTtsVoiceSynthesizer({
-    ...context.config.tts,
-    backend: "genie-tts",
-    genieBaseURL: undefined,
-    genieBaseURLExplicit: false,
-    genieUseStreamForSynthesis: true
-  }, {
-    appendLog: context.appendLog
-  });
-  return createFallbackVoiceSynthesizer(remote, local, { appendLog: context.appendLog });
 }
 
 function updateTtsConfig(
@@ -1684,6 +1676,14 @@ function updateTtsConfig(
   const current = readTtsConfigForAdmin(context);
   const currentVoice = current.voice ?? {};
   if ("api_preset" in patch) return { error: "invalid_plugin_config" };
+  const remotePatch = patch.remote && typeof patch.remote === "object" && !Array.isArray(patch.remote)
+    ? patch.remote as Record<string, unknown>
+    : {};
+  const currentRemote = current.remote ?? {};
+  const nextRemote = {
+    enabled: remotePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(remotePatch.enabled),
+    baseURL: remotePatch.baseURL === undefined ? currentRemote.baseURL ?? "http://192.168.0.103:8767" : normalizeRemoteTtsBaseURL(optionalString(remotePatch.baseURL) ?? "")
+  };
   const currentTranslationPresets = current.translationPresets ?? {};
   const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
   const editTranslationPresetName = safeTtsPresetName(optionalString(patch.newTranslationPresetName) || optionalString(patch.translationEditPresetName) || activeTranslationPresetName, "default");
@@ -1725,6 +1725,7 @@ function updateTtsConfig(
     : currentModelConfigs;
   const next: TtsPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    remote: nextRemote,
     translationPresetName: activeTranslationPresetName,
     translationPresets: nextTranslationPresets,
     translationEnabled: activeTranslation.translationEnabled ?? true,
@@ -1748,12 +1749,28 @@ function updateTtsConfig(
 }
 
 function validateTtsConfig(config: TtsPluginConfig): string | undefined {
+  if (config.remote?.enabled && !config.remote.baseURL) return "invalid_remote_tts_url";
   const voice = config.voice ?? {};
   for (const model of Object.values(voice.modelConfigs ?? {})) {
     if (model.speed !== undefined && (model.speed < 0.5 || model.speed > 2)) return "invalid_voice_speed";
     if (model.partSilenceSeconds !== undefined && (model.partSilenceSeconds < 0 || model.partSilenceSeconds > 3)) return "invalid_part_silence";
   }
   return undefined;
+}
+
+function normalizeRemoteTtsBaseURL(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  const hasScheme = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed);
+  const candidate = hasScheme ? trimmed : `http://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    if (!hasScheme && !parsed.port) parsed.port = "8767";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function isTtsVoiceAssetPath(value: string): boolean {
@@ -2010,6 +2027,10 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
   const currentModel = modelConfigs[modelConfigName] ?? {};
   return {
     enabled: config.enabled,
+    remote: {
+      enabled: config.remote?.enabled ?? true,
+      baseURL: config.remote?.baseURL ?? "http://192.168.0.103:8767"
+    },
     translationPresetName,
     translationEditPresetName: translationPresetName,
     newTranslationPresetName: "",
@@ -2042,6 +2063,10 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
   return {
     enabled: config.enabled,
+    remote: {
+      enabled: config.remote?.enabled ?? true,
+      baseURL: config.remote?.baseURL ?? "http://192.168.0.103:8767"
+    },
     translationPresetName,
     translationPresets,
     translationEnabled: config.translationEnabled,
@@ -2060,6 +2085,13 @@ function ttsConfigSchema(): unknown {
     type: "object",
     properties: {
       enabled: { type: "boolean" },
+      remote: {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean" },
+          baseURL: { type: "string" }
+        }
+      },
       translationEnabled: { type: "boolean" },
       apiPresetName: { type: "string" },
       prompt: { type: "string" },

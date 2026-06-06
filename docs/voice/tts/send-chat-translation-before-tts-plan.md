@@ -54,6 +54,10 @@ Current desired config shape:
 ```json
 {
   "enabled": true,
+  "remote": {
+    "enabled": true,
+    "baseURL": "http://192.168.0.103:8767"
+  },
   "translationPresetName": "default",
   "translationPresets": {
     "default": {
@@ -80,6 +84,8 @@ Current desired config shape:
 
 - `translationPresetName` 指向 active translation preset。
 - `voice.modelConfigName` 指向 active model preset。
+- `remote.enabled` 控制是否优先请求远端 Genie TTS。
+- `remote.baseURL` 保存远端 Genie TTS IP 或 base URL；只填 IP/host 时默认使用 `http://{host}:8767`。
 
 编辑界面另有 edit target：
 
@@ -141,6 +147,8 @@ assets/tts/preset/{配置名}/reference.txt
 | `general` | `translationPresetName` | `Active Translation Preset` | select | 运行时使用的翻译 preset |
 | `general` | `voice.modelConfigName` | `Active Model Preset` | select | 运行时使用的模型 preset |
 | `general` | `enabled` | `Enabled` | switch | 开关 TTS plugin |
+| `general` | `remote.enabled` | `Remote Genie` | switch | 是否优先使用远端 Genie TTS |
+| `general` | `remote.baseURL` | `Remote Genie IP/URL` | text | 远端 Genie TTS IP 或 base URL，例如 `192.168.0.103` 或 `http://192.168.0.103:8767` |
 | `general` | `targetRoute` | `Target Route` | readonly | `send_chat.voice.before_tts` |
 | `general` | `persistTranslation` | `Persist Translation` | readonly | 翻译不持久化 |
 
@@ -160,8 +168,34 @@ assets/tts/preset/{配置名}/reference.txt
 
 - 保存翻译块时，PATCH body 应包含 `translationEditPresetName` 和 `currentTranslation.*`，写入 `translationPresets[translationEditPresetName]`。
 - 保存模型块时，PATCH body 应包含 `voice.modelEditPresetName` 和 `voice.currentModel.*`，写入 `voice.modelConfigs[voice.modelEditPresetName]`。
-- 保存公共块时，PATCH body 才包含 `translationPresetName` 和 `voice.modelConfigName`，用于改变运行时 active preset。
+- 保存公共块时，PATCH body 才包含 `translationPresetName`、`voice.modelConfigName` 和 `remote.*`，用于改变运行时 active preset 和远端服务设置。
 - 如果用户只是在翻译或模型块里切换下拉查看/编辑其他 preset，不能把该下拉值保存为 active preset，否则会把“编辑目标”误当成“运行时选择”。
+
+## Remote Genie Request Flow
+
+远端请求流程必须对齐 `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md`：
+
+```text
+TTS text
+  -> POST /stream-input?language={language}&modelDir={local_model_dir}
+     content-type: application/x-ndjson
+     body: {"text":"...", "referenceText":"显式参考文本"}\n
+  -> 如果正常返回，直接消费 PCM stream
+  -> 如果返回 409 MODEL_NOT_UPLOADED 或 REFERENCE_NOT_UPLOADED:
+       zip preset dir that contains local_model_dir, reference audio, and reference text
+       POST returned uploadUrl as application/zip
+       如果没有 uploadUrl, POST /models/upload?modelDir={local_model_dir}
+       retry original /stream-input request unchanged
+```
+
+约束：
+
+- `modelDir` 必须是原始请求里的同一个本地路径，不换成 model id。
+- `referenceText` 必须是显式文本内容，不能传 `reference.txt` 路径。
+- zip 内容来自 `assets/tts/preset/{模型配置名}/`，需要包含该 preset 的 `model/`、`reference.*` 和 `reference.txt`。
+- 上传成功后重试原请求，不改变 `language`、`modelDir` 或文本。
+- 远端请求在产出音频前失败时可以 fallback 到 local Genie。
+- local Genie 继续使用本地 `/stream` JSON 请求路径；`/stream-input` 只用于显式远端 Genie URL。
 
 ## Migration Rules
 

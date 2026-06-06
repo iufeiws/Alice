@@ -275,13 +275,13 @@ class GenieRuntime:
         model_dir: str | Path,
         language: str,
         reference_audio: str | Path,
-        reference_text: str | Path,
+        reference_text: str,
     ) -> None:
         self.character_name = character_name
         self.model_dir = Path(model_dir).expanduser().resolve()
         self.language = language
         self.reference_audio = Path(reference_audio).expanduser().resolve()
-        self.reference_text = Path(reference_text).expanduser().resolve()
+        self.reference_text = str(reference_text or "").strip()
         self._loaded_model_key: tuple[str, str] | None = None
         self._reference_key: tuple[str, str, str] | None = None
         self._lock = threading.Lock()
@@ -359,7 +359,7 @@ class GenieRuntime:
         effective_model_dir = Path(model_dir).expanduser().resolve() if model_dir else self.model_dir
         effective_language = language or self.language
         effective_reference_audio = Path(reference_audio_path).expanduser().resolve() if reference_audio_path else self.reference_audio
-        effective_reference_text = reference_text if reference_text is not None else self.reference_text.read_text(encoding="utf-8").strip()
+        effective_reference_text = reference_text if reference_text is not None else self.reference_text
         with self._lock:
             self._load(
                 model_dir=effective_model_dir,
@@ -408,7 +408,7 @@ class GenieRuntime:
         effective_model_dir = Path(model_dir).expanduser().resolve() if model_dir else self.model_dir
         effective_language = language or self.language
         effective_reference_audio = Path(reference_audio_path).expanduser().resolve() if reference_audio_path else self.reference_audio
-        effective_reference_text = reference_text if reference_text is not None else self.reference_text.read_text(encoding="utf-8").strip()
+        effective_reference_text = reference_text if reference_text is not None else self.reference_text
         with self._lock:
             self._load(
                 model_dir=effective_model_dir,
@@ -673,6 +673,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_reference_text(value: str) -> str:
+    candidate = Path(value).expanduser()
+    try:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return value.strip()
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[genie-tts] %(asctime)s %(levelname)s %(message)s")
     start_memory_peak_sampler()
@@ -683,7 +693,7 @@ def main() -> int:
         model_dir=args.model_dir,
         language=args.language,
         reference_audio=args.reference_audio,
-        reference_text=args.reference_text,
+        reference_text=resolve_reference_text(args.reference_text),
     )
     shutdown_event = threading.Event()
     GenieHandler.runtime = runtime

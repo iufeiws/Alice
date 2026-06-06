@@ -74,6 +74,7 @@ export type FallbackVoiceSynthesizerDeps = {
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+const crypto = await import("node:crypto");
 
 export type TtsApiPreset = {
   name?: string;
@@ -88,6 +89,7 @@ export type TtsApiPreset = {
 
 export type TtsPluginConfig = {
   enabled: boolean;
+  remote?: TtsRemoteConfig;
   translationPresetName?: string;
   translationPresets?: Record<string, TtsTranslationPreset>;
   translationEnabled: boolean;
@@ -98,6 +100,11 @@ export type TtsPluginConfig = {
     modelConfigName?: string;
     modelConfigs?: Record<string, TtsVoiceModelConfig>;
   };
+};
+
+export type TtsRemoteConfig = {
+  enabled?: boolean;
+  baseURL?: string;
 };
 
 export type TtsTranslationPreset = {
@@ -171,6 +178,7 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   const raw = resolved ? fs.readFileSync(resolved, "utf8") : "{}";
   const parsed = parseJsonObject(raw);
   const preset = parseJsonObject(parsed.api_preset);
+  const remote = parseJsonObject(parsed.remote);
   const legacyPrompt = stringValue(parsed.prompt) || defaultPrompt();
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
   const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName, {
@@ -192,6 +200,10 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   });
   return {
     enabled: booleanValue(parsed.enabled, false),
+    remote: {
+      enabled: booleanValue(remote.enabled, true),
+      baseURL: normalizeBaseURL(stringValue(remote.baseURL) || "http://192.168.0.103:8767")
+    },
     translationPresetName,
     translationPresets,
     translationEnabled: selectedTranslation.translationEnabled ?? true,
@@ -633,6 +645,12 @@ function ttsReferenceTextValue(value: string | undefined): string | undefined {
   return value;
 }
 
+function requireGenieReferenceText(value: string | undefined, message: string): string {
+  const text = ttsReferenceTextValue(value)?.trim();
+  if (!text) throw new Error(message);
+  return text;
+}
+
 function ttsPresetModelDir(name: string): string {
   return path.join(ttsPresetAssetRoot, safeModelConfigName(name) || "jp", "model").split(path.sep).join("/");
 }
@@ -682,6 +700,120 @@ function optionalStringValue(value: unknown): string | undefined {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeBaseURL(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  const hasScheme = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed);
+  const candidate = hasScheme ? trimmed : `http://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (!hasScheme && !parsed.port) parsed.port = "8767";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmed;
+  }
+}
+
+function zipDirectoryToBuffer(rootDir: string): Uint8Array {
+  const root = path.resolve(rootDir);
+  const files = listZipFiles(root);
+  if (!files.length) throw new Error(`Genie TTS model directory has no files to upload: ${root}`);
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+  for (const filePath of files) {
+    const relativeName = path.relative(root, filePath).split(path.sep).join("/");
+    const name = new TextEncoder().encode(relativeName);
+    const data = fs.readFileSync(filePath);
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + name.length);
+    writeZipUint32(local, 0, 0x04034b50);
+    writeZipUint16(local, 4, 20);
+    writeZipUint16(local, 6, 0x0800);
+    writeZipUint16(local, 8, 0);
+    writeZipUint16(local, 10, 0);
+    writeZipUint16(local, 12, 0);
+    writeZipUint32(local, 14, crc);
+    writeZipUint32(local, 18, data.length);
+    writeZipUint32(local, 22, data.length);
+    writeZipUint16(local, 26, name.length);
+    writeZipUint16(local, 28, 0);
+    local.set(name, 30);
+    localParts.push(local, data);
+
+    const central = new Uint8Array(46 + name.length);
+    writeZipUint32(central, 0, 0x02014b50);
+    writeZipUint16(central, 4, 20);
+    writeZipUint16(central, 6, 20);
+    writeZipUint16(central, 8, 0x0800);
+    writeZipUint16(central, 10, 0);
+    writeZipUint16(central, 12, 0);
+    writeZipUint16(central, 14, 0);
+    writeZipUint32(central, 16, crc);
+    writeZipUint32(central, 20, data.length);
+    writeZipUint32(central, 24, data.length);
+    writeZipUint16(central, 28, name.length);
+    writeZipUint16(central, 30, 0);
+    writeZipUint16(central, 32, 0);
+    writeZipUint16(central, 34, 0);
+    writeZipUint16(central, 36, 0);
+    writeZipUint32(central, 38, 0);
+    writeZipUint32(central, 42, offset);
+    central.set(name, 46);
+    centralParts.push(central);
+    offset += local.length + data.length;
+  }
+  const centralDirectory = concatUint8Arrays(centralParts);
+  const end = new Uint8Array(22);
+  writeZipUint32(end, 0, 0x06054b50);
+  writeZipUint16(end, 4, 0);
+  writeZipUint16(end, 6, 0);
+  writeZipUint16(end, 8, files.length);
+  writeZipUint16(end, 10, files.length);
+  writeZipUint32(end, 12, centralDirectory.length);
+  writeZipUint32(end, 16, offset);
+  writeZipUint16(end, 20, 0);
+  return concatUint8Arrays([...localParts, centralDirectory, end]);
+}
+
+function listZipFiles(root: string): string[] {
+  const result: string[] = [];
+  for (const name of fs.readdirSync(root)) {
+    const fullPath = path.join(root, name);
+    const stats = fs.statSync(fullPath) as { isDirectory?(): boolean; isFile(): boolean };
+    if (stats.isDirectory?.()) {
+      result.push(...listZipFiles(fullPath));
+    } else if (stats.isFile()) {
+      result.push(fullPath);
+    }
+  }
+  return result.sort();
+}
+
+function writeZipUint16(target: Uint8Array, offset: number, value: number): void {
+  new DataView(target.buffer, target.byteOffset, target.byteLength).setUint16(offset, value, true);
+}
+
+function writeZipUint32(target: Uint8Array, offset: number, value: number): void {
+  new DataView(target.buffer, target.byteOffset, target.byteLength).setUint32(offset, value >>> 0, true);
+}
+
+const crc32Table = new Uint32Array(256).map((_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function crc32(value: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of value) {
+    crc = crc32Table[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 
@@ -779,6 +911,98 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
   return synthesize;
 }
 
+export function createTtsRemoteAwareVoiceSynthesizer(
+  input: TTSConfig & { ttsConfigPath?: string },
+  deps: ConfiguredVoiceSynthesizerDeps = {}
+): VoiceSynthesizer {
+  const local = createGenieTtsVoiceSynthesizer({
+    ...input,
+    backend: "genie-tts",
+    genieBaseURL: undefined,
+    genieBaseURLExplicit: false,
+    genieUseStreamForSynthesis: true
+  }, deps);
+  const remotes = new Map<string, VoiceSynthesizer>();
+
+  const remoteFor = (baseURL: string): VoiceSynthesizer => {
+    const normalized = normalizeBaseURL(baseURL);
+    const existing = remotes.get(normalized);
+    if (existing) return existing;
+    const remote = createGenieTtsVoiceSynthesizer({
+      ...input,
+      backend: "genie-tts",
+      genieBaseURL: normalized,
+      genieBaseURLExplicit: true,
+      genieIdleShutdownMs: 0,
+      genieUseStreamForSynthesis: true
+    }, deps);
+    remotes.set(normalized, remote);
+    return remote;
+  };
+
+  const selectedRemote = (): VoiceSynthesizer | undefined => {
+    const pluginConfig = readTtsPluginConfig(input.ttsConfigPath);
+    if (!pluginConfig.remote?.enabled) return undefined;
+    const baseURL = normalizeBaseURL(pluginConfig.remote.baseURL || "");
+    return baseURL ? remoteFor(baseURL) : undefined;
+  };
+
+  const synthesize = (async (request) => {
+    const remote = selectedRemote();
+    if (!remote) return local(request);
+    try {
+      return await remote(request);
+    } catch (error) {
+      if (isRemoteGenieProtocolError(error)) throw error;
+      deps.appendLog?.("warn", `tts remote Genie failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      return local(request);
+    }
+  }) as VoiceSynthesizer;
+
+  synthesize.streamAudio = async function* (request) {
+    const remote = selectedRemote();
+    if (!remote?.streamAudio) {
+      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      yield* local.streamAudio(request);
+      return;
+    }
+    let yielded = false;
+    try {
+      for await (const chunk of remote.streamAudio(request)) {
+        yielded = true;
+        yield chunk;
+      }
+    } catch (error) {
+      if (yielded) throw error;
+      if (isRemoteGenieProtocolError(error)) throw error;
+      deps.appendLog?.("warn", `tts remote Genie stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      yield* local.streamAudio(request);
+    }
+  };
+  synthesize.noteActivity = () => {
+    selectedRemote()?.noteActivity?.();
+    local.noteActivity?.();
+  };
+  synthesize.prepare = async () => {
+    const remote = selectedRemote();
+    if (remote) {
+      try {
+        await remote.prepare?.();
+        return;
+      } catch (error) {
+        deps.appendLog?.("warn", `tts remote Genie prepare failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await local.prepare?.();
+  };
+  synthesize.shutdown = async () => {
+    await Promise.all([...remotes.values()].map((remote) => remote.shutdown?.()));
+    await local.shutdown?.();
+  };
+  return synthesize;
+}
+
 export function createFallbackVoiceSynthesizer(
   primary: VoiceSynthesizer,
   fallback: VoiceSynthesizer,
@@ -862,7 +1086,7 @@ function getGenieReadinessError(input: TTSConfig): string | undefined {
   if (!containsFileWithExtension(modelPath, ".onnx")) return `Genie model directory has no ONNX files: ${modelPath}`;
   try {
     requireAssetPath(referenceAudio, "Genie TTS reference audio was not found");
-    requireAssetPath(referenceText, "Genie TTS reference text was not found");
+    requireGenieReferenceText(referenceText, "Genie TTS reference text was not found");
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
@@ -1107,11 +1331,12 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     await ensureGenieService();
     try {
       if (config.useStreamForSynthesis) {
-        deps.appendLog?.("info", `genie tts synthesize via stream start: url=${config.baseURL}/stream chars=${Array.from(text).length}`);
+        deps.appendLog?.("info", `genie tts synthesize via stream start: url=${config.baseURL}/${config.baseURLExplicit ? "stream-input" : "stream"} chars=${Array.from(text).length}`);
         const pcm = await collectGenieStreamPcm({
           text,
           genie: request.genie,
           baseURL: config.baseURL,
+          useClientUploadFlow: config.baseURLExplicit,
           timeoutMs: config.timeoutMs,
           fetchImpl,
           setTimer,
@@ -1179,6 +1404,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       text,
       genie: request.genie,
       baseURL: config.baseURL,
+      useClientUploadFlow: config.baseURLExplicit,
       timeoutMs: config.timeoutMs,
       fetchImpl,
       setTimer,
@@ -1231,7 +1457,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     const dataDir = requireAssetDirectory(config.dataDir, "Genie TTS data directory was not found");
     const modelDir = requireAssetDirectory(config.modelDir, "Genie TTS model directory was not found");
     const referenceAudio = requireAssetPath(config.referenceAudio, "Genie TTS reference audio was not found");
-    const referenceText = requireAssetPath(config.referenceText, "Genie TTS reference text was not found");
+    const referenceText = requireGenieReferenceText(config.referenceText, "Genie TTS reference text was not found");
     const outputDir = resolveAssetOutputDir(config.outputDir);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     deps.appendLog?.("info", `genie tts service starting: ${config.pythonCommand} ${scriptPath}`);
@@ -1314,21 +1540,26 @@ const genieRequiredBaseModelFiles = [
   "vits_fp32.onnx"
 ];
 
-function genieRequestOverrides(input: VoiceSynthesisInput["genie"], appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"]): Record<string, unknown> {
+function genieRequestOverrides(
+  input: VoiceSynthesisInput["genie"],
+  appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"],
+  options: { requireCompleteModel?: boolean } = {}
+): Record<string, unknown> {
   if (!input) return {};
+  const requireCompleteModel = options.requireCompleteModel ?? true;
   const overrides: Record<string, unknown> = {};
   if (input.language) overrides.language = input.language;
   if (input.modelDir) {
     const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS model directory was not found");
     const missing = missingGenieBaseModelFiles(modelDir);
-    if (missing.length === 0) {
+    if (!requireCompleteModel || missing.length === 0) {
       overrides.modelDir = modelDir;
     } else {
       appendLog?.("warn", `genie tts model override skipped because ${input.modelDir} is incomplete; missing ${missing.join(", ")}`);
     }
   }
   if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found");
-  if (input.referenceText) overrides.referenceText = input.referenceText;
+  if (input.referenceText) overrides.referenceText = requireGenieReferenceText(input.referenceText, "Genie TTS reference text was not found");
   if (input.partSilenceSeconds !== undefined) overrides.partSilenceSeconds = geniePartSilenceSecondsValue(input.partSilenceSeconds);
   if (input.splitText !== undefined) overrides.splitText = Boolean(input.splitText);
   return overrides;
@@ -1380,6 +1611,7 @@ async function* streamGeniePcm(input: {
   text: string;
   genie?: VoiceSynthesisInput["genie"];
   baseURL: string;
+  useClientUploadFlow?: boolean;
   timeoutMs: number;
   fetchImpl: typeof fetch;
   setTimer: typeof setTimeout;
@@ -1390,15 +1622,7 @@ async function* streamGeniePcm(input: {
   const timeout = input.setTimer(() => controller.abort(), input.timeoutMs);
   timeout.unref?.();
   try {
-    const response = await input.fetchImpl(`${input.baseURL}/stream`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        text: input.text,
-        ...genieRequestOverrides(input.genie, input.appendLog)
-      })
-    });
+    const response = await openGeniePcmStream(input, controller.signal);
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
       throw new Error(`Genie TTS stream HTTP ${response.status}: ${errorText.slice(0, 500)}`);
@@ -1411,6 +1635,131 @@ async function* streamGeniePcm(input: {
   } finally {
     input.clearTimer(timeout);
     controller.abort();
+  }
+}
+
+async function openGeniePcmStream(input: {
+  text: string;
+  genie?: VoiceSynthesisInput["genie"];
+  baseURL: string;
+  useClientUploadFlow?: boolean;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+  appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+}, signal: AbortSignal): Promise<Response> {
+  const overrides = genieRequestOverrides(input.genie, input.appendLog, {
+    requireCompleteModel: !input.useClientUploadFlow
+  });
+  if (!input.useClientUploadFlow || !input.genie?.modelDir) {
+    return input.fetchImpl(`${input.baseURL}/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal,
+      body: JSON.stringify({
+        text: input.text,
+        ...overrides
+      })
+    });
+  }
+
+  const url = genieStreamInputUrl(input.baseURL, {
+    language: typeof overrides.language === "string" ? overrides.language : undefined,
+    modelDir: String(overrides.modelDir)
+  });
+  const body = `${JSON.stringify({
+    text: input.text,
+    ...(typeof overrides.referenceText === "string" ? { referenceText: overrides.referenceText } : {})
+  })}\n`;
+  let response = await input.fetchImpl(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-ndjson" },
+    signal,
+    body
+  });
+  if (response.status !== 409) return response;
+  const missing = await readGenieRemoteUploadResponse(response, String(overrides.modelDir));
+  await uploadGenieModelForRemote({
+    baseURL: input.baseURL,
+    modelDir: missing.modelDir,
+    uploadUrl: missing.uploadUrl,
+    timeoutMs: input.timeoutMs,
+    fetchImpl: input.fetchImpl,
+    signal,
+    appendLog: input.appendLog
+  });
+  input.appendLog?.("info", `genie tts remote preset uploaded; retrying original stream-input request code=${missing.code} modelDir=${missing.modelDir}`);
+  response = await input.fetchImpl(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-ndjson" },
+    signal,
+    body
+  });
+  return response;
+}
+
+function genieStreamInputUrl(baseURL: string, input: { language?: string; modelDir: string }): string {
+  const url = new URL(`${baseURL}/stream-input`);
+  if (input.language) url.searchParams.set("language", input.language);
+  url.searchParams.set("modelDir", input.modelDir);
+  return url.toString();
+}
+
+async function readGenieRemoteUploadResponse(response: Response, fallbackModelDir: string): Promise<{ code: string; modelDir: string; uploadUrl?: string }> {
+  const text = await response.text().catch(() => "");
+  if (!text) throw new Error("Genie TTS stream-input HTTP 409 without JSON body");
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!isRecord(parsed)) throw new Error(`Genie TTS stream-input HTTP 409: ${text.slice(0, 500)}`);
+    const code = optionalStringValue(parsed.code) || "unknown_code";
+    if (code !== "MODEL_NOT_UPLOADED" && code !== "REFERENCE_NOT_UPLOADED") {
+      const message = optionalStringValue(parsed.error) || optionalStringValue(parsed.message) || text;
+      throw new Error(`Genie TTS stream-input HTTP 409 ${code}: ${message.slice(0, 500)}`);
+    }
+    const modelDir = optionalStringValue(parsed.modelDir) || fallbackModelDir;
+    if (!modelDir) throw new Error(`Genie TTS ${code} response did not include modelDir and original request had no modelDir`);
+    return {
+      code,
+      modelDir,
+      uploadUrl: optionalStringValue(parsed.uploadUrl)
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Genie TTS")) throw error;
+    throw new Error(`Genie TTS stream-input HTTP 409 invalid JSON: ${text.slice(0, 500)}`);
+  }
+}
+
+function isRemoteGenieProtocolError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Genie TTS stream-input HTTP 409|MODEL_NOT_UPLOADED|REFERENCE_NOT_UPLOADED|remote stream-input requires modelDir/i.test(message);
+}
+
+async function uploadGenieModelForRemote(input: {
+  baseURL: string;
+  modelDir: string;
+  uploadUrl?: string;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+  signal: AbortSignal;
+  appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+}): Promise<void> {
+  const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS remote upload model directory was not found");
+  const presetDir = path.dirname(modelDir);
+  const zip = zipDirectoryToBuffer(presetDir);
+  const hash = crypto.createHash("sha256").update(zip).digest("hex");
+  const uploadUrl = new URL(input.uploadUrl || `/models/upload?modelDir=${encodeURIComponent(input.modelDir)}`, input.baseURL).toString();
+  input.appendLog?.("info", `genie tts remote preset upload start: files_zip_bytes=${zip.byteLength} modelDir=${input.modelDir} presetDir=${presetDir}`);
+  const response = await input.fetchImpl(uploadUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/zip",
+      "x-model-sha256": hash
+    },
+    signal: input.signal,
+    body: new Uint8Array(zip)
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Genie TTS model upload HTTP ${response.status}: ${text.slice(0, 500)}`);
   }
 }
 

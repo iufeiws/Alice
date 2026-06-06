@@ -1361,6 +1361,8 @@ export function renderAdminHtmlV2(): string {
                 \${render("translationPresetName")}
                 \${render("voice.modelConfigName")}
                 \${render("enabled")}
+                \${render("remote.enabled")}
+                \${render("remote.baseURL")}
                 \${render("targetRoute")}
                 \${render("persistTranslation")}
               </div>

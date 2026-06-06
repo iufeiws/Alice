@@ -20,6 +20,10 @@ The original outgoing text remains the `send_chat` transcript and persisted mess
 ```json
 {
   "enabled": true,
+  "remote": {
+    "enabled": true,
+    "baseURL": "http://192.168.0.103:8767"
+  },
   "translationPresetName": "default",
   "translationPresets": {
     "default": {
@@ -44,6 +48,8 @@ The original outgoing text remains the `send_chat` transcript and persisted mess
 
 Translation preset fields:
 
+- `remote.enabled`: whether to try the LAN Genie TTS service before local Genie fallback.
+- `remote.baseURL`: LAN Genie TTS IP or base URL, for example `192.168.0.103` or `http://192.168.0.103:8767`. Bare IP/host values default to port `8767`.
 - `translationPresetName`: active translation preset used at runtime. It is a common setting, not the preset currently being edited in the Translation block.
 - `translationPresets.{name}.translationEnabled`: whether to translate before synthesis.
 - `translationPresets.{name}.apiPresetName`: LLM API preset used for translation.
@@ -102,6 +108,8 @@ Current admin page layout:
 - `translationPresetName`: active translation preset used at runtime.
 - `voice.modelConfigName`: active model preset used at runtime.
 - `enabled`: enables the TTS plugin route.
+- `remote.enabled`: enables the remote Genie TTS service.
+- `remote.baseURL`: remote Genie TTS IP or base URL.
 - `targetRoute`: readonly `send_chat.voice.before_tts`.
 - `persistTranslation`: readonly note that translations are transient.
 - `Save Common Settings` saves only this section.
@@ -109,6 +117,20 @@ Current admin page layout:
 This split is intentional. Preset-section saves write the edit target (`translationEditPresetName` or `voice.modelEditPresetName`). Common saves write the active runtime selectors (`translationPresetName` and `voice.modelConfigName`). A dropdown change in a preset section should never be treated as activating that preset.
 
 The admin payload may include `translationEditPresetName`, `currentTranslation`, `voice.modelEditPresetName`, `voice.currentModel`, `newTranslationPresetName`, and `voice.newModelConfigName`. The real config file should not persist those admin-only edit-target fields.
+
+## Remote Genie Flow
+
+When `remote.enabled` is true, runtime first tries `remote.baseURL`. If the remote service fails before audio is produced, runtime falls back to local Genie.
+
+Explicit remote Genie requests use the LAN upload protocol documented in `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md`:
+
+1. Send the original stream request to `/stream-input?language={language}&modelDir={modelDir}` with `content-type: application/x-ndjson`.
+2. Keep `modelDir` as the local model directory path derived from `assets/tts/preset/{model}/model`.
+3. Put `referenceText` in the NDJSON body as explicit text content. Do not send a `reference.txt` path.
+4. If the server returns `409` with `code: "MODEL_NOT_UPLOADED"` or `code: "REFERENCE_NOT_UPLOADED"`, zip the preset directory that contains `modelDir` and its matching `reference.*` / `reference.txt`, then POST it to the returned `uploadUrl` as `application/zip`. If the response does not include `uploadUrl`, use `/models/upload?modelDir={modelDir}`.
+5. After upload succeeds, retry the original `/stream-input` request unchanged.
+
+Local Genie still uses the older local `/stream` JSON request path, but its `referenceText` value is also resolved to text before being sent or passed to the local service process.
 
 ## Asset Migration
 

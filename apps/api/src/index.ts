@@ -35,7 +35,7 @@ import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 import { createPhotoTools } from "../../../tools/photo/src/index.js";
 import { createMessagingTools } from "../../../tools/messaging/src/index.js";
-import { createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createTtsPlugin } from "../../../plugins/tts/src/index.js";
+import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { createShellTools } from "../../../tools/shell/src/index.js";
 import { createBookcaseTools } from "../../../tools/bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../../tools/sleep-cocoon/src/index.js";
@@ -413,30 +413,15 @@ const dailyShellStore = createDailyShellStore(config.memoryFiles.root, {
     appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
   }
 });
-const ttsRemoteGenieSynthesizer = createGenieTtsVoiceSynthesizer({
+const ttsConfigPath = "config/plugin/tts/config.json";
+const ttsGenieSynthesizer = createTtsRemoteAwareVoiceSynthesizer({
   ...config.tts,
-  backend: "genie-tts",
-  genieBaseURL: "http://192.168.0.103:8767",
-  genieBaseURLExplicit: true,
-  genieIdleShutdownMs: 0,
-  genieUseStreamForSynthesis: true
+  ttsConfigPath
 }, { appendLog });
-const ttsLocalGenieSynthesizer = createGenieTtsVoiceSynthesizer({
-  ...config.tts,
-  backend: "genie-tts",
-  genieBaseURL: undefined,
-  genieBaseURLExplicit: false,
-  genieIdleShutdownMs: config.tts.genieIdleShutdownMs,
-  genieUseStreamForSynthesis: true
-}, { appendLog });
-const ttsGenieSynthesizer = createFallbackVoiceSynthesizer(
-  ttsRemoteGenieSynthesizer,
-  ttsLocalGenieSynthesizer,
-  { appendLog }
-);
-appendLog("info", "tts configured: remote Genie stream=http://192.168.0.103:8767/stream synthesize_via_stream=true fallback=local-genie");
+appendLog("info", `tts configured: plugin_config=${ttsConfigPath} remote-aware Genie stream-input fallback=local-genie`);
 const ttsPlugin = createTtsPlugin({
   baseSynthesizer: ttsGenieSynthesizer,
+  configPath: ttsConfigPath,
   llmRequestSender: (input) => llmRequests.send(input),
   resolveApiPreset(name) {
     return readLLMApiPresets().find((entry) => entry.name === name);
@@ -853,7 +838,7 @@ const server = http.createServer(createApiRequestHandler({
   runtime: runtimeState,
   pluginConfigs: {
     tts: {
-      configPath: "config/plugin/tts/config.json"
+      configPath: ttsConfigPath
     },
     asr: {
       configPath: "config/plugin/asr/config.json"

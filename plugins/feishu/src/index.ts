@@ -13,7 +13,7 @@ import { createRecentMessageDeduper } from "./dedupe.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import { createId, sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
 
-const TYPING_EMOJI_TYPE = "SMILE";
+const TYPING_EMOJI_TYPE = "Coffee";
 const REMOVE_TYPING_REACTION_ATTEMPTS = 3;
 const REMOVE_TYPING_REACTION_RETRY_DELAY_MS = 250;
 

@@ -176,7 +176,7 @@ test("feishu plugin starts and stops typing on the latest inbound message", asyn
   await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: false });
 
   assert.deepEqual(reactions, [
-    { action: "add", messageId: "om_typing", emojiType: "SMILE" },
+    { action: "add", messageId: "om_typing", emojiType: "Coffee" },
     { action: "remove", messageId: "om_typing", reactionId: "reaction-1" }
   ]);
 });
@@ -210,9 +210,9 @@ test("feishu plugin moves typing reaction when latest outbound message changes",
   await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
 
   assert.deepEqual(reactions, [
-    { action: "add", messageId: "om_inbound", emojiType: "SMILE" },
+    { action: "add", messageId: "om_inbound", emojiType: "Coffee" },
     { action: "remove", messageId: "om_inbound", reactionId: "reaction-1" },
-    { action: "add", messageId: "om_outbound", emojiType: "SMILE" }
+    { action: "add", messageId: "om_outbound", emojiType: "Coffee" }
   ]);
 });
 
@@ -237,7 +237,7 @@ test("feishu plugin clears active typing reactions on stop", async () => {
   await plugin.stop();
 
   assert.deepEqual(reactions, [
-    { action: "add", messageId: "om_stop", emojiType: "SMILE" },
+    { action: "add", messageId: "om_stop", emojiType: "Coffee" },
     { action: "remove", messageId: "om_stop", reactionId: "reaction-stop" }
   ]);
 });

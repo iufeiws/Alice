@@ -719,40 +719,46 @@ async function createCallState(
   const commitStableInputsIfReady = async () => {
     if (interruptBatch.items.length === 0) return;
     if (!interruptBatch.items.every((item) => item.stableInputReady)) return;
-    await Promise.all(interruptBatch.items.map((item) => item.runtimeInterruptPromise).filter((promise): promise is Promise<void> => Boolean(promise)));
-    if (playbackGateOpen()) throw new Error("voice call transaction assert failed: playback gate open");
-    if (playbackQueue.some((item) => item.status === "queued" || item.status === "playing")) {
-      throw new Error("voice call transaction assert failed: playable queue not cleared");
-    }
     const batchId = `stable:${input.callId}:${interruptEpoch}:${Date.now()}`;
     const items = [...interruptBatch.items].sort((a, b) => a.sequence - b.sequence);
-    if (deps.talkRuntime?.commitStableInputBatch) {
-      await deps.talkRuntime.commitStableInputBatch({
-        sessionId: talkSessionId,
-        batchId,
-        interruptEpoch,
-        inputs: items.map((item) => {
-          const stamp = nowStamp();
-          return {
-            interruptId: item.interruptId,
-            sequence: item.sequence,
-            reason: item.reason,
-            asrStreamId: item.asrStreamId,
-            text: item.stableInputText ?? "-杂音-",
-            occurredAt: stamp.occurredAt,
-            occurredAtUtc: stamp.occurredAtUtc,
-            targetOutputId: item.targetOutputId,
-            targetChunkId: item.targetChunkId
-          };
-        })
-      });
-      deps.emitStatus?.({ state: "talk_runtime.stable_batch", detail: `${batchId}:${items.length}` });
-    } else {
-      for (const item of items) {
-        deps.emitStatus?.({ state: "talk_runtime.ingress.todo", detail: `audio.transcript.final: ${item.stableInputText ?? "-杂音-"}` });
+    try {
+      await Promise.all(items.map((item) => item.runtimeInterruptPromise).filter((promise): promise is Promise<void> => Boolean(promise)));
+      if (playbackGateOpen()) throw new Error("voice call transaction assert failed: playback gate open");
+      if (playbackQueue.some((item) => item.status === "queued" || item.status === "playing")) {
+        throw new Error("voice call transaction assert failed: playable queue not cleared");
       }
+      if (deps.talkRuntime?.commitStableInputBatch) {
+        await deps.talkRuntime.commitStableInputBatch({
+          sessionId: talkSessionId,
+          batchId,
+          interruptEpoch,
+          inputs: items.map((item) => {
+            const stamp = nowStamp();
+            return {
+              interruptId: item.interruptId,
+              sequence: item.sequence,
+              reason: item.reason,
+              asrStreamId: item.asrStreamId,
+              text: item.stableInputText ?? "-杂音-",
+              occurredAt: stamp.occurredAt,
+              occurredAtUtc: stamp.occurredAtUtc,
+              targetOutputId: item.targetOutputId,
+              targetChunkId: item.targetChunkId
+            };
+          })
+        });
+        deps.emitStatus?.({ state: "talk_runtime.stable_batch", detail: `${batchId}:${items.length}` });
+      } else {
+        for (const item of items) {
+          deps.emitStatus?.({ state: "talk_runtime.ingress.todo", detail: `audio.transcript.final: ${item.stableInputText ?? "-杂音-"}` });
+        }
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      deps.emitStatus?.({ state: "talk_runtime.stable_batch.failed", detail: `${batchId}:${detail}` });
+    } finally {
+      interruptBatch.items.length = 0;
     }
-    interruptBatch.items.length = 0;
   };
   const markStableInput = async (text: string, reason: InterruptItem["reason"], streamId?: string) => {
     const target = streamId
@@ -1026,7 +1032,7 @@ async function createCallState(
     },
     async endInboundAudio() {
       if (closed) return undefined;
-      const result = await acceptAsrFrame(asrSession, {
+      const result = await acceptAsrFinalFrame(asrSession, {
         type: "end",
         streamId: asrStreamId,
         metadata: {
@@ -1051,7 +1057,8 @@ async function createCallState(
       } else if (result.ok && result.type === "final" && interruptBatch.items.length > 0) {
         await markStableInput(result.result.text, "barge_in", result.streamId);
       } else if (!result.ok) {
-        await runInterrupt("asr_failure");
+        if (interruptBatch.items.length > 0) await markStableInput("-杂音-", "asr_failure", result.streamId);
+        else await runInterrupt("asr_failure");
       }
       if (!result.ok && !isRecoverableAsrError(result.error)) return result;
       return result;
@@ -1502,6 +1509,34 @@ async function acceptAsrFrame(
       streamId: frame.streamId,
       message: detail
     };
+  }
+}
+
+async function acceptAsrFinalFrame(
+  session: AsrInboundStreamSession,
+  frame: Parameters<AsrInboundStreamSession["accept"]>[0],
+  deps: WebRtcVoiceDeps
+): Promise<AsrInboundStreamAcceptResult> {
+  const timeoutMs = deps.config.timeouts.asrFinalMs ?? 8_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      acceptAsrFrame(session, frame, deps),
+      new Promise<AsrInboundStreamAcceptResult>((resolve) => {
+        timer = setTimeout(() => {
+          deps.emitStatus?.({ state: "asr.final.timeout", detail: `${frame.streamId}:${timeoutMs}` });
+          resolve({
+            ok: false,
+            type: "error",
+            error: "timeout",
+            streamId: frame.streamId,
+            message: `ASR final timed out after ${timeoutMs}ms`
+          });
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

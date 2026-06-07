@@ -139,7 +139,7 @@ afterText = chars.slice(index).join("");
 
 - `playbackTextCache` 为空或 `totalMs <= 0` 时，不提交 breakpointContext。
 - 当前不使用 spans、音素 timing 或 provider word timing。
-- 当前不提交 `breakpointCharIndex`，只提交 `{ beforeText, afterText }`。
+- 当前只提交 `{ beforeText, afterText }`。
 - `playedMs / totalMs` 只作用于当前 consumer 文本，不跨 chunk。
 - 队列里已经有下一段文本但当前段还没播完时，barge-in 仍以当前 consumer 文本为准。
 - 当前段已播完、下一段还没被消费者消费时，consumer 仍保持上一段缓存；这个中间点的前文使用 consumer cache，而不是取队列 undefined 或后续文本。

@@ -1517,6 +1517,92 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
 });
 
+test("WebRTC voice times out ASR final and commits interrupt batch as noise", async () => {
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: {
+      ...defaultConfig,
+      timeouts: {
+        ...defaultConfig.timeouts,
+        asrFinalMs: 1
+      }
+    },
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeHangingAsrSession(),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("timed out barge-in final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput() {},
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-asr-final-timeout", userId: "browser-asr-final-timeout", offerSdp: "offer" });
+  await call.setSpeechActive(true);
+  const result = await call.setSpeechActive(false);
+
+  assert.equal(result, undefined);
+  assert.equal(statuses.some((entry) => entry.state === "asr.final.timeout" && entry.detail === "asr-call-asr-final-timeout-0:1"), true);
+  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    reason: input.reason,
+    text: input.text,
+    asrStreamId: input.asrStreamId
+  })), [{ reason: "asr_failure", text: "-杂音-", asrStreamId: "asr-call-asr-final-timeout-0" }]);
+});
+
+test("WebRTC voice marks stable batch commit failure and reopens playback gate", async () => {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const asr = new FakeAsrSession([
+    {
+      ok: true,
+      type: "final",
+      streamId: "asr-call-batch-failure-0",
+      result: {
+        text: "もしもし",
+        provider: "tencent"
+      }
+    }
+  ]);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => asr,
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [
+      { sequence: 0, pcm: new Int16Array([8]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
+    ],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptLatestOutput() {},
+      commitStableInputBatch() {
+        throw new Error("commit failed");
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-batch-failure", userId: "browser-batch-failure", offerSdp: "offer" });
+  await call.setSpeechActive(true);
+  await call.setSpeechActive(false);
+  const playback = await call.playReplyText("gate reopened", "after-batch-failure");
+
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed" && entry.detail?.includes("commit failed")), true);
+  assert.equal(playback.status, "played");
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[8]]);
+});
+
 test("WebRTC voice automatically interrupts pseudo-streaming TTS when user starts speaking", async () => {
   const peer = new FakePeer();
   const statuses: Array<{ state: string; detail?: string }> = [];
@@ -2076,6 +2162,14 @@ class FakeAsrSession implements AsrInboundStreamSession {
 
   async accept(): Promise<AsrInboundStreamAcceptResult> {
     return this.results.shift() ?? { ok: true, type: "ack", streamId: this.streamId, sequence: 0 };
+  }
+}
+
+class FakeHangingAsrSession implements AsrInboundStreamSession {
+  readonly streamId = "fake-hanging-stream";
+
+  async accept(): Promise<AsrInboundStreamAcceptResult> {
+    return new Promise<AsrInboundStreamAcceptResult>(() => undefined);
   }
 }
 

@@ -370,14 +370,14 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       assertOutputSession(output.sessionId, input.sessionId, input.outputId);
       const originalText = output.fullText;
       const originalLength = charLength(originalText);
-      const contextBreakpointCharIndex = breakpointCharIndexFromContext(originalText, input.breakpointContext);
-      const playedRatio = contextBreakpointCharIndex === undefined ? ratio(input.elapsedMs, input.totalMs) : undefined;
-      const breakpointCharIndex = clampIndex(
-        contextBreakpointCharIndex ?? Math.floor(originalLength * (playedRatio ?? 0)),
+      const contextSplitIndex = splitIndexFromContext(originalText, input.breakpointContext);
+      const playedRatio = contextSplitIndex === undefined ? ratio(input.elapsedMs, input.totalMs) : undefined;
+      const splitIndex = clampIndex(
+        contextSplitIndex ?? Math.floor(originalLength * (playedRatio ?? 0)),
         originalLength
       );
-      const visibleText = sliceChars(originalText, 0, breakpointCharIndex);
-      const discardedText = sliceChars(originalText, breakpointCharIndex);
+      const visibleText = sliceChars(originalText, 0, splitIndex);
+      const discardedText = sliceChars(originalText, splitIndex);
       const interruptId = `interrupt:${input.outputId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
       const discardId = `discard:${input.outputId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
       const marker = input.breakMarker ?? breakMarker;
@@ -388,7 +388,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         sessionId: input.sessionId,
         outputId: input.outputId,
         interruptId,
-        breakpointCharIndex,
         discardedText,
         reason: input.reason,
         now: now.occurredAt,
@@ -411,7 +410,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         role: "user",
         kind: "interrupt",
         contentText: input.reason,
-        contentJson: { interruptId, outputId: input.outputId, discardId, breakpointCharIndex, breakMarker: marker, breakpointContext: input.breakpointContext, omitAssistantMessage: input.omitAssistantMessage === true },
+        contentJson: { interruptId, outputId: input.outputId, discardId, breakMarker: marker, breakpointContext: input.breakpointContext, omitAssistantMessage: input.omitAssistantMessage === true },
         endedAt: now.occurredAt,
         endedAtUtc: now.occurredAtUtc
       });
@@ -441,7 +440,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         eventId: event.id,
         segmentId: segment.segmentId,
         reason: input.reason,
-        breakpointCharIndex,
         playedMs: input.elapsedMs,
         totalMs: input.totalMs,
         playedRatio,
@@ -573,7 +571,7 @@ function sliceChars(text: string, start: number, end?: number): string {
   return Array.from(text).slice(start, end).join("");
 }
 
-function breakpointCharIndexFromContext(originalText: string, context?: { beforeText?: string; afterText?: string }): number | undefined {
+function splitIndexFromContext(originalText: string, context?: { beforeText?: string; afterText?: string }): number | undefined {
   const beforeText = context?.beforeText;
   const afterText = context?.afterText;
   if (!beforeText && !afterText) return undefined;
@@ -597,7 +595,7 @@ function breakpointCharIndexFromContext(originalText: string, context?: { before
     const index = firstCharIndexOf(originalChars, afterChars);
     if (index >= 0) return index;
   }
-  return undefined;
+  return normalizedSplitIndexFromContext(originalText, context);
 }
 
 function charIndexBetweenContextAcrossOmittedParentheses(chars: string[], before: string[], after: string[]): number | undefined {
@@ -653,6 +651,41 @@ function lastCharIndexOf(chars: string[], needle: string[]): number {
     if (charsStartWith(chars, index, needle)) return index;
   }
   return -1;
+}
+
+function normalizedSplitIndexFromContext(originalText: string, context: { beforeText?: string; afterText?: string }): number | undefined {
+  const original = normalizeForContextLookup(originalText);
+  const before = context.beforeText ? normalizeForContextLookup(context.beforeText) : undefined;
+  const after = context.afterText ? normalizeForContextLookup(context.afterText) : undefined;
+  for (let index = 0; index <= original.text.length; index += 1) {
+    if (before && !original.text.slice(0, index).endsWith(before.text)) continue;
+    if (after && !original.text.slice(index).startsWith(after.text)) continue;
+    return original.endIndexes[Math.max(0, index - 1)] ?? 0;
+  }
+  if (before) {
+    const index = original.text.lastIndexOf(before.text);
+    if (index >= 0) return original.endIndexes[index + before.text.length - 1] ?? 0;
+  }
+  if (after) {
+    const index = original.text.indexOf(after.text);
+    if (index >= 0) return original.startIndexes[index] ?? 0;
+  }
+  return undefined;
+}
+
+function normalizeForContextLookup(text: string): { text: string; startIndexes: number[]; endIndexes: number[] } {
+  const chars = Array.from(text);
+  let normalized = "";
+  const startIndexes: number[] = [];
+  const endIndexes: number[] = [];
+  for (const [index, char] of chars.entries()) {
+    if (/\s/u.test(char)) continue;
+    const value = char === "…" ? "." : char;
+    normalized += value;
+    startIndexes.push(index);
+    endIndexes.push(index + 1);
+  }
+  return { text: normalized, startIndexes, endIndexes };
 }
 
 function ratio(elapsedMs?: number, totalMs?: number): number {

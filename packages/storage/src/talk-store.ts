@@ -81,7 +81,6 @@ export type TalkOutputDiscard = {
   sessionId: string;
   outputId: string;
   interruptId: string;
-  breakpointCharIndex: number;
   discardedText: string;
   reason: string;
 };
@@ -91,7 +90,6 @@ export type TalkOutputInterrupt = {
   sessionId: string;
   outputId: string;
   reason: string;
-  breakpointCharIndex: number;
   playedMs?: number;
   totalMs?: number;
   playedRatio?: number;
@@ -150,7 +148,6 @@ export type TalkStore = {
     sessionId: string;
     outputId: string;
     interruptId: string;
-    breakpointCharIndex: number;
     discardedText: string;
     reason: string;
     now: string;
@@ -165,7 +162,6 @@ export type TalkStore = {
     eventId?: number;
     segmentId?: string;
     reason: string;
-    breakpointCharIndex: number;
     playedMs?: number;
     totalMs?: number;
     playedRatio?: number;
@@ -458,14 +454,13 @@ export function createTalkStore(dbPath: string): TalkStore {
     },
     insertDiscard(input) {
       db.prepare(`
-        INSERT INTO talk_output_discards(discard_id, session_id, output_id, interrupt_id, breakpoint_char_index, discarded_text, reason, created_at, created_at_utc, metadata_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO talk_output_discards(discard_id, session_id, output_id, interrupt_id, discarded_text, reason, created_at, created_at_utc, metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.discardId,
         input.sessionId,
         input.outputId,
         input.interruptId,
-        input.breakpointCharIndex,
         input.discardedText,
         input.reason,
         input.now,
@@ -477,7 +472,7 @@ export function createTalkStore(dbPath: string): TalkStore {
     getDiscard(discardId) {
       return normalizeDiscard(db.prepare(`
         SELECT discard_id AS discardId, session_id AS sessionId, output_id AS outputId, interrupt_id AS interruptId,
-               breakpoint_char_index AS breakpointCharIndex, discarded_text AS discardedText, reason
+               discarded_text AS discardedText, reason
         FROM talk_output_discards
         WHERE discard_id = ?
         LIMIT 1
@@ -485,8 +480,8 @@ export function createTalkStore(dbPath: string): TalkStore {
     },
     insertInterrupt(input) {
       db.prepare(`
-        INSERT INTO talk_output_interrupts(interrupt_id, session_id, output_id, event_id, segment_id, reason, breakpoint_char_index, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, metadata_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO talk_output_interrupts(interrupt_id, session_id, output_id, event_id, segment_id, reason, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.interruptId,
         input.sessionId,
@@ -494,7 +489,6 @@ export function createTalkStore(dbPath: string): TalkStore {
         input.eventId ?? null,
         input.segmentId ?? null,
         input.reason,
-        input.breakpointCharIndex,
         input.playedMs ?? null,
         input.totalMs ?? null,
         input.playedRatio ?? null,
@@ -507,8 +501,8 @@ export function createTalkStore(dbPath: string): TalkStore {
       );
       return normalizeInterrupt(db.prepare(`
         SELECT interrupt_id AS interruptId, session_id AS sessionId, output_id AS outputId, reason,
-               breakpoint_char_index AS breakpointCharIndex, played_ms AS playedMs, total_ms AS totalMs,
-               played_ratio AS playedRatio, visible_text AS visibleText, discard_id AS discardId,
+               played_ms AS playedMs, total_ms AS totalMs, played_ratio AS playedRatio,
+               visible_text AS visibleText, discard_id AS discardId,
                break_marker AS breakMarker, final_user_segment_id AS finalUserSegmentId
         FROM talk_output_interrupts
         WHERE interrupt_id = ?
@@ -518,8 +512,8 @@ export function createTalkStore(dbPath: string): TalkStore {
     latestUnresolvedInterrupt(sessionId) {
       return normalizeInterrupt(db.prepare(`
         SELECT interrupt_id AS interruptId, session_id AS sessionId, output_id AS outputId, reason,
-               breakpoint_char_index AS breakpointCharIndex, played_ms AS playedMs, total_ms AS totalMs,
-               played_ratio AS playedRatio, visible_text AS visibleText, discard_id AS discardId,
+               played_ms AS playedMs, total_ms AS totalMs, played_ratio AS playedRatio,
+               visible_text AS visibleText, discard_id AS discardId,
                break_marker AS breakMarker, final_user_segment_id AS finalUserSegmentId
         FROM talk_output_interrupts
         WHERE session_id = ? AND final_user_segment_id IS NULL
@@ -662,7 +656,6 @@ function initialize(db: DatabaseSync): void {
       session_id TEXT NOT NULL,
       output_id TEXT NOT NULL,
       interrupt_id TEXT NOT NULL,
-      breakpoint_char_index INTEGER NOT NULL,
       discarded_text TEXT NOT NULL,
       reason TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -679,7 +672,6 @@ function initialize(db: DatabaseSync): void {
       event_id INTEGER,
       segment_id TEXT,
       reason TEXT NOT NULL,
-      breakpoint_char_index INTEGER NOT NULL,
       played_ms INTEGER,
       total_ms INTEGER,
       played_ratio REAL,
@@ -695,6 +687,7 @@ function initialize(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS talk_output_interrupts_session_idx ON talk_output_interrupts(session_id, id);
   `);
+  migrateTalkBreakpointIndexColumns(db);
 }
 
 function getOutput(db: DatabaseSync, outputId: string): TalkOutput | undefined {
@@ -779,7 +772,6 @@ function normalizeDiscard(row: unknown): TalkOutputDiscard | undefined {
     sessionId: value.sessionId,
     outputId: value.outputId,
     interruptId: value.interruptId,
-    breakpointCharIndex: Number(value.breakpointCharIndex),
     discardedText: value.discardedText,
     reason: value.reason
   };
@@ -793,7 +785,6 @@ function normalizeInterrupt(row: unknown): TalkOutputInterrupt | undefined {
     sessionId: value.sessionId,
     outputId: value.outputId,
     reason: value.reason,
-    breakpointCharIndex: Number(value.breakpointCharIndex),
     playedMs: optionalNumber(value.playedMs),
     totalMs: optionalNumber(value.totalMs),
     playedRatio: optionalNumber(value.playedRatio),
@@ -822,4 +813,65 @@ function payloadText(payload: unknown): string | undefined {
 
 function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
+}
+
+function migrateTalkBreakpointIndexColumns(db: DatabaseSync): void {
+  if (hasColumn(db, "talk_output_discards", "breakpoint_char_index")) {
+    db.exec(`
+      ALTER TABLE talk_output_discards RENAME TO talk_output_discards_old;
+      CREATE TABLE talk_output_discards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discard_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        output_id TEXT NOT NULL,
+        interrupt_id TEXT NOT NULL,
+        discarded_text TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_at_utc TEXT,
+        metadata_json TEXT
+      );
+      INSERT INTO talk_output_discards(id, discard_id, session_id, output_id, interrupt_id, discarded_text, reason, created_at, created_at_utc, metadata_json)
+      SELECT id, discard_id, session_id, output_id, interrupt_id, discarded_text, reason, created_at, created_at_utc, metadata_json
+      FROM talk_output_discards_old;
+      DROP TABLE talk_output_discards_old;
+      CREATE INDEX IF NOT EXISTS talk_output_discards_session_idx ON talk_output_discards(session_id, id);
+    `);
+  }
+  if (hasColumn(db, "talk_output_interrupts", "breakpoint_char_index")) {
+    db.exec(`
+      ALTER TABLE talk_output_interrupts RENAME TO talk_output_interrupts_old;
+      CREATE TABLE talk_output_interrupts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interrupt_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        output_id TEXT NOT NULL,
+        event_id INTEGER,
+        segment_id TEXT,
+        reason TEXT NOT NULL,
+        played_ms INTEGER,
+        total_ms INTEGER,
+        played_ratio REAL,
+        visible_text TEXT NOT NULL,
+        discard_id TEXT,
+        break_marker TEXT NOT NULL DEFAULT '...',
+        created_at TEXT NOT NULL,
+        created_at_utc TEXT,
+        final_user_segment_id TEXT,
+        resolved_at TEXT,
+        resolved_at_utc TEXT,
+        metadata_json TEXT
+      );
+      INSERT INTO talk_output_interrupts(id, interrupt_id, session_id, output_id, event_id, segment_id, reason, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, final_user_segment_id, resolved_at, resolved_at_utc, metadata_json)
+      SELECT id, interrupt_id, session_id, output_id, event_id, segment_id, reason, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, final_user_segment_id, resolved_at, resolved_at_utc, metadata_json
+      FROM talk_output_interrupts_old;
+      DROP TABLE talk_output_interrupts_old;
+      CREATE INDEX IF NOT EXISTS talk_output_interrupts_session_idx ON talk_output_interrupts(session_id, id);
+    `);
+  }
+}
+
+function hasColumn(db: DatabaseSync, tableName: string, columnName: string): boolean {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all()
+    .some((row: unknown) => row && typeof row === "object" && (row as { name?: unknown }).name === columnName);
 }

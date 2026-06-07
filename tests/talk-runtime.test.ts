@@ -103,7 +103,6 @@ test("talk runtime removes breakpoint and following text from main output and st
 
   assert.ok(interrupt.discardId);
   const discard = runtime.store.getDiscard(interrupt.discardId);
-  assert.equal(discard?.breakpointCharIndex, 8);
   assert.equal(discard?.discardedText, "饭，然后去散步。");
   assert.equal(interrupt.breakMarker, "...");
 
@@ -159,9 +158,66 @@ test("talk runtime resolves breakpoint from playback text context", () => {
     }
   });
 
-  assert.equal(interrupt.breakpointCharIndex, 13);
   assert.deepEqual(runtime.buildNextLoopMessages("session-context-breakpoint"), [
     { role: "assistant", content: "第一段重复内容。第二段重复..." }
+  ]);
+});
+
+test("talk runtime resolves logged voice context across whitespace and ellipsis normalization", () => {
+  const runtime = createTestRuntime("normalized-breakpoint");
+
+  runtime.openSession(sessionInput("session-normalized-breakpoint"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-normalized-breakpoint",
+    outputId: "output-normalized-breakpoint",
+    delta: "——喂喂喂！老板！？\n\n是老板吧！？\n\n这个点打电话过来……等等现在几点了！？"
+  });
+  runtime.finishAssistantOutput({
+    sessionId: "session-normalized-breakpoint",
+    outputId: "output-normalized-breakpoint"
+  });
+
+  const interrupt = runtime.interruptOutput({
+    sessionId: "session-normalized-breakpoint",
+    outputId: "output-normalized-breakpoint",
+    reason: "barge_in",
+    elapsedMs: 7480,
+    totalMs: 7480,
+    breakpointContext: { beforeText: "是老板吧！？ 这个点打电话过来…" }
+  });
+
+  assert.equal(runtime.store.getOutput("output-normalized-breakpoint")?.fullText, "——喂喂喂！老板！？\n\n是老板吧！？\n\n这个点打电话过来…");
+  assert.equal(runtime.store.getDiscard(interrupt.discardId!)?.discardedText, "…等等现在几点了！？");
+  assert.deepEqual(runtime.buildNextLoopMessages("session-normalized-breakpoint"), [
+    { role: "assistant", content: "——喂喂喂！老板！？\n\n是老板吧！？\n\n这个点打电话过来…" + "..." }
+  ]);
+});
+
+test("talk runtime ignores whitespace differences while resolving voice context", () => {
+  const runtime = createTestRuntime("whitespace-breakpoint");
+
+  runtime.openSession(sessionInput("session-whitespace-breakpoint"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-whitespace-breakpoint",
+    outputId: "output-whitespace-breakpoint",
+    delta: "第一句。\n\n第二句继续说。第三句不该保留。"
+  });
+  runtime.finishAssistantOutput({
+    sessionId: "session-whitespace-breakpoint",
+    outputId: "output-whitespace-breakpoint"
+  });
+
+  runtime.interruptOutput({
+    sessionId: "session-whitespace-breakpoint",
+    outputId: "output-whitespace-breakpoint",
+    reason: "barge_in",
+    elapsedMs: 1,
+    totalMs: 1,
+    breakpointContext: { beforeText: "第一句。第二句继续说。" }
+  });
+
+  assert.deepEqual(runtime.buildNextLoopMessages("session-whitespace-breakpoint"), [
+    { role: "assistant", content: "第一句。\n\n第二句继续说。..." }
   ]);
 });
 

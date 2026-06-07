@@ -31,6 +31,7 @@ import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
 import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
+import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
 
@@ -262,6 +263,9 @@ export type AdminRoutesContext = {
   };
   runtime: { feishuStarted: boolean; wechatStarted: boolean };
   pluginConfigs?: {
+    photo?: {
+      configPath?: string;
+    };
     tts?: {
       configPath?: string;
       testVoiceSynthesizer?: VoiceSynthesizer;
@@ -1005,6 +1009,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
   return [
     asrPluginEntry(),
     ttsPluginEntry(),
+    photoPluginEntry(),
     feishuPluginEntry(),
     wechatPluginEntry()
   ];
@@ -1183,6 +1188,72 @@ function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<Adm
         options: modelNames.map((name) => ({ value: name, label: name }))
       }
       : field)
+  };
+}
+
+function photoPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return photoPluginSummary(context);
+    },
+    config(context) {
+      return publicPhotoPluginConfig(readPhotoConfigForAdmin(context));
+    },
+    patch(context, patch) {
+      const result = updatePhotoConfig(context, patch);
+      return "error" in result ? result : { config: publicPhotoPluginConfig(result.config) };
+    },
+    setEnabled(context, enabled) {
+      const result = updatePhotoConfig(context, { enabled });
+      return "error" in result ? result : { config: publicPhotoPluginConfig(result.config) };
+    },
+    reload(context) {
+      return { config: publicPhotoPluginConfig(readPhotoConfigForAdmin(context)) };
+    },
+    configSchema: {
+      groups: [
+        { key: "general", label: "General" },
+        { key: "api", label: "Image API" },
+        { key: "codex", label: "Codex" },
+        { key: "storage", label: "Storage" }
+      ],
+      fields: [
+        { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the selfie tool route." },
+        { key: "selfieMode", label: "Selfie Mode", type: "select", group: "general", options: [
+          { value: "api", label: "API" },
+          { value: "codex", label: "Codex" }
+        ], description: "API uses the fast Image API runner. Codex uses the Codex CLI image path." },
+        { key: "selfieImageApiKeySet", label: "API Key", type: "readonly", group: "api", description: "Read from SELFIE_IMAGE_API_KEY or OPENAI_API_KEY; not stored in plugin config." },
+        { key: "selfieImageApiBaseURL", label: "API Base URL", type: "text", group: "api" },
+        { key: "selfieImageApiModel", label: "API Model", type: "text", group: "api" },
+        { key: "selfieImageApiSize", label: "API Size", type: "text", group: "api" },
+        { key: "selfieImageApiQuality", label: "API Quality", type: "text", group: "api" },
+        { key: "selfieImageApiOutputFormat", label: "Output Format", type: "select", group: "api", options: [
+          { value: "jpeg", label: "jpeg" },
+          { value: "png", label: "png" },
+          { value: "webp", label: "webp" }
+        ] },
+        { key: "selfieImageApiOutputCompression", label: "Output Compression", type: "number", group: "api", min: 0, max: 100, step: 1 },
+        { key: "selfieImageApiTimeoutMs", label: "API Timeout Ms", type: "number", group: "api", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieCodexCommand", label: "Codex Command", type: "text", group: "codex" },
+        { key: "selfieCodexTimeoutMs", label: "Codex Timeout Ms", type: "number", group: "codex", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieReferenceDir", label: "Reference Folder", type: "text", group: "storage" },
+        { key: "selfieOutputDir", label: "Output Folder", type: "text", group: "storage", description: "Must stay under assets/ so generated images can be routed as assets." },
+        { key: "selfieMaxBytes", label: "Max Image Bytes", type: "number", group: "storage", min: 1024, max: 52428800, step: 1024 }
+      ]
+    },
+    routePreview: [
+      "selfie tool call",
+      "photo plugin config",
+      "Image API fast runner or Codex CLI",
+      "channel.image.send"
+    ],
+    runtimeAccess: [
+      "read selfie prompt template and reference images",
+      "call selected Image API or local Codex CLI",
+      "write generated image under assets/generated/selfies",
+      "send generated image to the current messaging session"
+    ]
   };
 }
 
@@ -1394,6 +1465,130 @@ function asrPluginSummary(context: AdminRoutesContext, config = readAsrConfigFor
     configSource: asrConfigPath(context),
     lastLoadedAt: asrConfigMtime(context)
   };
+}
+
+function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfigForAdmin(context)): AdminPluginSummary {
+  const missingConfig = config.enabled && config.selfieMode === "api" && !config.selfieImageApiKey;
+  return {
+    id: "photo",
+    name: "Photo",
+    kind: "tool",
+    status: missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
+    health: missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
+    description: "Generate and send selfie images through the Image API runner or Codex CLI.",
+    configurable: true,
+    switchable: true,
+    configSource: photoConfigPath(context),
+    lastLoadedAt: photoConfigMtime(context)
+  };
+}
+
+function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: PhotoPluginConfig } | { error: string } {
+  if ("selfieImageApiKey" in patch) return { error: "invalid_plugin_config" };
+  const current = readPhotoConfigForAdmin(context);
+  const next: PhotoPluginConfig = {
+    ...current,
+    enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    selfieMode: patch.selfieMode === undefined ? current.selfieMode : photoSelfieModeFromUnknown(patch.selfieMode),
+    selfieReferenceDir: patch.selfieReferenceDir === undefined ? current.selfieReferenceDir : requiredString(patch.selfieReferenceDir).trim(),
+    selfieOutputDir: patch.selfieOutputDir === undefined ? current.selfieOutputDir : requiredString(patch.selfieOutputDir).trim(),
+    selfieCodexCommand: patch.selfieCodexCommand === undefined ? current.selfieCodexCommand : requiredString(patch.selfieCodexCommand).trim(),
+    selfieCodexTimeoutMs: patch.selfieCodexTimeoutMs === undefined ? current.selfieCodexTimeoutMs : numberFromUnknown(patch.selfieCodexTimeoutMs, current.selfieCodexTimeoutMs),
+    selfieImageApiBaseURL: patch.selfieImageApiBaseURL === undefined ? current.selfieImageApiBaseURL : requiredString(patch.selfieImageApiBaseURL).trim().replace(/\/+$/, ""),
+    selfieImageApiModel: patch.selfieImageApiModel === undefined ? current.selfieImageApiModel : requiredString(patch.selfieImageApiModel).trim(),
+    selfieImageApiSize: patch.selfieImageApiSize === undefined ? current.selfieImageApiSize : requiredString(patch.selfieImageApiSize).trim(),
+    selfieImageApiQuality: patch.selfieImageApiQuality === undefined ? current.selfieImageApiQuality : requiredString(patch.selfieImageApiQuality).trim(),
+    selfieImageApiOutputFormat: patch.selfieImageApiOutputFormat === undefined ? current.selfieImageApiOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiOutputFormat, current.selfieImageApiOutputFormat),
+    selfieImageApiOutputCompression: patch.selfieImageApiOutputCompression === undefined ? current.selfieImageApiOutputCompression : numberFromUnknown(patch.selfieImageApiOutputCompression, current.selfieImageApiOutputCompression),
+    selfieImageApiTimeoutMs: patch.selfieImageApiTimeoutMs === undefined ? current.selfieImageApiTimeoutMs : numberFromUnknown(patch.selfieImageApiTimeoutMs, current.selfieImageApiTimeoutMs),
+    selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : numberFromUnknown(patch.selfieMaxBytes, current.selfieMaxBytes)
+  };
+
+  const validationError = validatePhotoConfig(next);
+  if (validationError) return { error: validationError };
+  writePhotoConfig(context, next);
+  return { config: next };
+}
+
+function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
+  if (config.selfieMode !== "api" && config.selfieMode !== "codex") return "invalid_selfie_mode";
+  if (!config.selfieReferenceDir) return "missing_selfie_reference_dir";
+  if (!config.selfieOutputDir || !isPathUnderAssets(config.selfieOutputDir)) return "invalid_selfie_output_dir";
+  if (!config.selfieCodexCommand) return "missing_selfie_codex_command";
+  if (config.selfieCodexTimeoutMs < 1000 || config.selfieCodexTimeoutMs > 600_000) return "invalid_selfie_codex_timeout";
+  if (!isValidHttpUrl(config.selfieImageApiBaseURL)) return "invalid_selfie_api_base_url";
+  if (!config.selfieImageApiModel) return "missing_selfie_api_model";
+  if (!config.selfieImageApiSize) return "missing_selfie_api_size";
+  if (!config.selfieImageApiQuality) return "missing_selfie_api_quality";
+  if (!["jpeg", "png", "webp"].includes(config.selfieImageApiOutputFormat)) return "invalid_selfie_output_format";
+  if (config.selfieImageApiOutputCompression < 0 || config.selfieImageApiOutputCompression > 100) return "invalid_selfie_output_compression";
+  if (config.selfieImageApiTimeoutMs < 1000 || config.selfieImageApiTimeoutMs > 600_000) return "invalid_selfie_api_timeout";
+  if (config.selfieMaxBytes < 1024 || config.selfieMaxBytes > 50 * 1024 * 1024) return "invalid_selfie_max_bytes";
+  return undefined;
+}
+
+function readPhotoConfigForAdmin(context: AdminRoutesContext): PhotoPluginConfig {
+  return readPhotoPluginConfig(photoConfigPath(context), photoConfigDefaultsForAdmin(context));
+}
+
+function writePhotoConfig(context: AdminRoutesContext, config: PhotoPluginConfig): void {
+  const filePath = photoConfigPath(context);
+  const persisted: Partial<PhotoPluginConfig> = { ...config };
+  delete persisted.selfieImageApiKey;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(persisted, null, 2)}\n`);
+}
+
+function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<PhotoPluginConfig> {
+  const photo = ((context.config as Partial<AppConfig>).photo ?? {}) as Partial<PhotoPluginConfig>;
+  return {
+    enabled: true,
+    selfieMode: "api",
+    selfieReferenceDir: photo.selfieReferenceDir,
+    selfieOutputDir: photo.selfieOutputDir,
+    selfieCodexCommand: photo.selfieCodexCommand,
+    selfieCodexTimeoutMs: photo.selfieCodexTimeoutMs,
+    selfieImageApiKey: photo.selfieImageApiKey,
+    selfieImageApiBaseURL: photo.selfieImageApiBaseURL,
+    selfieImageApiModel: photo.selfieImageApiModel,
+    selfieImageApiSize: photo.selfieImageApiSize,
+    selfieImageApiQuality: photo.selfieImageApiQuality,
+    selfieImageApiOutputFormat: photo.selfieImageApiOutputFormat,
+    selfieImageApiOutputCompression: photo.selfieImageApiOutputCompression,
+    selfieImageApiTimeoutMs: photo.selfieImageApiTimeoutMs,
+    selfieMaxBytes: photo.selfieMaxBytes
+  };
+}
+
+function photoConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.photo?.configPath ?? defaultPhotoPluginConfigPath;
+}
+
+function photoConfigMtime(context: AdminRoutesContext): string | undefined {
+  try {
+    const stats = fs.statSync(photoConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
+    if (stats.mtime instanceof Date) return stats.mtime.toISOString();
+    if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function photoSelfieModeFromUnknown(value: unknown): SelfieGenerationMode {
+  return value === "codex" ? "codex" : "api";
+}
+
+function photoOutputFormatFromUnknown(value: unknown, fallback: string): string {
+  const normalized = requiredString(value).trim().toLowerCase();
+  if (normalized === "jpg") return "jpeg";
+  if (normalized === "jpeg" || normalized === "png" || normalized === "webp") return normalized;
+  return fallback;
+}
+
+function isPathUnderAssets(value: string): boolean {
+  const relative = path.relative(path.resolve("assets"), path.resolve(value));
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
 function asrConfigMissingPreset(config: AsrPluginConfig, presetNames: Set<string>): boolean {

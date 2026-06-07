@@ -1300,7 +1300,7 @@ export function renderAdminHtmlV2(): string {
           <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
           <h2>Runtime Access</h2>
           <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
-          \${renderPluginTestBox(payload)}
+          \${payload.testSchema ? renderPluginTestBox(payload) : ""}
           <h2>Recent Events</h2>
           <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
         \`;
@@ -1379,7 +1379,7 @@ export function renderAdminHtmlV2(): string {
           <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
           <h2>Runtime Access</h2>
           <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
-          \${renderPluginTestBox(payload)}
+          \${payload.testSchema ? renderPluginTestBox(payload) : ""}
           <h2>Recent Events</h2>
           <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
         \`;

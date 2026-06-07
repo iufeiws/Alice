@@ -63,6 +63,7 @@ export type VoiceSynthesisResult = {
 
 export type VoiceSynthesizer = ((input: VoiceSynthesisInput) => Promise<VoiceSynthesisResult>) & {
   streamAudio?(input: VoiceSynthesisInput): AsyncIterable<Uint8Array>;
+  streamAudioWithText?(input: VoiceSynthesisInput): AsyncIterable<TtsAudioTextChunk>;
   noteActivity?(): void;
   prepare?(): Promise<void>;
   shutdown?(): Promise<void>;
@@ -150,9 +151,14 @@ export type TtsStreamInput = {
 export type TtsStreamChunk =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; chunk: Uint8Array; contentType: "audio/L16; rate=32000; channels=1" }
+  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: "audio/L16; rate=32000; channels=1" }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
+
+export type TtsAudioTextChunk = {
+  text?: string;
+  chunk: Uint8Array;
+};
 
 export type TtsSynthesizer = VoiceSynthesizer & {
   stream?(input: TtsStreamInput): AsyncIterable<TtsStreamChunk>;
@@ -270,6 +276,7 @@ export function createTtsTranslationSynthesizer(
 
   synthesize.stream = (input) => streamTtsText(input, config, deps);
   synthesize.streamAudio = base.streamAudio?.bind(base);
+  synthesize.streamAudioWithText = base.streamAudioWithText?.bind(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -302,6 +309,7 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     return streamTtsText(input, config, deps);
   };
   synthesize.streamAudio = base.streamAudio?.bind(base);
+  synthesize.streamAudioWithText = base.streamAudioWithText?.bind(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -411,7 +419,9 @@ export async function* streamTtsText(
 ): AsyncIterable<TtsStreamChunk> {
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
-  if (!deps.baseSynthesizer.streamAudio) throw new Error("tts stream requires a streaming Genie TTS synthesizer");
+  if (!deps.baseSynthesizer.streamAudio && !deps.baseSynthesizer.streamAudioWithText) {
+    throw new Error("tts stream requires a streaming Genie TTS synthesizer");
+  }
 
   const sequence = 0;
   const sourceText = await collectTtsStreamText(input.text);
@@ -428,6 +438,7 @@ export async function* streamTtsText(
   }
   const ttsText = await resolveTtsText(sourceText, config, deps);
   const ttsChars = Array.from(ttsText).length;
+  deps.appendLog?.("info", `tts stream text lengths: stream=${input.streamId ?? ""} sourceChars=${sourceChars} translatedChars=${ttsChars}`);
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation complete: stream=${input.streamId ?? ""} chars=${ttsChars}`);
     yield { type: "translation_done", sequence, translatedChars: ttsChars };
@@ -435,25 +446,93 @@ export async function* streamTtsText(
 
   const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...streamGenie } = ttsGenieOverrides(config);
   deps.appendLog?.("info", `tts stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars}`);
+  const sourceTextMapper = createTtsSourceTextMapper(sourceText, ttsText);
   let audioChunks = 0;
   let audioBytes = 0;
-  for await (const chunk of deps.baseSynthesizer.streamAudio({
+  for await (const audio of streamTtsAudioWithOptionalText(deps.baseSynthesizer, {
     text: ttsText,
     time: input.time,
     genie: streamGenie
   })) {
     audioChunks += 1;
-    audioBytes += chunk.byteLength;
+    audioBytes += audio.chunk.byteLength;
+    const text = audio.text ? sourceTextMapper.take(audio.text) : undefined;
     yield {
       type: "audio",
       sequence,
-      chunk,
+      ...(text ? { text } : {}),
+      chunk: audio.chunk,
       contentType: "audio/L16; rate=32000; channels=1"
     };
   }
   deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${audioChunks} bytes=${audioBytes}`);
   yield { type: "part_done", sequence };
   yield { type: "done" };
+}
+
+async function* streamTtsAudioWithOptionalText(
+  synthesizer: VoiceSynthesizer,
+  input: VoiceSynthesisInput
+): AsyncIterable<TtsAudioTextChunk> {
+  if (synthesizer.streamAudioWithText) {
+    yield* synthesizer.streamAudioWithText(input);
+    return;
+  }
+  if (!synthesizer.streamAudio) throw new Error("tts stream requires a streaming Genie TTS synthesizer");
+  for await (const chunk of synthesizer.streamAudio(input)) yield { chunk };
+}
+
+function createTtsSourceTextMapper(sourceText: string, translatedText: string): { take(translatedChunkText: string): string | undefined } {
+  const sourceChars = Array.from(sourceText);
+  const translatedChars = Array.from(translatedText);
+  const sourceTotal = sourceChars.length;
+  const translatedTotal = translatedChars.length;
+  const boundaries = sourceTextBoundaries(sourceChars);
+  let translatedCursor = 0;
+  let sourceCursor = 0;
+
+  return {
+    take(translatedChunkText: string): string | undefined {
+      const translatedChunkChars = Array.from(translatedChunkText).length;
+      if (sourceCursor >= sourceTotal || translatedChunkChars <= 0) return undefined;
+      translatedCursor = Math.min(translatedTotal, translatedCursor + translatedChunkChars);
+      const rawTarget = translatedTotal > 0
+        ? Math.round((translatedCursor / translatedTotal) * sourceTotal)
+        : sourceTotal;
+      const target = translatedCursor >= translatedTotal
+        ? sourceTotal
+        : nearestSourceBoundary(rawTarget, sourceCursor, sourceTotal, boundaries);
+      const end = Math.min(sourceTotal, Math.max(sourceCursor + 1, target));
+      const text = sourceChars.slice(sourceCursor, end).join("").trim();
+      sourceCursor = end;
+      return text || undefined;
+    }
+  };
+}
+
+function sourceTextBoundaries(chars: string[]): number[] {
+  const boundaries: number[] = [];
+  chars.forEach((char, index) => {
+    if (/[。！？.!?,，、；;：:\n]/.test(char)) boundaries.push(index + 1);
+  });
+  if (chars.length > 0 && boundaries[boundaries.length - 1] !== chars.length) boundaries.push(chars.length);
+  return boundaries;
+}
+
+function nearestSourceBoundary(target: number, cursor: number, total: number, boundaries: number[]): number {
+  const clamped = Math.min(total, Math.max(cursor + 1, target));
+  const candidates = boundaries.filter((boundary) => boundary > cursor);
+  if (!candidates.length) return clamped;
+  let nearest = candidates[0]!;
+  let nearestDistance = Math.abs(nearest - clamped);
+  for (const boundary of candidates.slice(1)) {
+    const distance = Math.abs(boundary - clamped);
+    if (distance < nearestDistance) {
+      nearest = boundary;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
 }
 
 export async function collectTtsStreamText(text: AsyncIterable<string> | Iterable<string> | string): Promise<string> {
@@ -886,6 +965,22 @@ export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: Config
       throw error;
     }
   };
+  synthesize.streamAudioWithText = async function* (request) {
+    if (useMossFallback || !genie.streamAudioWithText) {
+      throw new Error("Genie TTS text stream is unavailable while using MOSS fallback");
+    }
+    try {
+      yield* genie.streamAudioWithText(request);
+      genieHasSynthesized = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!genieHasSynthesized && isGenieStartupFallbackError(message)) {
+        useMossFallback = true;
+        deps.appendLog?.("warn", `genie tts text stream failed; falling back to moss for non-stream synthesis: ${message}`);
+      }
+      throw error;
+    }
+  };
   synthesize.prepare = async () => {
     if (useMossFallback) {
       await fallbackMoss?.prepare?.();
@@ -983,6 +1078,38 @@ export function createTtsRemoteAwareVoiceSynthesizer(
       yield* local.streamAudio(request);
     }
   };
+  synthesize.streamAudioWithText = async function* (request) {
+    const remote = selectedRemote();
+    if (!remote?.streamAudioWithText) {
+      deps.appendLog?.("info", "tts remote-aware text stream using local Genie: remote unavailable");
+      if (local.streamAudioWithText) {
+        yield* local.streamAudioWithText(request);
+        return;
+      }
+      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      for await (const chunk of local.streamAudio(request)) yield { chunk };
+      return;
+    }
+    let yielded = false;
+    try {
+      deps.appendLog?.("info", `tts remote-aware text stream using remote Genie: chars=${Array.from(request.text).length}`);
+      for await (const chunk of remote.streamAudioWithText(request)) {
+        yielded = true;
+        yield chunk;
+      }
+      deps.appendLog?.("info", "tts remote-aware text stream remote complete");
+    } catch (error) {
+      if (yielded) throw error;
+      if (isRemoteGenieProtocolError(error)) throw error;
+      deps.appendLog?.("warn", `tts remote Genie text stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      if (local.streamAudioWithText) {
+        yield* local.streamAudioWithText(request);
+        return;
+      }
+      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      for await (const chunk of local.streamAudio(request)) yield { chunk };
+    }
+  };
   synthesize.noteActivity = () => {
     selectedRemote()?.noteActivity?.();
     local.noteActivity?.();
@@ -1047,6 +1174,50 @@ export function createFallbackVoiceSynthesizer(
       deps.appendLog?.("warn", `voice tts primary stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
       if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
       yield* fallback.streamAudio(request);
+    }
+  };
+  synthesize.streamAudioWithText = async function* (request) {
+    if (useFallback) {
+      if (fallback.streamAudioWithText) {
+        yield* fallback.streamAudioWithText(request);
+        return;
+      }
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      for await (const chunk of fallback.streamAudio(request)) yield { chunk };
+      return;
+    }
+    const primaryStream = primary.streamAudioWithText ?? (primary.streamAudio
+      ? async function* (input: VoiceSynthesisInput) {
+        for await (const chunk of primary.streamAudio!(input)) yield { chunk };
+      }
+      : undefined);
+    if (!primaryStream) {
+      useFallback = true;
+      deps.appendLog?.("warn", "voice tts primary text stream unavailable; falling back to local Genie");
+      if (fallback.streamAudioWithText) {
+        yield* fallback.streamAudioWithText(request);
+        return;
+      }
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      for await (const chunk of fallback.streamAudio(request)) yield { chunk };
+      return;
+    }
+    let yielded = false;
+    try {
+      for await (const chunk of primaryStream(request)) {
+        yielded = true;
+        yield chunk;
+      }
+    } catch (error) {
+      if (yielded) throw error;
+      useFallback = true;
+      deps.appendLog?.("warn", `voice tts primary text stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+      if (fallback.streamAudioWithText) {
+        yield* fallback.streamAudioWithText(request);
+        return;
+      }
+      if (!fallback.streamAudio) throw new Error("Fallback voice TTS stream is unavailable");
+      for await (const chunk of fallback.streamAudio(request)) yield { chunk };
     }
   };
   synthesize.noteActivity = () => {
@@ -1428,6 +1599,37 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     }
     deps.appendLog?.("info", `genie tts stream complete: chunks=${chunks} bytes=${bytes}`);
   };
+  synthesize.streamAudioWithText = async function* (request) {
+    const { text } = request;
+    noteActivity();
+    const speed = genieSpeedValue(request.genie?.speed);
+    if (speed !== 1) throw new Error("Genie TTS stream does not support speed adjustment");
+    deps.appendLog?.("info", `genie tts text stream prepare: baseURL=${config.baseURL} explicit=${config.baseURLExplicit ? "true" : "false"} chars=${Array.from(text).length}`);
+    await ensureGenieService();
+    deps.appendLog?.("info", `genie tts text stream open: url=${config.baseURL}/${config.baseURLExplicit ? "stream-input" : "stream"} chars=${Array.from(text).length}`);
+    let chunks = 0;
+    let bytes = 0;
+  for await (const chunk of streamGeniePcmWithText({
+      text,
+      genie: request.genie,
+      baseURL: config.baseURL,
+      useClientUploadFlow: config.baseURLExplicit,
+      timeoutMs: config.timeoutMs,
+      fetchImpl,
+      setTimer,
+      clearTimer,
+      appendLog: deps.appendLog
+    })) {
+    noteActivity();
+    chunks += 1;
+    bytes += chunk.chunk.byteLength;
+    if (chunks === 1 || chunks % 20 === 0) {
+        deps.appendLog?.("info", `genie tts text stream chunk: chunks=${chunks} bytes=${bytes}`);
+      }
+      yield chunk;
+    }
+    deps.appendLog?.("info", `genie tts text stream complete: chunks=${chunks} bytes=${bytes}`);
+  };
   synthesize.prepare = async () => {
     noteActivity();
     await ensureGenieService();
@@ -1631,19 +1833,41 @@ async function* streamGeniePcm(input: {
   clearTimer: typeof clearTimeout;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
 }): AsyncIterable<Uint8Array> {
+  for await (const chunk of streamGeniePcmWithText(input)) yield chunk.chunk;
+}
+
+async function* streamGeniePcmWithText(input: {
+  text: string;
+  genie?: VoiceSynthesisInput["genie"];
+  baseURL: string;
+  useClientUploadFlow?: boolean;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+  setTimer: typeof setTimeout;
+  clearTimer: typeof clearTimeout;
+  appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+}): AsyncIterable<TtsAudioTextChunk> {
   const controller = new AbortController();
   const timeout = input.setTimer(() => controller.abort(), input.timeoutMs);
   timeout.unref?.();
   try {
-    const response = await openGeniePcmStream(input, controller.signal);
+    const response = await openGeniePcmStream({
+      ...input,
+      responseFormat: input.useClientUploadFlow && input.genie?.modelDir ? "ndjson" : undefined
+    }, controller.signal);
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
       throw new Error(`Genie TTS stream HTTP ${response.status}: ${errorText.slice(0, 500)}`);
     }
     if (!response.body) throw new Error("Genie TTS stream response had no body");
+    const contentType = response.headers.get("content-type") ?? "";
+    if (/ndjson|jsonl|application\/json/i.test(contentType)) {
+      yield* parseGenieNdjsonAudioStream(response.body as AsyncIterable<Uint8Array>);
+      return;
+    }
     for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
       if (!chunk.byteLength) continue;
-      yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      yield { chunk: chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk) };
     }
   } finally {
     input.clearTimer(timeout);
@@ -1659,6 +1883,7 @@ async function openGeniePcmStream(input: {
   timeoutMs: number;
   fetchImpl: typeof fetch;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+  responseFormat?: "ndjson";
 }, signal: AbortSignal): Promise<Response> {
   const overrides = genieRequestOverrides(input.genie, input.appendLog, {
     requireCompleteModel: !input.useClientUploadFlow
@@ -1677,7 +1902,8 @@ async function openGeniePcmStream(input: {
 
   const url = genieStreamInputUrl(input.baseURL, {
     language: typeof overrides.language === "string" ? overrides.language : undefined,
-    modelDir: String(overrides.modelDir)
+    modelDir: String(overrides.modelDir),
+    responseFormat: input.responseFormat
   });
   const body = `${JSON.stringify({
     text: input.text,
@@ -1710,11 +1936,53 @@ async function openGeniePcmStream(input: {
   return response;
 }
 
-function genieStreamInputUrl(baseURL: string, input: { language?: string; modelDir: string }): string {
+function genieStreamInputUrl(baseURL: string, input: { language?: string; modelDir: string; responseFormat?: "ndjson" }): string {
   const url = new URL(`${baseURL}/stream-input`);
   if (input.language) url.searchParams.set("language", input.language);
   url.searchParams.set("modelDir", input.modelDir);
+  if (input.responseFormat) url.searchParams.set("responseFormat", input.responseFormat);
   return url.toString();
+}
+
+async function* parseGenieNdjsonAudioStream(body: AsyncIterable<Uint8Array>): AsyncIterable<TtsAudioTextChunk> {
+  const decoder = new TextDecoder();
+  let pending = "";
+  for await (const rawChunk of body) {
+    const chunk = rawChunk instanceof Uint8Array ? rawChunk : new Uint8Array(rawChunk);
+    pending += decoder.decode(chunk, { stream: true });
+    while (true) {
+      const newline = pending.indexOf("\n");
+      if (newline < 0) break;
+      const line = pending.slice(0, newline).trim();
+      pending = pending.slice(newline + 1);
+      const parsed = parseGenieNdjsonAudioLine(line);
+      if (parsed) yield parsed;
+    }
+  }
+  pending += decoder.decode();
+  const line = pending.trim();
+  const parsed = parseGenieNdjsonAudioLine(line);
+  if (parsed) yield parsed;
+}
+
+function parseGenieNdjsonAudioLine(line: string): TtsAudioTextChunk | undefined {
+  if (!line) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line) as unknown;
+  } catch {
+    throw new Error(`Genie TTS ndjson stream invalid JSON line: ${line.slice(0, 500)}`);
+  }
+  if (!isRecord(parsed)) throw new Error(`Genie TTS ndjson stream invalid line: ${line.slice(0, 500)}`);
+  const type = optionalStringValue(parsed.type);
+  if (type === "done") return undefined;
+  if (type !== "audio") return undefined;
+  const audioBase64 = optionalStringValue(parsed.audioBase64);
+  if (!audioBase64) throw new Error("Genie TTS ndjson audio line did not include audioBase64");
+  return {
+    text: optionalStringValue(parsed.text),
+    chunk: new Uint8Array(Buffer.from(audioBase64, "base64"))
+  };
 }
 
 async function readGenieRemoteUploadResponse(response: Response, fallbackModelDir: string): Promise<{ code: string; modelDir: string; uploadUrl?: string }> {

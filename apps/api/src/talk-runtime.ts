@@ -10,21 +10,21 @@ import type {
 
 export type TalkRuntime = {
   store: TalkStore;
-  openSession(input: TalkSessionOpenInput): void;
+  openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
   closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
   startAgentLoop(sessionId: string): void;
   ingestInput(event: TalkEvent): void;
+  commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
   claimReadyOutputChunk(sessionId: string): TalkOutputChunk | undefined;
-  markOutputChunkPlayed(chunkId: string): void;
+  markOutputChunkPlayed(input: { sessionId: string; chunkId: string }): void;
   interruptOutput(input: {
     sessionId: string;
     outputId: string;
     reason: "barge_in" | "manual" | "network" | "unknown";
     elapsedMs?: number;
     totalMs?: number;
-    breakpointCharIndex?: number;
     breakpointContext?: { beforeText?: string; afterText?: string };
     omitAssistantMessage?: boolean;
     breakMarker?: string;
@@ -34,7 +34,6 @@ export type TalkRuntime = {
     reason: "barge_in" | "manual" | "network" | "unknown";
     elapsedMs?: number;
     totalMs?: number;
-    breakpointCharIndex?: number;
     breakpointContext?: { beforeText?: string; afterText?: string };
     omitAssistantMessage?: boolean;
     breakMarker?: string;
@@ -43,11 +42,34 @@ export type TalkRuntime = {
 };
 
 export type TalkSessionOpenInput = {
-  sessionId: string;
+  sessionId?: string;
   source: TalkSource;
   occurredAt?: string;
   occurredAtUtc?: string;
   metadata?: unknown;
+};
+
+export type TalkSessionOpenResult = {
+  sessionId: string;
+};
+
+export type StableInputBatch = {
+  sessionId: string;
+  batchId: string;
+  interruptEpoch: number;
+  inputs: StableInputItem[];
+};
+
+export type StableInputItem = {
+  interruptId: string;
+  sequence: number;
+  reason: "barge_in" | "manual" | "asr_failure" | "call_close";
+  asrStreamId?: string;
+  text: string;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  targetOutputId?: string;
+  targetChunkId?: string;
 };
 
 export type TalkRuntimeDeps = {
@@ -55,6 +77,12 @@ export type TalkRuntimeDeps = {
   time: CurrentTimeProvider;
   breakMarker?: string;
   readyChars?: number;
+  createLLMSession?(input: {
+    occurredAt: string;
+    occurredAtUtc?: string;
+    source: TalkSource;
+    metadata?: unknown;
+  }): string | number;
   runAgentLoop?(sessionId: string): Promise<void> | void;
   interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
 };
@@ -71,8 +99,14 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       const now = current(deps.time);
       const occurredAt = input.occurredAt ?? now.occurredAt;
       const occurredAtUtc = input.occurredAtUtc ?? now.occurredAtUtc;
+      const sessionId = String(deps.createLLMSession?.({
+        occurredAt,
+        occurredAtUtc,
+        source: input.source,
+        metadata: input.metadata
+      }) ?? input.sessionId ?? `talk:${Date.now()}:${Math.random().toString(16).slice(2)}`);
       deps.store.openSession({
-        sessionId: input.sessionId,
+        sessionId,
         source: input.source,
         occurredAt,
         occurredAtUtc,
@@ -80,15 +114,17 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
       deps.store.insertEvent({
         kind: "session.started",
-        sessionId: input.sessionId,
+        sessionId,
         source: input.source,
         sequence: 0,
         occurredAt,
         occurredAtUtc,
         payload: { kind: "session", ...(typeof input.metadata === "object" && input.metadata ? input.metadata : {}) }
       });
+      return { sessionId };
     },
     closeSession(input) {
+      assertSessionExists(deps.store, input.sessionId);
       const now = current(deps.time);
       deps.store.closeSession({
         sessionId: input.sessionId,
@@ -97,11 +133,12 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
     },
     startAgentLoop(sessionId) {
+      assertOpenSession(deps.store, sessionId);
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
-      if (!deps.store.isSessionOutputIdle(sessionId)) return;
       void deps.runAgentLoop?.(sessionId);
     },
     ingestInput(event) {
+      assertOpenSession(deps.store, event.sessionId);
       const inserted = deps.store.insertEvent(event);
       if (!inserted.inserted) return;
       if (event.kind === "audio.transcript.final" || event.kind === "text.final") {
@@ -124,7 +161,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
           now: event.occurredAt,
           nowUtc: event.occurredAtUtc
         });
-        if (deps.store.isSessionOutputIdle(event.sessionId)) void deps.runAgentLoop?.(event.sessionId);
+        void deps.runAgentLoop?.(event.sessionId);
       } else if (event.kind === "input.interrupted") {
         deps.store.insertSegment({
           sessionId: event.sessionId,
@@ -139,8 +176,66 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         });
       }
     },
+    commitStableInputBatch(batch) {
+      assertOpenSession(deps.store, batch.sessionId);
+      if (batch.inputs.length === 0) return;
+      const commit = () => {
+        const ordered = [...batch.inputs].sort((a, b) => a.sequence - b.sequence);
+        for (const item of ordered) {
+          const event = deps.store.insertEvent({
+            kind: item.reason === "manual" ? "text.final" : "audio.transcript.final",
+            sessionId: batch.sessionId,
+            source: { plugin: "webrtc_voice" },
+            sequence: item.sequence,
+            occurredAt: item.occurredAt,
+            occurredAtUtc: item.occurredAtUtc,
+            payload: {
+              kind: item.reason === "manual" ? "text" : "transcript",
+              text: item.text,
+              interruptId: item.interruptId,
+              batchId: batch.batchId,
+              interruptEpoch: batch.interruptEpoch,
+              reason: item.reason,
+              targetOutputId: item.targetOutputId,
+              targetChunkId: item.targetChunkId
+            },
+            raw: { asrStreamId: item.asrStreamId }
+          });
+          if (!event.inserted) continue;
+          const segment = deps.store.insertSegment({
+            sessionId: batch.sessionId,
+            eventId: event.id,
+            segmentId: `stable:${batch.batchId}:${item.interruptId}`,
+            role: "user",
+            kind: item.reason === "manual" ? "text" : "transcript",
+            contentText: item.text,
+            contentJson: {
+              batchId: batch.batchId,
+              interruptId: item.interruptId,
+              interruptEpoch: batch.interruptEpoch,
+              reason: item.reason,
+              asrStreamId: item.asrStreamId,
+              targetOutputId: item.targetOutputId,
+              targetChunkId: item.targetChunkId
+            },
+            endedAt: item.occurredAt,
+            endedAtUtc: item.occurredAtUtc
+          });
+          deps.store.resolveInterrupt({
+            interruptId: item.interruptId,
+            finalUserSegmentId: segment.segmentId ?? String(segment.id),
+            now: item.occurredAt,
+            nowUtc: item.occurredAtUtc
+          });
+        }
+      };
+      if (deps.store.transaction) deps.store.transaction(commit);
+      else commit();
+      void deps.runAgentLoop?.(batch.sessionId);
+    },
     appendAssistantDelta(input) {
       if (!input.delta) return;
+      assertOpenSession(deps.store, input.sessionId);
       const now = current(deps.time);
       let output = deps.store.ensureOutput({
         sessionId: input.sessionId,
@@ -200,9 +295,11 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       void output;
     },
     finishAssistantOutput(input) {
+      assertOpenSession(deps.store, input.sessionId);
       const now = current(deps.time);
       const output = deps.store.getOutput(input.outputId);
       if (!output || output.status === "interrupted" || output.status === "cancelled") return;
+      assertOutputSession(output.sessionId, input.sessionId, input.outputId);
       const tail = output.pendingChunkText + output.bufferText;
       let nextChunkSequence = output.nextChunkSequence;
       if (tail) {
@@ -242,15 +339,22 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
     },
     claimReadyOutputChunk(sessionId) {
-      if (deps.store.latestUnresolvedInterrupt(sessionId)) return undefined;
+      assertOpenSession(deps.store, sessionId);
       const now = current(deps.time);
       return deps.store.claimReadyOutputChunk(sessionId, now.occurredAt, now.occurredAtUtc);
     },
-    markOutputChunkPlayed(chunkId) {
+    markOutputChunkPlayed(input) {
+      assertOpenSession(deps.store, input.sessionId);
       const now = current(deps.time);
-      deps.store.markChunkPlayed(chunkId, now.occurredAt, now.occurredAtUtc);
+      deps.store.markChunkPlayed({
+        sessionId: input.sessionId,
+        chunkId: input.chunkId,
+        now: now.occurredAt,
+        nowUtc: now.occurredAtUtc
+      });
     },
     interruptLatestOutput(input) {
+      assertOpenSession(deps.store, input.sessionId);
       const output = deps.store.latestOutput(input.sessionId);
       if (!output) return undefined;
       return runtime.interruptOutput({
@@ -259,14 +363,17 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
     },
     interruptOutput(input) {
+      assertOpenSession(deps.store, input.sessionId);
       const now = current(deps.time);
       const output = deps.store.getOutput(input.outputId);
       if (!output) throw new Error(`talk output not found: ${input.outputId}`);
+      assertOutputSession(output.sessionId, input.sessionId, input.outputId);
       const originalText = output.fullText;
       const originalLength = charLength(originalText);
-      const playedRatio = input.breakpointCharIndex === undefined ? ratio(input.elapsedMs, input.totalMs) : undefined;
+      const contextBreakpointCharIndex = breakpointCharIndexFromContext(originalText, input.breakpointContext);
+      const playedRatio = contextBreakpointCharIndex === undefined ? ratio(input.elapsedMs, input.totalMs) : undefined;
       const breakpointCharIndex = clampIndex(
-        input.breakpointCharIndex ?? Math.floor(originalLength * (playedRatio ?? 0)),
+        contextBreakpointCharIndex ?? Math.floor(originalLength * (playedRatio ?? 0)),
         originalLength
       );
       const visibleText = sliceChars(originalText, 0, breakpointCharIndex);
@@ -349,6 +456,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       return interrupt;
     },
     buildNextLoopMessages(sessionId) {
+      assertSessionExists(deps.store, sessionId);
       const latestInterrupt = deps.store.latestUnresolvedInterrupt(sessionId);
       const segments = deps.store.listSegments(sessionId).filter((segment) => segment.kind !== "interrupt");
       const messages: LLMMessage[] = [];
@@ -388,6 +496,22 @@ function current(time: CurrentTimeProvider): { occurredAt: string; occurredAtUtc
     occurredAt: now.iso,
     occurredAtUtc: now.date.toISOString()
   };
+}
+
+function assertSessionExists(store: TalkStore, sessionId: string): void {
+  if (!store.getSession(sessionId)) throw new Error(`talk session not found: ${sessionId}`);
+}
+
+function assertOpenSession(store: TalkStore, sessionId: string): void {
+  const session = store.getSession(sessionId);
+  if (!session) throw new Error(`talk session not found: ${sessionId}`);
+  if (session.status !== "open") throw new Error(`talk session is not open: ${sessionId}`);
+}
+
+function assertOutputSession(outputSessionId: string, expectedSessionId: string, outputId: string): void {
+  if (outputSessionId !== expectedSessionId) {
+    throw new Error(`talk output session mismatch: output=${outputId} session=${outputSessionId} expected=${expectedSessionId}`);
+  }
 }
 
 function payloadText(payload: unknown): string | undefined {
@@ -447,6 +571,88 @@ function charLength(text: string): number {
 
 function sliceChars(text: string, start: number, end?: number): string {
   return Array.from(text).slice(start, end).join("");
+}
+
+function breakpointCharIndexFromContext(originalText: string, context?: { beforeText?: string; afterText?: string }): number | undefined {
+  const beforeText = context?.beforeText;
+  const afterText = context?.afterText;
+  if (!beforeText && !afterText) return undefined;
+  const originalChars = Array.from(originalText);
+  const beforeChars = beforeText ? Array.from(beforeText) : [];
+  const afterChars = afterText ? Array.from(afterText) : [];
+  for (let index = 0; index <= originalChars.length; index += 1) {
+    if (beforeChars.length > 0 && !charsEndWith(originalChars, index, beforeChars)) continue;
+    if (afterChars.length > 0 && !charsStartWith(originalChars, index, afterChars)) continue;
+    return index;
+  }
+  if (beforeChars.length > 0 && afterChars.length > 0) {
+    const index = charIndexBetweenContextAcrossOmittedParentheses(originalChars, beforeChars, afterChars);
+    if (index !== undefined) return index;
+  }
+  if (beforeChars.length > 0) {
+    const index = lastCharIndexOf(originalChars, beforeChars);
+    if (index >= 0) return index + beforeChars.length;
+  }
+  if (afterChars.length > 0) {
+    const index = firstCharIndexOf(originalChars, afterChars);
+    if (index >= 0) return index;
+  }
+  return undefined;
+}
+
+function charIndexBetweenContextAcrossOmittedParentheses(chars: string[], before: string[], after: string[]): number | undefined {
+  for (let index = 0; index <= chars.length; index += 1) {
+    if (!charsEndWith(chars, index, before)) continue;
+    const afterIndex = skipParenthesizedAt(chars, index);
+    if (afterIndex !== undefined && charsStartWith(chars, afterIndex, after)) return index;
+  }
+  return undefined;
+}
+
+function skipParenthesizedAt(chars: string[], index: number): number | undefined {
+  const opener = chars[index];
+  const closer = opener === "(" ? ")" : opener === "（" ? "）" : undefined;
+  if (!closer) return undefined;
+  let depth = 0;
+  for (let cursor = index; cursor < chars.length; cursor += 1) {
+    const char = chars[cursor];
+    if (char === opener) depth += 1;
+    else if (char === closer) {
+      depth -= 1;
+      if (depth === 0) return cursor + 1;
+    }
+  }
+  return undefined;
+}
+
+function charsEndWith(chars: string[], endIndex: number, suffix: string[]): boolean {
+  if (suffix.length > endIndex) return false;
+  for (let offset = 0; offset < suffix.length; offset += 1) {
+    if (chars[endIndex - suffix.length + offset] !== suffix[offset]) return false;
+  }
+  return true;
+}
+
+function charsStartWith(chars: string[], startIndex: number, prefix: string[]): boolean {
+  if (startIndex + prefix.length > chars.length) return false;
+  for (let offset = 0; offset < prefix.length; offset += 1) {
+    if (chars[startIndex + offset] !== prefix[offset]) return false;
+  }
+  return true;
+}
+
+function firstCharIndexOf(chars: string[], needle: string[]): number {
+  for (let index = 0; index <= chars.length - needle.length; index += 1) {
+    if (charsStartWith(chars, index, needle)) return index;
+  }
+  return -1;
+}
+
+function lastCharIndexOf(chars: string[], needle: string[]): number {
+  for (let index = chars.length - needle.length; index >= 0; index -= 1) {
+    if (charsStartWith(chars, index, needle)) return index;
+  }
+  return -1;
 }
 
 function ratio(elapsedMs?: number, totalMs?: number): number {

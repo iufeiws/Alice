@@ -34,6 +34,21 @@ Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
 
 生成图片目录故意被 git 忽略。参考图和 prompt 模板是源码资产，应提交。
 
+## Admin 配置
+
+管理后台的 Plugins 页面会显示 `Photo` 插件。配置文件位于：
+
+```text
+config/plugin/photo/config.json
+```
+
+`selfieMode` 支持：
+
+- `api`：使用快速 Image API runner。
+- `codex`：使用 Codex CLI executor。
+
+API key 仍只从 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY` 读取；admin 配置文件只保存非 secret 设置。
+
 ## Image API 配置说明
 
 工具默认使用快速、小尺寸、低质量输出：

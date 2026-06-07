@@ -27,6 +27,40 @@ test("talk runtime exposes chunks after punctuation and twelve visible character
   assert.equal(runtime.claimReadyOutputChunk("session-chunk")?.text, "好。");
 });
 
+test("talk runtime uses created LLM session id and rejects stale session writes", () => {
+  const runtime = createTestRuntime("llm-session-id", undefined, undefined, () => "llm-session-42");
+
+  const opened = runtime.openSession({
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-42", userId: "browser-42" },
+    occurredAt: "2026-06-07T00:00:00.000",
+    occurredAtUtc: "2026-06-06T15:00:00.000Z",
+    metadata: { language: "ja", callId: "call-42" }
+  });
+
+  assert.equal(opened.sessionId, "llm-session-42");
+  assert.equal(runtime.store.getSession("llm-session-42")?.sessionId, "llm-session-42");
+  assert.throws(() => runtime.ingestInput({
+    kind: "text.final",
+    sessionId: "webrtc_voice:call-42",
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-42", userId: "browser-42" },
+    sequence: 1,
+    occurredAt: "2026-06-07T00:00:01.000",
+    occurredAtUtc: "2026-06-06T15:00:01.000Z",
+    payload: { kind: "text", text: "stale id" }
+  }), /talk session not found: webrtc_voice:call-42/);
+
+  runtime.ingestInput({
+    kind: "text.final",
+    sessionId: opened.sessionId,
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-42", userId: "browser-42" },
+    sequence: 1,
+    occurredAt: "2026-06-07T00:00:01.000",
+    occurredAtUtc: "2026-06-06T15:00:01.000Z",
+    payload: { kind: "text", text: "fresh id" }
+  });
+  assert.deepEqual(runtime.buildNextLoopMessages(opened.sessionId), [{ role: "user", content: "fresh id" }]);
+});
+
 test("talk runtime keeps parenthesized output in storage but out of TTS chunks across deltas", () => {
   const runtime = createTestRuntime("parenthesized");
 
@@ -77,7 +111,7 @@ test("talk runtime removes breakpoint and following text from main output and st
   assert.ok(cancelled.length >= 1);
 });
 
-test("talk runtime uses explicit voice breakpoint index instead of elapsed ratio", () => {
+test("talk runtime uses voice breakpoint context instead of elapsed ratio", () => {
   const runtime = createTestRuntime("explicit-breakpoint");
 
   runtime.openSession(sessionInput("session-explicit-breakpoint"));
@@ -94,12 +128,66 @@ test("talk runtime uses explicit voice breakpoint index instead of elapsed ratio
     reason: "barge_in",
     elapsedMs: 1,
     totalMs: 100,
-    breakpointCharIndex: 13,
-    breakpointContext: { beforeText: "你说撤", afterText: "就撤了" }
+    breakpointContext: { beforeText: "你说撤就撤了" }
   });
 
   assert.deepEqual(runtime.buildNextLoopMessages("session-explicit-breakpoint"), [
     { role: "assistant", content: "那些宫女太监，你说撤就撤了..." }
+  ]);
+});
+
+test("talk runtime resolves breakpoint from playback text context", () => {
+  const runtime = createTestRuntime("context-breakpoint");
+
+  runtime.openSession(sessionInput("session-context-breakpoint"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-context-breakpoint",
+    outputId: "output-context-breakpoint",
+    delta: "第一段重复内容。第二段重复内容。第三段结束。"
+  });
+  runtime.finishAssistantOutput({ sessionId: "session-context-breakpoint", outputId: "output-context-breakpoint" });
+
+  const interrupt = runtime.interruptOutput({
+    sessionId: "session-context-breakpoint",
+    outputId: "output-context-breakpoint",
+    reason: "barge_in",
+    elapsedMs: 1,
+    totalMs: 100,
+    breakpointContext: {
+      beforeText: "第一段重复内容。第二段重复",
+      afterText: "内容。第三段结束。"
+    }
+  });
+
+  assert.equal(interrupt.breakpointCharIndex, 13);
+  assert.deepEqual(runtime.buildNextLoopMessages("session-context-breakpoint"), [
+    { role: "assistant", content: "第一段重复内容。第二段重复..." }
+  ]);
+});
+
+test("talk runtime resolves breakpoint context across omitted parenthesized text", () => {
+  const runtime = createTestRuntime("context-parenthesized-breakpoint");
+
+  runtime.openSession(sessionInput("session-context-parenthesized-breakpoint"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-context-parenthesized-breakpoint",
+    outputId: "output-context-parenthesized-breakpoint",
+    delta: "你好（动作省略）世界。"
+  });
+  runtime.finishAssistantOutput({
+    sessionId: "session-context-parenthesized-breakpoint",
+    outputId: "output-context-parenthesized-breakpoint"
+  });
+
+  runtime.interruptOutput({
+    sessionId: "session-context-parenthesized-breakpoint",
+    outputId: "output-context-parenthesized-breakpoint",
+    reason: "barge_in",
+    breakpointContext: { beforeText: "你好", afterText: "世界。" }
+  });
+
+  assert.deepEqual(runtime.buildNextLoopMessages("session-context-parenthesized-breakpoint"), [
+    { role: "assistant", content: "你好..." }
   ]);
 });
 
@@ -117,7 +205,7 @@ test("talk runtime builds next loop messages with default break marker, not lite
     sessionId: "session-messages",
     outputId: "output-messages",
     reason: "barge_in",
-    breakpointCharIndex: 5,
+    breakpointContext: { beforeText: "我刚才说到" },
     elapsedMs: 900,
     totalMs: 1800
   });
@@ -139,7 +227,7 @@ test("talk runtime builds next loop messages with default break marker, not lite
   assert.doesNotMatch(messages.map((message) => message.content).join("\n"), /\[断点\]/);
 });
 
-test("talk runtime starts the next agent loop after output cache is claimed, before playback finishes", () => {
+test("talk runtime starts the next agent loop without waiting for output playback", () => {
   const loops: string[] = [];
   const runtime = createTestRuntime("idle-loop", (sessionId) => {
     loops.push(sessionId);
@@ -150,16 +238,16 @@ test("talk runtime starts the next agent loop after output cache is claimed, bef
   runtime.finishAssistantOutput({ sessionId: "session-idle", outputId: "output-idle" });
 
   runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, []);
+  assert.deepEqual(loops, ["session-idle"]);
 
   const chunk = runtime.claimReadyOutputChunk("session-idle");
   assert.ok(chunk);
   runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, ["session-idle"]);
-
-  runtime.markOutputChunkPlayed(chunk.chunkId);
-  runtime.startAgentLoop("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle"]);
+
+  runtime.markOutputChunkPlayed({ sessionId: "session-idle", chunkId: chunk.chunkId });
+  runtime.startAgentLoop("session-idle");
+  assert.deepEqual(loops, ["session-idle", "session-idle", "session-idle"]);
 });
 
 test("talk runtime blocks output claim and next loop while waiting for final transcript after interrupt", () => {
@@ -182,7 +270,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
     sessionId: "session-interrupt-gate",
     outputId: "output-interrupt-gate",
     reason: "barge_in",
-    breakpointCharIndex: 13
+    breakpointContext: { beforeText: "那些宫女太监，你说撤就撤了" }
   });
 
   assert.equal(runtime.claimReadyOutputChunk("session-interrupt-gate"), undefined);
@@ -206,6 +294,65 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
   ]);
 });
 
+test("talk runtime commits stable input batch in interrupt order", () => {
+  const loops: string[] = [];
+  const runtime = createTestRuntime("stable-batch", (sessionId) => {
+    loops.push(sessionId);
+  });
+
+  runtime.openSession(sessionInput("session-stable-batch"));
+  runtime.appendAssistantDelta({ sessionId: "session-stable-batch", outputId: "output-a", delta: "第一段被打断。" });
+  runtime.finishAssistantOutput({ sessionId: "session-stable-batch", outputId: "output-a" });
+  const first = runtime.interruptOutput({
+    sessionId: "session-stable-batch",
+    outputId: "output-a",
+    reason: "barge_in",
+    breakpointContext: { beforeText: "第一段" }
+  });
+  runtime.appendAssistantDelta({ sessionId: "session-stable-batch", outputId: "output-b", delta: "第二段也被打断。" });
+  const second = runtime.interruptOutput({
+    sessionId: "session-stable-batch",
+    outputId: "output-b",
+    reason: "manual",
+    breakpointContext: { beforeText: "第二" },
+    omitAssistantMessage: true
+  });
+
+  runtime.commitStableInputBatch({
+    sessionId: "session-stable-batch",
+    batchId: "batch-1",
+    interruptEpoch: 2,
+    inputs: [
+      {
+        interruptId: second.interruptId,
+        sequence: 3,
+        reason: "manual",
+        text: "第二次输入",
+        occurredAt: "2026-06-07T00:00:03.000",
+        occurredAtUtc: "2026-06-06T15:00:03.000Z",
+        targetOutputId: "output-b"
+      },
+      {
+        interruptId: first.interruptId,
+        sequence: 2,
+        reason: "barge_in",
+        text: "第一次输入",
+        occurredAt: "2026-06-07T00:00:02.000",
+        occurredAtUtc: "2026-06-06T15:00:02.000Z",
+        targetOutputId: "output-a"
+      }
+    ]
+  });
+
+  assert.deepEqual(runtime.buildNextLoopMessages("session-stable-batch").slice(-3), [
+    { role: "assistant", content: "第一段..." },
+    { role: "user", content: "第一次输入" },
+    { role: "user", content: "第二次输入" }
+  ]);
+  assert.equal(runtime.store.latestUnresolvedInterrupt("session-stable-batch"), undefined);
+  assert.deepEqual(loops, ["session-stable-batch"]);
+});
+
 test("talk runtime notifies agent loop interrupt when assistant output is interrupted", () => {
   const interrupted: string[] = [];
   const runtime = createTestRuntime("interrupt-agent", undefined, (sessionId, outputId) => {
@@ -218,7 +365,7 @@ test("talk runtime notifies agent loop interrupt when assistant output is interr
     sessionId: "session-interrupt-agent",
     outputId: "output-interrupt-agent",
     reason: "barge_in",
-    breakpointCharIndex: 2
+    breakpointContext: { beforeText: "正在" }
   });
 
   assert.deepEqual(interrupted, ["session-interrupt-agent:output-interrupt-agent"]);
@@ -236,7 +383,7 @@ test("talk runtime can interrupt the latest streaming output when voice has no c
   const interrupt = runtime.interruptLatestOutput({
     sessionId: "session-interrupt-latest",
     reason: "manual",
-    breakpointCharIndex: 4
+    breakpointContext: { beforeText: "正在生成" }
   });
 
   assert.equal(interrupt?.outputId, "output-latest");
@@ -258,7 +405,7 @@ test("talk runtime cancels later assistant outputs when an earlier playback outp
     sessionId: "session-cancel-later",
     outputId: "output-playback",
     reason: "barge_in",
-    breakpointCharIndex: 7
+    breakpointContext: { beforeText: "第一段正在播放" }
   });
 
   assert.equal(runtime.store.getOutput("output-later")?.status, "cancelled");
@@ -281,7 +428,6 @@ test("talk runtime omits the queued next assistant output when interrupt happens
     sessionId: "session-between-segments",
     outputId: "output-17",
     reason: "barge_in",
-    breakpointCharIndex: 0,
     breakpointContext: { beforeText: "完整播放。", afterText: "第二段已经" },
     omitAssistantMessage: true
   });
@@ -313,11 +459,12 @@ test("talk runtime omits the queued next assistant output when interrupt happens
 function createTestRuntime(
   name: string,
   runAgentLoop?: (sessionId: string) => void,
-  interruptAgentLoop?: (sessionId: string, outputId: string) => void
+  interruptAgentLoop?: (sessionId: string, outputId: string) => void,
+  createLLMSession?: () => string | number
 ): ReturnType<typeof createTalkRuntime> {
   const store = createTalkStore(path.join(makeTempDir(`talk-runtime-${name}`), "talk.sqlite"));
   const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
-  return createTalkRuntime({ store, time, runAgentLoop, interruptAgentLoop });
+  return createTalkRuntime({ store, time, runAgentLoop, interruptAgentLoop, createLLMSession });
 }
 
 function sessionInput(sessionId: string) {

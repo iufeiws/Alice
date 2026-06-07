@@ -60,10 +60,35 @@ export type SelfieExecutorResult = {
 
 export type SelfieExecutor = (input: SelfieExecutorInput) => Promise<SelfieExecutorResult | void>;
 
+export type SelfieGenerationMode = "api" | "codex";
+
+export type PhotoPluginConfig = {
+  enabled: boolean;
+  selfieMode: SelfieGenerationMode;
+  selfieReferenceDir: string;
+  selfieOutputDir: string;
+  selfieCodexCommand: string;
+  selfieCodexTimeoutMs: number;
+  selfieImageApiKey?: string;
+  selfieImageApiBaseURL: string;
+  selfieImageApiModel: string;
+  selfieImageApiSize: string;
+  selfieImageApiQuality: string;
+  selfieImageApiOutputFormat: string;
+  selfieImageApiOutputCompression: number;
+  selfieImageApiTimeoutMs: number;
+  selfieMaxBytes: number;
+};
+
+export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey"> & {
+  selfieImageApiKeySet: boolean;
+};
+
 export type PhotoToolsDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
+  selfieConfigPath?: string;
   selfieReferenceDir?: string;
   selfieOutputDir?: string;
   selfieCodexCommand?: string;
@@ -103,24 +128,11 @@ const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
 const defaultFastSelfieRunner = path.resolve("Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
+export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
 
 export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
-  const referenceDir = deps.selfieReferenceDir ?? "assets/selfie/references";
-  const outputDir = deps.selfieOutputDir ?? "assets/generated/selfies";
-  const codexCommand = deps.selfieCodexCommand ?? "codex";
-  const timeoutMs = deps.selfieCodexTimeoutMs ?? 180_000;
-  const imageApiKey = deps.selfieImageApiKey;
-  const imageApiBaseURL = (deps.selfieImageApiBaseURL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-  const imageApiModel = deps.selfieImageApiModel ?? "gpt-image-2";
-  const imageApiSize = deps.selfieImageApiSize ?? "768x1024";
-  const imageApiQuality = deps.selfieImageApiQuality ?? "low";
-  const imageApiOutputFormat = normalizeOutputFormat(deps.selfieImageApiOutputFormat ?? "jpeg");
-  const imageApiOutputCompression = deps.selfieImageApiOutputCompression ?? 45;
-  const imageApiTimeoutMs = deps.selfieImageApiTimeoutMs ?? 120_000;
   const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
-  const maxBytes = deps.selfieMaxBytes ?? 10 * 1024 * 1024;
-  const executor = deps.selfieExecutor ?? runAliceSelfieFastSkill;
 
   return {
     id: "photo",
@@ -134,6 +146,9 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   };
 
   async function selfie(call: ToolCall): Promise<ToolResult> {
+    const photoConfig = runtimePhotoConfig();
+    if (!photoConfig.enabled) return toolError(call, "photo selfie is disabled");
+
     const target = resolveTarget(call);
     if (!target) return toolError(call, "No current messaging session is available");
 
@@ -146,7 +161,8 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     const context = deps.getSelfieContext?.();
     if (!context) return toolError(call, "selfie context is not available");
 
-    const fullOutputDir = path.resolve(outputDir);
+    const imageApiOutputFormat = normalizeOutputFormat(photoConfig.selfieImageApiOutputFormat);
+    const fullOutputDir = path.resolve(photoConfig.selfieOutputDir);
     const assetRoot = path.resolve("assets");
     const relativeDir = path.relative(assetRoot, fullOutputDir);
     if (relativeDir.startsWith("..") || path.isAbsolute(relativeDir)) {
@@ -172,28 +188,30 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         "selfie generation start:",
         `workDir=${tempDir}`,
         `file=${fileName}`,
+        `mode=${photoConfig.selfieMode}`,
         `aspectRatio=${aspectRatio}`,
         `promptLength=${prompt.length}`,
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
         references.missingOutfitImage ? "missingOutfitImage=true" : ""
       ].join(" "));
+      const executor = deps.selfieExecutor ?? selfieExecutorForMode(photoConfig.selfieMode);
       const executorResult = await executor({
-        command: codexCommand,
+        command: photoConfig.selfieCodexCommand,
         workDir: tempDir,
         fileName,
         prompt,
         referenceImages: references.images,
         referenceImagePrompt: references.prompt,
         aspectRatio,
-        timeoutMs,
-        apiKey: imageApiKey,
-        apiBaseURL: imageApiBaseURL,
-        apiModel: imageApiModel,
-        apiSize: imageApiSize,
-        apiQuality: imageApiQuality,
+        timeoutMs: photoConfig.selfieCodexTimeoutMs,
+        apiKey: photoConfig.selfieImageApiKey,
+        apiBaseURL: photoConfig.selfieImageApiBaseURL,
+        apiModel: photoConfig.selfieImageApiModel,
+        apiSize: photoConfig.selfieImageApiSize,
+        apiQuality: photoConfig.selfieImageApiQuality,
         apiOutputFormat: imageApiOutputFormat,
-        apiOutputCompression: imageApiOutputCompression,
-        apiTimeoutMs: imageApiTimeoutMs,
+        apiOutputCompression: photoConfig.selfieImageApiOutputCompression,
+        apiTimeoutMs: photoConfig.selfieImageApiTimeoutMs,
         proxyUrl
       });
       if (executorResult) codexResult = executorResult;
@@ -207,9 +225,9 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         `files=${listDirForLog(tempDir)}`
       ].join(" "));
 
-      validateGeneratedImage(tempFilePath, tempDir, maxBytes);
+      validateGeneratedImage(tempFilePath, tempDir, photoConfig.selfieMaxBytes);
       fs.renameSync(tempFilePath, finalFilePath);
-      validateGeneratedImage(finalFilePath, fullOutputDir, maxBytes);
+      validateGeneratedImage(finalFilePath, fullOutputDir, photoConfig.selfieMaxBytes);
 
       const sent = await sendImage(target, assetId);
       deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
@@ -240,6 +258,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   }
 
   function buildSelfiePrompt(action: string, context: SelfieContext): string {
+    const referenceDir = runtimePhotoConfig().selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error("selfie prompt template was not found");
     const template = fs.readFileSync(templatePath, "utf8");
@@ -278,6 +297,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   }
 
   function resolveReferenceImages(context: SelfieContext): { images: string[]; prompt: string; missingOutfitImage: boolean } {
+    const referenceDir = runtimePhotoConfig().selfieReferenceDir;
     const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), "selfie character reference image was not found");
     const libraryImage = requireFile(path.resolve(referenceDir, libraryReferenceFileName), "selfie library reference image was not found");
     const outfitImage = optionalFile(resolveOutfitImage(context));
@@ -391,6 +411,13 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     const target = deps.getDefaultTarget?.();
     return target ? normalizeTarget(target) : undefined;
   }
+
+  function runtimePhotoConfig(): PhotoPluginConfig {
+    const defaults = photoConfigDefaultsFromDeps(deps);
+    return deps.selfieConfigPath
+      ? readPhotoPluginConfig(deps.selfieConfigPath, defaults)
+      : normalizePhotoPluginConfig({}, defaults);
+  }
 }
 
 const selfieTool: ToolDefinition = {
@@ -410,6 +437,67 @@ const selfieTool: ToolDefinition = {
     additionalProperties: false
   }
 };
+
+export function readPhotoPluginConfig(configPath?: string, defaults: Partial<PhotoPluginConfig> = {}): PhotoPluginConfig {
+  let parsed: Record<string, unknown> = {};
+  if (configPath) {
+    const resolved = path.resolve(configPath);
+    parsed = parseJsonObject(fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}");
+  }
+  return normalizePhotoPluginConfig(parsed, defaults);
+}
+
+export function publicPhotoPluginConfig(config: PhotoPluginConfig): PhotoPluginPublicConfig {
+  const { selfieImageApiKey, ...publicConfig } = config;
+  return {
+    ...publicConfig,
+    selfieImageApiKeySet: Boolean(selfieImageApiKey)
+  };
+}
+
+function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defaults: Partial<PhotoPluginConfig> = {}): PhotoPluginConfig {
+  return {
+    enabled: booleanValue(parsed.enabled, defaults.enabled ?? true),
+    selfieMode: selfieModeValue(parsed.selfieMode, defaults.selfieMode ?? "api"),
+    selfieReferenceDir: stringConfigValue(parsed.selfieReferenceDir, defaults.selfieReferenceDir ?? "assets/selfie/references"),
+    selfieOutputDir: stringConfigValue(parsed.selfieOutputDir, defaults.selfieOutputDir ?? "assets/generated/selfies"),
+    selfieCodexCommand: stringConfigValue(parsed.selfieCodexCommand, defaults.selfieCodexCommand ?? "codex"),
+    selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 180_000),
+    selfieImageApiKey: stringConfigValue(parsed.selfieImageApiKey, defaults.selfieImageApiKey),
+    selfieImageApiBaseURL: stringConfigValue(parsed.selfieImageApiBaseURL, defaults.selfieImageApiBaseURL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
+    selfieImageApiModel: stringConfigValue(parsed.selfieImageApiModel, defaults.selfieImageApiModel ?? "gpt-image-2"),
+    selfieImageApiSize: stringConfigValue(parsed.selfieImageApiSize, defaults.selfieImageApiSize ?? "768x1024"),
+    selfieImageApiQuality: stringConfigValue(parsed.selfieImageApiQuality, defaults.selfieImageApiQuality ?? "low"),
+    selfieImageApiOutputFormat: normalizeOutputFormat(stringConfigValue(parsed.selfieImageApiOutputFormat, defaults.selfieImageApiOutputFormat ?? "jpeg")),
+    selfieImageApiOutputCompression: numberValue(parsed.selfieImageApiOutputCompression, defaults.selfieImageApiOutputCompression ?? 45),
+    selfieImageApiTimeoutMs: numberValue(parsed.selfieImageApiTimeoutMs, defaults.selfieImageApiTimeoutMs ?? 120_000),
+    selfieMaxBytes: numberValue(parsed.selfieMaxBytes, defaults.selfieMaxBytes ?? 10 * 1024 * 1024)
+  };
+}
+
+function photoConfigDefaultsFromDeps(deps: PhotoToolsDeps): Partial<PhotoPluginConfig> {
+  return {
+    enabled: true,
+    selfieMode: "api",
+    selfieReferenceDir: deps.selfieReferenceDir,
+    selfieOutputDir: deps.selfieOutputDir,
+    selfieCodexCommand: deps.selfieCodexCommand,
+    selfieCodexTimeoutMs: deps.selfieCodexTimeoutMs,
+    selfieImageApiKey: deps.selfieImageApiKey,
+    selfieImageApiBaseURL: deps.selfieImageApiBaseURL,
+    selfieImageApiModel: deps.selfieImageApiModel,
+    selfieImageApiSize: deps.selfieImageApiSize,
+    selfieImageApiQuality: deps.selfieImageApiQuality,
+    selfieImageApiOutputFormat: deps.selfieImageApiOutputFormat,
+    selfieImageApiOutputCompression: deps.selfieImageApiOutputCompression,
+    selfieImageApiTimeoutMs: deps.selfieImageApiTimeoutMs,
+    selfieMaxBytes: deps.selfieMaxBytes
+  };
+}
+
+function selfieExecutorForMode(mode: SelfieGenerationMode): SelfieExecutor {
+  return mode === "codex" ? runCodexSelfie : runAliceSelfieFastSkill;
+}
 
 async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
   if (!input.apiKey) throw new Error("selfie Image API key is not configured; set OPENAI_API_KEY or SELFIE_IMAGE_API_KEY");
@@ -634,6 +722,37 @@ function normalizeOutputFormat(value: string): string {
   if (normalized === "jpg") return "jpeg";
   if (normalized === "jpeg" || normalized === "png" || normalized === "webp") return normalized;
   return "jpeg";
+}
+
+function selfieModeValue(value: unknown, fallback: SelfieGenerationMode): SelfieGenerationMode {
+  return value === "codex" ? "codex" : value === "api" ? "api" : fallback;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringConfigValue(value: unknown, fallback: string | undefined): string {
+  const text = stringValue(value).trim();
+  return text || fallback || "";
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean): boolean {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+  return Boolean(value);
 }
 
 function extensionForOutputFormat(value: string): string {

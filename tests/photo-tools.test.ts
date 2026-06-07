@@ -156,6 +156,76 @@ test("selfie default executor calls the fast runner", async () => {
   }
 });
 
+test("selfie codex mode calls codex command from plugin config", async () => {
+  const outputRoot = makeAssetTempDir("selfie-codex-mode");
+  const referenceRoot = makeTempDir("selfie-ref-codex-mode");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-codex-mode"), "dress.jpg");
+  const commandDir = makeTempDir("selfie-codex-command");
+  const commandPath = path.join(commandDir, "fake-codex.mjs");
+  const configPath = path.join(makeTempDir("selfie-photo-config"), "config.json");
+  const store = createAliceStore(path.join(makeTempDir("selfie-codex-mode-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let nextMessageId = 1;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+  fs.writeFileSync(commandPath, [
+    "#!/usr/bin/env node",
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "const args = process.argv.slice(2);",
+    "if (args[0] !== 'exec') process.exit(2);",
+    "const workDir = args[args.indexOf('-C') + 1];",
+    "const lastMessagePath = args[args.indexOf('--output-last-message') + 1];",
+    "const prompt = args.at(-1) || '';",
+    "const fileName = (/保存为当前工作目录下的 ([^。]+)。/.exec(prompt) || [])[1];",
+    "if (!workDir || !fileName) process.exit(3);",
+    "fs.writeFileSync(path.join(workDir, fileName), Buffer.from('codex-jpg'));",
+    "fs.writeFileSync(lastMessagePath, 'codex saved');",
+    "console.log(JSON.stringify({ ok: true, fileName }));"
+  ].join("\n"));
+  (fs as unknown as { chmodSync(filePath: string, mode: number): void }).chmodSync(commandPath, 0o755);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "codex",
+    selfieCodexCommand: commandPath
+  })}\n`);
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieConfigPath: configPath,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+          return { messageId: `om_selfie_${nextMessageId++}` };
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_codex_mode",
+      toolName: "selfie",
+      input: { action: "转头看镜头" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(sent[1].content.kind, "image");
+    assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    fs.rmSync(commandDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+});
+
 test("selfie falls back to text outfit when the outfit reference image is missing", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-outfit");
   const referenceRoot = makeTempDir("selfie-ref-missing-outfit");

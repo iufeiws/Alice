@@ -685,6 +685,7 @@ export function renderVoiceCallHtml(): string {
       if (state === "asr.preflight.failed") showError("语音识别不可用", detail || "ASR 测试失败。");
       if (state === "webrtc.answer.created") setPhase("connecting");
       if (state === "webrtc.connection" && detail === "connected") markConnected();
+      if (state === "tts.playing_text" && detail) aliceTranscript.textContent = detail;
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
     }
 

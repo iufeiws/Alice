@@ -201,3 +201,32 @@ def stream_tts(model_dir: str, texts: list[str]) -> bytes:
 audio = stream_tts(MODEL_DIR, ["第一段。", "第二段。"])
 Path("out.pcm").write_bytes(audio)
 ```
+
+## 7. Receiving Text With Each Audio Chunk
+
+The default streaming response is raw PCM, so it cannot include text metadata. To receive text with every returned audio chunk, request NDJSON:
+
+```powershell
+$url = "$server/stream-input?language=jp&modelDir=$encodedModelDir&responseFormat=ndjson"
+```
+
+Each response line is a JSON object:
+
+```json
+{
+  "type": "audio",
+  "text": "これは疑似ストリーミング音声のテストです。",
+  "format": "s16le",
+  "sampleRate": 32000,
+  "channels": 1,
+  "audioBase64": "..."
+}
+```
+
+The final line is:
+
+```json
+{"type":"done"}
+```
+
+`audioBase64` is the same PCM data that the default `audio/L16` response would return, base64 encoded so it can share the stream with text metadata.

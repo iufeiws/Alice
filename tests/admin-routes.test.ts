@@ -367,6 +367,105 @@ test("admin plugin list exposes ASR config card state", async () => {
   assert.equal(asr.switchable, true);
 });
 
+test("admin plugin list exposes photo selfie config card state", async () => {
+  const root = makeTempDir("admin-photo-plugin-list");
+  const configPath = path.join(root, "config", "plugin", "photo", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "codex"
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    config: {
+      ...base.config,
+      photo: photoDefaults()
+    },
+    pluginConfigs: { photo: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), response);
+  const body = JSON.parse(response.body);
+  const photo = body.plugins.find((plugin: { id: string }) => plugin.id === "photo");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(photo.status, "enabled");
+  assert.equal(photo.health, "healthy");
+  assert.equal(photo.kind, "tool");
+  assert.equal(photo.configurable, true);
+  assert.equal(photo.switchable, true);
+  assert.equal(photo.configSource, configPath);
+});
+
+test("admin plugin config patch writes photo selfie mode without storing api key", async () => {
+  const root = makeTempDir("admin-photo-plugin-config");
+  const configPath = path.join(root, "config", "plugin", "photo", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "api"
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    config: {
+      ...base.config,
+      photo: {
+        ...photoDefaults(),
+        selfieImageApiKey: "secret-image-key"
+      }
+    },
+    pluginConfigs: { photo: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const schemaResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/photo/config", {}), schemaResponse);
+  const schemaBody = JSON.parse(schemaResponse.body);
+  const modeField = schemaBody.configSchema.fields.find((field: { key: string }) => field.key === "selfieMode");
+
+  assert.equal(schemaResponse.statusCode, 200);
+  assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["api", "codex"]);
+  assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
+  assert.equal(schemaBody.configValue.selfieImageApiKey, undefined);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/photo/config", {
+    enabled: true,
+    selfieMode: "codex",
+    selfieCodexCommand: "codex",
+    selfieCodexTimeoutMs: 240000,
+    selfieOutputDir: "assets/generated/selfies",
+    selfieReferenceDir: "assets/selfie/references",
+    selfieImageApiBaseURL: "https://api.openai.com/v1",
+    selfieImageApiModel: "gpt-image-2",
+    selfieImageApiSize: "768x1024",
+    selfieImageApiQuality: "low",
+    selfieImageApiOutputFormat: "jpeg",
+    selfieImageApiOutputCompression: 45,
+    selfieImageApiTimeoutMs: 120000,
+    selfieMaxBytes: 10 * 1024 * 1024
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.configValue.selfieMode, "codex");
+  assert.equal(body.configValue.selfieImageApiKeySet, true);
+  assert.equal(saved.selfieMode, "codex");
+  assert.equal(saved.selfieCodexTimeoutMs, 240000);
+  assert.equal(saved.selfieImageApiKey, undefined);
+  assert.equal(saved.selfieImageApiKeySet, undefined);
+});
+
 test("admin plugin config patch writes tts config with preset reference only", async () => {
   const root = makeTempDir("admin-plugin-config");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
@@ -1359,6 +1458,23 @@ function emptyPlugin(id: string) {
     async execute() {
       return { ok: false, error: "not implemented" };
     }
+  };
+}
+
+function photoDefaults() {
+  return {
+    selfieReferenceDir: "assets/selfie/references",
+    selfieOutputDir: "assets/generated/selfies",
+    selfieCodexCommand: "codex",
+    selfieCodexTimeoutMs: 180_000,
+    selfieImageApiBaseURL: "https://api.openai.com/v1",
+    selfieImageApiModel: "gpt-image-2",
+    selfieImageApiSize: "768x1024",
+    selfieImageApiQuality: "low",
+    selfieImageApiOutputFormat: "jpeg",
+    selfieImageApiOutputCompression: 45,
+    selfieImageApiTimeoutMs: 120_000,
+    selfieMaxBytes: 10 * 1024 * 1024
   };
 }
 

@@ -642,6 +642,58 @@ test("LLMRequests cancels the active request signal", async () => {
   assert.equal(responseHookCalls, 0);
 });
 
+test("LLMRequests external abort targets the matching request controller", async () => {
+  const signals: AbortSignal[] = [];
+  const resolvers: Array<() => void> = [];
+  const client: LLMClient = {
+    chat(input) {
+      const index = signals.length;
+      if (!input.signal) throw new Error("missing signal");
+      signals.push(input.signal);
+      return new Promise((resolve, reject) => {
+        input.signal?.addEventListener("abort", () => reject(new Error(`client_aborted_${index}`)), { once: true });
+        resolvers[index] = () => resolve({ message: { role: "assistant", content: `done-${index}` }, finishReason: "stop" });
+      });
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+  const firstController = new AbortController();
+
+  const first = requests.send({
+    agentId: "talk",
+    client,
+    messages: [],
+    model: "core-model",
+    toolNames: [],
+    round: 0,
+    signal: firstController.signal
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const second = requests.send({
+    agentId: "chat",
+    client,
+    messages: [],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  firstController.abort();
+
+  await assert.rejects(() => first, /llm_request_cancelled/);
+  assert.equal(signals[0]?.aborted, true);
+  assert.equal(signals[1]?.aborted, false);
+  resolvers[1]?.();
+  assert.equal((await second).message.content, "done-1");
+});
+
 test("sqlite store initializes schema version without losing existing logs", () => {
   const dir = makeTempDir("db");
   const dbPath = path.join(dir, "alice.sqlite");

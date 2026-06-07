@@ -60,7 +60,9 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.match(html, /id="assistantOutputText"/);
   assert.match(html, /id="userInputText"/);
   assert.match(html, /tts\.output_text/);
+  assert.match(html, /tts\.playback\.consumer/);
   assert.match(html, /audio\.transcript\.final/);
+  assert.doesNotMatch(html, /message\.state === "asr\.partial"[\s\S]*partialTranscript\.textContent/);
   assert.match(html, /これは疑似ストリーミング音声のテストです。/);
   assert.match(html, /"sampleRateHz":16000/);
   assert.match(html, /"encoding":"pcm_s16le"/);
@@ -69,6 +71,7 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.doesNotMatch(html, /startVad/);
   assert.doesNotMatch(html, /noiseGate/);
   assert.doesNotMatch(html, /estimateNoiseFloor/);
+  assert.doesNotMatch(html, /remoteAudio state/);
   assert.match(html, /remoteAudio/);
   assert.match(html, /unlocks autoplay in the Call gesture/);
 });
@@ -80,6 +83,77 @@ test("WebRTC voice defaults inbound push-to-talk audio to PCM16 16k mono", () =>
   assert.equal(config.inboundAudio.channels, 1);
   assert.equal(config.inboundAudio.encoding, "pcm_s16le");
   assert.equal(config.inboundAudio.chunkMs, 100);
+});
+
+test("WebRTC voice records talk timestamps with configured local time and UTC", async () => {
+  const opened: unknown[] = [];
+  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-07T07:53:49.829Z"));
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    time,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession(input) {
+        opened.push(input);
+      },
+      startAgentLoop() {}
+    }
+  });
+
+  await plugin.createCall({ callId: "call-timezone", userId: "browser-timezone", offerSdp: "offer" });
+
+  assert.equal((opened[0] as { occurredAt?: string }).occurredAt, "2026-06-07T16:53:49.829");
+  assert.equal((opened[0] as { occurredAtUtc?: string }).occurredAtUtc, "2026-06-07T07:53:49.829Z");
+});
+
+test("WebRTC voice caches TalkRuntime returned session id for runtime submissions", async () => {
+  const asr = new FakeAsrSession([
+    {
+      ok: true,
+      type: "final",
+      streamId: "asr-call-returned-session-0",
+      result: {
+        text: "もしもし",
+        provider: "tencent"
+      }
+    }
+  ]);
+  const asrMetadata: unknown[] = [];
+  const ingested: unknown[] = [];
+  const closed: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: (start) => {
+      asrMetadata.push(start.metadata);
+      return asr;
+    },
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {
+        return { sessionId: "1780830000000" };
+      },
+      ingestInput(event) {
+        ingested.push(event);
+      },
+      closeSession(input) {
+        closed.push(input);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-returned-session", userId: "browser-returned-session", offerSdp: "offer" });
+  await call.endInboundAudio();
+  await call.close("manual");
+
+  assert.equal(call.talkSessionId, "1780830000000");
+  assert.equal((asrMetadata[0] as { talkSessionId?: string }).talkSessionId, "1780830000000");
+  assert.equal((ingested[0] as { sessionId?: string }).sessionId, "1780830000000");
+  assert.equal((closed[0] as { sessionId?: string }).sessionId, "1780830000000");
 });
 
 test("WebRTC voice call requires a server outbound audio track", async () => {
@@ -129,6 +203,30 @@ test("WebRTC voice playback synthesizes Japanese voice and writes frames to outb
   assert.deepEqual(decodedFiles, ["/tmp/reply.opus"]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1, 2], [3, 4]]);
   assert.equal(peer.outboundTrack?.stopped, false);
+  await call.close("test_done");
+});
+
+test("WebRTC voice passes injected project time to TTS synthesis", async () => {
+  const peer = new FakePeer();
+  const timeZones: string[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-06-07T08:00:00.000Z")),
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async ({ time }: { time: { timeZone: string } }) => {
+      timeZones.push(time.timeZone);
+      return { assetId: "generated/tts/reply.opus", filePath: "/tmp/reply.opus" };
+    }, {}),
+    decodeAudioFileToFrames: async () => [
+      { sequence: 0, pcm: new Int16Array([1, 2]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
+    ]
+  });
+
+  const call = await plugin.createCall({ callId: "call-tts-time", userId: "browser-tts-time", offerSdp: "offer" });
+  await call.playReplyText("晚点见", "output-time");
+
+  assert.deepEqual(timeZones, ["Asia/Shanghai"]);
   await call.close("test_done");
 });
 
@@ -207,8 +305,8 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
       startAgentLoop(sessionId: string) {
         startedLoops.push(sessionId);
       },
-      markOutputChunkPlayed(chunkId: string) {
-        playedChunks.push(chunkId);
+      markOutputChunkPlayed(input: { chunkId: string }) {
+        playedChunks.push(input.chunkId);
       },
       claimReadyOutputChunk(sessionId: string) {
         if (sessionId !== "webrtc_voice:call-runtime-output" || claimed) return undefined;
@@ -241,7 +339,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
   await call.close("test_done");
 });
 
-test("WebRTC voice claims next TalkRuntime chunk after TTS is queued, before current playback ends", async () => {
+test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finishes before playback ends", async () => {
   const peer = new FakePeer();
   const claimedChunks: string[] = [];
   const synthesizedTexts: string[] = [];
@@ -262,7 +360,7 @@ test("WebRTC voice claims next TalkRuntime chunk after TTS is queued, before cur
     }, {
       async *stream({ text }: { text: string }) {
         synthesizedTexts.push(text);
-        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
         yield { type: "done" as const };
       }
     }),
@@ -290,18 +388,159 @@ test("WebRTC voice claims next TalkRuntime chunk after TTS is queued, before cur
       }
     },
     sleep: async (ms) => {
-      if (ms === 20) await playbackSleep;
+      if (ms > 0) await playbackSleep;
     }
   });
 
   const call = await plugin.createCall({ callId: "call-overlap", userId: "browser-overlap", offerSdp: "offer" });
-  await waitFor(() => claimedChunks.length === 2 && synthesizedTexts.length === 2);
+  await waitFor(() => claimedChunks.length === 2 && synthesizedTexts.length === 2, 2_000);
 
   assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
   assert.deepEqual(synthesizedTexts, ["第一段。", "第二段。"]);
   assert.ok((peer.outboundTrack?.frames.length ?? 0) < 60);
 
   releasePlaybackSleep();
+  await call.close("test_done");
+});
+
+test("WebRTC voice barge-in uses playback consumer text when next queued chunk has no audio yet", async () => {
+  const peer = new FakePeer();
+  const claimedChunks: string[] = [];
+  const synthesizedTexts: string[] = [];
+  const playedChunks: string[] = [];
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const interrupts: Array<{ outputId: string; elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
+  const chunks = [
+    { sessionId: "webrtc_voice:call-consumer-target", outputId: "output-1", chunkId: "chunk-1", text: "啊——！老板！电话通了通了！" },
+    { sessionId: "webrtc_voice:call-consumer-target", outputId: "output-2", chunkId: "chunk-2", text: "第二段还在翻译后等待音频。" }
+  ];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream({ text }: { text: string }) {
+        synthesizedTexts.push(text);
+        if (text === "啊——！老板！电话通了通了！") {
+          yield { type: "audio" as const, sequence: 0, text, chunk: new Uint8Array(1_280), contentType: "audio/L16; rate=32000; channels=1" };
+          yield { type: "done" as const };
+          return;
+        }
+        yield { type: "translation_started" as const, sequence: 0, sourceChars: text.length };
+        yield { type: "translation_done" as const, sequence: 0, translatedChars: text.length };
+        await new Promise<void>(() => undefined);
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      startAgentLoop() {},
+      markOutputChunkPlayed(input: { chunkId: string }) {
+        playedChunks.push(input.chunkId);
+      },
+      claimReadyOutputChunk(sessionId: string) {
+        const chunk = chunks.shift();
+        if (!chunk || sessionId !== chunk.sessionId) return undefined;
+        claimedChunks.push(chunk.chunkId);
+        return chunk;
+      },
+      interruptOutput(input) {
+        interrupts.push({
+          outputId: input.outputId,
+          elapsedMs: input.elapsedMs,
+          totalMs: input.totalMs,
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    },
+    sleep: async () => {},
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-consumer-target", userId: "browser-consumer-target", offerSdp: "offer" });
+  await waitFor(() => claimedChunks.length === 2 && synthesizedTexts.length === 2 && playedChunks.includes("chunk-1"), 2_000);
+  await call.setSpeechActive(true);
+
+  assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
+  assert.equal(statuses.some((entry) => entry.state === "tts.stream.translation_done"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in" && entry.detail === "output-1"), true);
+  assert.deepEqual(interrupts, [{
+    outputId: "output-1",
+    elapsedMs: 20,
+    totalMs: 20,
+    beforeText: "啊——！老板！电话通了通了！",
+    afterText: undefined
+  }]);
+  await call.close("test_done");
+});
+
+test("WebRTC voice claims next TalkRuntime chunk after current TTS stream fails", async () => {
+  const peer = new FakePeer();
+  const claimedChunks: string[] = [];
+  const synthesizedTexts: string[] = [];
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const chunks = [
+    { sessionId: "webrtc_voice:call-stream-failure", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: "webrtc_voice:call-stream-failure", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+  ];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream({ text }: { text: string }) {
+        synthesizedTexts.push(text);
+        if (text === "第一段。") throw new Error("stream failed");
+        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      startAgentLoop() {},
+      markOutputChunkPlayed() {},
+      claimReadyOutputChunk(sessionId: string) {
+        const chunk = chunks.shift();
+        if (!chunk || sessionId !== chunk.sessionId) return undefined;
+        claimedChunks.push(chunk.chunkId);
+        return chunk;
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-failure", userId: "browser-stream-failure", offerSdp: "offer" });
+  await waitFor(() => claimedChunks.length === 2 && synthesizedTexts.length === 2, 2_000);
+  await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 1, 2_000);
+
+  assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
+  assert.deepEqual(synthesizedTexts, ["第一段。", "第二段。"]);
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail === "stream failed"), true);
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[2]]);
   await call.close("test_done");
 });
 
@@ -321,7 +560,7 @@ test("WebRTC voice starts the next TalkRuntime loop after chunk is queued, befor
       throw new Error("file synthesizer should not be used");
     }, {
       async *stream() {
-        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
         yield { type: "done" as const };
       }
     }),
@@ -406,8 +645,8 @@ test("WebRTC voice ASR final is marked as TalkRuntime TODO and not ingested yet"
   assert.deepEqual(statuses, [
     { state: "tts.prepare.started", detail: "connecting" },
     { state: "tts.prepare.ready", detail: "connected" },
-    { state: "asr.stream.started", detail: "asr-call-3-0" },
     { state: "talk_runtime.open.todo", detail: "webrtc_voice:call-3" },
+    { state: "asr.stream.started", detail: "asr-call-3-0" },
     { state: "asr.partial", detail: "もし" },
     { state: "talk_runtime.ingress.todo", detail: "audio.transcript.final: もしもし" }
   ]);
@@ -611,6 +850,9 @@ test("WebRTC voice manual interrupt discards queued later TTS playback", async (
       closeSession() {},
       interruptOutput(input) {
         interrupts.push(input.outputId);
+      },
+      interruptLatestOutput(input) {
+        interrupts.push(`latest:${input.reason}`);
       }
     },
     sleep: async (ms) => {
@@ -621,14 +863,14 @@ test("WebRTC voice manual interrupt discards queued later TTS playback", async (
   const call = await plugin.createCall({ callId: "call-discard-queued", userId: "browser-discard-queued", offerSdp: "offer" });
   const first = call.playReplyText("第一段。", "output-1");
   const second = call.playReplyText("第二段。", "output-2");
-  await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 1);
+  await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) >= 1);
 
   call.interrupt("manual");
   releasePlaybackSleep();
 
   assert.equal((await first).status, "interrupted");
   assert.equal((await second).status, "interrupted");
-  assert.deepEqual(interrupts, ["output-1"]);
+  assert.deepEqual(interrupts, ["latest:manual"]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1]]);
 });
 
@@ -660,8 +902,8 @@ test("WebRTC voice manual interrupt asks TalkRuntime to interrupt latest output 
   assert.deepEqual(ingestedKinds, []);
 });
 
-test("WebRTC voice barge-in between playback segments interrupts the queued next output", async () => {
-  const interrupts: Array<{ outputId: string; omitAssistantMessage?: boolean; breakpointCharIndex?: number }> = [];
+test("WebRTC voice barge-in before consumer has audio interrupts latest output", async () => {
+  const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
   let resolveVoice!: () => void;
   const voiceReady = new Promise<void>((resolve) => {
     resolveVoice = resolve;
@@ -681,11 +923,10 @@ test("WebRTC voice barge-in between playback segments interrupts the queued next
       openSession() {},
       closeSession() {},
       ingestInput() {},
-      interruptOutput(input) {
-        interrupts.push({
-          outputId: input.outputId,
-          omitAssistantMessage: input.omitAssistantMessage,
-          breakpointCharIndex: input.breakpointCharIndex
+      interruptLatestOutput(input) {
+        latestInterrupts.push({
+          reason: input.reason,
+          omitAssistantMessage: input.omitAssistantMessage
         });
       }
     }
@@ -696,15 +937,15 @@ test("WebRTC voice barge-in between playback segments interrupts the queued next
   await waitFor(() => call.playbackQueue.some((item) => item.outputId === "output-17" && item.status === "queued"));
 
   await call.setSpeechActive(true);
-  await waitFor(() => interrupts.length === 1);
+  await waitFor(() => latestInterrupts.length === 1);
 
-  assert.deepEqual(interrupts, [{ outputId: "output-17", omitAssistantMessage: true, breakpointCharIndex: undefined }]);
+  assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
   resolveVoice();
   assert.equal((await playback).status, "interrupted");
   await call.close("test_done");
 });
 
-test("WebRTC voice pauses runtime output claiming while interrupt queue is not drained", async () => {
+test("WebRTC voice waits for current playback task before claiming during interrupt handling", async () => {
   const peer = new FakePeer();
   const claimedChunks: string[] = [];
   const synthesizedTexts: string[] = [];
@@ -802,6 +1043,7 @@ test("WebRTC voice pseudo-streams TTS by sentence and stops later parts after in
   assert.deepEqual(peer.outboundTrack?.frames.map((frame) => Array.from(frame.pcm)), [[1]]);
   assert.equal(call.playbackQueue.length, 0);
   assert.equal(statuses.some((entry) => entry.state === "tts.part.playing" && entry.detail === "1/3"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第一句。"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.interrupted" && entry.detail === "stream-output"), true);
 });
 
@@ -928,7 +1170,7 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
       throw new Error("file synthesizer should not be used");
     }, {
       async *stream() {
-        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
         yield { type: "done" as const };
       }
     }),
@@ -941,18 +1183,34 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
       assert.deepEqual(chunks, [2]);
       yield { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
       yield { sequence: 1, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      yield { sequence: 2, pcm: new Int16Array([3]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
     },
     emitStatus: (event) => statuses.push(event)
   });
 
   const call = await plugin.createCall({ callId: "call-stream-queue", userId: "browser-stream-queue", offerSdp: "offer" });
-  const result = await call.playReplyText("queue", "queue-output");
+  const result = await call.playReplyText("queue", "queue-output", {
+    beforeFirstPlayback() {
+      assert.equal(statuses.some((entry) => entry.state === "tts.playing_text"), false);
+    }
+  });
 
   assert.equal(result.status, "played");
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1], [2]]);
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1], [2], [3]]);
   assert.equal(statuses.some((entry) => entry.state === "tts.queue.waiting"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.queue.ready"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.queue.producer_done"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.queue.encoded"), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.stream.frames_sent" && entry.detail?.includes("queued=")), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "原文播放片段"), true);
+  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playback.consumer"), [
+    { state: "tts.playback.consumer", detail: "前文=原文播放片段 时长=60ms" }
+  ]);
+  assert.ok(statuses.findIndex((entry) => entry.state === "voice_call.connected") < statuses.findIndex((entry) => entry.state === "tts.playback.consumer"));
+  assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail === "前文= 时长=20ms"), false);
+  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text"), [{ state: "tts.playing_text", detail: "原文播放片段" }]);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing" && entry.detail === "output=queue-output frame=2 spans=1"), true);
 });
 
 test("WebRTC voice starts streaming playback clock after first-playback delay", async () => {
@@ -1046,7 +1304,72 @@ test("WebRTC voice waits for streaming encoder completion before queued playback
   assert.equal(statuses.some((entry) => entry.state === "tts.queue.rtp_keepalive"), false);
 });
 
-test("WebRTC voice does not barge in before streaming TTS writes audio", async () => {
+test("WebRTC voice fills streaming underrun with timed silence frames", async () => {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  let nowMs = 0;
+  let underrunStartedAt: number | undefined;
+  let nextFrameReleased = false;
+  let releaseNextFrame!: () => void;
+  const nextFrameReady = new Promise<void>((resolve) => {
+    releaseNextFrame = resolve;
+  });
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    now: () => new Date(nowMs),
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text: "等待下一帧", chunk: new Uint8Array([1]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        for (let index = 0; index < 60; index += 1) {
+          yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+        await nextFrameReady;
+        yield { sequence: 60, pcm: new Int16Array([99]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    sleep: async (ms) => {
+      nowMs += ms;
+      if (underrunStartedAt !== undefined && !nextFrameReleased && nowMs - underrunStartedAt >= 120) {
+        nextFrameReleased = true;
+        releaseNextFrame();
+      }
+    },
+    emitStatus: (event) => {
+      statuses.push(event);
+      if (event.state === "tts.queue.underrun") underrunStartedAt = nowMs;
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-underrun-silence", userId: "browser-stream-underrun-silence", offerSdp: "offer" });
+  const result = await call.playReplyText("underrun", "underrun-output");
+
+  assert.equal(result.status, "played");
+  assert.equal(statuses.some((entry) => entry.state === "tts.queue.underrun"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.queue.silence"), true);
+  const frames = peer.outboundTrack?.frames ?? [];
+  const silenceCount = frames.filter((frame) => frame.pcm.length === 0).length;
+  const finalFrameIndex = frames.findIndex((frame) => Array.from(frame.pcm).join(",") === "99");
+  assert.ok(silenceCount > 0);
+  assert.ok(silenceCount < 20);
+  assert.ok(finalFrameIndex > 60);
+  assert.equal(frames[59]?.rtpTimestamp, 56_640);
+  assert.equal(frames[60]?.rtpTimestamp, 57_600);
+  assert.equal(frames[finalFrameIndex]?.rtpTimestamp, finalFrameIndex * 960);
+});
+
+test("WebRTC voice gates playback when speech starts before streaming TTS writes audio", async () => {
   const peer = new FakePeer();
   const statuses: Array<{ state: string; detail?: string }> = [];
   let releaseAudio!: () => void;
@@ -1083,9 +1406,115 @@ test("WebRTC voice does not barge in before streaming TTS writes audio", async (
   releaseAudio();
   const result = await playback;
 
-  assert.equal(result.status, "played");
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[7]]);
-  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), false);
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), []);
+  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in" && entry.detail === ""), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.todo" && entry.detail === "barge_in:"), true);
+});
+
+test("WebRTC voice does not use pending chunk text as breakpoint context before TTS produces audio", async () => {
+  let call: any;
+  const latestInterrupts: Array<{ beforeText?: string; afterText?: string }> = [];
+  let releaseAudio!: () => void;
+  const audioReady = new Promise<void>((resolve) => {
+    releaseAudio = resolve;
+  });
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "translation_done" as const, sequence: 0, translatedChars: 4 };
+        await audioReady;
+        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16ToFrames: async () => [
+      { sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
+    ],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptLatestOutput(input) {
+        latestInterrupts.push({
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    }
+  });
+
+  call = await plugin.createCall({ callId: "call-pending-context", userId: "browser-pending-context", offerSdp: "offer" });
+  const playback = call.playReplyText("是什么文件？", "pending-context-output", {
+    originalText: "是什么文件？"
+  });
+  await Promise.resolve();
+  await call.setSpeechActive(true);
+  releaseAudio();
+  const result = await playback;
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(latestInterrupts, [{ beforeText: undefined, afterText: undefined }]);
+});
+
+test("WebRTC voice starts barge-in batch on speech start and commits ASR final as the result", async () => {
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
+  const batches: unknown[] = [];
+  const asr = new FakeAsrSession([
+    {
+      ok: true,
+      type: "final",
+      streamId: "asr-call-barge-batch-0",
+      result: {
+        text: "もしもし",
+        provider: "tencent"
+      }
+    }
+  ]);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => asr,
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput(input) {
+        latestInterrupts.push({ reason: input.reason, omitAssistantMessage: input.omitAssistantMessage });
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-barge-batch", userId: "browser-barge-batch", offerSdp: "offer" });
+  await call.setSpeechActive(true);
+  await call.setSpeechActive(false);
+
+  assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
+  assert.equal(batches.length, 1);
+  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    reason: input.reason,
+    text: input.text,
+    asrStreamId: input.asrStreamId
+  })), [{ reason: "barge_in", text: "もしもし", asrStreamId: "asr-call-barge-batch-0" }]);
+  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
 });
 
 test("WebRTC voice automatically interrupts pseudo-streaming TTS when user starts speaking", async () => {
@@ -1185,7 +1614,7 @@ test("WebRTC voice keeps consecutive interrupts isolated in the interrupt queue"
 
   assert.equal((await first).status, "interrupted");
   assert.equal((await second).status, "interrupted");
-  assert.deepEqual(interrupts, ["output-first", "output-second"]);
+  assert.deepEqual(interrupts, ["output-first", "output-first"]);
   await call.close("test_done");
 });
 
@@ -1227,11 +1656,326 @@ test("WebRTC voice passes playback timing to TalkRuntime on barge-in", async () 
   assert.deepEqual(interrupts, [{ elapsedMs: 20, totalMs: 60 }]);
 });
 
-test("WebRTC voice sends chunk-derived breakpoint index and context to TalkRuntime on barge-in", async () => {
+test("WebRTC voice stores stream text with audio and uses it for breakpoint context", async () => {
   const peer = new FakePeer();
   let call: any;
   let sleeps = 0;
-  const interrupts: Array<{ outputId: string; breakpointCharIndex?: number; beforeText?: string; afterText?: string }> = [];
+  let queuedSpan: { text?: string; audioBytes?: number; startMs?: number; endMs?: number } | undefined;
+  const interrupts: Array<{ elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield {
+          type: "audio" as const,
+          sequence: 0,
+          text: "第一段内容。",
+          chunk: new Uint8Array(2_560),
+          contentType: "audio/L16; rate=32000; channels=1"
+        };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16ToFrames: async () => [
+      { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
+      { sequence: 1, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
+    ],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push({
+          elapsedMs: input.elapsedMs,
+          totalMs: input.totalMs,
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    },
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        const span = call.playbackQueue[0]?.ttsAudioTextSpans?.[0];
+        queuedSpan = span ? { text: span.text, audioBytes: span.audio.byteLength, startMs: span.startMs, endMs: span.endMs } : undefined;
+        await call.setSpeechActive(true);
+      }
+    }
+  });
+
+  call = await plugin.createCall({ callId: "call-stream-breakpoint", userId: "browser-stream-breakpoint", offerSdp: "offer" });
+  const result = await call.playReplyText("完整输出里的第一段内容。后面还有别的话。", "stream-breakpoint-output", {
+    originalText: "第一段内容。"
+  });
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(queuedSpan, { text: "第一段内容。", audioBytes: 2_560, startMs: 0, endMs: 40 });
+  assert.deepEqual(interrupts, [{
+    elapsedMs: 20,
+    totalMs: 40,
+    beforeText: "第一段",
+    afterText: "内容。"
+  }]);
+});
+
+test("WebRTC voice maps barge-in context by current chunk playback ratio", async () => {
+  const peer = new FakePeer();
+  let call: any;
+  let interrupted = false;
+  const interrupts: Array<{ elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
+  const text = "这个声音……是老板你的声音吧！";
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text, chunk: new Uint8Array(65_536), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 1, chunk: new Uint8Array(65_536), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      let sequence = 0;
+      for await (const _chunk of input.chunks) {
+        for (let index = 0; index < 50; index += 1) {
+          yield { sequence, pcm: new Int16Array([sequence]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+          sequence += 1;
+        }
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push({
+          elapsedMs: input.elapsedMs,
+          totalMs: input.totalMs,
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    },
+    emitStatus: (event) => statuses.push(event),
+    sleep: async () => {
+      if (!interrupted && (call.playbackQueue[0]?.framesWritten ?? 0) >= 50) {
+        interrupted = true;
+        await call.setSpeechActive(true);
+      }
+    }
+  });
+
+  call = await plugin.createCall({ callId: "call-ratio-breakpoint", userId: "browser-ratio-breakpoint", offerSdp: "offer" });
+  const result = await call.playReplyText(text, "ratio-breakpoint-output", {
+    originalText: text
+  });
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(interrupts, [{
+    elapsedMs: 1000,
+    totalMs: 2000,
+    beforeText: "这个声音……是老",
+    afterText: "板你的声音吧！"
+  }]);
+  assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
+});
+
+test("WebRTC voice treats zero playedMs with known totalMs as all after text", async () => {
+  const peer = new FakePeer();
+  let call: any;
+  let interrupted = false;
+  const interrupts: Array<{ elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
+  const text = "刚开始播放的这一段";
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text, chunk: new Uint8Array(65_536), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        for (let sequence = 0; sequence < 60; sequence += 1) {
+          yield { sequence, pcm: new Int16Array([sequence]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push({
+          elapsedMs: input.elapsedMs,
+          totalMs: input.totalMs,
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    }
+  });
+
+  call = await plugin.createCall({ callId: "call-zero-played-known-total", userId: "browser-zero-played-known-total", offerSdp: "offer" });
+  const result = await call.playReplyText(text, "zero-played-known-total-output", {
+    originalText: text,
+    beforeFirstPlayback: async () => {
+      void call.setSpeechActive(true);
+      await Promise.resolve();
+    }
+  });
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(interrupts, [{
+    elapsedMs: 0,
+    totalMs: 1200,
+    beforeText: undefined,
+    afterText: text
+  }]);
+});
+
+test("WebRTC voice keeps consumer cache until the next stream text is consumed", async () => {
+  const peer = new FakePeer();
+  let call: any;
+  let sleeps = 0;
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const interrupts: Array<{ beforeText?: string; afterText?: string }> = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text: "上一段。", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 1, text: "下一段。", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        yield { sequence: 1, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push({
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    },
+    emitStatus: (event) => statuses.push(event),
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) await call.setSpeechActive(true);
+    }
+  });
+
+  call = await plugin.createCall({ callId: "call-between-segments", userId: "browser-between-segments", offerSdp: "offer" });
+  const result = await call.playReplyText("上一段。下一段。", "between-segments-output");
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(interrupts, [{ beforeText: "上一", afterText: "段。" }]);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.breakpoint" && entry.detail === "前文=上一 后文=段。"), true);
+});
+
+test("WebRTC voice does not replace current segment cache with empty or none stream text", async () => {
+  const peer = new FakePeer();
+  let call: any;
+  const interrupts: Array<{ beforeText?: string; afterText?: string }> = [];
+  const yieldedTexts: Array<string | undefined> = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yieldedTexts.push("当前段文本");
+        yield { type: "audio" as const, sequence: 0, text: "当前段文本", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yieldedTexts.push(undefined);
+        yield { type: "audio" as const, sequence: 1, chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yieldedTexts.push("");
+        yield { type: "audio" as const, sequence: 2, text: "", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yieldedTexts.push("none");
+        yield { type: "audio" as const, sequence: 3, text: "none", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yieldedTexts.push("None");
+        yield { type: "audio" as const, sequence: 4, text: "None", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      let sequence = 0;
+      for await (const _chunk of input.chunks) {
+        yield { sequence, pcm: new Int16Array([sequence]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        sequence += 1;
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push({
+          beforeText: input.breakpointContext?.beforeText,
+          afterText: input.breakpointContext?.afterText
+        });
+      }
+    },
+    sleep: async () => {}
+  });
+
+  call = await plugin.createCall({ callId: "call-empty-none-cache", userId: "browser-empty-none-cache", offerSdp: "offer" });
+  const result = await call.playReplyText("当前段文本", "empty-none-cache-output", {
+    beforeFirstPlayback: async () => {
+      await call.setSpeechActive(true);
+    }
+  });
+
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(interrupts, [{ beforeText: undefined, afterText: "当前段文本" }]);
+  assert.deepEqual(yieldedTexts, ["当前段文本", undefined, "", "none", "None"]);
+});
+
+test("WebRTC voice sends breakpoint context without index to TalkRuntime on barge-in", async () => {
+  const peer = new FakePeer();
+  let call: any;
+  let sleeps = 0;
+  const interrupts: Array<{ outputId: string; beforeText?: string; afterText?: string }> = [];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
     createPeer: async () => peer,
@@ -1250,7 +1994,6 @@ test("WebRTC voice sends chunk-derived breakpoint index and context to TalkRunti
       interruptOutput(input) {
         interrupts.push({
           outputId: input.outputId,
-          breakpointCharIndex: input.breakpointCharIndex,
           beforeText: input.breakpointContext?.beforeText,
           afterText: input.breakpointContext?.afterText
         });
@@ -1264,15 +2007,12 @@ test("WebRTC voice sends chunk-derived breakpoint index and context to TalkRunti
 
   call = await plugin.createCall({ callId: "call-barge-breakpoint", userId: "browser-barge-breakpoint", offerSdp: "offer" });
   const result = await call.playReplyText("测试这一段语音", "breakpoint-output", {
-    outputStartCharIndex: 10,
-    outputEndCharIndex: 17,
     originalText: "测试这一段语音"
   });
 
   assert.equal(result.status, "interrupted");
   assert.deepEqual(interrupts, [{
     outputId: "breakpoint-output",
-    breakpointCharIndex: 14,
     beforeText: "测试这一",
     afterText: "段语音"
   }]);

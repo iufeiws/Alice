@@ -1105,6 +1105,99 @@ test("tts stream translates the full conversation once and yields Genie audio ch
   assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=2")), true);
 });
 
+test("tts stream maps returned translated audio text back to source punctuation", async () => {
+  const dir = makeTempDir("tts-stream-source-text");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+  const plugin = createTtsPlugin({
+    configPath,
+    baseSynthesizer: Object.assign(async () => {
+      throw new Error("non-stream synthesizer should not be used");
+    }, {
+      async *streamAudioWithText() {
+        yield { text: "これは一文目です。", chunk: new Uint8Array([1, 2]) };
+        yield { text: "二文目です。", chunk: new Uint8Array([3, 4]) };
+      },
+      async *streamAudio() {
+        throw new Error("streamAudio should not be used when streamAudioWithText is available");
+      }
+    }),
+    llmRequestSender: async () => ({
+      message: { role: "assistant", content: "これは一文目です。二文目です。" }
+    }),
+    resolveApiPreset() {
+      return {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash"
+      };
+    }
+  });
+
+  const events = [];
+  for await (const event of plugin.voiceSynthesizer.stream!({
+    text: "第一句。第二句。",
+    time: createCurrentTimeProvider("UTC"),
+    source: "send_chat.voice"
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, Array.from(event.chunk)]), [
+    ["第一句。", [1, 2]],
+    ["第二句。", [3, 4]]
+  ]);
+});
+
+test("tts stream never hard-cuts source text between punctuation boundaries", async () => {
+  const dir = makeTempDir("tts-stream-no-hard-cut");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+  const plugin = createTtsPlugin({
+    configPath,
+    baseSynthesizer: Object.assign(async () => {
+      throw new Error("non-stream synthesizer should not be used");
+    }, {
+      async *streamAudioWithText() {
+        yield { text: "老板から返信があるか", chunk: new Uint8Array([1]) };
+        yield { text: "確認してるんだよ！", chunk: new Uint8Array([2]) };
+      }
+    }),
+    llmRequestSender: async () => ({
+      message: { role: "assistant", content: "老板から返信があるか確認してるんだよ！" }
+    }),
+    resolveApiPreset() {
+      return {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash"
+      };
+    }
+  });
+
+  const events = [];
+  for await (const event of plugin.voiceSynthesizer.stream!({
+    text: "着手机看老板有没有回消息呢！",
+    time: createCurrentTimeProvider("UTC"),
+    source: "send_chat.voice"
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => event.text), [
+    "着手机看老板有没有回消息呢！",
+    undefined
+  ]);
+});
+
 test("tts stream text collection preserves full conversation order", async () => {
   const text = await collectTtsStreamText(["第一句", "。", "第二句"]);
   assert.equal(text, "第一句。第二句");
@@ -1657,6 +1750,7 @@ test("genie remote stream uploads missing model and retries original stream-inpu
     assert.equal(streamQueries.length, 2);
     assert.equal(streamQueries[0].language, "zh");
     assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
     assert.deepEqual(streamQueries[1], streamQueries[0]);
     assert.deepEqual(streamBodies, [
       `${JSON.stringify({ text: "第一段。", referenceText: "参照テキスト" })}\n`,
@@ -1669,6 +1763,70 @@ test("genie remote stream uploads missing model and retries original stream-inpu
     assert.equal(zipText.includes("reference.wav"), true);
     assert.equal(zipText.includes("reference.txt"), true);
     assert.deepEqual(chunks, [[7, 8]]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("genie remote text stream decodes ndjson audio text chunks", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-ndjson");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const streamQueries: Array<Record<string, string>> = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      const body = [
+        JSON.stringify({
+          type: "audio",
+          text: "これは一文目です。",
+          format: "s16le",
+          sampleRate: 32000,
+          channels: 1,
+          audioBase64: "AQI="
+        }),
+        JSON.stringify({
+          type: "audio",
+          text: "二文目です。",
+          format: "s16le",
+          sampleRate: 32000,
+          channels: 1,
+          audioBase64: "AwQ="
+        }),
+        JSON.stringify({ type: "done" })
+      ].join("\n") + "\n";
+      return new Response(body, { status: 200, headers: { "content-type": "application/x-ndjson" } });
+    }
+    throw new Error("unexpected request");
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudioWithText!({
+      text: "これは一文目です。二文目です。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "jp",
+        modelDir: fixture.modelDir,
+        referenceText: "参照テキスト"
+      }
+    })) {
+      chunks.push([chunk.text, Array.from(chunk.chunk)]);
+    }
+
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
+    assert.deepEqual(chunks, [
+      ["これは一文目です。", [1, 2]],
+      ["二文目です。", [3, 4]]
+    ]);
   } finally {
     fixture.cleanup();
   }
@@ -1733,6 +1891,7 @@ test("genie remote stream uploads missing reference files and retries original s
     assert.deepEqual(calls, ["GET /health", "POST /stream-input", "POST /models/upload", "POST /stream-input"]);
     assert.equal(streamQueries.length, 2);
     assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
     assert.deepEqual(streamQueries[1], streamQueries[0]);
     assert.equal(uploadBodies.length, 1);
     const zipText = new TextDecoder().decode(uploadBodies[0]);

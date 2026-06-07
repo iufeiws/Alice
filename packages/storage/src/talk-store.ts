@@ -19,6 +19,16 @@ export type TalkSource = {
   userId?: string;
 };
 
+export type TalkSession = {
+  id: number;
+  sessionId: string;
+  status: "open" | "closed" | string;
+  startedAt: string;
+  startedAtUtc?: string;
+  endedAt?: string;
+  endedAtUtc?: string;
+};
+
 export type TalkEvent = {
   kind: TalkEventKind;
   sessionId: string;
@@ -92,6 +102,7 @@ export type TalkOutputInterrupt = {
 };
 
 export type TalkStore = {
+  transaction?<T>(fn: () => T): T;
   openSession(input: {
     sessionId: string;
     source: TalkSource;
@@ -100,6 +111,7 @@ export type TalkStore = {
     metadata?: unknown;
   }): void;
   closeSession(input: { sessionId: string; occurredAt: string; occurredAtUtc?: string }): void;
+  getSession(sessionId: string): TalkSession | undefined;
   insertEvent(event: TalkEvent): { id: number; inserted: boolean };
   insertSegment(input: {
     sessionId: string;
@@ -128,7 +140,7 @@ export type TalkStore = {
     nowUtc?: string;
   }): TalkOutputChunk;
   claimReadyOutputChunk(sessionId: string, now: string, nowUtc?: string): TalkOutputChunk | undefined;
-  markChunkPlayed(chunkId: string, now: string, nowUtc?: string): void;
+  markChunkPlayed(input: { sessionId: string; chunkId: string; now: string; nowUtc?: string }): void;
   listChunks(outputId: string): TalkOutputChunk[];
   cancelChunks(outputId: string, now: string, nowUtc?: string): void;
   cancelOtherSessionOutputs(sessionId: string, keepOutputId: string, now: string, nowUtc?: string): void;
@@ -166,6 +178,7 @@ export type TalkStore = {
   }): TalkOutputInterrupt;
   latestUnresolvedInterrupt(sessionId: string): TalkOutputInterrupt | undefined;
   resolveLatestInterrupt(input: { sessionId: string; finalUserSegmentId: string; now: string; nowUtc?: string }): void;
+  resolveInterrupt(input: { interruptId: string; finalUserSegmentId: string; now: string; nowUtc?: string }): void;
 };
 
 export function createTalkStore(dbPath: string): TalkStore {
@@ -175,6 +188,17 @@ export function createTalkStore(dbPath: string): TalkStore {
   initialize(db);
 
   return {
+    transaction(fn) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = fn();
+        db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
     openSession(input) {
       db.prepare(`
         INSERT INTO talk_sessions(session_id, plugin, account_id, channel_id, user_id, status, started_at, started_at_utc, last_sequence, last_event_at, last_event_at_utc, metadata_json)
@@ -202,6 +226,15 @@ export function createTalkStore(dbPath: string): TalkStore {
         SET status = 'closed', ended_at = ?, ended_at_utc = ?, last_event_at = ?, last_event_at_utc = ?
         WHERE session_id = ?
       `).run(input.occurredAt, input.occurredAtUtc ?? null, input.occurredAt, input.occurredAtUtc ?? null, input.sessionId);
+    },
+    getSession(sessionId) {
+      return normalizeSession(db.prepare(`
+        SELECT id, session_id AS sessionId, status, started_at AS startedAt, started_at_utc AS startedAtUtc,
+               ended_at AS endedAt, ended_at_utc AS endedAtUtc
+        FROM talk_sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `).get(sessionId));
     },
     insertEvent(event) {
       const result = db.prepare(`
@@ -355,12 +388,12 @@ export function createTalkStore(dbPath: string): TalkStore {
       `).run(now, nowUtc ?? null, chunk.chunkId);
       return { ...chunk, status: "claimed" };
     },
-    markChunkPlayed(chunkId, now, nowUtc) {
+    markChunkPlayed(input) {
       db.prepare(`
         UPDATE talk_output_chunks
         SET status = 'played', playback_finished_at = ?, playback_finished_at_utc = ?
-        WHERE chunk_id = ? AND status IN ('claimed', 'ready')
-      `).run(now, nowUtc ?? null, chunkId);
+        WHERE session_id = ? AND chunk_id = ? AND status IN ('claimed', 'ready')
+      `).run(input.now, input.nowUtc ?? null, input.sessionId, input.chunkId);
     },
     listChunks(outputId) {
       return db.prepare(`
@@ -505,6 +538,13 @@ export function createTalkStore(dbPath: string): TalkStore {
           LIMIT 1
         )
       `).run(input.finalUserSegmentId, input.now, input.nowUtc ?? null, input.sessionId);
+    },
+    resolveInterrupt(input) {
+      db.prepare(`
+        UPDATE talk_output_interrupts
+        SET final_user_segment_id = ?, resolved_at = ?, resolved_at_utc = ?
+        WHERE interrupt_id = ? AND final_user_segment_id IS NULL
+      `).run(input.finalUserSegmentId, input.now, input.nowUtc ?? null, input.interruptId);
     }
   };
 }
@@ -667,6 +707,20 @@ function getOutput(db: DatabaseSync, outputId: string): TalkOutput | undefined {
     WHERE output_id = ?
     LIMIT 1
   `).get(outputId));
+}
+
+function normalizeSession(row: unknown): TalkSession | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as TalkSession;
+  return {
+    id: Number(value.id),
+    sessionId: value.sessionId,
+    status: value.status,
+    startedAt: value.startedAt,
+    startedAtUtc: value.startedAtUtc || undefined,
+    endedAt: value.endedAt || undefined,
+    endedAtUtc: value.endedAtUtc || undefined
+  };
 }
 
 function normalizeSegment(row: unknown): TalkSegment | undefined {

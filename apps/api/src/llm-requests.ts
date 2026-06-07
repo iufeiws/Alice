@@ -63,9 +63,10 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     const client = input.client;
     if (!client) throw new Error("LLMRequests.send requires a client");
     cancelRequested = false;
-    activeController = new AbortController();
-    const abort = () => activeController?.abort();
-    if (input.signal?.aborted) activeController.abort();
+    const requestController = new AbortController();
+    activeController = requestController;
+    const abort = () => requestController.abort();
+    if (input.signal?.aborted) requestController.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     const request: LLMChatInput = {
       messages: input.messages,
@@ -74,7 +75,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       maxTokens: input.maxTokens,
       extraParams: input.extraParams,
       tools: buildTools(input.toolNames, input.toolVariables),
-      signal: activeController.signal
+      signal: requestController.signal
     };
     try {
       deps.onRequestPrepared?.(input, request);
@@ -82,7 +83,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       let lastError: unknown;
       let result: LLMChatResult | undefined;
       for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
-        if (cancelRequested || activeController.signal.aborted) throw new Error("llm_request_cancelled");
+        if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
         deps.onLog?.({ kind: "call_start", agentId: input.agentId, round: input.round, stream: useStream, model: request.model, attempt });
         try {
           if (useStream && client.chatStream) {
@@ -99,7 +100,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
           break;
         } catch (error) {
           lastError = error;
-          if (cancelRequested || activeController.signal.aborted) throw new Error("llm_request_cancelled");
+          if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
           if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
           const delayMs = retryDelayMs(attempt);
           deps.onLog?.({
@@ -116,12 +117,12 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
         }
       }
       if (!result) throw lastError;
-      if (cancelRequested || activeController.signal.aborted) throw new Error("llm_request_cancelled");
+      if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
       deps.onResponseReceived?.(input, request, result);
       return result;
     } finally {
       input.signal?.removeEventListener("abort", abort);
-      if (activeController?.signal === request.signal) activeController = undefined;
+      if (activeController === requestController) activeController = undefined;
     }
   }
 

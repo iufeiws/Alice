@@ -298,13 +298,17 @@ store = createAliceStore("data/alice.sqlite", {
   messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
+const activeTalkAgentLoopControllers = new Map<string, AbortController>();
 const talkRuntime = createTalkRuntime({
   store: createTalkStore(path.join("data", "talk.sqlite")),
   time: currentTime,
+  createLLMSession(input) {
+    return createTalkLLMSession(input.occurredAt).id;
+  },
   runAgentLoop: runTalkAgentLoopForSession,
   interruptAgentLoop(sessionId) {
     rewriteActiveTalkLLMSessionFromRuntime(sessionId);
-    llmRequests.cancelActive("talk_interrupt");
+    activeTalkAgentLoopControllers.get(sessionId)?.abort();
   }
 });
 const activeTalkAgentLoops = new Set<string>();
@@ -477,6 +481,7 @@ const broadcastWebRtcVoiceStatus = (event: WebRtcVoiceStatusEvent) => {
 };
 const webRtcVoicePlugin = createWebRtcVoicePlugin({
   config: defaultWebRtcVoiceConfig(),
+  time: currentTime,
   async createPeer(input) {
     return createWeriftPeer({
       ...input,
@@ -533,10 +538,12 @@ const messagingTools = createMessagingTools({
   appendMessageLog,
   appendLog
 });
+const photoConfigPath = "config/plugin/photo/config.json";
 const photoTools = createPhotoTools({
   store,
   outputRouter,
   time: currentTime,
+  selfieConfigPath: photoConfigPath,
   selfieReferenceDir: config.photo.selfieReferenceDir,
   selfieOutputDir: config.photo.selfieOutputDir,
   selfieCodexCommand: config.photo.selfieCodexCommand,
@@ -895,6 +902,9 @@ const requestHandler = createApiRequestHandler({
   wechatStateStore,
   runtime: runtimeState,
   pluginConfigs: {
+    photo: {
+      configPath: photoConfigPath
+    },
     tts: {
       configPath: ttsConfigPath
     },
@@ -1099,7 +1109,13 @@ function currentTalkLLMConfig() {
 
 async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
   if (activeTalkAgentLoops.has(sessionId)) return;
+  if (!isActiveTalkLLMSession(sessionId)) {
+    appendLog("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${activeLLMSession?.id ?? "none"}`);
+    return;
+  }
   activeTalkAgentLoops.add(sessionId);
+  const controller = new AbortController();
+  activeTalkAgentLoopControllers.set(sessionId, controller);
   try {
     appendLog("info", `talk loop start: session=${sessionId}`);
     const profile = talkPromptProfileStore.get();
@@ -1142,6 +1158,7 @@ async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
         toolVariables: variables,
         round,
         stream: config.stream !== false,
+        signal: controller.signal,
         streamHandlers: {
           onContentDelta(delta) {
             streamedContent += delta;
@@ -1178,6 +1195,9 @@ async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
   } catch (error) {
     appendLog("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
   } finally {
+    if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
+      activeTalkAgentLoopControllers.delete(sessionId);
+    }
     activeTalkAgentLoops.delete(sessionId);
   }
 }
@@ -1777,6 +1797,11 @@ function ensureActiveLLMSession(time: string, agentId: "chat" | "talk" = "chat")
   return activeLLMSession;
 }
 
+function createTalkLLMSession(time: string): ActiveLLMSession {
+  activeLLMSession = undefined;
+  return ensureActiveLLMSession(time, "talk");
+}
+
 function noteActiveLLMRequest(entry: LLMRequestLogEntry, agentId: "chat" | "talk" = "chat"): void {
   const session = ensureActiveLLMSession(entry.time, agentId);
   entry.sessionId = session.id;
@@ -1844,29 +1869,34 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
 }
 
 function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: string): void {
-  if (!activeLLMSession || activeLLMSession.agentId !== "talk") return;
+  const session = activeLLMSession;
+  if (!session || session.agentId !== "talk" || String(session.id) !== talkSessionId) return;
   const conversationStartIndex = activeTalkConversationStartIndexes.get(talkSessionId);
   if (conversationStartIndex === undefined) return;
-  const preservedPrefix = activeLLMSession.messages.slice(0, conversationStartIndex);
+  const preservedPrefix = session.messages.slice(0, conversationStartIndex);
   const runtimeMessages = talkRuntime.buildNextLoopMessages(talkSessionId);
   const current = currentTime.now();
-  activeLLMSession.updatedAt = current.iso;
-  activeLLMSession.updatedAtUtc = current.date.toISOString();
-  activeLLMSession.messages = cloneLLMMessages([
+  session.updatedAt = current.iso;
+  session.updatedAtUtc = current.date.toISOString();
+  session.messages = cloneLLMMessages([
     ...preservedPrefix,
     ...runtimeMessages
   ]);
-  activeLLMSession.currentRound = activeLLMSession.currentRound
+  session.currentRound = session.currentRound
     ? {
-      ...activeLLMSession.currentRound,
+      ...session.currentRound,
       status: "interrupted",
       finishedAt: current.iso,
       finishedAtUtc: current.date.toISOString()
     }
-    : activeLLMSession.currentRound;
-  activeLLMSession.reason = "talk_interrupt";
-  writeLLMSessionFile(activeLLMSession);
-  writeLLMSessionMetadata(activeLLMSession);
+    : session.currentRound;
+  session.reason = "talk_interrupt";
+  writeLLMSessionFile(session);
+  writeLLMSessionMetadata(session);
+}
+
+function isActiveTalkLLMSession(sessionId: string): boolean {
+  return activeLLMSession?.agentId === "talk" && String(activeLLMSession.id) === sessionId;
 }
 
 function updateActiveLLMSessionTranscript(input: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {

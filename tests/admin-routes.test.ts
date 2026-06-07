@@ -30,7 +30,15 @@ test("voice call app page renders outside the plugin page", async () => {
   assert.match(response.body, /Alice Voice Call/);
   assert.match(response.body, /class="voice-call-app"/);
   assert.match(response.body, /\/voice-call\/api\/config/);
+  assert.match(response.body, /\/voice-call\/api\/signaling/);
   assert.match(response.body, /\/voice-call\/assets\/alice-default-portrait\.png/);
+  assert.match(response.body, /addTransceiver\("audio", \{ direction: "recvonly" \}\)/);
+  assert.match(response.body, /text\.length <= 3/);
+  assert.match(response.body, /sendSignal\(\{ type: "interrupt", reason: "manual" \}\)/);
+  assert.doesNotMatch(response.body, /realtime_voice/);
+  assert.doesNotMatch(response.body, /getUserMedia/);
+  assert.doesNotMatch(response.body, /addTrack\(track/);
+  assert.doesNotMatch(response.body, /startSpeechStateLoop/);
 });
 
 test("voice call app config defines frontend and signaling routes", async () => {
@@ -46,7 +54,7 @@ test("voice call app config defines frontend and signaling routes", async () => 
   assert.equal(response.statusCode, 200);
   assert.equal(body.routes.page, "/voice-call");
   assert.equal(body.routes.config, "/voice-call/api/config");
-  assert.equal(body.routes.signaling, "/plugins/webrtc-voice/signaling");
+  assert.equal(body.routes.signaling, "/voice-call/api/signaling");
   assert.equal(body.ui.portraitUrl, "/voice-call/assets/alice-default-portrait.png");
 });
 

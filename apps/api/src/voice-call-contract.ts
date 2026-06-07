@@ -1,7 +1,7 @@
 export const voiceCallRoutes = {
   page: "/voice-call",
   config: "/voice-call/api/config",
-  signaling: "/plugins/webrtc-voice/signaling",
+  signaling: "/voice-call/api/signaling",
   portrait: "/voice-call/assets/alice-default-portrait.png"
 } as const;
 
@@ -16,7 +16,7 @@ export type VoiceCallPhase =
   | "ended"
   | "error";
 
-export type VoiceCallInputMode = "hold_to_talk" | "realtime_voice" | "text";
+export type VoiceCallInputMode = "hold_to_talk" | "text";
 
 export type VoiceCallControlMessage =
   | { type: "hello"; clientId?: string; locale?: string; timezone?: string }

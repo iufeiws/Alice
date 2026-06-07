@@ -483,7 +483,6 @@ export function renderVoiceCallHtml(): string {
     const messageInput = document.getElementById("messageInput");
     const textControl = document.getElementById("textControl");
     const holdTalkButton = document.getElementById("holdTalkButton");
-    const realtimeMuteButton = document.getElementById("realtimeMuteButton");
     const aliceTranscript = document.getElementById("aliceTranscript");
     const userTranscript = document.getElementById("userTranscript");
     const overlay = document.getElementById("overlay");
@@ -508,28 +507,26 @@ export function renderVoiceCallHtml(): string {
     let animationFrame;
     let pendingRemoteIce = [];
     let waiting = false;
-    let muted = false;
     let inputMode = "text";
+    let textInputInterruptSent = false;
     let remoteStream;
     let popupResizeTimer;
     let pageHolding = false;
     let stableViewportWidth = 0;
     let stableViewportHeight = 0;
     let popupShouldCenter = true;
-    const inputModes = ["text", "hold_to_talk", "realtime_voice"];
+    const inputModes = ["text", "hold_to_talk"];
     const popupWidth = 420;
     const popupHeight = 747;
     const popupMinContentDelta = 3;
     const popupResizeIntervalMs = 5000;
     const modeIcons = {
       text: '<svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path><path d="M8 9h.01"></path><path d="M12 9h.01"></path><path d="M16 9h.01"></path><path d="M8 13h8"></path><path d="M9 16h6"></path></svg>',
-      hold_to_talk: '<svg viewBox="0 0 24 24"><path d="M8 3h7a2 2 0 0 1 2 2v16H6V5a2 2 0 0 1 2-2z"></path><path d="M10 3V1"></path><path d="M13 7h1"></path><path d="M9 11h5"></path><path d="M9 15h5"></path><path d="M9 19h5"></path><path d="M18 8h2v7h-2"></path></svg>',
-      realtime_voice: '<svg viewBox="0 0 24 24"><path d="M7.5 4.8 10 4a2 2 0 0 1 2.3.9l1.1 1.9a2 2 0 0 1-.3 2.4l-1 1a12 12 0 0 0 4.7 4.7l1-1a2 2 0 0 1 2.4-.3l1.9 1.1a2 2 0 0 1 .9 2.3l-.8 2.5a2 2 0 0 1-2.2 1.4A18.2 18.2 0 0 1 3.1 4.9 2 2 0 0 1 4.5 2.7z"></path><path d="M15 3h6v6"></path><path d="m21 3-6 6"></path></svg>'
+      hold_to_talk: '<svg viewBox="0 0 24 24"><path d="M8 3h7a2 2 0 0 1 2 2v16H6V5a2 2 0 0 1 2-2z"></path><path d="M10 3V1"></path><path d="M13 7h1"></path><path d="M9 11h5"></path><path d="M9 15h5"></path><path d="M9 19h5"></path><path d="M18 8h2v7h-2"></path></svg>'
     };
     const modeNames = {
       text: "文字输入",
-      hold_to_talk: "长按录音",
-      realtime_voice: "实时录音"
+      hold_to_talk: "长按录音"
     };
 
     const phaseText = {
@@ -558,7 +555,6 @@ export function renderVoiceCallHtml(): string {
     portraitCollapseButton.addEventListener("click", togglePortraitCollapsed);
     modeButton.addEventListener("click", cycleInputMode);
     waitButton.addEventListener("click", toggleWait);
-    realtimeMuteButton.addEventListener("click", toggleRealtimeMute);
     holdTalkButton.addEventListener("pointerdown", startHoldToTalk);
     holdTalkButton.addEventListener("pointerup", stopHoldToTalk);
     holdTalkButton.addEventListener("pointercancel", stopHoldToTalk);
@@ -570,7 +566,7 @@ export function renderVoiceCallHtml(): string {
       }
     });
     messageInput.addEventListener("focus", keepSurfaceAnchored);
-    messageInput.addEventListener("input", keepSurfaceAnchored);
+    messageInput.addEventListener("input", handleTextInputChange);
     window.visualViewport?.addEventListener("resize", keepSurfaceAnchored);
     window.addEventListener("resize", configureSurfaceSize);
     window.addEventListener("pagehide", () => holdCall("pagehide"));
@@ -588,20 +584,10 @@ export function renderVoiceCallHtml(): string {
         preloadStatus.textContent = "预热通话资源";
         const config = await loadConfig();
         await unlockAudio();
-        setPhase("permission_required");
-        localStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1
-          }
-        });
         preloadStatus.textContent = "";
         setPhase("connecting");
-        ensureAudioAnalyser(localStream, "local");
         peer = new RTCPeerConnection({ iceServers: config.iceServers || initialIceServers });
-        for (const track of localStream.getAudioTracks()) peer.addTrack(track, localStream);
+        peer.addTransceiver("audio", { direction: "recvonly" });
         peer.addEventListener("track", (event) => {
           remoteStream = event.streams[0] || new MediaStream([event.track]);
           remoteAudio.srcObject = remoteStream;
@@ -761,7 +747,20 @@ export function renderVoiceCallHtml(): string {
       sendSignal({ type: "text-input", text });
       userTranscript.textContent = text;
       messageInput.value = "";
+      textInputInterruptSent = false;
       statusSubtitle.textContent = "已发送文字";
+    }
+
+    function handleTextInputChange() {
+      keepSurfaceAnchored();
+      const text = messageInput.value.trim();
+      if (text.length <= 3) {
+        textInputInterruptSent = false;
+        return;
+      }
+      if (textInputInterruptSent) return;
+      textInputInterruptSent = true;
+      sendSignal({ type: "interrupt", reason: "manual" });
     }
 
     function cycleInputMode() {
@@ -774,7 +773,6 @@ export function renderVoiceCallHtml(): string {
     function applyInputMode() {
       textControl.classList.toggle("active", inputMode === "text");
       holdTalkButton.classList.toggle("active", inputMode === "hold_to_talk");
-      realtimeMuteButton.classList.toggle("active", inputMode === "realtime_voice");
       const nextMode = inputModes[(inputModes.indexOf(inputMode) + 1) % inputModes.length];
       modeButton.innerHTML = modeIcons[nextMode];
       modeButton.setAttribute("aria-label", "切换到" + modeNames[nextMode]);
@@ -794,15 +792,6 @@ export function renderVoiceCallHtml(): string {
       holdTalkButton.classList.remove("pressed");
       sendSignal({ type: "hold-to-talk", active: false });
       userTranscript.textContent = "录音已结束";
-    }
-
-    function toggleRealtimeMute() {
-      muted = !muted;
-      realtimeMuteButton.classList.toggle("selected", muted);
-      realtimeMuteButton.setAttribute("aria-label", muted ? "取消静音" : "静音");
-      for (const track of localStream?.getAudioTracks?.() || []) track.enabled = !muted;
-      sendSignal({ type: "mute", muted });
-      userTranscript.textContent = muted ? "实时录音已静音" : "实时录音中";
     }
 
     function togglePortraitCollapsed() {
@@ -1017,29 +1006,7 @@ export function renderVoiceCallHtml(): string {
       ctx.stroke();
     }
 
-    function startSpeechStateLoop() {
-      let active = false;
-      setInterval(() => {
-        if (!localAnalyser || phase !== "connected") return;
-        const data = new Uint8Array(localAnalyser.fftSize);
-        localAnalyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (const value of data) {
-          const centered = value - 128;
-          sum += centered * centered;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const nextActive = rms > 7;
-        if (nextActive !== active) {
-          active = nextActive;
-          sendSignal({ type: "speech-state", active });
-          if (active) sendSignal({ type: "interrupt", reason: "barge_in" });
-        }
-      }, 250);
-    }
-
     drawWaveform();
-    startSpeechStateLoop();
   </script>
 </body>
 </html>`;

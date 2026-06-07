@@ -1,4 +1,5 @@
 import { loadConfig } from "../../../packages/config/src/index.js";
+import type { NetworkInterfaceInfo } from "node:os";
 import { createAgentCore, type LLMSessionClearReason, type LLMSessionSnapshot, type TokenPressurePreviewBaseline } from "../../../core/agent/src/index.js";
 import {
   createAgentInitiatedBehaviorRunStore,
@@ -25,11 +26,12 @@ import {
 } from "../../../core/agent/src/llm-session-log.js";
 import { createDailyShellStore } from "../../../core/agent/src/shells.js";
 import { buildLLMTextVariables, renderLLMValue } from "../../../core/text-renderer/src/index.js";
-import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult, type LLMMessage, type LLMToolCall } from "../../../core/llm/src/index.js";
+import { createMutableLLMClient, createOpenAICompatibleClient, createStubLLMClient, type LLMChatInput, type LLMChatResult, type LLMMessage } from "../../../core/llm/src/index.js";
 import { createOutputRouter } from "../../../core/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../core/policy/src/index.js";
 import { createIntentRouter } from "../../../core/router/src/index.js";
 import { createSessionResolver } from "../../../core/session/src/index.js";
+import { createTalkAgentLoopForSession } from "../../../core/agent/src/talk-loop.js";
 import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
@@ -50,6 +52,7 @@ import { createMutableCurrentTimeProvider } from "../../../core/time/src/index.j
 import { parseZonedIso } from "../../../core/time/src/index.js";
 import { createMessageRuntime, summarizePayload } from "./message-runtime.js";
 import { createApiRequestHandler } from "./admin-routes.js";
+import { voiceCallRoutes } from "./voice-call-contract.js";
 import { createId, type ToolDefinition } from "../../../packages/types/src/index.js";
 import { createLLMRequests } from "./llm-requests.js";
 import { acquireSingletonLock } from "./singleton-lock.js";
@@ -298,21 +301,6 @@ store = createAliceStore("data/alice.sqlite", {
   messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
-const activeTalkAgentLoopControllers = new Map<string, AbortController>();
-const talkRuntime = createTalkRuntime({
-  store: createTalkStore(path.join("data", "talk.sqlite")),
-  time: currentTime,
-  createLLMSession(input) {
-    return createTalkLLMSession(input.occurredAt).id;
-  },
-  runAgentLoop: runTalkAgentLoopForSession,
-  interruptAgentLoop(sessionId) {
-    rewriteActiveTalkLLMSessionFromRuntime(sessionId);
-    activeTalkAgentLoopControllers.get(sessionId)?.abort();
-  }
-});
-const activeTalkAgentLoops = new Set<string>();
-const activeTalkConversationStartIndexes = new Map<string, number>();
 tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"), { time: currentTime });
 systemLogStore = createFileLogStore("logs/system", { getTimeZone: () => currentTime.timeZone });
 for (const entry of systemLogStore.listRecent(500)) {
@@ -479,51 +467,6 @@ const broadcastWebRtcVoiceStatus = (event: WebRtcVoiceStatusEvent) => {
     }
   }
 };
-const webRtcVoicePlugin = createWebRtcVoicePlugin({
-  config: defaultWebRtcVoiceConfig(),
-  time: currentTime,
-  async createPeer(input) {
-    return createWeriftPeer({
-      ...input,
-      onStatus: (event) => appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`)
-    });
-  },
-  createAsrSession(start) {
-    return createAsrInboundStreamSession(start, asrPlugin.config, {
-      resolveApiPreset(name) {
-        return readLLMApiPresets().find((entry) => entry.name === name);
-      },
-      appendLog
-    });
-  },
-  voiceSynthesizer: ttsPlugin.voiceSynthesizer,
-  decodeAudioFileToFrames(input) {
-    return decodeAudioFileToOpusRtpFrames(input);
-  },
-  encodePcmL16ToFrames(input) {
-    return encodePcmL16ToOpusRtpFrames(input);
-  },
-  encodePcmL16StreamToFrames(input) {
-    return encodePcmL16StreamToOpusRtpFrames(input);
-  },
-  talkRuntime,
-  async testAsr() {
-    const testAudioPath = asrPlugin.config.testAudioPath;
-    if (!testAudioPath) return { ok: false, error: "missing_asr_test_audio", message: "ASR test audio is not configured" };
-    const result = await asrPlugin.transcribe({
-      audioFile: testAudioPath,
-      filename: path.basename(testAudioPath),
-      language: webRtcVoicePlugin.config.language
-    });
-    return "ok" in result && result.ok === false
-      ? { ok: false, error: result.error, message: result.message ?? result.error }
-      : { ok: true };
-  },
-  emitStatus(event) {
-    appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
-    broadcastWebRtcVoiceStatus(event);
-  }
-});
 const messagingTools = createMessagingTools({
   store,
   outputRouter,
@@ -637,6 +580,44 @@ const llmRequests = createLLMRequests({
     if (event.kind === "retry") appendLog("warn", `llm retry: agent=${event.agentId} round=${event.round} attempt=${event.attempt ?? "?"} delay=${event.delayMs ?? "?"}ms error=${event.error ?? ""}`);
   }
 });
+const talkAgentLoop = createTalkAgentLoopForSession({
+  isActiveTalkLLMSession,
+  getActiveTalkLLMSessionId: () => activeLLMSession?.id,
+  getTalkPromptProfile: () => talkPromptProfileStore.get(),
+  time: currentTime,
+  dailyShellStore,
+  getAppearanceDescription: () => coreProfileStore.get().appearanceDescription,
+  memoryStore,
+  diaryStore,
+  buildNextLoopMessages(sessionId) {
+    return talkRuntime.buildNextLoopMessages(sessionId);
+  },
+  visibleToolNames,
+  toolPlugins,
+  getLLMConfig: currentTalkLLMConfig,
+  sendRequest: (input) => llmRequests.send(input),
+  appendAssistantDelta({ sessionId, outputId, delta }) {
+    talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
+  },
+  finishAssistantOutput({ sessionId, outputId }) {
+    talkRuntime.finishAssistantOutput({ sessionId, outputId });
+  },
+  log(level, message) {
+    appendLog(level, message);
+  }
+});
+const talkRuntime = createTalkRuntime({
+  store: createTalkStore(path.join("data", "talk.sqlite")),
+  time: currentTime,
+  createLLMSession(input) {
+    return createTalkLLMSession(input.occurredAt).id;
+  },
+  runAgentLoop: talkAgentLoop.runTalkAgentLoopForSession,
+  interruptAgentLoop(sessionId) {
+    rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+    talkAgentLoop.interruptTalkAgentLoop(sessionId);
+  }
+});
 const core = createAgentCore({
   config,
   llm: activeLLM,
@@ -698,6 +679,51 @@ const core = createAgentCore({
     llmRequests.resetCancel();
   },
   initialLLMSession: activeLLMSession
+});
+const webRtcVoicePlugin = createWebRtcVoicePlugin({
+  config: defaultWebRtcVoiceConfig(),
+  time: currentTime,
+  async createPeer(input) {
+    return createWeriftPeer({
+      ...input,
+      onStatus: (event) => appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`)
+    });
+  },
+  createAsrSession(start) {
+    return createAsrInboundStreamSession(start, asrPlugin.config, {
+      resolveApiPreset(name) {
+        return readLLMApiPresets().find((entry) => entry.name === name);
+      },
+      appendLog
+    });
+  },
+  voiceSynthesizer: ttsPlugin.voiceSynthesizer,
+  decodeAudioFileToFrames(input) {
+    return decodeAudioFileToOpusRtpFrames(input);
+  },
+  encodePcmL16ToFrames(input) {
+    return encodePcmL16ToOpusRtpFrames(input);
+  },
+  encodePcmL16StreamToFrames(input) {
+    return encodePcmL16StreamToOpusRtpFrames(input);
+  },
+  talkRuntime,
+  async testAsr() {
+    const testAudioPath = asrPlugin.config.testAudioPath;
+    if (!testAudioPath) return { ok: false, error: "missing_asr_test_audio", message: "ASR test audio is not configured" };
+    const result = await asrPlugin.transcribe({
+      audioFile: testAudioPath,
+      filename: path.basename(testAudioPath),
+      language: webRtcVoicePlugin.config.language
+    });
+    return "ok" in result && result.ok === false
+      ? { ok: false, error: result.error, message: result.message ?? result.error }
+      : { ok: true };
+  },
+  emitStatus(event) {
+    appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
+    broadcastWebRtcVoiceStatus(event);
+  }
 });
 
 const feishu = createFeishuPlugin(config.plugins.feishu, {
@@ -938,16 +964,19 @@ const onWebRtcVoiceCallCreated = async (call: WebRtcVoiceCall) => {
   webRtcVoiceCalls.set(call.callId, call);
 };
 for (const signalingServer of [server, httpsServer].filter(Boolean)) {
-  attachWebRtcVoiceSignalingServer({
-    server: signalingServer as any,
-    plugin: webRtcVoicePlugin,
-    appendLog,
-    onCallCreated: onWebRtcVoiceCallCreated,
-    onClientConnected(client) {
-      webRtcVoiceClients.add(client);
-      return () => webRtcVoiceClients.delete(client);
-    }
-  });
+  for (const signalingPath of [voiceCallRoutes.signaling, webRtcVoicePlugin.config.signalingPath]) {
+    attachWebRtcVoiceSignalingServer({
+      server: signalingServer as any,
+      plugin: webRtcVoicePlugin,
+      path: signalingPath,
+      appendLog,
+      onCallCreated: onWebRtcVoiceCallCreated,
+      onClientConnected(client) {
+        webRtcVoiceClients.add(client);
+        return () => webRtcVoiceClients.delete(client);
+      }
+    });
+  }
 }
 
 await core.start();
@@ -962,7 +991,7 @@ server.listen(config.api.port, config.api.host, () => {
 });
 httpsServer?.listen(config.api.httpsPort, config.api.httpsHost, () => {
   console.log(`[api] listening on https://${config.api.httpsHost}:${config.api.httpsPort}`);
-  console.log(`[api] voicecall LAN URL: https://${localLanAddress() ?? config.api.httpsHost}:${config.api.httpsPort}/plugins/webrtc-voice/call`);
+  console.log(`[api] voicecall LAN URL: https://${localLanAddress() ?? config.api.httpsHost}:${config.api.httpsPort}${voiceCallRoutes.page}`);
 });
 
 let shutdownStarted = false;
@@ -1105,200 +1134,6 @@ function currentTalkLLMConfig() {
     followupExtraParams: preset.followupExtraParams,
     stream: preset.stream
   };
-}
-
-async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
-  if (activeTalkAgentLoops.has(sessionId)) return;
-  if (!isActiveTalkLLMSession(sessionId)) {
-    appendLog("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${activeLLMSession?.id ?? "none"}`);
-    return;
-  }
-  activeTalkAgentLoops.add(sessionId);
-  const controller = new AbortController();
-  activeTalkAgentLoopControllers.set(sessionId, controller);
-  try {
-    appendLog("info", `talk loop start: session=${sessionId}`);
-    const profile = talkPromptProfileStore.get();
-    const event = buildTalkAgentEvent(sessionId);
-    const context = {
-      event,
-      time: currentTime,
-      dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
-      dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
-      appearanceDescription: coreProfileStore.get().appearanceDescription,
-      memory: memoryStore.read(),
-      wakeBoundary: diaryStore.latestWakeBoundary()
-    };
-    const variables = promptVariables(profile, context);
-    const runPromptTool = async (_layer: unknown, call: Parameters<typeof executeTalkToolCall>[1]) => executeTalkToolCall(event, call, variables);
-    const promptMessages: LLMMessage[] = await buildPromptMessagesWithToolResults(profile, context, runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]);
-    const talkMessages = talkRuntime.buildNextLoopMessages(sessionId);
-    const initialTalkMessages = talkMessages.length ? talkMessages : [{
-      role: "user" as const,
-      content: "A realtime voice call has just connected. Start with a short, natural voice greeting."
-    }];
-    activeTalkConversationStartIndexes.set(sessionId, promptMessages.length);
-    let messages: LLMMessage[] = [
-      ...promptMessages,
-      ...initialTalkMessages
-    ];
-    const config = currentTalkLLMConfig();
-    const toolNames = visibleToolNames(profile);
-    for (let round = 0; round < 6; round += 1) {
-      const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
-      let streamedContent = "";
-      const result = await llmRequests.send({
-        agentId: "talk",
-        client: config.client,
-        messages,
-        model: config.model,
-        temperature: config.temperature,
-        extraParams: round === 0 ? config.extraParams : config.followupExtraParams,
-        toolNames,
-        toolVariables: variables,
-        round,
-        stream: config.stream !== false,
-        signal: controller.signal,
-        streamHandlers: {
-          onContentDelta(delta) {
-            streamedContent += delta;
-            talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
-          }
-        }
-      });
-      const calls = result.message.toolCalls ?? [];
-      if (calls.length === 0) {
-        if (!streamedContent && result.message.content) {
-          talkRuntime.appendAssistantDelta({ sessionId, outputId, delta: result.message.content });
-        }
-        talkRuntime.finishAssistantOutput({ sessionId, outputId });
-        appendLog("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
-        return;
-      }
-      messages = [
-        ...messages,
-        {
-          role: "assistant",
-          content: result.message.content,
-          reasoningContent: result.message.reasoningContent,
-          toolCalls: calls
-        },
-        ...await Promise.all(calls.map(async (call) => ({
-          role: "tool" as const,
-          toolCallId: call.id,
-          name: call.function.name,
-          content: formatToolResultForLLM(await executeTalkLLMToolCall(event, call))
-        })))
-      ];
-    }
-    appendLog("warn", `talk loop stopped after round limit: session=${sessionId}`);
-  } catch (error) {
-    appendLog("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
-      activeTalkAgentLoopControllers.delete(sessionId);
-    }
-    activeTalkAgentLoops.delete(sessionId);
-  }
-}
-
-function buildTalkAgentEvent(sessionId: string) {
-  const now = currentTime.now();
-  return {
-    id: `talk_${sessionId}_${now.epochMs}`,
-    source: {
-      plugin: "webrtc_voice",
-      channelId: sessionId,
-      userId: sessionId
-    },
-    session: {
-      scope: "dm",
-      sessionId
-    },
-    type: "message.text",
-    payload: {
-      kind: "text",
-      text: "A realtime voice call event was received."
-    },
-    meta: {
-      receivedAt: now.iso,
-      receivedAtUtc: now.date.toISOString()
-    }
-  } as const;
-}
-
-async function executeTalkLLMToolCall(event: ReturnType<typeof buildTalkAgentEvent>, call: LLMToolCall) {
-  return executeTalkToolCall(event, {
-    id: call.id,
-    toolName: call.function.name,
-    input: parseToolArguments(call.function.arguments),
-    requester: event.source,
-    session: event.session
-  }, promptVariables(talkPromptProfileStore.get(), {
-    event,
-    time: currentTime,
-    dailyShell: dailyShellStore.render(currentTime.now().date, currentTime.timeZone),
-    dailyShellRaw: dailyShellStore.get(currentTime.now().date, currentTime.timeZone),
-    appearanceDescription: coreProfileStore.get().appearanceDescription,
-    memory: memoryStore.read(),
-    wakeBoundary: diaryStore.latestWakeBoundary()
-  }));
-}
-
-async function executeTalkToolCall(
-  _event: ReturnType<typeof buildTalkAgentEvent>,
-  call: {
-    id: string;
-    toolName: string;
-    input: Record<string, unknown>;
-    requester?: ReturnType<typeof buildTalkAgentEvent>["source"];
-    session?: ReturnType<typeof buildTalkAgentEvent>["session"];
-  },
-  _variables: ReturnType<typeof promptVariables>
-) {
-  if (isOutboundMessagingTool(call.toolName)) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: "Talk loop outputs through TalkRuntime voice chunks; do not use messaging send tools."
-    };
-  }
-  const plugin = toolPlugins.find((entry) => entry.listTools().some((tool) => tool.name === call.toolName));
-  if (!plugin) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: `Unknown tool: ${call.toolName}`
-    };
-  }
-  try {
-    return await plugin.execute({
-      id: call.id,
-      toolName: call.toolName,
-      input: call.input,
-      requester: call.requester,
-      session: call.session
-    });
-  } catch (error) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-
-function isOutboundMessagingTool(name: string): boolean {
-  return name === "send_chat" || name === "send_feishu" || name === "send_wechat";
-}
-
-function parseToolArguments(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
 }
 
 function createLLMClientFromPreset(preset: LLMApiPreset): ReturnType<typeof createOpenAICompatibleClient> | undefined {
@@ -1871,7 +1706,7 @@ function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
 function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: string): void {
   const session = activeLLMSession;
   if (!session || session.agentId !== "talk" || String(session.id) !== talkSessionId) return;
-  const conversationStartIndex = activeTalkConversationStartIndexes.get(talkSessionId);
+  const conversationStartIndex = talkAgentLoop.getConversationStartIndex(talkSessionId);
   if (conversationStartIndex === undefined) return;
   const preservedPrefix = session.messages.slice(0, conversationStartIndex);
   const runtimeMessages = talkRuntime.buildNextLoopMessages(talkSessionId);
@@ -3050,18 +2885,6 @@ function formatPreviewContextLine(entry: StoredConversationMessage): string {
   return `${speaker}${recalled}${read}${reactions ? ` [reactions: ${reactions}]` : ""}: ${entry.isRecalled ? "(message recalled)" : entry.contentText}`;
 }
 
-function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }): string {
-  if (!result.ok) return result.error ? `error: ${result.error}` : "error";
-  if (typeof result.output === "string") return result.output;
-  if (result.output === undefined || result.output === null) return "ok";
-  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
-  try {
-    return JSON.stringify(result.output);
-  } catch {
-    return String(result.output);
-  }
-}
-
 function summarizePreviewReactions(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as Record<string, { count?: unknown }>;
@@ -3112,7 +2935,7 @@ function apiHttpsCertificateAltNames(): string[] {
   const names = new Set(["DNS:localhost", "IP:127.0.0.1"]);
   const hostname = os.hostname();
   if (hostname) names.add(`DNS:${hostname}`);
-  for (const entries of Object.values(os.networkInterfaces())) {
+  for (const entries of Object.values(safeNetworkInterfaces())) {
     for (const entry of entries ?? []) {
       if (entry.internal || entry.family !== "IPv4") continue;
       names.add(`IP:${entry.address}`);
@@ -3131,13 +2954,22 @@ function certificateMatchesAltNames(certPath: string, altNames: string[]): boole
 }
 
 function localLanAddress(): string | undefined {
-  for (const entries of Object.values(os.networkInterfaces())) {
+  for (const entries of Object.values(safeNetworkInterfaces())) {
     for (const entry of entries ?? []) {
       if (entry.internal || entry.family !== "IPv4") continue;
       return entry.address;
     }
   }
   return undefined;
+}
+
+function safeNetworkInterfaces(): NodeJS.Dict<NetworkInterfaceInfo[]> {
+  try {
+    return os.networkInterfaces();
+  } catch (error) {
+    appendLog("warn", `network interfaces unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return {};
+  }
 }
 
 function loadDotEnv(path: string): void {

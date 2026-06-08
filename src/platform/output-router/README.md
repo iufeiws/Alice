@@ -1,6 +1,6 @@
 # Output Router 说明
 
-`core/output-router` 负责注册 Channel Plugin，并把 `AgentOutput` 路由到正确的渠道插件。
+`platform/output-router` 负责注册 Channel Plugin，并把 `AgentOutput` 路由到正确的渠道插件。
 
 ## 公共接口
 

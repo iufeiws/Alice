@@ -1,6 +1,6 @@
 # Event Bus 说明
 
-`core/event-bus` 提供一个小型内存 pub/sub 抽象。
+`platform/event-bus` 提供一个小型内存 pub/sub 抽象。
 
 ## 公共接口
 

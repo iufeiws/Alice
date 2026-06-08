@@ -1,6 +1,6 @@
 # Scheduler 说明
 
-`core/scheduler` 包含进程内每日调度器。
+`platform/scheduler` 包含进程内每日调度器。
 
 ## 公共类型
 

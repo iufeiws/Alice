@@ -17,7 +17,7 @@ src/apps/api/main.ts
 - 创建 `AgentCore`。
 - 创建飞书与微信 Channel Plugin。
 - 创建 messaging、photo 与 shell Tool Plugin。
-- 通过 `contexts/conversation-hub/platform storage wiring` 持久化 Core 侧消息和消息事件日志。
+- 通过 `contexts/conversation-hub 和 platform/storage` 持久化 conversation-hub消息和消息事件日志。
 - 通过文件日志存储持久化系统日志。
 - 归档活跃 LLM 会话 transcript delta。
 - 注册每日 04:00 清理任务。
@@ -113,7 +113,7 @@ Messaging tool 试用：
 
 ## 运行说明
 
-系统/运行日志位于 `logs/`，包括 `logs/system` 和 `logs/message/message-logs.sqlite`。Core 侧聊天消息位于 `memory-files/message/messages.sqlite`；清理聊天历史时不要修改 `logs/`。运行时代码来自 `dist`，因此代码变更后需要重启 API 进程。
+系统/运行日志位于 `logs/`，包括 `logs/system` 和 `logs/message/message-logs.sqlite`。conversation-hub聊天消息位于 `memory-files/message/messages.sqlite`；清理聊天历史时不要修改 `logs/`。运行时代码来自 `dist`，因此代码变更后需要重启 API 进程。
 
 ## 消息运行时
 

@@ -17,7 +17,7 @@
 
 ## Dependency rules
 
-- 允许依赖 `packages/*`、`core/*`（按迁移阶段最小化过渡）
+- 允许依赖 `platform/storage` 等基础设施；不依赖 `apps` 或 channel SDK
 - 不直接依赖 `channels/*` 渲染层
 
 ## File placement

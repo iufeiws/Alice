@@ -40,7 +40,7 @@ WebSocket client 也订阅消息生命周期回调：
 - `im.message.message_read_v1`
 - `im.message.recalled_v1`
 
-这些回调不会作为独立消息暴露给 Core。它们按飞书 `message_id` 更新 Core 侧 `messages` 表中的匹配行：
+这些回调不会作为独立消息暴露给 Core。它们按飞书 `message_id` 更新 conversation-hub `messages` 表中的匹配行：
 
 - reactions 更新 `reactions_json`；
 - read receipts 更新 `is_read` 与 `read_at`；

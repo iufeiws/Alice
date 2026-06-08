@@ -31,7 +31,7 @@ readEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
 recalledEventToLifecycleEvent(raw): FeishuMessageLifecycleEvent
 ```
 
-把飞书生命周期回调解析为消息状态更新。这些更新以飞书 `message_id` 为目标，存储为调试记录并更新 Core 侧消息行，但不会成为独立 Core 消息。
+把飞书生命周期回调解析为消息状态更新。这些更新以飞书 `message_id` 为目标，存储为调试记录并更新 conversation-hub消息行，但不会成为独立 Core 消息。
 
 ```ts
 createInMemoryFeishuBindingStore(): FeishuBindingStore

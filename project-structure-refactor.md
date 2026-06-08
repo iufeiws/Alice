@@ -881,7 +881,7 @@ capabilities/tools
   -> platform
   -> shared
 
-contexts/*
+src/contexts/*
   -> own domain/application/ports/contracts
   -> other context public contracts only
   -> shared

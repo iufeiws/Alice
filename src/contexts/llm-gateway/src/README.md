@@ -14,7 +14,7 @@
 
 ## Public API
 
-- `contexts/llm-gateway/src/index.ts`
+- `src/contexts/llm-gateway/src/index.ts`
 
 ## File placement
 

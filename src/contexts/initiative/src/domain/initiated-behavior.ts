@@ -106,10 +106,10 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     kind: "event",
     enabled: true,
     triggerEvent: "sleep_cocoon.auto_goodnight_check",
-    promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_goodnight.json",
+    promptProfilePath: "src/contexts/initiative/behaviors/sleep_goodnight.json",
     steps: [
       { kind: "backend_effect", effect: "sleep_cocoon", arguments: { action: "in" } },
-      { kind: "llm_instruction", promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_goodnight.json" }
+      { kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/sleep_goodnight.json" }
     ]
   },
   {
@@ -117,16 +117,16 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     kind: "event",
     enabled: true,
     triggerEvent: "sleep_cocoon.wake",
-    promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_morning.json",
-    steps: [{ kind: "llm_instruction", promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_morning.json" }]
+    promptProfilePath: "src/contexts/initiative/behaviors/sleep_morning.json",
+    steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/sleep_morning.json" }]
   },
   {
     id: "sleep_force_wake",
     kind: "event",
     enabled: true,
     triggerEvent: "sleep_cocoon.force_wake",
-    promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_force_wake.json",
-    steps: [{ kind: "llm_instruction", promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_force_wake.json" }]
+    promptProfilePath: "src/contexts/initiative/behaviors/sleep_force_wake.json",
+    steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/sleep_force_wake.json" }]
   },
   ...proactiveInitiationTypes.map((entry) => randomizedPlan(entry.id, entry.weight, entry.enabled))
 ];
@@ -523,7 +523,7 @@ function defaultAgentInitiatedBehaviorPromptContent(id: string): string {
 }
 
 function randomizedPlan(id: string, weight: number, enabled = false): AgentInitiatedBehaviorPlan {
-  const promptProfilePath = `src/core/prompt/initiated-behaviors/${id}.json`;
+  const promptProfilePath = `src/contexts/initiative/behaviors/${id}.json`;
   return {
     id,
     kind: "randomized",

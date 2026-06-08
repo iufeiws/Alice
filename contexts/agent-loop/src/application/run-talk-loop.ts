@@ -1,10 +1,10 @@
-import type { CurrentTimeProvider } from "../../time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../src/core/time/src/index.js";
 import type { LLMMessage, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
-import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../../src/packages/types/src/index.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
-import { formatToolResultForLLM } from "../../text-renderer/src/index.js";
-import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./chat-loop.js";
+import { formatToolResultForLLM } from "../../../../src/core/text-renderer/src/index.js";
+import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
 export type TalkAgentLoopInput = Omit<ChatAgentLoopInput, "llmInput"> & {

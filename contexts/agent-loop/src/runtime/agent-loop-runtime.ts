@@ -1,4 +1,4 @@
-import { createAgentStateController, createJsonAgentStateStore } from "./state.js";
+import { createAgentStateController, createJsonAgentStateStore } from "../domain/agent-loop-state.js";
 
 const path = await import("node:path");
 

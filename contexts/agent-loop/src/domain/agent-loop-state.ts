@@ -1,4 +1,4 @@
-import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../time/src/index.js";
+import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../../../src/core/time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

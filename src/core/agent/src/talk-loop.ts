@@ -1,1 +1,1 @@
-export * from "../../../../contexts/agent-loop/src/application/run-talk-loop.js";
+export * from "../../../contexts/agent-loop/src/application/run-talk-loop.js";

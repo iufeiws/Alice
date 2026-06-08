@@ -1,1 +1,1 @@
-export * from "../../../../contexts/memory/src/memory.js";
+export * from "../../../contexts/memory/src/memory.js";

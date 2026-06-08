@@ -1,1 +1,1 @@
-export * from "../../../../contexts/memory/src/memory-console-runtime.js";
+export * from "../../../contexts/memory/src/memory-console-runtime.js";

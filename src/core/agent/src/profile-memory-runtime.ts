@@ -1,1 +1,1 @@
-export * from "../../../../contexts/memory/src/profile-memory-runtime.js";
+export * from "../../../contexts/memory/src/profile-memory-runtime.js";

@@ -98,7 +98,10 @@ export function renderVoiceCallHtml(): string {
       line-height: 1.5;
       color: var(--call-text-muted);
     }
-    [data-phase]:not([data-phase="idle"]) .dial-screen { display: none; }
+    [data-phase="connected"] .dial-screen,
+    [data-phase="reconnecting"] .dial-screen,
+    [data-phase="ended"] .dial-screen,
+    [data-phase="error"] .dial-screen { display: none; }
     .app-bar {
       grid-row: 1;
       grid-column: 1;
@@ -118,6 +121,10 @@ export function renderVoiceCallHtml(): string {
       box-shadow: 0 12px 32px var(--call-shadow);
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
+    }
+    .call-button:disabled {
+      cursor: default;
+      opacity: 0.62;
     }
     .icon-button {
       width: 44px;
@@ -579,13 +586,11 @@ export function renderVoiceCallHtml(): string {
 
     async function startCall() {
       try {
+        if (phase !== "idle" && phase !== "ended" && phase !== "error") return;
         hideOverlay();
-        setPhase("preloading");
-        preloadStatus.textContent = "预热通话资源";
+        setPhase("preloading", "正在连接后台");
+        callButton.disabled = true;
         const config = await loadConfig();
-        await unlockAudio();
-        preloadStatus.textContent = "";
-        setPhase("connecting");
         peer = new RTCPeerConnection({ iceServers: config.iceServers || initialIceServers });
         peer.addTransceiver("audio", { direction: "recvonly" });
         peer.addEventListener("track", (event) => {
@@ -595,8 +600,8 @@ export function renderVoiceCallHtml(): string {
           void remoteAudio.play().catch(() => showError("远端音频播放失败", "点击页面后继续播放。"));
         });
         peer.addEventListener("connectionstatechange", () => {
-          if (peer.connectionState === "connected") markConnected();
-          if (peer.connectionState === "connecting") setPhase("connecting");
+          if (peer.connectionState === "connected") setPreConnectedPhase("connecting", "链路已建立，等待首段音频");
+          if (peer.connectionState === "connecting") setPreConnectedPhase("connecting");
           if (peer.connectionState === "disconnected") setPhase("reconnecting");
           if (peer.connectionState === "failed") showError("通话连接失败", "WebRTC 建立失败，请重试。");
           if (peer.connectionState === "closed") setPhase("ended");
@@ -607,6 +612,7 @@ export function renderVoiceCallHtml(): string {
           }
         });
         await openSignaling(config.routes?.signaling || routes.signaling);
+        await unlockAudio();
       } catch (error) {
         if (error && error.name === "NotAllowedError") {
           setPhase("permission_required");
@@ -666,13 +672,23 @@ export function renderVoiceCallHtml(): string {
     }
 
     function applyBackendStatus(state, detail) {
-      if (state === "asr.preflight.started") setPhase("preloading", "正在检查语音识别");
-      if (state === "asr.preflight.ready") setPhase("preloading", "语音识别可用");
+      if (state === "asr.preflight.started") setPreConnectedPhase("preloading", "正在检查语音识别");
+      if (state === "asr.preflight.ready") setPreConnectedPhase("preloading", "语音识别可用");
+      if (state === "tts.prepare.started") setPreConnectedPhase("preloading", "正在准备语音合成");
+      if (state === "tts.prepare.ready") setPreConnectedPhase("preloading", "语音合成可用");
       if (state === "asr.preflight.failed") showError("语音识别不可用", detail || "ASR 测试失败。");
-      if (state === "webrtc.answer.created") setPhase("connecting");
-      if (state === "webrtc.connection" && detail === "connected") markConnected();
+      if (state === "webrtc.answer.created") setPreConnectedPhase("connecting");
+      if (state === "webrtc.connection" && detail === "connected") setPreConnectedPhase("connecting", "链路已建立，等待首段音频");
+      if (state === "tts.queue.waiting") setPreConnectedPhase("connecting", "正在准备 Alice 的第一段声音");
+      if (state === "tts.queue.ready") setPreConnectedPhase("connecting", "首段音频准备完毕");
+      if (state === "voice_call.connected") markConnected();
       if (state === "tts.playing_text" && detail) aliceTranscript.textContent = detail;
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
+    }
+
+    function setPreConnectedPhase(nextPhase, detail) {
+      if (phase === "connected" || phase === "reconnecting" || phase === "ended" || phase === "error") return;
+      setPhase(nextPhase, detail);
     }
 
     function markConnected() {
@@ -697,11 +713,15 @@ export function renderVoiceCallHtml(): string {
       const text = phaseText[nextPhase] || phaseText.error;
       statusTitle.textContent = text[0];
       statusSubtitle.textContent = detail || text[1];
+      if (nextPhase === "idle" || nextPhase === "preloading" || nextPhase === "connecting" || nextPhase === "ringing" || nextPhase === "permission_required") {
+        preloadStatus.textContent = detail || text[1];
+      }
       srStatus.textContent = text[0] + " " + (detail || text[1]);
     }
 
     function showError(title, message) {
       setPhase("error", message);
+      callButton.disabled = false;
       overlayTitle.textContent = title;
       overlayMessage.textContent = message;
       overlay.setAttribute("aria-hidden", "false");
@@ -722,6 +742,7 @@ export function renderVoiceCallHtml(): string {
       for (const track of localStream?.getTracks?.() || []) track.stop();
       localStream = undefined;
       clearInterval(elapsedTimer);
+      callButton.disabled = false;
       setPhase("ended");
     }
 

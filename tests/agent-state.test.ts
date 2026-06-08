@@ -102,6 +102,22 @@ test("agent state returns documented delay ranges", () => {
   assert.equal(controller.getInboundDelayMs(), 15_000);
 });
 
+test("agent state supports calling without an automatic inactive deadline", () => {
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    random: () => 0
+  });
+
+  controller.setState("calling", { reason: "talk_session_opened" });
+
+  assert.equal(controller.getSnapshot().state, "calling");
+  assert.equal(controller.getSnapshot().reason, "talk_session_opened");
+  assert.equal(controller.getSnapshot().responseDelayMs, 0);
+  assert.equal(controller.getSnapshot().nextTransitionAt, undefined);
+  assert.equal(controller.canReplyToInbound(), true);
+  assert.equal(controller.canRunHeartbeat(), true);
+});
+
 test("waiting degrades to idle after inactivity", () => {
   let current = new Date("2026-05-25T00:00:00.000Z");
   const controller = createAgentStateController({

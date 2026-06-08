@@ -27,6 +27,89 @@ test("talk runtime exposes chunks after punctuation and twelve visible character
   assert.equal(runtime.claimReadyOutputChunk("session-chunk")?.text, "好。");
 });
 
+test("talk runtime reports pending voice output chars for ready chunks and streaming buffers", () => {
+  const runtime = createTestRuntime("pending-voice-output");
+
+  runtime.openSession(sessionInput("session-pending-output"));
+  runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "你好，今天要不要一起散步？" });
+  assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), "你好，今天要不要一起散步？".length);
+
+  runtime.claimReadyOutputChunk("session-pending-output");
+  assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), 0);
+
+  runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "好" });
+  assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), 1);
+});
+
+test("talk runtime notifies agent state callbacks on session open and close", () => {
+  const states: string[] = [];
+  const store = createTalkStore(path.join(makeTempDir("talk-runtime-agent-state"), "talk.sqlite"));
+  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
+  const runtime = createTalkRuntime({
+    store,
+    time,
+    onSessionOpened: () => states.push("calling"),
+    onSessionClosed: () => states.push("waiting")
+  });
+
+  runtime.openSession(sessionInput("session-agent-state"));
+  runtime.closeSession({ sessionId: "session-agent-state" });
+
+  assert.deepEqual(states, ["calling", "waiting"]);
+});
+
+test("talk runtime closes an open session after max continuous rounds timeout", () => {
+  let scheduled: (() => void) | undefined;
+  const store = createTalkStore(path.join(makeTempDir("talk-runtime-max-round-close"), "talk.sqlite"));
+  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
+  const runtime = createTalkRuntime({
+    store,
+    time,
+    maxContinuousRoundIdleMs: 60_000,
+    setTimeout(handler, ms) {
+      assert.equal(ms, 60_000);
+      scheduled = handler;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimeout: () => {}
+  });
+
+  runtime.openSession(sessionInput("session-max-round-close"));
+  runtime.noteAgentLoopMaxContinuousRounds({ sessionId: "session-max-round-close", rounds: 30 });
+
+  assert.equal(runtime.store.getSession("session-max-round-close")?.status, "open");
+  scheduled?.();
+  assert.equal(runtime.store.getSession("session-max-round-close")?.status, "closed");
+});
+
+test("talk runtime cancels max continuous rounds timeout when user interrupts", () => {
+  let timerCleared = false;
+  const store = createTalkStore(path.join(makeTempDir("talk-runtime-max-round-interrupt"), "talk.sqlite"));
+  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
+  const runtime = createTalkRuntime({
+    store,
+    time,
+    setTimeout() {
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimeout() {
+      timerCleared = true;
+    }
+  });
+
+  runtime.openSession(sessionInput("session-max-round-interrupt"));
+  runtime.appendAssistantDelta({ sessionId: "session-max-round-interrupt", outputId: "output-max-round-interrupt", delta: "まだ話しています。" });
+  runtime.noteAgentLoopMaxContinuousRounds({ sessionId: "session-max-round-interrupt", rounds: 30 });
+  runtime.interruptLatestOutput({
+    sessionId: "session-max-round-interrupt",
+    reason: "barge_in",
+    breakpointContext: { beforeText: "まだ" }
+  });
+
+  assert.equal(timerCleared, true);
+  assert.equal(runtime.store.getSession("session-max-round-interrupt")?.status, "open");
+});
+
 test("talk runtime uses created LLM session id and rejects stale session writes", () => {
   const runtime = createTestRuntime("llm-session-id", undefined, undefined, () => "llm-session-42");
 

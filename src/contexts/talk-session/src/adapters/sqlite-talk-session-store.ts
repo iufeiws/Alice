@@ -10,6 +10,7 @@ export type TalkEventKind =
   | "audio.transcript.final"
   | "text.final"
   | "input.interrupted"
+  | "agent.max_continuous_rounds"
   | "session.ended";
 
 export type TalkSource = {
@@ -143,6 +144,7 @@ export type TalkStore = {
   cancelChunks(outputId: string, now: string, nowUtc?: string): void;
   cancelOtherSessionOutputs(sessionId: string, keepOutputId: string, now: string, nowUtc?: string): void;
   isSessionOutputIdle(sessionId: string): boolean;
+  pendingVoiceOutputCharCount(sessionId: string): number;
   insertDiscard(input: {
     discardId: string;
     sessionId: string;
@@ -451,6 +453,19 @@ export function createTalkStore(dbPath: string): TalkStore {
         LIMIT 1
       `).get(sessionId);
       return !activeChunk;
+    },
+    pendingVoiceOutputCharCount(sessionId) {
+      const output = db.prepare(`
+        SELECT COALESCE(SUM(LENGTH(buffer_text) + LENGTH(pending_chunk_text)), 0) AS count
+        FROM talk_outputs
+        WHERE session_id = ? AND status = 'streaming'
+      `).get(sessionId) as { count?: number } | undefined;
+      const chunks = db.prepare(`
+        SELECT COALESCE(SUM(LENGTH(text)), 0) AS count
+        FROM talk_output_chunks
+        WHERE session_id = ? AND status = 'ready'
+      `).get(sessionId) as { count?: number } | undefined;
+      return Number(output?.count ?? 0) + Number(chunks?.count ?? 0);
     },
     insertDiscard(input) {
       db.prepare(`

@@ -14,6 +14,7 @@ export type LLMApiPreset = {
   stream: boolean;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
+  maxContinuousRounds?: number;
 };
 
 export type PromptApiProfile = {
@@ -99,6 +100,13 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
-    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
+    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {},
+    maxContinuousRounds: positiveInteger(value.maxContinuousRounds)
   };
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1) return undefined;
+  return Math.floor(number);
 }

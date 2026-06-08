@@ -269,6 +269,8 @@ export function renderAdminHtmlV2(): string {
               <input id="temperature" name="temperature" inputmode="decimal" />
               <label for="timeoutMs">Timeout Ms</label>
               <input id="timeoutMs" name="timeoutMs" inputmode="numeric" />
+              <label for="maxContinuousRounds">Max Continuous Rounds</label>
+              <input id="maxContinuousRounds" name="maxContinuousRounds" inputmode="numeric" />
               <label><input id="streamEnabled" name="stream" type="checkbox" /> Streaming</label>
               <label for="extraParams">Extra Params JSON</label>
               <textarea id="extraParams" name="extraParams" rows="6" spellcheck="false">{}</textarea>
@@ -2404,6 +2406,7 @@ Timing:
           model: $("model").value,
           temperature: $("temperature").value,
           timeoutMs: $("timeoutMs").value,
+          maxContinuousRounds: $("maxContinuousRounds").value,
           stream: $("streamEnabled").checked,
           extraParams: $("extraParams").value,
           followupExtraParams: $("followupExtraParams").value
@@ -2413,7 +2416,7 @@ Timing:
       }
 
       function bindLLMApiPresetFormDirtyTracking() {
-        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
+        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "timeoutMs", "maxContinuousRounds", "extraParams", "followupExtraParams"].forEach((id) => {
           $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
         });
         $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
@@ -2430,6 +2433,7 @@ Timing:
         $("model").value = preset.model || "";
         $("temperature").value = String(preset.temperature ?? "");
         $("timeoutMs").value = String(preset.timeoutMs ?? "");
+        $("maxContinuousRounds").value = String(preset.maxContinuousRounds ?? 30);
         $("streamEnabled").checked = preset.stream !== false;
         $("extraParams").value = JSON.stringify(preset.extraParams || {}, null, 2);
         $("followupExtraParams").value = JSON.stringify(preset.followupExtraParams || {}, null, 2);
@@ -2443,6 +2447,7 @@ Timing:
         $("model").value = "";
         $("temperature").value = "0.2";
         $("timeoutMs").value = "60000";
+        $("maxContinuousRounds").value = "30";
         $("streamEnabled").checked = true;
         $("extraParams").value = "{}";
         $("followupExtraParams").value = "{}";
@@ -2468,6 +2473,8 @@ Timing:
         if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return "Temperature must be a number between 0 and 2.";
         const timeoutMs = Number($("timeoutMs").value);
         if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) return "Timeout Ms must be at least 1000.";
+        const maxContinuousRounds = Number($("maxContinuousRounds").value);
+        if (!Number.isFinite(maxContinuousRounds) || maxContinuousRounds < 1) return "Max Continuous Rounds must be at least 1.";
         const extraParams = parseLLMApiJsonObject("Extra Params JSON", $("extraParams").value);
         if (extraParams) return extraParams;
         const followupExtraParams = parseLLMApiJsonObject("Follow-up Extra Params JSON", $("followupExtraParams").value);

@@ -20,6 +20,7 @@ type TalkAgentLoopLLMConfig = {
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
   stream?: boolean;
+  maxContinuousRounds?: number;
 };
 
 type TalkAgentLoopState = {
@@ -33,6 +34,8 @@ type TalkAgentLoopState = {
 type TalkAgentLoopDeps = {
   isActiveTalkLLMSession(sessionId: string): boolean;
   getActiveTalkLLMSessionId(): string | number | undefined;
+  isTalkSessionOpen(sessionId: string): boolean;
+  pendingVoiceOutputCharCount(sessionId: string): number;
   getTalkPromptProfile(): PromptProfile;
   time: CurrentTimeProvider;
   dailyShellStore: {
@@ -49,7 +52,9 @@ type TalkAgentLoopDeps = {
   sendRequest: LLMRequestSender;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
+  onMaxContinuousRounds?(input: { sessionId: string; rounds: number }): Promise<void> | void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
+  sleep?(ms: number): Promise<void>;
 };
 
 export type TalkAgentLoopController = {
@@ -62,11 +67,16 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   const activeTalkAgentLoops = new Set<string>();
   const activeTalkAgentLoopControllers = new Map<string, AbortController>();
   const activeTalkConversationStartIndexes = new Map<string, number>();
+  const maxPendingVoiceOutputChars = 12;
 
   async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
     if (activeTalkAgentLoops.has(sessionId)) return;
     if (!deps.isActiveTalkLLMSession(sessionId)) {
       deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
+      return;
+    }
+    if (!deps.isTalkSessionOpen(sessionId)) {
+      deps.log("info", `talk loop skipped: session closed session=${sessionId}`);
       return;
     }
     activeTalkAgentLoops.add(sessionId);
@@ -81,7 +91,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         ...initialTalkMessages
       ];
       const config = deps.getLLMConfig();
-      for (let round = 0; true; round += 1) {
+      const maxContinuousRounds = normalizeMaxContinuousRounds(config.maxContinuousRounds);
+      for (let round = 0; round < maxContinuousRounds; round += 1) {
+        const guard = await waitForTalkLoopRound(sessionId, round, controller);
+        if (!guard.continue) return;
         const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
         let streamedContent = "";
         const result = await deps.sendRequest({
@@ -110,7 +123,6 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           }
           deps.finishAssistantOutput({ sessionId, outputId });
           deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
-          //return;
         }
         messages = [
           ...messages,
@@ -128,7 +140,13 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           })))
         ];
       }
+      deps.log("info", `talk loop reached max continuous rounds: session=${sessionId} rounds=${maxContinuousRounds}`);
+      await deps.onMaxContinuousRounds?.({ sessionId, rounds: maxContinuousRounds });
     } catch (error) {
+      if (controller.signal.aborted || isCancellationError(error)) {
+        deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
       deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
     } finally {
       if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
@@ -144,6 +162,31 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
 
   function getConversationStartIndex(sessionId: string): number | undefined {
     return activeTalkConversationStartIndexes.get(sessionId);
+  }
+
+  async function waitForTalkLoopRound(sessionId: string, round: number, controller: AbortController): Promise<{ continue: boolean }> {
+    let loggedBackpressure = false;
+    while (true) {
+      if (controller.signal.aborted) {
+        deps.log("info", `talk loop cancelled before round: session=${sessionId} round=${round}`);
+        return { continue: false };
+      }
+      if (!deps.isActiveTalkLLMSession(sessionId)) {
+        deps.log("warn", `talk loop stopped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
+        return { continue: false };
+      }
+      if (!deps.isTalkSessionOpen(sessionId)) {
+        deps.log("info", `talk loop stopped: session closed session=${sessionId}`);
+        return { continue: false };
+      }
+      const pendingChars = deps.pendingVoiceOutputCharCount(sessionId);
+      if (pendingChars < maxPendingVoiceOutputChars) return { continue: true };
+      if (!loggedBackpressure) {
+        deps.log("info", `talk loop waiting: voice output buffer pending_chars=${pendingChars} limit=${maxPendingVoiceOutputChars} session=${sessionId}`);
+        loggedBackpressure = true;
+      }
+      await (deps.sleep ?? sleep)(25);
+    }
   }
 
   async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState> {
@@ -234,6 +277,22 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     interruptTalkAgentLoop,
     getConversationStartIndex
   };
+}
+
+function normalizeMaxContinuousRounds(value: unknown): number {
+  const rounds = Number(value);
+  if (!Number.isFinite(rounds) || rounds < 1) return 30;
+  return Math.max(1, Math.floor(rounds));
+}
+
+function isCancellationError(error: unknown): boolean {
+  if (!error) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "llm_request_cancelled" || /abort/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider): AgentEvent {

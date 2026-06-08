@@ -13,6 +13,7 @@ export type TalkRuntime = {
   openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
   closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
   startAgentLoop(sessionId: string): void;
+  noteAgentLoopMaxContinuousRounds(input: { sessionId: string; rounds: number }): void;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
@@ -85,13 +86,25 @@ export type TalkRuntimeDeps = {
   }): string | number;
   runAgentLoop?(sessionId: string): Promise<void> | void;
   interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
+  onSessionOpened?(sessionId: string): void;
+  onSessionClosed?(sessionId: string): void;
+  maxContinuousRoundIdleMs?: number;
+  setTimeout?: (handler: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
 };
 
 const defaultReadyChars = 12;
+const defaultMaxContinuousRoundIdleMs = 60_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
   const readyChars = deps.readyChars ?? defaultReadyChars;
+  const maxContinuousRoundIdleMs = deps.maxContinuousRoundIdleMs ?? defaultMaxContinuousRoundIdleMs;
+  const timers = {
+    setTimeout: deps.setTimeout ?? ((handler: () => void, ms: number) => setTimeout(handler, ms)),
+    clearTimeout: deps.clearTimeout ?? ((timer: ReturnType<typeof setTimeout>) => clearTimeout(timer))
+  };
+  const maxRoundCloseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -121,27 +134,45 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         occurredAtUtc,
         payload: { kind: "session", ...(typeof input.metadata === "object" && input.metadata ? input.metadata : {}) }
       });
+      deps.onSessionOpened?.(sessionId);
       return { sessionId };
     },
     closeSession(input) {
       assertSessionExists(deps.store, input.sessionId);
+      clearMaxRoundCloseTimer(input.sessionId);
       const now = current(deps.time);
       deps.store.closeSession({
         sessionId: input.sessionId,
         occurredAt: input.occurredAt ?? now.occurredAt,
         occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc
       });
+      deps.onSessionClosed?.(input.sessionId);
     },
     startAgentLoop(sessionId) {
       assertOpenSession(deps.store, sessionId);
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
       void deps.runAgentLoop?.(sessionId);
     },
+    noteAgentLoopMaxContinuousRounds(input) {
+      assertOpenSession(deps.store, input.sessionId);
+      const now = current(deps.time);
+      deps.store.insertEvent({
+        kind: "agent.max_continuous_rounds",
+        sessionId: input.sessionId,
+        source: { plugin: "talk_runtime" },
+        sequence: nextSyntheticSequence(),
+        occurredAt: now.occurredAt,
+        occurredAtUtc: now.occurredAtUtc,
+        payload: { kind: "agent.max_continuous_rounds", rounds: input.rounds, idleTimeoutMs: maxContinuousRoundIdleMs }
+      });
+      scheduleMaxRoundClose(input.sessionId);
+    },
     ingestInput(event) {
       assertOpenSession(deps.store, event.sessionId);
       const inserted = deps.store.insertEvent(event);
       if (!inserted.inserted) return;
       if (event.kind === "audio.transcript.final" || event.kind === "text.final") {
+        clearMaxRoundCloseTimer(event.sessionId);
         const text = payloadText(event.payload);
         if (!text) return;
         const segment = deps.store.insertSegment({
@@ -355,6 +386,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     interruptLatestOutput(input) {
       assertOpenSession(deps.store, input.sessionId);
+      clearMaxRoundCloseTimer(input.sessionId);
       const output = deps.store.latestOutput(input.sessionId);
       if (!output) return undefined;
       return runtime.interruptOutput({
@@ -364,6 +396,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     interruptOutput(input) {
       assertOpenSession(deps.store, input.sessionId);
+      clearMaxRoundCloseTimer(input.sessionId);
       const now = current(deps.time);
       const output = deps.store.getOutput(input.outputId);
       if (!output) throw new Error(`talk output not found: ${input.outputId}`);
@@ -479,6 +512,23 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   };
 
   return runtime;
+
+  function scheduleMaxRoundClose(sessionId: string): void {
+    clearMaxRoundCloseTimer(sessionId);
+    const timer = timers.setTimeout(() => {
+      maxRoundCloseTimers.delete(sessionId);
+      if (deps.store.getSession(sessionId)?.status !== "open") return;
+      runtime.closeSession({ sessionId });
+    }, maxContinuousRoundIdleMs);
+    maxRoundCloseTimers.set(sessionId, timer);
+  }
+
+  function clearMaxRoundCloseTimer(sessionId: string): void {
+    const timer = maxRoundCloseTimers.get(sessionId);
+    if (!timer) return;
+    timers.clearTimeout(timer);
+    maxRoundCloseTimers.delete(sessionId);
+  }
 }
 
 let syntheticSequence = 1_000_000;

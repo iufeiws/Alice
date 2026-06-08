@@ -7,6 +7,7 @@ const path = await import("node:path");
 export type AgentBehaviorState =
   | "idle"
   | "waiting"
+  | "calling"
   | "away"
   | "curious"
   | "working"
@@ -171,6 +172,10 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       return transition("idle", { reason: "inactive" });
     }
 
+    if (snapshot.state === "calling") {
+      return clone(snapshot);
+    }
+
     if (snapshot.state === "away") {
       return transition("waiting", { reason: "returned" });
     }
@@ -315,6 +320,7 @@ function isAgentBehaviorState(value: unknown): value is AgentBehaviorState {
   return typeof value === "string" && [
     "idle",
     "waiting",
+    "calling",
     "away",
     "curious",
     "working",
@@ -362,6 +368,7 @@ function responseDelayFor(state: AgentBehaviorState, random: () => number): numb
   if (state === "idle") return randomRange(20 * SECOND, 120 * SECOND, random);
   if (state === "away") return randomRange(5 * MINUTE, 30 * MINUTE, random);
   if (state === "test") return 8 * SECOND;
+  if (state === "calling") return 0;
   if (state === "curious") return randomRange(8 * SECOND, 12 * SECOND, random);
   return randomRange(8 * SECOND, 15 * SECOND, random);
 }

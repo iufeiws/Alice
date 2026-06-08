@@ -19,12 +19,19 @@ export function createTalkRuntimeRuntime(input: {
   sendRequest(input: any): Promise<any>;
   createLLMSession(occurredAt: string): number;
   rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
+  agentState?: { setState(state: "calling" | "waiting", options?: { reason?: string }): unknown };
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   let talkRuntime: any;
   const talkAgentLoop = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: input.isActiveTalkLLMSession,
     getActiveTalkLLMSessionId: input.getActiveTalkLLMSessionId,
+    isTalkSessionOpen(sessionId) {
+      return talkRuntime.store.getSession(sessionId)?.status === "open";
+    },
+    pendingVoiceOutputCharCount(sessionId) {
+      return talkRuntime.store.pendingVoiceOutputCharCount(sessionId);
+    },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,
     dailyShellStore: input.dailyShellStore,
@@ -44,6 +51,9 @@ export function createTalkRuntimeRuntime(input: {
     finishAssistantOutput({ sessionId, outputId }) {
       talkRuntime.finishAssistantOutput({ sessionId, outputId });
     },
+    onMaxContinuousRounds({ sessionId, rounds }) {
+      talkRuntime.noteAgentLoopMaxContinuousRounds({ sessionId, rounds });
+    },
     log(level, message) {
       input.appendLog(level, message);
     }
@@ -59,6 +69,12 @@ export function createTalkRuntimeRuntime(input: {
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
       talkAgentLoop.interruptTalkAgentLoop(sessionId);
+    },
+    onSessionOpened() {
+      input.agentState?.setState("calling", { reason: "talk_session_opened" });
+    },
+    onSessionClosed() {
+      input.agentState?.setState("waiting", { reason: "talk_session_closed" });
     }
   });
 

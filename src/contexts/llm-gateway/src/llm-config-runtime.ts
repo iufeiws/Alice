@@ -22,7 +22,8 @@ export function createLLMConfigRuntime(input: {
         temperature: undefined,
         extraParams: {},
         followupExtraParams: {},
-        stream: false
+        stream: false,
+        maxContinuousRounds: 30
       };
     }
     return {
@@ -31,7 +32,8 @@ export function createLLMConfigRuntime(input: {
       temperature: preset.temperature,
       extraParams: preset.extraParams,
       followupExtraParams: preset.followupExtraParams,
-      stream: preset.stream
+      stream: preset.stream,
+      maxContinuousRounds: preset.maxContinuousRounds
     };
   }
 }

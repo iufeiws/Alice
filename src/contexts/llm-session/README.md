@@ -9,11 +9,10 @@ Owns:
 
 Depends on:
 
-- `core/agent`（日志持久化、提示词工具）
-- `core/llm`（请求模型与 request 对比）
-- `core/time`
+- `contexts/llm-gateway`（请求模型与 request 对比）
+- `contexts/agent-profile`（提示词预览输入）
+- `platform/time`
 
 Public API:
 
 - 导出位于 [src/index.ts](./src/index.ts)
-

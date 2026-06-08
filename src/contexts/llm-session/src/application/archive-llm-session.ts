@@ -11,7 +11,7 @@ import {
   relativeLLMSessionPath as relativeLLMSessionJsonlPath,
   writeLLMSessionJsonl,
   writeLLMSessionJsonlMetadata
-} from "../../../../core/agent/src/llm-session-log.js";
+} from "../adapters/jsonl-llm-session-log.js";
 import type { ActiveLLMSession } from "../domain/llm-session.js";
 import {
   parseRequestInfo,

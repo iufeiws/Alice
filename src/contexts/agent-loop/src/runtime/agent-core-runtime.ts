@@ -1,7 +1,7 @@
-import { createAgentCore } from "../../../../core/agent/src/index.js";
-import { createAllowAllPolicy } from "../../../../core/policy/src/index.js";
-import { createIntentRouter } from "../../../../core/router/src/index.js";
-import { createSessionResolver } from "../../../../core/session/index.js";
+import { createAgentCore } from "../application/agent-core.js";
+import { createAllowAllPolicy } from "../ports/policy.js";
+import { createIntentRouter } from "../application/intent-router.js";
+import { createSessionResolver } from "../application/session-resolver.js";
 
 export function createAgentCoreRuntime(input: {
   config: any;

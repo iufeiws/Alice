@@ -2,7 +2,7 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatInput, LLMChatResult } from "./index.js";
 import { buildRawLLMRequest } from "./llm-request-shape.js";
 import { diffRequests } from "./llm-request-diff.js";
-import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../core/session/index.js";
+import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/llm-session/src/index.js";
 
 type AgentId = "chat" | "talk";
 

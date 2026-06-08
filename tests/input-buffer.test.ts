@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSessionDirtyFlagger } from "../src/core/input-buffer/src/index.js";
+import { createSessionDirtyFlagger } from "../src/contexts/conversation-hub/src/application/session-dirty-flagger.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 
 test("session dirty flagger waits before processing a dirty session", async () => {

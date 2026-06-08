@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
 
 export type Intent =
   | { kind: "chat"; text: string }

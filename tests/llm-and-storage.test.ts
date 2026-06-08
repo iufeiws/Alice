@@ -7,7 +7,7 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createTokenUsageStore } from "../src/platform/storage/src/token-usage-store.js";
 import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
-import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../src/core/agent/src/llm-session-log.js";
+import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../src/contexts/llm-session/src/adapters/jsonl-llm-session-log.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

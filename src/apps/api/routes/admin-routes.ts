@@ -8,7 +8,7 @@ import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-
 import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
-import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
+import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapters/json-core-profile-store.js";
 import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import {

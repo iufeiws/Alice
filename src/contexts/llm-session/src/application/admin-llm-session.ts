@@ -1,5 +1,5 @@
 import { createMemoryConsoleRuntime } from "../../../../contexts/memory/src/memory-console-runtime.js";
-import { createMemoryLLMSessionRuntime } from "./manage-memory-llm-session.js";
+import { createMemoryLLMSessionRuntime } from "../../../../contexts/memory/src/application/manage-memory-llm-session.js";
 import { createLLMSessionListRuntime } from "./list-llm-sessions.js";
 import { createLLMRequestPreviewRuntime } from "../../../llm-gateway/src/llm-request-preview-runtime.js";
 

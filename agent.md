@@ -23,7 +23,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 - **重点：凡是已经有 Prompt 编辑器管理的 Core / Memorize prompt，运行时构筑不得私自追加、前置、包裹任何隐藏 prompt 文本。** 如果确实需要新增固定说明，必须先作为编辑器里的 layer 出现；不可编辑的固定块也必须在编辑器/预览中明确显示。
 - **重点：每次修改 prompt、prompt preview、prompt layer schema、LLM request 构筑、fake tool call、Memorize/Core prompt 相关代码前后，都必须审阅是否引入了隐藏 prompt 或改变了 layer 顺序。** 这会破坏用户设计的缓存命中结构，可能导致大额 API 成本损失。
 - Prompt Preview 必须反映实际发送给 LLM 的消息序列；不得存在 preview 看不到但运行时会发送的 prompt 内容。
-- **重点：项目中所有 prompt layer 解析必须共用同一个解析器入口。** 当前公共入口是 `core/agent/src/prompt-layer-parser.ts`；不要在 Core、Memorize 或其他模块里复制 `normalize layer`、`layer -> LLMMessage`、tool argument 解析逻辑。
+- **重点：项目中所有 prompt layer 解析必须共用同一个解析器入口。** 当前公共入口是 `src/contexts/agent-profile/src/domain/prompt-layer.ts`；不要在 Core、Memorize 或其他模块里复制 `normalize layer`、`layer -> LLMMessage`、tool argument 解析逻辑。
 
 ## 运行命令
 

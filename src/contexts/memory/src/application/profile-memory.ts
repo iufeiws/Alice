@@ -1,5 +1,5 @@
 import type { MemoryFilesConfig } from "../contracts/memory-config.js";
-import { createCoreProfileStore } from "../../../../core/agent/src/core-profile.js";
+import { createCoreProfileStore } from "../../../agent-profile/src/adapters/json-core-profile-store.js";
 import {
   createMarkdownMemoryStore,
   createMemoryDiaryStore,

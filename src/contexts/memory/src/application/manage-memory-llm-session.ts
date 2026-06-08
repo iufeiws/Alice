@@ -1,9 +1,9 @@
-import { readLLMSessionJsonl } from "../agent/src/llm-session-log.js";
+import { readLLMSessionJsonl } from "../../../llm-session/src/adapters/jsonl-llm-session-log.js";
 import {
   parseRequestInfo,
   parseResponseInfo,
   parseRoundInfo
-} from "../../contexts/llm-session/src/domain/llm-session-utils.js";
+} from "../../../llm-session/src/domain/llm-session-utils.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

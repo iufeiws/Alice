@@ -2,7 +2,7 @@ import type { LLMSessionClearReason, LLMSessionSnapshot, TokenPressurePreviewBas
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import { cloneLLMMessages } from "../../../../core/agent/src/llm-session-log.js";
+import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import { buildRawLLMRequest } from "../../../llm-gateway/src/llm-request-shape.js";
 import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";

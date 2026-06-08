@@ -1,4 +1,4 @@
-import type { LLMChatInput, LLMChatResult, LLMMessage } from "../../../contexts/llm-gateway/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMMessage } from "../../../llm-gateway/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

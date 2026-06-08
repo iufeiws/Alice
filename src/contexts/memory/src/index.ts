@@ -8,7 +8,7 @@ import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabiliti
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
-import { createLLMSessionTranscriptLogger } from "../../../core/agent/src/llm-session-log.js";
+import { createLLMSessionTranscriptLogger } from "../../llm-session/src/adapters/jsonl-llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../../../contexts/agent-profile/src/domain/prompt-layer.js";
 

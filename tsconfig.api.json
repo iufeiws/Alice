@@ -7,6 +7,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "files": ["src/apps/api/src/index.ts"],
+  "files": ["src/apps/api/main.ts"],
   "include": []
 }

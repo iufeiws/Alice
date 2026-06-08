@@ -9,7 +9,7 @@ import {
   type MemoryInductionPromptStore,
   type MemoryStore
 } from "./memory.js";
-import { createLLMClientFromPreset, type LLMApiPreset } from "../../../apps/api/src/llm/llm-api-profile.js";
+import { createLLMClientFromPreset, type LLMApiPreset } from "../../llm/src/llm-api-profile.js";
 
 type AliceStore = ReturnType<typeof createAliceStore>;
 type SleepMemoryStateStore = ReturnType<typeof createSleepMemoryStateStore>;

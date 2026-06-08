@@ -1,4 +1,4 @@
-import { formatZonedIso, parseZonedIso } from "../../../../core/time/src/index.js";
+import { formatZonedIso, parseZonedIso } from "../../../../platform/time/src/index.js";
 import { promptStoragePath } from "../adapters/json-prompt-profile-store.js";
 
 const fs = await import("node:fs");

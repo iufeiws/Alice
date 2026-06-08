@@ -1,6 +1,6 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { buildLLMTextVariables } from "../../../core/text-renderer/src/index.js";
+import type { TTSConfig } from "./index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { buildLLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "./index.js";
 import { createAsrPlugin } from "../../asr/src/index.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
@@ -8,7 +8,7 @@ import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-pro
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createVoicePluginRuntime(input: {
-  config: AppConfig;
+  config: { tts: TTSConfig };
   time: CurrentTimeProvider;
   promptProfileStore: any;
   sendLLMRequest(request: any): Promise<any>;

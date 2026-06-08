@@ -1,5 +1,5 @@
-import type { FeishuConfig } from "../../../packages/config/src/index.js";
-import type { AgentEvent } from "../../../packages/types/src/index.js";
+import type { FeishuConfig } from "./types.js";
+import type { AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export function checkFeishuEventPolicy(config: FeishuConfig, event: AgentEvent): { allowed: boolean; reason?: string } {
   const userId = event.source.userId;

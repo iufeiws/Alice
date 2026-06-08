@@ -1,4 +1,4 @@
-import type { FeishuConfig } from "../../../packages/config/src/index.js";
+import type { FeishuConfig } from "./types.js";
 
 export function isFeishuConfigured(config: FeishuConfig): boolean {
   return config.enabled && Object.keys(config.accounts).length > 0;

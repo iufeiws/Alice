@@ -1,5 +1,6 @@
-import { createCurrentTimeProvider, formatZonedIso, parseZonedIso, type CurrentTimeProvider } from "../../../../core/time/src/index.js";
-import * as sqlite from "../../../../packages/storage/src/sqlite-compat.js";
+import { createCurrentTimeProvider, formatZonedIso, parseZonedIso } from "../../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import * as sqlite from "../../../../platform/storage/src/sqlite-compat.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

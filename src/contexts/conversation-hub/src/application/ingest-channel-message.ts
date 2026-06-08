@@ -1,19 +1,21 @@
-import type { AgentEvent, AgentOutput } from "../../../../packages/types/src/index.js";
-import { createId, sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../../packages/types/src/index.js";
-import type { AgentStateController, AgentStateSnapshot } from "../../../../core/agent/src/state.js";
+import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
+import { sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentStateController, AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import {
   defaultAgentInitiatedBehaviorPlans,
   selectRandomizedAgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorPlan
-} from "../../../../core/agent/src/initiated-behaviors.js";
-import { createCurrentTimeProvider, parseZonedIso, type CurrentTimeProvider } from "../../../../core/time/src/index.js";
+} from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
+import { createCurrentTimeProvider, parseZonedIso } from "../../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type {
   InsertOutboundMessageInput,
   StoredConversationMessage,
   StoredMessageLog,
   UpdateMessageReactionInput,
   UpsertInboundMessageInput
-} from "../../../../packages/storage/src/sqlite-store.js";
+} from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 export type MessageRuntimeDeps = {
   getDelayMs(): number;

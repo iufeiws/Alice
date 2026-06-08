@@ -1,12 +1,12 @@
-import type { AgentEvent, ToolPlugin } from "../../../../packages/types/src/index.js";
+import type { AgentEvent, ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import type { PromptLayer } from "../../../../core/agent/src/prompts.js";
-import { promptVariables, type PromptProfile, type PromptRenderContext } from "../../../../core/agent/src/prompts.js";
-import { normalizePromptLayers, promptLayerToMessage } from "../../../../core/agent/src/prompt-layer-parser.js";
+import type { PromptLayer } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { promptVariables, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { normalizePromptLayers, promptLayerToMessage } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
-const sqlite = await import("../../../../packages/storage/src/sqlite-compat.js");
+const sqlite = await import("../../../../platform/storage/src/sqlite-compat.js");
 
 export type AgentInitiatedBehaviorKind = "event" | "randomized";
 export type AgentInitiatedBehaviorPriority = number;

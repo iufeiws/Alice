@@ -6,12 +6,12 @@ import {
   createMarkdownMemoryStore,
   createMemoryInductionPromptStore,
   runMemoryInductionForMessages
-} from "../src/core/agent/src/memory.js";
-import { promptStoragePath } from "../src/core/agent/src/prompt-storage.js";
-import { createPromptProfileStore } from "../src/core/agent/src/prompts.js";
-import type { LLMChatInput, LLMClient } from "../src/core/llm/src/index.js";
-import { createDiaryStore } from "../src/packages/storage/src/diary-store.js";
-import type { StoredConversationMessage } from "../src/packages/storage/src/sqlite-store.js";
+} from "../src/contexts/memory/src/memory.js";
+import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
+import { createPromptProfileStore } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
+import type { StoredConversationMessage } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

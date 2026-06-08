@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../src/core/llm/src/index.js";
-import { createLLMRequests } from "../src/core/agent/src/llm-requests.js";
+import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
 import { acquireSingletonLock } from "../src/apps/api/server/singleton-lock.js";
-import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
-import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
-import { createTokenUsageStore } from "../src/packages/storage/src/token-usage-store.js";
-import * as sqlite from "../src/packages/storage/src/sqlite-compat.js";
+import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
+import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createTokenUsageStore } from "../src/platform/storage/src/token-usage-store.js";
+import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
 import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../src/core/agent/src/llm-session-log.js";
 
 const fs = await import("node:fs");

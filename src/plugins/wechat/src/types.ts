@@ -1,5 +1,5 @@
-import type { AgentEvent } from "../../../packages/types/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { WeChatStateStore } from "./state.js";
 
 export type WeChatConfig = {

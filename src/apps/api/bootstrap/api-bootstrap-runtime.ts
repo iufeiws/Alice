@@ -1,4 +1,4 @@
-import { loadConfig } from "../../../packages/config/src/index.js";
+import { loadConfig } from "./app-config-runtime.js";
 import { createMutableLLMClient, createStubLLMClient } from "../../../contexts/llm-gateway/src/index.js";
 import { acquireSingletonLock } from "../server/singleton-lock.js";
 import { loadDotEnv } from "./dotenv-loader.js";

@@ -1,8 +1,8 @@
-import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, runSleepMemoryBackfill } from "../src/core/agent/src/memory.js";
-import { createOpenAICompatibleClient } from "../src/core/llm/src/index.js";
-import { createMutableCurrentTimeProvider } from "../src/core/time/src/index.js";
-import { loadConfig } from "../src/packages/config/src/index.js";
-import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
+import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, runSleepMemoryBackfill } from "../src/contexts/memory/src/memory.js";
+import { createOpenAICompatibleClient } from "../src/contexts/llm-gateway/src/index.js";
+import { createMutableCurrentTimeProvider } from "../src/platform/time/src/index.js";
+import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
+import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -23,7 +23,7 @@ const llm = config.memorySummary.enabled && config.memorySummary.apiKey
   ? createOpenAICompatibleClient({
       baseURL: config.memorySummary.baseURL,
       apiKey: config.memorySummary.apiKey,
-      model: config.memorySummary.model,
+      model: config.memorySummary.model ?? "deepseek-v4-pro",
       temperature: config.memorySummary.temperature,
       timeoutMs: config.memorySummary.timeoutMs,
       extraParams: config.memorySummary.extraParams

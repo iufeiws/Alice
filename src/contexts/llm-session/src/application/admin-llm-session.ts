@@ -1,4 +1,4 @@
-import { createMemoryConsoleRuntime } from "../../../../core/agent/src/memory-console-runtime.js";
+import { createMemoryConsoleRuntime } from "../../../../contexts/memory/src/memory-console-runtime.js";
 import { createMemoryLLMSessionRuntime } from "./manage-memory-llm-session.js";
 import { createLLMSessionListRuntime } from "./list-llm-sessions.js";
 import { createLLMRequestPreviewRuntime } from "../../../llm-gateway/src/llm-request-preview-runtime.js";

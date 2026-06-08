@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanupPreviousTtsFiles, createDailyMaintenanceTasks, delayUntilNext } from "../src/core/scheduler/src/index.js";
+import { delayUntilNext } from "../src/platform/scheduler/src/index.js";
+import { cleanupPreviousTtsFiles, createDailyMaintenanceTasks } from "../src/apps/api/bootstrap/daily-maintenance-runtime.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

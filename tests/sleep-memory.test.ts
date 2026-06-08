@@ -9,11 +9,11 @@ import {
   runMemoryInductionForMessages,
   runSleepMemoryInduction,
   splitMessagesByLongGaps
-} from "../src/core/agent/src/memory.js";
-import type { LLMChatInput, LLMClient } from "../src/core/llm/src/index.js";
-import { createDiaryStore } from "../src/packages/storage/src/diary-store.js";
-import * as sqlite from "../src/packages/storage/src/sqlite-compat.js";
-import type { StoredConversationMessage } from "../src/packages/storage/src/sqlite-store.js";
+} from "../src/contexts/memory/src/memory.js";
+import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
+import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
+import type { StoredConversationMessage } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

@@ -1,5 +1,5 @@
 import { createAdminLLMSessionRuntime } from "../../session/index.js";
-import { createSleepMemoryBridgeRuntime } from "./sleep-memory-bridge-runtime.js";
+import { createSleepMemoryBridgeRuntime } from "../../../contexts/memory/src/sleep-memory-bridge-runtime.js";
 
 export function createApiSupportRuntime(input: {
   config: any;

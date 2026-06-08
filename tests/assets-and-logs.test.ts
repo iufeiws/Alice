@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveAdminAssetPath } from "../src/apps/api/routes/asset-utils.js";
-import { createFileLogStore } from "../src/packages/storage/src/file-log-store.js";
+import { createFileLogStore } from "../src/contexts/conversation-hub/src/adapters/file-log-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

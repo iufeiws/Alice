@@ -1,7 +1,7 @@
 import { createWebRtcVoiceRuntime } from "../../../plugins/webrtc-voice/src/web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
-import type { StoredMessageLog } from "../../../packages/storage/src/sqlite-store.js";
+import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 export function createApiCommunicationRuntime(input: {
   config: any;

@@ -1,5 +1,4 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
 import { createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
 
@@ -7,7 +6,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 export function createChannelStateRuntime(input: {
-  config: AppConfig;
+  config: { memoryFiles: { root: string }; plugins: { wechat: { botToken?: string; baseURL: string } } };
   time: CurrentTimeProvider;
 }) {
   const feishuPairingStore = createFeishuPairingStore("memory-files/indexes/feishu-paired-contacts.json", {

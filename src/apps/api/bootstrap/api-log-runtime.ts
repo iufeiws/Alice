@@ -1,6 +1,6 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { createAliceStore } from "../../../packages/storage/src/sqlite-store.js";
-import type { createFileLogStore } from "../../../packages/storage/src/file-log-store.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { createAliceStore } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { createFileLogStore } from "../../../contexts/conversation-hub/src/adapters/file-log-store.js";
 
 export type LogLevel = "info" | "warn" | "error";
 

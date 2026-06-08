@@ -1,16 +1,16 @@
-import type { MemorySummaryConfig } from "../../../packages/config/src/index.js";
-import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../packages/storage/src/diary-store.js";
-import * as sqlite from "../../../packages/storage/src/sqlite-compat.js";
-import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
-import type { ToolDefinition } from "../../../packages/types/src/index.js";
+import type { MemorySummaryConfig } from "./contracts/memory-config.js";
+import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../platform/storage/src/diary-store.js";
+import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
+import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
 import { createWorkspaceFilesTools, formatReadOutput } from "../../../tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
-import { buildLLMTextVariables, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
-import { formatZonedIso, parseZonedIso } from "../../../core/time/src/index.js";
+import { buildLLMTextVariables, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "../../../core/agent/src/llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
-import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../../../core/agent/src/prompt-layer-parser.js";
+import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

@@ -1,7 +1,7 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { runMemoryInductionForMessages } from "../../../core/agent/src/memory.js";
-import type { AgentInitiatedBehaviorPlan } from "../../../core/agent/src/initiated-behaviors.js";
+import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { runMemoryInductionForMessages } from "../../../contexts/memory/src/memory.js";
+import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import { createLLMClientFromPreset, type LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 import { createApiRequestHandler } from "./admin-routes.js";
 

@@ -1,5 +1,5 @@
-import type { FeishuConfig } from "../../../packages/config/src/index.js";
-import type { AgentOutput, ChannelPlugin } from "../../../packages/types/src/index.js";
+import type { FeishuConfig } from "./types.js";
+import type { AgentOutput, ChannelPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createInMemoryFeishuBindingStore, type FeishuBindingStore } from "./bindings.js";
 import { isFeishuConfigured } from "./config.js";
 import { createFeishuMonitor } from "./monitor.js";
@@ -10,8 +10,10 @@ import { textMessageEventToAgentEvent } from "./handlers/message.js";
 import { reactionEventToLifecycleEvent, readEventToLifecycleEvent, recalledEventToLifecycleEvent } from "./handlers/lifecycle.js";
 import { getPairingCommand, isPairingCommand } from "./pairing.js";
 import { createRecentMessageDeduper } from "./dedupe.js";
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { createId, sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
+import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { createId } from "../../../shared/uuid/src/index.js";
+import { sanitizeAudioTranscript } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const TYPING_EMOJI_TYPE = "Coffee";
 const REMOVE_TYPING_REACTION_ATTEMPTS = 3;

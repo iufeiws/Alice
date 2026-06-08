@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
+import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");

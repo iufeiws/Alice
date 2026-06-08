@@ -1,4 +1,4 @@
-import type { AgentOutput } from "../../../packages/types/src/index.js";
+import type { AgentOutput } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { FeishuSendPlan } from "./types.js";
 
 export function renderForFeishu(output: AgentOutput): FeishuSendPlan {

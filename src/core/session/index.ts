@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../packages/types/src/index.js";
+import type { AgentEvent } from "../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export * from "../../contexts/llm-session/src/index.js";
 export * from "./memory-llm-session-runtime.js";

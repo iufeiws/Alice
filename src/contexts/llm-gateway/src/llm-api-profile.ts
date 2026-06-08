@@ -1,5 +1,5 @@
 import { createOpenAICompatibleClient } from "./index.js";
-import { promptStoragePath } from "../../../core/agent/src/prompt-storage.js";
+import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

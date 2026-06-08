@@ -1,15 +1,16 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
+import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 import { createOpenAICompatibleClient, type LLMClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
-import { formatZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { ToolPlugin } from "../../../packages/types/src/index.js";
-import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";
-import type { DiaryStore } from "../../../packages/storage/src/diary-store.js";
-import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
-import type { AgentBehaviorState, AgentStateController } from "../../../core/agent/src/state.js";
+import { formatZonedIso } from "../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { ToolPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-store.js";
+import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
+import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { AgentBehaviorState, AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { CoreProfileStore } from "../../../core/agent/src/core-profile.js";
-import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../core/agent/src/memory.js";
-import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../core/agent/src/prompts.js";
+import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
+import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import {
   defaultAgentInitiatedBehaviorPlans,
   defaultAgentInitiatedBehaviorPromptProfile,
@@ -18,10 +19,10 @@ import {
   resolveAgentInitiatedBehaviorAvailability,
   type AgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorRunStore
-} from "../../../core/agent/src/initiated-behaviors.js";
-import { promptStoragePath } from "../../../core/agent/src/prompt-storage.js";
-import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
-import type { DailyShellStore, ShellCategory, ShellOption } from "../../../core/agent/src/shells.js";
+} from "../../../contexts/initiative/src/domain/initiated-behavior.js";
+import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
+import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { DailyShellStore, ShellCategory, ShellOption } from "../../../contexts/agent-profile/src/domain/shell.js";
 import { HttpJsonError, assertLoopbackAdminRequest, readJsonBody, readRawBody } from "../middleware/http-utils.js";
 import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "../server/env-file.js";

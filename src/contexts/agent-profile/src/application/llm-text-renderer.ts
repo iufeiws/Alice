@@ -1,0 +1,235 @@
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { AgentEvent, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+
+export type LLMTextPrimitive = string | number | boolean | null | undefined;
+export type LLMTextValue = LLMTextPrimitive | LLMTextValue[] | { [key: string]: LLMTextValue };
+
+export type LLMTextVariables = { [key: string]: LLMTextValue };
+
+export type LLMTextShellOption = {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+};
+
+export type LLMTextDailyShell = {
+  date: string;
+  dateUtc?: string;
+  createdAt: string;
+  createdAtUtc?: string;
+  personality: LLMTextShellOption;
+  relationship: LLMTextShellOption;
+  outfit: LLMTextShellOption;
+};
+
+export type LLMTextWakeBoundary = {
+  occurredAt: string;
+  occurredAtUtc?: string;
+};
+
+export type LLMTextContextInput = {
+  userName?: string;
+  time?: CurrentTimeProvider;
+  event?: AgentEvent;
+  dailyShell?: string;
+  dailyShellRaw?: LLMTextDailyShell;
+  appearanceDescription?: string;
+  memory?: {
+    persistent?: string;
+    userPreferences?: string;
+    yesterdaySummary?: string;
+  };
+  wakeBoundary?: LLMTextWakeBoundary;
+  extra?: LLMTextVariables;
+};
+
+export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextVariables {
+  const emptyOption = optionVariable({ id: "", name: "", content: "" });
+  const emptyMemoryLimit = { lines: 0, bytes: 0, kib: 0 };
+  const memoryNode = (content: string | undefined) => ({
+    content: content ?? "",
+    limit: { ...emptyMemoryLimit }
+  });
+  const variables: LLMTextVariables = {
+    date_time: "",
+    date_time_utc: "",
+    time: "",
+    time_utc: "",
+    date: "",
+    date_utc: "",
+    weekday: "",
+    weekday_utc: "",
+    timezone: "",
+    session: "",
+    channel: "",
+    dailyShell: {
+      date: "",
+      createdAt: "",
+      persona: emptyOption,
+      relationship: emptyOption
+    },
+    outfit: emptyOption,
+    memorize: {
+      target: {
+        key: "",
+        title: "",
+        fileName: "",
+        currentContent: ""
+      },
+      limit: {
+        lines: 0,
+        bytes: 0,
+        kib: 0
+      },
+      window: {
+        startAt: "",
+        endAt: ""
+      },
+      timezone: "",
+      messages: {
+        count: 0,
+        content: ""
+      }
+    },
+    wakeBoundary: {
+      occurredAt: "",
+      occurredAtUtc: "",
+      date: "",
+      weekday: ""
+    }
+  };
+  if (input.time) {
+    const now = input.time.now();
+    const utc = now.date.toISOString();
+    variables.date_time = now.iso.slice(0, 19).replace("T", " ");
+    variables.time = now.iso.slice(11, 19);
+    variables.date = now.iso.slice(0, 10);
+    variables.date_time_utc = utc.slice(0, 19).replace("T", " ");
+    variables.time_utc = utc.slice(11, 19);
+    variables.date_utc = utc.slice(0, 10);
+    variables.weekday = formatWeekday(now.date, input.time.timeZone);
+    variables.weekday_utc = formatWeekday(now.date, "UTC");
+    variables.timezone = input.time.timeZone;
+  }
+  variables.user = input.userName?.trim() || "user";
+  variables.appearance = input.appearanceDescription?.trim() || "";
+  variables.memory = {
+    persistent: memoryNode(input.memory?.persistent),
+    userPreferences: memoryNode(input.memory?.userPreferences),
+    yesterdaySummary: memoryNode(input.memory?.yesterdaySummary)
+  };
+  if (input.dailyShellRaw) {
+    variables.dailyShell = {
+      date: input.dailyShellRaw.date,
+      createdAt: input.dailyShellRaw.createdAt,
+      persona: optionVariable(input.dailyShellRaw.personality),
+      relationship: optionVariable(input.dailyShellRaw.relationship)
+    };
+    variables.outfit = optionVariable(input.dailyShellRaw.outfit);
+  }
+  if (input.event) {
+    variables.session = input.event.session.sessionId;
+    variables.channel = input.event.source.channelId ?? input.event.source.userId ?? input.event.session.sessionId;
+  }
+  if (input.wakeBoundary) {
+    variables.wakeBoundary = wakeBoundaryVariable(input.wakeBoundary, input.time?.timeZone ?? "UTC");
+  }
+  return {
+    ...variables,
+    ...(input.extra ?? {})
+  };
+}
+
+function formatWeekday(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { timeZone, weekday: "long" }).format(date);
+}
+
+export function renderLLMText(content: string, variables: LLMTextVariables = {}): string {
+  return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
+    const resolved = resolveVariablePath(variables, key);
+    return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
+  });
+}
+
+export function renderLLMValue<T>(value: T, variables: LLMTextVariables = {}): T {
+  return renderLLMValueInner(value, variables, new WeakSet<object>());
+}
+
+function renderLLMValueInner<T>(value: T, variables: LLMTextVariables, seen: WeakSet<object>): T {
+  if (typeof value === "string") return renderLLMText(value, variables) as T;
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "[Circular]" as T;
+    seen.add(value);
+    return value.map((entry) => renderLLMValueInner(entry, variables, seen)) as T;
+  }
+  if (value && typeof value === "object") {
+    if (seen.has(value)) return "[Circular]" as T;
+    seen.add(value);
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, renderLLMValueInner(entry, variables, seen)])) as T;
+  }
+  return value;
+}
+
+export function formatToolResultForLLM(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables = {}): string {
+  return stringifyToolResult(result, variables);
+}
+
+function stringifyToolResult(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables): string {
+  if (!result.ok && typeof result.output === "string") return renderLLMText(result.output, variables);
+  if (!result.ok) return result.error ? `error: ${renderLLMText(result.error, variables)}` : "error";
+  if (typeof result.output === "string") return renderLLMText(result.output, variables);
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  try {
+    return JSON.stringify(renderLLMValue(result.output as LLMTextValue, variables));
+  } catch {
+    return String(result.output);
+  }
+}
+
+function optionVariable(option: LLMTextShellOption): LLMTextVariables {
+  return {
+    id: option.id,
+    name: option.name,
+    content: option.content,
+    ...(option.group ? { group: option.group } : {}),
+    ...(option.imageUrl ? { imageUrl: option.imageUrl } : {})
+  };
+}
+
+function wakeBoundaryVariable(boundary: LLMTextWakeBoundary, timeZone: string): LLMTextVariables {
+  const instant = boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : undefined;
+  const canFormatInstant = !!instant && Number.isFinite(instant.getTime());
+  const fallbackDate = boundary.occurredAt.slice(0, 10);
+  return {
+    occurredAt: boundary.occurredAt,
+    occurredAtUtc: boundary.occurredAtUtc ?? "",
+    date: canFormatInstant ? formatLocalDate(instant, timeZone) : fallbackDate,
+    weekday: canFormatInstant ? formatWeekday(instant, timeZone) : weekdayForLocalDate(fallbackDate)
+  };
+}
+
+function weekdayForLocalDate(localDate: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) return "";
+  return formatWeekday(new Date(`${localDate}T12:00:00.000Z`), "UTC");
+}
+
+function formatLocalDate(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function resolveVariablePath(variables: LLMTextVariables, path: string): LLMTextValue {
+  return path.split("/").reduce<LLMTextValue>((current, segment) => {
+    if (!segment || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    return current[segment];
+  }, variables);
+}

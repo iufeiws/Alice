@@ -1,5 +1,5 @@
 import type { LLMChatResult } from "./index.js";
-import type { TokenUsageQuery, createTokenUsageStore } from "../../../packages/storage/src/token-usage-store.js";
+import type { TokenUsageQuery, createTokenUsageStore } from "../../../platform/storage/src/token-usage-store.js";
 
 type TokenUsageStore = ReturnType<typeof createTokenUsageStore>;
 

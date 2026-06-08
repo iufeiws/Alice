@@ -1,1 +1,1 @@
-export * from "../../../../core/agent/src/prompts.js";
+export * from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";

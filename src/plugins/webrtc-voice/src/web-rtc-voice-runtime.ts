@@ -1,4 +1,4 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { createAsrPlugin } from "../../asr/src/index.js";
 import {
   attachWebRtcVoiceSignalingServer,
@@ -12,7 +12,7 @@ import {
   type WebRtcVoiceStatusEvent
 } from "./index.js";
 import { createAsrInboundStreamSession } from "../../asr/src/index.js";
-import type { TalkRuntime } from "../../../core/agent/src/talk-runtime.js";
+import type { TalkRuntime } from "../../../contexts/talk-session/src/application/talk-session-runtime.js";
 import type { voiceCallRoutes } from "../../../apps/api/routes/voice-call-contract.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 

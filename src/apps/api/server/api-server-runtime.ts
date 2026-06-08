@@ -1,4 +1,4 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
+import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 import { createHttpShutdownController } from "./http-shutdown.js";
 import { voiceCallRoutes } from "../routes/voice-call-contract.js";
 import { createApiHttpsOptions, localLanAddress } from "./api-https.js";

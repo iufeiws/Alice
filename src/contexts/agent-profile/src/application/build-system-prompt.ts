@@ -1,7 +1,7 @@
-import type { LLMMessage } from "../../../../core/llm/src/index.js";
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
-import type { AgentEvent, ToolCall, ToolResult } from "../../../../packages/types/src/index.js";
-import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../../core/text-renderer/src/index.js";
+import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { DailyShell } from "../domain/shell.js";
 import type { MemorySnapshot } from "../../../memory/src/memory.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "../domain/prompt-layer.js";

@@ -1,4 +1,5 @@
-import { createDailyMaintenanceTasks, createDailyScheduler } from "../../../core/scheduler/src/index.js";
+import { createDailyScheduler } from "../../../platform/scheduler/src/index.js";
+import { createDailyMaintenanceTasks } from "../bootstrap/daily-maintenance-runtime.js";
 import { createApiServerRuntime } from "./api-server-runtime.js";
 import { createApiStartupRuntime, type ApiRuntimeState } from "../bootstrap/api-startup-runtime.js";
 

@@ -1,4 +1,4 @@
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import {
   clearMemoryInductionSession as clearActiveMemoryInductionSession,
   createMemoryInductionSession,

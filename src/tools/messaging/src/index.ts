@@ -1,16 +1,17 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
-import { todayMessagingAnchor } from "../../../core/time/src/index.js";
-import { parseZonedIso } from "../../../core/time/src/index.js";
-import type { OutputRouter } from "../../../core/output-router/src/index.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
-import { createId, sanitizeMessageText, summarizeAudioText } from "../../../packages/types/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
+import { todayMessagingAnchor } from "../../../platform/time/src/index.js";
+import { parseZonedIso } from "../../../platform/time/src/index.js";
+import type { OutputRouter } from "../../../platform/output-router/src/index.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../shared/uuid/src/index.js";
+import { sanitizeMessageText, summarizeAudioText } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import type {
   AliceStore,
   InsertOutboundMessageInput,
   StoredConversationMessage
-} from "../../../packages/storage/src/sqlite-store.js";
+} from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const fsp = await import("node:fs/promises");
 

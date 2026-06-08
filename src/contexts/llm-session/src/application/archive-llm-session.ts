@@ -1,6 +1,6 @@
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../../core/agent/src/prompts.js";
+import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
   appendLLMSessionJsonlMessages,

@@ -1,7 +1,7 @@
-import type { AgentEvent, ToolPlugin, ToolResult } from "../../../../packages/types/src/index.js";
+import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
-import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../../core/text-renderer/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
 

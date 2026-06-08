@@ -1,6 +1,24 @@
-import type { AgentOutput, AgentEvent } from "../../../packages/types/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { AgentOutput, AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { FeishuPairingStore } from "./pairing.js";
+
+export type FeishuConfig = {
+  enabled: boolean;
+  connectionMode: "websocket" | "webhook";
+  accounts: Record<string, { appId: string; appSecret: string; name?: string }>;
+  dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
+  dmAllowFrom: string[];
+  groupPolicy: "allowlist" | "open" | "disabled";
+  groupAllowFrom: string[];
+  requireMention: boolean;
+  codexPolicy: {
+    enabled: boolean;
+    requireAllowlist: boolean;
+    allowedUsers: string[];
+    allowedChats: string[];
+    requireExplicitCommand: boolean;
+  };
+};
 
 export type FeishuTextMessageEvent = {
   schema?: string;

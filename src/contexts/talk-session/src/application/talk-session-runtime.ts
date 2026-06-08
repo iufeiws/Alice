@@ -1,5 +1,5 @@
-import type { LLMMessage } from "../../../../core/llm/src/index.js";
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type {
   TalkEvent,
   TalkOutputChunk,

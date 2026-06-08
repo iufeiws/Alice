@@ -1,18 +1,18 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
 import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../contexts/llm-gateway/src/index.js";
-import type { OutputRouter } from "../../output-router/src/index.js";
+import type { OutputRouter } from "../../../platform/output-router/src/index.js";
 import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
 import type { SessionResolver } from "../../session/index.js";
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
-import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
-import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptProfile } from "./prompts.js";
-import type { AgentStateController, AgentStateSnapshot } from "./state.js";
-import type { DailyShell } from "./shells.js";
-import type { MemorySnapshot } from "./memory.js";
-import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../text-renderer/src/index.js";
-import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
+import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../shared/uuid/src/index.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import type { AgentStateController, AgentStateSnapshot } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
+import type { DailyShell } from "../../../contexts/agent-profile/src/domain/shell.js";
+import type { MemorySnapshot } from "../../../contexts/memory/src/memory.js";
+import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { deepSeekPriceForModel } from "../../../contexts/llm-gateway/src/token-pricing.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import {
   agentInitiatedBehaviorPlanFromEvent,
@@ -24,7 +24,7 @@ import {
   resolveAgentInitiatedBehaviorAvailability,
   type AgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorRun
-} from "./initiated-behaviors.js";
+} from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import {
   buildFixedPrefixAppendMessages,
   buildWaitChatResumeMessages,
@@ -40,7 +40,7 @@ import {
   type ChatAgentLoopInput,
   type ChatAgentLoopSession,
   type ChatAgentModeState
-} from "./chat-loop.js";
+} from "../../../contexts/agent-loop/src/application/run-chat-loop.js";
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
 export type LLMSessionSnapshot = {
@@ -113,15 +113,26 @@ export function calculateTokenPressureSwitch(input: TokenPressureComparisonInput
 
 type ModeState = ChatAgentModeState;
 
-export * from "./initiated-behavior-config.js";
-export * from "./initiated-behavior-runtime.js";
-export * from "./agent-state-runtime.js";
+export * from "../../../contexts/initiative/src/adapters/json-initiated-behavior-store.js";
+export * from "../../../contexts/initiative/src/application/evaluate-triggers.js";
+export * from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 export * from "../../../contexts/llm-gateway/src/llm-requests.js";
-export * from "./memory-console-runtime.js";
-export * from "./message-runtime.js";
-export * from "./sleep-memory-bridge-runtime.js";
-export * from "./sleep-memory-induction-runtime.js";
-export * from "./talk-runtime.js";
+export * from "../../../contexts/memory/src/memory-console-runtime.js";
+export * from "../../../contexts/conversation-hub/src/application/ingest-channel-message.js";
+export * from "../../../contexts/memory/src/sleep-memory-bridge-runtime.js";
+export * from "../../../contexts/memory/src/sleep-memory-induction-runtime.js";
+export * from "../../../contexts/talk-session/src/application/talk-session-runtime.js";
+
+type AgentCoreConfig = {
+  llm: {
+    model: string;
+    temperature: number;
+    tokenPressureContextImportance: number;
+    extraParams: Record<string, unknown>;
+    followupExtraParams: Record<string, unknown>;
+    stream: boolean;
+  };
+};
 
 type CoreLLMRuntimeConfig = {
   client?: LLMClient;
@@ -133,7 +144,7 @@ type CoreLLMRuntimeConfig = {
 };
 
 export type AgentCoreDeps = {
-  config: AppConfig;
+  config: AgentCoreConfig;
   llm: LLMClient;
   intentRouter: IntentRouter;
   sessionResolver: SessionResolver;

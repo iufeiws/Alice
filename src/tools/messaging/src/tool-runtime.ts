@@ -1,5 +1,4 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createMessagingTools } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
 import { createShellTools } from "../../shell/src/index.js";
@@ -10,7 +9,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: AppConfig;
+  config: { photo: any };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;

@@ -1,6 +1,6 @@
-import { createMutableCurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createMutableCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import { createApiLogRuntime } from "./api-log-runtime.js";
-import { createApiStorageRuntime } from "../../../packages/storage/src/api-storage-runtime.js";
+import { createApiStorageRuntime } from "../../../contexts/conversation-hub/src/application/bootstrap-storage.js";
 import { createApiBootstrapRuntime } from "./api-bootstrap-runtime.js";
 import { installApiConsoleLogging } from "./console-log-runtime.js";
 

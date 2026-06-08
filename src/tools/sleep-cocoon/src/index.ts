@@ -1,8 +1,8 @@
-import type { AgentStateController } from "../../../core/agent/src/state.js";
-import type { OutputRouter } from "../../../core/output-router/src/index.js";
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
+import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
+import type { OutputRouter } from "../../../platform/output-router/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../shared/uuid/src/index.js";
 
 export * from "./sleep-cocoon-math.js";
 export * from "./sleep-cocoon-event-runtime.js";

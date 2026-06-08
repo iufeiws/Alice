@@ -5,9 +5,10 @@ import type {
 import type {
   InboundAudioStreamChunkFrame,
   InboundAudioStreamStartFrame
-} from "../../../packages/types/src/index.js";
+} from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { VoiceSynthesizer } from "../../tts/src/index.js";
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../core/time/src/index.js";
+import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 
 const childProcess = await import("node:child_process");
 const crypto = await import("node:crypto");

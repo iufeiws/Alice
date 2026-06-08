@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAgentStateController, type AgentStateStore } from "../src/core/agent/src/state.js";
+import { createAgentStateController, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 
 test("agent state defaults from missing or corrupt JSON", () => {
   const missing = createAgentStateController({

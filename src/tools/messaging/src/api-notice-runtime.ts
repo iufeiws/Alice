@@ -1,4 +1,4 @@
-import { createOutputRouter } from "../../../core/output-router/src/index.js";
+import { createOutputRouter } from "../../../platform/output-router/src/index.js";
 import { createOutboundNoticeRuntime } from "./outbound-notice-runtime.js";
 
 export function createApiNoticeRuntime(input: {

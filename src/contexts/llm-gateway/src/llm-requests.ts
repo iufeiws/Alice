@@ -1,7 +1,7 @@
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolSpec } from "./index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
-import { renderLLMValue, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
-import type { ToolDefinition } from "../../../packages/types/src/index.js";
+import { renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 
 export type LLMRequestLogEvent = {
   kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "retry";

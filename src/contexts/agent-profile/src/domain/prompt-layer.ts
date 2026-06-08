@@ -1,5 +1,5 @@
-import type { LLMMessage } from "../../../../core/llm/src/index.js";
-import { renderLLMText, type LLMTextVariables } from "../../../../core/text-renderer/src/index.js";
+import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import { renderLLMText, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
 export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
 

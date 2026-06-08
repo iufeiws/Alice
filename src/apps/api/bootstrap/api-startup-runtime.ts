@@ -1,4 +1,4 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
+import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 

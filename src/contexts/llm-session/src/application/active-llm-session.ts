@@ -1,6 +1,6 @@
 import type { LLMSessionClearReason, LLMSessionSnapshot, TokenPressurePreviewBaseline } from "../domain/llm-session.js";
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
-import { parseZonedIso } from "../../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { cloneLLMMessages } from "../../../../core/agent/src/llm-session-log.js";
 import { buildRawLLMRequest } from "../../../llm-gateway/src/llm-request-shape.js";

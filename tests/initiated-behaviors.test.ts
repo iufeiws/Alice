@@ -10,9 +10,9 @@ import {
   resolveAgentInitiatedBehaviorAvailability,
   selectRandomizedAgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorPlan
-} from "../src/core/agent/src/initiated-behaviors.js";
-import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
-import type { AgentEvent } from "../src/packages/types/src/index.js";
+} from "../src/contexts/initiative/src/domain/initiated-behavior.js";
+import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
+import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("initiated behavior prompt layers are rendered by enabled order", () => {
   const filePath = path.join("/tmp", `initiated-behavior-test-${process.pid}.json`);

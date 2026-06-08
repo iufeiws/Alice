@@ -1,4 +1,4 @@
-import type { AppConfig } from "../../../../packages/config/src/index.js";
+import type { MemoryFilesConfig } from "../contracts/memory-config.js";
 import { createCoreProfileStore } from "../../../../core/agent/src/core-profile.js";
 import {
   createMarkdownMemoryStore,
@@ -6,16 +6,16 @@ import {
   createMemoryInductionPromptStore,
   createSleepMemoryStateStore
 } from "../memory.js";
-import { createPromptProfileStore } from "../../../../core/agent/src/prompts.js";
-import { promptStoragePath } from "../../../../core/agent/src/prompt-storage.js";
-import { createDailyShellStore } from "../../../../core/agent/src/shells.js";
+import { createPromptProfileStore } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { promptStoragePath } from "../../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
+import { createDailyShellStore } from "../../../../contexts/agent-profile/src/domain/shell.js";
 
 const path = await import("node:path");
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createProfileMemoryRuntime(input: {
-  config: AppConfig;
+  config: MemoryFilesConfig;
   appendLog: AppendLog;
 }) {
   const promptProfileStore = createPromptProfileStore(promptStoragePath(input.config.memoryFiles.root, "prompt-profile.json", ["config", "prompt-profile.json"]));

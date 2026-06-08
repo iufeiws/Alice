@@ -1,6 +1,6 @@
-import { createMessageRuntime } from "../../../core/agent/src/message-runtime.js";
+import { createMessageRuntime } from "../../../contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
-import type { StoredMessageLog } from "../../../packages/storage/src/sqlite-store.js";
+import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 export function createMessageRuntimeRuntime(input: {
   config: any;

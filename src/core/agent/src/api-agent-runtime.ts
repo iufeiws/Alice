@@ -1,5 +1,5 @@
-import { createAgentCoreRuntime } from "./agent-core-runtime.js";
-import { createTalkRuntimeRuntime } from "./talk-runtime-runtime.js";
+import { createAgentCoreRuntime } from "../../../contexts/agent-loop/src/runtime/agent-core-runtime.js";
+import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
 
 export function createApiAgentRuntime(input: {
   config: any;

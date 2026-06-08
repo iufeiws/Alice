@@ -1,16 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "../src/core/agent/src/index.js";
-import type { LLMRequestSenderInput } from "../src/core/agent/src/llm-tool-loop.js";
-import type { LLMChatInput, LLMClient } from "../src/core/llm/src/index.js";
-import type { AgentEvent, ToolCall } from "../src/packages/types/src/index.js";
-import { loadConfig } from "../src/packages/config/src/index.js";
-import { createOutputRouter } from "../src/core/output-router/src/index.js";
+import type { LLMRequestSenderInput } from "../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+import type { AgentEvent, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
+import { createOutputRouter } from "../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../src/core/policy/src/index.js";
 import { createIntentRouter } from "../src/core/router/src/index.js";
 import { createSessionResolver } from "../src/core/session/index.js";
-import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
-import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../src/core/agent/src/state.js";
+import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
+import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];

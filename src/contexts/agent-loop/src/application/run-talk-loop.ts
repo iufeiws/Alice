@@ -1,9 +1,9 @@
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
-import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../../packages/types/src/index.js";
+import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
-import { formatToolResultForLLM } from "../../../../core/text-renderer/src/index.js";
+import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;

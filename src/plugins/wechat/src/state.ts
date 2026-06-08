@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../../packages/types/src/index.js";
+import type { AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

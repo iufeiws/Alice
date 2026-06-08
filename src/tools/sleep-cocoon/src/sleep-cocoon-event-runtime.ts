@@ -1,7 +1,7 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { parseZonedIso } from "../../../core/time/src/index.js";
-import type { AgentStateController } from "../../../core/agent/src/state.js";
-import { createId } from "../../../packages/types/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { parseZonedIso } from "../../../platform/time/src/index.js";
+import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
+import { createId } from "../../../shared/uuid/src/index.js";
 import { sleepCocoonHazardProbability } from "./sleep-cocoon-math.js";
 import type { DefaultMessagingTarget } from "../../messaging/src/default-target-runtime.js";
 

@@ -1,5 +1,5 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { createId } from "../../../shared/uuid/src/index.js";
 import { extractSentMessageCreatedAtUtc, extractSentMessageId } from "./sent-message-utils.js";
 import type { DefaultMessagingTarget } from "./default-target-runtime.js";
 

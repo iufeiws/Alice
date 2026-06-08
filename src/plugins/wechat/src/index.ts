@@ -1,6 +1,6 @@
-import type { AgentEvent, AgentOutput, ChannelPlugin } from "../../../packages/types/src/index.js";
-import { createId } from "../../../packages/types/src/index.js";
-import { createCurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { AgentEvent, AgentOutput, ChannelPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../shared/uuid/src/index.js";
+import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import { createWeChatILinkClient } from "./client.js";
 import type { WeChatConfig, WeChatPluginDeps, WeChatTextMessage } from "./types.js";
 

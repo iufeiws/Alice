@@ -1,4 +1,4 @@
-import type { FeishuConfig } from "../../../packages/config/src/index.js";
+import type { FeishuConfig } from "./types.js";
 import { createFeishuClient, type FeishuClientDeps } from "./client.js";
 
 export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps) {

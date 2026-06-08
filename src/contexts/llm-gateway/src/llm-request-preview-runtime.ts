@@ -1,4 +1,4 @@
-import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatInput } from "./index.js";
 import { buildRawLLMRequest } from "./llm-request-shape.js";
 import type { LLMRequestLogEntry, LLMRequestPreview } from "../../../core/session/index.js";

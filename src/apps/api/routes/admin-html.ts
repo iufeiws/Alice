@@ -1,4 +1,4 @@
-import { deepSeekPricesCnyPer1M } from "../../../packages/config/src/token-pricing.js";
+import { deepSeekPricesCnyPer1M } from "../../../contexts/llm-gateway/src/token-pricing.js";
 
 export function renderAdminHtmlV2(): string {
   return `<!doctype html>

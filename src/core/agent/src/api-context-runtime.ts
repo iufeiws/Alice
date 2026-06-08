@@ -1,9 +1,9 @@
-import { createAgentInitiatedBehaviorRunStore } from "./initiated-behaviors.js";
-import { promptStoragePath } from "./prompt-storage.js";
+import { createAgentInitiatedBehaviorRunStore } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
+import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createChannelStateRuntime } from "../../../tools/messaging/src/channel-state-runtime.js";
 import { createDefaultTargetResolver } from "../../../tools/messaging/src/default-target-runtime.js";
-import { createProfileMemoryRuntime } from "./profile-memory-runtime.js";
-import { createInitiatedBehaviorRuntime } from "./initiated-behavior-runtime.js";
+import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile-memory-runtime.js";
+import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 
 const path = await import("node:path");
 

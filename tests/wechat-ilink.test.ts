@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { createWeChatILinkClient } from "../src/plugins/wechat/src/client.js";
 import { createWeChatPlugin, createWeChatStateStore } from "../src/plugins/wechat/src/index.js";
 import type { WeChatTextMessage } from "../src/plugins/wechat/src/types.js";
-import { createMessageRuntime } from "../src/core/agent/src/message-runtime.js";
-import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
+import { createMessageRuntime } from "../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
+import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createMessagingTools } from "../src/tools/messaging/src/index.js";
-import type { AgentEvent } from "../src/packages/types/src/index.js";
+import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

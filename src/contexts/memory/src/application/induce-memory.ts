@@ -1,8 +1,8 @@
-import type { AppConfig } from "../../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import type { SleepMemoryInductionConfig } from "../contracts/memory-config.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
-import type { createAliceStore } from "../../../../packages/storage/src/sqlite-store.js";
-import type { DiaryStore } from "../../../../packages/storage/src/diary-store.js";
+import type { createAliceStore } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { DiaryStore } from "../../../../platform/storage/src/diary-store.js";
 import {
   createSleepMemoryStateStore,
   runSleepMemoryInduction,
@@ -17,7 +17,7 @@ type SleepMemoryStateStore = ReturnType<typeof createSleepMemoryStateStore>;
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createSleepMemoryInductionRuntime(input: {
-  config: AppConfig;
+  config: SleepMemoryInductionConfig;
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
   stateStore: SleepMemoryStateStore;

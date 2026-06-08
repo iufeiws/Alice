@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig } from "../src/packages/config/src/index.js";
+import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 
 test("tts config defaults to genie tts backend with moss fallback settings", () => {
   const config = loadConfig({});

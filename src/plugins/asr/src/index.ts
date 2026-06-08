@@ -11,8 +11,8 @@ import type {
   InboundAudioStreamEndFrame,
   InboundAudioStreamFrame,
   InboundAudioStreamStartFrame
-} from "../../../packages/types/src/index.js";
-import { sanitizeAudioTranscript } from "../../../packages/types/src/index.js";
+} from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { sanitizeAudioTranscript } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const tencentLocalAudioUploadLimitBytes = 5 * 1024 * 1024;
 const defaultPseudoStreamMinPauseMs = 1500;

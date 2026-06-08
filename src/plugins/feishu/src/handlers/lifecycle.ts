@@ -1,4 +1,5 @@
-import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../../../core/time/src/index.js";
+import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { FeishuMessageLifecycleEvent } from "../types.js";
 
 export function reactionEventToLifecycleEvent(

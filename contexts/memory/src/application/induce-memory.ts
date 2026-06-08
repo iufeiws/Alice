@@ -1,14 +1,14 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { CurrentTimeProvider } from "../../time/src/index.js";
+import type { AppConfig } from "../../../../packages/config/src/index.js";
+import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
 import type { LLMRequestSender } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
-import type { createAliceStore } from "../../../packages/storage/src/sqlite-store.js";
-import type { DiaryStore } from "../../../packages/storage/src/diary-store.js";
+import type { createAliceStore } from "../../../../packages/storage/src/sqlite-store.js";
+import type { DiaryStore } from "../../../../packages/storage/src/diary-store.js";
 import {
   createSleepMemoryStateStore,
   runSleepMemoryInduction,
   type MemoryInductionPromptStore,
   type MemoryStore
-} from "./memory.js";
+} from "../memory.js";
 import { createLLMClientFromPreset, type LLMApiPreset } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
 
 type AliceStore = ReturnType<typeof createAliceStore>;

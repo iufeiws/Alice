@@ -1,4 +1,4 @@
-import { createSleepMemoryInductionRuntime } from "./sleep-memory-induction-runtime.js";
+import { createSleepMemoryInductionRuntime } from "../sleep-memory-induction-runtime.js";
 
 export function createSleepMemoryBridgeRuntime(input: {
   config: any;

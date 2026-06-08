@@ -1,14 +1,14 @@
-import type { AppConfig } from "../../../packages/config/src/index.js";
-import { createCoreProfileStore } from "./core-profile.js";
+import type { AppConfig } from "../../../../packages/config/src/index.js";
+import { createCoreProfileStore } from "../../../../src/core/agent/src/core-profile.js";
 import {
   createMarkdownMemoryStore,
   createMemoryDiaryStore,
   createMemoryInductionPromptStore,
   createSleepMemoryStateStore
-} from "./memory.js";
-import { createPromptProfileStore } from "./prompts.js";
-import { promptStoragePath } from "./prompt-storage.js";
-import { createDailyShellStore } from "./shells.js";
+} from "../memory.js";
+import { createPromptProfileStore } from "../../../../src/core/agent/src/prompts.js";
+import { promptStoragePath } from "../../../../src/core/agent/src/prompt-storage.js";
+import { createDailyShellStore } from "../../../../src/core/agent/src/shells.js";
 
 const path = await import("node:path");
 
@@ -29,7 +29,11 @@ export function createProfileMemoryRuntime(input: {
   const sleepMemoryStateStore = createSleepMemoryStateStore(path.join(input.config.memoryFiles.root, "state", "sleep-memory-state.json"));
   const dailyShellStore = createDailyShellStore(input.config.memoryFiles.root, {
     promptTemplatePath: promptStoragePath(input.config.memoryFiles.root, "shell-prompt-template.txt", ["shell", "prompt-template.txt"]),
-    onSwitch(entry) {
+    onSwitch(entry: {
+      message: string;
+      outfitName: string;
+      date: string;
+    }) {
       input.appendLog("info", `daily shell switched: ${entry.message} outfit=${entry.outfitName} date=${entry.date}`);
     }
   });

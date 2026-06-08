@@ -1,9 +1,9 @@
-import type { CurrentTimeProvider } from "../../time/src/index.js";
+import type { CurrentTimeProvider } from "../../../../core/time/src/index.js";
 import {
   clearMemoryInductionSession as clearActiveMemoryInductionSession,
   createMemoryInductionSession,
   type MemoryInductionSession
-} from "./memory.js";
+} from "../memory.js";
 
 export function createMemoryConsoleRuntime(input: {
   sessionRoot(): string;

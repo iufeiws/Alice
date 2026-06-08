@@ -4,6 +4,9 @@ import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";
 
+export * from "./sleep-cocoon-math.js";
+export * from "./sleep-cocoon-event-runtime.js";
+
 export type SleepCocoonToolTarget = {
   plugin: string;
   accountId?: string;

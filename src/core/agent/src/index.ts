@@ -113,6 +113,16 @@ export function calculateTokenPressureSwitch(input: TokenPressureComparisonInput
 
 type ModeState = ChatAgentModeState;
 
+export * from "./initiated-behavior-config.js";
+export * from "./initiated-behavior-runtime.js";
+export * from "./agent-state-runtime.js";
+export * from "./llm-requests.js";
+export * from "./memory-console-runtime.js";
+export * from "./message-runtime.js";
+export * from "./sleep-memory-bridge-runtime.js";
+export * from "./sleep-memory-induction-runtime.js";
+export * from "./talk-runtime.js";
+
 type CoreLLMRuntimeConfig = {
   client?: LLMClient;
   model?: string;

@@ -14,6 +14,10 @@ import type {
 
 const fsp = await import("node:fs/promises");
 
+export * from "./default-target-runtime.js";
+export * from "./outbound-notice-runtime.js";
+export * from "./sent-message-utils.js";
+
 export type MessagingToolTarget = {
   plugin: string;
   accountId?: string;

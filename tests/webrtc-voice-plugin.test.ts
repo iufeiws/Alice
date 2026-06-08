@@ -57,6 +57,18 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.match(html, /getUserMedia/);
   assert.match(html, /Hold to talk/);
   assert.match(html, /id="testSpeakText"/);
+  assert.match(html, /id="typedInterruptInput"/);
+  assert.match(html, /Type more than 1 character to interrupt; press Enter to submit\./);
+  assert.match(html, /text\.length <= 1/);
+  assert.match(html, /addEventListener\("keydown"/);
+  assert.match(html, /event\.key !== "Enter"/);
+  assert.doesNotMatch(html, /typedInputFinalIdleMs/);
+  assert.doesNotMatch(html, /setTimeout\(\(\) => \{/);
+  assert.match(html, /type: "interrupt", reason: "manual"/);
+  assert.match(html, /-已撤回-/);
+  assert.match(html, /normalizeTypedInputText/);
+  assert.match(html, /\\uFFFC/);
+  assert.match(html, /type: "text-input", text: payloadText/);
   assert.match(html, /id="assistantOutputText"/);
   assert.match(html, /id="userInputText"/);
   assert.match(html, /tts\.output_text/);
@@ -1515,6 +1527,165 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
   })), [{ reason: "barge_in", text: "もしもし", asrStreamId: "asr-call-barge-batch-0" }]);
   assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), true);
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
+});
+
+test("WebRTC voice commits typed final text into the active manual interrupt batch", async () => {
+  const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("typed final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput(input) {
+        latestInterrupts.push({ reason: input.reason, omitAssistantMessage: input.omitAssistantMessage });
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-typed-batch", userId: "browser-typed-batch", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("typed final");
+
+  assert.deepEqual(latestInterrupts, [{ reason: "manual", omitAssistantMessage: false }]);
+  assert.equal(batches.length, 1);
+  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    reason: input.reason,
+    text: input.text,
+    asrStreamId: input.asrStreamId
+  })), [{ reason: "manual", text: "typed final", asrStreamId: "asr-call-typed-batch-0" }]);
+});
+
+test("WebRTC voice closes an active manual interrupt batch when typed input is withdrawn", async () => {
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("withdrawn typed final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput() {},
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-typed-withdrawn", userId: "browser-typed-withdrawn", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("");
+
+  assert.equal(batches.length, 1);
+  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    reason: input.reason,
+    text: input.text,
+    asrStreamId: input.asrStreamId
+  })), [{ reason: "manual", text: "-已撤回-", asrStreamId: "asr-call-typed-withdrawn-0" }]);
+});
+
+test("WebRTC voice ignores empty typed input when no interrupt batch is active", async () => {
+  const ingested: unknown[] = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput(input) {
+        ingested.push(input);
+      },
+      closeSession() {},
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-empty-no-batch", userId: "browser-empty-no-batch", offerSdp: "offer" });
+  await call.acceptTextInput?.("");
+
+  assert.deepEqual(ingested, []);
+  assert.deepEqual(batches, []);
+});
+
+test("WebRTC voice treats iOS dictation placeholder-only typed input as empty", async () => {
+  const ingested: unknown[] = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput(input) {
+        ingested.push(input);
+      },
+      closeSession() {},
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-ios-dictation-empty", userId: "browser-ios-dictation-empty", offerSdp: "offer" });
+  await call.acceptTextInput?.("\uFFFC\u200B\u200C\u200D\u2060\uFEFF");
+
+  assert.deepEqual(ingested, []);
+  assert.deepEqual(batches, []);
+});
+
+test("WebRTC voice closes active manual interrupt batch for iOS dictation placeholder-only final", async () => {
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("placeholder-only typed final should close the active interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput() {},
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-ios-dictation-withdrawn", userId: "browser-ios-dictation-withdrawn", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("\uFFFC\u200B\u200C\u200D\u2060\uFEFF");
+
+  assert.equal(batches.length, 1);
+  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    reason: input.reason,
+    text: input.text,
+    asrStreamId: input.asrStreamId
+  })), [{ reason: "manual", text: "-已撤回-", asrStreamId: "asr-call-ios-dictation-withdrawn-0" }]);
 });
 
 test("WebRTC voice times out ASR final and commits interrupt batch as noise", async () => {

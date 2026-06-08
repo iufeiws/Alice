@@ -590,8 +590,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
             } else if (message.type === "hold-to-talk") {
               await call?.setSpeechActive(Boolean((message as { active?: unknown }).active));
             } else if (message.type === "text-input") {
-              const textInput = typeof message.text === "string" ? message.text.trim() : "";
-              if (textInput) await call?.acceptTextInput?.(textInput);
+              if (typeof message.text === "string") await call?.acceptTextInput?.(message.text);
             } else if (message.type === "audio-chunk") {
               const data = (message as { data?: unknown }).data;
               if (typeof data === "string") {
@@ -1026,10 +1025,12 @@ async function createCallState(
     },
     async acceptTextInput(text) {
       if (closed) return;
-      if (playbackQueue.some((item) => item.status === "playing" || item.status === "queued")) {
+      const stableText = normalizeTypedInputText(text) || "-已撤回-";
+      if (stableText === "-已撤回-" && interruptBatch.items.length === 0) return;
+      if (stableText !== "-已撤回-" && playbackQueue.some((item) => item.status === "playing" || item.status === "queued")) {
         await runInterrupt("manual");
       }
-      await markStableInput(text, "manual");
+      await markStableInput(stableText, "manual");
     },
     async endInboundAudio() {
       if (closed) return undefined;
@@ -1662,9 +1663,11 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; max-width: 760px; }
     button { margin-right: 8px; padding: 8px 12px; }
+    textarea { font: inherit; }
     #status, #finalTranscript { margin-top: 16px; white-space: pre-wrap; font-family: ui-monospace, monospace; }
     #partialTranscript { min-height: 28px; margin-top: 12px; padding: 8px; border: 1px solid #bbb; }
     #finalTranscript { min-height: 64px; padding: 8px; border: 1px solid #bbb; }
+    #typedInterruptInput { display: block; width: 100%; min-height: 72px; box-sizing: border-box; margin-top: 8px; padding: 8px; }
     .label { margin-top: 12px; font-size: 12px; color: #555; }
     .error { color: #b00020; }
   </style>
@@ -1676,6 +1679,8 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
     <button id="testSpeakButton" type="button">Test voice</button>
     <button id="interruptButton" type="button">Interrupt voice</button>
     <button id="hangupButton" type="button">Hang up</button>
+    <div class="label">Typed interrupt input</div>
+    <textarea id="typedInterruptInput" rows="3" placeholder="Type more than 1 character to interrupt; press Enter to submit."></textarea>
     <textarea id="testSpeakText" rows="5" style="display:block; width:100%; box-sizing:border-box; margin:12px 0; font-family:ui-monospace, monospace;">${escapeHtml(defaultTestSpeakText)}</textarea>
     <audio id="remoteAudio" autoplay playsinline controls></audio>
     <div id="assistantOutputText" hidden data-event="tts.output_text"></div>
@@ -1698,6 +1703,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
     const finalTranscript = document.getElementById("finalTranscript");
     const talkButton = document.getElementById("talkButton");
     const testSpeakText = document.getElementById("testSpeakText");
+    const typedInterruptInput = document.getElementById("typedInterruptInput");
     let peer;
     let socket;
     let localStream;
@@ -1705,6 +1711,7 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
     let pcmSource;
     let pcmProcessor;
     let pendingRemoteIce = [];
+    let typedInputInterruptSent = false;
     function log(line, error = false) {
       const prefix = new Date().toLocaleTimeString();
       status.textContent += "[" + prefix + "] " + line + "\\n";
@@ -1849,6 +1856,35 @@ function renderCallPage(config: WebRtcVoiceConfig): string {
       log("interrupt requested");
       socket?.send(JSON.stringify({ type: "interrupt" }));
     });
+    function commitTypedFinalText(text) {
+      const payloadText = normalizeTypedInputText(text) || "-已撤回-";
+      socket?.send(JSON.stringify({ type: "text-input", text: payloadText }));
+      document.getElementById("userInputText").textContent = payloadText;
+      const time = new Date().toLocaleTimeString();
+      finalTranscript.textContent += "[" + time + "] " + payloadText + "\\n";
+      typedInterruptInput.value = "";
+      typedInputInterruptSent = false;
+      log("typed final committed");
+    }
+    function normalizeTypedInputText(text) {
+      return String(text || "").replace(/[\\u0000-\\u001F\\u007F\\u200B-\\u200D\\u2060\\uFEFF\\uFFFC]/g, "").trim();
+    }
+    typedInterruptInput.addEventListener("input", () => {
+      const text = normalizeTypedInputText(typedInterruptInput.value);
+      if (text.length <= 1) {
+        return;
+      }
+      if (!typedInputInterruptSent) {
+        typedInputInterruptSent = true;
+        log("typed interrupt requested");
+        socket?.send(JSON.stringify({ type: "interrupt", reason: "manual" }));
+      }
+    });
+    typedInterruptInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      commitTypedFinalText(typedInterruptInput.value);
+    });
     function startTalking() {
       if (speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
       speechActive = true;
@@ -1903,6 +1939,12 @@ function hashText(value: string): string {
     hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
   }
   return Math.abs(hash).toString(16);
+}
+
+function normalizeTypedInputText(value: string): string {
+  return value
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF\uFFFC]/g, "")
+    .trim();
 }
 
 function splitTtsPseudoStreamParts(text: string): string[] {

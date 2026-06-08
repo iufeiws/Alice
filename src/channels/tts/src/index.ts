@@ -1,6 +1,3 @@
-import type { LLMClient, OpenAICompatibleConfig } from "../../../contexts/llm-gateway/src/index.js";
-import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
-import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { renderLLMText, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
@@ -124,13 +121,42 @@ export type TtsVoiceModelConfig = {
   referenceText?: string;
 };
 
+export type TtsLlmRequest = {
+  agentId: string;
+  client?: TtsLlmClient;
+  messages: Array<{ role: "system" | "user" | "assistant" | "tool"; content: string }>;
+  model?: string;
+  temperature?: number;
+  extraParams?: Record<string, unknown>;
+  toolNames?: string[];
+  round?: number;
+  stream?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type TtsLlmResult = {
+  message: { role?: string; content: string };
+};
+
+export type TtsLlmClient = {
+  chat(input: {
+    messages: TtsLlmRequest["messages"];
+    model?: string;
+    temperature?: number;
+    extraParams?: Record<string, unknown>;
+  }): Promise<TtsLlmResult>;
+};
+
+export type TtsLlmRequestSender = (request: TtsLlmRequest) => Promise<TtsLlmResult>;
+
 export type TtsPluginDeps = {
   baseSynthesizer: VoiceSynthesizer;
   configPath?: string;
-  llm?: LLMClient;
-  llmRequestSender?: LLMRequestSender;
+  llm?: TtsLlmClient;
+  llmRequestSender?: TtsLlmRequestSender;
   env?: Record<string, string | undefined>;
   resolveApiPreset?(name: string): TtsApiPreset | undefined;
+  createLlmClientFromPreset?(preset: TtsApiPreset, env: Record<string, string | undefined>): TtsLlmClient | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   promptVariables?: LLMTextVariables | (() => LLMTextVariables);
 };
@@ -165,8 +191,7 @@ export type TtsSynthesizer = VoiceSynthesizer & {
 };
 
 const defaultConfigPath = "config/plugin/tts/config.json";
-const legacyTtsConfigPath = "src/plugins/tts/config.json";
-const legacyConfigPath = "src/plugins/japanese-voice/config.json";
+const legacyTtsConfigPath = "src/channels/tts/config.json";
 const ttsPresetAssetRoot = path.join("assets", "tts", "preset");
 
 export function createTtsPlugin(deps: TtsPluginDeps): TtsPlugin {
@@ -237,17 +262,13 @@ function resolveTtsConfigReadPath(configPath = defaultConfigPath): string | unde
   if (fs.existsSync(resolved)) return resolved;
   const defaultResolved = path.resolve(defaultConfigPath);
   const legacyTtsResolved = path.resolve(legacyTtsConfigPath);
-  const legacyResolved = path.resolve(legacyConfigPath);
   if (resolved === defaultResolved && fs.existsSync(legacyTtsResolved)) return legacyTtsResolved;
-  if (resolved === defaultResolved && fs.existsSync(legacyResolved)) return legacyResolved;
   const parsed = path.parse(resolved);
   const expectedSuffix = path.join("config", "plugin", "tts", "config.json");
   if (resolved.endsWith(expectedSuffix)) {
     const root = resolved.slice(0, -expectedSuffix.length);
     const siblingLegacyTts = path.join(root || parsed.root, "plugins", "tts", "config.json");
     if (fs.existsSync(siblingLegacyTts)) return siblingLegacyTts;
-    const siblingLegacy = path.join(root || parsed.root, "plugins", "japanese-voice", "config.json");
-    if (fs.existsSync(siblingLegacy)) return siblingLegacy;
   }
   return undefined;
 }
@@ -367,8 +388,8 @@ export async function resolveTtsText(text: string, config: TtsPluginConfig, deps
 
 export async function translateTtsText(text: string, config: TtsPluginConfig, deps: TtsPluginDeps): Promise<string | undefined> {
   const preset = resolveEffectivePreset(config, deps);
-  const client = deps.llm ?? (preset ? createClientFromPreset(preset, deps.env ?? process.env) : undefined);
-  if (!client) {
+  const client = deps.llm ?? (preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined);
+  if (!client && !deps.llmRequestSender) {
     deps.appendLog?.("warn", "tts translation skipped: missing api preset baseURL or api key");
     return undefined;
   }
@@ -378,7 +399,7 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
     const legacyPreset = config.api_preset ?? { baseURL: "", model: "flash", temperature: 0.2, extraParams: {} };
     const request = {
       agentId: "tts",
-      client,
+      ...(client ? { client } : {}),
       messages: [
         { role: "system" as const, content: renderTtsPrompt(config, deps) },
         { role: "user" as const, content: text }
@@ -393,7 +414,7 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
     };
     const result = deps.llmRequestSender
       ? await deps.llmRequestSender(request)
-      : await client.chat({
+      : await client!.chat({
         messages: request.messages,
         model: request.model,
         temperature: request.temperature,
@@ -605,20 +626,6 @@ function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginDeps): T
   return config.api_preset;
 }
 
-function createClientFromPreset(preset: TtsApiPreset, env: Record<string, string | undefined>): LLMClient | undefined {
-  const apiKey = preset.apiKey || (preset.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
-  if (!preset.baseURL || !apiKey) return undefined;
-  const config: OpenAICompatibleConfig = {
-    baseURL: preset.baseURL,
-    apiKey,
-    model: preset.model,
-    temperature: preset.temperature,
-    timeoutMs: preset.timeoutMs,
-    extraParams: preset.extraParams
-  };
-  return createOpenAICompatibleClient(config);
-}
-
 function defaultPrompt(): string {
   return [
     "Translate the text appended below into natural Japanese for voice reading.",
@@ -752,22 +759,6 @@ function ttsPresetReferenceAudio(name: string): string | undefined {
   }
 }
 
-export type JapaneseVoiceApiPreset = TtsApiPreset;
-export type JapaneseVoicePluginConfig = TtsPluginConfig;
-export type JapaneseVoicePluginDeps = TtsPluginDeps;
-export type JapaneseVoicePlugin = TtsPlugin;
-export type JapaneseVoiceStreamInput = TtsStreamInput;
-export type JapaneseVoiceStreamChunk = TtsStreamChunk;
-export type JapaneseVoiceSynthesizer = TtsSynthesizer;
-export const createJapaneseVoicePlugin = createTtsPlugin;
-export const readJapaneseVoicePluginConfig = readTtsPluginConfig;
-export const createJapaneseVoiceTranslationSynthesizer = createTtsTranslationSynthesizer;
-export const japaneseVoiceGenieOverrides = ttsGenieOverrides;
-export const resolveJapaneseVoiceTtsText = resolveTtsText;
-export const translateJapaneseVoiceText = translateTtsText;
-export const streamJapaneseVoiceText = streamTtsText;
-export const collectJapaneseVoiceStreamText = collectTtsStreamText;
-export const splitJapaneseVoiceStreamParts = splitTtsStreamParts;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";

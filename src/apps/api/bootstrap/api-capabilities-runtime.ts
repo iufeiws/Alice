@@ -1,6 +1,6 @@
 import { createToolRuntime } from "../../../capabilities/tools/messaging/src/tool-runtime.js";
 import { createPromptToolPreviewRuntime } from "./prompt-tool-preview-runtime.js";
-import { createVoicePluginRuntime } from "../../../plugins/tts/src/voice-plugin-runtime.js";
+import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 
 export function createApiCapabilitiesRuntime(input: {

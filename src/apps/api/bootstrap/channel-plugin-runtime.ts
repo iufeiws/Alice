@@ -1,5 +1,5 @@
-import { createFeishuPlugin } from "../../../plugins/feishu/src/index.js";
-import { createWeChatPlugin } from "../../../plugins/wechat/src/index.js";
+import { createFeishuPlugin } from "../../../channels/feishu/src/index.js";
+import { createWeChatPlugin } from "../../../channels/wechat/src/index.js";
 
 export function createChannelPluginRuntime(input: {
   config: any;

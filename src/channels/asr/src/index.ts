@@ -194,7 +194,7 @@ export type AsrInboundStreamSession = {
 };
 
 const defaultConfigPath = "config/plugin/asr/config.json";
-const legacyConfigPath = "src/plugins/asr/config.json";
+const legacyConfigPath = "src/channels/asr/config.json";
 
 export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
   return {

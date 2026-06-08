@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWeChatILinkClient } from "../src/plugins/wechat/src/client.js";
-import { createWeChatPlugin, createWeChatStateStore } from "../src/plugins/wechat/src/index.js";
-import type { WeChatTextMessage } from "../src/plugins/wechat/src/types.js";
+import { createWeChatILinkClient } from "../src/channels/wechat/src/client.js";
+import { createWeChatPlugin, createWeChatStateStore } from "../src/channels/wechat/src/index.js";
+import type { WeChatTextMessage } from "../src/channels/wechat/src/types.js";
 import { createMessageRuntime } from "../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";

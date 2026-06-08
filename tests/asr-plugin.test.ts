@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAsrInboundStreamSession, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/plugins/asr/src/index.js";
+import { createAsrInboundStreamSession, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/channels/asr/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

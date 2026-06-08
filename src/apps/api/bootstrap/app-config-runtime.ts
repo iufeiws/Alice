@@ -1,7 +1,7 @@
 import { envBool, envJsonObject, envNumber, trimTrailingSlashes, type Env } from "../../../platform/config/src/index.js";
 import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts/memory-config.js";
-import type { FeishuConfig } from "../../../plugins/feishu/src/types.js";
-import type { WeChatConfig } from "../../../plugins/wechat/src/types.js";
+import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
+import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
 
 export type LLMConfig = {
   provider: "openai-compatible" | "stub";

@@ -1,6 +1,6 @@
 # TTS Plugin
 
-`src/plugins/tts` is the canonical outbound voice synthesis plugin.
+`src/channels/tts` is the canonical outbound voice synthesis plugin.
 
 It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio events, and the preset settings used by `send_chat` voice output and WebRTC voice playback. `tools/messaging` should only call an injected `VoiceSynthesizer`.
 
@@ -11,7 +11,7 @@ It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio
 - Display name: `TTS`
 - Config path: `config/plugin/tts/config.json`
 - Canonical asset root: `assets/tts/preset/`
-- Legacy config fallback: `src/plugins/tts/config.json`, then `src/plugins/japanese-voice/config.json`
+- Legacy config fallback: `src/channels/tts/config.json`
 
 The original outgoing text remains the `send_chat` transcript and persisted message content. Translation output is transient and is used only for synthesis.
 
@@ -71,7 +71,7 @@ assets/tts/preset/{name}/reference.*
 assets/tts/preset/{name}/reference.txt
 ```
 
-Legacy config files under `src/plugins/tts/config.json` and `src/plugins/japanese-voice/config.json` are still read as migration input when the canonical config is missing. Legacy flat fields such as `translationEnabled`, `apiPresetName`, `prompt`, `voice.language`, `voice.modelDir`, `voice.referenceAudio`, and `voice.referenceText` are also still accepted.
+Legacy config files under `src/channels/tts/config.json` are still read as migration input when the canonical config is missing. Legacy flat fields such as `translationEnabled`, `apiPresetName`, `prompt`, `voice.language`, `voice.modelDir`, `voice.referenceAudio`, and `voice.referenceText` are also still accepted.
 
 ## Admin Settings Layout
 
@@ -142,4 +142,4 @@ assets/tts/preset/{preset}/reference.*
 assets/tts/preset/{preset}/reference.txt
 ```
 
-Legacy assets under `assets/plugin/japanese-voice/`, `assets/plugin/tts/`, or `assets/tts/model/` may remain as migration sources. New admin writes should use `assets/tts/preset/`.
+Legacy assets under `assets/plugin/tts/` or `assets/tts/model/` may remain as migration sources. New admin writes should use `assets/tts/preset/`.

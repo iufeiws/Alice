@@ -1,8 +1,9 @@
-import type { TTSConfig } from "./index.js";
+import type { TTSConfig, TtsApiPreset } from "../../../channels/tts/src/index.js";
+import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { buildLLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "./index.js";
-import { createAsrPlugin } from "../../asr/src/index.js";
+import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createAsrPlugin } from "../../../channels/asr/src/index.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
@@ -28,6 +29,7 @@ export function createVoicePluginRuntime(input: {
     resolveApiPreset(name) {
       return input.readLLMApiPresets().find((entry) => entry.name === name);
     },
+    createLlmClientFromPreset: createTtsLlmClientFromPreset,
     promptVariables: () => buildLLMTextVariables({
       userName: input.promptProfileStore.get().userName,
       time: input.time
@@ -46,4 +48,17 @@ export function createVoicePluginRuntime(input: {
     ttsPlugin,
     asrPlugin
   };
+}
+
+function createTtsLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, string | undefined>) {
+  const apiKey = preset.apiKey || (preset.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
+  if (!preset.baseURL || !apiKey) return undefined;
+  return createOpenAICompatibleClient({
+    baseURL: preset.baseURL,
+    apiKey,
+    model: preset.model,
+    temperature: preset.temperature,
+    timeoutMs: preset.timeoutMs,
+    extraParams: preset.extraParams
+  });
 }

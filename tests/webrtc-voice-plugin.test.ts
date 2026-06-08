@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame, type WebRtcVoiceConfig } from "../src/plugins/webrtc-voice/src/index.js";
-import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../src/plugins/asr/src/index.js";
+import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
+import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../src/channels/asr/src/index.js";
 import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";

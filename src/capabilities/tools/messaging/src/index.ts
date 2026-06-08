@@ -6,7 +6,7 @@ import type { OutputRouter } from "../../../../platform/output-router/src/index.
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeMessageText, summarizeAudioText } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../../../plugins/tts/src/index.js";
+import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../../../channels/tts/src/index.js";
 import type {
   AliceStore,
   InsertOutboundMessageInput,

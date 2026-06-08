@@ -1,4 +1,4 @@
-import { createWebRtcVoiceRuntime } from "../../../plugins/webrtc-voice/src/web-rtc-voice-runtime.js";
+import { createWebRtcVoiceRuntime } from "./web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";

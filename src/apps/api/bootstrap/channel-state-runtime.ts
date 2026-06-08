@@ -1,6 +1,6 @@
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { createFeishuPairingStore } from "../../../plugins/feishu/src/pairing.js";
-import { createWeChatStateStore } from "../../../plugins/wechat/src/index.js";
+import { createFeishuPairingStore } from "../../../channels/feishu/src/pairing.js";
+import { createWeChatStateStore } from "../../../channels/wechat/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

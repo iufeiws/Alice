@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRecentMessageDeduper } from "../src/plugins/feishu/src/dedupe.js";
-import { createFeishuPlugin } from "../src/plugins/feishu/src/index.js";
-import type { FeishuAudioMessageEvent, FeishuTextMessageEvent } from "../src/plugins/feishu/src/types.js";
-import type { FeishuConfig } from "../src/plugins/feishu/src/types.js";
+import { createRecentMessageDeduper } from "../src/channels/feishu/src/dedupe.js";
+import { createFeishuPlugin } from "../src/channels/feishu/src/index.js";
+import type { FeishuAudioMessageEvent, FeishuTextMessageEvent } from "../src/channels/feishu/src/types.js";
+import type { FeishuConfig } from "../src/channels/feishu/src/types.js";
 import type { AgentEvent, AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("recent message deduper rejects repeated keys inside ttl", () => {

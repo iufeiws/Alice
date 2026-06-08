@@ -311,35 +311,6 @@ test("admin plugin list exposes tts config card state", async () => {
   assert.equal(tts.switchable, true);
 });
 
-test("admin plugin list reads legacy japanese voice config when tts config is missing", async () => {
-  const root = makeTempDir("admin-plugin-legacy-config");
-  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  const legacyConfigPath = path.join(root, "plugins", "japanese-voice", "config.json");
-  fs.mkdirSync(path.dirname(legacyConfigPath), { recursive: true });
-  fs.writeFileSync(legacyConfigPath, `${JSON.stringify({
-    enabled: true,
-    apiPresetName: "voice",
-    prompt: "Translate:"
-  })}\n`);
-  writePreset(root, "voice");
-  const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const context = {
-    ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { tts: { configPath } }
-  };
-  const handler = createApiRequestHandler(context);
-
-  const response = createResponse();
-  await handler(createRequest("GET", "/admin/api/plugins", {}), response);
-  const body = JSON.parse(response.body);
-  const tts = body.plugins.find((plugin: { id: string }) => plugin.id === "tts");
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(tts.status, "enabled");
-  assert.equal(tts.configSource, configPath);
-});
-
 test("admin plugin list exposes ASR config card state", async () => {
   const root = makeTempDir("admin-asr-plugin-list");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");

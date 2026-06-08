@@ -28,12 +28,12 @@ import { AssetValidationError, resolveAdminAssetPath } from "./asset-utils.js";
 import { updateEnvFile } from "../server/env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
-import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
+import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
-import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
-import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
+import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
-import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
+import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
 
 const fs = await import("node:fs");
@@ -1003,7 +1003,7 @@ function findAdminPluginEntry(context: AdminRoutesContext, pluginId: string): Ad
 }
 
 function normalizeAdminPluginId(pluginId: string): string {
-  return pluginId === "japanese-voice" ? "tts" : pluginId;
+  return pluginId;
 }
 
 function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryEntry[] {
@@ -1829,7 +1829,7 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
       baseSynthesizer: async () => {
         throw new Error("not used");
       },
-      llmRequestSender: context.llmRequestSender,
+      llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
       llm: createOpenAICompatibleClient({
         baseURL: preset.baseURL,
         apiKey: preset.apiKey,
@@ -1999,7 +1999,7 @@ function normalizeRemoteTtsBaseURL(value: string): string {
 }
 
 function isTtsVoiceAssetPath(value: string): boolean {
-  return isTtsModelAssetPath(value) || isPluginAssetPath("tts", value) || isPluginAssetPath("japanese-voice", value);
+  return isTtsModelAssetPath(value) || isPluginAssetPath("tts", value);
 }
 
 function ttsLanguageFromUnknown(value: unknown): "jp" | "zh" | "en" {

@@ -45,11 +45,11 @@ test("prompt profile store creates defaults and persists edits", () => {
   const reopened = createPromptProfileStore(filePath).get();
   assert.equal(reopened.userName, "AliceUser");
   assert.equal(reopened.layers[0].content, "Hi {{user}} at {{date_time}}");
-  assert.equal(fs.existsSync(path.join(root, "core", "prompt", "prompt-profile.json")), true);
+  assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json")), true);
   assert.equal(fs.existsSync(path.join(root, "config", "prompt-profile.json")), false);
 });
 
-test("prompt profile storage migrates legacy config file to core prompt folder", () => {
+test("prompt profile storage migrates legacy config file to agent-profile prompts folder", () => {
   const root = makeTempDir("prompt-store-migrate");
   const legacyPath = path.join(root, "config", "prompt-profile.json");
   fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
@@ -62,12 +62,12 @@ test("prompt profile storage migrates legacy config file to core prompt folder",
   const store = createPromptProfileStore(filePath);
 
   assert.equal(store.get().userName, "LegacyUser");
-  assert.equal(filePath, path.join(root, "core", "prompt", "prompt-profile.json"));
+  assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
   assert.equal(fs.existsSync(filePath), true);
   assert.equal(fs.existsSync(legacyPath), false);
 });
 
-test("prompt profile storage migrates previous root prompt file to core prompt folder", () => {
+test("prompt profile storage migrates previous root prompt file to agent-profile prompts folder", () => {
   const root = makeTempDir("prompt-store-root-migrate");
   const previousPath = path.join(root, "prompt", "prompt-profile.json");
   fs.mkdirSync(path.dirname(previousPath), { recursive: true });
@@ -80,7 +80,7 @@ test("prompt profile storage migrates previous root prompt file to core prompt f
   const store = createPromptProfileStore(filePath);
 
   assert.equal(store.get().userName, "PreviousRootUser");
-  assert.equal(filePath, path.join(root, "core", "prompt", "prompt-profile.json"));
+  assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
   assert.equal(fs.existsSync(filePath), true);
   assert.equal(fs.existsSync(previousPath), false);
 });
@@ -273,7 +273,7 @@ test("daily shell store creates category files and reuses one shell per day", ()
   assert.equal(fs.readdirSync(path.join(shellDir, "personalities")).filter((item) => item.endsWith(".json")).length >= 10, true);
   assert.equal(fs.readdirSync(path.join(shellDir, "relationships")).filter((item) => item.endsWith(".json")).length >= 10, true);
   assert.equal(fs.readdirSync(path.join(shellDir, "outfits")).filter((item) => item.endsWith(".json")).length >= 10, true);
-  assert.equal(fs.existsSync(path.join(root, "core", "prompt", "shell-prompt-template.txt")), true);
+  assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt")), true);
   assert.equal(fs.existsSync(path.join(shellDir, "prompt-template.txt")), false);
   assert.match(fs.readFileSync(path.join(shellDir, "daily-shell.json"), "utf8"), /rendered/);
   assert.match(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai"), /爱丽丝今日的\*外壳\*是/);
@@ -305,7 +305,7 @@ test("daily shell prompt template is editable", () => {
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   assert.equal(config.personalities[0].id, "p1");
   assert.equal(config.promptTemplate, "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
-  assert.equal(fs.readFileSync(path.join(root, "core", "prompt", "shell-prompt-template.txt"), "utf8"), "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}\n");
+  assert.equal(fs.readFileSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt"), "utf8"), "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}\n");
   assert.match(config.rendered, /^P=/);
 });
 
@@ -319,7 +319,7 @@ test("daily shell prompt template migrates from legacy shell folder", () => {
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
 
   assert.equal(config.promptTemplate, "Legacy={{outfit_name}}");
-  assert.equal(fs.existsSync(path.join(root, "core", "prompt", "shell-prompt-template.txt")), true);
+  assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt")), true);
   assert.equal(fs.existsSync(legacyPath), false);
   assert.match(config.rendered, /^Legacy=/);
 });

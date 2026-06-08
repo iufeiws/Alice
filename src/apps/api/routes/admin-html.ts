@@ -517,7 +517,7 @@ export function renderAdminHtmlV2(): string {
             <div class="behavior-toolbar">
               <div>
                 <h2>Initiated Behaviors</h2>
-                <p class="muted">Runtime plans and layer-based prompt profiles from src/core/prompt.</p>
+                <p class="muted">Runtime plans and layer-based prompt profiles from src/contexts/agent-profile/prompts.</p>
               </div>
               <label for="behaviorTypeFilter">Type
                 <select id="behaviorTypeFilter">

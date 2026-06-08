@@ -467,13 +467,16 @@ export function renderAdminHtmlV2(): string {
         <section id="main-memory" class="pane">
           <div>
             <h2>Memory</h2>
-            <div class="memory-controls">
-              <label for="memoryRunDate">Date
-                <select id="memoryRunDate"></select>
-              </label>
-              <button type="button" id="memory-run-day">Run Selected Day</button>
-              <button type="button" id="memory-clear-session" class="secondary">Clear Session</button>
-            </div>
+          <div class="memory-controls">
+            <label for="memoryRunDate">Date
+              <select id="memoryRunDate"></select>
+            </label>
+            <button type="button" id="memory-run-day">Run Selected Day</button>
+            <button type="button" id="memory-clear-session" class="secondary">Clear Session</button>
+            <button type="button" id="memory-undo-last" class="secondary">Undo Last Run</button>
+            <button type="button" id="memory-redo-last" class="secondary">Redo Last Run</button>
+            <button type="button" id="memory-delete-latest-sql" class="secondary">Delete Latest SQL</button>
+          </div>
             <div class="memory-day-layout">
               <div class="memory-calendar" id="memoryCalendar"></div>
               <div class="memory-chat-panel">
@@ -2841,12 +2844,14 @@ Timing:
       }
 
       async function undoLastMemoryRun() {
-        $("memory-status").textContent = "Memory git undo is no longer available for SQL-backed memory.";
+        const result = await fetch("/admin/api/memory/undo-last", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Undo memory run complete." : "Undo memory run failed: " + (result.error || "unknown");
         await refreshMemory();
       }
 
       async function redoLastMemoryRun() {
-        $("memory-status").textContent = "Memory git redo is no longer available for SQL-backed memory.";
+        const result = await fetch("/admin/api/memory/redo-last", { method: "POST" }).then((res) => res.json());
+        $("memory-status").textContent = result.ok ? "Redo memory run complete." : "Redo memory run failed: " + (result.error || "unknown");
         await refreshMemory();
       }
 
@@ -3719,6 +3724,9 @@ Timing:
       });
       $("memory-run-day").addEventListener("click", runMemoryDay);
       $("memory-clear-session").addEventListener("click", clearMemorySession);
+      $("memory-undo-last").addEventListener("click", undoLastMemoryRun);
+      $("memory-redo-last").addEventListener("click", redoLastMemoryRun);
+      $("memory-delete-latest-sql").addEventListener("click", () => deleteLatestMemorySqlRecord("persistent"));
       $("memoryRunDate").addEventListener("change", async () => {
         memoryCalendarMonth = $("memoryRunDate").value.slice(0, 7);
         renderMemoryCalendar();

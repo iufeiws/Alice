@@ -20,6 +20,13 @@ export function resolveAdminAssetPath(assetId: string, options: AssetValidationO
   if (!trimmed) {
     throw new AssetValidationError("missing_asset");
   }
+  if (
+    trimmed === "." || trimmed === ".." ||
+    trimmed.startsWith("./") || trimmed.startsWith("../") ||
+    trimmed.includes("/../") || trimmed.includes("\\../") || trimmed.includes("/..\\")
+  ) {
+    throw new AssetValidationError("asset_outside_assets");
+  }
   if (trimmed.startsWith("file://") || path.isAbsolute(trimmed)) {
     throw new AssetValidationError("asset_must_be_relative");
   }

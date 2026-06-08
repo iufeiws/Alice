@@ -4,26 +4,15 @@ const path = await import("node:path");
 export function promptRootForMemoryRoot(memoryRoot: string): string {
   const normalized = path.normalize(memoryRoot);
   const parentDir = path.basename(normalized) === "memory-files" ? path.dirname(normalized) : normalized;
-  const srcRootPrompt = path.join(parentDir, "src", "core", "prompt");
-  const legacyRootPrompt = path.join(parentDir, "core", "prompt");
-
-  if (directoryExists(srcRootPrompt)) return srcRootPrompt;
-  if (directoryExists(legacyRootPrompt)) return legacyRootPrompt;
-  return srcRootPrompt;
-}
-
-function directoryExists(value: string): boolean {
-  try {
-    return fs.existsSync(value) && (fs.statSync(value) as import("node:fs").Stats).isDirectory();
-  } catch {
-    return false;
-  }
+  return path.join(parentDir, "core", "prompt");
 }
 
 export function promptStoragePath(memoryRoot: string, fileName: string, legacySegments: string[]): string {
   const currentPath = path.join(promptRootForMemoryRoot(memoryRoot), fileName);
   const legacyPromptRoot = previousPromptRootForMemoryRoot(memoryRoot);
+  const legacyRootPrompt = path.join(memoryRoot, "prompt", fileName);
   migratePromptStorageFile(currentPath, path.join(legacyPromptRoot, fileName));
+  migratePromptStorageFile(currentPath, legacyRootPrompt);
   return migratePromptStorageFile(currentPath, path.join(memoryRoot, ...legacySegments));
 }
 

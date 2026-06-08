@@ -293,6 +293,9 @@ export function formatReadOutput(content: string, options: { offset?: number; li
 
 function resolveWorkspacePath(filePath: string, root: string): string {
   if (path.isAbsolute(filePath)) throw new Error("path must be workspace-relative");
+  if (filePath.startsWith(`.${path.sep}`) || filePath.startsWith(`./`) || filePath.startsWith(`.\\`)) {
+    throw new Error("path is outside the workspace");
+  }
   const resolved = path.resolve(root, filePath);
   const relative = path.relative(root, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("path is outside the workspace");

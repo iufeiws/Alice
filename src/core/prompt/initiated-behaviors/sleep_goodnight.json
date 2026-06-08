@@ -5,7 +5,7 @@
       "title": "Goodnight Reply",
       "role": "user",
       "enabled": true,
-      "content": "现在是{{time}}, 爱丽丝你觉得困了。进入睡眠茧, 然后对{{user}}说句晚安吧",
+      "content": "现在是{{time}}, 爱丽丝你觉得困了。进入睡眠茧, 然后对{{user}}说晚安吧",
       "order": 10
     },
     {

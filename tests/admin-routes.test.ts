@@ -1,17 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { createApiRequestHandler } from "./apps/api/src/admin-routes.js";
+import { createApiRequestHandler } from "../src/apps/api/routes/admin-routes.js";
 import {
   createMarkdownMemoryStore,
   createMemoryInductionPromptStore,
   runMemoryInductionForMessages
-} from "./core/agent/src/memory.js";
-import { promptStoragePath } from "./core/agent/src/prompt-storage.js";
-import { createPromptProfileStore } from "./core/agent/src/prompts.js";
-import type { LLMChatInput, LLMClient } from "./core/llm/src/index.js";
-import { createDiaryStore } from "./packages/storage/src/diary-store.js";
-import type { StoredConversationMessage } from "./packages/storage/src/sqlite-store.js";
+} from "../src/core/agent/src/memory.js";
+import { promptStoragePath } from "../src/core/agent/src/prompt-storage.js";
+import { createPromptProfileStore } from "../src/core/agent/src/prompts.js";
+import type { LLMChatInput, LLMClient } from "../src/core/llm/src/index.js";
+import { createDiaryStore } from "../src/packages/storage/src/diary-store.js";
+import type { StoredConversationMessage } from "../src/packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

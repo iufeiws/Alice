@@ -3,7 +3,7 @@ import type { LLMChatInput, LLMChatResult, LLMClient } from "../../llm/src/index
 import type { OutputRouter } from "../../output-router/src/index.js";
 import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
-import type { SessionResolver } from "../../session/src/index.js";
+import type { SessionResolver } from "../../session/index.js";
 import { createCurrentTimeProvider, type CurrentTimeProvider } from "../../time/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { createId } from "../../../packages/types/src/index.js";

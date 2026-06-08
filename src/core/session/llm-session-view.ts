@@ -1,5 +1,5 @@
-import type { LLMChatInput } from "../../llm/src/index.js";
-import { cloneLLMMessages } from "../../agent/src/llm-session-log.js";
+import type { LLMChatInput } from "../llm/src/index.js";
+import { cloneLLMMessages } from "../agent/src/llm-session-log.js";
 import type {
   ActiveLLMSession,
   LLMRequestLogEntry,

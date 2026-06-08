@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPhotoTools, type SelfieExecutorInput } from "./tools/photo/src/index.js";
-import { createCurrentTimeProvider } from "./core/time/src/index.js";
-import { createAliceStore } from "./packages/storage/src/sqlite-store.js";
-import type { AgentOutput } from "./packages/types/src/index.js";
+import { createPhotoTools, type SelfieExecutorInput } from "../src/tools/photo/src/index.js";
+import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
+import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
+import type { AgentOutput } from "../src/packages/types/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { updateEnvFile } from "./apps/api/src/env-file.js";
+import { updateEnvFile } from "../src/apps/api/server/env-file.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

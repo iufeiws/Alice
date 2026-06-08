@@ -1,16 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "./core/agent/src/index.js";
-import type { LLMRequestSenderInput } from "./core/agent/src/llm-tool-loop.js";
-import type { LLMChatInput, LLMClient } from "./core/llm/src/index.js";
-import type { AgentEvent, ToolCall } from "./packages/types/src/index.js";
-import { loadConfig } from "./packages/config/src/index.js";
-import { createOutputRouter } from "./core/output-router/src/index.js";
-import { createAllowAllPolicy } from "./core/policy/src/index.js";
-import { createIntentRouter } from "./core/router/src/index.js";
-import { createSessionResolver } from "./core/session/src/index.js";
-import { createCurrentTimeProvider } from "./core/time/src/index.js";
-import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "./core/agent/src/state.js";
+import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "../src/core/agent/src/index.js";
+import type { LLMRequestSenderInput } from "../src/core/agent/src/llm-tool-loop.js";
+import type { LLMChatInput, LLMClient } from "../src/core/llm/src/index.js";
+import type { AgentEvent, ToolCall } from "../src/packages/types/src/index.js";
+import { loadConfig } from "../src/packages/config/src/index.js";
+import { createOutputRouter } from "../src/core/output-router/src/index.js";
+import { createAllowAllPolicy } from "../src/core/policy/src/index.js";
+import { createIntentRouter } from "../src/core/router/src/index.js";
+import { createSessionResolver } from "../src/core/session/index.js";
+import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
+import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../src/core/agent/src/state.js";
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];

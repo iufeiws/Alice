@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTalkRuntime } from "./apps/api/src/talk-runtime.js";
-import { createTalkStore } from "./packages/storage/src/talk-store.js";
-import { createCurrentTimeProvider } from "./core/time/src/index.js";
+import { createTalkRuntime } from "../src/core/agent/src/talk-runtime.js";
+import { createTalkStore } from "../src/packages/storage/src/talk-store.js";
+import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

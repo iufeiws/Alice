@@ -1,6 +1,6 @@
-import type { CurrentTimeProvider } from "../../time/src/index.js";
-import type { LLMChatInput } from "../../llm/src/index.js";
-import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../agent/src/prompts.js";
+import type { CurrentTimeProvider } from "../time/src/index.js";
+import type { LLMChatInput } from "../llm/src/index.js";
+import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../agent/src/prompts.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
   appendLLMSessionJsonlMessages,
@@ -11,7 +11,7 @@ import {
   relativeLLMSessionPath as relativeLLMSessionJsonlPath,
   writeLLMSessionJsonl,
   writeLLMSessionJsonlMetadata
-} from "../../agent/src/llm-session-log.js";
+} from "../agent/src/llm-session-log.js";
 import type { ActiveLLMSession } from "./llm-session-types.js";
 import {
   parseRequestInfo,

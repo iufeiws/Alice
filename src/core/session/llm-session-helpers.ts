@@ -1,5 +1,5 @@
-import type { TokenPressurePreviewBaseline } from "../../agent/src/index.js";
-import type { LLMChatInput } from "../../llm/src/index.js";
+import type { TokenPressurePreviewBaseline } from "../agent/src/index.js";
+import type { LLMChatInput } from "../llm/src/index.js";
 import type { LLMSessionRequestInfo, LLMSessionResponseInfo, LLMSessionRoundInfo } from "./llm-session-types.js";
 
 export function cloneLLMTools(tools: LLMChatInput["tools"] | undefined): LLMChatInput["tools"] | undefined {

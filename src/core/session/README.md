@@ -1,6 +1,11 @@
-# Session Resolver 说明
+# Session 说明
 
-`core/session` 从规范化事件创建稳定的内部 session id。
+`core/session` 管理会话边界：
+
+- 从规范化事件创建稳定的内部 session id。
+- 保存、恢复、归档、列表、查看、清理 LLM session。
+
+LLM 请求构造、模型调用、调用日志、观测与 token 统计属于 `core/llm`。
 
 ## 公共接口
 

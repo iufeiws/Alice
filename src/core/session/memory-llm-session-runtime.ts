@@ -1,4 +1,4 @@
-import { readLLMSessionJsonl } from "../../agent/src/llm-session-log.js";
+import { readLLMSessionJsonl } from "../agent/src/llm-session-log.js";
 import {
   parseRequestInfo,
   parseResponseInfo,

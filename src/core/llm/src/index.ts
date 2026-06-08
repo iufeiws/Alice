@@ -1,5 +1,13 @@
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
+export * from "./api-llm-runtime.js";
+export * from "./llm-log-runtime.js";
+export * from "./llm-observability-runtime.js";
+export * from "./llm-request-diff.js";
+export * from "./llm-request-preview-runtime.js";
+export * from "./llm-request-shape.js";
+export * from "./token-usage-runtime.js";
+
 export type LLMMessage = {
   role: LLMRole;
   content: string;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanupPreviousTtsFiles, createDailyMaintenanceTasks, delayUntilNext } from "./core/scheduler/src/index.js";
+import { cleanupPreviousTtsFiles, createDailyMaintenanceTasks, delayUntilNext } from "../src/core/scheduler/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

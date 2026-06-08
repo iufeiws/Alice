@@ -1,6 +1,6 @@
-import type { TokenPressurePreviewBaseline } from "../../agent/src/index.js";
-import type { LLMChatInput, LLMChatResult } from "../../llm/src/index.js";
-import type { LLMRequestDiff } from "./llm-request-diff.js";
+import type { TokenPressurePreviewBaseline } from "../agent/src/index.js";
+import type { LLMChatInput, LLMChatResult } from "../llm/src/index.js";
+import type { LLMRequestDiff } from "../llm/src/llm-request-diff.js";
 
 export type LLMRequestLogEntry = {
   id: number;

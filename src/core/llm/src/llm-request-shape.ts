@@ -1,4 +1,4 @@
-import type { LLMChatInput } from "../../llm/src/index.js";
+import type { LLMChatInput } from "./index.js";
 import type { StoredConversationMessage } from "../../../packages/storage/src/sqlite-store.js";
 
 export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {

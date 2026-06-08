@@ -1,4 +1,4 @@
-import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "../../../core/session/src/llm-session-types.js";
+import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "../../../core/session/llm-session-types.js";
 
 export function createApiRuntimeState() {
   const llmRequestLogs: LLMRequestLogEntry[] = [];

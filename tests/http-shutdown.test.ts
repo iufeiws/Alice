@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHttpShutdownController } from "./apps/api/src/http-shutdown.js";
+import { createHttpShutdownController } from "../src/apps/api/server/http-shutdown.js";
 
 const http = await import("node:http") as any;
 

@@ -8,6 +8,10 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
+    "rootDirs": [
+      ".",
+      "src"
+    ],
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
@@ -20,7 +24,7 @@
       "@alice/output-router": ["src/core/output-router/src/index.ts"],
       "@alice/policy": ["src/core/policy/src/index.ts"],
       "@alice/router": ["src/core/router/src/index.ts"],
-      "@alice/session": ["src/core/session/src/index.ts"],
+      "@alice/session": ["src/core/session/index.ts"],
       "@alice/feishu": ["src/plugins/feishu/src/index.ts"]
     }
   },

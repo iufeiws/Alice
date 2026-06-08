@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HttpJsonError, assertLoopbackAdminRequest, isLoopbackAddress, isPrivateNetworkAddress, readJsonBody } from "./apps/api/src/http-utils.js";
+import { HttpJsonError, assertLoopbackAdminRequest, isLoopbackAddress, isPrivateNetworkAddress, readJsonBody } from "../src/apps/api/middleware/http-utils.js";
 
 test("loopback admin guard allows local addresses", () => {
   assert.equal(isLoopbackAddress("127.0.0.1"), true);

@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCurrentTimeProvider } from "./core/time/src/index.js";
-import { formatToolResultForLLM } from "./core/text-renderer/src/index.js";
-import { createMessagingTools } from "./tools/messaging/src/index.js";
-import { collectTtsStreamText, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "./plugins/tts/src/index.js";
-import { createAliceStore } from "./packages/storage/src/sqlite-store.js";
-import type { AgentOutput } from "./packages/types/src/index.js";
+import { createCurrentTimeProvider } from "../src/core/time/src/index.js";
+import { formatToolResultForLLM } from "../src/core/text-renderer/src/index.js";
+import { createMessagingTools } from "../src/tools/messaging/src/index.js";
+import { collectTtsStreamText, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/plugins/tts/src/index.js";
+import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
+import type { AgentOutput } from "../src/packages/types/src/index.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");

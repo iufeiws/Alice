@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCoreProfileStore } from "./core/agent/src/core-profile.js";
+import { createCoreProfileStore } from "../src/core/agent/src/core-profile.js";
 
 const fs = await import("node:fs");
 const os = await import("node:os");

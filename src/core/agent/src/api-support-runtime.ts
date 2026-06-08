@@ -1,4 +1,4 @@
-import { createAdminLLMSessionRuntime } from "../../session/src/admin-llm-session-runtime.js";
+import { createAdminLLMSessionRuntime } from "../../session/admin-llm-session-runtime.js";
 import { createSleepMemoryBridgeRuntime } from "./sleep-memory-bridge-runtime.js";
 
 export function createApiSupportRuntime(input: {

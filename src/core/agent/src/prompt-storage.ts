@@ -14,7 +14,7 @@ export function promptRootForMemoryRoot(memoryRoot: string): string {
 
 function directoryExists(value: string): boolean {
   try {
-    return fs.existsSync(value) && fs.statSync(value).isDirectory();
+    return fs.existsSync(value) && (fs.statSync(value) as import("node:fs").Stats).isDirectory();
   } catch {
     return false;
   }

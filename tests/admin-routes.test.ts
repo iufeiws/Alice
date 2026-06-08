@@ -198,6 +198,43 @@ test("talk prompt profile saves independently from chat prompt profile", async (
   assert.notEqual(context.promptProfileStore.get().userName, "talk-user");
 });
 
+test("agent state admin route exposes and accepts calling state", async () => {
+  const root = makeTempDir("admin-agent-state-calling");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  let currentState = "calling";
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    agentState: {
+      getSnapshot: () => ({ state: currentState, intimacy: 50 }),
+      setState(state: string) {
+        currentState = state;
+        return { state: currentState, intimacy: 50 };
+      },
+      setIntimacy(intimacy: number) {
+        return { state: currentState, intimacy };
+      }
+    }
+  });
+
+  const getResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/agent-state", {}), getResponse);
+  const getBody = JSON.parse(getResponse.body);
+
+  assert.equal(getResponse.statusCode, 200);
+  assert.equal(getBody.state.state, "calling");
+  assert.ok(getBody.states.includes("calling"));
+
+  const putResponse = createResponse();
+  await handler(createRequest("PUT", "/admin/api/agent-state", { state: "calling" }), putResponse);
+  const putBody = JSON.parse(putResponse.body);
+
+  assert.equal(putResponse.statusCode, 200);
+  assert.equal(currentState, "calling");
+  assert.equal(putBody.state.state, "calling");
+  assert.ok(putBody.states.includes("calling"));
+});
+
 test("initiated behavior config patch preserves tool request prompt layers", async () => {
   const root = makeTempDir("admin-initiated-behavior-tool-layer");
   const memoryStore = createMarkdownMemoryStore(root);

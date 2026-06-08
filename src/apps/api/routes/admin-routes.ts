@@ -292,6 +292,7 @@ export type AdminRoutesContext = {
 const AGENT_STATES: AgentBehaviorState[] = [
   "idle",
   "waiting",
+  "calling",
   "away",
   "curious",
   "working",

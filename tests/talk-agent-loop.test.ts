@@ -10,6 +10,7 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
   let sleepCalls = 0;
   let sendCalls = 0;
   let maxRoundEvent: { sessionId: string; rounds: number } | undefined;
+  const sentMessages: unknown[][] = [];
   const finishedOutputs: string[] = [];
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
@@ -34,7 +35,8 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
       maxContinuousRounds: 2,
       stream: false
     }),
-    async sendRequest() {
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
       sendCalls += 1;
       return { message: { role: "assistant", content: `reply-${sendCalls}` }, finishReason: "stop" };
     },
@@ -59,6 +61,7 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
   assert.equal(sleepCalls, 1);
   assert.equal(sendCalls, 2);
   assert.equal(finishedOutputs.length, 2);
+  assert.equal("toolCalls" in (sentMessages[1]?.at(-1) as Record<string, unknown>), false);
   assert.deepEqual(maxRoundEvent, { sessionId: "session-backpressure", rounds: 2 });
   assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output buffer")), true);
 });

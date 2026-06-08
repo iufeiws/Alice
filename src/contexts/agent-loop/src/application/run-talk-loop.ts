@@ -124,14 +124,15 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           deps.finishAssistantOutput({ sessionId, outputId });
           deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
         }
+        const assistantMessage: LLMMessage = {
+          role: "assistant",
+          content: result.message.content,
+          reasoningContent: result.message.reasoningContent
+        };
+        if (calls.length > 0) assistantMessage.toolCalls = calls;
         messages = [
           ...messages,
-          {
-            role: "assistant",
-            content: result.message.content,
-            reasoningContent: result.message.reasoningContent,
-            toolCalls: calls
-          },
+          assistantMessage,
           ...await Promise.all(calls.map(async (call) => ({
             role: "tool" as const,
             toolCallId: call.id,

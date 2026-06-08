@@ -78,15 +78,15 @@
 
 | 当前概念 | 建议上下文 |
 |---|---|
-| 三种 agent loop：chat / talk / memory_organizer | `contexts/agent-loop` |
-| agent 性格管理 | `contexts/agent-profile` |
-| 心跳、控制 LLM 响应 chat | `contexts/control-plane` |
-| 多渠道 chat message 汇总储存器 | `contexts/conversation-hub` |
-| talk 模式会话管理和储存器 | `contexts/talk-session` |
-| 记忆文件管理器 | `contexts/memory` |
-| 大模型会话管理和持久化，内部指针指向文件 | `contexts/llm-session` |
-| 实际 LLM caller，组装 tool call | `contexts/llm-gateway` |
-| LLM 主动事件触发器 | `contexts/initiative` |
+| 三种 agent loop：chat / talk / memory_organizer | `src/contexts/agent-loop` |
+| agent 性格管理 | `src/contexts/agent-profile` |
+| 心跳、控制 LLM 响应 chat | `src/contexts/control-plane` |
+| 多渠道 chat message 汇总储存器 | `src/contexts/conversation-hub` |
+| talk 模式会话管理和储存器 | `src/contexts/talk-session` |
+| 记忆文件管理器 | `src/contexts/memory` |
+| 大模型会话管理和持久化，内部指针指向文件 | `src/contexts/llm-session` |
+| 实际 LLM caller，组装 tool call | `src/contexts/llm-gateway` |
+| LLM 主动事件触发器 | `src/contexts/initiative` |
 
 ---
 
@@ -412,33 +412,33 @@ src
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/agent/src/chat-loop.ts` | `contexts/agent-loop/src/application/run-chat-loop.ts` | 拆分为「会话构建 + 工具执行」两个阶段 |
-| `src/core/agent/src/talk-loop.ts` | `contexts/agent-loop/src/application/run-talk-loop.ts` | 保留文件名语义，拆分状态更新函数到 `domain` |
-| `src/core/agent/src/state.ts` | `contexts/agent-loop/src/domain/agent-loop-state.ts` | 拆分模型定义 |
-| `src/core/agent/src/agent-state-runtime.ts` | `contexts/agent-loop/src/runtime/agent-loop-runtime.ts` | 与 `agent-core-runtime.ts` 协同合并 |
-| `src/core/agent/src/agent-core-runtime.ts` | `contexts/agent-loop/src/runtime/agent-core-runtime.ts` | 与 `agent-state-runtime` 拆分运行时编排边界 |
+| `src/core/agent/src/chat-loop.ts` | `src/contexts/agent-loop/src/application/run-chat-loop.ts` | 拆分为「会话构建 + 工具执行」两个阶段 |
+| `src/core/agent/src/talk-loop.ts` | `src/contexts/agent-loop/src/application/run-talk-loop.ts` | 保留文件名语义，拆分状态更新函数到 `domain` |
+| `src/core/agent/src/state.ts` | `src/contexts/agent-loop/src/domain/agent-loop-state.ts` | 拆分模型定义 |
+| `src/core/agent/src/agent-state-runtime.ts` | `src/contexts/agent-loop/src/runtime/agent-loop-runtime.ts` | 与 `agent-core-runtime.ts` 协同合并 |
+| `src/core/agent/src/agent-core-runtime.ts` | `src/contexts/agent-loop/src/runtime/agent-core-runtime.ts` | 与 `agent-state-runtime` 拆分运行时编排边界 |
 
 #### 4.1.2 `agent-profile`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/prompt/prompt-profile.json` | `contexts/agent-profile/prompts/prompt-profile.json` | 保留并按 context 管理 |
-| `src/core/prompt/talk-prompt-profile.json` | `contexts/agent-profile/prompts/talk-prompt-profile.json` | 保留 |
-| `src/core/prompt/prompt-api-profile.json` | `contexts/agent-profile/prompts/prompt-api-profile.json` | 保留 |
-| `src/core/prompt/memorize-prompts.json` | `contexts/agent-profile/prompts/memorize-prompts.json` | 保留 |
-| `src/core/prompt/memory-induction-prompts.json` | `contexts/agent-profile/prompts/memory-induction-prompts.json` | 保留 |
-| `src/core/prompt/shell-prompt-template.txt` | `contexts/agent-profile/prompts/shell-prompt-template.txt` | 保留 |
-| `src/core/agent/src/prompts.ts` | `contexts/agent-profile/src/application/build-system-prompt.ts` | 拆分为 profile 解析与 prompt 拼装 |
-| `src/core/agent/src/prompt-storage.ts` | `contexts/agent-profile/src/adapters/json-prompt-profile-store.ts` | 拆分 store 适配层 |
-| `src/core/agent/src/prompt-layer-parser.ts` | `contexts/agent-profile/src/domain/prompt-layer.ts` | 拆分 parser 与类型定义 |
-| `src/core/agent/src/shells.ts` | `contexts/agent-profile/src/domain/shell.ts` | 拆分外观与模板模型 |
+| `src/core/prompt/prompt-profile.json` | `src/contexts/agent-profile/prompts/prompt-profile.json` | 保留并按 context 管理 |
+| `src/core/prompt/talk-prompt-profile.json` | `src/contexts/agent-profile/prompts/talk-prompt-profile.json` | 保留 |
+| `src/core/prompt/prompt-api-profile.json` | `src/contexts/agent-profile/prompts/prompt-api-profile.json` | 保留 |
+| `src/core/prompt/memorize-prompts.json` | `src/contexts/agent-profile/prompts/memorize-prompts.json` | 保留 |
+| `src/core/prompt/memory-induction-prompts.json` | `src/contexts/agent-profile/prompts/memory-induction-prompts.json` | 保留 |
+| `src/core/prompt/shell-prompt-template.txt` | `src/contexts/agent-profile/prompts/shell-prompt-template.txt` | 保留 |
+| `src/core/agent/src/prompts.ts` | `src/contexts/agent-profile/src/application/build-system-prompt.ts` | 拆分为 profile 解析与 prompt 拼装 |
+| `src/core/agent/src/prompt-storage.ts` | `src/contexts/agent-profile/src/adapters/json-prompt-profile-store.ts` | 拆分 store 适配层 |
+| `src/core/agent/src/prompt-layer-parser.ts` | `src/contexts/agent-profile/src/domain/prompt-layer.ts` | 拆分 parser 与类型定义 |
+| `src/core/agent/src/shells.ts` | `src/contexts/agent-profile/src/domain/shell.ts` | 拆分外观与模板模型 |
 
 #### 4.1.3 `control-plane`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/agent/src/api-control-runtime.ts` | `contexts/control-plane/src/application/admin-control-runtime.ts` | 拆分 pause/resume 和 shutdown 处理 |
-| `src/core/agent/src/message-runtime.ts`（心跳部分） | `contexts/control-plane/src/application/heartbeat-control.ts` | 从消息聚合逻辑中拆出 heartbeat 管理 |
+| `src/core/agent/src/api-control-runtime.ts` | `src/contexts/control-plane/src/application/admin-control-runtime.ts` | 拆分 pause/resume 和 shutdown 处理 |
+| `src/core/agent/src/message-runtime.ts`（心跳部分） | `src/contexts/control-plane/src/application/heartbeat-control.ts` | 从消息聚合逻辑中拆出 heartbeat 管理 |
 | `src/apps/api/routes/admin-routes.ts` | `apps/api/routes/admin-routes.ts` | 仅调用控制面 runtime，不移动 endpoint |
 | `src/apps/api/server/api-server-runtime.ts` | `apps/api/server/api-lifecycle-runtime.ts` | 拆分关闭/退场流程 |
 
@@ -446,69 +446,69 @@ src
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/packages/storage/src/sqlite-store.ts` | `src/platform/storage/`（现有）或 `contexts/conversation-hub/src/adapters/sqlite-conversation-store.ts`（规划） | 按是否先做平台层中间层决定；最终可拆成 ConversationStore + MessageLogStore |
-| `src/packages/storage/src/file-log-store.ts` | `contexts/conversation-hub/src/adapters/file-log-store.ts` | 合并到 conversation-hub 存储适配 |
-| `src/packages/storage/src/api-storage-runtime.ts` | `contexts/conversation-hub/src/application/bootstrap-storage.ts` | 拆分 API 组装与存储对象创建 |
-| `src/core/agent/src/message-runtime.ts`（消息聚合/会话列表部分） | `contexts/conversation-hub/src/application/ingest-channel-message.ts` | 拆分 message-ingest 与 heartbeat |
+| `src/packages/storage/src/sqlite-store.ts` | `src/platform/storage/`（现有）或 `src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.ts`（规划） | 按是否先做平台层中间层决定；最终可拆成 ConversationStore + MessageLogStore |
+| `src/packages/storage/src/file-log-store.ts` | `src/contexts/conversation-hub/src/adapters/file-log-store.ts` | 合并到 conversation-hub 存储适配 |
+| `src/packages/storage/src/api-storage-runtime.ts` | `src/contexts/conversation-hub/src/application/bootstrap-storage.ts` | 拆分 API 组装与存储对象创建 |
+| `src/core/agent/src/message-runtime.ts`（消息聚合/会话列表部分） | `src/contexts/conversation-hub/src/application/ingest-channel-message.ts` | 拆分 message-ingest 与 heartbeat |
 
 #### 4.1.5 `talk-session`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/packages/storage/src/talk-store.ts` | `contexts/talk-session/src/adapters/sqlite-talk-session-store.ts` | 拆分 `TalkStore` 的查询与更新接口 |
-| `src/core/agent/src/talk-runtime.ts` | `contexts/talk-session/src/application/talk-session-runtime.ts` | 拆分 domain/application/runtime |
-| `src/core/agent/src/talk-runtime-runtime.ts` | `contexts/talk-session/src/runtime/talk-session-runtime.ts` | 保留为组装入口 |
+| `src/packages/storage/src/talk-store.ts` | `src/contexts/talk-session/src/adapters/sqlite-talk-session-store.ts` | 拆分 `TalkStore` 的查询与更新接口 |
+| `src/core/agent/src/talk-runtime.ts` | `src/contexts/talk-session/src/application/talk-session-runtime.ts` | 拆分 domain/application/runtime |
+| `src/core/agent/src/talk-runtime-runtime.ts` | `src/contexts/talk-session/src/runtime/talk-session-runtime.ts` | 保留为组装入口 |
 
 #### 4.1.6 `memory`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/agent/src/memory.ts` | `contexts/memory/src/`（按职责拆分） | 大拆分：domain、application、ports、adapters |
-| `src/core/agent/src/memory-console-runtime.ts` | `contexts/memory/src/application/manage-memory-console.ts` | 拆分 session 管理接口 |
-| `src/core/agent/src/sleep-memory-induction-runtime.ts` | `contexts/memory/src/application/induce-memory.ts` | 合并到记忆归纳用例 |
-| `src/core/agent/src/sleep-memory-bridge-runtime.ts` | `contexts/memory/src/application/sleep-memory-bridge.ts` | 拆分 bridge 到独立应用服务 |
-| `src/core/agent/src/profile-memory-runtime.ts` | `contexts/memory/src/application/profile-memory.ts` | 拆分 profile 持久化路径 |
+| `src/core/agent/src/memory.ts` | `src/contexts/memory/src/`（按职责拆分） | 大拆分：domain、application、ports、adapters |
+| `src/core/agent/src/memory-console-runtime.ts` | `src/contexts/memory/src/application/manage-memory-console.ts` | 拆分 session 管理接口 |
+| `src/core/agent/src/sleep-memory-induction-runtime.ts` | `src/contexts/memory/src/application/induce-memory.ts` | 合并到记忆归纳用例 |
+| `src/core/agent/src/sleep-memory-bridge-runtime.ts` | `src/contexts/memory/src/application/sleep-memory-bridge.ts` | 拆分 bridge 到独立应用服务 |
+| `src/core/agent/src/profile-memory-runtime.ts` | `src/contexts/memory/src/application/profile-memory.ts` | 拆分 profile 持久化路径 |
 
 #### 4.1.7 `llm-session`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/session/active-llm-session-runtime.ts` | `contexts/llm-session/src/application/active-llm-session.ts` | 拆分 active 与历史会话 |
-| `src/core/session/admin-llm-session-runtime.ts` | `contexts/llm-session/src/application/admin-llm-session.ts` | 管理面逻辑保留独立 |
-| `src/core/session/api-session-runtime.ts` | `contexts/llm-session/src/application/create-llm-session.ts` | 拆分创建与查询流程 |
-| `src/core/session/llm-session-archive.ts` | `contexts/llm-session/src/application/archive-llm-session.ts` | 拆分存档和文件路径解析 |
-| `src/core/session/llm-session-list-runtime.ts` | `contexts/llm-session/src/application/list-llm-sessions.ts` | 保留并重命名 |
-| `src/core/session/llm-session-view.ts` | `contexts/llm-session/src/application/llm-session-view.ts` | 保留 |
-| `src/core/session/llm-session-types.ts` | `contexts/llm-session/src/domain/llm-session.ts` | 拆分类型与状态机 |
-| `src/core/session/memory-llm-session-runtime.ts` | `contexts/memory/src/application/manage-memory-llm-session.ts` | 与 memory-console 相关逻辑可合并在同一 context |
-| `src/core/session/llm-session-helpers.ts` | `contexts/llm-session/src/domain/llm-session-utils.ts` | 拆分工具函数 |
+| `src/core/session/active-llm-session-runtime.ts` | `src/contexts/llm-session/src/application/active-llm-session.ts` | 拆分 active 与历史会话 |
+| `src/core/session/admin-llm-session-runtime.ts` | `src/contexts/llm-session/src/application/admin-llm-session.ts` | 管理面逻辑保留独立 |
+| `src/core/session/api-session-runtime.ts` | `src/contexts/llm-session/src/application/create-llm-session.ts` | 拆分创建与查询流程 |
+| `src/core/session/llm-session-archive.ts` | `src/contexts/llm-session/src/application/archive-llm-session.ts` | 拆分存档和文件路径解析 |
+| `src/core/session/llm-session-list-runtime.ts` | `src/contexts/llm-session/src/application/list-llm-sessions.ts` | 保留并重命名 |
+| `src/core/session/llm-session-view.ts` | `src/contexts/llm-session/src/application/llm-session-view.ts` | 保留 |
+| `src/core/session/llm-session-types.ts` | `src/contexts/llm-session/src/domain/llm-session.ts` | 拆分类型与状态机 |
+| `src/core/session/memory-llm-session-runtime.ts` | `src/contexts/memory/src/application/manage-memory-llm-session.ts` | 与 memory-console 相关逻辑可合并在同一 context |
+| `src/core/session/llm-session-helpers.ts` | `src/contexts/llm-session/src/domain/llm-session-utils.ts` | 拆分工具函数 |
 
 #### 4.1.8 `llm-gateway`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/llm/src/api-llm-runtime.ts` | `contexts/llm-gateway/src/adapters/openai-model-client.ts` | 拆分 provider client 与请求适配 |
-| `src/core/llm/src/llm-api-profile.ts` | `contexts/llm-gateway/src/domain/llm-api-profile.ts` | 保留 profile 模型 |
-| `src/core/llm/src/llm-config-runtime.ts` | `contexts/llm-gateway/src/application/resolve-llm-config.ts` | 拆分配置解析 |
-| `src/core/llm/src/llm-request-shape.ts` | `contexts/llm-gateway/src/domain/llm-request.ts` | 重命名并拆分 request type |
-| `src/core/llm/src/llm-request-diff.ts` | `contexts/llm-gateway/src/application/diff-llm-request.ts` | 保留 |
-| `src/core/llm/src/llm-request-preview-runtime.ts` | `contexts/llm-gateway/src/application/preview-llm-request.ts` | 拆分为预览服务 |
-| `src/core/llm/src/llm-observability-runtime.ts` | `contexts/llm-gateway/src/runtime/llm-observability.ts` | 拆分 |
-| `src/core/llm/src/llm-log-runtime.ts` | `contexts/llm-gateway/src/adapters/token-usage-store.ts` | 与 token usage 日志合并 |
-| `src/core/llm/src/token-usage-runtime.ts` | `contexts/llm-gateway/src/application/track-token-usage.ts` | 拆分 |
-| `src/core/agent/src/llm-requests.ts` | `contexts/llm-gateway/src/application/build-llm-tools.ts` | 拆分工具构造和发送 |
-| `src/core/agent/src/llm-requests-runtime.ts` | `contexts/llm-gateway/src/application/call-llm.ts` | 拆分重试与日志策略 |
-| `src/core/agent/src/llm-tool-loop.ts` | `contexts/llm-gateway/src/application/run-tool-loop.ts` | 拆分循环策略与执行器 |
+| `src/core/llm/src/api-llm-runtime.ts` | `src/contexts/llm-gateway/src/adapters/openai-model-client.ts` | 拆分 provider client 与请求适配 |
+| `src/core/llm/src/llm-api-profile.ts` | `src/contexts/llm-gateway/src/domain/llm-api-profile.ts` | 保留 profile 模型 |
+| `src/core/llm/src/llm-config-runtime.ts` | `src/contexts/llm-gateway/src/application/resolve-llm-config.ts` | 拆分配置解析 |
+| `src/core/llm/src/llm-request-shape.ts` | `src/contexts/llm-gateway/src/domain/llm-request.ts` | 重命名并拆分 request type |
+| `src/core/llm/src/llm-request-diff.ts` | `src/contexts/llm-gateway/src/application/diff-llm-request.ts` | 保留 |
+| `src/core/llm/src/llm-request-preview-runtime.ts` | `src/contexts/llm-gateway/src/application/preview-llm-request.ts` | 拆分为预览服务 |
+| `src/core/llm/src/llm-observability-runtime.ts` | `src/contexts/llm-gateway/src/runtime/llm-observability.ts` | 拆分 |
+| `src/core/llm/src/llm-log-runtime.ts` | `src/contexts/llm-gateway/src/adapters/token-usage-store.ts` | 与 token usage 日志合并 |
+| `src/core/llm/src/token-usage-runtime.ts` | `src/contexts/llm-gateway/src/application/track-token-usage.ts` | 拆分 |
+| `src/core/agent/src/llm-requests.ts` | `src/contexts/llm-gateway/src/application/build-llm-tools.ts` | 拆分工具构造和发送 |
+| `src/core/agent/src/llm-requests-runtime.ts` | `src/contexts/llm-gateway/src/application/call-llm.ts` | 拆分重试与日志策略 |
+| `src/core/agent/src/llm-tool-loop.ts` | `src/contexts/llm-gateway/src/application/run-tool-loop.ts` | 拆分循环策略与执行器 |
 
 #### 4.1.9 `initiative`
 
 | 当前文件位置 | 迁移后文件位置 | 合并 / 拆分 |
 |---|---|---|
-| `src/core/agent/src/initiated-behavior-runtime.ts` | `contexts/initiative/src/application/evaluate-triggers.ts` | 拆分 trigger 与执行 |
-| `src/core/agent/src/initiated-behavior-config.ts` | `contexts/initiative/src/adapters/json-initiated-behavior-store.ts` | 运行时配置与持久化分离 |
-| `src/core/agent/src/initiated-behaviors.ts` | `contexts/initiative/src/application/run-initiated-behavior.ts` | 拆分规则与运行逻辑 |
-| `src/core/agent/src/api-behavior-runtime.ts` | `contexts/initiative/src/application/api-initiated-behavior.ts` | 合并 api 行为分支 |
-| `src/core/agent/src/initiated-behaviors.ts`（行为运行时 prompt 解析） | `contexts/initiative/src/domain/initiated-behavior.ts` | 拆分领域模型 |
+| `src/core/agent/src/initiated-behavior-runtime.ts` | `src/contexts/initiative/src/application/evaluate-triggers.ts` | 拆分 trigger 与执行 |
+| `src/core/agent/src/initiated-behavior-config.ts` | `src/contexts/initiative/src/adapters/json-initiated-behavior-store.ts` | 运行时配置与持久化分离 |
+| `src/core/agent/src/initiated-behaviors.ts` | `src/contexts/initiative/src/application/run-initiated-behavior.ts` | 拆分规则与运行逻辑 |
+| `src/core/agent/src/api-behavior-runtime.ts` | `src/contexts/initiative/src/application/api-initiated-behavior.ts` | 合并 api 行为分支 |
+| `src/core/agent/src/initiated-behaviors.ts`（行为运行时 prompt 解析） | `src/contexts/initiative/src/domain/initiated-behavior.ts` | 拆分领域模型 |
 | `src/core/prompt/initiated-behaviors/*.json` | `src/contexts/initiative/behaviors/*.json` | 迁移配置目录到 context 内 |
 
 ## 5. 一级目录职责
@@ -547,7 +547,7 @@ apps/api 负责把系统启动起来，但不拥有系统业务逻辑。
 
 ---
 
-### 5.2 `contexts/`
+### 5.2 `src/contexts/`
 
 系统核心。每个 context 是一个业务边界。
 
@@ -608,9 +608,9 @@ agent-loop 内部文件
 ```txt
 Feishu webhook
   -> channels/feishu
-  -> contexts/conversation-hub.ingestChannelMessage()
-  -> contexts/agent-loop.runChatLoop()
-  -> contexts/llm-gateway.callLlm()
+  -> src/contexts/conversation-hub.ingestChannelMessage()
+  -> src/contexts/agent-loop.runChatLoop()
+  -> src/contexts/llm-gateway.callLlm()
   -> platform/output-router
   -> channels/feishu.outbound
 ```
@@ -872,7 +872,7 @@ apps
   -> shared
 
 channels
-  -> contexts/conversation-hub contracts
+  -> src/contexts/conversation-hub contracts
   -> platform
   -> shared
 
@@ -1045,17 +1045,17 @@ When adding or modifying code:
 不要一次性全搬。建议按风险最低的顺序迁移：
 
 ```txt
-1. 建 contexts/conversation-hub
+1. 建 src/contexts/conversation-hub
 2. 迁移所有 chat message 汇总、读取、存储逻辑
-3. 建 contexts/llm-gateway
+3. 建 src/contexts/llm-gateway
 4. 迁移 LLM call、tool loop、request preview、token usage
-5. 建 contexts/llm-session
+5. 建 src/contexts/llm-session
 6. 迁移大模型会话指针、归档、查看逻辑
-7. 建 contexts/memory
+7. 建 src/contexts/memory
 8. 迁移 memory 文件、induction、reflection、organizer
-9. 建 contexts/agent-loop
+9. 建 src/contexts/agent-loop
 10. 只保留 chat / talk / memory_organizer 三个 loop 的编排
-11. 建 contexts/initiative
+11. 建 src/contexts/initiative
 12. 迁移主动触发行为
 13. 最后清理 channels、platform、apps
 ```

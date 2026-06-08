@@ -1,5 +1,5 @@
 import { createToolRuntime } from "../../../capabilities/tools/messaging/src/tool-runtime.js";
-import { createPromptToolPreviewRuntime } from "./prompt-tool-preview-runtime.js";
+import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 

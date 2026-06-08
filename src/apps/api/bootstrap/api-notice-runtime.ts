@@ -1,5 +1,5 @@
 import { createOutputRouter } from "../../../platform/output-router/src/index.js";
-import { createOutboundNoticeRuntime } from "./outbound-notice-runtime.js";
+import { createOutboundNoticeRuntime } from "../../../contexts/conversation-hub/src/application/outbound-notice-runtime.js";
 
 export function createApiNoticeRuntime(input: {
   time: any;

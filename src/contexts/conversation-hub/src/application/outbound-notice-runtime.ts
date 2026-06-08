@@ -1,7 +1,7 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { createId } from "../../../shared/uuid/src/index.js";
-import { extractSentMessageCreatedAtUtc, extractSentMessageId } from "../../../capabilities/tools/messaging/src/sent-message-utils.js";
-import type { DefaultMessagingTarget } from "./default-target-runtime.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
+import { extractSentMessageCreatedAtUtc, extractSentMessageId } from "../../../../capabilities/tools/messaging/src/sent-message-utils.js";
+import type { DefaultMessagingTarget } from "../../../../apps/api/bootstrap/default-target-runtime.js";
 
 type MessageStoreLike = {
   insertOutboundMessage(input: {

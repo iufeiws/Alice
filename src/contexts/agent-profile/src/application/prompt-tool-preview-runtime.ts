@@ -1,12 +1,12 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { LLMChatInput } from "../../../contexts/llm-gateway/src/index.js";
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
+import type { ToolDefinition } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import {
   buildAppendPromptMessagesWithToolResults,
   buildPromptMessagesWithToolResults
-} from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { memoryToolDefinitions } from "../../../contexts/memory/src/memory.js";
+} from "./build-system-prompt.js";
+import { buildLLMTextVariables } from "./llm-text-renderer.js";
+import { memoryToolDefinitions } from "../../../memory/src/memory.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;

@@ -9,7 +9,8 @@ import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapters/json-core-profile-store.js";
-import { buildMemoryPromptPreview, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate, type MemoryInductionPromptStore, type MemoryRunSummary, type MemorySleepWindow, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
+import { type MemoryInductionPromptStore, type MemoryRunSummary, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
+import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import {
   defaultAgentInitiatedBehaviorPlans,
@@ -68,20 +69,6 @@ type PromptApiProfile = {
 };
 
 type LLMApiPresetView = Omit<LLMApiPreset, "apiKey"> & { apiKeySet: boolean };
-
-type MemoryRunProgress = {
-  id: string;
-  date: string;
-  target?: MemoryTarget;
-  status: "running" | "complete" | "failed" | "rejected";
-  rounds: Partial<Record<MemoryTarget, number>>;
-  tools: Partial<Record<MemoryTarget, string>>;
-  roundStartedAt: Partial<Record<MemoryTarget, string>>;
-  updatedAt: string;
-};
-
-const memoryRunProgress = new Map<string, MemoryRunProgress>();
-let memoryAdminRunActive = false;
 
 type AdminPluginKind = "channel" | "tool" | "voice" | "asr" | "presentation";
 type AdminPluginStatus = "enabled" | "disabled" | "planned" | "external_config" | "missing_config" | "error";
@@ -237,7 +224,10 @@ export type AdminRoutesContext = {
   memoryStore: MemoryStore;
   diaryStore: DiaryStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
-  runMemoryInductionForMessages(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
+  memoryAdminRuntime?: ReturnType<typeof createAdminMemoryRuntime>;
+  runMemoryInductionForMessages?(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
+  llmSessionRoot?(): string;
+  ensureMemoryConsoleSession?(windowEndAt: string, windowStartAt?: string): any;
   getDailyShell(): string;
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
@@ -529,7 +519,13 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/prompts/preview") {
-        await previewMemoryPrompts(context, request, response);
+        const body = await readJsonBody(request);
+        const target = requiredString(body.target);
+        if (!isMemoryTarget(target)) return writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+        const prompts = body.prompts && typeof body.prompts === "object"
+          ? body.prompts as ReturnType<MemoryInductionPromptStore["get"]>
+          : undefined;
+        writeServiceResult(response, getMemoryAdminRuntime(context).previewPrompts(target, prompts, resolveMemorizeApiPreset(context)));
         return;
       }
 
@@ -547,7 +543,7 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "GET" && request.url === "/admin/api/memory") {
-        const sleepDays = ensureMemorySleepBoundaries(context);
+        const sleepDays = getMemoryAdminRuntime(context).listSleepDays();
         writeJson(response, 200, {
           files: context.memoryStore.stats(),
           prompts: context.memoryInductionPromptStore.get(),
@@ -557,22 +553,30 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "GET" && request.url.startsWith("/admin/api/memory/messages")) {
-        await listMemoryDayMessages(context, request, response);
+        const url = new URL(request.url, "http://admin.local");
+        writeServiceResult(response, getMemoryAdminRuntime(context).listDayMessages(url.searchParams.get("date") || ""));
         return;
       }
 
       if (request.method === "PUT" && request.url === "/admin/api/memory/file") {
-        await saveMemoryFile(context, request, response);
+        const body = await readJsonBody(request);
+        const target = requiredString(body.target);
+        if (!isMemoryTarget(target)) return writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+        writeJson(response, 200, getMemoryAdminRuntime(context).saveFile(target, typeof body.content === "string" ? body.content : ""));
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/run-day") {
-        await runMemoryDay(context, request, response);
+        const body = await readJsonBody(request);
+        writeServiceResult(response, await getMemoryAdminRuntime(context).runDay(requiredString(body.date), optionalString(body.runId), resolveMemorizeApiPreset(context)));
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/run-target") {
-        await runMemoryTarget(context, request, response);
+        const body = await readJsonBody(request);
+        const target = requiredString(body.target);
+        if (!isMemoryTarget(target)) return writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+        writeServiceResult(response, await getMemoryAdminRuntime(context).runTarget(requiredString(body.date), target, optionalString(body.runId), resolveMemorizeApiPreset(context)));
         return;
       }
 
@@ -584,22 +588,26 @@ export function createApiRequestHandler(context: AdminRoutesContext) {
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/delete-latest-sql") {
-        await deleteLatestMemorySqlRecord(context, request, response);
+        const body = await readJsonBody(request);
+        const target = body.target === undefined ? "yesterdaySummary" : requiredString(body.target);
+        if (!isMemoryTarget(target)) return writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
+        writeServiceResult(response, getMemoryAdminRuntime(context).deleteLatestSqlRecord(target));
         return;
       }
 
       if (request.method === "GET" && request.url.startsWith("/admin/api/memory/run-progress")) {
-        getMemoryRunProgress(request, response);
+        const url = new URL(request.url, "http://admin.local");
+        writeServiceResult(response, getMemoryAdminRuntime(context).getRunProgress(url.searchParams.get("id") || ""));
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/undo-last") {
-        undoLastMemoryGitCommit(context, response);
+        writeServiceResult(response, getMemoryAdminRuntime(context).undoLastGitCommit());
         return;
       }
 
       if (request.method === "POST" && request.url === "/admin/api/memory/redo-last") {
-        redoLastMemoryGitCommit(context, response);
+        writeServiceResult(response, getMemoryAdminRuntime(context).redoLastGitCommit());
         return;
       }
 
@@ -2402,444 +2410,32 @@ async function savePromptApiProfile(context: AdminRoutesContext, request: any, r
   writeJson(response, 200, { ok: true, profile });
 }
 
-async function saveMemoryFile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const target = requiredString(body.target);
-  if (!isMemoryTarget(target)) {
-    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
-    return;
-  }
-  const content = typeof body.content === "string" ? body.content : "";
-  context.memoryStore.writeTarget(target, content);
-  context.appendLog("info", `memory file saved: ${target}`);
-  writeJson(response, 200, { ok: true, files: context.memoryStore.stats() });
-}
-
-async function listMemoryDayMessages(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const url = new URL(request.url, "http://admin.local");
-  const date = url.searchParams.get("date") || "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    writeJson(response, 400, { ok: false, error: "invalid_date" });
-    return;
-  }
-  if (!context.store?.listMessagesByCreatedAtRange) {
-    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
-    return;
-  }
-  const window = resolveMemorySleepWindow(context, date);
-  if (!window) {
-    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
-    return;
-  }
-  const { startAt, endAt } = window;
-  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
-  const content = formatCheckChatMessages(messages, {
-    timeZone: context.time.timeZone,
-    userName: context.promptProfileStore.get().userName || "user"
-  });
-  writeJson(response, 200, {
-    ok: true,
-    date,
-    startAt,
-    endAt,
-    startAtUtc: window.startAtUtc,
-    endAtUtc: window.endAtUtc,
-    source: window.source,
-    content,
-    messages
-  });
-}
-
-async function runMemoryDay(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const date = requiredString(body.date);
-  await runMemoryForDate(context, response, date, undefined, optionalString(body.runId));
-}
-
-async function runMemoryTarget(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const date = requiredString(body.date);
-  const target = requiredString(body.target);
-  if (!isMemoryTarget(target)) {
-    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
-    return;
-  }
-  await runMemoryForDate(context, response, date, target, optionalString(body.runId));
-}
-
-async function runMemoryForDate(
-  context: AdminRoutesContext,
-  response: any,
-  date: string,
-  target?: MemoryTarget,
-  runId?: string
-): Promise<void> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    writeJson(response, 400, { ok: false, error: "invalid_date" });
-    return;
-  }
-  if (!context.store?.listMessagesByCreatedAtRange) {
-    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
-    return;
-  }
-  const window = resolveMemorySleepWindow(context, date);
-  if (!window) {
-    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
-    return;
-  }
-  const { startAt, endAt } = window;
-  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
-  const apiPreset = resolveMemorizeApiPreset(context);
-  if (!apiPreset) {
-    writeJson(response, 400, { ok: false, error: "memorize_preset_required" });
-    return;
-  }
-  if (context.config.memorySummary.manualRunRequiresSleeping !== false && context.agentState.getSnapshot().state !== "sleeping") {
-    updateMemoryRunProgress(runId, date, target, "rejected");
-    writeJson(response, 409, { ok: false, error: "memory_manual_run_requires_sleeping" });
-    return;
-  }
-  if (memoryAdminRunActive) {
-    updateMemoryRunProgress(runId, date, target, "rejected");
-    writeJson(response, 409, { ok: false, error: "memory_run_already_running" });
-    return;
-  }
-  memoryAdminRunActive = true;
-  updateMemoryRunProgress(runId, date, target, "running");
-  try {
-    const result = await context.runMemoryInductionForMessages(messages, startAt, endAt, apiPreset, target, (roundTarget, rounds, toolStatus) => {
-      updateMemoryRunProgress(runId, date, target, "running", roundTarget, rounds, toolStatus);
-    });
-    updateMemoryRunProgress(runId, date, target, result.ok ? "complete" : "failed");
-    context.appendLog(result.ok ? "info" : "warn", `memorize ${target ?? "day"} ${date}: ${result.ok ? "ok" : "failed"} messages=${messages.length}`);
-    writeJson(response, result.ok ? 200 : 400, {
-      ok: result.ok,
-      result,
-      files: context.memoryStore.stats()
-    });
-  } finally {
-    memoryAdminRunActive = false;
-  }
-}
-
-function updateMemoryRunProgress(
-  runId: string | undefined,
-  date: string,
-  target: MemoryTarget | undefined,
-  status: MemoryRunProgress["status"],
-  roundTarget?: MemoryTarget,
-  rounds?: number,
-  toolStatus?: string
-): void {
-  if (!runId) return;
-  const previous = memoryRunProgress.get(runId);
-  const next: MemoryRunProgress = previous ?? {
-    id: runId,
-    date,
-    target,
-    status,
-    rounds: {},
-    tools: {},
-    roundStartedAt: {},
-    updatedAt: new Date().toISOString()
-  };
-  next.status = status;
-  next.updatedAt = new Date().toISOString();
-  if (roundTarget && rounds !== undefined) {
-    if (next.rounds[roundTarget] !== rounds) {
-      next.roundStartedAt[roundTarget] = next.updatedAt;
-      delete next.tools[roundTarget];
-    }
-    next.rounds[roundTarget] = rounds;
-  }
-  if (roundTarget && toolStatus) next.tools[roundTarget] = toolStatus;
-  if (status === "complete" && target) next.tools[target] = "ok";
-  memoryRunProgress.set(runId, next);
-}
-
-function getMemoryRunProgress(request: any, response: any): void {
-  const url = new URL(request.url, "http://admin.local");
-  const id = url.searchParams.get("id") || "";
-  const progress = memoryRunProgress.get(id);
-  if (!progress) {
-    writeJson(response, 404, { ok: false, error: "memory_run_progress_not_found" });
-    return;
-  }
-  writeJson(response, 200, { ok: true, progress });
-}
-
-function undoLastMemoryGitCommit(context: AdminRoutesContext, response: any): void {
-  const dir = path.join(context.config.memoryFiles.root, "long-term-memory");
-  try {
-    const unavailable = validateMemoryGitRepo(dir);
-    if (unavailable) {
-      writeJson(response, 400, { ok: false, error: unavailable });
-      return;
-    }
-    const target = findLatestActiveMemoryCommit(dir);
-    if (!target) {
-      writeJson(response, 400, { ok: false, error: "no_memorize_commit_to_undo" });
-      return;
-    }
-    removeEmptyUntrackedMemoryFiles(dir);
-    ensureMemoryGitClean(dir);
-    revertMemoryGitCommit(dir, target.commit);
-    context.appendLog("info", `memory git undo: reverted ${target.shortCommit} ${target.subject}`);
-    writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
-  } catch (error) {
-    writeJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "memory_git_undo_failed" });
-  }
-}
-
-function redoLastMemoryGitCommit(context: AdminRoutesContext, response: any): void {
-  const dir = path.join(context.config.memoryFiles.root, "long-term-memory");
-  try {
-    const unavailable = validateMemoryGitRepo(dir);
-    if (unavailable) {
-      writeJson(response, 400, { ok: false, error: unavailable });
-      return;
-    }
-    const target = findLatestActiveMemoryRevertCommit(dir);
-    if (!target) {
-      writeJson(response, 400, { ok: false, error: "no_memorize_revert_to_redo" });
-      return;
-    }
-    removeEmptyUntrackedMemoryFiles(dir);
-    ensureMemoryGitClean(dir);
-    revertMemoryGitCommit(dir, target.commit);
-    context.appendLog("info", `memory git redo: reverted ${target.shortCommit} ${target.subject}`);
-    writeJson(response, 200, { ok: true, commit: target.shortCommit, message: target.subject, files: context.memoryStore.stats() });
-  } catch (error) {
-    writeJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "memory_git_redo_failed" });
-  }
-}
-
-async function deleteLatestMemorySqlRecord(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const target = body.target === undefined ? "yesterdaySummary" : requiredString(body.target);
-  if (!isMemoryTarget(target)) {
-    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
-    return;
-  }
-  const entry = context.memoryStore.deleteLatestEntry?.(target);
-  if (!entry) {
-    writeJson(response, 400, { ok: false, error: "no_memory_sql_record_to_delete" });
-    return;
-  }
-  context.appendLog("info", `memory sql delete latest ${target} entry: ${entry.localDate ?? entry.id}`);
-  writeJson(response, 200, { ok: true, entry, files: context.memoryStore.stats() });
-}
-
-type MemoryGitLogEntry = {
-  commit: string;
-  shortCommit: string;
-  subject: string;
-  body: string;
-  originalMemoryCommit?: string;
-};
-
-function validateMemoryGitRepo(dir: string): string | undefined {
-  if (!fs.existsSync(path.join(dir, ".git"))) return "memory_git_unavailable";
-  try {
-    gitExecFileSync(["rev-parse", "--verify", "HEAD"], { cwd: dir });
-    return undefined;
-  } catch {
-    return "memory_git_empty";
-  }
-}
-
-function findLatestActiveMemoryCommit(dir: string): MemoryGitLogEntry | undefined {
-  const log = readMemoryGitLog(dir);
-  const activeOriginals = activeOriginalMemoryCommits(log);
-  for (let index = log.length - 1; index >= 0; index -= 1) {
-    const entry = log[index];
-    if (isMemorizeSubject(entry.subject) && activeOriginals.has(entry.commit)) return entry;
-  }
-  return undefined;
-}
-
-function findLatestActiveMemoryRevertCommit(dir: string): MemoryGitLogEntry | undefined {
-  const log = readMemoryGitLog(dir);
-  const activeOriginals = activeOriginalMemoryCommits(log);
-  for (let index = log.length - 1; index >= 0; index -= 1) {
-    const entry = log[index];
-    if (!isMemorizeRevertSubject(entry.subject) || !entry.originalMemoryCommit) continue;
-    if (!activeOriginals.has(entry.originalMemoryCommit)) return entry;
-  }
-  return undefined;
-}
-
-function activeOriginalMemoryCommits(log: MemoryGitLogEntry[]): Set<string> {
-  const active = new Set<string>();
-  const originalsByCommit = new Map<string, string>();
-  for (const entry of log) {
-    if (isMemorizeSubject(entry.subject)) {
-      active.add(entry.commit);
-      originalsByCommit.set(entry.commit, entry.commit);
-      entry.originalMemoryCommit = entry.commit;
-      continue;
-    }
-    const reverted = revertedCommitFromBody(entry.body);
-    const original = reverted ? originalsByCommit.get(reverted) : undefined;
-    if (!original) continue;
-    entry.originalMemoryCommit = original;
-    originalsByCommit.set(entry.commit, original);
-    if (active.has(original)) active.delete(original);
-    else active.add(original);
-  }
-  return active;
-}
-
-function readMemoryGitLog(dir: string): MemoryGitLogEntry[] {
-  const output = gitExecFileSync(["log", "--reverse", "--format=%H%x00%h%x00%s%x00%b%x1e"], { cwd: dir, encoding: "utf8" });
-  return output
-    .split("\x1e")
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .map((chunk) => {
-      const [commit = "", shortCommit = "", subject = "", ...bodyParts] = chunk.split("\x00");
-      return { commit, shortCommit, subject, body: bodyParts.join("\x00") };
-    })
-    .filter((entry) => entry.commit);
-}
-
-function isMemorizeSubject(subject: string): boolean {
-  return subject.startsWith("memorize ");
-}
-
-function isMemorizeRevertSubject(subject: string): boolean {
-  return subject.startsWith('Revert "memorize ');
-}
-
-function revertedCommitFromBody(body: string): string | undefined {
-  return body.match(/This reverts commit ([0-9a-f]{40})\./)?.[1];
-}
-
-function removeEmptyUntrackedMemoryFiles(dir: string): void {
-  for (const fileName of ["persistent-memory.md", "user-preferences.md"]) {
-    const filePath = path.join(dir, fileName);
-    if (!fs.existsSync(filePath) || fs.readFileSync(filePath, "utf8") !== "") continue;
-    try {
-      gitExecFileSync(["ls-files", "--error-unmatch", fileName], { cwd: dir });
-    } catch {
-      fs.rmSync(filePath);
-    }
-  }
-}
-
-function ensureMemoryGitClean(dir: string): void {
-  const status = gitExecFileSync(["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).trim();
-  if (!status) return;
-  throw new Error("memory_git_worktree_dirty");
-}
-
-function revertMemoryGitCommit(dir: string, commit: string): void {
-  try {
-    gitExecFileSync(["revert", "--no-edit", commit], { cwd: dir });
-  } catch (error) {
-    abortMemoryGitRevert(dir);
-    throw error;
-  }
-}
-
-function abortMemoryGitRevert(dir: string): void {
-  if (!fs.existsSync(path.join(dir, ".git", "REVERT_HEAD"))) return;
-  try {
-    gitExecFileSync(["revert", "--abort"], { cwd: dir });
-  } catch {
-    // Preserve the original revert error for the API response.
-  }
-}
-
-function gitExecFileSync(args: string[], options: { cwd: string; encoding?: BufferEncoding }): string {
-  const result = childProcess.spawnSync("git", args, {
-    cwd: options.cwd,
-    encoding: options.encoding ?? "utf8"
-  });
-  if (result.status !== 0) {
-    const error = new Error(result.stderr?.toString() || result.error?.message || `git ${args.join(" ")} failed`);
-    (error as Error & { status?: number }).status = result.status ?? undefined;
-    throw error;
-  }
-  return result.stdout?.toString() ?? "";
-}
-
-function resolveMemorySleepWindow(context: AdminRoutesContext, date: string): MemorySleepWindow | undefined {
-  return resolveMemorySleepWindowForDate({
-    diaryStore: context.diaryStore,
-    date,
-    timeZone: context.time.timeZone,
-    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
-    now: () => {
-      const now = context.time.now();
-      return { iso: now.iso, utcIso: now.date.toISOString() };
-    }
-  });
-}
-
-function ensureMemorySleepBoundaries(context: AdminRoutesContext): MemorySleepWindow[] {
-  return listMemorySleepWindows({
-    diaryStore: context.diaryStore,
-    timeZone: context.time.timeZone,
-    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
-    now: () => {
-      const now = context.time.now();
-      return { iso: now.iso, utcIso: now.date.toISOString() };
-    }
-  });
-}
-
-function latestMemoryWindow(context: AdminRoutesContext): MemorySleepWindow | undefined {
-  return latestMemorySleepWindow({
-    diaryStore: context.diaryStore,
-    timeZone: context.time.timeZone,
-    messages: context.store?.listMessagesChronological?.(10_000) ?? [],
-    now: () => {
-      const now = context.time.now();
-      return { iso: now.iso, utcIso: now.date.toISOString() };
-    }
-  });
-}
-
-
-async function previewMemoryPrompts(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const target = requiredString(body.target);
-  if (!isMemoryTarget(target)) {
-    writeJson(response, 400, { ok: false, error: "invalid_memory_target" });
-    return;
-  }
-  if (!context.store?.listMessagesByCreatedAtRange) {
-    writeJson(response, 500, { ok: false, error: "message_store_unavailable" });
-    return;
-  }
-  const window = latestMemoryWindow(context);
-  if (!window) {
-    writeJson(response, 404, { ok: false, error: "sleep_window_not_found" });
-    return;
-  }
-  const date = window.date;
-  const { startAt, endAt } = window;
-  const messages = context.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
-  const prompts = body.prompts && typeof body.prompts === "object"
-    ? body.prompts as ReturnType<MemoryInductionPromptStore["get"]>
-    : context.memoryInductionPromptStore.get();
-  const preview = buildMemoryPromptPreview({
-    memoryStore: context.memoryStore,
-    prompts,
-    messages,
-    windowStartAt: startAt,
-    windowEndAt: endAt,
-    timezone: context.time.timeZone,
-    userName: context.promptProfileStore.get().userName,
-    config: memorySummaryConfigForPreset(context, resolveMemorizeApiPreset(context)),
-    generatedAt: context.time.now().iso
-  }, target as MemoryTarget);
-  writeJson(response, 200, { ok: true, date, source: window.source, preview });
-}
-
 function isMemoryTarget(value: string): value is "persistent" | "userPreferences" | "yesterdaySummary" {
   return value === "persistent" || value === "userPreferences" || value === "yesterdaySummary";
+}
+
+function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<typeof createAdminMemoryRuntime> {
+  context.memoryAdminRuntime ??= createAdminMemoryRuntime({
+    config: context.config,
+    store: context.store,
+    memoryStore: context.memoryStore,
+    diaryStore: context.diaryStore,
+    memoryInductionPromptStore: context.memoryInductionPromptStore,
+    promptProfileStore: context.promptProfileStore,
+    agentState: context.agentState,
+    time: context.time,
+    llmRequests: { send: async (input) => context.llmRequestSender ? context.llmRequestSender(input) : context.getLLM().chat(input) },
+    llmSessionRoot: () => context.llmSessionRoot?.() ?? path.join(context.config.memoryFiles.root, "llm-sessions"),
+    ensureMemoryConsoleSession: (windowEndAt, windowStartAt) => context.ensureMemoryConsoleSession?.(windowEndAt, windowStartAt),
+    resolveMemorizeApiPreset: () => resolveMemorizeApiPreset(context),
+    runMemoryInductionForMessages: context.runMemoryInductionForMessages,
+    appendLog: context.appendLog
+  });
+  return context.memoryAdminRuntime;
+}
+
+function writeServiceResult(response: any, result: { status: number; body: unknown }): void {
+  writeJson(response, result.status, result.body);
 }
 
 function getPromptVariablePreview(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): LLMTextVariables {
@@ -3726,21 +3322,6 @@ function resolvePromptApiPreset(context: AdminRoutesContext, kind: "chat" | "tal
 
 function resolveMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | undefined {
   return resolvePromptApiPreset(context, "memorize") ?? defaultMemorizeApiPreset(context);
-}
-
-function memorySummaryConfigForPreset(context: AdminRoutesContext, preset: LLMApiPreset | undefined) {
-  if (!preset) return { ...context.config.memorySummary, enabled: false, apiKey: undefined };
-  return {
-    ...context.config.memorySummary,
-    baseURL: preset.baseURL,
-    apiKey: preset.apiKey,
-    model: preset.model,
-    temperature: preset.temperature,
-    timeoutMs: preset.timeoutMs,
-    stream: preset.stream,
-    extraParams: preset.extraParams,
-    followupExtraParams: preset.followupExtraParams
-  };
 }
 
 function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | undefined {

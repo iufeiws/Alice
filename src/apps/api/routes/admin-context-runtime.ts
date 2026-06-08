@@ -1,8 +1,8 @@
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { runMemoryInductionForMessages } from "../../../contexts/memory/src/memory.js";
+import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
-import { createLLMClientFromPreset, type LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
+import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 import { createApiRequestHandler } from "./admin-routes.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
@@ -84,8 +84,21 @@ export function createAdminRequestHandlerRuntime(input: {
   appendLog: AppendLog;
   appendMessageLog(input: any): unknown;
 }) {
-  let memoryInductionActive = false;
-
+  const memoryAdminRuntime = createAdminMemoryRuntime({
+    config: input.config,
+    store: input.store,
+    memoryStore: input.memoryStore,
+    diaryStore: input.diaryStore,
+    memoryInductionPromptStore: input.memoryInductionPromptStore,
+    promptProfileStore: input.promptProfileStore,
+    agentState: input.agentState,
+    time: input.time,
+    llmRequests: input.llmRequests,
+    llmSessionRoot: input.llmSessionRoot,
+    ensureMemoryConsoleSession: input.ensureMemoryConsoleSession,
+    resolveMemorizeApiPreset: () => undefined,
+    appendLog: input.appendLog
+  });
   return createApiRequestHandler({
     config: input.config,
     logs: input.logs,
@@ -118,62 +131,7 @@ export function createAdminRequestHandlerRuntime(input: {
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
-    async runMemoryInductionForMessages(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: any, onRound?: any) {
-      if (memoryInductionActive || input.sleepMemoryInductionRuntime.isActive()) {
-        return {
-          ok: false,
-          startedAt: input.time.now().iso,
-          windowStartAt,
-          windowEndAt,
-          messageCount: messages.length,
-          results: [{
-            target: target ?? "persistent",
-            ok: false,
-            edited: false,
-            rounds: 0,
-            error: "memory_induction_already_running",
-            toolCalls: []
-          }]
-        };
-      }
-      memoryInductionActive = true;
-      const memoryConfig = apiPreset ? {
-        ...input.config.memorySummary,
-        baseURL: apiPreset.baseURL,
-        apiKey: apiPreset.apiKey,
-        model: apiPreset.model,
-        temperature: apiPreset.temperature,
-        timeoutMs: apiPreset.timeoutMs,
-        stream: apiPreset.stream,
-        extraParams: apiPreset.extraParams,
-        followupExtraParams: apiPreset.followupExtraParams
-      } : { ...input.config.memorySummary, enabled: false, apiKey: undefined };
-      const memoryLLM = apiPreset ? createLLMClientFromPreset(apiPreset) : undefined;
-      const memorySession = target
-        ? input.ensureMemoryConsoleSession(windowEndAt, windowStartAt)
-        : undefined;
-      try {
-        return await runMemoryInductionForMessages({
-          memoryStore: input.memoryStore,
-          promptStore: input.memoryInductionPromptStore,
-          messages,
-          windowStartAt,
-          windowEndAt,
-          llm: memoryLLM,
-          llmRequestSender: input.llmRequests.send,
-          config: memoryConfig,
-          nowIso: () => input.time.now().iso,
-          timezone: input.time.timeZone,
-          userName: input.promptProfileStore.get().userName,
-          sessionRoot: input.llmSessionRoot(),
-          memorySession,
-          onRound,
-          log: input.appendLog
-        }, target);
-      } finally {
-        memoryInductionActive = false;
-      }
-    },
+    memoryAdminRuntime,
     getDailyShell: input.getDailyShell,
     dailyShellStore: input.dailyShellStore,
     agentState: input.agentState,

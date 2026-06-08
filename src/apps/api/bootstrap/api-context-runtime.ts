@@ -1,7 +1,7 @@
 import { createAgentInitiatedBehaviorRunStore } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
-import { createChannelStateRuntime } from "../../../apps/api/bootstrap/channel-state-runtime.js";
-import { createDefaultTargetResolver } from "../../../apps/api/bootstrap/default-target-runtime.js";
+import { createChannelStateRuntime } from "./channel-state-runtime.js";
+import { createDefaultTargetResolver } from "./default-target-runtime.js";
 import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile-memory-runtime.js";
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 

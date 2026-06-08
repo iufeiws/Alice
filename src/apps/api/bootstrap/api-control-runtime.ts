@@ -1,6 +1,6 @@
-import { createApiContextRuntime } from "../../../../core/agent/src/api-context-runtime.js";
-import { createApiNoticeRuntime } from "../../../../apps/api/bootstrap/api-notice-runtime.js";
-import { createApiBehaviorRuntime } from "../../../initiative/src/application/api-initiated-behavior.js";
+import { createApiContextRuntime } from "./api-context-runtime.js";
+import { createApiNoticeRuntime } from "./api-notice-runtime.js";
+import { createApiBehaviorRuntime } from "../../../contexts/initiative/src/application/api-initiated-behavior.js";
 
 export function createApiControlRuntime(input: {
   config: any;

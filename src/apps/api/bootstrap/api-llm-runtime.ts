@@ -1,5 +1,5 @@
 import { createApiSessionRuntime } from "../../../core/session/index.js";
-import { createLLMObservabilityRuntime } from "./llm-observability-runtime.js";
+import { createLLMObservabilityRuntime } from "../../../contexts/llm-gateway/src/llm-observability-runtime.js";
 
 export function createApiLLMRuntime(input: {
   config: any;

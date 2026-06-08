@@ -1,10 +1,10 @@
 import { createApiFoundationRuntime } from "./api-foundation-runtime.js";
 import { createApiRuntimeState } from "./api-runtime-state.js";
-import { createApiLLMRuntime } from "../../../contexts/llm-gateway/src/api-llm-runtime.js";
+import { createApiLLMRuntime } from "./api-llm-runtime.js";
 import { createApiToolingRuntime } from "./api-tooling-runtime.js";
 import { createApiServerStackRuntime } from "../server/api-server-stack-runtime.js";
-import { createApiAgentStackRuntime } from "../../../core/agent/src/api-agent-stack-runtime.js";
-import { createApiControlRuntime } from "../../../contexts/control-plane/src/application/admin-control-runtime.js";
+import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
+import { createApiControlRuntime } from "./api-control-runtime.js";
 
 export function createApiRootRuntime() {
   const apiRuntimeState = createApiRuntimeState();

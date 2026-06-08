@@ -1,5 +1,5 @@
 import { createApiCapabilitiesRuntime } from "./api-capabilities-runtime.js";
-import { createApiSupportRuntime } from "../../../core/agent/src/api-support-runtime.js";
+import { createApiSupportRuntime } from "./api-support-runtime.js";
 
 export function createApiToolingRuntime(input: {
   config: any;

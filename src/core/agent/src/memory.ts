@@ -5,11 +5,11 @@ import type { StoredConversationMessage } from "../../../packages/storage/src/sq
 import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
 import { createWorkspaceFilesTools, formatReadOutput } from "../../../tools/workspace-files/src/index.js";
-import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../llm/src/index.js";
+import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../../contexts/llm-gateway/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../text-renderer/src/index.js";
 import { formatZonedIso, parseZonedIso } from "../../time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "./llm-session-log.js";
-import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
+import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "./prompt-layer-parser.js";
 
 const fs = await import("node:fs");

@@ -1,4 +1,4 @@
-import type { ActiveLLMSession } from "./llm-session-types.js";
+import type { ActiveLLMSession } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
 
 export function createLLMSessionListRuntime(input: {

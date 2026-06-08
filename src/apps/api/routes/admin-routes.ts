@@ -1,6 +1,6 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
-import { createOpenAICompatibleClient, type LLMClient } from "../../../core/llm/src/index.js";
-import type { LLMRequestSender } from "../../../core/agent/src/llm-tool-loop.js";
+import { createOpenAICompatibleClient, type LLMClient } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMRequestSender } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { formatZonedIso, type CurrentTimeProvider } from "../../../core/time/src/index.js";
 import type { ToolPlugin } from "../../../packages/types/src/index.js";
 import type { TokenUsageQuery } from "../../../packages/storage/src/token-usage-store.js";

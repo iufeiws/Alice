@@ -1,6 +1,6 @@
-import type { LLMClient, OpenAICompatibleConfig } from "../../../core/llm/src/index.js";
-import { createOpenAICompatibleClient } from "../../../core/llm/src/index.js";
-import type { LLMRequestSender } from "../../../core/agent/src/llm-tool-loop.js";
+import type { LLMClient, OpenAICompatibleConfig } from "../../../../contexts/llm-gateway/src/index.js";
+import { createOpenAICompatibleClient } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMRequestSender } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import { renderLLMText, type LLMTextVariables } from "../../../core/text-renderer/src/index.js";
 

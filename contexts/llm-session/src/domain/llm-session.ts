@@ -1,6 +1,30 @@
-import type { TokenPressurePreviewBaseline } from "../agent/src/index.js";
-import type { LLMChatInput, LLMChatResult } from "../llm/src/index.js";
-import type { LLMRequestDiff } from "../llm/src/llm-request-diff.js";
+import type { LLMChatInput, LLMChatResult } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMRequestDiff } from "../../../../contexts/llm-gateway/src/llm-request-diff.js";
+
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
+export type LLMSessionSnapshot = {
+  messages: LLMChatInput["messages"];
+  staticPromptFingerprint?: string;
+  staticPromptMessageCount?: number;
+  requestTimestamps?: string[];
+  lastTotalTokens?: number;
+  lastInputTokens?: number;
+  lastUsageModel?: string;
+  tokenPressurePreviewBaselines?: Record<string, TokenPressurePreviewBaseline>;
+  mode?: string;
+  modeStaticMessages?: LLMChatInput["messages"];
+  modeStaticTokenEstimate?: number;
+  modeStartedAt?: string;
+  modeExpiresAt?: string;
+  fixedPrefixKind?: string;
+  fixedPrefixCursorMessageId?: number;
+  waitChatStartedAt?: string;
+};
+
+export type TokenPressurePreviewBaseline = {
+  inputTokens: number;
+  previewTokens: number;
+};
 
 export type LLMRequestLogEntry = {
   id: number;

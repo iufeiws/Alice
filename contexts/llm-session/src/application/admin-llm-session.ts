@@ -1,7 +1,7 @@
-import { createMemoryConsoleRuntime } from "../agent/src/memory-console-runtime.js";
-import { createMemoryLLMSessionRuntime } from "./memory-llm-session-runtime.js";
-import { createLLMSessionListRuntime } from "./llm-session-list-runtime.js";
-import { createLLMRequestPreviewRuntime } from "../llm/src/llm-request-preview-runtime.js";
+import { createMemoryConsoleRuntime } from "../../../../src/core/agent/src/memory-console-runtime.js";
+import { createMemoryLLMSessionRuntime } from "./manage-memory-llm-session.js";
+import { createLLMSessionListRuntime } from "./list-llm-sessions.js";
+import { createLLMRequestPreviewRuntime } from "../../../../contexts/llm-gateway/src/llm-request-preview-runtime.js";
 
 export function createAdminLLMSessionRuntime(input: {
   sessionRoot(): string;

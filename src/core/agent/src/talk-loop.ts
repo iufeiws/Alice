@@ -1,6 +1,6 @@
 import type { CurrentTimeProvider } from "../../time/src/index.js";
-import type { LLMMessage, LLMToolCall } from "../../llm/src/index.js";
-import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
+import type { LLMMessage, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMRequestSender, LLMRequestSenderInput } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 import { formatToolResultForLLM } from "../../text-renderer/src/index.js";

@@ -1,8 +1,8 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../../../packages/types/src/index.js";
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../llm/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../time/src/index.js";
 import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../text-renderer/src/index.js";
-import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "./llm-tool-loop.js";
+import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
 
 const sendChatToolName = "send_chat";

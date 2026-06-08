@@ -1,6 +1,6 @@
-import type { ActiveLLMSession } from "./llm-session-types.js";
-import { createLLMSessionArchive } from "./llm-session-archive.js";
-import { createActiveLLMSessionRuntime } from "./active-llm-session-runtime.js";
+import type { ActiveLLMSession } from "../domain/llm-session.js";
+import { createLLMSessionArchive } from "./archive-llm-session.js";
+import { createActiveLLMSessionRuntime } from "./active-llm-session.js";
 
 export function createApiSessionRuntime(input: {
   config: any;

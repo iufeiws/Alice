@@ -1,4 +1,4 @@
-import { createApiSessionRuntime } from "../../session/api-session-runtime.js";
+import { createApiSessionRuntime } from "../../../src/core/session/index.js";
 import { createLLMObservabilityRuntime } from "./llm-observability-runtime.js";
 
 export function createApiLLMRuntime(input: {

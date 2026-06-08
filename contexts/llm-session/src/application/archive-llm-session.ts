@@ -1,6 +1,6 @@
-import type { CurrentTimeProvider } from "../time/src/index.js";
-import type { LLMChatInput } from "../llm/src/index.js";
-import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../agent/src/prompts.js";
+import type { CurrentTimeProvider } from "../../../../src/core/time/src/index.js";
+import type { LLMChatInput } from "../../../../contexts/llm-gateway/src/index.js";
+import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../../src/core/agent/src/prompts.js";
 import {
   absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
   appendLLMSessionJsonlMessages,
@@ -11,15 +11,15 @@ import {
   relativeLLMSessionPath as relativeLLMSessionJsonlPath,
   writeLLMSessionJsonl,
   writeLLMSessionJsonlMetadata
-} from "../agent/src/llm-session-log.js";
-import type { ActiveLLMSession } from "./llm-session-types.js";
+} from "../../../../src/core/agent/src/llm-session-log.js";
+import type { ActiveLLMSession } from "../domain/llm-session.js";
 import {
   parseRequestInfo,
   parseResponseInfo,
   parseRoundInfo,
   parseTokenPressurePreviewBaselines,
   stringArray
-} from "./llm-session-helpers.js";
+} from "../domain/llm-session-utils.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

@@ -3,7 +3,7 @@ import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
 import { buildLLMTextVariables } from "../../../core/text-renderer/src/index.js";
 import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "./index.js";
 import { createAsrPlugin } from "../../asr/src/index.js";
-import type { LLMApiPreset } from "../../../core/llm/src/llm-api-profile.js";
+import type { LLMApiPreset } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 

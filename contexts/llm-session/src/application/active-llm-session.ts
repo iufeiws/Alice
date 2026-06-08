@@ -1,12 +1,12 @@
-import type { LLMSessionClearReason, LLMSessionSnapshot, TokenPressurePreviewBaseline } from "../agent/src/index.js";
-import type { CurrentTimeProvider } from "../time/src/index.js";
-import { parseZonedIso } from "../time/src/index.js";
-import type { LLMChatInput } from "../llm/src/index.js";
-import { cloneLLMMessages } from "../agent/src/llm-session-log.js";
-import { buildRawLLMRequest } from "../llm/src/llm-request-shape.js";
-import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "./llm-session-types.js";
+import type { LLMSessionClearReason, LLMSessionSnapshot, TokenPressurePreviewBaseline } from "../domain/llm-session.js";
+import type { CurrentTimeProvider } from "../../../../src/core/time/src/index.js";
+import { parseZonedIso } from "../../../../src/core/time/src/index.js";
+import type { LLMChatInput } from "../../../../contexts/llm-gateway/src/index.js";
+import { cloneLLMMessages } from "../../../../src/core/agent/src/llm-session-log.js";
+import { buildRawLLMRequest } from "../../../../contexts/llm-gateway/src/llm-request-shape.js";
+import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
-import { cloneJsonObject, cloneLLMTools, cloneTokenPressurePreviewBaselines } from "./llm-session-helpers.js";
+import { cloneJsonObject, cloneLLMTools, cloneTokenPressurePreviewBaselines } from "../domain/llm-session-utils.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 

@@ -1,5 +1,5 @@
-import type { LLMChatInput } from "../llm/src/index.js";
-import { cloneLLMMessages } from "../agent/src/llm-session-log.js";
+import type { LLMChatInput } from "../../../../contexts/llm-gateway/src/index.js";
+import { cloneLLMMessages } from "../../../../src/core/agent/src/llm-session-log.js";
 import type {
   ActiveLLMSession,
   LLMRequestLogEntry,
@@ -7,7 +7,7 @@ import type {
   LLMSessionRequestInfo,
   LLMSessionResponseInfo,
   LLMSessionTurn
-} from "./llm-session-types.js";
+} from "../domain/llm-session.js";
 
 export function summarizeLLMSession(session: ActiveLLMSession): unknown {
   const roundCount = llmSessionRoundCount(session);

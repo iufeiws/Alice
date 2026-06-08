@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../core/time/src/index.js";
-import type { LLMChatInput } from "../../../core/llm/src/index.js";
+import type { LLMChatInput } from "../../../../contexts/llm-gateway/src/index.js";
 import type { ToolDefinition } from "../../../packages/types/src/index.js";
 import {
   buildAppendPromptMessagesWithToolResults,

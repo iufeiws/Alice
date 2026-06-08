@@ -1,6 +1,6 @@
 import { createApiFoundationRuntime } from "./api-foundation-runtime.js";
 import { createApiRuntimeState } from "./api-runtime-state.js";
-import { createApiLLMRuntime } from "../../../core/llm/src/api-llm-runtime.js";
+import { createApiLLMRuntime } from "../../../../contexts/llm-gateway/src/api-llm-runtime.js";
 import { createApiToolingRuntime } from "../../../tools/messaging/src/api-tooling-runtime.js";
 import { createApiServerStackRuntime } from "../server/api-server-stack-runtime.js";
 import { createApiAgentStackRuntime } from "../../../core/agent/src/api-agent-stack-runtime.js";

@@ -14,7 +14,7 @@ import {
 import { createAsrInboundStreamSession } from "../../asr/src/index.js";
 import type { TalkRuntime } from "../../../core/agent/src/talk-runtime.js";
 import type { voiceCallRoutes } from "../../../apps/api/routes/voice-call-contract.js";
-import type { LLMApiPreset } from "../../../core/llm/src/llm-api-profile.js";
+import type { LLMApiPreset } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
 
 type WebRtcVoiceClient = { send(message: unknown): void };
 type AsrPlugin = ReturnType<typeof createAsrPlugin>;

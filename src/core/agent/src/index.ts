@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../../packages/config/src/index.js";
-import type { LLMChatInput, LLMChatResult, LLMClient } from "../../llm/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../../contexts/llm-gateway/src/index.js";
 import type { OutputRouter } from "../../output-router/src/index.js";
 import type { PolicyEngine } from "../../policy/src/index.js";
 import type { IntentRouter } from "../../router/src/index.js";
@@ -13,7 +13,7 @@ import type { DailyShell } from "./shells.js";
 import type { MemorySnapshot } from "./memory.js";
 import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../text-renderer/src/index.js";
 import { deepSeekPriceForModel } from "../../../packages/config/src/token-pricing.js";
-import type { LLMRequestSender } from "./llm-tool-loop.js";
+import type { LLMRequestSender } from "../../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import {
   agentInitiatedBehaviorPlanFromEvent,
   agentInitiatedTriggerEventFromRaw,
@@ -116,7 +116,7 @@ type ModeState = ChatAgentModeState;
 export * from "./initiated-behavior-config.js";
 export * from "./initiated-behavior-runtime.js";
 export * from "./agent-state-runtime.js";
-export * from "./llm-requests.js";
+export * from "../../../../contexts/llm-gateway/src/llm-requests.js";
 export * from "./memory-console-runtime.js";
 export * from "./message-runtime.js";
 export * from "./sleep-memory-bridge-runtime.js";

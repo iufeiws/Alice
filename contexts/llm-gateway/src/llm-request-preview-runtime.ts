@@ -1,7 +1,7 @@
-import type { CurrentTimeProvider } from "../../time/src/index.js";
+import type { CurrentTimeProvider } from "../../../src/core/time/src/index.js";
 import type { LLMChatInput } from "./index.js";
 import { buildRawLLMRequest } from "./llm-request-shape.js";
-import type { LLMRequestLogEntry, LLMRequestPreview } from "../../session/llm-session-types.js";
+import type { LLMRequestLogEntry, LLMRequestPreview } from "../../../src/core/session/index.js";
 import type { LLMApiPreset } from "./llm-api-profile.js";
 
 export function createLLMRequestPreviewRuntime(input: {

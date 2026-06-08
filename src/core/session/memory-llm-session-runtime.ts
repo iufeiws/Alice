@@ -3,7 +3,7 @@ import {
   parseRequestInfo,
   parseResponseInfo,
   parseRoundInfo
-} from "./llm-session-helpers.js";
+} from "../../../contexts/llm-session/src/domain/llm-session-utils.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

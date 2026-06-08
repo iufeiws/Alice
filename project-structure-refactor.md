@@ -509,7 +509,7 @@ src
 | `src/core/agent/src/initiated-behaviors.ts` | `contexts/initiative/src/application/run-initiated-behavior.ts` | 拆分规则与运行逻辑 |
 | `src/core/agent/src/api-behavior-runtime.ts` | `contexts/initiative/src/application/api-initiated-behavior.ts` | 合并 api 行为分支 |
 | `src/core/agent/src/initiated-behaviors.ts`（行为运行时 prompt 解析） | `contexts/initiative/src/domain/initiated-behavior.ts` | 拆分领域模型 |
-| `src/core/prompt/initiated-behaviors/*.json` | `contexts/initiative/behaviors/*.json` | 迁移配置目录到 context 内 |
+| `src/core/prompt/initiated-behaviors/*.json` | `src/contexts/initiative/behaviors/*.json` | 迁移配置目录到 context 内 |
 
 ## 5. 一级目录职责
 

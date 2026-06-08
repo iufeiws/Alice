@@ -1,4 +1,4 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { createMessagingTools } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
 import { createShellTools } from "../../shell/src/index.js";

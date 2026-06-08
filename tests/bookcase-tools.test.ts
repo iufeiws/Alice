@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createBookcaseTools } from "../src/tools/bookcase/src/index.js";
+import { createBookcaseTools } from "../src/capabilities/tools/bookcase/src/index.js";
 import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
 
 const fs = await import("node:fs");

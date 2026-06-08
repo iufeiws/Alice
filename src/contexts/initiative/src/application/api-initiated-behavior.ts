@@ -1,5 +1,5 @@
 import { createAgentStateRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
-import { createSleepCocoonEventRuntime } from "../../../../tools/sleep-cocoon/src/sleep-cocoon-event-runtime.js";
+import { createSleepCocoonEventRuntime } from "../../../../capabilities/tools/sleep-cocoon/src/sleep-cocoon-event-runtime.js";
 
 export function createApiBehaviorRuntime(input: {
   config: any;

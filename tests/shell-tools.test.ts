@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../src/contexts/agent-profile/src/domain/shell.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import { createShellTools } from "../src/tools/shell/src/index.js";
+import { createShellTools } from "../src/capabilities/tools/shell/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

@@ -1,14 +1,20 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { parseZonedIso } from "../../../platform/time/src/index.js";
-import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
-import { createId } from "../../../shared/uuid/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { parseZonedIso } from "../../../../platform/time/src/index.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
 import { sleepCocoonHazardProbability } from "./sleep-cocoon-math.js";
-import type { DefaultMessagingTarget } from "../../messaging/src/default-target-runtime.js";
+import type { MessagingToolTarget } from "../../messaging/src/index.js";
+
+type SleepCocoonAgentState = {
+  getSnapshot(): { state: string; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; sleepCocoonAutoCheckedAt?: string };
+  setState(state: string, options?: Record<string, unknown>): unknown;
+  canRunHeartbeat(): boolean;
+  noteSleepCocoonAutoChecked(): unknown;
+};
 
 export function createSleepCocoonEventRuntime(input: {
-  agentState: AgentStateController;
+  agentState: SleepCocoonAgentState;
   time: CurrentTimeProvider;
-  getDefaultTarget(): DefaultMessagingTarget | undefined;
+  getDefaultTarget(): MessagingToolTarget | undefined;
   random?: () => number;
 }) {
   const random = input.random ?? Math.random;

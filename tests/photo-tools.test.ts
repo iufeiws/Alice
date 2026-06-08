@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPhotoTools, type SelfieExecutorInput } from "../src/tools/photo/src/index.js";
+import { createPhotoTools, type SelfieExecutorInput } from "../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";

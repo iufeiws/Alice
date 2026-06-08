@@ -1,10 +1,10 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
-import type { OutputRouter } from "../../../platform/output-router/src/index.js";
-import type { DailyShellStore, ShellOption } from "../../../contexts/agent-profile/src/domain/shell.js";
-import type { AliceStore } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { createId } from "../../../shared/uuid/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
+import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
+import type { DailyShellStore, ShellOption } from "../../../../contexts/agent-profile/src/ports/shell-store.js";
+import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
 
 export type ShellToolTarget = {
   plugin: string;

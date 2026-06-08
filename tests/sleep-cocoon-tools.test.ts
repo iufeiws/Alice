@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentStateController, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { createSleepCocoonTools, resolveSleepDurationMs } from "../src/tools/sleep-cocoon/src/index.js";
+import { createSleepCocoonTools, resolveSleepDurationMs } from "../src/capabilities/tools/sleep-cocoon/src/index.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("sleep_cocoon schema exposes in and out actions with Chinese descriptions", () => {

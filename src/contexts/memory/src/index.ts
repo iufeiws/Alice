@@ -3,8 +3,8 @@ import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../
 import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
-import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
-import { createWorkspaceFilesTools, formatReadOutput } from "../../../tools/workspace-files/src/index.js";
+import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
+import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabilities/tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
 import { buildLLMTextVariables, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";

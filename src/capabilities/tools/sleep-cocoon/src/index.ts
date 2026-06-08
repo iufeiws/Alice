@@ -1,8 +1,12 @@
-import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
-import type { OutputRouter } from "../../../platform/output-router/src/index.js";
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { createId } from "../../../shared/uuid/src/index.js";
+import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
+
+type SleepCocoonAgentState = {
+  getSnapshot(): { state: string; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; sleepCocoonAutoCheckedAt?: string };
+  setState(state: string, options?: Record<string, unknown>): unknown;
+};
 
 export * from "./sleep-cocoon-math.js";
 export * from "./sleep-cocoon-event-runtime.js";
@@ -16,7 +20,7 @@ export type SleepCocoonToolTarget = {
 };
 
 export type SleepCocoonToolsDeps = {
-  agentState: Pick<AgentStateController, "getSnapshot" | "setState">;
+  agentState: SleepCocoonAgentState;
   time: CurrentTimeProvider;
   outputRouter?: Pick<OutputRouter, "send">;
   getDefaultTarget?(): SleepCocoonToolTarget | undefined;

@@ -10,13 +10,13 @@ description: 当外部 agent 需要通过 Alice 当前自拍流程快速生成 A
 不要先浏览仓库、读取日志、检查 prompt 或制定计划。立即运行一次低质量 API 自拍：
 
 ```bash
-node src/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "<short action>"
+node src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "<short action>"
 ```
 
 如果用户没有提供动作，使用：
 
 ```bash
-node src/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "lean close to the camera, tilt her head slightly, with a shy expression"
+node src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "lean close to the camera, tilt her head slightly, with a shy expression"
 ```
 
 正常成功响应：只报告命令输出的文件路径和耗时。

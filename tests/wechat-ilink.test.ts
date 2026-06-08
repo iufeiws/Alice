@@ -5,7 +5,7 @@ import { createWeChatPlugin, createWeChatStateStore } from "../src/plugins/wecha
 import type { WeChatTextMessage } from "../src/plugins/wechat/src/types.js";
 import { createMessageRuntime } from "../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import { createMessagingTools } from "../src/tools/messaging/src/index.js";
+import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");

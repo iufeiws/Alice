@@ -29,10 +29,10 @@ import { updateEnvFile } from "../server/env-file.js";
 import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../plugins/wechat/src/client.js";
-import { formatCheckChatMessages } from "../../../tools/messaging/src/index.js";
+import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../plugins/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../plugins/asr/src/index.js";
-import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../tools/photo/src/index.js";
+import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../plugins/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
 

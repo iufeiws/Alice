@@ -23,7 +23,7 @@ Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
    - 主 prompt profile 中的 Alice 角色特征。
    - 当前日常 shell personality 与 outfit。
    - `assets/selfie/references/selfie-prompt.txt`。
-3. 默认通过 `src/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs --tool-input ...` 调用 Image API `/v1/images/edits`。内置 direct executor 和 Codex executor 仍保留为代码路径，但默认 executor 是 fast runner。
+3. 默认通过 `src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs --tool-input ...` 调用 Image API `/v1/images/edits`。内置 direct executor 和 Codex executor 仍保留为代码路径，但默认 executor 是 fast runner。
 4. 按以下顺序传入参考图：
    - `assets/selfie/references/alice-character-reference.png`
    - `memory-files/shell/outfits/*.jpg` 中当前 outfit 对应图片

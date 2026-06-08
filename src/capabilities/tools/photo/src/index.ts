@@ -1,10 +1,10 @@
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
-import type { OutputRouter } from "../../../platform/output-router/src/index.js";
-import type { AliceStore, InsertOutboundMessageInput } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { createId } from "../../../shared/uuid/src/index.js";
-import { buildLLMTextVariables, renderLLMText } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
+import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
+import type { AliceStore, InsertOutboundMessageInput } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createId } from "../../../../shared/uuid/src/index.js";
+import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 
 const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
@@ -127,7 +127,7 @@ const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
-const defaultFastSelfieRunner = path.resolve("src/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
+const defaultFastSelfieRunner = path.resolve("src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
 export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
 
 export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {

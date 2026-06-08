@@ -11,18 +11,18 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@alice/types": ["packages/types/src/index.ts"],
-      "@alice/config": ["packages/config/src/index.ts"],
-      "@alice/agent": ["core/agent/src/index.ts"],
-      "@alice/event-bus": ["core/event-bus/src/index.ts"],
-      "@alice/input-buffer": ["core/input-buffer/src/index.ts"],
-      "@alice/llm": ["core/llm/src/index.ts"],
-      "@alice/output-router": ["core/output-router/src/index.ts"],
-      "@alice/policy": ["core/policy/src/index.ts"],
-      "@alice/router": ["core/router/src/index.ts"],
-      "@alice/session": ["core/session/src/index.ts"],
-      "@alice/feishu": ["plugins/feishu/src/index.ts"]
+      "@alice/types": ["src/packages/types/src/index.ts"],
+      "@alice/config": ["src/packages/config/src/index.ts"],
+      "@alice/agent": ["src/core/agent/src/index.ts"],
+      "@alice/event-bus": ["src/core/event-bus/src/index.ts"],
+      "@alice/input-buffer": ["src/core/input-buffer/src/index.ts"],
+      "@alice/llm": ["src/core/llm/src/index.ts"],
+      "@alice/output-router": ["src/core/output-router/src/index.ts"],
+      "@alice/policy": ["src/core/policy/src/index.ts"],
+      "@alice/router": ["src/core/router/src/index.ts"],
+      "@alice/session": ["src/core/session/src/index.ts"],
+      "@alice/feishu": ["src/plugins/feishu/src/index.ts"]
     }
   },
-  "include": ["apps/**/*.ts", "core/**/*.ts", "plugins/**/*.ts", "packages/**/*.ts", "workers/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/apps/**/*.ts", "src/core/**/*.ts", "src/plugins/**/*.ts", "src/packages/**/*.ts", "src/workers/**/*.ts", "src/tools/**/*.ts", "src/skills/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
 }

@@ -3,12 +3,12 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createAsrInboundStreamSession, createAsrPlugin } from "../plugins/asr/src/index.ts";
+import { createAsrInboundStreamSession, createAsrPlugin } from "../src/plugins/asr/src/index.ts";
 import {
   createTtsPlugin,
   createTtsRemoteAwareVoiceSynthesizer,
   readTtsPluginConfig
-} from "../plugins/tts/src/index.ts";
+} from "../src/plugins/tts/src/index.ts";
 import {
   attachWebRtcVoiceSignalingServer,
   createWebRtcVoicePlugin,
@@ -17,7 +17,7 @@ import {
   defaultWebRtcVoiceConfig,
   encodePcmL16StreamToOpusRtpFrames,
   encodePcmL16ToOpusRtpFrames
-} from "../plugins/webrtc-voice/src/index.ts";
+} from "../src/plugins/webrtc-voice/src/index.ts";
 
 const host = process.env.HOST || "0.0.0.0";
 const port = Number(process.env.PORT || 3041);

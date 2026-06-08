@@ -1,0 +1,4 @@
+interface:
+  display_name: "Alice Selfie Fast"
+  short_description: "Fast Alice selfies for external agents"
+  default_prompt: "Use $alice-selfie-fast to generate one Alice selfie through Alice's fast external-agent flow."

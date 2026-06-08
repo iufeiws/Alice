@@ -196,7 +196,7 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 ├──────────────────────────────────────┴──────────────────────────────────────┤
 │ Steps                                                                        │
 │ backend_effect  sleep_cocoon  {"action":"in"}                                │
-│ llm_instruction core/prompt/initiated-behaviors/sleep_goodnight.json         │
+│ llm_instruction src/core/prompt/initiated-behaviors/sleep_goodnight.json         │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Prompt Layers                                                                │
 │ [layer list: enabled, role, title, order]                                     │
@@ -258,7 +258,7 @@ Goodnight and enter sleep cocoon.                   [Save] [Test] [Reset]
 
 行为 prompt 的编辑器参考当前主 Prompt 页的 layer 模型，不提供单独的 `promptInstruction` textarea。
 
-每个行为 prompt profile 存在 `core/prompt/initiated-behaviors/{behavior_id}.json`，结构为：
+每个行为 prompt profile 存在 `src/core/prompt/initiated-behaviors/{behavior_id}.json`，结构为：
 
 ```ts
 type InitiatedBehaviorPromptProfile = {
@@ -309,7 +309,7 @@ Prompt Layers
 - `role` 只允许 `user`、`assistant`、`tool_request`；这里不能选择 `system`，避免主动行为 prompt 破坏主 prompt prefix。
 - `tool_request` layer 必须展示并保存 `toolName`、`toolCallId`、`toolArguments`、`thinking`，不能降级成普通文本或隐藏 fake tool。
 - Config 页必须显示 enabled/order 后组装出的 preview messages，包括 `content`、`reasoning_content`、`tool_calls`。
-- 保存 prompt layers 只修改对应 `core/prompt/initiated-behaviors/{behavior_id}.json`。
+- 保存 prompt layers 只修改对应 `src/core/prompt/initiated-behaviors/{behavior_id}.json`。
 - 删除或修改 prompt layer 不能删除 `steps` 中的 backend effect。
 - `sleep_goodnight` 的后台入睡效果显示在 `Steps`，prompt layers 只表达晚安话术。
 
@@ -330,7 +330,7 @@ Steps 是行为语义的一部分，admin 可以展示并在未来提供受控�
 
 ```text
 backend_effect   sleep_cocoon   {"action":"in"}
-llm_instruction  core/prompt/initiated-behaviors/sleep_goodnight.json
+llm_instruction  src/core/prompt/initiated-behaviors/sleep_goodnight.json
 ```
 
 Config 底部操作：

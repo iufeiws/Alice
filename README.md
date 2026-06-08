@@ -27,7 +27,7 @@ Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 
   - 缓存 `context_token`，用于向曾经来信的微信用户主动发送消息。
 - Media Tool Plugin：
   - 提供 `selfie` 工具，用 Image API 生成 Alice 自拍照。
-  - 默认经 `Skill/external/alice-selfie-fast` runner 调用 `/v1/images/edits`。
+  - 默认经 `src/skills/external/alice-selfie-fast` runner 调用 `/v1/images/edits`。
   - 使用角色、图书馆参考图；如果当前服装参考图存在，会作为第三张参考图，否则降级为文字服装描述。
   - 生成前先发送简短进行中提示。
   - 阻止连续两次调用 `selfie`。
@@ -89,7 +89,7 @@ node dist/scripts/backfill-sleep-memory.js
 OPENAI_API_KEY=...
 ```
 
-详细拍照工具配置和独立测速命令见 [tools/photo/README.md](/home/wyf98/Alice/tools/photo/README.md)。
+详细拍照工具配置和独立测速命令见 [tools/photo/README.md](/home/wyf98/Alice/src/tools/photo/README.md)。
 
 ## 微信 iLink
 
@@ -122,13 +122,13 @@ memory-files/llm-sessions/core/YYYY-MM-DD/*.jsonl
 memory-files/llm-sessions/memorize/YYYY-MM-DD/*.jsonl
 memory-files/indexes/feishu-paired-contacts.json
 memory-files/indexes/wechat-ilink-state.json
-core/prompt/prompt-profile.json
-core/prompt/memorize-prompts.json
-core/prompt/prompt-api-profile.json
-core/prompt/shell-prompt-template.txt
+src/core/prompt/prompt-profile.json
+src/core/prompt/memorize-prompts.json
+src/core/prompt/prompt-api-profile.json
+src/core/prompt/shell-prompt-template.txt
 memory-files/shell/
 ```
 
 所有 `logs/` 下的文件都按系统/运行日志处理；清理聊天历史时只清 `memory-files/message/messages.sqlite`，不要清 `logs/message/message-logs.sqlite`，除非明确是在清系统日志。
 
-`core/prompt/` 中的 prompt 文件会随 Git 版本化；`data/`、`logs/`、部分运行时 `memory-files/` 目录、`.env`、`dist/` 和 `node_modules/` 已被 git 忽略。
+`src/core/prompt/` 中的 prompt 文件会随 Git 版本化；`data/`、`logs/`、部分运行时 `memory-files/` 目录、`.env`、`dist/` 和 `node_modules/` 已被 git 忽略。

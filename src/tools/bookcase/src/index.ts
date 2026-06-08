@@ -51,7 +51,7 @@ type SelectedBook = {
   summary: string;
 };
 
-const defaultDbPath = path.resolve("src/tools/bookcase/assets/booksummaries.sqlite");
+const defaultDbPath = path.resolve("assets/tools/bookcase/booksummaries.sqlite");
 
 const bookcaseTool: ToolDefinition = {
   name: "bookcase",

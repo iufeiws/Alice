@@ -1,8 +1,8 @@
-import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, runSleepMemoryBackfill } from "../core/agent/src/memory.js";
-import { createOpenAICompatibleClient } from "../core/llm/src/index.js";
-import { createMutableCurrentTimeProvider } from "../core/time/src/index.js";
-import { loadConfig } from "../packages/config/src/index.js";
-import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
+import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, runSleepMemoryBackfill } from "../src/core/agent/src/memory.js";
+import { createOpenAICompatibleClient } from "../src/core/llm/src/index.js";
+import { createMutableCurrentTimeProvider } from "../src/core/time/src/index.js";
+import { loadConfig } from "../src/packages/config/src/index.js";
+import { createAliceStore } from "../src/packages/storage/src/sqlite-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

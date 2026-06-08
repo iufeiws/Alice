@@ -127,7 +127,7 @@ const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
-const defaultFastSelfieRunner = path.resolve("Skill/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
+const defaultFastSelfieRunner = path.resolve("src/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
 export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
 
 export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {

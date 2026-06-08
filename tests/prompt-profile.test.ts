@@ -7,11 +7,11 @@ import {
   createPromptProfileStore,
   defaultPromptProfile,
   staticPromptFingerprint
-} from "../core/agent/src/prompts.js";
-import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../core/agent/src/shells.js";
-import { promptStoragePath } from "../core/agent/src/prompt-storage.js";
-import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import type { AgentEvent } from "../packages/types/src/index.js";
+} from "./core/agent/src/prompts.js";
+import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "./core/agent/src/shells.js";
+import { promptStoragePath } from "./core/agent/src/prompt-storage.js";
+import { createCurrentTimeProvider } from "./core/time/src/index.js";
+import type { AgentEvent } from "./packages/types/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

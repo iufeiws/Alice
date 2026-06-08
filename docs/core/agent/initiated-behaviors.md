@@ -8,7 +8,7 @@
 
 - 将主动行为从硬编码 prompt 迁移为可配置行为计划。
 - 支持事件驱动型和随机触发型两类主动行为。
-- 将行为 prompt 存到 `core/prompt`，并沿用当前主 prompt 的 layer-based profile 结构。
+- 将行为 prompt 存到 `src/core/prompt`，并沿用当前主 prompt 的 layer-based profile 结构。
 - 让 admin 能编辑行为配置和 prompt layers，但不拥有行为语义。
 - 为运行记录、15 分钟响应统计和 30 分钟随机触发聚合预留实现边界。
 
@@ -130,7 +130,7 @@ backend effect 仍受当前主 prompt profile 的 tool 可见性约束。隐藏�
 
 ## Prompt 存储
 
-行为 prompt 存到 `core/prompt`。存储结构参考当前主 prompt profile，使用 layer-based profile：
+行为 prompt 存到 `src/core/prompt`。存储结构参考当前主 prompt profile，使用 layer-based profile：
 
 ```ts
 type AgentInitiatedBehaviorPromptProfile = {
@@ -162,12 +162,12 @@ type AgentInitiatedBehaviorPromptProfile = {
 建议路径：
 
 ```text
-core/prompt/initiated-behaviors/sleep_goodnight.json
-core/prompt/initiated-behaviors/sleep_morning.json
-core/prompt/initiated-behaviors/sleep_force_wake.json
-core/prompt/initiated-behaviors/idle_check_in.json
-core/prompt/initiated-behaviors/memory_reflection.json
-core/prompt/initiated-behaviors/topic_followup.json
+src/core/prompt/initiated-behaviors/sleep_goodnight.json
+src/core/prompt/initiated-behaviors/sleep_morning.json
+src/core/prompt/initiated-behaviors/sleep_force_wake.json
+src/core/prompt/initiated-behaviors/idle_check_in.json
+src/core/prompt/initiated-behaviors/memory_reflection.json
+src/core/prompt/initiated-behaviors/topic_followup.json
 ```
 
 ## Sleep 行为目标实现
@@ -182,7 +182,7 @@ core/prompt/initiated-behaviors/topic_followup.json
   kind: "event",
   enabled: true,
   triggerEvent: "sleep_cocoon.auto_goodnight_check",
-  promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json",
+  promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_goodnight.json",
   steps: [
     {
       kind: "backend_effect",
@@ -191,7 +191,7 @@ core/prompt/initiated-behaviors/topic_followup.json
     },
     {
       kind: "llm_instruction",
-      promptProfilePath: "core/prompt/initiated-behaviors/sleep_goodnight.json"
+      promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_goodnight.json"
     }
   ]
 }
@@ -214,11 +214,11 @@ core/prompt/initiated-behaviors/topic_followup.json
   kind: "event",
   enabled: true,
   triggerEvent: "sleep_cocoon.wake",
-  promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json",
+  promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_morning.json",
   steps: [
     {
       kind: "llm_instruction",
-      promptProfilePath: "core/prompt/initiated-behaviors/sleep_morning.json"
+      promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_morning.json"
     }
   ]
 }
@@ -234,11 +234,11 @@ core/prompt/initiated-behaviors/topic_followup.json
   kind: "event",
   enabled: true,
   triggerEvent: "sleep_cocoon.force_wake",
-  promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json",
+  promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_force_wake.json",
   steps: [
     {
       kind: "llm_instruction",
-      promptProfilePath: "core/prompt/initiated-behaviors/sleep_force_wake.json"
+      promptProfilePath: "src/core/prompt/initiated-behaviors/sleep_force_wake.json"
     }
   ]
 }
@@ -263,11 +263,11 @@ core/prompt/initiated-behaviors/topic_followup.json
   weight: 4,
   priority: 0,
   dryRun: false,
-  promptProfilePath: "core/prompt/initiated-behaviors/care.json",
+  promptProfilePath: "src/core/prompt/initiated-behaviors/care.json",
   steps: [
     {
       kind: "llm_instruction",
-      promptProfilePath: "core/prompt/initiated-behaviors/care.json"
+      promptProfilePath: "src/core/prompt/initiated-behaviors/care.json"
     }
   ]
 }
@@ -312,7 +312,7 @@ Admin Config 需要能表达：
 
 保存规则：
 
-- 保存 prompt 只修改 `core/prompt` 下的行为 prompt profile。
+- 保存 prompt 只修改 `src/core/prompt` 下的行为 prompt profile。
 - 保存行为配置不应吞掉 backend effect。
 - Recent runs 和 30 分钟图表来自 run 聚合，不从配置表推导。
 
@@ -360,7 +360,7 @@ type AgentInitiatedBehaviorRun = {
 
 1. 定义 `AgentInitiatedBehaviorPlan` 和最小 step 类型。
 2. 定义行为 prompt profile 文件结构，沿用主 prompt 的 layer schema。
-3. 将当前三条 hardcoded sleep prompt 迁移到 `core/prompt/initiated-behaviors/`。
+3. 将当前三条 hardcoded sleep prompt 迁移到 `src/core/prompt/initiated-behaviors/`。
 4. 将 `sleep_goodnight` 拆分为 backend effect 和晚安 prompt layers。
 5. 增加行为配置读取层，先支持三条 sleep event config。
 6. 保留现有 raw flag 兼容入口，并映射到新的 `triggerEvent`。
@@ -375,7 +375,7 @@ type AgentInitiatedBehaviorRun = {
 
 - 行为 prompt profile 按 `enabled/order` 组装。
 - 禁用某个 layer 后，该 layer 不进入 LLM messages。
-- 修改 `core/prompt` 中行为 layer 后，下次行为执行使用新文本。
+- 修改 `src/core/prompt` 中行为 layer 后，下次行为执行使用新文本。
 
 ### sleep_goodnight
 
@@ -400,7 +400,7 @@ type AgentInitiatedBehaviorRun = {
 ### Admin
 
 - Config 页能编辑 prompt layers。
-- 保存 prompt 只改 `core/prompt` 的 layer profile。
+- 保存 prompt 只改 `src/core/prompt` 的 layer profile。
 - 保存行为配置不丢失 backend effect。
 - Recent runs 和 30 分钟图表来自 run 聚合。
 

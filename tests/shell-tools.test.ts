@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../core/agent/src/shells.js";
-import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import { createAliceStore } from "../packages/storage/src/sqlite-store.js";
-import { createShellTools } from "../tools/shell/src/index.js";
+import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "./core/agent/src/shells.js";
+import { createCurrentTimeProvider } from "./core/time/src/index.js";
+import { createAliceStore } from "./packages/storage/src/sqlite-store.js";
+import { createShellTools } from "./tools/shell/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

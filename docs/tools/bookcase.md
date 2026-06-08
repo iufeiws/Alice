@@ -11,7 +11,7 @@ Supported filters for `draw` are `title`, `author`, `genre`, `minSummaryChars`, 
 
 ## Runtime Behavior
 
-The default summary database is `tools/bookcase/assets/booksummaries.sqlite`.
+The default summary database is `assets/tools/bookcase/booksummaries.sqlite`.
 
 `draw` sends `-少女已取书-` when a current output target is available. `return` sends `-少女已还书-`. Both notices are runtime side effects; the LLM-facing tool schema only exposes the `bookcase` input fields.
 

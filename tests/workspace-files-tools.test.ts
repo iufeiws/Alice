@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWorkspaceFilesTools } from "../tools/workspace-files/src/index.js";
+import { createWorkspaceFilesTools } from "./tools/workspace-files/src/index.js";
 
 const fs = await import("node:fs");
 const os = await import("node:os");
@@ -26,7 +26,7 @@ test("Read reports empty files and rejects paths outside workspace", async () =>
 
   const empty = await tools.execute({ id: "read_empty", toolName: "Read", input: { file_path: "empty.txt" } });
   const outside = await tools.execute({ id: "read_outside", toolName: "Read", input: { file_path: outsidePath } });
-  const escape = await tools.execute({ id: "read_escape", toolName: "Read", input: { file_path: "../secret.txt" } });
+  const escape = await tools.execute({ id: "read_escape", toolName: "Read", input: { file_path: "./secret.txt" } });
 
   assert.equal(empty.ok, true);
   assert.equal(empty.output, "File is empty.");

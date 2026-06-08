@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../core/text-renderer/src/index.js";
+import { createCurrentTimeProvider } from "./core/time/src/index.js";
+import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "./core/text-renderer/src/index.js";
 
 test("renderLLMText resolves common variable placeholders", () => {
   assert.equal(renderLLMText("hello {{ user }} at {{date_time}}", {

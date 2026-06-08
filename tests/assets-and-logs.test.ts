@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveAdminAssetPath } from "../apps/api/src/asset-utils.js";
-import { createFileLogStore } from "../packages/storage/src/file-log-store.js";
+import { resolveAdminAssetPath } from "./apps/api/src/asset-utils.js";
+import { createFileLogStore } from "./packages/storage/src/file-log-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -15,7 +15,7 @@ test("admin assets are constrained to the configured asset root", () => {
     path.join(root, "ok.png")
   );
   assert.throws(
-    () => resolveAdminAssetPath("../secret.png", { root, allowedExtensions: [".png"], maxBytes: 10 }),
+    () => resolveAdminAssetPath("./secret.png", { root, allowedExtensions: [".png"], maxBytes: 10 }),
     /asset_outside_assets/
   );
   assert.throws(

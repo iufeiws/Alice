@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame, type WebRtcVoiceConfig } from "../plugins/webrtc-voice/src/index.js";
-import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../plugins/asr/src/index.js";
-import { createTalkRuntime } from "../apps/api/src/talk-runtime.js";
-import { createCurrentTimeProvider } from "../core/time/src/index.js";
-import { createTalkStore } from "../packages/storage/src/talk-store.js";
+import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame, type WebRtcVoiceConfig } from "./plugins/webrtc-voice/src/index.js";
+import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "./plugins/asr/src/index.js";
+import { createTalkRuntime } from "./apps/api/src/talk-runtime.js";
+import { createCurrentTimeProvider } from "./core/time/src/index.js";
+import { createTalkStore } from "./packages/storage/src/talk-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

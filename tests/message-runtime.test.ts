@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMessageRuntime } from "../apps/api/src/message-runtime.js";
-import { createAgentStateController, type AgentStateStore } from "../core/agent/src/state.js";
-import { createAliceStore, type StoredMessageLog } from "../packages/storage/src/sqlite-store.js";
-import type { AgentEvent, AgentOutput } from "../packages/types/src/index.js";
+import { createMessageRuntime } from "./apps/api/src/message-runtime.js";
+import { createAgentStateController, type AgentStateStore } from "./core/agent/src/state.js";
+import { createAliceStore, type StoredMessageLog } from "./packages/storage/src/sqlite-store.js";
+import type { AgentEvent, AgentOutput } from "./packages/types/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

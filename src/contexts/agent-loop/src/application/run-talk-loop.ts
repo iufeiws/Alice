@@ -5,6 +5,7 @@ import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
+import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
 export type TalkAgentLoopInput = Omit<ChatAgentLoopInput, "llmInput"> & {
@@ -46,6 +47,7 @@ type TalkAgentLoopDeps = {
   memoryStore: { read(): PromptRenderContext["memory"] };
   diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
   buildNextLoopMessages(sessionId: string): Promise<LLMMessage[]> | LLMMessage[];
+  maxPendingVoiceOutputChars?: number;
   visibleToolNames(profile: PromptProfile): string[];
   toolPlugins: readonly ToolPlugin[];
   getLLMConfig(): TalkAgentLoopLLMConfig;
@@ -67,7 +69,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   const activeTalkAgentLoops = new Set<string>();
   const activeTalkAgentLoopControllers = new Map<string, AbortController>();
   const activeTalkConversationStartIndexes = new Map<string, number>();
-  const maxPendingVoiceOutputChars = 12;
+  const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
   async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
     if (activeTalkAgentLoops.has(sessionId)) return;

@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTalkAgentLoopForSession } from "../src/contexts/agent-loop/src/application/run-talk-loop.js";
+import { defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 
 test("talk loop waits for voice output backpressure instead of exiting", async () => {
-  let pendingChars = 12;
+  let pendingChars = defaultTalkOutputReadyChars;
   let sleepCalls = 0;
   let sendCalls = 0;
   let maxRoundEvent: { sessionId: string; rounds: number } | undefined;

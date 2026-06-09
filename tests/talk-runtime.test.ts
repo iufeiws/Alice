@@ -1,22 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
+import { createTalkRuntime, defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("talk runtime exposes chunks after punctuation and twelve visible characters, then flushes tail", () => {
+test("talk runtime exposes chunks after punctuation and the default ready character count, then flushes tail", () => {
   const runtime = createTestRuntime("chunk");
 
   runtime.openSession(sessionInput("session-chunk"));
   runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "你好，" });
   assert.equal(runtime.claimReadyOutputChunk("session-chunk"), undefined);
 
-  runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "今天要不要一起散步？" });
+  runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "今天要不要一起去公园散步，然后喝茶？" });
   const first = runtime.claimReadyOutputChunk("session-chunk");
-  assert.equal(first?.text, "你好，今天要不要一起散步？");
+  assert.equal(first?.text, "你好，今天要不要一起去公园散步，然后喝茶？");
+  assert.ok((first?.text.length ?? 0) >= defaultTalkOutputReadyChars);
   assert.equal(first?.outputId, "output-1");
   assert.equal(runtime.claimReadyOutputChunk("session-chunk"), undefined);
 
@@ -31,8 +32,8 @@ test("talk runtime reports pending voice output chars for ready chunks and strea
   const runtime = createTestRuntime("pending-voice-output");
 
   runtime.openSession(sessionInput("session-pending-output"));
-  runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "你好，今天要不要一起散步？" });
-  assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), "你好，今天要不要一起散步？".length);
+  runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "你好，今天要不要一起去公园散步，然后喝茶？" });
+  assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), "你好，今天要不要一起去公园散步，然后喝茶？".length);
 
   runtime.claimReadyOutputChunk("session-pending-output");
   assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), 0);

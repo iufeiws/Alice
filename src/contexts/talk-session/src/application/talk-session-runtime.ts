@@ -93,12 +93,12 @@ export type TalkRuntimeDeps = {
   clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
 };
 
-const defaultReadyChars = 12;
+export const defaultTalkOutputReadyChars = 20;
 const defaultMaxContinuousRoundIdleMs = 60_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
-  const readyChars = deps.readyChars ?? defaultReadyChars;
+  const readyChars = deps.readyChars ?? defaultTalkOutputReadyChars;
   const maxContinuousRoundIdleMs = deps.maxContinuousRoundIdleMs ?? defaultMaxContinuousRoundIdleMs;
   const timers = {
     setTimeout: deps.setTimeout ?? ((handler: () => void, ms: number) => setTimeout(handler, ms)),

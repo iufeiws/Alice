@@ -477,6 +477,7 @@ export function renderVoiceCallHtml(): string {
   <script type="module">
     const routes = ${JSON.stringify(voiceCallRoutes)};
     const initialIceServers = ${JSON.stringify(config.iceServers)};
+    const inboundAudio = ${JSON.stringify(config.inboundAudio)};
     const app = document.querySelector(".voice-call-app");
     const statusTitle = document.getElementById("statusTitle");
     const statusSubtitle = document.getElementById("statusSubtitle");
@@ -509,6 +510,9 @@ export function renderVoiceCallHtml(): string {
     let localAnalyser;
     let remoteAnalyser;
     let audioContext;
+    let pcmSource;
+    let pcmProcessor;
+    let speechActive = false;
     let connectedAt = 0;
     let elapsedTimer;
     let animationFrame;
@@ -590,6 +594,16 @@ export function renderVoiceCallHtml(): string {
         setPhase("preloading", "正在连接后台");
         callButton.disabled = true;
         const config = await loadConfig();
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1
+          }
+        });
+        ensureAudioAnalyser(localStream, "local");
+        startPcmStreaming(localStream);
         peer = new RTCPeerConnection({ iceServers: config.iceServers || initialIceServers });
         peer.addTransceiver("audio", { direction: "recvonly" });
         peer.addEventListener("track", (event) => {
@@ -613,7 +627,9 @@ export function renderVoiceCallHtml(): string {
         await openSignaling(config.routes?.signaling || routes.signaling);
         await unlockAudio();
       } catch (error) {
+        stopLocalAudio();
         if (error && error.name === "NotAllowedError") {
+          callButton.disabled = false;
           setPhase("permission_required");
           showError("需要麦克风权限", "请在浏览器设置中允许麦克风访问。");
           return;
@@ -738,8 +754,7 @@ export function renderVoiceCallHtml(): string {
       sendSignal({ type: "hangup", reason });
       socket?.close();
       peer?.close();
-      for (const track of localStream?.getTracks?.() || []) track.stop();
-      localStream = undefined;
+      stopLocalAudio();
       clearInterval(elapsedTimer);
       callButton.disabled = false;
       setPhase("ended");
@@ -749,6 +764,7 @@ export function renderVoiceCallHtml(): string {
       if (phase === "idle" || phase === "ended" || phase === "error") return;
       pageHolding = true;
       sendSignal({ type: "hold", reason });
+      stopTalking();
       for (const track of localStream?.getAudioTracks?.() || []) track.enabled = false;
       clearInterval(elapsedTimer);
       setPhase("reconnecting", "页面已暂停，返回后继续");
@@ -804,16 +820,29 @@ export function renderVoiceCallHtml(): string {
     function startHoldToTalk(event) {
       if (inputMode !== "hold_to_talk") return;
       event.preventDefault();
+      startTalking();
       holdTalkButton.classList.add("pressed");
-      sendSignal({ type: "hold-to-talk", active: true });
       userTranscript.textContent = "正在录音";
     }
 
     function stopHoldToTalk() {
       if (inputMode !== "hold_to_talk") return;
+      stopTalking();
       holdTalkButton.classList.remove("pressed");
-      sendSignal({ type: "hold-to-talk", active: false });
       userTranscript.textContent = "录音已结束";
+    }
+
+    function startTalking() {
+      if (speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
+      void audioContext?.resume?.();
+      speechActive = true;
+      sendSignal({ type: "hold-to-talk", active: true });
+    }
+
+    function stopTalking() {
+      if (!speechActive) return;
+      speechActive = false;
+      sendSignal({ type: "hold-to-talk", active: false });
     }
 
     function togglePortraitCollapsed() {
@@ -972,6 +1001,52 @@ export function renderVoiceCallHtml(): string {
       remoteAudio.muted = false;
       remoteAudio.volume = 1;
       await remoteAudio.play().catch(() => {});
+    }
+
+    function startPcmStreaming(stream) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext || !stream) throw new Error("浏览器不支持音频采集");
+      audioContext ||= new AudioContext();
+      pcmSource = audioContext.createMediaStreamSource(stream);
+      pcmProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      pcmProcessor.onaudioprocess = (event) => {
+        if (!speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const pcm = downsampleToPcm16(input, audioContext.sampleRate, inboundAudio.sampleRateHz);
+        if (!pcm.byteLength) return;
+        let binary = "";
+        const bytes = new Uint8Array(pcm.buffer);
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        sendSignal({ type: "audio-chunk", data: btoa(binary) });
+      };
+      pcmSource.connect(pcmProcessor);
+      pcmProcessor.connect(audioContext.destination);
+    }
+
+    function stopPcmStreaming() {
+      pcmProcessor?.disconnect?.();
+      pcmSource?.disconnect?.();
+      pcmProcessor = undefined;
+      pcmSource = undefined;
+      speechActive = false;
+    }
+
+    function stopLocalAudio() {
+      stopPcmStreaming();
+      for (const track of localStream?.getTracks?.() || []) track.stop();
+      localStream = undefined;
+    }
+
+    function downsampleToPcm16(input, sourceRate, targetRate) {
+      const ratio = sourceRate / targetRate;
+      const length = Math.floor(input.length / ratio);
+      const output = new Int16Array(length);
+      for (let index = 0; index < length; index += 1) {
+        const sourceIndex = Math.floor(index * ratio);
+        const sample = Math.max(-1, Math.min(1, input[sourceIndex] || 0));
+        output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      return output;
     }
 
     function ensureAudioAnalyser(stream, side) {

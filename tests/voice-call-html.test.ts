@@ -28,3 +28,17 @@ test("voice-call text input matches webrtc voice call typed interrupt behavior",
   assert.match(html, /if \(text\.length <= 1\) \{/);
   assert.doesNotMatch(html, /if \(text\.length <= 3\)/);
 });
+
+test("voice-call hold-to-talk streams microphone PCM chunks to signaling", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(html, /const inboundAudio = \{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","chunkMs":100\};/);
+  assert.match(html, /startPcmStreaming\(localStream\);/);
+  assert.match(html, /function startPcmStreaming\(stream\)/);
+  assert.match(html, /downsampleToPcm16\(input, audioContext\.sampleRate, inboundAudio\.sampleRateHz\)/);
+  assert.match(html, /sendSignal\(\{ type: "audio-chunk", data: btoa\(binary\) \}\);/);
+  assert.match(html, /sendSignal\(\{ type: "hold-to-talk", active: true \}\);/);
+  assert.match(html, /sendSignal\(\{ type: "hold-to-talk", active: false \}\);/);
+  assert.match(html, /stopPcmStreaming\(\);/);
+});

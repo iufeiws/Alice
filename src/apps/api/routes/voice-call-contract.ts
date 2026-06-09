@@ -23,6 +23,7 @@ export type VoiceCallControlMessage =
   | { type: "offer"; sdp: string }
   | { type: "ice"; candidate: unknown }
   | { type: "speech-state"; active: boolean }
+  | { type: "audio-chunk"; data: string }
   | { type: "input-mode"; mode: VoiceCallInputMode }
   | { type: "hold-to-talk"; active: boolean }
   | { type: "mute"; muted: boolean }
@@ -49,6 +50,12 @@ export type VoiceCallConfigResponse = {
     portraitUrl: string;
     maxWidthPx: number;
   };
+  inboundAudio: {
+    sampleRateHz: number;
+    channels: number;
+    encoding: "pcm_s16le";
+    chunkMs: number;
+  };
 };
 
 export function defaultVoiceCallConfigResponse(): VoiceCallConfigResponse {
@@ -58,6 +65,12 @@ export function defaultVoiceCallConfigResponse(): VoiceCallConfigResponse {
     ui: {
       portraitUrl: voiceCallRoutes.portrait,
       maxWidthPx: 480
+    },
+    inboundAudio: {
+      sampleRateHz: 16_000,
+      channels: 1,
+      encoding: "pcm_s16le",
+      chunkMs: 100
     }
   };
 }

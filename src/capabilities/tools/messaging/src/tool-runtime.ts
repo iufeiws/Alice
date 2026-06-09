@@ -9,7 +9,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: { photo: any };
+  config: { photo: any; tts?: any };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;
@@ -28,6 +28,7 @@ export function createToolRuntime(input: {
     outputRouter: input.outputRouter,
     time: input.time,
     voiceSynthesizer: input.voiceSynthesizer,
+    voiceMessageTtsTrainingOutputDir: input.config.tts?.voiceMessageTrainingOutputDir,
     getUserName: () => input.promptProfileStore.get().userName,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,

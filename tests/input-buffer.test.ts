@@ -87,6 +87,7 @@ test("tts config has genie defaults and moss env overrides", () => {
   assert.equal(defaults.mossOutputDir, "assets/generated/tts");
   assert.equal(defaults.mossTimeoutMs, 120000);
   assert.equal(defaults.voiceCallTrainingOutputDir, "assets/generated/tts-training/voice-call");
+  assert.equal(defaults.voiceMessageTrainingOutputDir, "assets/generated/tts-training/voice-massage");
   assert.equal(defaults.generatedCleanupEnabled, true);
 
   const custom = loadConfig({
@@ -97,6 +98,7 @@ test("tts config has genie defaults and moss env overrides", () => {
     MOSS_TTS_OUTPUT_DIR: "assets/generated/custom-tts",
     MOSS_TTS_TIMEOUT_MS: "5000",
     TTS_VOICE_CALL_TRAINING_OUTPUT_DIR: "assets/training/voice-call",
+    TTS_VOICE_MESSAGE_TRAINING_OUTPUT_DIR: "assets/training/voice-message",
     TTS_GENERATED_CLEANUP_ENABLED: "false"
   }).tts;
   assert.equal(custom.mossBaseURL, "http://localhost:9000");
@@ -107,6 +109,7 @@ test("tts config has genie defaults and moss env overrides", () => {
   assert.equal(custom.mossOutputDir, "assets/generated/custom-tts");
   assert.equal(custom.mossTimeoutMs, 5000);
   assert.equal(custom.voiceCallTrainingOutputDir, "assets/training/voice-call");
+  assert.equal(custom.voiceMessageTrainingOutputDir, "assets/training/voice-message");
   assert.equal(custom.generatedCleanupEnabled, false);
 });
 

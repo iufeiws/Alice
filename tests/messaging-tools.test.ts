@@ -899,10 +899,12 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: AgentOutput[] = [];
   let generatedPath = "";
+  const trainingDir = path.join(dir, "tts-training", "voice-massage");
   const tools = createMessagingTools({
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
     sleep: async () => {},
+    voiceMessageTtsTrainingOutputDir: trainingDir,
     voiceSynthesizer: async ({ text }) => {
       generatedPath = path.join(dir, "voice.wav");
       fs.writeFileSync(generatedPath, `voice:${text}`);
@@ -928,6 +930,18 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
   assert.equal(fs.existsSync(generatedPath), false);
+  const trainingFiles = fs.readdirSync(trainingDir).sort();
+  assert.equal(trainingFiles.length, 2);
+  const audioFileName = trainingFiles.find((fileName) => fileName.endsWith(".wav"));
+  assert.ok(audioFileName);
+  const audioFilePath = path.join(trainingDir, audioFileName);
+  assert.equal(fs.readFileSync(audioFilePath, "utf8"), "voice:晚点见");
+  const metadata = JSON.parse(fs.readFileSync(`${audioFilePath}.json`, "utf8"));
+  assert.equal(metadata.text, "晚点见");
+  assert.equal(metadata.status, "sent");
+  assert.equal(metadata.plugin, "wechat");
+  assert.equal(metadata.sessionId, "wechat:dm:wx-user");
+  assert.equal(metadata.assetId, "generated/tts/voice.wav");
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
   const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
   assert.equal(stored.length, 1);
@@ -2494,9 +2508,11 @@ test("send_chat voice send failure marks failed and removes generated file witho
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   let attempts = 0;
   let generatedPath = "";
+  const trainingDir = path.join(dir, "tts-training", "voice-massage");
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
+    voiceMessageTtsTrainingOutputDir: trainingDir,
     voiceSynthesizer: async () => {
       generatedPath = path.join(dir, "voice.wav");
       fs.writeFileSync(generatedPath, "voice");
@@ -2525,6 +2541,12 @@ test("send_chat voice send failure marks failed and removes generated file witho
   assert.equal(result.error, "wechat audio failed");
   assert.equal(attempts, 1);
   assert.equal(fs.existsSync(generatedPath), false);
+  const trainingFiles = fs.readdirSync(trainingDir).sort();
+  const audioFileName = trainingFiles.find((fileName) => fileName.endsWith(".wav"));
+  assert.ok(audioFileName);
+  const audioFilePath = path.join(trainingDir, audioFileName);
+  assert.equal(fs.readFileSync(audioFilePath, "utf8"), "voice");
+  assert.equal(JSON.parse(fs.readFileSync(`${audioFilePath}.json`, "utf8")).status, "failed");
   assert.equal(logs.filter((entry) => entry.status === "send_failed").length, 1);
   assert.equal(logs.some((entry) => entry.status === "retry_failed"), false);
   const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");

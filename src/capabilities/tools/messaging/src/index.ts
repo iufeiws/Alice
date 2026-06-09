@@ -14,6 +14,7 @@ import type {
 } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 
 const fsp = await import("node:fs/promises");
+const path = await import("node:path");
 
 export * from "./sent-message-utils.js";
 
@@ -40,6 +41,7 @@ export type MessagingToolsDeps = {
   time?: CurrentTimeProvider;
   sleep?: (ms: number) => Promise<void>;
   voiceSynthesizer?: VoiceSynthesizer;
+  voiceMessageTtsTrainingOutputDir?: string;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   getShellSwitchLogs?(): Array<{
@@ -348,6 +350,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);
       synthesized = await voiceSynthesizer({ text, time });
       const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
+      await archiveVoiceMessageTtsOutput(target, text, synthesized, audioResult.ok ? "sent" : "failed");
       if (target.plugin !== "feishu" || !audioResult.ok) return [audioResult];
       await sendFeishuVoiceTranscript(target, text);
       return [audioResult];
@@ -368,6 +371,27 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       return [{ ok: false, error: reason, content: text }];
     } finally {
       if (synthesized) await removeGeneratedVoice(synthesized.filePath);
+    }
+  }
+
+  async function archiveVoiceMessageTtsOutput(
+    target: MessagingToolTarget,
+    text: string,
+    synthesized: VoiceSynthesisResult,
+    status: "sent" | "failed"
+  ): Promise<void> {
+    try {
+      const filePath = await copyVoiceMessageTrainingAsset({
+        outputDir: deps.voiceMessageTtsTrainingOutputDir ?? "assets/generated/tts-training/voice-massage",
+        text,
+        target,
+        synthesized,
+        status,
+        archivedAt: time.now().iso
+      });
+      deps.appendLog?.("info", `voice message tts archived: ${filePath}`);
+    } catch (error) {
+      deps.appendLog?.("warn", `voice message tts archive failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -1068,4 +1092,43 @@ async function removeGeneratedVoice(filePath: string): Promise<void> {
     const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
     if (code !== "ENOENT") throw error;
   }
+}
+
+async function copyVoiceMessageTrainingAsset(input: {
+  outputDir: string;
+  text: string;
+  target: MessagingToolTarget;
+  synthesized: VoiceSynthesisResult;
+  status: "sent" | "failed";
+  archivedAt: string;
+}): Promise<string> {
+  const outputDir = path.resolve(input.outputDir);
+  await fsp.mkdir(outputDir, { recursive: true });
+  const extension = path.extname(input.synthesized.filePath) || ".audio";
+  const baseName = [
+    safeTrainingPathPart(input.archivedAt.replace(/[:.]/g, "-")),
+    safeTrainingPathPart(input.target.plugin),
+    safeTrainingPathPart(input.target.sessionId),
+    safeTrainingPathPart(path.basename(input.synthesized.assetId, path.extname(input.synthesized.assetId)))
+  ].join("-");
+  const audioPath = path.join(outputDir, `${baseName}${extension}`);
+  await fsp.copyFile(input.synthesized.filePath, audioPath);
+  await fsp.writeFile(`${audioPath}.json`, `${JSON.stringify({
+    text: input.text,
+    status: input.status,
+    plugin: input.target.plugin,
+    accountId: input.target.accountId,
+    channelId: input.target.channelId,
+    userId: input.target.userId,
+    sessionId: input.target.sessionId,
+    assetId: input.synthesized.assetId,
+    sourceFilePath: input.synthesized.filePath,
+    audioFilePath: audioPath,
+    archivedAt: input.archivedAt
+  }, null, 2)}\n`, "utf8");
+  return audioPath;
+}
+
+function safeTrainingPathPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 96) || "unknown";
 }

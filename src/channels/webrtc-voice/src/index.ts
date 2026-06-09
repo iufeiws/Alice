@@ -646,6 +646,7 @@ async function createCallState(
   let interruptEpoch = 0;
   let stableSequence = 20_000;
   let outboundRtpTimestamp = 0;
+  const playbackTextAdvanceDelayMs = 100;
   const interruptBatch: { items: InterruptItem[] } = { items: [] };
   const activeTtsTasks = new Set<TtsTask>();
   const activePlaybackTasks = new Set<Promise<unknown>>();
@@ -1306,6 +1307,14 @@ async function createCallState(
             const delayMs = targetAt - (deps.now?.().getTime() ?? Date.now());
             if (delayMs > 0) await (deps.sleep ?? sleep)(delayMs);
             if (written) {
+              const nextConsumerText = normalizePlaybackTextCache(frameText);
+              if (
+                nextConsumerText
+                && playbackConsumer.playbackTextCache
+                && playbackConsumer.playbackTextCache !== nextConsumerText
+              ) {
+                await (deps.sleep ?? sleep)(playbackTextAdvanceDelayMs);
+              }
               updatePlaybackConsumer(item, frameText, Math.max(textTotalMs ?? 0, item.totalMs ?? 0), { emit: true });
               if (frameText) emitPlayingText(frameText);
               else reportMissingPlayingText(frameCount);
@@ -1327,9 +1336,9 @@ async function createCallState(
                 if (playbackFrame) break;
                 const nextFrameAt = playbackStartedAt + playbackFrameCount * deps.config.outboundAudio.frameMs;
                 const remainingMs = nextFrameAt - (deps.now?.().getTime() ?? Date.now());
-                if (remainingMs >= 20) {
+                if (remainingMs >= playbackTextAdvanceDelayMs) {
                   await Promise.race([
-                    (deps.sleep ?? sleep)(remainingMs - 19),
+                    (deps.sleep ?? sleep)(remainingMs - playbackTextAdvanceDelayMs + 1),
                     frameQueue.waitFor(() => frameQueue.length > 0 || frameQueue.closed)
                   ]);
                   continue;
@@ -1342,7 +1351,7 @@ async function createCallState(
                   if (silenceFrames === 1 || silenceFrames % 50 === 0) {
                     deps.emitStatus?.({ state: "tts.queue.silence", detail: `silence=${silenceFrames} sent=${frameCount} encoded=${encodedFrames} chunks=${audioChunks}` });
                   }
-                  await (deps.sleep ?? sleep)(deps.config.outboundAudio.frameMs);
+                  await (deps.sleep ?? sleep)(playbackTextAdvanceDelayMs);
                 }
               }
               if (!playbackFrame) continue;

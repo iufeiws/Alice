@@ -1429,7 +1429,7 @@ test("WebRTC voice does not advance playback text until underrun silence finishe
     sleep: async (ms) => {
       if (sawSilence && !checkedSilenceSleep) {
         checkedSilenceSleep = true;
-        assert.equal(ms, 20);
+        assert.equal(ms, 100);
         assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
         assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
         releaseNextFrame();
@@ -1489,9 +1489,8 @@ test("WebRTC voice does not advance playback text until the next real frame fini
       }
     },
     sleep: async (ms) => {
-      if (!checkedSecondFrameSleep && peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99")) {
+      if (!checkedSecondFrameSleep && ms === 100 && peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99")) {
         checkedSecondFrameSleep = true;
-        assert.equal(ms, 20);
         assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
         assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
       }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -459,8 +459,10 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
     contentType: "voicecalltranscript",
     contentText: [
       "-已接通-",
-      "{{user}}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。",
-      "Alice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。",
+      "{{user}}:喂，爱丽丝，能听到吗？",
+      "{{user}}:我刚到车站，想确认一下今晚的安排。",
+      "Alice:听得到。",
+      "Alice:今晚先去吃饭，然后回去把明天要用的东西收好。",
       "[message]{{user}}:我刚才也发了一条飞书确认。",
       "{{user}}:好，那我二十分钟后到。你帮我记一下别忘了买水。",
       "Alice:记下了，路上慢点，到附近再给我发一条消息。",
@@ -485,7 +487,7 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
   const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: {} });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:20\]\n-已接通-/);
-  assert.match(String(result.output), /\{\{user\}\}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。\nAlice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。/);
+  assert.match(String(result.output), /\{\{user\}\}:喂，爱丽丝，能听到吗？\n\{\{user\}\}:我刚到车站，想确认一下今晚的安排。\nAlice:听得到。\nAlice:今晚先去吃饭，然后回去把明天要用的东西收好。/);
   assert.match(String(result.output), /\[message\]\{\{user\}\}:我刚才也发了一条飞书确认。\n\{\{user\}\}:好，那我二十分钟后到。你帮我记一下别忘了买水。/);
   assert.match(String(result.output), /Alice:记下了，路上慢点，到附近再给我发一条消息。\n\[message\]Alice:我在飞书里也提醒你买水了。\n-已挂断-\n<call-duration>0:20<\/call-duration>\n<\/voice-call-transcript>\n<\/chat-log>/);
   assert.doesNotMatch(String(result.output), /\[message\]听得到|\[message\]记下了/);
@@ -1039,6 +1041,27 @@ test("tts plugin config reads switch, api preset, and prompt from plugin folder 
   assert.equal(config.voice?.modelConfigs?.jp?.splitText, false);
 });
 
+test("tts plugin config migrates legacy remote settings into Genie conversion", () => {
+  const dir = makeTempDir("tts-config-conversion");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    remote: {
+      enabled: true,
+      baseURL: "192.168.0.103"
+    },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+
+  const config = readTtsPluginConfig(configPath);
+
+  assert.equal(config.conversion?.provider, "genie");
+  assert.equal(config.conversion?.genie?.enabled, true);
+  assert.equal(config.conversion?.genie?.baseURL, "http://192.168.0.103:8767");
+  assert.equal(config.remote?.baseURL, "http://192.168.0.103:8767");
+});
+
 test("tts plugin switch is read from plugin config at synthesis time", async () => {
   const dir = makeTempDir("tts-switch");
   const configPath = path.join(dir, "config.json");
@@ -1078,6 +1101,100 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
   await plugin.voiceSynthesizer({ text: "原文", time: createCurrentTimeProvider("UTC") });
 
   assert.deepEqual(synthesizedTexts, ["原文", "日本語"]);
+});
+
+test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation text", async () => {
+  const requests: Array<{ url: string; body: any; authorization: string | null }> = [];
+  const first = new Uint8Array(32_000 * 2);
+  const second = new Uint8Array(32_000 * 2);
+  second.fill(1);
+  const fakeFetch = async (url: string | URL | Request, init?: RequestInit) => {
+    requests.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body)),
+      authorization: init?.headers instanceof Headers ? init.headers.get("authorization") : (init?.headers as Record<string, string>)?.authorization ?? null
+    });
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(first);
+        controller.enqueue(second);
+        controller.close();
+      }
+    }), { status: 200, headers: { "content-type": "application/octet-stream" } });
+  };
+  const synthesize = createOpenAiApiTtsVoiceSynthesizer({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "openai-api",
+      openaiApi: {
+        apiPresetName: "speech",
+        model: "higgs-audio-v3-tts",
+        voice: "default",
+        sampleRate: 16_000,
+        channels: 1
+      }
+    }
+  }, {
+    fetch: fakeFetch as typeof fetch,
+    resolveApiPreset(name) {
+      assert.equal(name, "speech");
+      return {
+        name,
+        baseURL: "https://api.boson.ai/v1",
+        apiKey: "test-key",
+        model: "preset-model"
+      };
+    }
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({
+    text: "第一句。第二句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    chunks.push([chunk.text, chunk.chunk.byteLength, chunk.sampleRateHz, chunk.channels]);
+  }
+
+  assert.equal(requests[0].url, "https://api.boson.ai/v1/audio/speech");
+  assert.equal(requests[0].authorization, "Bearer test-key");
+  assert.deepEqual(requests[0].body, {
+    input: "第一句。第二句。",
+    model: "higgs-audio-v3-tts",
+    voice: "default",
+    response_format: "pcm",
+    stream: true
+  });
+  assert.deepEqual(chunks, [
+    ["第一句。", 64_000, 16_000, 1],
+    ["第二句。", 64_000, 16_000, 1]
+  ]);
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-09T02:10:51.609Z"))
+  });
+  try {
+    assert.equal(result.assetId, "generated/tts/2026-06-09T02_10_51.609-openai-api.wav");
+    assert.equal(result.filePath, path.join("assets", "generated", "tts", "2026-06-09T02_10_51.609-openai-api.wav"));
+    assert.equal(fs.existsSync(result.filePath), true);
+    assert.equal(path.resolve("assets", result.assetId), path.resolve(result.filePath));
+    const wav = fs.readFileSync(result.filePath);
+    assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 16_000);
+    assert.equal(requests[1].body.response_format, "pcm");
+    assert.equal("stream" in requests[1].body, false);
+  } finally {
+    fs.rmSync(result.filePath, { force: true });
+  }
+});
+
+test("tts PCM progress mapper falls back to UTF character slices without punctuation", () => {
+  const mapper = createTtsPcmProgressTextMapper("abcdef", 6, { sampleRate: 1000, channels: 1, bytesPerSample: 1 });
+
+  assert.equal(mapper.take(2), "ab");
+  assert.equal(mapper.take(2), "cd");
+  assert.equal(mapper.take(2), "ef");
 });
 
 test("tts stream translates the full conversation once and yields Genie audio chunks", async () => {

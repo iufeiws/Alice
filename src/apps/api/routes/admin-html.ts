@@ -1323,7 +1323,6 @@ export function renderAdminHtmlV2(): string {
             <section class="plugin-config-section" data-plugin-config-section="translation">
               <div class="plugin-section-head">
                 <h2>Translation</h2>
-                \${render("currentTranslation.translationEnabled")}
               </div>
               <div class="plugin-preset-row">
                 \${render("translationEditPresetName")}
@@ -1338,9 +1337,13 @@ export function renderAdminHtmlV2(): string {
                 <button type="button" data-plugin-section-save="translation">Save Translation Preset</button>
               </div>
             </section>
-            <section class="plugin-config-section" data-plugin-config-section="model">
+            <section class="plugin-config-section" data-plugin-config-section="model-genie" data-plugin-conversion-panel="genie">
               <div class="plugin-section-head">
-                <h2>Model</h2>
+                <h2>Model / Conversion / Genie</h2>
+              </div>
+              <div class="plugin-public-grid">
+                \${render("conversion.genie.enabled")}
+                \${render("conversion.genie.baseURL")}
               </div>
               <div class="plugin-preset-row">
                 \${render("voice.modelEditPresetName")}
@@ -1357,7 +1360,22 @@ export function renderAdminHtmlV2(): string {
                 \${render("voice.currentModel.partSilenceSeconds")}
               </div>
               <div class="prompt-actions">
-                <button type="button" data-plugin-section-save="model">Save Model Preset</button>
+                <button type="button" data-plugin-section-save="model-genie">Save Genie Settings</button>
+              </div>
+            </section>
+            <section class="plugin-config-section" data-plugin-config-section="conversion-openai-api" data-plugin-conversion-panel="openai-api">
+              <div class="plugin-section-head"><h2>Conversion / OpenAI-API</h2></div>
+              <div class="plugin-public-grid">
+                \${render("conversion.openaiApi.apiPresetName")}
+                \${render("conversion.openaiApi.model")}
+                \${render("conversion.openaiApi.voice")}
+                \${render("conversion.openaiApi.timeoutMs")}
+                \${render("conversion.openaiApi.sampleRate")}
+                \${render("conversion.openaiApi.channels")}
+                \${render("conversion.openaiApi.extraParamsJson")}
+              </div>
+              <div class="prompt-actions">
+                <button type="button" data-plugin-section-save="conversion-openai-api">Save OpenAI-API Conversion</button>
               </div>
             </section>
             <section class="plugin-config-section" data-plugin-config-section="common">
@@ -1365,9 +1383,9 @@ export function renderAdminHtmlV2(): string {
               <div class="plugin-public-grid">
                 \${render("translationPresetName")}
                 \${render("voice.modelConfigName")}
+                \${render("conversion.provider")}
+                \${render("currentTranslation.translationEnabled")}
                 \${render("enabled")}
-                \${render("remote.enabled")}
-                \${render("remote.baseURL")}
                 \${render("targetRoute")}
                 \${render("persistTranslation")}
               </div>
@@ -1419,6 +1437,15 @@ export function renderAdminHtmlV2(): string {
             setPluginFieldValue("voice.newModelConfigName", "");
           });
         }
+        const conversionProviderSelect = document.querySelector('[data-plugin-field="conversion.provider"]');
+        const applyConversionPanel = () => {
+          const provider = conversionProviderSelect?.value || "genie";
+          document.querySelectorAll("[data-plugin-conversion-panel]").forEach((node) => {
+            node.style.display = node.dataset.pluginConversionPanel === provider ? "" : "none";
+          });
+        };
+        conversionProviderSelect?.addEventListener("change", applyConversionPanel);
+        applyConversionPanel();
       }
 
       function setPluginFieldValue(field, value) {

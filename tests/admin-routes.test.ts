@@ -573,23 +573,29 @@ test("admin TTS config schema exposes voice language and language model folder",
   const configField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.modelEditPresetName");
   const languageField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.language");
   const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.modelDir");
-  const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "remote.enabled");
-  const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "remote.baseURL");
+  const providerField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.provider");
+  const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.enabled");
+  const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.baseURL");
+  const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.openaiApi.apiPresetName");
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model", "general"]);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "general"]);
   assert.equal(configField.type, "select");
-  assert.equal(configField.group, "model");
+  assert.equal(configField.group, "model_genie");
   assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["jp"]);
   assert.equal(languageField.type, "select");
-  assert.equal(languageField.group, "model");
+  assert.equal(languageField.group, "model_genie");
   assert.deepEqual(languageField.options.map((option: { value: string }) => option.value), ["jp", "zh", "en"]);
   assert.equal(modelField.label, "Model Folder");
-  assert.equal(modelField.group, "model");
+  assert.equal(modelField.group, "model_genie");
+  assert.equal(providerField.type, "select");
+  assert.equal(providerField.group, "general");
   assert.equal(remoteEnabledField.type, "switch");
-  assert.equal(remoteEnabledField.group, "general");
+  assert.equal(remoteEnabledField.group, "model_genie");
   assert.equal(remoteUrlField.type, "text");
-  assert.equal(remoteUrlField.group, "general");
+  assert.equal(remoteUrlField.group, "model_genie");
+  assert.equal(openAiPresetField.type, "apiPresetSelect");
+  assert.equal(openAiPresetField.group, "conversion_openai_api");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {

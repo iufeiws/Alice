@@ -119,7 +119,7 @@ export type EncodePcmL16StreamInput = Omit<EncodePcmL16Input, "pcm"> & {
 export type WebRtcVoiceTtsStreamEvent =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: string }
+  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
 
@@ -1181,8 +1181,46 @@ async function createCallState(
           let audioChunks = 0;
           let audioBytes = 0;
           let encodedFrames = 0;
+          const ttsIterator = abortableAsyncIterable(ttsEvents, ttsTask.controller.signal)[Symbol.asyncIterator]();
+          let firstAudioEvent: any;
+          while (!ttsTask.controller.signal.aborted && generation === playbackGeneration && playbackQueue.includes(item)) {
+            const next = await ttsIterator.next();
+            if (next.done) break;
+            const event = next.value;
+            if (event.type === "translation_started") {
+              deps.emitStatus?.({ state: "tts.stream.translation_started", detail: `${event.sequence}:${event.sourceChars}` });
+              continue;
+            }
+            if (event.type === "translation_done") {
+              deps.emitStatus?.({ state: "tts.stream.translation_done", detail: `${event.sequence}:${event.translatedChars}` });
+              continue;
+            }
+            if (event.type === "part_done") {
+              deps.emitStatus?.({ state: "tts.stream.part_done", detail: String(event.sequence) });
+              continue;
+            }
+            if (event.type === "done") {
+              deps.emitStatus?.({ state: "tts.stream.done", detail: outputId });
+              break;
+            }
+            if (event.type !== "audio") continue;
+            firstAudioEvent = event;
+            break;
+          }
+          const inputSampleRateHz = firstAudioEvent?.sampleRateHz ?? 32_000;
+          const inputChannels = firstAudioEvent?.channels ?? 1;
           const pcmChunks = async function* () {
-            for await (const event of abortableAsyncIterable(ttsEvents, ttsTask.controller.signal)) {
+            if (firstAudioEvent) {
+              audioChunks += 1;
+              audioBytes += firstAudioEvent.chunk.byteLength;
+              recordTtsAudioTextSpan(item, firstAudioEvent.text, firstAudioEvent.chunk);
+              deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${inputSampleRateHz}Hz` });
+              yield firstAudioEvent.chunk;
+            }
+            while (true) {
+              const next = await ttsIterator.next();
+              if (next.done) break;
+              const event = next.value;
               if (ttsTask.controller.signal.aborted || generation !== playbackGeneration || !playbackQueue.includes(item)) break;
               if (event.type === "translation_started") {
                 deps.emitStatus?.({ state: "tts.stream.translation_started", detail: `${event.sequence}:${event.sourceChars}` });
@@ -1205,7 +1243,7 @@ async function createCallState(
               audioBytes += event.chunk.byteLength;
               recordTtsAudioTextSpan(item, event.text, event.chunk);
               if (audioChunks === 1 || audioChunks % 20 === 0) {
-                deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}` });
+                deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${event.sampleRateHz ?? inputSampleRateHz}Hz` });
               }
               yield event.chunk;
             }
@@ -1216,8 +1254,8 @@ async function createCallState(
               let encodedMs = 0;
               for await (const frame of deps.encodePcmL16StreamToFrames!({
                 chunks: pcmChunks(),
-                inputSampleRateHz: 32_000,
-                inputChannels: 1,
+                inputSampleRateHz,
+                inputChannels,
                 sampleRateHz: deps.config.outboundAudio.sampleRateHz,
                 channels: deps.config.outboundAudio.channels,
                 frameMs: deps.config.outboundAudio.frameMs
@@ -1344,8 +1382,8 @@ async function createCallState(
             recordTtsAudioTextSpan(item, event.text, event.chunk);
             const frames = await raceWithAbort(Promise.resolve(deps.encodePcmL16ToFrames({
               pcm: event.chunk,
-              inputSampleRateHz: 32_000,
-              inputChannels: 1,
+              inputSampleRateHz: event.sampleRateHz ?? 32_000,
+              inputChannels: event.channels ?? 1,
               sampleRateHz: deps.config.outboundAudio.sampleRateHz,
               channels: deps.config.outboundAudio.channels,
               frameMs: deps.config.outboundAudio.frameMs

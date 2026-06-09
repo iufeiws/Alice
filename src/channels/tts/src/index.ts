@@ -88,6 +88,7 @@ export type TtsApiPreset = {
 export type TtsPluginConfig = {
   enabled: boolean;
   remote?: TtsRemoteConfig;
+  conversion?: TtsConversionConfig;
   translationPresetName?: string;
   translationPresets?: Record<string, TtsTranslationPreset>;
   translationEnabled: boolean;
@@ -103,6 +104,25 @@ export type TtsPluginConfig = {
 export type TtsRemoteConfig = {
   enabled?: boolean;
   baseURL?: string;
+};
+
+export type TtsConversionConfig = {
+  provider?: "genie" | "openai-api";
+  genie?: TtsRemoteConfig;
+  openaiApi?: TtsOpenAiApiConversionConfig;
+};
+
+export type TtsOpenAiApiConversionConfig = {
+  apiPresetName?: string;
+  baseURL?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  model?: string;
+  voice?: string;
+  timeoutMs?: number;
+  sampleRate?: number;
+  channels?: number;
+  extraParams?: Record<string, unknown>;
 };
 
 export type TtsTranslationPreset = {
@@ -155,6 +175,7 @@ export type TtsPluginDeps = {
   llm?: TtsLlmClient;
   llmRequestSender?: TtsLlmRequestSender;
   env?: Record<string, string | undefined>;
+  fetch?: typeof fetch;
   resolveApiPreset?(name: string): TtsApiPreset | undefined;
   createLlmClientFromPreset?(preset: TtsApiPreset, env: Record<string, string | undefined>): TtsLlmClient | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
@@ -177,13 +198,15 @@ export type TtsStreamInput = {
 export type TtsStreamChunk =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: "audio/L16; rate=32000; channels=1" }
+  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
 
 export type TtsAudioTextChunk = {
   text?: string;
   chunk: Uint8Array;
+  sampleRateHz?: number;
+  channels?: number;
 };
 
 const ttsPcmL16BytesPerMs = 32_000 * 2 / 1000;
@@ -213,6 +236,7 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   const parsed = parseJsonObject(raw);
   const preset = parseJsonObject(parsed.api_preset);
   const remote = parseJsonObject(parsed.remote);
+  const conversion = ttsConversionConfigValue(parsed.conversion, remote);
   const legacyPrompt = stringValue(parsed.prompt) || defaultPrompt();
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
   const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName, {
@@ -235,9 +259,10 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   return {
     enabled: booleanValue(parsed.enabled, false),
     remote: {
-      enabled: booleanValue(remote.enabled, true),
-      baseURL: normalizeBaseURL(stringValue(remote.baseURL) || "http://192.168.0.103:8767")
+      enabled: conversion.genie?.enabled ?? true,
+      baseURL: conversion.genie?.baseURL ?? normalizeBaseURL("http://192.168.0.103:8767")
     },
+    conversion,
     translationPresetName,
     translationPresets,
     translationEnabled: selectedTranslation.translationEnabled ?? true,
@@ -289,7 +314,13 @@ export function createTtsTranslationSynthesizer(
   const synthesize = (async (input) => {
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
-    const result = await base({
+    const conversion = selectedTtsConversionProvider(config);
+    const result = conversion === "openai-api"
+      ? await createOpenAiApiTtsVoiceSynthesizer(config, deps)({
+        ...input,
+        text: ttsText
+      })
+      : await base({
       ...input,
       text: ttsText,
       genie: ttsGenieOverrides(config)
@@ -319,7 +350,13 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     if (!config.enabled) return base(input);
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
-    const result = await base({
+    const conversion = selectedTtsConversionProvider(config);
+    const result = conversion === "openai-api"
+      ? await createOpenAiApiTtsVoiceSynthesizer(config, deps)({
+        ...input,
+        text: ttsText
+      })
+      : await base({
       ...input,
       text: ttsText,
       genie: ttsGenieOverrides(config)
@@ -443,11 +480,16 @@ export async function* streamTtsText(
 ): AsyncIterable<TtsStreamChunk> {
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
-  if (!deps.baseSynthesizer.streamAudio && !deps.baseSynthesizer.streamAudioWithText) {
+  const conversion = selectedTtsConversionProvider(config);
+  const synthesisStream = conversion === "openai-api"
+    ? createOpenAiApiTtsVoiceSynthesizer(config, deps)
+    : deps.baseSynthesizer;
+  if (!synthesisStream.streamAudio && !synthesisStream.streamAudioWithText) {
     throw new Error("tts stream requires a streaming Genie TTS synthesizer");
   }
 
   const sequence = 0;
+  const pcmFormat = selectedTtsStreamPcmFormat(config);
   const sourceText = await collectTtsStreamText(input.text);
   const sourceChars = Array.from(sourceText).length;
   if (!sourceText.trim()) {
@@ -457,14 +499,16 @@ export async function* streamTtsText(
   }
   const symbolOnly = ttsSymbolOnlyInput(sourceText);
   if (symbolOnly) {
-    const chunk = ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs);
+    const chunk = ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs, pcmFormat);
     deps.appendLog?.("info", `tts stream skipped: symbol-only input stream=${input.streamId ?? ""} symbols=${symbolOnly.symbols} silenceMs=${symbolOnly.symbols * ttsSymbolSilenceMs}`);
     yield {
       type: "audio",
       sequence,
       text: sourceText,
       chunk,
-      contentType: "audio/L16; rate=32000; channels=1"
+      contentType: ttsPcmContentType(pcmFormat),
+      sampleRateHz: pcmFormat.sampleRateHz,
+      channels: pcmFormat.channels
     };
     yield { type: "part_done", sequence };
     yield { type: "done" };
@@ -483,25 +527,36 @@ export async function* streamTtsText(
     yield { type: "translation_done", sequence, translatedChars: ttsChars };
   }
 
-  const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...streamGenie } = ttsGenieOverrides(config);
+  const streamGenie = conversion === "genie"
+    ? (() => {
+      const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...genie } = ttsGenieOverrides(config);
+      return genie;
+    })()
+    : undefined;
   deps.appendLog?.("info", `tts stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars}`);
   const sourceTextMapper = createTtsSourceTextMapper(sourceText, ttsText);
   let audioChunks = 0;
   let audioBytes = 0;
-  for await (const audio of streamTtsAudioWithOptionalText(deps.baseSynthesizer, {
+  for await (const audio of streamTtsAudioWithOptionalText(synthesisStream, {
     text: ttsText,
     time: input.time,
-    genie: streamGenie
+    ...(streamGenie ? { genie: streamGenie } : {})
   })) {
     audioChunks += 1;
     audioBytes += audio.chunk.byteLength;
     const text = audio.text ? sourceTextMapper.take(audio.text) : undefined;
+    const audioFormat = {
+      sampleRateHz: audio.sampleRateHz ?? pcmFormat.sampleRateHz,
+      channels: audio.channels ?? pcmFormat.channels
+    };
     yield {
       type: "audio",
       sequence,
       ...(text ? { text } : {}),
       chunk: audio.chunk,
-      contentType: "audio/L16; rate=32000; channels=1"
+      contentType: ttsPcmContentType(audioFormat),
+      sampleRateHz: audioFormat.sampleRateHz,
+      channels: audioFormat.channels
     };
   }
   deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${audioChunks} bytes=${audioBytes}`);
@@ -546,8 +601,24 @@ function ttsSymbolOnlyInput(text: string): { symbols: number } | undefined {
   return symbols > 0 ? { symbols } : undefined;
 }
 
-function ttsSilentPcmL16(durationMs: number): Uint8Array {
-  return new Uint8Array(Math.max(0, Math.round(durationMs * ttsPcmL16BytesPerMs)));
+function ttsSilentPcmL16(durationMs: number, format: { sampleRateHz?: number; channels?: number } = {}): Uint8Array {
+  const bytesPerMs = ((format.sampleRateHz ?? 32_000) * (format.channels ?? 1) * 2) / 1000;
+  return new Uint8Array(Math.max(0, Math.round(durationMs * bytesPerMs)));
+}
+
+function selectedTtsStreamPcmFormat(config: TtsPluginConfig): { sampleRateHz: number; channels: number } {
+  const openaiApi = config.conversion?.openaiApi;
+  if (selectedTtsConversionProvider(config) === "openai-api") {
+    return {
+      sampleRateHz: openaiApi?.sampleRate ?? 32_000,
+      channels: openaiApi?.channels ?? 1
+    };
+  }
+  return { sampleRateHz: 32_000, channels: 1 };
+}
+
+function ttsPcmContentType(format: { sampleRateHz: number; channels: number }): string {
+  return `audio/L16; rate=${format.sampleRateHz}; channels=${format.channels}`;
 }
 
 function createTtsSourceTextMapper(sourceText: string, translatedText: string): { take(translatedChunkText: string): string | undefined } {
@@ -576,6 +647,58 @@ function createTtsSourceTextMapper(sourceText: string, translatedText: string): 
       return text || undefined;
     }
   };
+}
+
+export function createTtsPcmProgressTextMapper(
+  text: string,
+  totalAudioBytes: number,
+  options: { sampleRate?: number; channels?: number; bytesPerSample?: number } = {}
+): { take(chunkBytes: number): string | undefined } {
+  const chars = Array.from(text);
+  const totalChars = chars.length;
+  const bytesPerMs = ((options.sampleRate ?? 32_000) * (options.channels ?? 1) * (options.bytesPerSample ?? 2)) / 1000;
+  const totalMs = bytesPerMs > 0 ? totalAudioBytes / bytesPerMs : 0;
+  let elapsedMs = 0;
+  let cursor = 0;
+  return {
+    take(chunkBytes: number): string | undefined {
+      if (cursor >= totalChars || totalChars <= 0) return undefined;
+      elapsedMs += bytesPerMs > 0 ? chunkBytes / bytesPerMs : 0;
+      const rawTarget = totalMs > 0 ? Math.round((elapsedMs / totalMs) * totalChars) : totalChars;
+      const target = Math.min(totalChars, Math.max(cursor + 1, snapTtsTextBoundary(chars, rawTarget, cursor)));
+      const value = chars.slice(cursor, target).join("").trim();
+      cursor = target;
+      return value || undefined;
+    }
+  };
+}
+
+function snapTtsTextBoundary(chars: string[], rawTarget: number, cursor: number): number {
+  if (rawTarget >= chars.length) return chars.length;
+  const hard = nearestBoundary(chars, rawTarget, cursor, /[。！？.!?]/u);
+  if (hard !== undefined) return hard;
+  const soft = nearestBoundary(chars, rawTarget, cursor, /[，、,;；:：]/u);
+  if (soft !== undefined) return soft;
+  return Math.min(chars.length, Math.max(cursor + 1, rawTarget));
+}
+
+function nearestBoundary(chars: string[], rawTarget: number, cursor: number, pattern: RegExp): number | undefined {
+  const candidates: number[] = [];
+  for (let index = cursor; index < chars.length; index += 1) {
+    if (pattern.test(chars[index]!)) candidates.push(index + 1);
+  }
+  if (!candidates.length) return undefined;
+  const clamped = Math.min(chars.length, Math.max(cursor + 1, rawTarget));
+  let nearest = candidates[0]!;
+  let distance = Math.abs(nearest - clamped);
+  for (const candidate of candidates.slice(1)) {
+    const nextDistance = Math.abs(candidate - clamped);
+    if (nextDistance < distance) {
+      nearest = candidate;
+      distance = nextDistance;
+    }
+  }
+  return nearest > cursor ? nearest : undefined;
 }
 
 function sourceTextBoundaries(chars: string[]): number[] {
@@ -717,6 +840,44 @@ function optionalNumberValue(value: unknown): number | undefined {
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, unknown>): TtsConversionConfig {
+  const raw = parseJsonObject(value);
+  const genie = parseJsonObject(raw.genie);
+  const openaiApi = parseJsonObject(raw.openaiApi);
+  const legacyGenie = {
+    enabled: booleanValue(legacyRemote.enabled, true),
+    baseURL: normalizeBaseURL(stringValue(legacyRemote.baseURL) || "http://192.168.0.103:8767")
+  };
+  const nextGenie = {
+    enabled: genie.enabled === undefined ? legacyGenie.enabled : booleanValue(genie.enabled, legacyGenie.enabled),
+    baseURL: normalizeBaseURL(stringValue(genie.baseURL) || legacyGenie.baseURL)
+  };
+  return {
+    provider: raw.provider === "openai-api" ? "openai-api" : "genie",
+    genie: nextGenie,
+    openaiApi: ttsOpenAiApiConversionConfigValue(openaiApi)
+  };
+}
+
+function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpenAiApiConversionConfig {
+  return {
+    apiPresetName: stringValue(raw.apiPresetName),
+    baseURL: stringValue(raw.baseURL),
+    apiKey: stringValue(raw.apiKey),
+    apiKeyEnv: stringValue(raw.apiKeyEnv),
+    model: stringValue(raw.model) || "higgs-audio-v3-tts",
+    voice: stringValue(raw.voice) || "default",
+    timeoutMs: numberValue(raw.timeoutMs, 60_000),
+    sampleRate: numberValue(raw.sampleRate, 32_000),
+    channels: numberValue(raw.channels, 1),
+    extraParams: recordValue(raw.extraParams)
+  };
+}
+
+export function selectedTtsConversionProvider(config: TtsPluginConfig): "genie" | "openai-api" {
+  return config.conversion?.provider === "openai-api" ? "openai-api" : "genie";
 }
 
 function ttsLanguageValue(value: unknown): "jp" | "zh" | "en" {
@@ -936,6 +1097,185 @@ function crc32(value: Uint8Array): number {
 
 export type ConfiguredVoiceSynthesizerDeps = MossOnnxVoiceSynthesizerDeps;
 
+export function createOpenAiApiTtsVoiceSynthesizer(config: TtsPluginConfig, deps: Pick<TtsPluginDeps, "fetch" | "env" | "resolveApiPreset" | "appendLog"> = {}): VoiceSynthesizer {
+  const synthesize = (async (request) => {
+    const settings = resolveOpenAiApiTtsSettings(config, deps);
+    const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
+    const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
+    const filePath = path.join("assets", "generated", "tts", `${stamp}-openai-api.wav`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, pcmToWav(audio, { sampleRate: settings.sampleRate, channels: settings.channels }));
+    return {
+      assetId: `generated/tts/${path.basename(filePath)}`,
+      filePath
+    };
+  }) as VoiceSynthesizer;
+
+  synthesize.streamAudio = async function* (request) {
+    const settings = resolveOpenAiApiTtsSettings(config, deps);
+    for await (const chunk of requestOpenAiApiTtsAudioStream(request.text, settings, deps)) yield chunk;
+  };
+  synthesize.streamAudioWithText = async function* (request) {
+    const settings = resolveOpenAiApiTtsSettings(config, deps);
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    for await (const chunk of requestOpenAiApiTtsAudioStream(request.text, settings, deps)) {
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+    const mapper = createTtsPcmProgressTextMapper(request.text, totalBytes, {
+      sampleRate: settings.sampleRate,
+      channels: settings.channels
+    });
+    for (const chunk of chunks) {
+      yield {
+        text: mapper.take(chunk.byteLength),
+        chunk,
+        sampleRateHz: settings.sampleRate,
+        channels: settings.channels
+      };
+    }
+  };
+  return synthesize;
+}
+
+type OpenAiApiTtsSettings = {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  voice: string;
+  timeoutMs: number;
+  sampleRate: number;
+  channels: number;
+  extraParams: Record<string, unknown>;
+};
+
+function resolveOpenAiApiTtsSettings(config: TtsPluginConfig, deps: Pick<TtsPluginDeps, "env" | "resolveApiPreset">): OpenAiApiTtsSettings {
+  const conversion = config.conversion?.openaiApi ?? {};
+  const preset = conversion.apiPresetName ? deps.resolveApiPreset?.(conversion.apiPresetName) : undefined;
+  const env = deps.env ?? process.env;
+  const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || preset?.apiKey || (preset?.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
+  const baseURL = normalizeOpenAiApiSpeechBaseURL(conversion.baseURL || preset?.baseURL || "");
+  if (!baseURL) throw new Error("OpenAI-API TTS conversion requires baseURL or API preset");
+  if (!apiKey) throw new Error("OpenAI-API TTS conversion requires API key or API preset");
+  return {
+    baseURL,
+    apiKey,
+    model: conversion.model || preset?.model || "higgs-audio-v3-tts",
+    voice: conversion.voice || "default",
+    timeoutMs: conversion.timeoutMs ?? preset?.timeoutMs ?? 60_000,
+    sampleRate: conversion.sampleRate ?? 32_000,
+    channels: conversion.channels ?? 1,
+    extraParams: {
+      ...(preset?.extraParams ?? {}),
+      ...(conversion.extraParams ?? {})
+    }
+  };
+}
+
+async function requestOpenAiApiTtsAudio(
+  text: string,
+  settings: OpenAiApiTtsSettings,
+  deps: Pick<TtsPluginDeps, "fetch" | "appendLog">,
+  options: { stream: boolean }
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of requestOpenAiApiTtsAudioStream(text, settings, deps, options)) {
+    chunks.push(chunk);
+    total += chunk.byteLength;
+  }
+  const audio = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    audio.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return audio;
+}
+
+async function* requestOpenAiApiTtsAudioStream(
+  text: string,
+  settings: OpenAiApiTtsSettings,
+  deps: Pick<TtsPluginDeps, "fetch" | "appendLog">,
+  options: { stream?: boolean } = { stream: true }
+): AsyncIterable<Uint8Array> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error("openai_api_tts_timeout")), settings.timeoutMs);
+  const body = {
+    ...settings.extraParams,
+    input: text,
+    model: settings.model,
+    voice: settings.voice,
+    response_format: "pcm",
+    ...(options.stream === false ? {} : { stream: true })
+  };
+  deps.appendLog?.("info", `tts OpenAI-API speech start: chars=${Array.from(text).length} stream=${options.stream === false ? "false" : "true"}`);
+  try {
+    const response = await fetchImpl(`${settings.baseURL}/audio/speech`, {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${settings.apiKey}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`OpenAI-API TTS HTTP ${response.status}: ${errorText.slice(0, 500)}`);
+    }
+    if (!response.body) {
+      const buffer = new Uint8Array(await response.arrayBuffer());
+      if (buffer.byteLength > 0) yield buffer;
+      return;
+    }
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value?.byteLength) yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeOpenAiApiSpeechBaseURL(value: string): string {
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (!normalized) return "";
+  return normalized.endsWith("/audio/speech")
+    ? normalized.slice(0, -"/audio/speech".length).replace(/\/+$/, "")
+    : normalized;
+}
+
+function pcmToWav(pcm: Uint8Array, options: { sampleRate: number; channels: number }): Uint8Array {
+  const header = new Uint8Array(44);
+  const view = new DataView(header.buffer);
+  writeAscii(header, 0, "RIFF");
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  writeAscii(header, 8, "WAVE");
+  writeAscii(header, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, options.channels, true);
+  view.setUint32(24, options.sampleRate, true);
+  view.setUint32(28, options.sampleRate * options.channels * 2, true);
+  view.setUint16(32, options.channels * 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(header, 36, "data");
+  view.setUint32(40, pcm.byteLength, true);
+  const wav = new Uint8Array(header.byteLength + pcm.byteLength);
+  wav.set(header);
+  wav.set(pcm, header.byteLength);
+  return wav;
+}
+
 export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: ConfiguredVoiceSynthesizerDeps = {}): VoiceSynthesizer {
   const config = input ?? { backend: "genie-tts" as const };
   const disableMoss = Boolean(
@@ -1075,8 +1415,9 @@ export function createTtsRemoteAwareVoiceSynthesizer(
 
   const selectedRemote = (): VoiceSynthesizer | undefined => {
     const pluginConfig = readTtsPluginConfig(input.ttsConfigPath);
-    if (!pluginConfig.remote?.enabled) return undefined;
-    const baseURL = normalizeBaseURL(pluginConfig.remote.baseURL || "");
+    const genie = pluginConfig.conversion?.genie ?? pluginConfig.remote;
+    if (!genie?.enabled) return undefined;
+    const baseURL = normalizeBaseURL(genie.baseURL || "");
     return baseURL ? remoteFor(baseURL) : undefined;
   };
 

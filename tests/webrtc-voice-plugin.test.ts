@@ -1182,7 +1182,7 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
       throw new Error("file synthesizer should not be used");
     }, {
       async *stream() {
-        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=16000; channels=1", sampleRateHz: 16_000, channels: 1 };
         yield { type: "done" as const };
       }
     }),
@@ -1190,6 +1190,8 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
       throw new Error("file decoder should not be used");
     },
     encodePcmL16StreamToFrames: async function* (input) {
+      assert.equal(input.inputSampleRateHz, 16_000);
+      assert.equal(input.inputChannels, 1);
       const chunks: number[] = [];
       for await (const chunk of input.chunks) chunks.push(chunk.byteLength);
       assert.deepEqual(chunks, [2]);

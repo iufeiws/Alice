@@ -31,7 +31,7 @@ import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
-import { createConfiguredVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
@@ -94,6 +94,22 @@ type TtsAdminConfig = {
   remote?: {
     enabled?: boolean;
     baseURL?: string;
+  };
+  conversion?: {
+    provider?: "genie" | "openai-api";
+    genie?: {
+      enabled?: boolean;
+      baseURL?: string;
+    };
+    openaiApi?: {
+      apiPresetName?: string;
+      model?: string;
+      voice?: string;
+      timeoutMs?: number;
+      sampleRate?: number;
+      channels?: number;
+      extraParamsJson?: string;
+    };
   };
   translationPresetName?: string;
   translationEditPresetName?: string;
@@ -1379,34 +1395,46 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
     },
     configSchema: {
       groups: [
-        { key: "translation", label: "翻译预设" },
-        { key: "model", label: "模型预设" },
-        { key: "general", label: "公共设置" }
+        { key: "translation", label: "Translation Presets" },
+        { key: "model_genie", label: "Model / Conversion / Genie" },
+        { key: "conversion_openai_api", label: "Conversion / OpenAI-API" },
+        { key: "general", label: "Common Settings" }
       ],
       fields: [
         { key: "translationEditPresetName", label: "Translation Preset", type: "select", group: "translation", options: [], description: "Select the translation preset to edit." },
         { key: "newTranslationPresetName", label: "Create or Rename", type: "text", group: "translation", description: "Enter a translation preset name and save to create/switch to it." },
-        { key: "currentTranslation.translationEnabled", label: "Translate Text", type: "switch", group: "translation", description: "Translate text before TTS. Disable to send the original text directly to the selected voice model." },
+        { key: "currentTranslation.translationEnabled", label: "Translate Text", type: "switch", group: "general", description: "Translate text before TTS. Disable to send the original text directly to the selected voice model." },
         { key: "currentTranslation.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "translation", description: "Select a saved API preset. The plugin does not store API keys." },
         { key: "currentTranslation.prompt", label: "Prompt", type: "textarea", group: "translation", description: "Prompt used by this plugin before it calls the selected API preset." },
-        { key: "voice.modelEditPresetName", label: "Model Preset", type: "select", group: "model", options: [], description: "Select the model preset to edit." },
-        { key: "voice.newModelConfigName", label: "Create or Rename", type: "text", group: "model", description: "Enter a model preset name and save to create/switch to it." },
-        { key: "voice.currentModel.language", label: "Voice Language", type: "select", group: "model", options: [
+        { key: "voice.modelEditPresetName", label: "Model Preset", type: "select", group: "model_genie", options: [], description: "Select the model preset to edit." },
+        { key: "voice.newModelConfigName", label: "Create or Rename", type: "text", group: "model_genie", description: "Enter a model preset name and save to create/switch to it." },
+        { key: "voice.currentModel.language", label: "Voice Language", type: "select", group: "model_genie", options: [
           { value: "jp", label: "Japanese" },
           { value: "zh", label: "Chinese" },
           { value: "en", label: "English" }
         ], description: "Genie language used for this TTS voice route." },
-        { key: "voice.currentModel.modelDir", label: "Model Folder", type: "folderUpload", group: "model", assetKey: "model", description: "Genie model folder for the selected model config." },
-        { key: "voice.currentModel.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
-        { key: "voice.currentModel.referenceText", label: "Reference Text", type: "textarea", group: "model", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
-        { key: "voice.currentModel.speed", label: "Voice Speed", type: "number", group: "model", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
-        { key: "voice.currentModel.splitText", label: "Split Text", type: "switch", group: "model", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
-        { key: "voice.currentModel.partSilenceSeconds", label: "Part Silence", type: "number", group: "model", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
+        { key: "voice.currentModel.modelDir", label: "Model Folder", type: "folderUpload", group: "model_genie", assetKey: "model", description: "Genie model folder for the selected model config." },
+        { key: "voice.currentModel.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model_genie", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
+        { key: "voice.currentModel.referenceText", label: "Reference Text", type: "textarea", group: "model_genie", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
+        { key: "voice.currentModel.speed", label: "Voice Speed", type: "number", group: "model_genie", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
+        { key: "voice.currentModel.splitText", label: "Split Text", type: "switch", group: "model_genie", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
+        { key: "voice.currentModel.partSilenceSeconds", label: "Part Silence", type: "number", group: "model_genie", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
         { key: "voice.modelConfigName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
+        { key: "conversion.provider", label: "Conversion Backend", type: "select", group: "general", options: [
+          { value: "genie", label: "Genie" },
+          { value: "openai-api", label: "OpenAI-API" }
+        ], description: "Backend used after optional translation." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
-        { key: "remote.enabled", label: "Remote Genie", type: "switch", group: "general", description: "Use the LAN Genie TTS service before falling back to local Genie." },
-        { key: "remote.baseURL", label: "Remote Genie IP/URL", type: "text", group: "general", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
+        { key: "conversion.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
+        { key: "conversion.genie.baseURL", label: "Remote Genie IP/URL", type: "text", group: "model_genie", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
+        { key: "conversion.openaiApi.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "conversion_openai_api", description: "OpenAI-compatible speech API preset. The plugin does not expose API keys in public config." },
+        { key: "conversion.openaiApi.model", label: "Model", type: "text", group: "conversion_openai_api", description: "Speech model sent as model in POST /audio/speech." },
+        { key: "conversion.openaiApi.voice", label: "Voice", type: "text", group: "conversion_openai_api", description: "Voice name or custom voice ID sent as voice." },
+        { key: "conversion.openaiApi.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_openai_api", min: 1000, max: 300000, step: 1000, description: "Request timeout for OpenAI-API speech calls." },
+        { key: "conversion.openaiApi.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_openai_api", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used to estimate chunk text timing. Default is 32000." },
+        { key: "conversion.openaiApi.channels", label: "PCM Channels", type: "number", group: "conversion_openai_api", min: 1, max: 2, step: 1, description: "PCM channel count used to estimate chunk text timing. Default is 1." },
+        { key: "conversion.openaiApi.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_openai_api", description: "Optional JSON object merged into the speech request before input/model/voice/response_format." },
         { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
@@ -1806,7 +1834,9 @@ function optionalNumberFromUnknown(value: unknown): number | undefined {
 
 function ttsPluginSummary(context: AdminRoutesContext, config = readTtsConfigForAdmin(context)): AdminPluginSummary {
   const presetExists = !config.apiPresetName || readLLMApiPresets(context).some((entry) => entry.name === config.apiPresetName);
-  const missingConfig = config.enabled && (!config.apiPresetName || !presetExists);
+  const conversionPresetName = config.conversion?.provider === "openai-api" ? config.conversion.openaiApi?.apiPresetName : undefined;
+  const conversionPresetExists = !conversionPresetName || readLLMApiPresets(context).some((entry) => entry.name === conversionPresetName);
+  const missingConfig = config.enabled && ((!config.apiPresetName || !presetExists) || !conversionPresetExists);
   return {
     id: "tts",
     name: "TTS",
@@ -1866,11 +1896,24 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
 
   const ttsStartedAt = Date.now();
   const configuredSynthesizer = context.pluginConfigs?.tts?.testVoiceSynthesizer;
-  const synthesizer = configuredSynthesizer ?? createTtsFallbackTtsSynthesizer(context);
+  const synthesizer = configuredSynthesizer ?? (
+    config.conversion?.provider === "openai-api"
+      ? createOpenAiApiTtsVoiceSynthesizer(config, {
+        resolveApiPreset(name) {
+          return readLLMApiPresets(context).find((entry) => entry.name === name);
+        },
+        appendLog: context.appendLog
+      })
+      : createTtsFallbackTtsSynthesizer(context)
+  );
   let voice: Awaited<ReturnType<VoiceSynthesizer>>;
   let ttsMs = 0;
   try {
-    voice = await synthesizer({ text: translatedText, time: context.time, genie: ttsGenieOverrides(config) });
+    voice = await synthesizer({
+      text: translatedText,
+      time: context.time,
+      ...(config.conversion?.provider === "openai-api" ? {} : { genie: ttsGenieOverrides(config) })
+    });
     ttsMs = Date.now() - ttsStartedAt;
   } finally {
     if (!configuredSynthesizer) await synthesizer.shutdown?.();
@@ -1911,14 +1954,38 @@ function updateTtsConfig(
   const current = readTtsConfigForAdmin(context);
   const currentVoice = current.voice ?? {};
   if ("api_preset" in patch) return { error: "invalid_plugin_config" };
+  const conversionPatch = patch.conversion && typeof patch.conversion === "object" && !Array.isArray(patch.conversion)
+    ? patch.conversion as Record<string, unknown>
+    : {};
   const remotePatch = patch.remote && typeof patch.remote === "object" && !Array.isArray(patch.remote)
     ? patch.remote as Record<string, unknown>
     : {};
-  const currentRemote = current.remote ?? {};
+  const geniePatch = conversionPatch.genie && typeof conversionPatch.genie === "object" && !Array.isArray(conversionPatch.genie)
+    ? conversionPatch.genie as Record<string, unknown>
+    : remotePatch;
+  const currentRemote = current.conversion?.genie ?? current.remote ?? {};
   const nextRemote = {
-    enabled: remotePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(remotePatch.enabled),
-    baseURL: remotePatch.baseURL === undefined ? currentRemote.baseURL ?? "http://192.168.0.103:8767" : normalizeRemoteTtsBaseURL(optionalString(remotePatch.baseURL) ?? "")
+    enabled: geniePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(geniePatch.enabled),
+    baseURL: geniePatch.baseURL === undefined ? currentRemote.baseURL ?? "http://192.168.0.103:8767" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? "")
   };
+  const openAiApiPatch = conversionPatch.openaiApi && typeof conversionPatch.openaiApi === "object" && !Array.isArray(conversionPatch.openaiApi)
+    ? conversionPatch.openaiApi as Record<string, unknown>
+    : {};
+  const currentOpenAiApi = current.conversion?.openaiApi ?? {};
+  const extraParamsResult = parseOptionalJsonObject(openAiApiPatch.extraParamsJson, currentOpenAiApi.extraParams ?? {});
+  if ("error" in extraParamsResult) return { error: extraParamsResult.error };
+  const nextOpenAiApi = {
+    apiPresetName: openAiApiPatch.apiPresetName === undefined ? currentOpenAiApi.apiPresetName : optionalString(openAiApiPatch.apiPresetName),
+    model: openAiApiPatch.model === undefined ? currentOpenAiApi.model ?? "higgs-audio-v3-tts" : requiredString(openAiApiPatch.model),
+    voice: openAiApiPatch.voice === undefined ? currentOpenAiApi.voice ?? "default" : requiredString(openAiApiPatch.voice),
+    timeoutMs: openAiApiPatch.timeoutMs === undefined ? currentOpenAiApi.timeoutMs ?? 60_000 : optionalNumberFromUnknown(openAiApiPatch.timeoutMs),
+    sampleRate: openAiApiPatch.sampleRate === undefined ? currentOpenAiApi.sampleRate ?? 32_000 : optionalNumberFromUnknown(openAiApiPatch.sampleRate),
+    channels: openAiApiPatch.channels === undefined ? currentOpenAiApi.channels ?? 1 : optionalNumberFromUnknown(openAiApiPatch.channels),
+    extraParams: extraParamsResult.value
+  };
+  const nextConversionProvider = conversionPatch.provider === undefined
+    ? current.conversion?.provider ?? "genie"
+    : conversionPatch.provider === "openai-api" ? "openai-api" : "genie";
   const currentTranslationPresets = current.translationPresets ?? {};
   const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
   const editTranslationPresetName = safeTtsPresetName(optionalString(patch.newTranslationPresetName) || optionalString(patch.translationEditPresetName) || activeTranslationPresetName, "default");
@@ -1961,6 +2028,11 @@ function updateTtsConfig(
   const next: TtsPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     remote: nextRemote,
+    conversion: {
+      provider: nextConversionProvider,
+      genie: nextRemote,
+      openaiApi: nextOpenAiApi
+    },
     translationPresetName: activeTranslationPresetName,
     translationPresets: nextTranslationPresets,
     translationEnabled: activeTranslation.translationEnabled ?? true,
@@ -1979,18 +2051,44 @@ function updateTtsConfig(
   if ((shouldUpdateTranslationPreset || "translationPresetName" in patch || "enabled" in patch) && (presetToValidate.translationEnabled ?? true) && presetToValidate.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === presetToValidate.apiPresetName)) {
     return { error: "invalid_api_preset" };
   }
+  if (next.conversion?.provider === "openai-api" && next.conversion.openaiApi?.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.conversion?.openaiApi?.apiPresetName)) {
+    return { error: "invalid_openai_api_preset" };
+  }
   writeTtsConfig(context, next);
   return { config: next };
 }
 
 function validateTtsConfig(config: TtsPluginConfig): string | undefined {
-  if (config.remote?.enabled && !config.remote.baseURL) return "invalid_remote_tts_url";
+  const genie = config.conversion?.genie ?? config.remote;
+  if (genie?.enabled && !genie.baseURL) return "invalid_remote_tts_url";
+  const openaiApi = config.conversion?.openaiApi;
+  if (config.conversion?.provider === "openai-api") {
+    if (!openaiApi?.apiPresetName && !openaiApi?.baseURL) return "missing_openai_api_tts_preset";
+    if (!openaiApi?.model) return "missing_openai_api_tts_model";
+    if (!openaiApi?.voice) return "missing_openai_api_tts_voice";
+  }
+  if (openaiApi?.timeoutMs !== undefined && (openaiApi.timeoutMs < 1000 || openaiApi.timeoutMs > 300000)) return "invalid_openai_api_timeout";
+  if (openaiApi?.sampleRate !== undefined && (openaiApi.sampleRate < 8000 || openaiApi.sampleRate > 48000)) return "invalid_openai_api_sample_rate";
+  if (openaiApi?.channels !== undefined && (openaiApi.channels < 1 || openaiApi.channels > 2)) return "invalid_openai_api_channels";
   const voice = config.voice ?? {};
   for (const model of Object.values(voice.modelConfigs ?? {})) {
     if (model.speed !== undefined && (model.speed < 0.5 || model.speed > 2)) return "invalid_voice_speed";
     if (model.partSilenceSeconds !== undefined && (model.partSilenceSeconds < 0 || model.partSilenceSeconds > 3)) return "invalid_part_silence";
   }
   return undefined;
+}
+
+function parseOptionalJsonObject(value: unknown, fallback: Record<string, unknown>): { value: Record<string, unknown> } | { error: string } {
+  if (value === undefined) return { value: fallback };
+  const text = optionalString(value);
+  if (!text) return { value: {} };
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "invalid_openai_api_extra_params" };
+    return { value: parsed as Record<string, unknown> };
+  } catch {
+    return { error: "invalid_openai_api_extra_params" };
+  }
 }
 
 function normalizeRemoteTtsBaseURL(value: string): string {
@@ -2260,11 +2358,29 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
   const modelConfigs = voice.modelConfigs ?? {};
   const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
   const currentModel = modelConfigs[modelConfigName] ?? {};
+  const conversion = config.conversion ?? { provider: "genie" as const, genie: config.remote };
+  const openaiApi = conversion.openaiApi ?? {};
   return {
     enabled: config.enabled,
     remote: {
-      enabled: config.remote?.enabled ?? true,
-      baseURL: config.remote?.baseURL ?? "http://192.168.0.103:8767"
+      enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
+      baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767"
+    },
+    conversion: {
+      provider: conversion.provider ?? "genie",
+      genie: {
+        enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
+        baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767"
+      },
+      openaiApi: {
+        apiPresetName: openaiApi.apiPresetName,
+        model: openaiApi.model ?? "higgs-audio-v3-tts",
+        voice: openaiApi.voice ?? "default",
+        timeoutMs: openaiApi.timeoutMs ?? 60_000,
+        sampleRate: openaiApi.sampleRate ?? 32_000,
+        channels: openaiApi.channels ?? 1,
+        extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
+      }
     },
     translationPresetName,
     translationEditPresetName: translationPresetName,
@@ -2296,11 +2412,31 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   const voice = config.voice ?? {};
   const modelConfigs = voice.modelConfigs ?? {};
   const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
+  const genie = config.conversion?.genie ?? config.remote;
+  const openaiApi = config.conversion?.openaiApi;
   return {
     enabled: config.enabled,
     remote: {
-      enabled: config.remote?.enabled ?? true,
-      baseURL: config.remote?.baseURL ?? "http://192.168.0.103:8767"
+      enabled: genie?.enabled ?? true,
+      baseURL: genie?.baseURL ?? "http://192.168.0.103:8767"
+    },
+    conversion: {
+      provider: config.conversion?.provider ?? "genie",
+      genie: {
+        enabled: genie?.enabled ?? true,
+        baseURL: genie?.baseURL ?? "http://192.168.0.103:8767"
+      },
+      openaiApi: {
+        apiPresetName: openaiApi?.apiPresetName,
+        baseURL: openaiApi?.baseURL,
+        apiKeyEnv: openaiApi?.apiKeyEnv,
+        model: openaiApi?.model ?? "higgs-audio-v3-tts",
+        voice: openaiApi?.voice ?? "default",
+        timeoutMs: openaiApi?.timeoutMs ?? 60_000,
+        sampleRate: openaiApi?.sampleRate ?? 32_000,
+        channels: openaiApi?.channels ?? 1,
+        extraParams: openaiApi?.extraParams ?? {}
+      }
     },
     translationPresetName,
     translationPresets,
@@ -2325,6 +2461,14 @@ function ttsConfigSchema(): unknown {
         properties: {
           enabled: { type: "boolean" },
           baseURL: { type: "string" }
+        }
+      },
+      conversion: {
+        type: "object",
+        properties: {
+          provider: { type: "string", enum: ["genie", "openai-api"] },
+          genie: { type: "object" },
+          openaiApi: { type: "object" }
         }
       },
       translationEnabled: { type: "boolean" },

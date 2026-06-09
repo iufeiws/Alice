@@ -89,7 +89,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
     assert.equal(result?.message.toolCalls?.[0].function.name, "check_chat");
     assert.equal(result?.message.toolCalls?.[0].function.arguments, "{}");
     assert.equal(result?.message.reasoningContent, "think more");
-    assert.equal(requestBody.messages[0].reasoning_content, "prior thinking");
+    assert.equal(requestBody.messages[0].reasoning_content, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -226,6 +226,83 @@ test("openai-compatible client adds fallback reasoning content for tool request 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("LLM request message sanitization removes empty assistant tool calls before reasoning", async () => {
+  let requestMessages: any[] | undefined;
+  const client: LLMClient = {
+    async chat(input) {
+      requestMessages = input.messages as any[];
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [
+      { role: "assistant", content: "no tool", reasoningContent: "drop me" },
+      { role: "assistant", content: "empty tools", reasoningContent: "drop me too", toolCalls: [] },
+      {
+        role: "assistant",
+        content: "tool",
+        reasoningContent: "keep me",
+        toolCalls: [{
+          id: "call_1",
+          type: "function",
+          function: { name: "check_chat", arguments: "{}" }
+        }]
+      }
+    ],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+
+  assert.equal(requestMessages?.[0].reasoningContent, undefined);
+  assert.equal(requestMessages?.[1].toolCalls, undefined);
+  assert.equal(requestMessages?.[1].reasoningContent, undefined);
+  assert.equal(requestMessages?.[2].reasoningContent, "keep me");
+});
+
+test("LLM request message sanitization settings can be disabled separately", async () => {
+  let requestMessages: any[] | undefined;
+  const client: LLMClient = {
+    async chat(input) {
+      requestMessages = input.messages as any[];
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    messageSanitization: {
+      removeEmptyAssistantToolCalls: false,
+      removeAssistantReasoningWithoutToolCall: false
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [{ role: "assistant", content: "", reasoningContent: "keep", toolCalls: [] }],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(requestMessages?.[0].toolCalls, []);
+  assert.equal(requestMessages?.[0].reasoningContent, "keep");
 });
 
 test("openai stream client preserves include_usage final usage chunk", async () => {

@@ -1,6 +1,9 @@
+import { sanitizeLLMRequestMessages, type LLMMessageSanitizationOptions } from "./llm-message-sanitization.js";
+
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
 export * from "./llm-log-runtime.js";
+export * from "./llm-message-sanitization.js";
 export * from "./llm-observability-runtime.js";
 export * from "./llm-request-diff.js";
 export * from "./llm-request-preview-runtime.js";
@@ -100,6 +103,7 @@ export type OpenAICompatibleConfig = {
   temperature?: number;
   timeoutMs?: number;
   extraParams?: Record<string, unknown>;
+  messageSanitization?: LLMMessageSanitizationOptions;
 };
 
 type OpenAIChatCompletionResponse = {
@@ -338,7 +342,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       const body: Record<string, unknown> = {
         ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
-        messages: input.messages.map(toOpenAIMessage),
+        messages: sanitizeOpenAIMessages(input.messages),
         temperature: input.temperature ?? config.temperature ?? 0.2
       };
       if (input.tools !== undefined) body.tools = input.tools;
@@ -368,7 +372,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       const body: Record<string, unknown> = {
         ...(input.extraParams ?? config.extraParams ?? {}),
         model: input.model ?? config.model,
-        messages: input.messages.map(toOpenAIMessage),
+        messages: sanitizeOpenAIMessages(input.messages),
         temperature: input.temperature ?? config.temperature ?? 0.2
       };
       if (input.tools !== undefined) body.tools = input.tools;
@@ -387,6 +391,10 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       }));
     }
   };
+
+  function sanitizeOpenAIMessages(messages: LLMMessage[]): Record<string, unknown>[] {
+    return sanitizeLLMRequestMessages(messages, config.messageSanitization).map(toOpenAIMessage);
+  }
 }
 
 function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {

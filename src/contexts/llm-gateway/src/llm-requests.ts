@@ -1,5 +1,6 @@
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolSpec } from "./index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
+import { sanitizeLLMRequestMessages, type LLMMessageSanitizationOptions } from "./llm-message-sanitization.js";
 import { renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 
@@ -19,6 +20,7 @@ export type LLMRequestsDeps = {
   onRequestPrepared?(input: LLMRequestSenderInput, request: LLMChatInput): void;
   onResponseReceived?(input: LLMRequestSenderInput, request: LLMChatInput, result: LLMChatResult): void;
   onLog?(event: LLMRequestLogEvent): void;
+  messageSanitization?: LLMMessageSanitizationOptions;
   retryDelayMs?: (attempt: number) => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -69,7 +71,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     if (input.signal?.aborted) requestController.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     const request: LLMChatInput = {
-      messages: input.messages,
+      messages: sanitizeLLMRequestMessages(input.messages, deps.messageSanitization),
       model: input.model,
       temperature: input.temperature,
       maxTokens: input.maxTokens,

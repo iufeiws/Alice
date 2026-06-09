@@ -1,4 +1,5 @@
 import type { LLMChatInput } from "./index.js";
+import { sanitizeLLMRequestMessages } from "./llm-message-sanitization.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {
@@ -7,7 +8,7 @@ export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperat
     model: input.model,
     stream: true,
     temperature: input.temperature,
-    messages: input.messages.map((message) => {
+    messages: sanitizeLLMRequestMessages(input.messages).map((message) => {
       const entry: Record<string, unknown> = {
         role: message.role,
         content: message.content

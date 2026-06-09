@@ -1381,6 +1381,132 @@ test("WebRTC voice fills streaming underrun with timed silence frames", async ()
   assert.equal(frames[finalFrameIndex]?.rtpTimestamp, finalFrameIndex * 960);
 });
 
+test("WebRTC voice does not advance playback text until underrun silence finishes", async () => {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  let nowMs = 0;
+  let sawSilence = false;
+  let checkedSilenceSleep = false;
+  let releaseNextFrame!: () => void;
+  const nextFrameReady = new Promise<void>((resolve) => {
+    releaseNextFrame = resolve;
+  });
+  const firstChunk = new Uint8Array(76_800);
+  const secondChunk = new Uint8Array(1_280);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    now: () => new Date(nowMs),
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text: "第一段", chunk: firstChunk, contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 1, text: "第二段", chunk: secondChunk, contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      let chunkIndex = 0;
+      for await (const _chunk of input.chunks) {
+        if (chunkIndex === 0) {
+          for (let index = 0; index < 60; index += 1) {
+            yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+          }
+          await nextFrameReady;
+        } else {
+          yield { sequence: 60, pcm: new Int16Array([99]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+        chunkIndex += 1;
+      }
+    },
+    sleep: async (ms) => {
+      if (sawSilence && !checkedSilenceSleep) {
+        checkedSilenceSleep = true;
+        assert.equal(ms, 20);
+        assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
+        assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
+        releaseNextFrame();
+      }
+      nowMs += ms;
+    },
+    emitStatus: (event) => {
+      statuses.push(event);
+      if (event.state === "tts.queue.silence") sawSilence = true;
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-text-silence-gate", userId: "browser-stream-text-silence-gate", offerSdp: "offer" });
+  const result = await call.playReplyText("silence gate", "silence-gate-output");
+
+  assert.equal(result.status, "played");
+  assert.equal(checkedSilenceSleep, true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")), true);
+  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text").map((entry) => entry.detail), ["第一段", "第二段"]);
+});
+
+test("WebRTC voice does not advance playback text until the next real frame finishes", async () => {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  let nowMs = 0;
+  let checkedSecondFrameSleep = false;
+  const firstChunk = new Uint8Array(76_800);
+  const secondChunk = new Uint8Array(1_280);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    now: () => new Date(nowMs),
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, text: "第一段", chunk: firstChunk, contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio" as const, sequence: 1, text: "第二段", chunk: secondChunk, contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      let chunkIndex = 0;
+      for await (const _chunk of input.chunks) {
+        if (chunkIndex === 0) {
+          for (let index = 0; index < 60; index += 1) {
+            yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+          }
+        } else {
+          yield { sequence: 60, pcm: new Int16Array([99]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+        chunkIndex += 1;
+      }
+    },
+    sleep: async (ms) => {
+      if (!checkedSecondFrameSleep && peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99")) {
+        checkedSecondFrameSleep = true;
+        assert.equal(ms, 20);
+        assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
+        assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
+      }
+      nowMs += ms;
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-text-real-frame-gate", userId: "browser-stream-text-real-frame-gate", offerSdp: "offer" });
+  const result = await call.playReplyText("real frame gate", "real-frame-gate-output");
+
+  assert.equal(result.status, "played");
+  assert.equal(checkedSecondFrameSleep, true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")), true);
+  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text").map((entry) => entry.detail), ["第一段", "第二段"]);
+});
+
 test("WebRTC voice gates playback when speech starts before streaming TTS writes audio", async () => {
   const peer = new FakePeer();
   const statuses: Array<{ state: string; detail?: string }> = [];
@@ -2043,10 +2169,10 @@ test("WebRTC voice maps barge-in context by current chunk playback ratio", async
 
   assert.equal(result.status, "interrupted");
   assert.deepEqual(interrupts, [{
-    elapsedMs: 1000,
+    elapsedMs: 980,
     totalMs: 2000,
-    beforeText: "这个声音……是老",
-    afterText: "板你的声音吧！"
+    beforeText: "这个声音……是",
+    afterText: "老板你的声音吧！"
   }]);
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
 });
@@ -2162,8 +2288,8 @@ test("WebRTC voice keeps consumer cache until the next stream text is consumed",
   const result = await call.playReplyText("上一段。下一段。", "between-segments-output");
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(interrupts, [{ beforeText: "上一", afterText: "段。" }]);
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.breakpoint" && entry.detail === "前文=上一 后文=段。"), true);
+  assert.deepEqual(interrupts, [{ beforeText: "上", afterText: "一段。" }]);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.breakpoint" && entry.detail === "前文=上 后文=一段。"), true);
 });
 
 test("WebRTC voice does not replace current segment cache with empty or none stream text", async () => {

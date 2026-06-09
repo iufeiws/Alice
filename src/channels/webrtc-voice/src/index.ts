@@ -1258,29 +1258,34 @@ async function createCallState(
             const written = await outboundTrack.writeFrame(stampOutboundFrame(frame));
             if (written) {
               advanceOutboundRtpClockForFrame(frame);
-              updatePlaybackConsumer(item, frameText, Math.max(textTotalMs ?? 0, item.totalMs ?? 0), { emit: true });
-              if (frameText) emitPlayingText(frameText);
-              else reportMissingPlayingText(frameCount + 1);
               frameCount += 1;
               playbackFrameCount += 1;
               item.framesWritten = frameCount;
               item.playedMs = (item.playedMs ?? 0) + frame.durationMs;
               item.totalMs = Math.max(item.totalMs ?? 0, (item.framesWritten ?? 0) * frame.durationMs);
-              advancePlaybackConsumer(item, frame.durationMs);
             }
             const targetAt = playbackStartedAt + playbackFrameCount * frame.durationMs;
             const delayMs = targetAt - (deps.now?.().getTime() ?? Date.now());
             if (delayMs > 0) await (deps.sleep ?? sleep)(delayMs);
+            if (written) {
+              updatePlaybackConsumer(item, frameText, Math.max(textTotalMs ?? 0, item.totalMs ?? 0), { emit: true });
+              if (frameText) emitPlayingText(frameText);
+              else reportMissingPlayingText(frameCount);
+              advancePlaybackConsumer(item, frame.durationMs);
+            }
           };
+          let finishPlay = true;
           while (!ttsTask.controller.signal.aborted && generation === playbackGeneration && playbackQueue.includes(item)) {
-            let playbackFrame = frameQueue.shift();
+            let playbackFrame = finishPlay ? frameQueue.shift() : undefined;
+            if (playbackFrame) finishPlay = false;
             if (!playbackFrame) {
               if (frameQueue.closed) break;
               deps.emitStatus?.({ state: "tts.queue.underrun", detail: `sent=${frameCount} encoded=${encodedFrames} chunks=${audioChunks}` });
               let silenceFrames = 0;
               while (!ttsTask.controller.signal.aborted && generation === playbackGeneration && playbackQueue.includes(item) && !frameQueue.closed) {
                 await Promise.resolve();
-                playbackFrame = frameQueue.shift();
+                playbackFrame = finishPlay ? frameQueue.shift() : undefined;
+                if (playbackFrame) finishPlay = false;
                 if (playbackFrame) break;
                 const nextFrameAt = playbackStartedAt + playbackFrameCount * deps.config.outboundAudio.frameMs;
                 const remainingMs = nextFrameAt - (deps.now?.().getTime() ?? Date.now());
@@ -1295,15 +1300,18 @@ async function createCallState(
                 if (written) {
                   playbackFrameCount += 1;
                   silenceFrames += 1;
+                  finishPlay = true;
                   if (silenceFrames === 1 || silenceFrames % 50 === 0) {
                     deps.emitStatus?.({ state: "tts.queue.silence", detail: `silence=${silenceFrames} sent=${frameCount} encoded=${encodedFrames} chunks=${audioChunks}` });
                   }
+                  await (deps.sleep ?? sleep)(deps.config.outboundAudio.frameMs);
                 }
               }
               if (!playbackFrame) continue;
               deps.emitStatus?.({ state: "tts.queue.resumed", detail: `queued=${frameQueue.length} sent=${frameCount} silence=${silenceFrames}` });
             }
             await consumePlaybackFrame(playbackFrame);
+            finishPlay = true;
           }
           await producer;
         } else if (deps.encodePcmL16ToFrames) {

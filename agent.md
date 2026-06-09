@@ -17,6 +17,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 
 - 代码文件位于项目root/src/下
 - 测试代码位于项目root/test/下
+- 单一代码文件*禁止*超过一千行
 
 ## Prompt 构筑硬约束
 

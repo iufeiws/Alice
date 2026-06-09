@@ -422,8 +422,8 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         entryId: `assistant:${input.outputId}`,
         role: "assistant",
         contentText: output.fullText,
-        occurredAt: now.occurredAt,
-        occurredAtUtc: now.occurredAtUtc,
+        occurredAt: output.startedAt,
+        occurredAtUtc: output.startedAtUtc,
         sourceKind: "assistant.output",
         sourceId: input.outputId
       });
@@ -548,8 +548,8 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
           entryId: `assistant:${input.outputId}`,
           role: "assistant",
           contentText: `${visibleText}${marker}`,
-          occurredAt: now.occurredAt,
-          occurredAtUtc: now.occurredAtUtc,
+          occurredAt: output.startedAt,
+          occurredAtUtc: output.startedAtUtc,
           sourceKind: "assistant.output.interrupted",
           sourceId: input.outputId
         });

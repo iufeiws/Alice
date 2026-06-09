@@ -80,6 +80,8 @@ export type TalkOutput = {
   pendingChunkText: string;
   pendingChunkStartCharIndex: number;
   nextChunkSequence: number;
+  startedAt: string;
+  startedAtUtc?: string;
 };
 
 export type TalkOutputChunk = {
@@ -806,7 +808,7 @@ function getOutput(db: DatabaseSync, outputId: string): TalkOutput | undefined {
     SELECT output_id AS outputId, session_id AS sessionId, segment_id AS segmentId, status,
            full_text AS fullText, visible_text AS visibleText, buffer_text AS bufferText,
            pending_chunk_text AS pendingChunkText, pending_chunk_start_char_index AS pendingChunkStartCharIndex,
-           next_chunk_sequence AS nextChunkSequence
+           next_chunk_sequence AS nextChunkSequence, started_at AS startedAt, started_at_utc AS startedAtUtc
     FROM talk_outputs
     WHERE output_id = ?
     LIMIT 1
@@ -876,7 +878,9 @@ function normalizeOutput(row: unknown): TalkOutput | undefined {
     bufferText: value.bufferText,
     pendingChunkText: value.pendingChunkText,
     pendingChunkStartCharIndex: Number(value.pendingChunkStartCharIndex),
-    nextChunkSequence: Number(value.nextChunkSequence)
+    nextChunkSequence: Number(value.nextChunkSequence),
+    startedAt: value.startedAt,
+    startedAtUtc: value.startedAtUtc || undefined
   };
 }
 

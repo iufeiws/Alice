@@ -561,6 +561,46 @@ test("talk runtime cancels later assistant outputs when an earlier playback outp
   ]);
 });
 
+test("talk runtime timestamps assistant transcript rows by output creation time", () => {
+  const store = createTalkStore(path.join(makeTempDir("talk-runtime-transcript-output-start"), "talk.sqlite"));
+  let now = new Date("2026-06-06T15:00:00.000Z");
+  const runtime = createTalkRuntime({
+    store,
+    time: createCurrentTimeProvider("Asia/Tokyo", () => now)
+  });
+
+  runtime.openSession(sessionInput("session-transcript-output-start"));
+  now = new Date("2026-06-06T15:00:01.000Z");
+  runtime.appendAssistantDelta({
+    sessionId: "session-transcript-output-start",
+    outputId: "output-early",
+    delta: "第一段正在播放。后面不该保留。"
+  });
+  now = new Date("2026-06-06T15:00:02.000Z");
+  runtime.appendAssistantDelta({
+    sessionId: "session-transcript-output-start",
+    outputId: "output-later",
+    delta: "第二段已经生成但应该取消。"
+  });
+  runtime.finishAssistantOutput({ sessionId: "session-transcript-output-start", outputId: "output-later" });
+  now = new Date("2026-06-06T15:00:10.000Z");
+  runtime.interruptOutput({
+    sessionId: "session-transcript-output-start",
+    outputId: "output-early",
+    reason: "barge_in",
+    breakpointContext: { beforeText: "第一段" }
+  });
+
+  assert.deepEqual(runtime.store.listTranscriptEntries("session-transcript-output-start").map((entry) => ({
+    role: entry.role,
+    contentText: entry.contentText,
+    occurredAt: entry.occurredAt
+  })), [
+    { role: "system", contentText: "开始", occurredAt: "2026-06-07T00:00:00.000" },
+    { role: "assistant", contentText: "第一段...", occurredAt: "2026-06-07T00:00:01.000" }
+  ]);
+});
+
 test("talk runtime omits the queued next assistant output when interrupt happens between playback segments", () => {
   const runtime = createTestRuntime("interrupt-between-segments");
 

@@ -1,6 +1,12 @@
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolSpec } from "./index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMToolSpec } from "./index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
-import { sanitizeLLMRequestMessages, type LLMMessageSanitizationOptions } from "./llm-message-sanitization.js";
+import {
+  createParenthesizedContentStripper,
+  defaultLLMMessageSanitizationOptions,
+  sanitizeLLMRequestMessages,
+  sanitizeLLMResponseMessage,
+  type LLMMessageSanitizationOptions
+} from "./llm-message-sanitization.js";
 import { renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 
@@ -91,12 +97,15 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
           if (useStream && client.chatStream) {
             deps.onLog?.({ kind: "stream_start", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt });
             try {
-              result = await client.chatStream(request, input.streamHandlers);
+              result = sanitizeLLMChatResult(
+                await client.chatStream(request, sanitizeStreamHandlers(input.streamHandlers, deps.messageSanitization)),
+                deps.messageSanitization
+              );
             } finally {
               deps.onLog?.({ kind: "stream_end", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt });
             }
           } else {
-            result = await client.chat(request);
+            result = sanitizeLLMChatResult(await client.chat(request), deps.messageSanitization);
             deps.onLog?.({ kind: "response_received", agentId: input.agentId, round: input.round, stream: false, model: request.model, attempt });
           }
           break;
@@ -142,6 +151,31 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     isCancelRequested: () => cancelRequested,
     resetCancel: () => {
       cancelRequested = false;
+    }
+  };
+}
+
+function sanitizeLLMChatResult(result: LLMChatResult, options?: LLMMessageSanitizationOptions): LLMChatResult {
+  return {
+    ...result,
+    message: sanitizeLLMResponseMessage(result.message, options)
+  };
+}
+
+function sanitizeStreamHandlers(
+  handlers: LLMStreamHandlers | undefined,
+  options?: LLMMessageSanitizationOptions
+): LLMStreamHandlers | undefined {
+  if (!handlers) return undefined;
+  const shouldSanitize = options?.removeParenthesizedAssistantResponseContent
+    ?? defaultLLMMessageSanitizationOptions.removeParenthesizedAssistantResponseContent;
+  if (!shouldSanitize || !handlers.onContentDelta) return handlers;
+  const stripper = createParenthesizedContentStripper();
+  return {
+    ...handlers,
+    async onContentDelta(content) {
+      const sanitized = stripper.push(content);
+      if (sanitized) await handlers.onContentDelta?.(sanitized);
     }
   };
 }

@@ -305,6 +305,101 @@ test("LLM request message sanitization settings can be disabled separately", asy
   assert.equal(requestMessages?.[0].reasoningContent, "keep");
 });
 
+test("openai-compatible client removes parenthesized assistant response content", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: "chat_1",
+    model: "test",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。"
+      },
+      finish_reason: "stop"
+    }]
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.message.content, "喂我在。");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client removes parenthesized response content across chunks", async () => {
+  const originalFetch = globalThis.fetch;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        [
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"喂（电话那头"}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"沉默了一会儿，只有细微的呼吸声）我在。"}}]}',
+          "data: [DONE]"
+        ].join("\n\n")
+      ));
+      controller.close();
+    }
+  });
+  globalThis.fetch = async () => new Response(stream, { status: 200 });
+  const deltas: string[] = [];
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chatStream?.({ messages: [] }, {
+      onContentDelta(content) {
+        deltas.push(content);
+      }
+    });
+    assert.deepEqual(deltas, ["喂", "我在。"]);
+    assert.equal(result?.message.content, "喂我在。");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM request response content sanitization setting can be disabled", async () => {
+  const client: LLMClient = {
+    async chat() {
+      return {
+        message: {
+          role: "assistant",
+          content: "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。"
+        },
+        finishReason: "stop"
+      };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    messageSanitization: {
+      removeParenthesizedAssistantResponseContent: false
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  const result = await requests.send({
+    agentId: "chat",
+    client,
+    messages: [],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+
+  assert.equal(result.message.content, "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。");
+});
+
 test("openai stream client preserves include_usage final usage chunk", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody: any;

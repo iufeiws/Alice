@@ -1,4 +1,10 @@
-import { sanitizeLLMRequestMessages, type LLMMessageSanitizationOptions } from "./llm-message-sanitization.js";
+import {
+  createParenthesizedContentStripper,
+  defaultLLMMessageSanitizationOptions,
+  sanitizeLLMRequestMessages,
+  sanitizeLLMResponseMessage,
+  type LLMMessageSanitizationOptions
+} from "./llm-message-sanitization.js";
 
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
@@ -246,6 +252,9 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       let rawUsage: OpenAIUsage | null | undefined;
       let usage: LLMUsage | undefined;
       const toolCalls = new Map<number, LLMToolCall>();
+      const contentStripper = shouldSanitizeAssistantResponseContent()
+        ? createParenthesizedContentStripper()
+        : undefined;
       const processLine = async (line: string) => {
         const trimmed = line.trim();
         if (!trimmed.startsWith("data:")) return;
@@ -260,8 +269,9 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         finishReason = choice?.finish_reason ?? finishReason;
         const deltaContent = choice?.delta?.content;
         if (deltaContent) {
-          content += deltaContent;
-          await handlers?.onContentDelta?.(deltaContent);
+          const sanitizedDelta = contentStripper ? contentStripper.push(deltaContent) : deltaContent;
+          content += sanitizedDelta;
+          if (sanitizedDelta) await handlers?.onContentDelta?.(sanitizedDelta);
         }
         const deltaReasoningContent = choice?.delta?.reasoning_content;
         if (deltaReasoningContent) {
@@ -310,7 +320,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       return {
         id,
         model,
-        message: {
+        message: sanitizeOpenAIResponseMessage({
           role: "assistant",
           content,
           reasoningContent: reasoningContent || undefined,
@@ -318,7 +328,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
             .sort(([left], [right]) => left - right)
             .map(([, call]) => call)
             .filter((call) => call.function.name)
-        },
+        }),
         finishReason,
         usage,
         raw: rawUsage === undefined ? undefined : { usage: rawUsage }
@@ -357,12 +367,12 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       return {
         id: json.id,
         model: json.model,
-        message: {
+        message: sanitizeOpenAIResponseMessage({
           role: "assistant",
           content: choice?.message?.content ?? "",
           reasoningContent: choice?.message?.reasoning_content ?? undefined,
           toolCalls: normalizeToolCalls(choice?.message?.tool_calls)
-        },
+        }),
         finishReason: choice?.finish_reason,
         usage: normalizeUsage(json.usage),
         raw: json
@@ -394,6 +404,15 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
 
   function sanitizeOpenAIMessages(messages: LLMMessage[]): Record<string, unknown>[] {
     return sanitizeLLMRequestMessages(messages, config.messageSanitization).map(toOpenAIMessage);
+  }
+
+  function sanitizeOpenAIResponseMessage(message: LLMMessage): LLMMessage {
+    return sanitizeLLMResponseMessage(message, config.messageSanitization);
+  }
+
+  function shouldSanitizeAssistantResponseContent(): boolean {
+    return config.messageSanitization?.removeParenthesizedAssistantResponseContent
+      ?? defaultLLMMessageSanitizationOptions.removeParenthesizedAssistantResponseContent;
   }
 }
 

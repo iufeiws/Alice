@@ -3,11 +3,13 @@ import type { LLMMessage } from "./index.js";
 export type LLMMessageSanitizationOptions = {
   removeEmptyAssistantToolCalls?: boolean;
   removeAssistantReasoningWithoutToolCall?: boolean;
+  removeParenthesizedAssistantResponseContent?: boolean;
 };
 
 export const defaultLLMMessageSanitizationOptions: Required<LLMMessageSanitizationOptions> = {
   removeEmptyAssistantToolCalls: true,
-  removeAssistantReasoningWithoutToolCall: true
+  removeAssistantReasoningWithoutToolCall: true,
+  removeParenthesizedAssistantResponseContent: true
 };
 
 export function sanitizeLLMRequestMessages(
@@ -39,6 +41,58 @@ export function sanitizeLLMRequestMessages(
   });
 }
 
+export function sanitizeLLMResponseMessage(
+  message: LLMMessage,
+  options: LLMMessageSanitizationOptions = {}
+): LLMMessage {
+  const resolved = { ...defaultLLMMessageSanitizationOptions, ...options };
+  if (!resolved.removeParenthesizedAssistantResponseContent || message.role !== "assistant") {
+    return cloneLLMMessage(message);
+  }
+  return {
+    ...cloneLLMMessage(message),
+    content: stripParenthesizedContent(message.content)
+  };
+}
+
+export function stripParenthesizedContent(content: string): string {
+  const stripper = createParenthesizedContentStripper();
+  return stripper.push(content);
+}
+
+export function createParenthesizedContentStripper() {
+  let depth = 0;
+  return {
+    push(content: string): string {
+      let result = "";
+      for (const char of content) {
+        if (isOpeningParenthesis(char)) {
+          depth += 1;
+          continue;
+        }
+        if (isClosingParenthesis(char)) {
+          if (depth > 0) {
+            depth -= 1;
+            continue;
+          }
+          result += char;
+          continue;
+        }
+        if (depth > 0) continue;
+        result += char;
+      }
+      return result;
+    }
+  };
+}
+
+function cloneLLMMessage(message: LLMMessage): LLMMessage {
+  return {
+    ...message,
+    toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
+  };
+}
+
 function hasAssistantFunctionCall(message: LLMMessage): boolean {
   if (message.toolCalls && message.toolCalls.length > 0) return true;
   const extra = message as LLMMessage & {
@@ -46,4 +100,12 @@ function hasAssistantFunctionCall(message: LLMMessage): boolean {
     function_call?: unknown;
   };
   return extra.functionCall !== undefined || extra.function_call !== undefined;
+}
+
+function isOpeningParenthesis(char: string): boolean {
+  return char === "(" || char === "（";
+}
+
+function isClosingParenthesis(char: string): boolean {
+  return char === ")" || char === "）";
 }

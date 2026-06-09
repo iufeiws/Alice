@@ -31,7 +31,7 @@ import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
-import { createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
@@ -96,7 +96,7 @@ type TtsAdminConfig = {
     baseURL?: string;
   };
   conversion?: {
-    provider?: "genie" | "openai-api";
+    provider?: "genie" | "openai-api" | "bailian";
     genie?: {
       enabled?: boolean;
       baseURL?: string;
@@ -105,6 +105,22 @@ type TtsAdminConfig = {
       apiPresetName?: string;
       model?: string;
       voice?: string;
+      timeoutMs?: number;
+      sampleRate?: number;
+      channels?: number;
+      extraParamsJson?: string;
+    };
+    bailian?: {
+      endpoint?: string;
+      apiKey?: string;
+      apiKeyEnv?: string;
+      workspaceId?: string;
+      userAgent?: string;
+      model?: string;
+      voice?: string;
+      languageType?: string;
+      mode?: "server_commit" | "commit";
+      responseFormat?: string;
       timeoutMs?: number;
       sampleRate?: number;
       channels?: number;
@@ -146,7 +162,7 @@ type TtsAdminConfig = {
   };
 };
 
-type AdminPluginFieldType = "switch" | "text" | "number" | "textarea" | "select" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
+type AdminPluginFieldType = "switch" | "text" | "password" | "number" | "textarea" | "select" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
 
 type AdminPluginConfigField = {
   key: string;
@@ -1400,6 +1416,7 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "translation", label: "Translation Presets" },
         { key: "model_genie", label: "Model / Conversion / Genie" },
         { key: "conversion_openai_api", label: "Conversion / OpenAI-API" },
+        { key: "conversion_bailian", label: "Conversion / Bailian" },
         { key: "general", label: "Common Settings" }
       ],
       fields: [
@@ -1425,7 +1442,8 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "voice.modelConfigName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
         { key: "conversion.provider", label: "Conversion Backend", type: "select", group: "general", options: [
           { value: "genie", label: "Genie" },
-          { value: "openai-api", label: "OpenAI-API" }
+          { value: "openai-api", label: "OpenAI-API" },
+          { value: "bailian", label: "Bailian" }
         ], description: "Backend used after optional translation." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
         { key: "conversion.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
@@ -1437,6 +1455,23 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "conversion.openaiApi.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_openai_api", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used to estimate chunk text timing. Default is 32000." },
         { key: "conversion.openaiApi.channels", label: "PCM Channels", type: "number", group: "conversion_openai_api", min: 1, max: 2, step: 1, description: "PCM channel count used to estimate chunk text timing. Default is 1." },
         { key: "conversion.openaiApi.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_openai_api", description: "Optional JSON object merged into the speech request before input/model/voice/response_format." },
+        { key: "conversion.bailian.endpoint", label: "HTTP SSE Endpoint", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime HTTP endpoint used with X-DashScope-SSE: enable." },
+        { key: "conversion.bailian.apiKey", label: "API Key", type: "password", group: "conversion_bailian", description: "Bailian DashScope API key stored in the local ignored plugin config. Leave blank to keep unchanged." },
+        { key: "conversion.bailian.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_bailian", description: "Environment variable containing the Bailian DashScope API key. Default is DASHSCOPE_API_KEY." },
+        { key: "conversion.bailian.workspaceId", label: "Workspace ID", type: "text", group: "conversion_bailian", description: "Optional Bailian workspace id sent as X-DashScope-WorkSpace." },
+        { key: "conversion.bailian.userAgent", label: "User Agent", type: "text", group: "conversion_bailian", description: "Optional user-agent sent with the HTTP request." },
+        { key: "conversion.bailian.model", label: "Model", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime model name." },
+        { key: "conversion.bailian.voice", label: "Voice", type: "text", group: "conversion_bailian", description: "Bailian voice name or custom voice ID." },
+        { key: "conversion.bailian.languageType", label: "Language Type", type: "text", group: "conversion_bailian", description: "Qwen-TTS language_type, for example Chinese, Japanese, English, or Auto." },
+        { key: "conversion.bailian.mode", label: "Mode", type: "select", group: "conversion_bailian", options: [
+          { value: "server_commit", label: "Server Commit" },
+          { value: "commit", label: "Commit" }
+        ], description: "Retained for older configs; non-realtime streaming uses HTTP SSE." },
+        { key: "conversion.bailian.responseFormat", label: "Response Format", type: "text", group: "conversion_bailian", description: "Local PCM format label for playback; Bailian non-realtime SSE returns PCM audio data." },
+        { key: "conversion.bailian.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_bailian", min: 1000, max: 300000, step: 1000, description: "Request timeout for Bailian non-realtime TTS." },
+        { key: "conversion.bailian.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_bailian", min: 8000, max: 48000, step: 1000, description: "PCM sample rate returned by Bailian. Default is 24000." },
+        { key: "conversion.bailian.channels", label: "PCM Channels", type: "number", group: "conversion_bailian", min: 1, max: 2, step: 1, description: "PCM channel count returned by Bailian. Default is 1." },
+        { key: "conversion.bailian.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_bailian", description: "Optional JSON object merged into Bailian Qwen-TTS input fields." },
         { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
@@ -1907,6 +1942,10 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
         },
         appendLog: context.appendLog
       })
+      : config.conversion?.provider === "bailian"
+        ? createBailianTtsVoiceSynthesizer(config, {
+          appendLog: context.appendLog
+        })
       : createTtsFallbackTtsSynthesizer(context)
   );
   let voice: Awaited<ReturnType<VoiceSynthesizer>>;
@@ -1915,7 +1954,7 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
     voice = await synthesizer({
       text: translatedText,
       time: context.time,
-      ...(config.conversion?.provider === "openai-api" ? {} : { genie: ttsGenieOverrides(config) })
+      ...(config.conversion?.provider === "genie" || !config.conversion?.provider ? { genie: ttsGenieOverrides(config) } : {})
     });
     ttsMs = Date.now() - ttsStartedAt;
   } finally {
@@ -1986,9 +2025,31 @@ function updateTtsConfig(
     channels: openAiApiPatch.channels === undefined ? currentOpenAiApi.channels ?? 1 : optionalNumberFromUnknown(openAiApiPatch.channels),
     extraParams: extraParamsResult.value
   };
+  const bailianPatch = conversionPatch.bailian && typeof conversionPatch.bailian === "object" && !Array.isArray(conversionPatch.bailian)
+    ? conversionPatch.bailian as Record<string, unknown>
+    : {};
+  const currentBailian = current.conversion?.bailian ?? {};
+  const bailianExtraParamsResult = parseOptionalJsonObject(bailianPatch.extraParamsJson, currentBailian.extraParams ?? {});
+  if ("error" in bailianExtraParamsResult) return { error: "invalid_bailian_extra_params" };
+  const nextBailian = {
+    endpoint: bailianPatch.endpoint === undefined ? currentBailian.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation" : requiredString(bailianPatch.endpoint),
+    apiKey: bailianPatch.apiKey === undefined ? currentBailian.apiKey : optionalString(bailianPatch.apiKey) ?? currentBailian.apiKey,
+    apiKeyEnv: bailianPatch.apiKeyEnv === undefined ? currentBailian.apiKeyEnv ?? "DASHSCOPE_API_KEY" : optionalString(bailianPatch.apiKeyEnv),
+    workspaceId: bailianPatch.workspaceId === undefined ? currentBailian.workspaceId : optionalString(bailianPatch.workspaceId),
+    userAgent: bailianPatch.userAgent === undefined ? currentBailian.userAgent : optionalString(bailianPatch.userAgent),
+    model: bailianPatch.model === undefined ? currentBailian.model ?? "qwen3-tts-vc-2026-01-22" : requiredString(bailianPatch.model),
+    voice: bailianPatch.voice === undefined ? currentBailian.voice ?? "Cherry" : requiredString(bailianPatch.voice),
+    languageType: bailianPatch.languageType === undefined ? currentBailian.languageType ?? "Chinese" : optionalString(bailianPatch.languageType),
+    mode: bailianPatch.mode === undefined ? currentBailian.mode ?? "server_commit" : bailianPatch.mode === "commit" ? "commit" as const : "server_commit" as const,
+    responseFormat: bailianPatch.responseFormat === undefined ? currentBailian.responseFormat ?? "pcm" : requiredString(bailianPatch.responseFormat),
+    timeoutMs: bailianPatch.timeoutMs === undefined ? currentBailian.timeoutMs ?? 60_000 : optionalNumberFromUnknown(bailianPatch.timeoutMs),
+    sampleRate: bailianPatch.sampleRate === undefined ? currentBailian.sampleRate ?? 24_000 : optionalNumberFromUnknown(bailianPatch.sampleRate),
+    channels: bailianPatch.channels === undefined ? currentBailian.channels ?? 1 : optionalNumberFromUnknown(bailianPatch.channels),
+    extraParams: bailianExtraParamsResult.value
+  };
   const nextConversionProvider = conversionPatch.provider === undefined
     ? current.conversion?.provider ?? "genie"
-    : conversionPatch.provider === "openai-api" ? "openai-api" : "genie";
+    : conversionPatch.provider === "openai-api" ? "openai-api" : conversionPatch.provider === "bailian" ? "bailian" : "genie";
   const currentTranslationPresets = current.translationPresets ?? {};
   const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
   const editTranslationPresetName = safeTtsPresetName(optionalString(patch.newTranslationPresetName) || optionalString(patch.translationEditPresetName) || activeTranslationPresetName, "default");
@@ -2034,7 +2095,8 @@ function updateTtsConfig(
     conversion: {
       provider: nextConversionProvider,
       genie: nextRemote,
-      openaiApi: nextOpenAiApi
+      openaiApi: nextOpenAiApi,
+      bailian: nextBailian
     },
     translationPresetName: activeTranslationPresetName,
     translationPresets: nextTranslationPresets,
@@ -2073,6 +2135,15 @@ function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   if (openaiApi?.timeoutMs !== undefined && (openaiApi.timeoutMs < 1000 || openaiApi.timeoutMs > 300000)) return "invalid_openai_api_timeout";
   if (openaiApi?.sampleRate !== undefined && (openaiApi.sampleRate < 8000 || openaiApi.sampleRate > 48000)) return "invalid_openai_api_sample_rate";
   if (openaiApi?.channels !== undefined && (openaiApi.channels < 1 || openaiApi.channels > 2)) return "invalid_openai_api_channels";
+  const bailian = config.conversion?.bailian;
+  if (config.conversion?.provider === "bailian") {
+    if (!bailian?.endpoint) return "missing_bailian_tts_endpoint";
+    if (!bailian?.model) return "missing_bailian_tts_model";
+    if (!bailian?.voice) return "missing_bailian_tts_voice";
+  }
+  if (bailian?.timeoutMs !== undefined && (bailian.timeoutMs < 1000 || bailian.timeoutMs > 300000)) return "invalid_bailian_timeout";
+  if (bailian?.sampleRate !== undefined && (bailian.sampleRate < 8000 || bailian.sampleRate > 48000)) return "invalid_bailian_sample_rate";
+  if (bailian?.channels !== undefined && (bailian.channels < 1 || bailian.channels > 2)) return "invalid_bailian_channels";
   const voice = config.voice ?? {};
   for (const model of Object.values(voice.modelConfigs ?? {})) {
     if (model.speed !== undefined && (model.speed < 0.5 || model.speed > 2)) return "invalid_voice_speed";
@@ -2372,6 +2443,7 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
   const currentModel = modelConfigs[modelConfigName] ?? {};
   const conversion = config.conversion ?? { provider: "genie" as const, genie: config.remote };
   const openaiApi = conversion.openaiApi ?? {};
+  const bailian = conversion.bailian ?? {};
   return {
     enabled: config.enabled,
     remote: {
@@ -2392,6 +2464,22 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
         sampleRate: openaiApi.sampleRate ?? 32_000,
         channels: openaiApi.channels ?? 1,
         extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
+      },
+      bailian: {
+        endpoint: bailian.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        apiKey: "",
+        apiKeyEnv: bailian.apiKeyEnv ?? "DASHSCOPE_API_KEY",
+        workspaceId: bailian.workspaceId,
+        userAgent: bailian.userAgent,
+        model: bailian.model ?? "qwen3-tts-vc-2026-01-22",
+        voice: bailian.voice ?? "Cherry",
+        languageType: bailian.languageType ?? "Chinese",
+        mode: bailian.mode ?? "server_commit",
+        responseFormat: bailian.responseFormat ?? "pcm",
+        timeoutMs: bailian.timeoutMs ?? 60_000,
+        sampleRate: bailian.sampleRate ?? 24_000,
+        channels: bailian.channels ?? 1,
+        extraParamsJson: JSON.stringify(bailian.extraParams ?? {}, null, 2)
       }
     },
     translationPresetName,
@@ -2426,6 +2514,7 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
   const genie = config.conversion?.genie ?? config.remote;
   const openaiApi = config.conversion?.openaiApi;
+  const bailian = config.conversion?.bailian;
   return {
     enabled: config.enabled,
     remote: {
@@ -2448,6 +2537,22 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
         sampleRate: openaiApi?.sampleRate ?? 32_000,
         channels: openaiApi?.channels ?? 1,
         extraParams: openaiApi?.extraParams ?? {}
+      },
+      bailian: {
+        endpoint: bailian?.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        apiKey: bailian?.apiKey,
+        apiKeyEnv: bailian?.apiKeyEnv ?? "DASHSCOPE_API_KEY",
+        workspaceId: bailian?.workspaceId,
+        userAgent: bailian?.userAgent,
+        model: bailian?.model ?? "qwen3-tts-vc-2026-01-22",
+        voice: bailian?.voice ?? "Cherry",
+        languageType: bailian?.languageType ?? "Chinese",
+        mode: bailian?.mode ?? "server_commit",
+        responseFormat: bailian?.responseFormat ?? "pcm",
+        timeoutMs: bailian?.timeoutMs ?? 60_000,
+        sampleRate: bailian?.sampleRate ?? 24_000,
+        channels: bailian?.channels ?? 1,
+        extraParams: bailian?.extraParams ?? {}
       }
     },
     translationPresetName,
@@ -2478,9 +2583,10 @@ function ttsConfigSchema(): unknown {
       conversion: {
         type: "object",
         properties: {
-          provider: { type: "string", enum: ["genie", "openai-api"] },
+          provider: { type: "string", enum: ["genie", "openai-api", "bailian"] },
           genie: { type: "object" },
-          openaiApi: { type: "object" }
+          openaiApi: { type: "object" },
+          bailian: { type: "object" }
         }
       },
       translationEnabled: { type: "boolean" },

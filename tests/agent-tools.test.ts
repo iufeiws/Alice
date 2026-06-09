@@ -824,13 +824,16 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
   })), [{
     result: "completed",
     steps: [
-      { kind: "backend_effect", result: "completed" },
       { kind: "llm_instruction", result: "completed" }
     ],
     error: undefined
   }]);
   assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("对YY说晚安")), true);
-  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), false);
+  const sleepToolRequestIndex = requests[0].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "sleep_cocoon");
+  assert.ok(sleepToolRequestIndex >= 0);
+  assert.equal(requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"in\"}");
+  assert.equal(requests[0].messages[sleepToolRequestIndex + 1]?.role, "tool");
+  assert.equal(requests[0].messages[sleepToolRequestIndex + 1]?.toolCallId, requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.id);
 });
 
 test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async () => {

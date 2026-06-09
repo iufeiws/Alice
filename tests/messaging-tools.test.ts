@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1104,6 +1104,50 @@ test("tts plugin config migrates legacy remote settings into Genie conversion", 
   assert.equal(config.remote?.baseURL, "http://192.168.0.103:8767");
 });
 
+test("tts plugin config reads Bailian conversion settings", () => {
+  const dir = makeTempDir("tts-config-bailian");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        apiKey: "inline-key",
+        apiKeyEnv: "DASHSCOPE_API_KEY",
+        workspaceId: "workspace-1",
+        userAgent: "Alice-Test",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "custom-voice",
+        languageType: "Chinese",
+        mode: "server_commit",
+        responseFormat: "pcm",
+        sampleRate: 24000,
+        channels: 1,
+        timeoutMs: 5000,
+        extraParams: { volume: 50 }
+      }
+    },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+
+  const config = readTtsPluginConfig(configPath);
+
+  assert.equal(config.conversion?.provider, "bailian");
+  assert.equal(config.conversion?.bailian?.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+  assert.equal(config.conversion?.bailian?.apiKey, "inline-key");
+  assert.equal(config.conversion?.bailian?.apiKeyEnv, "DASHSCOPE_API_KEY");
+  assert.equal(config.conversion?.bailian?.workspaceId, "workspace-1");
+  assert.equal(config.conversion?.bailian?.userAgent, "Alice-Test");
+  assert.equal(config.conversion?.bailian?.model, "qwen3-tts-vc-2026-01-22");
+  assert.equal(config.conversion?.bailian?.voice, "custom-voice");
+  assert.equal(config.conversion?.bailian?.languageType, "Chinese");
+  assert.equal(config.conversion?.bailian?.mode, "server_commit");
+  assert.equal(config.conversion?.bailian?.sampleRate, 24000);
+  assert.deepEqual(config.conversion?.bailian?.extraParams, { volume: 50 });
+});
+
 test("tts plugin switch is read from plugin config at synthesis time", async () => {
   const dir = makeTempDir("tts-switch");
   const configPath = path.join(dir, "config.json");
@@ -1228,6 +1272,92 @@ test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation
     assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 16_000);
     assert.equal(requests[1].body.response_format, "pcm");
     assert.equal("stream" in requests[1].body, false);
+  } finally {
+    fs.rmSync(result.filePath, { force: true });
+  }
+});
+
+test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", async () => {
+  const outputDir = path.join(makeTempDir("bailian-tts-output"), "assets", "generated", "tts");
+  const requests: Array<{ url: string; headers: Headers; body: any }> = [];
+  const sse = [
+    `data: ${JSON.stringify({ output: { audio: { data: Buffer.from(new Uint8Array([1, 2])).toString("base64") } } })}`,
+    "",
+    `data: ${JSON.stringify({ output: { audio: { data: Buffer.from(new Uint8Array([3, 4])).toString("base64") }, finish_reason: "stop" } })}`,
+    ""
+  ].join("\n");
+  const synthesize = createBailianTtsVoiceSynthesizer({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        apiKey: "inline-key",
+        workspaceId: "workspace-1",
+        userAgent: "Alice-Test",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "custom-voice",
+        languageType: "Chinese",
+        mode: "server_commit",
+        responseFormat: "pcm",
+        sampleRate: 24000,
+        channels: 1,
+        extraParams: { volume: 50 }
+      }
+    }
+  }, {
+    outputDir,
+    env: { DASHSCOPE_API_KEY: "env-key" },
+    fetch: async (url, init) => {
+      requests.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body))
+      });
+      return new Response(sse, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" }
+      });
+    }
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({
+    text: "第一句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    chunks.push([chunk.text, Array.from(chunk.chunk), chunk.sampleRateHz, chunk.channels]);
+  }
+
+  assert.equal(requests[0].url, "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+  assert.equal(requests[0].headers.get("Authorization"), "Bearer inline-key");
+  assert.equal(requests[0].headers.get("X-DashScope-WorkSpace"), "workspace-1");
+  assert.equal(requests[0].headers.get("user-agent"), "Alice-Test");
+  assert.equal(requests[0].headers.get("X-DashScope-SSE"), "enable");
+  assert.deepEqual(requests[0].body, {
+    model: "qwen3-tts-vc-2026-01-22",
+    input: {
+      volume: 50,
+      text: "第一句。",
+      voice: "custom-voice",
+      language_type: "Chinese"
+    }
+  });
+  assert.deepEqual(chunks, [
+    ["第一句。", [1, 2], 24000, 1],
+    [undefined, [3, 4], 24000, 1]
+  ]);
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-10T02:10:51.609Z"))
+  });
+  try {
+    assert.equal(result.assetId, "generated/tts/2026-06-10T02_10_51.609-bailian.wav");
+    const wav = fs.readFileSync(result.filePath);
+    assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 24000);
   } finally {
     fs.rmSync(result.filePath, { force: true });
   }

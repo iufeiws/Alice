@@ -377,6 +377,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           const mode = applyModeStateToNewSession ?? defaultModeState();
           applyModeStateToNewSession = undefined;
           let promptCheckChatCursor: number | undefined;
+          let initiatedBehaviorPromptToolResult: ToolResult | undefined;
           const promptMessages = mode.mode === "fixed_prefix"
             ? cloneLLMMessages(mode.modeStaticMessages)
             : [
@@ -385,7 +386,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                 return result;
               }),
-              ...buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext),
+              ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
+                const result = await runPromptToolRequest(layer, call, toolPlugins);
+                promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                initiatedBehaviorPromptToolResult = result;
+                return result;
+              }),
               ...mode.modeStaticMessages
             ];
           initiatedBehavior = undefined;
@@ -405,6 +411,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             waitChatStartedAt: undefined,
             lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
           };
+          if (initiatedBehaviorPromptToolResult) {
+            applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorPromptToolResult, time.now().epochMs);
+          }
           noteLLMSessionUpdated();
         }
         if (!activeLLMSession) throw new Error("llm_session_unavailable");

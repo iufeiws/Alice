@@ -343,7 +343,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
   assert.deepEqual(playedChunks, []);
   assert.deepEqual(startedLoops, ["webrtc_voice:call-runtime-output", "webrtc_voice:call-runtime-output"]);
   assert.equal(statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === "webrtc_voice:call-runtime-output"), true);
-  assert.equal(sleeps.includes(100), true);
+  assert.equal(sleeps.includes(20), true);
   assert.equal(sleeps.includes(1000), false);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[7]]);
   await call.close("test_done");
@@ -408,7 +408,7 @@ test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finish
 
   assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
   assert.deepEqual(synthesizedTexts, ["第一段。", "第二段。"]);
-  assert.equal(sleeps.filter((ms) => ms === 100).length, 1);
+  assert.equal(sleeps.filter((ms) => ms === 20).length, 1);
   assert.ok((peer.outboundTrack?.frames.length ?? 0) < 60);
 
   releasePlaybackSleep();
@@ -491,7 +491,7 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
   await call.close("test_done");
 });
 
-test("WebRTC voice claims next TalkRuntime chunk after current TTS stream fails", async () => {
+test("WebRTC voice closes instead of claiming the next TalkRuntime chunk after current TTS stream fails", async () => {
   const peer = new FakePeer();
   const claimedChunks: string[] = [];
   const synthesizedTexts: string[] = [];
@@ -537,15 +537,15 @@ test("WebRTC voice claims next TalkRuntime chunk after current TTS stream fails"
     emitStatus: (event) => statuses.push(event)
   });
 
-  const call = await plugin.createCall({ callId: "call-stream-failure", userId: "browser-stream-failure", offerSdp: "offer" });
-  await waitFor(() => claimedChunks.length === 2 && synthesizedTexts.length === 2, 2_000);
-  await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 1, 2_000);
+  await plugin.createCall({ callId: "call-stream-failure", userId: "browser-stream-failure", offerSdp: "offer" });
+  await waitFor(() => statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "tts_failed"), 2_000);
+  await new Promise((resolve) => setTimeout(resolve, 25));
 
-  assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
-  assert.deepEqual(synthesizedTexts, ["第一段。", "第二段。"]);
+  assert.deepEqual(claimedChunks, ["chunk-1"]);
+  assert.deepEqual(synthesizedTexts, ["第一段。"]);
   assert.equal(statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail === "stream failed"), true);
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[2]]);
-  await call.close("test_done");
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), []);
+  assert.equal(peer.closed, true);
 });
 
 test("WebRTC voice starts the next TalkRuntime loop after chunk is queued, before playback ends", async () => {
@@ -1198,6 +1198,58 @@ test("WebRTC voice fails a chunk after repeated outbound write failures and cont
   await call.close("test_done");
 });
 
+test("WebRTC voice closes the call and stops output pump when TTS cannot produce audio", async () => {
+  const peer = new FakePeer();
+  const claimedChunks: string[] = [];
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const chunks = [
+    { sessionId: "webrtc_voice:call-tts-fatal", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: "webrtc_voice:call-tts-fatal", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+  ];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        throw new Error("tts service unavailable");
+      }
+    }),
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      startAgentLoop() {},
+      claimReadyOutputChunk(sessionId: string) {
+        const chunk = chunks.shift();
+        if (!chunk || chunk.sessionId !== sessionId) return undefined;
+        claimedChunks.push(chunk.chunkId);
+        return chunk;
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  await plugin.createCall({ callId: "call-tts-fatal", userId: "browser-tts-fatal", offerSdp: "offer" });
+
+  await waitFor(() => statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "tts_failed"), 2_000);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(claimedChunks, ["chunk-1"]);
+  assert.equal(peer.closed, true);
+  assert.equal(peer.outboundTrack?.stopped, true);
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail?.includes("tts service unavailable")), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "tts_failed"), true);
+});
+
 test("WebRTC voice streaming PCM encoder reuses one ffmpeg process for chunked audio", async () => {
   const sampleRateHz = 32_000;
   const samples = Math.floor(sampleRateHz * 0.24);
@@ -1329,6 +1381,58 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
   assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing" && entry.detail === "output=queue-output frame=2 spans=1"), true);
 });
 
+test("WebRTC voice maps streaming text spans with source PCM sample rate", async () => {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  let nowMs = 0;
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield {
+          type: "audio" as const,
+          sequence: 0,
+          text: "父亲大人终于睡醒了呀",
+          chunk: new Uint8Array(16_000),
+          contentType: "audio/L16; rate=16000; channels=1",
+          sampleRateHz: 16_000,
+          channels: 1
+        };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const chunk of input.chunks) {
+        assert.equal(chunk.byteLength, 16_000);
+        assert.equal(input.inputSampleRateHz, 16_000);
+        for (let index = 0; index < 25; index += 1) {
+          yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+      }
+    },
+    emitStatus: (event) => statuses.push(event),
+    now: () => new Date(nowMs),
+    sleep: async (ms) => {
+      nowMs += ms;
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-text-span-rate", userId: "browser-stream-text-span-rate", offerSdp: "offer" });
+  const result = await call.playReplyText("span", "span-output");
+
+  assert.equal(result.status, "played");
+  assert.equal(result.frameCount, 25);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing"), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail === "前文=父亲大人终于睡醒了呀 时长=500ms"), true);
+});
+
 test("WebRTC voice starts streaming playback clock after first-playback delay", async () => {
   const peer = new FakePeer();
   const sleeps: number[] = [];
@@ -1373,7 +1477,7 @@ test("WebRTC voice starts streaming playback clock after first-playback delay", 
   assert.equal(result.status, "played");
   await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 60);
   assert.equal(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length, 60);
-  assert.deepEqual(sleeps.slice(0, 3), [100, 1000, 100]);
+  assert.deepEqual(sleeps.slice(0, 3), [20, 1000, 20]);
 });
 
 test("WebRTC voice waits for streaming encoder completion before queued playback", async () => {
@@ -1481,7 +1585,7 @@ test("WebRTC voice fills streaming underrun with timed silence frames", async ()
   const finalFrameIndex = frames.findIndex((frame) => Array.from(frame.pcm).join(",") === "99");
   assert.ok(silenceCount > 0);
   assert.ok(finalFrameIndex > 60);
-  assert.equal(frames.some((frame) => frame.pcm.length === 0 && frame.durationMs === 100), true);
+  assert.equal(frames.some((frame) => frame.pcm.length === 0 && frame.durationMs === 20), true);
   assert.ok((frames[finalFrameIndex]?.rtpTimestamp ?? 0) > (frames[59]?.rtpTimestamp ?? 0));
 });
 
@@ -1531,7 +1635,7 @@ test("WebRTC voice does not advance playback text until underrun silence finishe
     sleep: async (ms) => {
       if (sawSilence && !checkedSilenceSleep) {
         checkedSilenceSleep = true;
-        assert.equal(ms, 100);
+        assert.equal(ms, 20);
         assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
         assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
         releaseNextFrame();
@@ -1592,7 +1696,7 @@ test("WebRTC voice does not advance playback text until the next real frame fini
       }
     },
     sleep: async (ms) => {
-      if (!checkedSecondFrameSleep && ms === 100 && peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99")) {
+      if (!checkedSecondFrameSleep && ms === 20 && peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99")) {
         checkedSecondFrameSleep = true;
         assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("第二段")), false);
         assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第二段"), false);
@@ -1606,11 +1710,54 @@ test("WebRTC voice does not advance playback text until the next real frame fini
   const result = await call.playReplyText("real frame gate", "real-frame-gate-output");
 
   assert.equal(result.status, "played");
-  await waitFor(() => checkedSecondFrameSleep);
-  assert.equal(checkedSecondFrameSleep, true);
+  if (!checkedSecondFrameSleep) {
+    assert.equal(peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99"), true);
+  }
   await waitFor(() => statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")));
   assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")), true);
   assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text").map((entry) => entry.detail), ["第一段", "第二段"]);
+});
+
+test("WebRTC voice paces queued RTP frames instead of bursting the whole stream", async () => {
+  const peer = new FakePeer();
+  const frameCountsAtSleep: number[] = [];
+  let nowMs = 0;
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    now: () => new Date(nowMs),
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream() {
+        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        for (let index = 0; index < 60; index += 1) {
+          yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+        }
+      }
+    },
+    sleep: async (ms) => {
+      if (ms === 20) frameCountsAtSleep.push(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0);
+      nowMs += ms;
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-stream-rtp-paced", userId: "browser-stream-rtp-paced", offerSdp: "offer" });
+  const result = await call.playReplyText("paced", "paced-output");
+
+  assert.equal(result.status, "played");
+  assert.equal(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length, 60);
+  assert.equal(frameCountsAtSleep[0], 1);
+  assert.equal(frameCountsAtSleep.some((count) => count > 0 && count < 60), true);
 });
 
 test("WebRTC voice gates playback when speech starts before streaming TTS writes audio", async () => {

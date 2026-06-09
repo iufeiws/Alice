@@ -42,15 +42,24 @@ export function attachWebRtcVoiceSignalingServer(input: {
             if (message.type === "offer" && message.sdp) {
               let answerSent = false;
               const pendingCandidates: unknown[] = [];
-              call = await input.plugin.createCall({
-                callId,
-                userId,
-                offerSdp: message.sdp,
-                onLocalIceCandidate(candidate) {
-                  if (answerSent) send({ type: "ice", candidate });
-                  else pendingCandidates.push(candidate);
-                }
-              });
+              try {
+                call = await input.plugin.createCall({
+                  callId,
+                  userId,
+                  offerSdp: message.sdp,
+                  onLocalIceCandidate(candidate) {
+                    if (answerSent) send({ type: "ice", candidate });
+                    else pendingCandidates.push(candidate);
+                  }
+                });
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                input.appendLog?.("error", `webrtc voice call create failed: ${detail}`);
+                send({ type: "status", state: "tts.failed", detail });
+                send({ type: "status", state: "voice_call.hangup", detail: "tts_failed" });
+                socket.end();
+                return;
+              }
               input.onCallCreated?.(call);
               send({ type: "answer", sdp: call.answerSdp });
               answerSent = true;

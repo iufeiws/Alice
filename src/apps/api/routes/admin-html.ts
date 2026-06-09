@@ -1378,6 +1378,28 @@ export function renderAdminHtmlV2(): string {
                 <button type="button" data-plugin-section-save="conversion-openai-api">Save OpenAI-API Conversion</button>
               </div>
             </section>
+            <section class="plugin-config-section" data-plugin-config-section="conversion-bailian" data-plugin-conversion-panel="bailian">
+              <div class="plugin-section-head"><h2>Conversion / Bailian</h2></div>
+              <div class="plugin-public-grid">
+                \${render("conversion.bailian.endpoint")}
+                \${render("conversion.bailian.apiKey")}
+                \${render("conversion.bailian.apiKeyEnv")}
+                \${render("conversion.bailian.workspaceId")}
+                \${render("conversion.bailian.userAgent")}
+                \${render("conversion.bailian.model")}
+                \${render("conversion.bailian.voice")}
+                \${render("conversion.bailian.languageType")}
+                \${render("conversion.bailian.mode")}
+                \${render("conversion.bailian.responseFormat")}
+                \${render("conversion.bailian.timeoutMs")}
+                \${render("conversion.bailian.sampleRate")}
+                \${render("conversion.bailian.channels")}
+                \${render("conversion.bailian.extraParamsJson")}
+              </div>
+              <div class="prompt-actions">
+                <button type="button" data-plugin-section-save="conversion-bailian">Save Bailian Conversion</button>
+              </div>
+            </section>
             <section class="plugin-config-section" data-plugin-config-section="common">
               <div class="plugin-section-head"><h2>Common</h2></div>
               <div class="plugin-public-grid">
@@ -1525,6 +1547,9 @@ export function renderAdminHtmlV2(): string {
         }
         if (field.type === "number") {
           return \`<label>\${escapeHtml(field.label)}<input type="number" min="\${escapeAttr(field.min ?? "0.5")}" max="\${escapeAttr(field.max ?? "2")}" step="\${escapeAttr(field.step ?? "0.05")}" name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value ?? "")}" /></label>\${description}\`;
+        }
+        if (field.type === "password") {
+          return \`<label>\${escapeHtml(field.label)}<input type="password" name="\${inputName}" data-plugin-field="\${inputName}" value="" placeholder="Leave blank to keep unchanged" autocomplete="new-password" /></label>\${description}\`;
         }
         if (field.type === "select") {
           const options = field.options || [];

@@ -108,9 +108,10 @@ export type TtsRemoteConfig = {
 };
 
 export type TtsConversionConfig = {
-  provider?: "genie" | "openai-api";
+  provider?: "genie" | "openai-api" | "bailian";
   genie?: TtsRemoteConfig;
   openaiApi?: TtsOpenAiApiConversionConfig;
+  bailian?: TtsBailianConversionConfig;
 };
 
 export type TtsOpenAiApiConversionConfig = {
@@ -123,6 +124,23 @@ export type TtsOpenAiApiConversionConfig = {
   timeoutMs?: number;
   sampleRate?: number;
   channels?: number;
+  extraParams?: Record<string, unknown>;
+};
+
+export type TtsBailianConversionConfig = {
+  endpoint?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  workspaceId?: string;
+  userAgent?: string;
+  model?: string;
+  voice?: string;
+  languageType?: string;
+  mode?: "server_commit" | "commit";
+  responseFormat?: string;
+  sampleRate?: number;
+  channels?: number;
+  timeoutMs?: number;
   extraParams?: Record<string, unknown>;
 };
 
@@ -316,8 +334,9 @@ export function createTtsTranslationSynthesizer(
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
     const conversion = selectedTtsConversionProvider(config);
-    const result = conversion === "openai-api"
-      ? await createOpenAiApiTtsVoiceSynthesizer(config, deps)({
+    const conversionSynthesizer = createTtsConversionSynthesizer(conversion, config, deps);
+    const result = conversionSynthesizer
+      ? await conversionSynthesizer({
         ...input,
         text: ttsText
       })
@@ -352,8 +371,9 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
     const conversion = selectedTtsConversionProvider(config);
-    const result = conversion === "openai-api"
-      ? await createOpenAiApiTtsVoiceSynthesizer(config, deps)({
+    const conversionSynthesizer = createTtsConversionSynthesizer(conversion, config, deps);
+    const result = conversionSynthesizer
+      ? await conversionSynthesizer({
         ...input,
         text: ttsText
       })
@@ -482,9 +502,7 @@ export async function* streamTtsText(
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
   const conversion = selectedTtsConversionProvider(config);
-  const synthesisStream = conversion === "openai-api"
-    ? createOpenAiApiTtsVoiceSynthesizer(config, deps)
-    : deps.baseSynthesizer;
+  const synthesisStream = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
   if (!synthesisStream.streamAudio && !synthesisStream.streamAudioWithText) {
     throw new Error("tts stream requires a streaming Genie TTS synthesizer");
   }
@@ -609,13 +627,31 @@ function ttsSilentPcmL16(durationMs: number, format: { sampleRateHz?: number; ch
 
 function selectedTtsStreamPcmFormat(config: TtsPluginConfig): { sampleRateHz: number; channels: number } {
   const openaiApi = config.conversion?.openaiApi;
-  if (selectedTtsConversionProvider(config) === "openai-api") {
+  const provider = selectedTtsConversionProvider(config);
+  if (provider === "openai-api") {
     return {
       sampleRateHz: openaiApi?.sampleRate ?? 32_000,
       channels: openaiApi?.channels ?? 1
     };
   }
+  const bailian = config.conversion?.bailian;
+  if (provider === "bailian") {
+    return {
+      sampleRateHz: bailian?.sampleRate ?? 24_000,
+      channels: bailian?.channels ?? 1
+    };
+  }
   return { sampleRateHz: 32_000, channels: 1 };
+}
+
+function createTtsConversionSynthesizer(
+  conversion: ReturnType<typeof selectedTtsConversionProvider>,
+  config: TtsPluginConfig,
+  deps: TtsPluginDeps
+): VoiceSynthesizer | undefined {
+  if (conversion === "openai-api") return createOpenAiApiTtsVoiceSynthesizer(config, deps);
+  if (conversion === "bailian") return createBailianTtsVoiceSynthesizer(config, deps);
+  return undefined;
 }
 
 function ttsPcmContentType(format: { sampleRateHz: number; channels: number }): string {
@@ -847,6 +883,7 @@ function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, u
   const raw = parseJsonObject(value);
   const genie = parseJsonObject(raw.genie);
   const openaiApi = parseJsonObject(raw.openaiApi);
+  const bailian = parseJsonObject(raw.bailian);
   const legacyGenie = {
     enabled: booleanValue(legacyRemote.enabled, true),
     baseURL: normalizeBaseURL(stringValue(legacyRemote.baseURL) || "http://192.168.0.103:8767")
@@ -856,9 +893,10 @@ function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, u
     baseURL: normalizeBaseURL(stringValue(genie.baseURL) || legacyGenie.baseURL)
   };
   return {
-    provider: raw.provider === "openai-api" ? "openai-api" : "genie",
+    provider: raw.provider === "openai-api" ? "openai-api" : raw.provider === "bailian" ? "bailian" : "genie",
     genie: nextGenie,
-    openaiApi: ttsOpenAiApiConversionConfigValue(openaiApi)
+    openaiApi: ttsOpenAiApiConversionConfigValue(openaiApi),
+    bailian: ttsBailianConversionConfigValue(bailian)
   };
 }
 
@@ -877,8 +915,28 @@ function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpe
   };
 }
 
-export function selectedTtsConversionProvider(config: TtsPluginConfig): "genie" | "openai-api" {
-  return config.conversion?.provider === "openai-api" ? "openai-api" : "genie";
+function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBailianConversionConfig {
+  return {
+    endpoint: stringValue(raw.endpoint) || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    apiKey: stringValue(raw.apiKey),
+    apiKeyEnv: stringValue(raw.apiKeyEnv) || "DASHSCOPE_API_KEY",
+    workspaceId: stringValue(raw.workspaceId),
+    userAgent: stringValue(raw.userAgent),
+    model: stringValue(raw.model) || "qwen3-tts-vc-2026-01-22",
+    voice: stringValue(raw.voice) || "Cherry",
+    languageType: stringValue(raw.languageType) || "Chinese",
+    mode: raw.mode === "commit" ? "commit" : "server_commit",
+    responseFormat: stringValue(raw.responseFormat) || "pcm",
+    sampleRate: numberValue(raw.sampleRate, 24_000),
+    channels: numberValue(raw.channels, 1),
+    timeoutMs: numberValue(raw.timeoutMs, 60_000),
+    extraParams: recordValue(raw.extraParams)
+  };
+}
+
+export function selectedTtsConversionProvider(config: TtsPluginConfig): "genie" | "openai-api" | "bailian" {
+  const provider = config.conversion?.provider;
+  return provider === "openai-api" || provider === "bailian" ? provider : "genie";
 }
 
 function ttsLanguageValue(value: unknown): "jp" | "zh" | "en" {
@@ -1257,6 +1315,231 @@ function normalizeOpenAiApiSpeechBaseURL(value: string): string {
   return normalized.endsWith("/audio/speech")
     ? normalized.slice(0, -"/audio/speech".length).replace(/\/+$/, "")
     : normalized;
+}
+
+export function createBailianTtsVoiceSynthesizer(
+  config: TtsPluginConfig,
+  deps: Pick<TtsPluginDeps, "env" | "fetch" | "appendLog"> & { outputDir?: string } = {}
+): VoiceSynthesizer {
+  const synthesize = (async (request) => {
+    const settings = resolveBailianTtsSettings(config, deps);
+    const audio = await requestBailianTtsAudio(request.text, settings, deps);
+    const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
+    const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
+    const filePath = path.join(outputDir, `${stamp}-bailian.wav`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, pcmToWav(audio, { sampleRate: settings.sampleRate, channels: settings.channels }));
+    return {
+      assetId: `generated/tts/${path.basename(filePath)}`,
+      filePath
+    };
+  }) as VoiceSynthesizer;
+
+  synthesize.streamAudio = async function* (request) {
+    const settings = resolveBailianTtsSettings(config, deps);
+    for await (const chunk of requestBailianTtsAudioStream(request.text, settings, deps)) yield chunk;
+  };
+  synthesize.streamAudioWithText = async function* (request) {
+    const settings = resolveBailianTtsSettings(config, deps);
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    for await (const chunk of requestBailianTtsAudioStream(request.text, settings, deps)) {
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+    const mapper = createTtsPcmProgressTextMapper(request.text, totalBytes, {
+      sampleRate: settings.sampleRate,
+      channels: settings.channels
+    });
+    for (const chunk of chunks) {
+      yield {
+        text: mapper.take(chunk.byteLength),
+        chunk,
+        sampleRateHz: settings.sampleRate,
+        channels: settings.channels
+      };
+    }
+  };
+  return synthesize;
+}
+
+type BailianTtsSettings = {
+  endpoint: string;
+  apiKey: string;
+  workspaceId?: string;
+  userAgent?: string;
+  model: string;
+  voice: string;
+  languageType: string;
+  mode: "server_commit" | "commit";
+  responseFormat: string;
+  sampleRate: number;
+  channels: number;
+  timeoutMs: number;
+  extraParams: Record<string, unknown>;
+};
+
+function resolveBailianTtsSettings(
+  config: TtsPluginConfig,
+  deps: Pick<TtsPluginDeps, "env">
+): BailianTtsSettings {
+  const conversion = config.conversion?.bailian ?? {};
+  const env = deps.env ?? process.env;
+  const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || env.DASHSCOPE_API_KEY;
+  if (!apiKey) throw new Error("Bailian TTS conversion requires apiKey or DASHSCOPE_API_KEY");
+  return {
+    endpoint: conversion.endpoint || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    apiKey,
+    workspaceId: conversion.workspaceId,
+    userAgent: conversion.userAgent,
+    model: conversion.model || "qwen3-tts-vc-2026-01-22",
+    voice: conversion.voice || "Cherry",
+    languageType: conversion.languageType || "Chinese",
+    mode: conversion.mode === "commit" ? "commit" : "server_commit",
+    responseFormat: conversion.responseFormat || "pcm",
+    sampleRate: conversion.sampleRate ?? 24_000,
+    channels: conversion.channels ?? 1,
+    timeoutMs: conversion.timeoutMs ?? 60_000,
+    extraParams: conversion.extraParams ?? {}
+  };
+}
+
+async function requestBailianTtsAudio(
+  text: string,
+  settings: BailianTtsSettings,
+  deps: Pick<TtsPluginDeps, "fetch" | "appendLog">
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of requestBailianTtsAudioStream(text, settings, deps)) {
+    chunks.push(chunk);
+    total += chunk.byteLength;
+  }
+  const audio = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    audio.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return audio;
+}
+
+async function* requestBailianTtsAudioStream(
+  text: string,
+  settings: BailianTtsSettings,
+  deps: Pick<TtsPluginDeps, "fetch" | "appendLog">
+): AsyncIterable<Uint8Array> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), settings.timeoutMs);
+  deps.appendLog?.("info", `tts Bailian non-realtime stream start: chars=${Array.from(text).length}`);
+  try {
+    const response = await fetchImpl(settings.endpoint, {
+      method: "POST",
+      signal: abort.signal,
+      headers: {
+        Authorization: `Bearer ${settings.apiKey}`,
+        "Content-Type": "application/json",
+        "X-DashScope-SSE": "enable",
+        ...(settings.userAgent ? { "user-agent": settings.userAgent } : {}),
+        ...(settings.workspaceId ? { "X-DashScope-WorkSpace": settings.workspaceId } : {})
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        input: {
+          ...settings.extraParams,
+          text,
+          voice: settings.voice,
+          language_type: settings.languageType
+        }
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Bailian TTS HTTP error ${response.status}: ${await response.text()}`);
+    }
+    let chunks = 0;
+    let bytes = 0;
+    for await (const event of readBailianSseEvents(response)) {
+      const error = parseBailianHttpError(event);
+      if (error) throw error;
+      const audio = bailianHttpAudioData(event);
+      if (audio?.byteLength) {
+        chunks += 1;
+        bytes += audio.byteLength;
+        yield audio;
+      }
+    }
+    if (bytes <= 0) throw new Error("Bailian TTS returned no audio data");
+    deps.appendLog?.("info", `tts Bailian non-realtime stream complete: chunks=${chunks} bytes=${bytes}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function* readBailianSseEvents(response: Response): AsyncIterable<Record<string, unknown>> {
+  const body = response.body;
+  if (!body) {
+    const event = parseJsonObject(await response.text());
+    if (Object.keys(event).length) yield event;
+    return;
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = bailianSseEventBoundary(buffer);
+      while (boundary >= 0) {
+        const raw = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + (buffer[boundary] === "\r" ? 4 : 2));
+        const event = parseBailianSseEvent(raw);
+        if (event) yield event;
+        boundary = bailianSseEventBoundary(buffer);
+      }
+    }
+    buffer += decoder.decode();
+    const event = parseBailianSseEvent(buffer);
+    if (event) yield event;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function bailianSseEventBoundary(buffer: string): number {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+  if (lf < 0) return crlf;
+  if (crlf < 0) return lf;
+  return Math.min(lf, crlf);
+}
+
+function parseBailianSseEvent(raw: string): Record<string, unknown> | undefined {
+  const data = raw.split(/\r?\n/u)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim())
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") return undefined;
+  return parseJsonObject(data);
+}
+
+function bailianHttpAudioData(event: Record<string, unknown>): Uint8Array | undefined {
+  const output = parseJsonObject(event.output);
+  const audio = parseJsonObject(output.audio);
+  const data = stringValue(audio.data);
+  if (!data) return undefined;
+  return new Uint8Array(Buffer.from(data, "base64"));
+}
+
+function parseBailianHttpError(event: Record<string, unknown>): Error | undefined {
+  const code = stringValue(event.error_code) || stringValue(event.code);
+  if (!code) return undefined;
+  const error = parseJsonObject(event.error);
+  const message = stringValue(error.message) || stringValue(event.message) || JSON.stringify(event).slice(0, 500);
+  return new Error(`Bailian TTS error: ${message}`);
 }
 
 function pcmToWav(pcm: Uint8Array, options: { sampleRate: number; channels: number }): Uint8Array {

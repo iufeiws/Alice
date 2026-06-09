@@ -577,9 +577,11 @@ test("admin TTS config schema exposes voice language and language model folder",
   const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.enabled");
   const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.baseURL");
   const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.openaiApi.apiPresetName");
+  const bailianKeyField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.apiKey");
+  const bailianModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.model");
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "general"]);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "conversion_bailian", "general"]);
   assert.equal(configField.type, "select");
   assert.equal(configField.group, "model_genie");
   assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["jp"]);
@@ -596,6 +598,70 @@ test("admin TTS config schema exposes voice language and language model folder",
   assert.equal(remoteUrlField.group, "model_genie");
   assert.equal(openAiPresetField.type, "apiPresetSelect");
   assert.equal(openAiPresetField.group, "conversion_openai_api");
+  assert.equal(bailianKeyField.type, "password");
+  assert.equal(bailianKeyField.group, "conversion_bailian");
+  assert.equal(bailianModelField.type, "text");
+  assert.equal(bailianModelField.group, "conversion_bailian");
+});
+
+test("admin TTS config patch stores Bailian api key and preserves it when blank", async () => {
+  const root = makeTempDir("admin-tts-bailian-key");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        apiKeyEnv: "DASHSCOPE_API_KEY",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "Cherry"
+      }
+    }
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const first = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        apiKey: "dashscope-secret",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "Cherry"
+      }
+    }
+  }), first);
+  const firstSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(JSON.parse(first.body).ok, true);
+  assert.equal(firstSaved.conversion.bailian.apiKey, "dashscope-secret");
+
+  const second = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        apiKey: "",
+        voice: "Cherry"
+      }
+    }
+  }), second);
+  const secondSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(second.body).ok, true);
+  assert.equal(secondSaved.conversion.bailian.apiKey, "dashscope-secret");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {

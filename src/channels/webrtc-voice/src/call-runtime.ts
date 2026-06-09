@@ -165,12 +165,18 @@ export async function createCallState(
         beforeFirstPlayback: async () => {
           if (!firstOutboundPlaybackBufferPending) return;
           firstOutboundPlaybackBufferPending = false;
-          await deps.sleep?.(100);
+          await deps.sleep?.(deps.config.outboundAudio.frameMs);
         },
         onTtsStreamSettled: resolveTtsStreamSettled
       });
       void deps.talkRuntime?.startAgentLoop?.(talkSessionId);
       void playback.then(async (result) => {
+        if (result?.failureReason) {
+          deps.emitStatus?.({ state: "voice_call.tts_fatal", detail: `${result.outputId ?? chunk.outputId ?? ""} ${result.failureReason}`.trim() });
+          await call.close("tts_failed");
+          resolveTtsStreamSettled();
+          return;
+        }
         resolveTtsStreamSettled();
         if (result?.status !== "played" || !chunk.chunkId) return;
         try {
@@ -180,8 +186,8 @@ export async function createCallState(
           deps.emitStatus?.({ state: "talk_runtime.chunk_played_failed", detail: `${chunk.outputId} chunk=${chunk.chunkId}: ${error instanceof Error ? error.message : String(error)}` });
         }
       }).catch((error) => {
-        resolveTtsStreamSettled();
         deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });
+        void call.close("tts_failed").finally(resolveTtsStreamSettled);
       });
       await ttsStreamSettledPromise;
     }
@@ -289,6 +295,7 @@ export async function createCallState(
     async close(reason = "closed") {
       if (closed) return;
       closed = true;
+      deps.emitStatus?.({ state: "voice_call.hangup", detail: reason });
       playback.stopTextCacheStatus();
       await interruptController.runInterrupt("call_close");
       await interruptController.commitStableInputsIfReady();

@@ -1,8 +1,8 @@
-import type { AgentEvent, ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { PromptLayer } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { promptVariables, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { normalizePromptLayers, promptLayerToMessage } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
+import { buildLayerMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { normalizePromptLayers } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -108,7 +108,6 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     triggerEvent: "sleep_cocoon.auto_goodnight_check",
     promptProfilePath: "src/contexts/initiative/behaviors/sleep_goodnight.json",
     steps: [
-      { kind: "backend_effect", effect: "sleep_cocoon", arguments: { action: "in" } },
       { kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/sleep_goodnight.json" }
     ]
   },
@@ -180,21 +179,24 @@ export function selectRandomizedAgentInitiatedBehaviorPlan(
   return candidates.at(-1);
 }
 
-export function buildAgentInitiatedBehaviorMessages(
+export async function buildAgentInitiatedBehaviorMessages(
   plan: AgentInitiatedBehaviorPlan | undefined,
   promptProfile: PromptProfile,
-  context: PromptRenderContext
-): LLMChatInput["messages"] {
+  context: PromptRenderContext,
+  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+): Promise<LLMChatInput["messages"]> {
   if (!plan || !plan.enabled || plan.dryRun) return [];
   const variables = promptVariables(promptProfile, context);
-  return plan.steps.flatMap((step) => {
-    if (step.kind !== "llm_instruction") return [];
+  const messages: LLMChatInput["messages"] = [];
+  for (const step of plan.steps) {
+    if (step.kind !== "llm_instruction") continue;
     const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
-    return normalizePromptLayers(profile.layers)
+    const layers = normalizePromptLayers(profile.layers)
       .filter((layer) => layer.enabled)
-      .sort((left, right) => left.order - right.order)
-      .map((layer) => promptLayerToMessage(layer, variables, { toolCallIdPrefix: `initiated_${plan.id}` }));
-  });
+      .sort((left, right) => left.order - right.order);
+    messages.push(...await buildLayerMessagesWithToolResults(layers, variables, context, runTool, { toolCallIdPrefix: `initiated_${plan.id}` }));
+  }
+  return messages;
 }
 
 export function readAgentInitiatedBehaviorPromptProfile(filePath: string): AgentInitiatedBehaviorPromptProfile | undefined {
@@ -232,6 +234,18 @@ export function resolveAgentInitiatedBehaviorAvailability(
   tools: ToolPlugin[]
 ): AgentInitiatedBehaviorAvailability {
   const steps = plan.steps.map((step) => {
+    if (step.kind === "llm_instruction") {
+      const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
+      const unavailableTool = normalizePromptLayers(profile.layers)
+        .filter((layer) => layer.enabled && layer.role === "tool_request")
+        .map((layer) => layer.toolName || "check_chat")
+        .find((toolName) => !isToolVisibleInPromptProfile(promptProfile, toolName) || !findToolByName(tools, toolName));
+      if (!unavailableTool) return { kind: step.kind, status: "available" as const };
+      const reason = !isToolVisibleInPromptProfile(promptProfile, unavailableTool)
+        ? `tool_hidden:${unavailableTool}`
+        : `tool_missing:${unavailableTool}`;
+      return { kind: step.kind, status: "unavailable" as const, reason };
+    }
     if (step.kind !== "backend_effect") return { kind: step.kind, status: "available" as const };
     if (step.effect !== "sleep_cocoon") {
       return { kind: step.kind, status: "unavailable" as const, reason: `unsupported_backend_effect:${step.effect}` };

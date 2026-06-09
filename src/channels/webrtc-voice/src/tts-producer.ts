@@ -94,7 +94,8 @@ export function createTtsProducer(ctx: {
         return {
           status: "interrupted",
           outputId,
-          frameCount: 0
+          frameCount: 0,
+          failureReason: "outbound_audio_not_ready"
         };
       }
       if (ctx.deps.voiceSynthesizer.stream && (ctx.deps.encodePcmL16StreamToFrames || ctx.deps.encodePcmL16ToFrames)) {
@@ -146,7 +147,10 @@ export function createTtsProducer(ctx: {
               audioChunks += 1;
               audioBytes += firstAudioEvent.chunk.byteLength;
               archiveAudioChunks.push(copyUint8Array(firstAudioEvent.chunk));
-              ctx.playback.recordAudioTextSpan(item, firstAudioEvent.text, firstAudioEvent.chunk);
+              ctx.playback.recordAudioTextSpan(item, firstAudioEvent.text, firstAudioEvent.chunk, {
+                sampleRateHz: firstAudioEvent.sampleRateHz ?? inputSampleRateHz,
+                channels: firstAudioEvent.channels ?? inputChannels
+              });
               ctx.deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${inputSampleRateHz}Hz` });
               yield firstAudioEvent.chunk;
             }
@@ -175,7 +179,10 @@ export function createTtsProducer(ctx: {
               audioChunks += 1;
               audioBytes += event.chunk.byteLength;
               archiveAudioChunks.push(copyUint8Array(event.chunk));
-              ctx.playback.recordAudioTextSpan(item, event.text, event.chunk);
+              ctx.playback.recordAudioTextSpan(item, event.text, event.chunk, {
+                sampleRateHz: event.sampleRateHz ?? inputSampleRateHz,
+                channels: event.channels ?? inputChannels
+              });
               if (audioChunks === 1 || audioChunks % 20 === 0) {
                 ctx.deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${event.sampleRateHz ?? inputSampleRateHz}Hz` });
               }
@@ -205,7 +212,7 @@ export function createTtsProducer(ctx: {
               item.producerDone = true;
               throw error;
             } finally {
-              await notifyTtsStreamSettled();
+              if (encodedFrames > 0) await notifyTtsStreamSettled();
             }
           })();
           const minBufferedFrames = Math.max(20, Math.ceil(1200 / ctx.deps.config.outboundAudio.frameMs));
@@ -255,7 +262,8 @@ export function createTtsProducer(ctx: {
           return {
             status: finalStatus,
             outputId,
-            frameCount
+            frameCount,
+            failureReason: failed ? "no_frames_sent" : undefined
           };
         } else if (ctx.deps.encodePcmL16ToFrames) {
           if (!await ctx.playback.waitForTurn(item, ctx.playbackGateOpen)) {
@@ -287,7 +295,10 @@ export function createTtsProducer(ctx: {
             inputSampleRateHz = event.sampleRateHz ?? inputSampleRateHz;
             inputChannels = event.channels ?? inputChannels;
             archiveAudioChunks.push(copyUint8Array(event.chunk));
-            ctx.playback.recordAudioTextSpan(item, event.text, event.chunk);
+            ctx.playback.recordAudioTextSpan(item, event.text, event.chunk, {
+              sampleRateHz: inputSampleRateHz,
+              channels: inputChannels
+            });
             const frames = await raceWithAbort(Promise.resolve(ctx.deps.encodePcmL16ToFrames({
               pcm: event.chunk,
               inputSampleRateHz,
@@ -316,7 +327,7 @@ export function createTtsProducer(ctx: {
             ctx.deps.emitStatus?.({ state: "tts.stream.frames_sent", detail: `sent=${frameCount}` });
           }
           } finally {
-            await notifyTtsStreamSettled();
+            if (frameCount > 0) await notifyTtsStreamSettled();
           }
         }
         const interrupted = ttsTask.controller.signal.aborted || generation !== ctx.getPlaybackGeneration() || !ctx.playbackQueue.includes(item);
@@ -346,7 +357,8 @@ export function createTtsProducer(ctx: {
         return {
           status: interrupted || frameCount === 0 ? "interrupted" : "played",
           outputId,
-          frameCount
+          frameCount,
+          failureReason: !interrupted && frameCount === 0 ? "no_frames_sent" : undefined
         };
       }
       const parts = splitTtsPseudoStreamParts(speakText);
@@ -447,7 +459,8 @@ export function createTtsProducer(ctx: {
       return {
         status: interrupted || frameCount === 0 ? "interrupted" : "played",
         outputId,
-        frameCount
+        frameCount,
+        failureReason: !interrupted && frameCount === 0 ? "no_frames_sent" : undefined
       };
       } catch (error) {
         item.status = ttsTask.controller.signal.aborted ? "interrupted" : "failed";

@@ -12,9 +12,9 @@ import {
   type AgentInitiatedBehaviorPlan
 } from "../src/contexts/initiative/src/domain/initiated-behavior.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
-test("initiated behavior prompt layers are rendered by enabled order", () => {
+test("initiated behavior prompt layers are rendered by enabled order", async () => {
   const filePath = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-test-${process.pid}.json`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
@@ -35,7 +35,7 @@ test("initiated behavior prompt layers are rendered by enabled order", () => {
     }]
   };
   const event = textEvent();
-  const messages = buildAgentInitiatedBehaviorMessages(plan, {
+  const messages = await buildAgentInitiatedBehaviorMessages(plan, {
     userName: "YY",
     visibleTools: { feishu: true },
     layers: [],
@@ -43,6 +43,8 @@ test("initiated behavior prompt layers are rendered by enabled order", () => {
   }, {
     event,
     time: createCurrentTimeProvider("UTC")
+  }, async (_layer, call) => {
+    throw new Error(`unexpected tool request: ${call.toolName}`);
   });
 
   assert.deepEqual(messages.map((message) => `${message.role}:${message.content}`), [
@@ -51,7 +53,7 @@ test("initiated behavior prompt layers are rendered by enabled order", () => {
   ]);
 });
 
-test("initiated behavior prompt layers preserve assistant tool request layers", () => {
+test("initiated behavior prompt layers execute assistant tool request layers", async () => {
   const filePath = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-tool-test-${process.pid}.json`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
@@ -77,7 +79,8 @@ test("initiated behavior prompt layers preserve assistant tool request layers", 
     triggerEvent: "custom.event",
     steps: [{ kind: "llm_instruction", promptProfilePath: filePath }]
   };
-  const messages = buildAgentInitiatedBehaviorMessages(plan, {
+  const toolCalls: ToolCall[] = [];
+  const messages = await buildAgentInitiatedBehaviorMessages(plan, {
     userName: "YY",
     visibleTools: { feishu: true },
     layers: [],
@@ -85,9 +88,16 @@ test("initiated behavior prompt layers preserve assistant tool request layers", 
   }, {
     event: textEvent(),
     time: createCurrentTimeProvider("UTC")
+  }, async (_layer, call) => {
+    toolCalls.push(call);
+    return { callId: call.id, ok: true, output: "history for YY" };
   });
 
-  assert.equal(messages.length, 1);
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0].id, "call_check_chat");
+  assert.equal(toolCalls[0].toolName, "check_chat");
+  assert.deepEqual(toolCalls[0].input, { target: "YY" });
+  assert.equal(messages.length, 2);
   assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].reasoningContent, "checking chat for YY");
   assert.deepEqual(messages[0].toolCalls, [{
@@ -98,6 +108,9 @@ test("initiated behavior prompt layers preserve assistant tool request layers", 
       arguments: "{\"target\":\"YY\"}"
     }
   }]);
+  assert.equal(messages[1].role, "tool");
+  assert.equal(messages[1].toolCallId, "call_check_chat");
+  assert.equal(messages[1].content, "history for YY");
 });
 
 test("default randomized behavior plans use proactive initiation types", () => {

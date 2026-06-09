@@ -200,6 +200,7 @@ export type PlaybackResult = {
   status: "played" | "interrupted";
   outputId?: string;
   frameCount: number;
+  failureReason?: "tts_failed" | "outbound_audio_not_ready" | "no_frames_sent";
 };
 
 export type InterruptItem = {
@@ -260,6 +261,8 @@ export type PlaybackAudioTextSpan = {
   audio: Uint8Array;
   startMs: number;
   endMs: number;
+  sampleRateHz?: number;
+  channels?: number;
 };
 
 export type PlaybackFrame = {

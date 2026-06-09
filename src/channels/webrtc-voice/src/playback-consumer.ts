@@ -30,7 +30,7 @@ export function createVoicePlaybackConsumer(input: {
   updateTextCache(item: PlaybackItem, text: string | undefined, durationMs: number): void;
   updateConsumer(item: PlaybackItem, text: string | undefined, totalMs: number, options?: { emit?: boolean }): void;
   advanceConsumer(item: PlaybackItem, durationMs: number): void;
-  recordAudioTextSpan(item: PlaybackItem, text: string | undefined, audio: Uint8Array): void;
+  recordAudioTextSpan(item: PlaybackItem, text: string | undefined, audio: Uint8Array, format?: { sampleRateHz?: number; channels?: number }): void;
   emitPlayingText(value: string | undefined): void;
   reportMissingPlayingText(item: PlaybackItem, frameIndex: number): void;
   enqueueFrame(item: PlaybackItem, frame: ServerAudioFrame, encodedMs: number): void;
@@ -40,7 +40,7 @@ export function createVoicePlaybackConsumer(input: {
   removeFramesFor(item: PlaybackItem): void;
   waitForTurn(item: PlaybackItem, gateOpen: () => boolean): Promise<boolean>;
 } {
-  const playbackTextAdvanceDelayMs = 100;
+  const playbackTextAdvanceDelayMs = input.deps.config.outboundAudio.frameMs;
   const maxFrameWriteFailures = 3;
   const playbackFrameQueue = createAsyncQueue<PlaybackFrame>();
   const playbackTimelineEvents: PlaybackTimelineEvent[] = [];
@@ -235,6 +235,7 @@ export function createVoicePlaybackConsumer(input: {
         const head = input.playbackQueue.find((item) => item.status === "queued" || item.status === "playing");
         let drained = false;
         while (head) {
+          if (Math.max(0, outboundBufferedUntilMs - playbackNowMs()) >= playbackTextAdvanceDelayMs) break;
           const playbackFrame = playbackFrameQueue.shiftWhere((frame) => frame.item === head);
           if (!playbackFrame) break;
           drained = true;
@@ -298,15 +299,18 @@ export function createVoicePlaybackConsumer(input: {
     },
     updateConsumer,
     advanceConsumer,
-    recordAudioTextSpan(item, text, audio) {
+    recordAudioTextSpan(item, text, audio, format) {
       const value = normalizePlaybackTextCache(text);
       if (!value || audio.byteLength <= 0) return;
       const startMs = item.ttsAudioTextSpans?.at(-1)?.endMs ?? 0;
-      const durationMs = Math.max(0, (audio.byteLength / 2 / 32_000) * 1000);
+      const sampleRateHz = format?.sampleRateHz ?? input.deps.config.outboundAudio.sampleRateHz;
+      const channels = format?.channels ?? input.deps.config.outboundAudio.channels;
+      const bytesPerMs = (sampleRateHz * channels * 2) / 1000;
+      const durationMs = Math.max(0, audio.byteLength / bytesPerMs);
       if (durationMs <= 0) return;
       const endMs = startMs + durationMs;
       item.ttsAudioTextSpans ??= [];
-      item.ttsAudioTextSpans.push({ text: value, audio, startMs, endMs });
+      item.ttsAudioTextSpans.push({ text: value, audio, startMs, endMs, sampleRateHz, channels });
       item.totalMs = Math.max(item.totalMs ?? 0, endMs);
       this.updateTextCache(item, value, durationMs);
     },

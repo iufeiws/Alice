@@ -229,11 +229,12 @@ export async function buildAppendPromptMessagesWithToolResults(
   return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], variables, context, runTool);
 }
 
-async function buildLayerMessagesWithToolResults(
+export async function buildLayerMessagesWithToolResults(
   inputLayers: PromptLayer[],
   variables: LLMTextVariables,
   context: PromptRenderContext,
-  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>,
+  options: { toolCallIdPrefix?: string } = {}
 ): Promise<LLMMessage[]> {
   const messages: LLMMessage[] = [];
   const layers = inputLayers
@@ -241,7 +242,7 @@ async function buildLayerMessagesWithToolResults(
     .sort((left, right) => left.order - right.order);
 
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, variables);
+    const message = promptLayerToMessage(layer, variables, options);
     messages.push(message);
     if (layer.role !== "tool_request") continue;
 

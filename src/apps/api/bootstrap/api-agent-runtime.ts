@@ -20,6 +20,7 @@ export function createApiAgentRuntime(input: {
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
   activeLLMSessionRuntime: any;
+  conversationStore: any;
   getActiveLLMSession(): any;
   setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
@@ -43,6 +44,7 @@ export function createApiAgentRuntime(input: {
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     createLLMSession: (occurredAt) => input.activeLLMSessionRuntime.createTalkLLMSession(occurredAt).id,
     rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.activeLLMSessionRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),
+    conversationStore: input.conversationStore,
     agentState: input.agentState,
     appendLog: input.appendLog
   });

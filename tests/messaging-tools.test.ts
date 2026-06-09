@@ -447,6 +447,51 @@ test("check_chat simplifies outbound media records", async () => {
   assert.doesNotMatch(String(result.output), /selfie_20260528_160956\.jpg/);
 });
 
+test("check_chat renders voicecalltranscript as an embedded transcript block", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-voicecalltranscript"), "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:01:00.000Z"))
+  });
+  store.upsertInboundMessage({
+    plugin: "webrtc_voice",
+    externalMessageId: "voicecalltranscript:session-1",
+    conversationId: "call-1",
+    senderRole: "system",
+    contentType: "voicecalltranscript",
+    contentText: [
+      "-已接通-",
+      "{{user}}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。",
+      "Alice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。",
+      "[message]{{user}}:我刚才也发了一条飞书确认。",
+      "{{user}}:好，那我二十分钟后到。你帮我记一下别忘了买水。",
+      "Alice:记下了，路上慢点，到附近再给我发一条消息。",
+      "[message]Alice:我在飞书里也提醒你买水了。",
+      "-已挂断-",
+      "<call-duration>0:20</call-duration>"
+    ].join("\n"),
+    contentJson: JSON.stringify({ kind: "voicecalltranscript", sessionId: "session-1", durationMs: 20_000 }),
+    createdAt: "2026-06-07T00:00:20.000",
+    createdAtUtc: "2026-06-06T15:00:20.000Z",
+    coreProcessedAt: "2026-06-07T00:00:20.000"
+  });
+
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:01:00.000Z")),
+    outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-06-07T00:00:00.000",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: {} });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:20\]\n-已接通-/);
+  assert.match(String(result.output), /\{\{user\}\}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。\nAlice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。/);
+  assert.match(String(result.output), /\[message\]\{\{user\}\}:我刚才也发了一条飞书确认。\n\{\{user\}\}:好，那我二十分钟后到。你帮我记一下别忘了买水。/);
+  assert.match(String(result.output), /Alice:记下了，路上慢点，到附近再给我发一条消息。\n\[message\]Alice:我在飞书里也提醒你买水了。\n-已挂断-\n<call-duration>0:20<\/call-duration>\n<\/voice-call-transcript>\n<\/chat-log>/);
+  assert.doesNotMatch(String(result.output), /\[message\]听得到|\[message\]记下了/);
+  assert.doesNotMatch(String(result.output), /Alice:<voice-call-transcript>|user:<voice-call-transcript>/);
+});
+
 test("check_chat recent returns only the latest 50 messages from the 500 message window", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-recent-limit"), "alice.sqlite"));
   for (let index = 1; index <= 560; index += 1) {

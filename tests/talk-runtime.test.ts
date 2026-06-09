@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTalkRuntime, defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
+import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { projectClosedTalkSessionToConversationHub } from "../src/contexts/talk-session/src/runtime/talk-session-runtime.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 
 const fs = await import("node:fs");
@@ -594,6 +596,104 @@ test("talk runtime omits the queued next assistant output when interrupt happens
     { role: "assistant", content: "第一段已经完整播放。" },
     { role: "user", content: "只有一半吗？只有" }
   ]);
+});
+
+test("closed talk session is projected to conversation hub as voicecalltranscript", () => {
+  const dir = makeTempDir("talk-runtime-conversation-projection");
+  const talkStore = createTalkStore(path.join(dir, "talk.sqlite"));
+  const conversationStore = createAliceStore(path.join(dir, "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"))
+  });
+  let now = new Date("2026-06-06T15:00:00.000Z");
+  const time = createCurrentTimeProvider("Asia/Tokyo", () => now);
+  const runtime = createTalkRuntime({ store: talkStore, time });
+
+  runtime.openSession(sessionInput("session-projection"));
+  runtime.ingestInput({
+    kind: "audio.transcript.final",
+    sessionId: "session-projection",
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-1", userId: "browser-1" },
+    sequence: 1,
+    occurredAt: "2026-06-07T00:00:02.000",
+    occurredAtUtc: "2026-06-06T15:00:02.000Z",
+    payload: { kind: "transcript", text: "喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。" }
+  });
+  now = new Date("2026-06-06T15:00:06.000Z");
+  runtime.appendAssistantDelta({ sessionId: "session-projection", outputId: "output-projection-1", delta: "听得到。今晚先去吃饭，然后回去把明天要用的东西收好。" });
+  runtime.finishAssistantOutput({ sessionId: "session-projection", outputId: "output-projection-1" });
+  conversationStore.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_call_chat_1",
+    conversationId: "feishu-session-1",
+    senderId: "user-1",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "我刚才也发了一条飞书确认。",
+    createdAt: "2026-06-07T00:00:08.000",
+    createdAtUtc: "2026-06-06T15:00:08.000Z",
+    coreProcessedAt: "2026-06-07T00:00:08.000"
+  });
+  runtime.ingestInput({
+    kind: "audio.transcript.final",
+    sessionId: "session-projection",
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-1", userId: "browser-1" },
+    sequence: 2,
+    occurredAt: "2026-06-07T00:00:12.000",
+    occurredAtUtc: "2026-06-06T15:00:12.000Z",
+    payload: { kind: "transcript", text: "好，那我二十分钟后到。你帮我记一下别忘了买水。" }
+  });
+  now = new Date("2026-06-06T15:00:16.000Z");
+  runtime.appendAssistantDelta({ sessionId: "session-projection", outputId: "output-projection-2", delta: "记下了，路上慢点，到附近再给我发一条消息。" });
+  runtime.finishAssistantOutput({ sessionId: "session-projection", outputId: "output-projection-2" });
+  const outboundChat = conversationStore.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "feishu-session-1",
+    senderRole: "assistant",
+    contentType: "text",
+    contentText: "我在飞书里也提醒你买水了。",
+    createdAt: "2026-06-07T00:00:18.000",
+    createdAtUtc: "2026-06-06T15:00:18.000Z"
+  });
+  conversationStore.markOutboundMessageSent(outboundChat.id, "om_call_chat_2", "2026-06-06T15:00:18.000Z");
+  now = new Date("2026-06-06T15:00:20.000Z");
+  runtime.closeSession({
+    sessionId: "session-projection",
+    occurredAt: "2026-06-07T00:00:20.000",
+    occurredAtUtc: "2026-06-06T15:00:20.000Z"
+  });
+
+  projectClosedTalkSessionToConversationHub("session-projection", talkStore, conversationStore, time);
+  projectClosedTalkSessionToConversationHub("session-projection", talkStore, conversationStore, time);
+
+  const messages = conversationStore.listMessages(10);
+  const transcriptMessages = messages.filter((message) => message.contentType === "voicecalltranscript");
+  assert.equal(transcriptMessages.length, 1);
+  const transcript = transcriptMessages[0];
+  assert.equal(transcript.senderRole, "system");
+  assert.equal(transcript.conversationId, "call-1");
+  assert.equal(transcript.coreProcessedAt, "2026-06-07T00:00:20.000");
+  assert.equal(transcript.contentText, [
+    "-已接通-",
+    "{{user}}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。",
+    "Alice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。",
+    "[message]{{user}}:我刚才也发了一条飞书确认。",
+    "{{user}}:好，那我二十分钟后到。你帮我记一下别忘了买水。",
+    "Alice:记下了，路上慢点，到附近再给我发一条消息。",
+    "[message]Alice:我在飞书里也提醒你买水了。",
+    "-已挂断-",
+    "<call-duration>0:20</call-duration>"
+  ].join("\n"));
+  assert.deepEqual(JSON.parse(transcript.contentJson ?? "{}"), {
+    kind: "voicecalltranscript",
+    sessionId: "session-projection",
+    startedAt: "2026-06-07T00:00:00.000",
+    startedAtUtc: "2026-06-06T15:00:00.000Z",
+    endedAt: "2026-06-07T00:00:20.000",
+    endedAtUtc: "2026-06-06T15:00:20.000Z",
+    durationMs: 20000,
+    segmentCount: 4,
+    chatMessageCount: 2
+  });
 });
 
 function createTestRuntime(

@@ -53,6 +53,7 @@ export function createApiRootRuntime() {
     apiContextRuntime: apiControlRuntime.apiContextRuntime,
     apiLLMRuntime,
     apiRuntimeState,
+    store: foundation.store,
     agentState: apiControlRuntime.agentState,
     time: foundation.currentTime,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,

@@ -23,6 +23,10 @@ export type TalkSource = {
 export type TalkSession = {
   id: number;
   sessionId: string;
+  plugin: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
   status: "open" | "closed" | string;
   startedAt: string;
   startedAtUtc?: string;
@@ -227,7 +231,8 @@ export function createTalkStore(dbPath: string): TalkStore {
     },
     getSession(sessionId) {
       return normalizeSession(db.prepare(`
-        SELECT id, session_id AS sessionId, status, started_at AS startedAt, started_at_utc AS startedAtUtc,
+        SELECT id, session_id AS sessionId, plugin, account_id AS accountId, channel_id AS channelId, user_id AS userId,
+               status, started_at AS startedAt, started_at_utc AS startedAtUtc,
                ended_at AS endedAt, ended_at_utc AS endedAtUtc
         FROM talk_sessions
         WHERE session_id = ?
@@ -723,6 +728,10 @@ function normalizeSession(row: unknown): TalkSession | undefined {
   return {
     id: Number(value.id),
     sessionId: value.sessionId,
+    plugin: value.plugin,
+    accountId: value.accountId || undefined,
+    channelId: value.channelId || undefined,
+    userId: value.userId || undefined,
     status: value.status,
     startedAt: value.startedAt,
     startedAtUtc: value.startedAtUtc || undefined,

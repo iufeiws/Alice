@@ -631,6 +631,15 @@ function formatTimelineBlocks(
   let currentTime: Date | undefined;
 
   for (const entry of entries) {
+    if (entry.kind === "message" && isVoiceCallTranscriptMessage(entry.message)) {
+      if (currentLines.length > 0) {
+        blocks.push(currentLines.join("\n"));
+        currentLines = [];
+        currentTime = undefined;
+      }
+      blocks.push(formatVoiceCallTranscriptBlock(entry.message, entry.time, timeZone));
+      continue;
+    }
     if (!currentTime || entry.time.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
       if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
       currentTime = entry.time;
@@ -650,6 +659,15 @@ function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: st
 
   for (const message of messages) {
     const messageTime = parseZonedIso(message.createdAt, timeZone);
+    if (isVoiceCallTranscriptMessage(message)) {
+      if (currentLines.length > 0) {
+        blocks.push(currentLines.join("\n"));
+        currentLines = [];
+        currentTime = undefined;
+      }
+      blocks.push(formatVoiceCallTranscriptBlock(message, messageTime, timeZone));
+      continue;
+    }
     if (!currentTime || messageTime.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
       if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
       currentTime = messageTime;
@@ -692,6 +710,7 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
 
 function formatMessageContent(message: StoredConversationMessage): string {
   const content = parseContentJson(message.contentJson);
+  if (isVoiceCallTranscriptMessage(message)) return message.contentText;
   if (message.contentType === "image" || content?.kind === "image") return "发送了一张图片";
   if (message.contentType === "audio" || content?.kind === "audio") {
     const transcript = optionalStringValue(content?.transcript) || message.contentText;
@@ -702,6 +721,20 @@ function formatMessageContent(message: StoredConversationMessage): string {
     return `发送了文件[${filePath}]`;
   }
   return message.contentText;
+}
+
+function isVoiceCallTranscriptMessage(message: StoredConversationMessage): boolean {
+  const content = parseContentJson(message.contentJson);
+  return message.contentType === "voicecalltranscript" || content?.kind === "voicecalltranscript";
+}
+
+function formatVoiceCallTranscriptBlock(message: StoredConversationMessage, time: Date, timeZone: string): string {
+  return [
+    "<voice-call-transcript>",
+    `[${formatLocalDateTime(time, timeZone)}]`,
+    message.contentText,
+    "</voice-call-transcript>"
+  ].join("\n");
 }
 
 function isMediaActionMessage(message: StoredConversationMessage): boolean {

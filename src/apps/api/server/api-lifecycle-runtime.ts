@@ -24,6 +24,7 @@ export function createApiLifecycleRuntime(input: {
   const scheduler = createDailyScheduler(createDailyMaintenanceTasks({
     systemLogStore: input.systemLogStore,
     ttsOutputDirs: [input.config.tts.genieOutputDir, input.config.tts.mossOutputDir],
+    ttsGeneratedCleanupEnabled: input.config.tts.generatedCleanupEnabled,
     nowIso: () => input.time.now().iso,
     log: input.appendLog
   }));

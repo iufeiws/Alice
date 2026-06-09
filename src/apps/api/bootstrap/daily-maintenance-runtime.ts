@@ -6,12 +6,13 @@ const path = await import("node:path");
 export type DailyMaintenanceTaskDeps = {
   systemLogStore?: { cleanupOlderThan(retentionDays: number, now?: Date): number };
   ttsOutputDirs?: string[];
+  ttsGeneratedCleanupEnabled?: boolean;
   nowIso(): string;
   log(level: "info" | "warn" | "error", message: string): void;
 };
 
 export function createDailyMaintenanceTasks(deps: DailyMaintenanceTaskDeps): ScheduledTask[] {
-  return [
+  const tasks: ScheduledTask[] = [
     {
       id: "system-log-retention",
       hour: 4,
@@ -20,8 +21,10 @@ export function createDailyMaintenanceTasks(deps: DailyMaintenanceTaskDeps): Sch
         const removed = deps.systemLogStore?.cleanupOlderThan(7) ?? 0;
         deps.log("info", `daily cleanup: removed ${removed} system log file(s) older than 7 days`);
       }
-    },
-    {
+    }
+  ];
+  if (deps.ttsGeneratedCleanupEnabled !== false) {
+    tasks.push({
       id: "tts-generated-retention",
       hour: 4,
       minute: 0,
@@ -29,8 +32,9 @@ export function createDailyMaintenanceTasks(deps: DailyMaintenanceTaskDeps): Sch
         const removed = cleanupPreviousTtsFiles(deps.ttsOutputDirs ?? [], deps.nowIso(), (message) => deps.log("warn", message));
         deps.log("info", `daily cleanup: removed ${removed} generated tts file(s) from previous days`);
       }
-    }
-  ];
+    });
+  }
+  return tasks;
 }
 
 export function cleanupPreviousTtsFiles(outputDirs: string[], nowIso: string, onWarning?: (message: string) => void): number {

@@ -27,11 +27,11 @@ type Scheduler = {
 
 ## 当前用途
 
-`apps/api` 通过 `createDailyMaintenanceTasks` 注册两个核心维护任务：
+`apps/api` 通过 `createDailyMaintenanceTasks` 注册核心维护任务：
 
 ```text
 每日 04:00 -> 删除超过 7 天的系统日志文件
-每日 04:00 -> 删除前一日及更早的生成 TTS 文件
+每日 04:00 -> 删除前一日及更早的生成 TTS 文件（可用 TTS_GENERATED_CLEANUP_ENABLED=false 关闭）
 ```
 
 调度器不持久化，也不是分布式的。错过的执行不会补跑。

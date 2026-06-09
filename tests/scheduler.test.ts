@@ -11,7 +11,7 @@ test("delayUntilNext returns next same-day or next-day delay", () => {
   assert.equal(delayUntilNext(4, 0, new Date(2026, 4, 29, 5, 0, 0, 0)), 23 * 60 * 60 * 1000);
 });
 
-test("daily maintenance tasks clean logs and generated tts files", () => {
+test("daily maintenance tasks clean logs and generated tts files by default", () => {
   const root = makeAssetTempDir("scheduler-maintenance");
   fs.writeFileSync(path.join(root, "20260528_235959_999.opus"), "old");
   fs.writeFileSync(path.join(root, "20260529_000000_000.opus"), "today");
@@ -48,6 +48,24 @@ test("daily maintenance tasks clean logs and generated tts files", () => {
     "info:daily cleanup: removed 3 system log file(s) older than 7 days",
     "info:daily cleanup: removed 1 generated tts file(s) from previous days"
   ]);
+});
+
+test("daily maintenance tasks can disable generated tts cleanup", () => {
+  const root = makeAssetTempDir("scheduler-maintenance-disabled");
+  fs.writeFileSync(path.join(root, "20260528_235959_999.opus"), "old");
+  const tasks = createDailyMaintenanceTasks({
+    systemLogStore: { cleanupOlderThan: () => 0 },
+    ttsOutputDirs: [root],
+    ttsGeneratedCleanupEnabled: false,
+    nowIso: () => "2026-05-29T04:00:00.000",
+    log() {}
+  });
+
+  assert.deepEqual(tasks.map((task) => `${task.id}@${task.hour}:${task.minute}`), [
+    "system-log-retention@4:0"
+  ]);
+  tasks[0].run();
+  assert.equal(fs.existsSync(path.join(root, "20260528_235959_999.opus")), true);
 });
 
 test("cleanupPreviousTtsFiles deduplicates directories and ignores non-tts names", () => {

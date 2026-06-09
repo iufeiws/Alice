@@ -16,3 +16,15 @@ test("voice-call page waits for first backend audio-ready event before entering 
   assert.match(html, /if \(phase === "connected" \|\| phase === "reconnecting" \|\| phase === "ended" \|\| phase === "error"\) return;/);
   assert.ok(html.indexOf("await openSignaling") < html.indexOf("await unlockAudio"));
 });
+
+test("voice-call text input matches webrtc voice call typed interrupt behavior", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /if \(event\.key !== "Enter" \|\| event\.isComposing\) return;/);
+  assert.doesNotMatch(html, /event\.shiftKey/);
+  assert.match(html, /const payloadText = normalizeTypedInputText\(messageInput\.value\) \|\| "-已撤回-";/);
+  assert.match(html, /sendSignal\(\{ type: "text-input", text: payloadText \}\);/);
+  assert.match(html, /function normalizeTypedInputText\(text\)/);
+  assert.match(html, /if \(text\.length <= 1\) \{/);
+  assert.doesNotMatch(html, /if \(text\.length <= 3\)/);
+});

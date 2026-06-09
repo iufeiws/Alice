@@ -567,10 +567,9 @@ export function renderVoiceCallHtml(): string {
     holdTalkButton.addEventListener("pointercancel", stopHoldToTalk);
     holdTalkButton.addEventListener("pointerleave", stopHoldToTalk);
     messageInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendTextInput();
-      }
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      sendTextInput();
     });
     messageInput.addEventListener("focus", keepSurfaceAnchored);
     messageInput.addEventListener("input", handleTextInputChange);
@@ -763,20 +762,22 @@ export function renderVoiceCallHtml(): string {
     }
 
     function sendTextInput() {
-      const text = messageInput.value.trim();
-      if (!text) return;
-      sendSignal({ type: "text-input", text });
-      userTranscript.textContent = text;
+      const payloadText = normalizeTypedInputText(messageInput.value) || "-已撤回-";
+      sendSignal({ type: "text-input", text: payloadText });
+      userTranscript.textContent = payloadText;
       messageInput.value = "";
       textInputInterruptSent = false;
       statusSubtitle.textContent = "已发送文字";
     }
 
+    function normalizeTypedInputText(text) {
+      return String(text || "").replace(/[\\u0000-\\u001F\\u007F\\u200B-\\u200D\\u2060\\uFEFF\\uFFFC]/g, "").trim();
+    }
+
     function handleTextInputChange() {
       keepSurfaceAnchored();
-      const text = messageInput.value.trim();
-      if (text.length <= 3) {
-        textInputInterruptSent = false;
+      const text = normalizeTypedInputText(messageInput.value);
+      if (text.length <= 1) {
         return;
       }
       if (textInputInterruptSent) return;

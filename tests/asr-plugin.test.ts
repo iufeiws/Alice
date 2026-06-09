@@ -563,6 +563,7 @@ test("Tencent ASR inbound stream uses native websocket streaming when configured
     }
   });
 
+  assert.equal(sockets.length, 0);
   assert.deepEqual(await session.accept({ type: "chunk", streamId: "voice-stream-1", sequence: 0, bytes: new Uint8Array([1, 2]) }), {
     ok: true,
     type: "ack",
@@ -602,6 +603,42 @@ test("Tencent ASR inbound stream uses native websocket streaming when configured
   assert.equal(final.result?.text, "你有注意到我加了语音功能吗？");
   assert.deepEqual(sockets[0].sent.at(-1), "{\"type\":\"end\"}");
   assert.equal(sockets[0].closed, true);
+});
+
+test("Tencent ASR inbound stream does not open websocket before audio", async () => {
+  const sockets: FakeWebSocket[] = [];
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "tencent",
+    providers: {
+      tencent: {
+        appId: "1259220000",
+        secretId: "secret-id",
+        secretKey: "secret-key",
+        engineModelType: "16k_zh"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "idle-stream",
+    audio: { filename: "stream.pcm", mimeType: "audio/pcm", encoding: "pcm_s16le" }
+  }, config, {
+    createWebSocket() {
+      const socket = new FakeWebSocket();
+      sockets.push(socket);
+      return socket;
+    }
+  });
+
+  assert.equal(sockets.length, 0);
+  assert.deepEqual(await session.accept({ type: "end", streamId: "idle-stream" }), {
+    ok: false,
+    type: "error",
+    streamId: "idle-stream",
+    error: "empty_stream"
+  });
+  assert.equal(sockets.length, 0);
 });
 
 class FakeWebSocket {

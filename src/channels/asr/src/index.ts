@@ -376,38 +376,45 @@ function createTencentRealtimeInboundStreamSession(
   let closed = false;
   let socketClosed = false;
   let finalReceived = false;
+  let socketPromise: Promise<AsrWebSocketLike> | undefined;
+  let receivedAudio = false;
 
-  const socketPromise = Promise.resolve(createTencentRealtimeSocket(start, providerConfig, deps)).then(async (socket) => {
-    addSocketListener(socket, "message", (event) => {
-      messages.push(socketMessageData(event));
-      notifyMessageWaiters(waiters);
+  const socketForAudio = () => {
+    socketPromise ??= Promise.resolve(createTencentRealtimeSocket(start, providerConfig, deps)).then(async (socket) => {
+      addSocketListener(socket, "message", (event) => {
+        messages.push(socketMessageData(event));
+        notifyMessageWaiters(waiters);
+      });
+      addSocketListener(socket, "close", () => {
+        socketClosed = true;
+        notifyMessageWaiters(waiters);
+      });
+      addSocketListener(socket, "error", () => {
+        socketClosed = true;
+        notifyMessageWaiters(waiters);
+      });
+      await waitForSocketOpen(socket, Math.min(timeoutMs, 10_000));
+      return socket;
     });
-    addSocketListener(socket, "close", () => {
-      socketClosed = true;
-      notifyMessageWaiters(waiters);
-    });
-    addSocketListener(socket, "error", () => {
-      socketClosed = true;
-      notifyMessageWaiters(waiters);
-    });
-    await waitForSocketOpen(socket, Math.min(timeoutMs, 10_000));
-    return socket;
-  });
+    return socketPromise;
+  };
 
   return {
     streamId: start.streamId,
     async accept(frame): Promise<AsrInboundStreamAcceptResult> {
       if (frame.streamId !== start.streamId) return streamError(start.streamId, "stream_id_mismatch");
       if (closed) return streamError(start.streamId, "stream_closed");
-      const socket = await socketPromise;
       if (frame.type === "abort") {
         closed = true;
-        socket.close?.();
+        const socket = await socketPromise;
+        socket?.close?.();
         return abortStream(start.streamId, frame);
       }
       if (frame.type === "chunk") {
         if (frame.sequence !== expectedSequence) return streamError(start.streamId, "out_of_order_chunk");
         expectedSequence += 1;
+        receivedAudio = true;
+        const socket = await socketForAudio();
         await Promise.resolve(socket.send(frame.bytes));
         return drainTencentRealtimeMessages(start.streamId, messages, stableResults, (text) => {
           latestPartial = text;
@@ -415,6 +422,8 @@ function createTencentRealtimeInboundStreamSession(
       }
       if (frame.type === "end") {
         closed = true;
+        if (!receivedAudio) return streamError(start.streamId, "empty_stream");
+        const socket = await socketForAudio();
         await Promise.resolve(socket.send(JSON.stringify({ type: "end" })));
         let drained: AsrInboundStreamPartial | AsrInboundStreamError | undefined;
         const deadline = Date.now() + timeoutMs;
@@ -491,7 +500,10 @@ function drainTencentRealtimeMessages(
     const raw = messages.shift();
     const parsed = parseJsonObject(socketTextMessage(raw));
     const code = numberValue(parsed.code, 0);
-    if (code !== 0) return streamError(streamId, "provider_request_failed", stringValue(parsed.message));
+    if (code !== 0) {
+      const message = [String(code), stringValue(parsed.message)].filter(Boolean).join(":");
+      return streamError(streamId, "provider_request_failed", message || undefined);
+    }
     if (numberValue(parsed.final, 0) === 1) {
       onFinal?.();
       continue;

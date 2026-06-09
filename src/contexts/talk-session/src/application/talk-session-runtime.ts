@@ -134,6 +134,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         occurredAtUtc,
         payload: { kind: "session", ...(typeof input.metadata === "object" && input.metadata ? input.metadata : {}) }
       });
+      recordTranscriptEntry(deps.store, {
+        sessionId,
+        entryId: "system:start",
+        role: "system",
+        contentText: "开始",
+        occurredAt,
+        occurredAtUtc,
+        sourceKind: "session.started",
+        sourceId: "system:start"
+      });
       deps.onSessionOpened?.(sessionId);
       return { sessionId };
     },
@@ -145,6 +155,13 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         sessionId: input.sessionId,
         occurredAt: input.occurredAt ?? now.occurredAt,
         occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc
+      });
+      recordTranscriptEnd(deps.store, {
+        sessionId: input.sessionId,
+        occurredAt: input.occurredAt ?? now.occurredAt,
+        occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc,
+        sourceKind: "session.ended",
+        sourceId: "system:end"
       });
       deps.onSessionClosed?.(input.sessionId);
     },
@@ -192,6 +209,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
           now: event.occurredAt,
           nowUtc: event.occurredAtUtc
         });
+        recordTranscriptEntry(deps.store, {
+          sessionId: event.sessionId,
+          entryId: `user:${segment.segmentId ?? segment.id}`,
+          role: "user",
+          contentText: text,
+          occurredAt: event.occurredAt,
+          occurredAtUtc: event.occurredAtUtc,
+          sourceKind: event.kind,
+          sourceId: segment.segmentId ?? String(segment.id)
+        });
         void deps.runAgentLoop?.(event.sessionId);
       } else if (event.kind === "input.interrupted") {
         deps.store.insertSegment({
@@ -210,6 +237,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     commitStableInputBatch(batch) {
       assertOpenSession(deps.store, batch.sessionId);
       if (batch.inputs.length === 0) return;
+      let shouldRunAgentLoop = false;
       const commit = () => {
         const ordered = [...batch.inputs].sort((a, b) => a.sequence - b.sequence);
         for (const item of ordered) {
@@ -233,6 +261,17 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
             raw: { asrStreamId: item.asrStreamId }
           });
           if (!event.inserted) continue;
+          if (item.reason === "call_close" && isHangupText(item.text)) {
+            recordTranscriptEnd(deps.store, {
+              sessionId: batch.sessionId,
+              occurredAt: item.occurredAt,
+              occurredAtUtc: item.occurredAtUtc,
+              sourceKind: "call_close",
+              sourceId: item.interruptId
+            });
+            continue;
+          }
+          shouldRunAgentLoop = true;
           const segment = deps.store.insertSegment({
             sessionId: batch.sessionId,
             eventId: event.id,
@@ -258,11 +297,21 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
             now: item.occurredAt,
             nowUtc: item.occurredAtUtc
           });
+          recordTranscriptEntry(deps.store, {
+            sessionId: batch.sessionId,
+            entryId: `user:${segment.segmentId ?? segment.id}`,
+            role: "user",
+            contentText: item.text,
+            occurredAt: item.occurredAt,
+            occurredAtUtc: item.occurredAtUtc,
+            sourceKind: item.reason === "manual" ? "text.final" : "audio.transcript.final",
+            sourceId: segment.segmentId ?? String(segment.id)
+          });
         }
       };
       if (deps.store.transaction) deps.store.transaction(commit);
       else commit();
-      void deps.runAgentLoop?.(batch.sessionId);
+      if (shouldRunAgentLoop) void deps.runAgentLoop?.(batch.sessionId);
     },
     appendAssistantDelta(input) {
       if (!input.delta) return;
@@ -367,6 +416,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         bufferText: "",
         pendingChunkText: "",
         nextChunkSequence
+      });
+      recordTranscriptEntry(deps.store, {
+        sessionId: input.sessionId,
+        entryId: `assistant:${input.outputId}`,
+        role: "assistant",
+        contentText: output.fullText,
+        occurredAt: now.occurredAt,
+        occurredAtUtc: now.occurredAtUtc,
+        sourceKind: "assistant.output",
+        sourceId: input.outputId
       });
     },
     claimReadyOutputChunk(sessionId) {
@@ -483,6 +542,18 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         now: now.occurredAt,
         nowUtc: now.occurredAtUtc
       });
+      if (assistantSegment) {
+        recordTranscriptEntry(deps.store, {
+          sessionId: input.sessionId,
+          entryId: `assistant:${input.outputId}`,
+          role: "assistant",
+          contentText: visibleText,
+          occurredAt: now.occurredAt,
+          occurredAtUtc: now.occurredAtUtc,
+          sourceKind: "assistant.output.interrupted",
+          sourceId: input.outputId
+        });
+      }
       void deps.interruptAgentLoop?.(input.sessionId, input.outputId);
       return interrupt;
     },
@@ -576,6 +647,43 @@ function interruptReason(payload: unknown): string {
 
 function segmentId(kind: string, eventId: number): string {
   return `${kind}:${eventId}`;
+}
+
+function recordTranscriptEntry(store: TalkStore, input: {
+  sessionId: string;
+  entryId: string;
+  role: "system" | "assistant" | "user";
+  contentText: string;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  sourceKind: string;
+  sourceId: string;
+}): void {
+  store.upsertTranscriptEntry(input);
+}
+
+function recordTranscriptEnd(store: TalkStore, input: {
+  sessionId: string;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  sourceKind: string;
+  sourceId: string;
+}): void {
+  if (store.listTranscriptEntries(input.sessionId).some((entry) => entry.entryId === "system:end")) return;
+  store.upsertTranscriptEntry({
+    sessionId: input.sessionId,
+    entryId: "system:end",
+    role: "system",
+    contentText: "结束",
+    occurredAt: input.occurredAt,
+    occurredAtUtc: input.occurredAtUtc,
+    sourceKind: input.sourceKind,
+    sourceId: input.sourceId
+  });
+}
+
+function isHangupText(text: string): boolean {
+  return text.trim() === "已挂断" || text.trim() === "-已挂断-";
 }
 
 function firstBoundaryIndex(text: string): number {

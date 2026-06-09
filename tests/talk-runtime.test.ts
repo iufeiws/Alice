@@ -616,10 +616,10 @@ test("closed talk session is projected to conversation hub as voicecalltranscrip
     sequence: 1,
     occurredAt: "2026-06-07T00:00:02.000",
     occurredAtUtc: "2026-06-06T15:00:02.000Z",
-    payload: { kind: "transcript", text: "喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。" }
+    payload: { kind: "transcript", text: "喂，爱丽丝，能听到吗？\n\n我刚到车站，想确认一下今晚的安排。" }
   });
   now = new Date("2026-06-06T15:00:06.000Z");
-  runtime.appendAssistantDelta({ sessionId: "session-projection", outputId: "output-projection-1", delta: "听得到。今晚先去吃饭，然后回去把明天要用的东西收好。" });
+  runtime.appendAssistantDelta({ sessionId: "session-projection", outputId: "output-projection-1", delta: "听得到。\n\n今晚先去吃饭，然后回去把明天要用的东西收好。" });
   runtime.finishAssistantOutput({ sessionId: "session-projection", outputId: "output-projection-1" });
   conversationStore.upsertInboundMessage({
     plugin: "feishu",
@@ -665,35 +665,93 @@ test("closed talk session is projected to conversation hub as voicecalltranscrip
   projectClosedTalkSessionToConversationHub("session-projection", talkStore, conversationStore, time);
   projectClosedTalkSessionToConversationHub("session-projection", talkStore, conversationStore, time);
 
-  const messages = conversationStore.listMessages(10);
+  const messages = conversationStore.listMessages(20);
   const transcriptMessages = messages.filter((message) => message.contentType === "voicecalltranscript");
-  assert.equal(transcriptMessages.length, 1);
-  const transcript = transcriptMessages[0];
-  assert.equal(transcript.senderRole, "system");
-  assert.equal(transcript.conversationId, "call-1");
-  assert.equal(transcript.coreProcessedAt, "2026-06-07T00:00:20.000");
-  assert.equal(transcript.contentText, [
-    "-已接通-",
-    "{{user}}:喂，爱丽丝，能听到吗？我刚到车站，想确认一下今晚的安排。",
-    "Alice:听得到。今晚先去吃饭，然后回去把明天要用的东西收好。",
-    "[message]{{user}}:我刚才也发了一条飞书确认。",
-    "{{user}}:好，那我二十分钟后到。你帮我记一下别忘了买水。",
-    "Alice:记下了，路上慢点，到附近再给我发一条消息。",
-    "[message]Alice:我在飞书里也提醒你买水了。",
-    "-已挂断-",
-    "<call-duration>0:20</call-duration>"
-  ].join("\n"));
-  assert.deepEqual(JSON.parse(transcript.contentJson ?? "{}"), {
-    kind: "voicecalltranscript",
-    sessionId: "session-projection",
-    startedAt: "2026-06-07T00:00:00.000",
-    startedAtUtc: "2026-06-06T15:00:00.000Z",
-    endedAt: "2026-06-07T00:00:20.000",
-    endedAtUtc: "2026-06-06T15:00:20.000Z",
-    durationMs: 20000,
-    segmentCount: 4,
-    chatMessageCount: 2
+  assert.equal(transcriptMessages.length, 6);
+  assert.equal(messages.length, 8);
+  assert.deepEqual(transcriptMessages.map((message) => message.contentText), [
+    "开始",
+    "喂，爱丽丝，能听到吗？\n\n我刚到车站，想确认一下今晚的安排。",
+    "听得到。\n\n今晚先去吃饭，然后回去把明天要用的东西收好。",
+    "好，那我二十分钟后到。你帮我记一下别忘了买水。",
+    "记下了，路上慢点，到附近再给我发一条消息。",
+    "结束"
+  ]);
+  assert.deepEqual(transcriptMessages.map((message) => message.externalMessageId), [
+    "voicecalltranscript:session-projection:system:start",
+    "voicecalltranscript:session-projection:user:audio.transcript.final:2",
+    "voicecalltranscript:session-projection:assistant:output-projection-1",
+    "voicecalltranscript:session-projection:user:audio.transcript.final:3",
+    "voicecalltranscript:session-projection:assistant:output-projection-2",
+    "voicecalltranscript:session-projection:system:end"
+  ]);
+  assert.deepEqual(transcriptMessages.map((message) => message.createdAt), [
+    "2026-06-07T00:00:00.000",
+    "2026-06-07T00:00:02.000",
+    "2026-06-07T00:00:06.000",
+    "2026-06-07T00:00:12.000",
+    "2026-06-07T00:00:16.000",
+    "2026-06-07T00:00:20.000"
+  ]);
+  for (const message of transcriptMessages) {
+    assert.equal(message.senderRole, "system");
+    assert.equal(message.conversationId, "call-1");
+    assert.doesNotMatch(message.contentText, /-已接通-|-已挂断-|Alice:|\{\{user\}\}:|\[message\]/);
+  }
+  const payloads = transcriptMessages.map((message) => JSON.parse(message.contentJson ?? "{}"));
+  assert.deepEqual(payloads.map((payload) => payload.role), ["system", "user", "assistant", "user", "assistant", "system"]);
+  assert.deepEqual(payloads.map((payload) => payload.entryId), [
+    "system:start",
+    "user:audio.transcript.final:2",
+    "assistant:output-projection-1",
+    "user:audio.transcript.final:3",
+    "assistant:output-projection-2",
+    "system:end"
+  ]);
+  assert.equal(payloads.every((payload) => payload.kind === "voicecalltranscript"), true);
+  assert.equal(payloads.every((payload) => payload.talkSessionId === "session-projection"), true);
+  assert.equal(payloads.every((payload) => payload.durationMs === 20000), true);
+  assert.equal(transcriptMessages.filter((message) => message.externalMessageId === "voicecalltranscript:session-projection:system:end").length, 1);
+});
+
+test("talk runtime records call_close hangup as one system end transcript entry", () => {
+  const loops: string[] = [];
+  const runtime = createTestRuntime("call-close-transcript", (sessionId) => {
+    loops.push(sessionId);
   });
+
+  runtime.openSession(sessionInput("session-call-close"));
+  runtime.commitStableInputBatch({
+    sessionId: "session-call-close",
+    batchId: "batch-close",
+    interruptEpoch: 1,
+    inputs: [{
+      interruptId: "interrupt-close",
+      sequence: 2,
+      reason: "call_close",
+      text: "-已挂断-",
+      occurredAt: "2026-06-07T00:00:19.000",
+      occurredAtUtc: "2026-06-06T15:00:19.000Z"
+    }]
+  });
+  runtime.closeSession({
+    sessionId: "session-call-close",
+    occurredAt: "2026-06-07T00:00:20.000",
+    occurredAtUtc: "2026-06-06T15:00:20.000Z"
+  });
+
+  const entries = runtime.store.listTranscriptEntries("session-call-close");
+  assert.deepEqual(entries.map((entry) => `${entry.role}:${entry.contentText}`), [
+    "system:开始",
+    "system:结束"
+  ]);
+  const endEntries = entries.filter((entry) => entry.entryId === "system:end");
+  assert.equal(endEntries.length, 1);
+  assert.equal(endEntries[0].occurredAt, "2026-06-07T00:00:19.000");
+  assert.equal(endEntries[0].sourceKind, "call_close");
+  assert.equal(endEntries[0].sourceId, "interrupt-close");
+  assert.equal(entries.some((entry) => entry.role === "user" && /已挂断/.test(entry.contentText)), false);
+  assert.deepEqual(loops, []);
 });
 
 function createTestRuntime(

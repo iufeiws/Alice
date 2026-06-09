@@ -57,6 +57,18 @@ export type TalkSegment = {
   endedAtUtc?: string;
 };
 
+export type TalkTranscriptEntry = {
+  id: number;
+  sessionId: string;
+  entryId: string;
+  role: "system" | "assistant" | "user";
+  contentText: string;
+  occurredAt: string;
+  occurredAtUtc?: string;
+  sourceKind?: string;
+  sourceId?: string;
+};
+
 export type TalkOutput = {
   outputId: string;
   sessionId: string;
@@ -128,6 +140,17 @@ export type TalkStore = {
     endedAtUtc?: string;
   }): TalkSegment;
   listSegments(sessionId: string): TalkSegment[];
+  upsertTranscriptEntry(input: {
+    sessionId: string;
+    entryId: string;
+    role: TalkTranscriptEntry["role"];
+    contentText: string;
+    occurredAt: string;
+    occurredAtUtc?: string;
+    sourceKind?: string;
+    sourceId?: string;
+  }): TalkTranscriptEntry;
+  listTranscriptEntries(sessionId: string): TalkTranscriptEntry[];
   getOutput(outputId: string): TalkOutput | undefined;
   latestOutput(sessionId: string): TalkOutput | undefined;
   ensureOutput(input: { sessionId: string; outputId: string; now: string; nowUtc?: string }): TalkOutput;
@@ -304,6 +327,46 @@ export function createTalkStore(dbPath: string): TalkStore {
         WHERE session_id = ?
         ORDER BY id ASC
       `).all(sessionId).map((row: unknown) => normalizeSegment(row)!).filter(Boolean);
+    },
+    upsertTranscriptEntry(input) {
+      db.prepare(`
+        INSERT INTO talk_transcript_entries(session_id, entry_id, role, content_text, occurred_at, occurred_at_utc, source_kind, source_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, entry_id) DO UPDATE SET
+          role = excluded.role,
+          content_text = excluded.content_text,
+          occurred_at = excluded.occurred_at,
+          occurred_at_utc = excluded.occurred_at_utc,
+          source_kind = excluded.source_kind,
+          source_id = excluded.source_id
+      `).run(
+        input.sessionId,
+        input.entryId,
+        input.role,
+        input.contentText,
+        input.occurredAt,
+        input.occurredAtUtc ?? null,
+        input.sourceKind ?? null,
+        input.sourceId ?? null
+      );
+      return normalizeTranscriptEntry(db.prepare(`
+        SELECT id, session_id AS sessionId, entry_id AS entryId, role, content_text AS contentText,
+               occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc,
+               source_kind AS sourceKind, source_id AS sourceId
+        FROM talk_transcript_entries
+        WHERE session_id = ? AND entry_id = ?
+        LIMIT 1
+      `).get(input.sessionId, input.entryId))!;
+    },
+    listTranscriptEntries(sessionId) {
+      return db.prepare(`
+        SELECT id, session_id AS sessionId, entry_id AS entryId, role, content_text AS contentText,
+               occurred_at AS occurredAt, occurred_at_utc AS occurredAtUtc,
+               source_kind AS sourceKind, source_id AS sourceId
+        FROM talk_transcript_entries
+        WHERE session_id = ?
+        ORDER BY occurred_at ASC, id ASC
+      `).all(sessionId).map((row: unknown) => normalizeTranscriptEntry(row)!).filter(Boolean);
     },
     getOutput(outputId) {
       return getOutput(db, outputId);
@@ -623,6 +686,20 @@ function initialize(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS talk_segments_session_id_idx ON talk_segments(session_id, id);
     CREATE INDEX IF NOT EXISTS talk_segments_core_pending_idx ON talk_segments(core_processed_at, session_id);
 
+    CREATE TABLE IF NOT EXISTS talk_transcript_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content_text TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      occurred_at_utc TEXT,
+      source_kind TEXT,
+      source_id TEXT,
+      UNIQUE(session_id, entry_id)
+    );
+    CREATE INDEX IF NOT EXISTS talk_transcript_entries_session_time_idx ON talk_transcript_entries(session_id, occurred_at, id);
+
     CREATE TABLE IF NOT EXISTS talk_outputs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       output_id TEXT NOT NULL UNIQUE,
@@ -753,6 +830,22 @@ function normalizeSegment(row: unknown): TalkSegment | undefined {
     contentJson: value.contentJson || undefined,
     endedAt: value.endedAt,
     endedAtUtc: value.endedAtUtc || undefined
+  };
+}
+
+function normalizeTranscriptEntry(row: unknown): TalkTranscriptEntry | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as TalkTranscriptEntry;
+  return {
+    id: Number(value.id),
+    sessionId: value.sessionId,
+    entryId: value.entryId,
+    role: value.role,
+    contentText: value.contentText,
+    occurredAt: value.occurredAt,
+    occurredAtUtc: value.occurredAtUtc || undefined,
+    sourceKind: value.sourceKind || undefined,
+    sourceId: value.sourceId || undefined
   };
 }
 

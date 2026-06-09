@@ -451,30 +451,57 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
   const store = createAliceStore(path.join(makeTempDir("messaging-voicecalltranscript"), "alice.sqlite"), {
     time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:01:00.000Z"))
   });
-  store.upsertInboundMessage({
+  const insertTranscript = (
+    entryId: string,
+    role: "system" | "assistant" | "user",
+    contentText: string,
+    createdAt: string,
+    createdAtUtc: string
+  ) => store.upsertInboundMessage({
     plugin: "webrtc_voice",
-    externalMessageId: "voicecalltranscript:session-1",
+    externalMessageId: `voicecalltranscript:session-1:${entryId}`,
     conversationId: "call-1",
     senderRole: "system",
     contentType: "voicecalltranscript",
-    contentText: [
-      "-已接通-",
-      "{{user}}:喂，爱丽丝，能听到吗？",
-      "{{user}}:我刚到车站，想确认一下今晚的安排。",
-      "Alice:听得到。",
-      "Alice:今晚先去吃饭，然后回去把明天要用的东西收好。",
-      "[message]{{user}}:我刚才也发了一条飞书确认。",
-      "{{user}}:好，那我二十分钟后到。你帮我记一下别忘了买水。",
-      "Alice:记下了，路上慢点，到附近再给我发一条消息。",
-      "[message]Alice:我在飞书里也提醒你买水了。",
-      "-已挂断-",
-      "<call-duration>0:20</call-duration>"
-    ].join("\n"),
-    contentJson: JSON.stringify({ kind: "voicecalltranscript", sessionId: "session-1", durationMs: 20_000 }),
-    createdAt: "2026-06-07T00:00:20.000",
-    createdAtUtc: "2026-06-06T15:00:20.000Z",
-    coreProcessedAt: "2026-06-07T00:00:20.000"
+    contentText,
+    contentJson: JSON.stringify({
+      kind: "voicecalltranscript",
+      talkSessionId: "session-1",
+      entryId,
+      role,
+      durationMs: 20_000
+    }),
+    createdAt,
+    createdAtUtc,
+    coreProcessedAt: createdAt
   });
+  insertTranscript("system:start", "system", "开始", "2026-06-07T00:00:00.000", "2026-06-06T15:00:00.000Z");
+  insertTranscript("user:1", "user", "喂，爱丽丝，能听到吗？\n\n我刚到车站，想确认一下今晚的安排。", "2026-06-07T00:00:02.000", "2026-06-06T15:00:02.000Z");
+  insertTranscript("assistant:1", "assistant", "听得到。\n\n今晚先去吃饭，然后回去把明天要用的东西收好。", "2026-06-07T00:00:06.000", "2026-06-06T15:00:06.000Z");
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_call_chat_1",
+    conversationId: "feishu-session-1",
+    senderId: "user-1",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "我刚才也发了一条飞书确认。",
+    createdAt: "2026-06-07T00:00:08.000",
+    createdAtUtc: "2026-06-06T15:00:08.000Z"
+  });
+  insertTranscript("user:2", "user", "好，那我二十分钟后到。你帮我记一下别忘了买水。", "2026-06-07T00:00:12.000", "2026-06-06T15:00:12.000Z");
+  insertTranscript("assistant:2", "assistant", "记下了，路上慢点，到附近再给我发一条消息。", "2026-06-07T00:00:16.000", "2026-06-06T15:00:16.000Z");
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "feishu-session-1",
+    senderRole: "assistant",
+    contentType: "text",
+    contentText: "我在飞书里也提醒你买水了。",
+    createdAt: "2026-06-07T00:00:18.000",
+    createdAtUtc: "2026-06-06T15:00:18.000Z"
+  });
+  store.markOutboundMessageSent(outbound.id, "om_call_chat_2", "2026-06-06T15:00:18.000Z");
+  insertTranscript("system:end", "system", "结束", "2026-06-07T00:00:20.000", "2026-06-06T15:00:20.000Z");
 
   const tools = createMessagingTools({
     store,
@@ -486,11 +513,12 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
 
   const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: {} });
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:20\]\n-已接通-/);
+  assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:00\]\n-已接通-/);
   assert.match(String(result.output), /\{\{user\}\}:喂，爱丽丝，能听到吗？\n\{\{user\}\}:我刚到车站，想确认一下今晚的安排。\nAlice:听得到。\nAlice:今晚先去吃饭，然后回去把明天要用的东西收好。/);
   assert.match(String(result.output), /\[message\]\{\{user\}\}:我刚才也发了一条飞书确认。\n\{\{user\}\}:好，那我二十分钟后到。你帮我记一下别忘了买水。/);
   assert.match(String(result.output), /Alice:记下了，路上慢点，到附近再给我发一条消息。\n\[message\]Alice:我在飞书里也提醒你买水了。\n-已挂断-\n<call-duration>0:20<\/call-duration>\n<\/voice-call-transcript>\n<\/chat-log>/);
   assert.doesNotMatch(String(result.output), /\[message\]听得到|\[message\]记下了/);
+  assert.doesNotMatch(String(result.output), /\{\{user\}\}:已挂断|\{\{user\}\}:-已挂断-/);
   assert.doesNotMatch(String(result.output), /Alice:<voice-call-transcript>|user:<voice-call-transcript>/);
 });
 

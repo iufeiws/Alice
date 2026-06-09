@@ -615,6 +615,14 @@ type ChatContextEntry =
   | { kind: "message"; time: Date; message: StoredConversationMessage }
   | ShellSwitchContextEntry;
 
+type VoiceCallTranscriptRow = {
+  sessionId: string;
+  entryId?: string;
+  role: "system" | "assistant" | "user";
+  contentText: string;
+  durationMs?: number;
+};
+
 function formatTimelineBlocks(
   messages: StoredConversationMessage[],
   shellEvents: ShellSwitchContextEntry[],
@@ -625,58 +633,81 @@ function formatTimelineBlocks(
     ...messages.map((message) => ({ kind: "message" as const, time: parseMessageTime(message.createdAt, timeZone), message })),
     ...shellEvents
   ].sort((left, right) => left.time.getTime() - right.time.getTime());
+  return formatTimelineEntries(entries, timeZone, userName);
+}
 
+function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: string, userName: string, now: Date): string {
+  const entries: ChatContextEntry[] = messages.map((message) => ({
+    kind: "message" as const,
+    time: parseZonedIso(message.createdAt, timeZone),
+    message
+  }));
+  return formatTimelineEntries(entries, timeZone, userName);
+}
+
+function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, userName: string): string {
   const blocks: string[] = [];
   let currentLines: string[] = [];
   let currentTime: Date | undefined;
+  let activeCall: { sessionId: string; lines: string[]; durationMs?: number } | undefined;
+
+  const flushChatBlock = () => {
+    if (currentLines.length > 0) {
+      blocks.push(currentLines.join("\n"));
+      currentLines = [];
+      currentTime = undefined;
+    }
+  };
+  const flushActiveCall = () => {
+    if (activeCall) {
+      activeCall.lines.push("</voice-call-transcript>");
+      blocks.push(activeCall.lines.join("\n"));
+      activeCall = undefined;
+    }
+  };
 
   for (const entry of entries) {
     if (entry.kind === "message" && isVoiceCallTranscriptMessage(entry.message)) {
-      if (currentLines.length > 0) {
-        blocks.push(currentLines.join("\n"));
-        currentLines = [];
-        currentTime = undefined;
+      flushChatBlock();
+      const transcript = parseVoiceCallTranscriptMessage(entry.message);
+      if (!transcript) continue;
+      if (!activeCall || activeCall.sessionId !== transcript.sessionId) {
+        flushActiveCall();
+        activeCall = {
+          sessionId: transcript.sessionId,
+          durationMs: transcript.durationMs,
+          lines: ["<voice-call-transcript>", `[${formatLocalDateTime(entry.time, timeZone)}]`]
+        };
       }
-      blocks.push(formatVoiceCallTranscriptBlock(entry.message, entry.time, timeZone));
+      activeCall.durationMs = transcript.durationMs ?? activeCall.durationMs;
+      const rendered = formatVoiceCallTranscriptRow(transcript, userName);
+      if (rendered) activeCall.lines.push(...rendered.split("\n"));
+      if (transcript.role === "system" && transcript.contentText.trim() === "结束") {
+        activeCall.lines.push(`<call-duration>${formatDurationMs(activeCall.durationMs)}</call-duration>`);
+        flushActiveCall();
+      }
       continue;
     }
+
+    if (activeCall && entry.kind === "message") {
+      activeCall.lines.push(`[message]${formatMessageContentLine(entry.message, userName)}`);
+      continue;
+    }
+
+    if (activeCall) flushActiveCall();
+
     if (!currentTime || entry.time.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
-      if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
+      if (currentLines.length > 0) {
+        blocks.push(currentLines.join("\n"));
+      }
       currentTime = entry.time;
       currentLines = [`[${formatLocalDateTime(entry.time, timeZone)}]`];
     }
     currentLines.push(formatContextEntryLine(entry, userName));
   }
 
-  if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
-  return blocks.join("\n");
-}
-
-function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: string, userName: string, now: Date): string {
-  const blocks: string[] = [];
-  let currentLines: string[] = [];
-  let currentTime: Date | undefined;
-
-  for (const message of messages) {
-    const messageTime = parseZonedIso(message.createdAt, timeZone);
-    if (isVoiceCallTranscriptMessage(message)) {
-      if (currentLines.length > 0) {
-        blocks.push(currentLines.join("\n"));
-        currentLines = [];
-        currentTime = undefined;
-      }
-      blocks.push(formatVoiceCallTranscriptBlock(message, messageTime, timeZone));
-      continue;
-    }
-    if (!currentTime || messageTime.getTime() - currentTime.getTime() >= 5 * 60 * 1000) {
-      if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
-      currentTime = messageTime;
-      currentLines = [`[${formatLocalDateTime(messageTime, timeZone)}]`];
-    }
-    currentLines.push(formatMessageContentLine(message, userName));
-  }
-
-  if (currentLines.length > 0) blocks.push(currentLines.join("\n"));
+  flushChatBlock();
+  flushActiveCall();
   return blocks.join("\n");
 }
 
@@ -728,13 +759,61 @@ function isVoiceCallTranscriptMessage(message: StoredConversationMessage): boole
   return message.contentType === "voicecalltranscript" || content?.kind === "voicecalltranscript";
 }
 
-function formatVoiceCallTranscriptBlock(message: StoredConversationMessage, time: Date, timeZone: string): string {
-  return [
-    "<voice-call-transcript>",
-    `[${formatLocalDateTime(time, timeZone)}]`,
-    message.contentText,
-    "</voice-call-transcript>"
-  ].join("\n");
+function parseVoiceCallTranscriptMessage(message: StoredConversationMessage): VoiceCallTranscriptRow | undefined {
+  const payload = parseContentJson(message.contentJson);
+  if (!payload || payload.kind !== "voicecalltranscript") return undefined;
+  const role = transcriptRole(payload.role);
+  const sessionId = optionalStringValue(payload.talkSessionId) || optionalStringValue(payload.sessionId) || message.conversationId;
+  if (!role || !sessionId) return undefined;
+  return {
+    sessionId,
+    entryId: optionalStringValue(payload.entryId),
+    role,
+    contentText: message.contentText,
+    durationMs: numberValue(payload.durationMs)
+  };
+}
+
+function transcriptRole(value: unknown): VoiceCallTranscriptRow["role"] | undefined {
+  return value === "system" || value === "assistant" || value === "user" ? value : undefined;
+}
+
+function formatVoiceCallTranscriptRow(row: VoiceCallTranscriptRow, userName: string): string {
+  if (row.role === "system") {
+    const text = row.contentText.trim();
+    if (text === "开始") return "-已接通-";
+    if (text === "结束") return "-已挂断-";
+    return text;
+  }
+  return formatSpeakerText(row.role === "assistant" ? "Alice" : userName, row.contentText);
+}
+
+function formatSpeakerText(speaker: string, text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `${speaker}:${line}`)
+    .join("\n");
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatDurationMs(durationMs: number | undefined): string {
+  if (durationMs === undefined) return "unknown";
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${pad2(minutes)}:${pad2(seconds)}`
+    : `${minutes}:${pad2(seconds)}`;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function isMediaActionMessage(message: StoredConversationMessage): boolean {

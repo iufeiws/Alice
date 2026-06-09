@@ -186,6 +186,9 @@ export type TtsAudioTextChunk = {
   chunk: Uint8Array;
 };
 
+const ttsPcmL16BytesPerMs = 32_000 * 2 / 1000;
+const ttsSymbolSilenceMs = 100;
+
 export type TtsSynthesizer = VoiceSynthesizer & {
   stream?(input: TtsStreamInput): AsyncIterable<TtsStreamChunk>;
 };
@@ -297,7 +300,7 @@ export function createTtsTranslationSynthesizer(
 
   synthesize.stream = (input) => streamTtsText(input, config, deps);
   synthesize.streamAudio = base.streamAudio?.bind(base);
-  synthesize.streamAudioWithText = base.streamAudioWithText?.bind(base);
+  synthesize.streamAudioWithText = streamAudioWithSymbolSilence(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -330,7 +333,7 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     return streamTtsText(input, config, deps);
   };
   synthesize.streamAudio = base.streamAudio?.bind(base);
-  synthesize.streamAudioWithText = base.streamAudioWithText?.bind(base);
+  synthesize.streamAudioWithText = streamAudioWithSymbolSilence(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -452,6 +455,21 @@ export async function* streamTtsText(
     yield { type: "done" };
     return;
   }
+  const symbolOnly = ttsSymbolOnlyInput(sourceText);
+  if (symbolOnly) {
+    const chunk = ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs);
+    deps.appendLog?.("info", `tts stream skipped: symbol-only input stream=${input.streamId ?? ""} symbols=${symbolOnly.symbols} silenceMs=${symbolOnly.symbols * ttsSymbolSilenceMs}`);
+    yield {
+      type: "audio",
+      sequence,
+      text: sourceText,
+      chunk,
+      contentType: "audio/L16; rate=32000; channels=1"
+    };
+    yield { type: "part_done", sequence };
+    yield { type: "done" };
+    return;
+  }
 
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation start: stream=${input.streamId ?? ""} chars=${sourceChars}`);
@@ -501,6 +519,35 @@ async function* streamTtsAudioWithOptionalText(
   }
   if (!synthesizer.streamAudio) throw new Error("tts stream requires a streaming Genie TTS synthesizer");
   for await (const chunk of synthesizer.streamAudio(input)) yield { chunk };
+}
+
+function streamAudioWithSymbolSilence(synthesizer: VoiceSynthesizer): ((input: VoiceSynthesisInput) => AsyncIterable<TtsAudioTextChunk>) | undefined {
+  if (!synthesizer.streamAudioWithText && !synthesizer.streamAudio) return undefined;
+  return async function* (input) {
+    const symbolOnly = ttsSymbolOnlyInput(input.text);
+    if (symbolOnly) {
+      yield {
+        text: input.text,
+        chunk: ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs)
+      };
+      return;
+    }
+    yield* streamTtsAudioWithOptionalText(synthesizer, input);
+  };
+}
+
+function ttsSymbolOnlyInput(text: string): { symbols: number } | undefined {
+  let symbols = 0;
+  for (const char of Array.from(text)) {
+    if (/\s/u.test(char)) continue;
+    if (!/[\p{P}\p{S}]/u.test(char)) return undefined;
+    symbols += 1;
+  }
+  return symbols > 0 ? { symbols } : undefined;
+}
+
+function ttsSilentPcmL16(durationMs: number): Uint8Array {
+  return new Uint8Array(Math.max(0, Math.round(durationMs * ttsPcmL16BytesPerMs)));
 }
 
 function createTtsSourceTextMapper(sourceText: string, translatedText: string): { take(translatedChunkText: string): string | undefined } {

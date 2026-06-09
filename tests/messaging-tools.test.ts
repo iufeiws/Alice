@@ -1153,6 +1153,97 @@ test("tts stream maps returned translated audio text back to source punctuation"
   ]);
 });
 
+test("tts stream returns original text with symbol-length silence for symbol-only input", async () => {
+  const dir = makeTempDir("tts-stream-symbol-only");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+  let llmCalls = 0;
+  let streamCalls = 0;
+  const logs: string[] = [];
+  const plugin = createTtsPlugin({
+    configPath,
+    baseSynthesizer: Object.assign(async () => {
+      throw new Error("non-stream synthesizer should not be used");
+    }, {
+      async *streamAudioWithText() {
+        streamCalls += 1;
+        yield { text: "should not stream", chunk: new Uint8Array([1]) };
+      }
+    }),
+    llmRequestSender: async () => {
+      llmCalls += 1;
+      return { message: { role: "assistant", content: "日本語" } };
+    },
+    resolveApiPreset() {
+      return {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash"
+      };
+    },
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  const events = [];
+  for await (const event of plugin.voiceSynthesizer.stream!({
+    text: "！？…",
+    time: createCurrentTimeProvider("UTC"),
+    source: "send_chat.voice",
+    streamId: "symbol-stream"
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(llmCalls, 0);
+  assert.equal(streamCalls, 0);
+  assert.deepEqual(events.map((event) => event.type), ["audio", "part_done", "done"]);
+  assert.equal((events[0] as any).text, "！？…");
+  assert.equal((events[0] as any).chunk.byteLength, 3 * 100 * 64);
+  assert.equal((events[0] as any).chunk.every((value: number) => value === 0), true);
+  assert.equal(logs.some((message) => message.includes("symbol-only input") && message.includes("symbols=3")), true);
+});
+
+test("tts streamAudioWithText returns symbol-only input as original text and silence", async () => {
+  let streamCalls = 0;
+  const synthesize = createTtsTranslationSynthesizer({
+    enabled: true,
+    translationEnabled: true,
+    api_preset: {
+      baseURL: "https://example.invalid/v1",
+      apiKey: "test-key",
+      model: "flash"
+    },
+    prompt: "Translate to Japanese.\nText:"
+  }, {
+    baseSynthesizer: Object.assign(async () => {
+      throw new Error("non-stream synthesizer should not be used");
+    }, {
+      async *streamAudioWithText() {
+        streamCalls += 1;
+        yield { text: "should not stream", chunk: new Uint8Array([1]) };
+      }
+    })
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({
+    text: "!!!",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    chunks.push(chunk);
+  }
+
+  assert.equal(streamCalls, 0);
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].text, "!!!");
+  assert.equal(chunks[0].chunk.byteLength, 3 * 100 * 64);
+  assert.equal(chunks[0].chunk.every((value) => value === 0), true);
+});
+
 test("tts stream never hard-cuts source text between punctuation boundaries", async () => {
   const dir = makeTempDir("tts-stream-no-hard-cut");
   const configPath = path.join(dir, "config.json");

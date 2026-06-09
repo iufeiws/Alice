@@ -68,6 +68,11 @@ export function createAsyncQueue<T>() {
       items.push(item);
       notify();
     },
+    unshift(item: T) {
+      if (closed) return;
+      items.unshift(item);
+      notify();
+    },
     shift() {
       if (error) throw error;
       return items.shift();

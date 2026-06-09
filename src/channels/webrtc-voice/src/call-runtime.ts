@@ -170,8 +170,15 @@ export async function createCallState(
         onTtsStreamSettled: resolveTtsStreamSettled
       });
       void deps.talkRuntime?.startAgentLoop?.(talkSessionId);
-      void playback.then(() => {
+      void playback.then(async (result) => {
         resolveTtsStreamSettled();
+        if (result?.status !== "played" || !chunk.chunkId) return;
+        try {
+          await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
+          deps.emitStatus?.({ state: "talk_runtime.chunk_played", detail: `${chunk.outputId} chunk=${chunk.chunkId}` });
+        } catch (error) {
+          deps.emitStatus?.({ state: "talk_runtime.chunk_played_failed", detail: `${chunk.outputId} chunk=${chunk.chunkId}: ${error instanceof Error ? error.message : String(error)}` });
+        }
       }).catch((error) => {
         resolveTtsStreamSettled();
         deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });

@@ -20,6 +20,18 @@ export function createTtsProducer(ctx: {
   playbackGateOpen(): boolean;
   archiveTtsOutput(deps: WebRtcVoiceDeps, input: WebRtcVoiceTtsArchiveInput): Promise<void>;
 }) {
+  const playbackDetail = (item: PlaybackItem, fallback?: string) => {
+    const output = item.outputId ?? fallback;
+    if (!output && !item.chunkId) return fallback ?? "";
+    return `${output ?? ""}${item.chunkId ? ` chunk=${item.chunkId}` : ""}`;
+  };
+  const waitForPlaybackItemSettled = async (item: PlaybackItem) => {
+    while (ctx.playbackQueue.includes(item) && item.status !== "failed" && item.status !== "interrupted" && item.status !== "cancelled") {
+      ctx.playback.cleanupFinishedItems();
+      if (!ctx.playbackQueue.includes(item)) break;
+      await sleep(5);
+    }
+  };
   return {
     async playReplyText(text: string, outputId?: string, options?: unknown): Promise<PlaybackResult> {
       const speakText = ctx.deps.config.ttsTextFilter?.stripParenthesized ? stripParenthesizedText(text) : text;
@@ -187,7 +199,7 @@ export function createTtsProducer(ctx: {
                 item.totalMs = Math.max(item.totalMs ?? 0, encodedMs);
               }
               item.producerDone = true;
-              ctx.deps.emitStatus?.({ state: "tts.queue.producer_done", detail: `chunks=${audioChunks} encoded=${encodedFrames} queued=${item.queuedFrames ?? 0}` });
+              ctx.deps.emitStatus?.({ state: "tts.queue.producer_done", detail: `${playbackDetail(item, outputId)} chunks=${audioChunks} encoded=${encodedFrames} queued=${item.queuedFrames ?? 0}`.trim() });
             } catch (error) {
               item.status = ttsTask.controller.signal.aborted ? "interrupted" : "failed";
               item.producerDone = true;
@@ -201,10 +213,26 @@ export function createTtsProducer(ctx: {
           await producer;
           ctx.deps.emitStatus?.({ state: "tts.queue.ready", detail: `queued=${item.queuedFrames ?? 0} closed=true` });
           frameCount = item.queuedFrames ?? 0;
-          const interrupted = ttsTask.controller.signal.aborted || generation !== ctx.getPlaybackGeneration() || !ctx.playbackQueue.includes(item);
-          if (interrupted) item.status = "interrupted";
-          else if (frameCount <= 0) item.status = "failed";
+          const failed = item.status === "failed" || frameCount <= 0;
+          const interrupted = !failed && (ttsTask.controller.signal.aborted || generation !== ctx.getPlaybackGeneration() || !ctx.playbackQueue.includes(item));
+          if (failed) item.status = "failed";
+          else if (interrupted) item.status = "interrupted";
           else if (item.status !== "playing") item.status = "queued";
+          let finalStatus: PlaybackResult["status"];
+          let archiveStatus: "interrupted" | "failed" | "played";
+          if (interrupted || failed) {
+            const queueIndex = ctx.playbackQueue.indexOf(item);
+            if (queueIndex >= 0) ctx.playbackQueue.splice(queueIndex, 1);
+            ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : "tts.failed", detail: `${playbackDetail(item, outputId)}${frameCount > 0 ? "" : " no_frames_sent"}`.trim() });
+            finalStatus = "interrupted";
+            archiveStatus = interrupted ? "interrupted" : "failed";
+          } else {
+            ctx.playback.cleanupFinishedItems();
+            await waitForPlaybackItemSettled(item);
+            const settledStatus = item.status as PlaybackItem["status"];
+            finalStatus = settledStatus === "played" ? "played" : "interrupted";
+            archiveStatus = settledStatus === "played" ? "played" : settledStatus === "failed" ? "failed" : "interrupted";
+          }
           if (archiveAudioChunks.length > 0) {
             await ctx.archiveTtsOutput(ctx.deps, {
               callId: ctx.callId,
@@ -214,7 +242,7 @@ export function createTtsProducer(ctx: {
               text,
               speakText,
               createdAt,
-              status: interrupted ? "interrupted" : frameCount > 0 ? "played" : "failed",
+              status: archiveStatus,
               source: "stream",
               audio: {
                 chunks: archiveAudioChunks,
@@ -224,15 +252,8 @@ export function createTtsProducer(ctx: {
               }
             });
           }
-          if (interrupted || frameCount === 0) {
-            const queueIndex = ctx.playbackQueue.indexOf(item);
-            if (queueIndex >= 0) ctx.playbackQueue.splice(queueIndex, 1);
-            ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : "tts.failed", detail: frameCount > 0 ? outputId : "no_frames_sent" });
-          } else {
-            ctx.playback.cleanupFinishedItems();
-          }
           return {
-            status: interrupted || frameCount === 0 ? "interrupted" : "played",
+            status: finalStatus,
             outputId,
             frameCount
           };
@@ -321,7 +342,7 @@ export function createTtsProducer(ctx: {
         }
         if (ctx.playback.currentPlayingItem() === item) ctx.playback.setCurrentPlayingItem(undefined);
         ctx.playbackQueue.shift();
-        ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : frameCount > 0 ? "tts.played" : "tts.failed", detail: frameCount > 0 ? outputId : "no_frames_sent" });
+        ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : frameCount > 0 ? "tts.played" : "tts.failed", detail: frameCount > 0 ? playbackDetail(item, outputId) : `${playbackDetail(item, outputId)} no_frames_sent`.trim() });
         return {
           status: interrupted || frameCount === 0 ? "interrupted" : "played",
           outputId,
@@ -422,7 +443,7 @@ export function createTtsProducer(ctx: {
       item.status = interrupted ? "interrupted" : frameCount > 0 ? "played" : "failed";
       if (ctx.playback.currentPlayingItem() === item) ctx.playback.setCurrentPlayingItem(undefined);
       ctx.playbackQueue.shift();
-      ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : frameCount > 0 ? "tts.played" : "tts.failed", detail: frameCount > 0 ? outputId : "no_frames_sent" });
+      ctx.deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : frameCount > 0 ? "tts.played" : "tts.failed", detail: frameCount > 0 ? playbackDetail(item, outputId) : `${playbackDetail(item, outputId)} no_frames_sent`.trim() });
       return {
         status: interrupted || frameCount === 0 ? "interrupted" : "played",
         outputId,

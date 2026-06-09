@@ -41,6 +41,7 @@ export function createVoicePlaybackConsumer(input: {
   waitForTurn(item: PlaybackItem, gateOpen: () => boolean): Promise<boolean>;
 } {
   const playbackTextAdvanceDelayMs = 100;
+  const maxFrameWriteFailures = 3;
   const playbackFrameQueue = createAsyncQueue<PlaybackFrame>();
   const playbackTimelineEvents: PlaybackTimelineEvent[] = [];
   const consumer: PlaybackConsumer = {
@@ -55,6 +56,13 @@ export function createVoicePlaybackConsumer(input: {
   let playbackClockMs = input.deps.now?.().getTime() ?? Date.now();
   let outboundBufferedUntilMs = 0;
   let currentPlayingItem: PlaybackItem | undefined;
+
+  const playbackDetail = (item: PlaybackItem | undefined, fallback?: string) => {
+    const output = item?.outputId ?? fallback;
+    const chunk = item?.chunkId;
+    if (!output && !chunk) return fallback ?? "";
+    return `${output ?? ""}${chunk ? ` chunk=${chunk}` : ""}`;
+  };
 
   const normalizePlaybackTextCache = (text: string | undefined): string | undefined => {
     const value = text?.trim();
@@ -137,12 +145,12 @@ export function createVoicePlaybackConsumer(input: {
       if (!item.producerDone) return;
       if ((item.queuedFrames ?? 0) > item.framesWritten) return;
       if ((item.pendingPlaybackEvents ?? 0) > 0) return;
-      item.status = item.framesWritten > 0 ? "played" : item.status === "failed" ? "failed" : "interrupted";
+      item.status = item.framesWritten > 0 && item.status !== "failed" ? "played" : item.status === "failed" ? "failed" : "interrupted";
       if (currentPlayingItem === item) currentPlayingItem = undefined;
       input.playbackQueue.shift();
       input.deps.emitStatus?.({
-        state: item.framesWritten > 0 ? "tts.played" : "tts.failed",
-        detail: item.framesWritten > 0 ? item.outputId : "no_frames_sent"
+        state: item.status === "played" ? "tts.played" : "tts.failed",
+        detail: item.status === "played" ? playbackDetail(item, item.outputId) : `${playbackDetail(item, item.outputId)}${item.framesWritten > 0 ? "" : " no_frames_sent"}`.trim()
       });
     }
   };
@@ -177,7 +185,25 @@ export function createVoicePlaybackConsumer(input: {
     const frameStartAt = Math.max(outboundBufferedUntilMs, nowMs);
     const frameEndAt = frameStartAt + frame.durationMs;
     const written = await input.outboundTrack.writeFrame(input.stampOutboundFrame(frame));
-    if (!written) return false;
+    if (!written) {
+      playbackFrame.writeFailures = (playbackFrame.writeFailures ?? 0) + 1;
+      input.deps.emitStatus?.({
+        state: "tts.playback.write_failed",
+        detail: `${playbackDetail(item, item.outputId)} framesWritten=${item.framesWritten} queuedFrames=${item.queuedFrames ?? 0} attempt=${playbackFrame.writeFailures}`.trim()
+      });
+      if (playbackFrame.writeFailures < maxFrameWriteFailures) {
+        playbackFrameQueue.unshift(playbackFrame);
+        await playbackSleep(frame.durationMs);
+      } else {
+        item.status = "failed";
+        item.producerDone = true;
+        playbackFrameQueue.removeWhere((candidate) => candidate.item === item);
+        item.queuedFrames = item.framesWritten;
+        if (currentPlayingItem === item) currentPlayingItem = undefined;
+        cleanupFinishedItems();
+      }
+      return false;
+    }
     input.advanceOutboundRtpClockForFrame(frame);
     item.framesWritten += 1;
     item.playedMs = Math.max(item.playedMs ?? 0, item.framesWritten * frame.durationMs);

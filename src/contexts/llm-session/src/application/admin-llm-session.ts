@@ -1,5 +1,6 @@
 import { createMemoryConsoleRuntime } from "../../../../contexts/memory/src/memory-console-runtime.js";
 import { createMemoryLLMSessionRuntime } from "../../../../contexts/memory/src/application/manage-memory-llm-session.js";
+import { createLLMSessionBrowserRuntime } from "./browse-llm-sessions.js";
 import { createLLMSessionListRuntime } from "./list-llm-sessions.js";
 import { createLLMRequestPreviewRuntime } from "../../../llm-gateway/src/llm-request-preview-runtime.js";
 
@@ -30,6 +31,26 @@ export function createAdminLLMSessionRuntime(input: {
     archive: input.archive,
     getActiveSession: input.getActiveSession
   });
+  const llmSessionBrowserRuntime = createLLMSessionBrowserRuntime({
+    sessionRoot: input.sessionRoot,
+    collectFiles: input.archive.collectFiles,
+    relativePath: input.archive.relativePath,
+    getActiveSession: input.getActiveSession,
+    sources: [{
+      name: "runtime",
+      accept: (metadata) => metadata.agent !== "memorize",
+      id: ({ metadata, relativePath }) => String(metadata.sessionId ?? relativePath)
+    }, {
+      name: "memorize",
+      subdir: "memorize",
+      limit: 100,
+      accept: (metadata) => metadata.agent === "memorize",
+      id: ({ metadata, relativePath }) => typeof metadata.sessionId === "string"
+        ? metadata.sessionId
+        : `memorize:${relativePath}`,
+      mode: (metadata) => typeof metadata.mode === "string" ? metadata.mode : "memorize"
+    }]
+  });
   const llmRequestPreviewRuntime = createLLMRequestPreviewRuntime({
     requestLogs: input.requestLogs,
     hasActiveSession: () => Boolean(input.getActiveSession()),
@@ -47,6 +68,7 @@ export function createAdminLLMSessionRuntime(input: {
     memoryConsoleRuntime,
     memoryLLMSessionRuntime,
     llmSessionListRuntime,
+    llmSessionBrowserRuntime,
     getLLMRequestPreview: llmRequestPreviewRuntime.getLLMRequestPreview,
     getLLMRequestProfilePreview: llmRequestPreviewRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: llmRequestPreviewRuntime.getTalkLLMRequestProfilePreview

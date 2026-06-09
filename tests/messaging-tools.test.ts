@@ -1133,6 +1133,7 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
 
 test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation text", async () => {
   const requests: Array<{ url: string; body: any; authorization: string | null }> = [];
+  const outputDir = path.join(makeTempDir("openai-api-tts-output"), "assets", "generated", "tts");
   const first = new Uint8Array(32_000 * 2);
   const second = new Uint8Array(32_000 * 2);
   second.fill(1);
@@ -1165,6 +1166,7 @@ test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation
       }
     }
   }, {
+    outputDir,
     fetch: fakeFetch as typeof fetch,
     resolveApiPreset(name) {
       assert.equal(name, "speech");
@@ -1205,9 +1207,9 @@ test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation
   });
   try {
     assert.equal(result.assetId, "generated/tts/2026-06-09T02_10_51.609-openai-api.wav");
-    assert.equal(result.filePath, path.join("assets", "generated", "tts", "2026-06-09T02_10_51.609-openai-api.wav"));
+    assert.equal(result.filePath, path.join(outputDir, "2026-06-09T02_10_51.609-openai-api.wav"));
     assert.equal(fs.existsSync(result.filePath), true);
-    assert.equal(path.resolve("assets", result.assetId), path.resolve(result.filePath));
+    assert.equal(path.resolve(outputDir, path.basename(result.assetId)), path.resolve(result.filePath));
     const wav = fs.readFileSync(result.filePath);
     assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 16_000);
     assert.equal(requests[1].body.response_format, "pcm");
@@ -1691,6 +1693,7 @@ test("moss onnx voice synthesizer calls service and returns opus asset", async (
     mossBaseURL: "http://127.0.0.1:9876",
     mossReferenceAudio: "test.opus",
     mossOutputDir: outputDir,
+    assetRoot: path.join(dir, "assets"),
     mossTimeoutMs: 1_000,
     mossIdleShutdownMs: 0,
     mossFfmpegCommand: "ffmpeg"
@@ -1719,6 +1722,7 @@ test("moss onnx voice synthesizer does not spawn when explicit base url is unhea
     mossBaseURLExplicit: true,
     mossReferenceAudio: "test.opus",
     mossOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     mossTimeoutMs: 1_000,
     mossIdleShutdownMs: 0,
     mossFfmpegCommand: "ffmpeg"
@@ -1751,6 +1755,7 @@ test("configured voice synthesizer falls back to moss when genie model is missin
     mossBaseURL: "http://127.0.0.1:9876",
     mossReferenceAudio: "test.opus",
     mossOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     mossIdleShutdownMs: 0,
     mossFfmpegCommand: "ffmpeg"
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
@@ -1798,6 +1803,7 @@ test("genie tts voice synthesizer calls service and returns opus asset", async (
     backend: "genie-tts",
     genieBaseURL: "http://127.0.0.1:8767",
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieIdleShutdownMs: 0,
     genieFfmpegCommand: "ffmpeg"
   }, { fetch: fakeFetch as typeof fetch, spawn });
@@ -1857,6 +1863,7 @@ test("genie tts recovers generated file when synthesize response times out", asy
     backend: "genie-tts",
     genieBaseURL: "http://127.0.0.1:8767",
     genieOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     genieTimeoutMs: 5,
     genieIdleShutdownMs: 0,
     genieFfmpegCommand: "ffmpeg"
@@ -1896,6 +1903,7 @@ test("genie tts exposes streaming PCM chunks through streamAudio", async () => {
     backend: "genie-tts",
     genieBaseURL: "http://127.0.0.1:8767",
     genieOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     genieIdleShutdownMs: 0
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
@@ -1944,6 +1952,7 @@ test("genie tts can synthesize an opus asset from remote stream audio", async ()
     backend: "genie-tts",
     genieBaseURL: "http://127.0.0.1:8767",
     genieOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     genieIdleShutdownMs: 0,
     genieFfmpegCommand: "ffmpeg",
     genieUseStreamForSynthesis: true
@@ -2010,6 +2019,7 @@ test("genie remote stream uploads missing model and retries original stream-inpu
     genieBaseURL: "http://127.0.0.1:8767",
     genieBaseURLExplicit: true,
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieIdleShutdownMs: 0
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
@@ -2086,6 +2096,7 @@ test("genie remote text stream decodes ndjson audio text chunks", async () => {
     genieBaseURL: "http://127.0.0.1:8767",
     genieBaseURLExplicit: true,
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieIdleShutdownMs: 0
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
@@ -2154,6 +2165,7 @@ test("genie remote stream uploads missing reference files and retries original s
     genieBaseURL: "http://127.0.0.1:8767",
     genieBaseURLExplicit: true,
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieIdleShutdownMs: 0
   }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
 
@@ -2194,7 +2206,7 @@ test("fallback voice synthesizer uses local synthesis when remote synthesis fail
   }, {}) as any;
   const local = Object.assign(async () => {
     calls.push("local");
-    return { assetId: "generated/tts/local.opus", filePath: "assets/generated/tts/local.opus" };
+    return { assetId: "generated/tts/local.opus", filePath: path.join(makeTempDir("fallback-local-tts"), "assets", "generated", "tts", "local.opus") };
   }, {}) as any;
   const synthesize = createFallbackVoiceSynthesizer(remote, local, {
     appendLog: (_level, message) => logs.push(message)
@@ -2266,9 +2278,10 @@ test("genie tts owned service shuts down on idle timeout", async () => {
     backend: "genie-tts",
     genieDataDir: fixture.modelDir,
     genieModelDir: fixture.modelDir,
-    genieReferenceAudio: "test.opus",
+    genieReferenceAudio: fixture.referenceAudio,
     genieReferenceText: "selfie/references/selfie-prompt.txt",
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieTimeoutMs: 1_000,
     genieIdleShutdownMs: 10
   }, {
@@ -2323,8 +2336,9 @@ test("genie tts local service receives reference text content instead of text pa
     genieDataDir: fixture.modelDir,
     genieModelDir: fixture.modelDir,
     genieReferenceAudio: fixture.referenceAudio,
-    genieReferenceText: path.relative("assets", referenceTextPath).split(path.sep).join("/"),
+    genieReferenceText: referenceTextPath,
     genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
     genieTimeoutMs: 1_000,
     genieIdleShutdownMs: 0
   }, {
@@ -2371,6 +2385,7 @@ test("configured voice synthesizer falls back to moss when explicit genie servic
     mossBaseURL: "http://127.0.0.1:9876",
     mossReferenceAudio: "test.opus",
     mossOutputDir: "generated/tts",
+    assetRoot: path.join(makeTempDir("tts-asset-root"), "assets"),
     mossIdleShutdownMs: 0,
     mossFfmpegCommand: "ffmpeg"
   }, { fetch: fakeFetch as typeof fetch, spawn });
@@ -2755,13 +2770,14 @@ async function eventually(condition: () => boolean, timeoutMs = 500): Promise<vo
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-function makeTtsAssetFixture(prefix: string): { root: string; modelDir: string; referenceAudio: string; cleanup(): void } {
-  const root = path.join("assets", "generated", `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+function makeTtsAssetFixture(prefix: string): { root: string; assetRoot: string; modelDir: string; referenceAudio: string; cleanup(): void } {
+  const assetRoot = path.join(makeTempDir(`${prefix}-asset-root`), "assets");
+  const root = path.join(assetRoot, "generated", `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const modelDir = path.join(root, "model");
   const referenceAudio = path.join(root, "reference.wav");
   fs.mkdirSync(modelDir, { recursive: true });
@@ -2771,8 +2787,9 @@ function makeTtsAssetFixture(prefix: string): { root: string; modelDir: string; 
   fs.writeFileSync(referenceAudio, "wav");
   return {
     root,
-    modelDir: path.relative("assets", modelDir).split(path.sep).join("/"),
-    referenceAudio: path.relative("assets", referenceAudio).split(path.sep).join("/"),
+    assetRoot,
+    modelDir,
+    referenceAudio,
     cleanup() {
       fs.rmSync(root, { recursive: true, force: true });
     }

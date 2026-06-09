@@ -4,7 +4,6 @@ import { createBookcaseTools } from "../src/capabilities/tools/bookcase/src/inde
 import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
 
 const fs = await import("node:fs");
-const os = await import("node:os");
 const path = await import("node:path");
 
 test("bookcase tool draws a book and includes retelling instructions", async () => {
@@ -175,7 +174,7 @@ test("bookcase notice failures do not block draw or return transitions", async (
 });
 
 function createFixtureDb(): string {
-  const dir = path.join(os.tmpdir(), `alice-bookcase-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-bookcase-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "books.sqlite");
   const db: any = new sqlite.DatabaseSync(dbPath);

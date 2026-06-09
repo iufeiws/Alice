@@ -205,7 +205,7 @@ test("wechat iLink client parses quoted text messages", async () => {
 });
 
 test("wechat plugin forwards quoted message metadata", async () => {
-  const dir = path.join("/tmp", `alice-wechat-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
   const events: AgentEvent[] = [];
@@ -235,7 +235,7 @@ test("wechat plugin forwards quoted message metadata", async () => {
 });
 
 test("wechat plugin writes inbound context and sends text with cached context_token", async () => {
-  const dir = path.join("/tmp", `alice-wechat-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
   const events: string[] = [];
@@ -290,7 +290,7 @@ test("wechat plugin writes inbound context and sends text with cached context_to
 });
 
 test("wechat plugin uploads and sends image with cached context_token", async () => {
-  const dir = path.join("/tmp", `alice-wechat-image-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-image-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const projectAssetPath = path.join(process.cwd(), "assets", "test.png");
   const imageSize = fs.statSync(projectAssetPath).size;
@@ -366,7 +366,7 @@ test("wechat plugin uploads and sends image with cached context_token", async ()
 });
 
 test("wechat plugin uploads and sends audio with cached context_token", async () => {
-  const dir = path.join("/tmp", `alice-wechat-audio-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-audio-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const projectAssetPath = path.join(process.cwd(), "assets", "generated", "test-wechat-audio.wav");
   writeSilentWav(projectAssetPath);
@@ -447,7 +447,7 @@ test("wechat plugin uploads and sends audio with cached context_token", async ()
 });
 
 test("wechat plugin starts and stops typing with cached ticket", async () => {
-  const dir = path.join("/tmp", `alice-wechat-typing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-typing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
   const urls: string[] = [];
@@ -490,7 +490,7 @@ test("wechat plugin starts and stops typing with cached ticket", async () => {
 });
 
 test("wechat inbound messages are persisted through message runtime logs", async () => {
-  const dir = path.join("/tmp", `alice-wechat-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
@@ -545,7 +545,7 @@ test("wechat inbound messages are persisted through message runtime logs", async
 });
 
 test("wechat quoted inbound messages are visible in persisted chat context", async () => {
-  const dir = path.join("/tmp", `alice-wechat-runtime-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-runtime-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
@@ -603,7 +603,7 @@ test("wechat quoted inbound messages are visible in persisted chat context", asy
 });
 
 test("send_chat messaging tool routes outbound text to wechat channel", async () => {
-  const dir = path.join("/tmp", `alice-wechat-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   const sent: Array<{ plugin: string; text: string }> = [];

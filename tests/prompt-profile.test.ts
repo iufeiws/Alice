@@ -510,7 +510,7 @@ function replaceShellCategory(root: string, store: DailyShellStore, category: Sh
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

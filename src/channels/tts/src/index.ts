@@ -37,6 +37,7 @@ export type TTSConfig = {
   mossIdleShutdownMs?: number;
   mossFfmpegCommand?: string;
   mossVoiceCloneMaxTextTokens?: number;
+  assetRoot?: string;
 };
 
 export type VoiceSynthesisInput = {
@@ -1097,12 +1098,16 @@ function crc32(value: Uint8Array): number {
 
 export type ConfiguredVoiceSynthesizerDeps = MossOnnxVoiceSynthesizerDeps;
 
-export function createOpenAiApiTtsVoiceSynthesizer(config: TtsPluginConfig, deps: Pick<TtsPluginDeps, "fetch" | "env" | "resolveApiPreset" | "appendLog"> = {}): VoiceSynthesizer {
+export function createOpenAiApiTtsVoiceSynthesizer(
+  config: TtsPluginConfig,
+  deps: Pick<TtsPluginDeps, "fetch" | "env" | "resolveApiPreset" | "appendLog"> & { outputDir?: string } = {}
+): VoiceSynthesizer {
   const synthesize = (async (request) => {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
     const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
     const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
-    const filePath = path.join("assets", "generated", "tts", `${stamp}-openai-api.wav`);
+    const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
+    const filePath = path.join(outputDir, `${stamp}-openai-api.wav`);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, pcmToWav(audio, { sampleRate: settings.sampleRate, channels: settings.channels }));
     return {
@@ -1703,7 +1708,7 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   const synthesize = (async (request) => {
     const { text, time } = request;
     noteActivity();
-    const outputDir = resolveAssetOutputDir(config.outputDir);
+    const outputDir = resolveAssetOutputDir(config.outputDir, input.assetRoot);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     const baseName = uniqueVoiceBaseName(outputDir.fullPath, time.now().iso);
     const wavPath = path.resolve(outputDir.fullPath, `${baseName}.wav`);
@@ -1774,7 +1779,7 @@ export function createMossOnnxVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
     const scriptPath = path.resolve(config.serviceScript);
     if (!fs.existsSync(scriptPath)) throw new Error(`MOSS TTS service script was not found: ${scriptPath}`);
     const modelDir = requireAssetPath(config.modelDir, "MOSS TTS model directory was not found");
-    const outputDir = resolveAssetOutputDir(config.outputDir);
+    const outputDir = resolveAssetOutputDir(config.outputDir, input.assetRoot);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     deps.appendLog?.("info", `moss tts service starting: ${config.pythonCommand} ${scriptPath}`);
     ownedProcess = spawnImpl(config.pythonCommand, [
@@ -1873,7 +1878,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   const synthesize = (async (request) => {
     const { text, time } = request;
     noteActivity();
-    const outputDir = resolveAssetOutputDir(config.outputDir);
+    const outputDir = resolveAssetOutputDir(config.outputDir, input.assetRoot);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     const baseName = uniqueVoiceBaseName(outputDir.fullPath, time.now().iso);
     const wavPath = path.resolve(outputDir.fullPath, `${baseName}.wav`);
@@ -1915,7 +1920,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       const requestBody = {
         text,
         outputPath: wavPath,
-        ...genieRequestOverrides(request.genie, deps.appendLog)
+        ...genieRequestOverrides(request.genie, deps.appendLog, { assetRoot: input.assetRoot })
       };
       let response: unknown;
       try {
@@ -1966,6 +1971,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       fetchImpl,
       setTimer,
       clearTimer,
+      assetRoot: input.assetRoot,
       appendLog: deps.appendLog
     })) {
       noteActivity();
@@ -1997,6 +2003,7 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
       fetchImpl,
       setTimer,
       clearTimer,
+      assetRoot: input.assetRoot,
       appendLog: deps.appendLog
     })) {
     noteActivity();
@@ -2048,11 +2055,11 @@ export function createGenieTtsVoiceSynthesizer(input: TTSConfig, deps: MossOnnxV
   async function startOwnedService(): Promise<void> {
     const scriptPath = path.resolve(config.serviceScript);
     if (!fs.existsSync(scriptPath)) throw new Error(`Genie TTS service script was not found: ${scriptPath}`);
-    const dataDir = requireAssetDirectory(config.dataDir, "Genie TTS data directory was not found");
-    const modelDir = requireAssetDirectory(config.modelDir, "Genie TTS model directory was not found");
-    const referenceAudio = requireAssetPath(config.referenceAudio, "Genie TTS reference audio was not found");
+    const dataDir = requireAssetDirectory(config.dataDir, "Genie TTS data directory was not found", input.assetRoot);
+    const modelDir = requireAssetDirectory(config.modelDir, "Genie TTS model directory was not found", input.assetRoot);
+    const referenceAudio = requireAssetPath(config.referenceAudio, "Genie TTS reference audio was not found", input.assetRoot);
     const referenceText = requireGenieReferenceText(config.referenceText, "Genie TTS reference text was not found");
-    const outputDir = resolveAssetOutputDir(config.outputDir);
+    const outputDir = resolveAssetOutputDir(config.outputDir, input.assetRoot);
     fs.mkdirSync(outputDir.fullPath, { recursive: true });
     deps.appendLog?.("info", `genie tts service starting: ${config.pythonCommand} ${scriptPath}`);
     ownedProcess = spawnImpl(config.pythonCommand, [
@@ -2137,14 +2144,14 @@ const genieRequiredBaseModelFiles = [
 function genieRequestOverrides(
   input: VoiceSynthesisInput["genie"],
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"],
-  options: { requireCompleteModel?: boolean } = {}
+  options: { requireCompleteModel?: boolean; assetRoot?: string } = {}
 ): Record<string, unknown> {
   if (!input) return {};
   const requireCompleteModel = options.requireCompleteModel ?? true;
   const overrides: Record<string, unknown> = {};
   if (input.language) overrides.language = input.language;
   if (input.modelDir) {
-    const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS model directory was not found");
+    const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS model directory was not found", options.assetRoot);
     const missing = missingGenieBaseModelFiles(modelDir);
     if (!requireCompleteModel || missing.length === 0) {
       overrides.modelDir = modelDir;
@@ -2152,7 +2159,7 @@ function genieRequestOverrides(
       appendLog?.("warn", `genie tts model override skipped because ${input.modelDir} is incomplete; missing ${missing.join(", ")}`);
     }
   }
-  if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found");
+  if (input.referenceAudio) overrides.referenceAudioPath = requireAssetPath(input.referenceAudio, "Genie TTS reference audio was not found", options.assetRoot);
   if (input.referenceText) overrides.referenceText = requireGenieReferenceText(input.referenceText, "Genie TTS reference text was not found");
   if (input.partSilenceSeconds !== undefined) overrides.partSilenceSeconds = geniePartSilenceSecondsValue(input.partSilenceSeconds);
   if (input.splitText !== undefined) overrides.splitText = Boolean(input.splitText);
@@ -2210,6 +2217,7 @@ async function* streamGeniePcm(input: {
   fetchImpl: typeof fetch;
   setTimer: typeof setTimeout;
   clearTimer: typeof clearTimeout;
+  assetRoot?: string;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
 }): AsyncIterable<Uint8Array> {
   for await (const chunk of streamGeniePcmWithText(input)) yield chunk.chunk;
@@ -2224,6 +2232,7 @@ async function* streamGeniePcmWithText(input: {
   fetchImpl: typeof fetch;
   setTimer: typeof setTimeout;
   clearTimer: typeof clearTimeout;
+  assetRoot?: string;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
 }): AsyncIterable<TtsAudioTextChunk> {
   const controller = new AbortController();
@@ -2262,10 +2271,12 @@ async function openGeniePcmStream(input: {
   timeoutMs: number;
   fetchImpl: typeof fetch;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
+  assetRoot?: string;
   responseFormat?: "ndjson";
 }, signal: AbortSignal): Promise<Response> {
   const overrides = genieRequestOverrides(input.genie, input.appendLog, {
-    requireCompleteModel: !input.useClientUploadFlow
+    requireCompleteModel: !input.useClientUploadFlow,
+    assetRoot: input.assetRoot
   });
   if (!input.useClientUploadFlow || !input.genie?.modelDir) {
     return input.fetchImpl(`${input.baseURL}/stream`, {
@@ -2303,6 +2314,7 @@ async function openGeniePcmStream(input: {
     timeoutMs: input.timeoutMs,
     fetchImpl: input.fetchImpl,
     signal,
+    assetRoot: input.assetRoot,
     appendLog: input.appendLog
   });
   input.appendLog?.("info", `genie tts remote preset uploaded; retrying original stream-input request code=${missing.code} modelDir=${missing.modelDir}`);
@@ -2400,9 +2412,10 @@ async function uploadGenieModelForRemote(input: {
   timeoutMs: number;
   fetchImpl: typeof fetch;
   signal: AbortSignal;
+  assetRoot?: string;
   appendLog?: MossOnnxVoiceSynthesizerDeps["appendLog"];
 }): Promise<void> {
-  const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS remote upload model directory was not found");
+  const modelDir = requireAssetDirectory(input.modelDir, "Genie TTS remote upload model directory was not found", input.assetRoot);
   const presetDir = path.dirname(modelDir);
   const zip = zipDirectoryToBuffer(presetDir);
   const hash = crypto.createHash("sha256").update(zip).digest("hex");
@@ -2621,24 +2634,24 @@ function resolveFfmpegCommand(ffmpegCommand: string): string {
   throw new Error("ffmpeg-static is not installed or did not expose an ffmpeg binary path");
 }
 
-function requireAssetPath(assetId: string, error: string): string {
-  const assetRoot = path.resolve("assets");
-  const filePath = resolveAssetScopedPath(assetId);
+function requireAssetPath(assetId: string, error: string, assetRootInput = "assets"): string {
+  const assetRoot = path.resolve(assetRootInput);
+  const filePath = resolveAssetScopedPath(assetId, assetRoot);
   const relative = path.relative(assetRoot, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("TTS asset path is outside assets directory");
   if (!fs.existsSync(filePath)) throw new Error(error);
   return filePath;
 }
 
-function requireAssetDirectory(assetId: string, error: string): string {
-  const dirPath = requireAssetPath(assetId, error);
+function requireAssetDirectory(assetId: string, error: string, assetRootInput = "assets"): string {
+  const dirPath = requireAssetPath(assetId, error, assetRootInput);
   if (fs.statSync(dirPath).isFile()) throw new Error(error);
   return dirPath;
 }
 
-function resolveAssetOutputDir(assetDir: string): { fullPath: string; relativePath: string } {
-  const assetRoot = path.resolve("assets");
-  const fullPath = resolveAssetScopedPath(assetDir);
+function resolveAssetOutputDir(assetDir: string, assetRootInput = "assets"): { fullPath: string; relativePath: string } {
+  const assetRoot = path.resolve(assetRootInput);
+  const fullPath = resolveAssetScopedPath(assetDir, assetRoot);
   const relativePath = path.relative(assetRoot, fullPath);
   if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     throw new Error("TTS output directory must be inside assets");
@@ -2646,13 +2659,13 @@ function resolveAssetOutputDir(assetDir: string): { fullPath: string; relativePa
   return { fullPath, relativePath };
 }
 
-function resolveAssetScopedPath(assetPath: string): string {
+function resolveAssetScopedPath(assetPath: string, assetRoot = path.resolve("assets")): string {
   if (path.isAbsolute(assetPath)) return assetPath;
   const normalized = path.normalize(assetPath);
   if (normalized === "assets" || normalized.startsWith(`assets${path.sep}`)) {
     return path.resolve(normalized);
   }
-  return path.resolve("assets", normalized);
+  return path.resolve(assetRoot, normalized);
 }
 
 function validateGeneratedVoice(filePath: string, outputDir: string): void {

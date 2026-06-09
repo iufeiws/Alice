@@ -193,7 +193,7 @@ test("WebRTC voice playback synthesizes Japanese voice and writes frames to outb
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: "generated/tts/reply.opus", filePath: "/tmp/reply.opus" };
+      return { assetId: "generated/tts/reply.opus", filePath: tempFilePath("reply.opus") };
     }, {}),
     decodeAudioFileToFrames: async (input) => {
       decodedFiles.push(input.filePath);
@@ -212,7 +212,7 @@ test("WebRTC voice playback synthesizes Japanese voice and writes frames to outb
 
   assert.equal(result.status, "played");
   assert.deepEqual(synthesizedTexts, ["晚点见"]);
-  assert.deepEqual(decodedFiles, ["/tmp/reply.opus"]);
+  assert.deepEqual(decodedFiles, [tempFilePath("reply.opus")]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1, 2], [3, 4]]);
   assert.equal(peer.outboundTrack?.stopped, false);
   await call.close("test_done");
@@ -228,7 +228,7 @@ test("WebRTC voice passes injected project time to TTS synthesis", async () => {
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ time }: { time: { timeZone: string } }) => {
       timeZones.push(time.timeZone);
-      return { assetId: "generated/tts/reply.opus", filePath: "/tmp/reply.opus" };
+      return { assetId: "generated/tts/reply.opus", filePath: tempFilePath("reply.opus") };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1, 2]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -250,7 +250,7 @@ test("WebRTC voice strips parenthesized text before TTS when enabled", async () 
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: "generated/tts/reply.opus", filePath: "/tmp/reply.opus" };
+      return { assetId: "generated/tts/reply.opus", filePath: tempFilePath("reply.opus") };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -305,7 +305,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: "generated/tts/greeting.opus", filePath: "/tmp/greeting.opus" };
+      return { assetId: "generated/tts/greeting.opus", filePath: tempFilePath("greeting.opus") };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -798,7 +798,7 @@ test("WebRTC voice manual interrupt targets current TalkRuntime output without e
     createPeer: async () => peer,
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
-      return { assetId: `generated/tts/${text}.opus`, filePath: `/tmp/${text}.opus` };
+      return { assetId: `generated/tts/${text}.opus`, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
@@ -926,7 +926,7 @@ test("WebRTC voice barge-in before consumer has audio interrupts latest output",
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async () => {
       await voiceReady;
-      return { assetId: "generated/tts/queued.opus", filePath: "/tmp/queued.opus" };
+      return { assetId: "generated/tts/queued.opus", filePath: tempFilePath("queued.opus") };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([17]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -980,7 +980,7 @@ test("WebRTC voice waits for current playback task before claiming during interr
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: text, filePath: `/tmp/${text}.opus` };
+      return { assetId: text, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async (input) => [
       { sequence: 0, pcm: new Int16Array([input.filePath.includes("第二段") ? 2 : 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -1035,7 +1035,7 @@ test("WebRTC voice pseudo-streams TTS by sentence and stops later parts after in
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: `generated/tts/${synthesizedTexts.length}.opus`, filePath: `/tmp/${synthesizedTexts.length}.opus` };
+      return { assetId: `generated/tts/${synthesizedTexts.length}.opus`, filePath: tempFilePath(`${synthesizedTexts.length}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([synthesizedTexts.length]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -1092,7 +1092,7 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
     },
     archiveTtsOutput: async (input) => {
       archives.push(input);
-      return { filePath: "/tmp/archive.wav" };
+      return { filePath: tempFilePath("archive.wav") };
     },
     emitStatus: (event) => statuses.push(event)
   });
@@ -1114,7 +1114,7 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   assert.equal((archives[0] as any).status, "played");
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.started"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.frames_sent" && entry.detail === "sent=1"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.archive.saved" && entry.detail === "/tmp/archive.wav"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.archive.saved" && entry.detail === tempFilePath("archive.wav")), true);
 });
 
 test("WebRTC voice streaming PCM encoder reuses one ffmpeg process for chunked audio", async () => {
@@ -1928,7 +1928,7 @@ test("WebRTC voice automatically interrupts pseudo-streaming TTS when user start
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       synthesizedTexts.push(text);
-      return { assetId: `generated/tts/${synthesizedTexts.length}.opus`, filePath: `/tmp/${synthesizedTexts.length}.opus` };
+      return { assetId: `generated/tts/${synthesizedTexts.length}.opus`, filePath: tempFilePath(`${synthesizedTexts.length}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([synthesizedTexts.length]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -1961,7 +1961,7 @@ test("WebRTC voice plays the first pseudo-stream part before the next TTS part c
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
       if (text.includes("第二")) await secondPartReady;
-      return { assetId: `generated/tts/${text}.opus`, filePath: `/tmp/${text}.opus` };
+      return { assetId: `generated/tts/${text}.opus`, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async (input) => [
       { sequence: 0, pcm: new Int16Array([input.filePath.includes("第一") ? 1 : 2]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
@@ -1986,7 +1986,7 @@ test("WebRTC voice keeps consecutive interrupts isolated in the interrupt queue"
     createPeer: async () => peer,
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
-      return { assetId: `generated/tts/${text}.opus`, filePath: `/tmp/${text}.opus` };
+      return { assetId: `generated/tts/${text}.opus`, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
@@ -2027,7 +2027,7 @@ test("WebRTC voice passes playback timing to TalkRuntime on barge-in", async () 
     createPeer: async () => peer,
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
-      return { assetId: `generated/tts/${text}.opus`, filePath: `/tmp/${text}.opus` };
+      return { assetId: `generated/tts/${text}.opus`, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
@@ -2380,7 +2380,7 @@ test("WebRTC voice sends breakpoint context without index to TalkRuntime on barg
     createPeer: async () => peer,
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
-      return { assetId: `generated/tts/${text}.opus`, filePath: `/tmp/${text}.opus` };
+      return { assetId: `generated/tts/${text}.opus`, filePath: tempFilePath(`${text}.opus`) };
     }, {}),
     decodeAudioFileToFrames: async () => [
       { sequence: 0, pcm: new Int16Array([1]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
@@ -2418,7 +2418,7 @@ test("WebRTC voice sends breakpoint context without index to TalkRuntime on barg
 });
 
 async function fakeVoiceSynthesizer() {
-  return { assetId: "generated/tts/fake.opus", filePath: "/tmp/fake.opus" };
+  return { assetId: "generated/tts/fake.opus", filePath: tempFilePath("fake.opus") };
 }
 
 class FakePeer {
@@ -2490,6 +2490,12 @@ function makeTempDir(name: string): string {
   const dir = path.join(process.cwd(), ".tmp-tests", `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function tempFilePath(fileName: string): string {
+  const dir = path.join(process.cwd(), ".tmp-tests", "webrtc-voice-files");
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, fileName);
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {

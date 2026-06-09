@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { createWorkspaceFilesTools } from "../src/capabilities/tools/workspace-files/src/index.js";
 
 const fs = await import("node:fs");
-const os = await import("node:os");
 const path = await import("node:path");
 
 test("Read returns cat-n style line numbers and supports paging", async () => {
@@ -195,7 +194,7 @@ test("Grep supports files_with_matches, content, count, glob filtering, no match
 });
 
 function makeTempDir(name: string): string {
-  const dir = path.join(os.tmpdir(), `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

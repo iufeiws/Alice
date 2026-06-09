@@ -6,6 +6,7 @@ const path = await import("node:path");
 export type DailyMaintenanceTaskDeps = {
   systemLogStore?: { cleanupOlderThan(retentionDays: number, now?: Date): number };
   ttsOutputDirs?: string[];
+  ttsAssetRoot?: string;
   ttsGeneratedCleanupEnabled?: boolean;
   nowIso(): string;
   log(level: "info" | "warn" | "error", message: string): void;
@@ -29,7 +30,7 @@ export function createDailyMaintenanceTasks(deps: DailyMaintenanceTaskDeps): Sch
       hour: 4,
       minute: 0,
       run() {
-        const removed = cleanupPreviousTtsFiles(deps.ttsOutputDirs ?? [], deps.nowIso(), (message) => deps.log("warn", message));
+        const removed = cleanupPreviousTtsFiles(deps.ttsOutputDirs ?? [], deps.nowIso(), (message) => deps.log("warn", message), deps.ttsAssetRoot);
         deps.log("info", `daily cleanup: removed ${removed} generated tts file(s) from previous days`);
       }
     });
@@ -37,14 +38,14 @@ export function createDailyMaintenanceTasks(deps: DailyMaintenanceTaskDeps): Sch
   return tasks;
 }
 
-export function cleanupPreviousTtsFiles(outputDirs: string[], nowIso: string, onWarning?: (message: string) => void): number {
+export function cleanupPreviousTtsFiles(outputDirs: string[], nowIso: string, onWarning?: (message: string) => void, assetRoot = "assets"): number {
   const today = nowIso.slice(0, 10).replace(/-/g, "");
   let removed = 0;
   const visited = new Set<string>();
   for (const outputDir of outputDirs) {
     let dir: string;
     try {
-      dir = resolveAssetScopedPath(outputDir);
+      dir = resolveAssetScopedPath(outputDir, assetRoot);
     } catch (error) {
       onWarning?.(`daily cleanup: generated tts directory skipped ${outputDir}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -66,15 +67,15 @@ export function cleanupPreviousTtsFiles(outputDirs: string[], nowIso: string, on
   return removed;
 }
 
-function resolveAssetScopedPath(assetPath: string): string {
+function resolveAssetScopedPath(assetPath: string, assetRoot: string): string {
   const normalized = path.normalize(assetPath);
+  const resolvedAssetRoot = path.resolve(assetRoot);
   const fullPath = path.isAbsolute(assetPath)
     ? path.resolve(assetPath)
     : normalized === "assets" || normalized.startsWith(`assets${path.sep}`)
       ? path.resolve(normalized)
-      : path.resolve("assets", normalized);
-  const assetRoot = path.resolve("assets");
-  const relativeToAssets = path.relative(assetRoot, fullPath);
+      : path.resolve(resolvedAssetRoot, normalized);
+  const relativeToAssets = path.relative(resolvedAssetRoot, fullPath);
   if (!relativeToAssets || relativeToAssets.startsWith("..") || path.isAbsolute(relativeToAssets)) {
     throw new Error(`TTS cleanup directory must be inside assets: ${fullPath}`);
   }

@@ -15,7 +15,8 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("initiated behavior prompt layers are rendered by enabled order", () => {
-  const filePath = path.join("/tmp", `initiated-behavior-test-${process.pid}.json`);
+  const filePath = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-test-${process.pid}.json`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
     layers: [
       { id: "second", title: "Second", role: "user", enabled: true, content: "second {{user}}", order: 20 },
@@ -51,7 +52,8 @@ test("initiated behavior prompt layers are rendered by enabled order", () => {
 });
 
 test("initiated behavior prompt layers preserve assistant tool request layers", () => {
-  const filePath = path.join("/tmp", `initiated-behavior-tool-test-${process.pid}.json`);
+  const filePath = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-tool-test-${process.pid}.json`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
     layers: [
       {
@@ -148,7 +150,7 @@ test("initiated behavior run store aggregates randomized thirty minute buckets",
 });
 
 test("initiated behavior run store persists and marks 15 minute responses", () => {
-  const dir = path.join("/tmp", `initiated-behavior-runs-${process.pid}-${Date.now()}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-runs-${process.pid}-${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "runs.sqlite");
   const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
@@ -173,7 +175,7 @@ test("initiated behavior run store persists and marks 15 minute responses", () =
 });
 
 test("initiated behavior run store does not count pending responses as missed in buckets", () => {
-  const dir = path.join("/tmp", `initiated-behavior-runs-pending-${process.pid}-${Date.now()}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-runs-pending-${process.pid}-${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "runs.sqlite");
   const store = createAgentInitiatedBehaviorRunStore({ dbPath });

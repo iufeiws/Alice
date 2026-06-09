@@ -41,6 +41,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async (input) => {
         executorInputs.push(input);
         fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from("fake-jpg"));
@@ -123,6 +124,7 @@ test("selfie default executor calls the fast runner", async () => {
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieImageApiKey: "test-key",
       outputRouter: {
         async send(output) {
@@ -198,6 +200,7 @@ test("selfie codex mode calls codex command from plugin config", async () => {
       selfieConfigPath: configPath,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       outputRouter: {
         async send(output) {
           sent.push(output);
@@ -240,6 +243,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async (input) => {
         referenceImages = input.referenceImages;
         referenceImagePrompt = input.referenceImagePrompt;
@@ -288,6 +292,7 @@ test("selfie sends start notice before required reference failures", async () =>
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async () => {
         throw new Error("executor should not run");
       },
@@ -332,6 +337,7 @@ test("selfie cleans up temporary directory when codex does not create the reques
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async (input) => {
         workDir = input.workDir;
         return { stdout: "done", lastMessage: "I could not create the requested file" };
@@ -434,13 +440,17 @@ function writeReferenceFiles(root: string): void {
 }
 
 function makeAssetTempDir(name: string): string {
-  const relative = path.join("assets", "generated", `test-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  fs.mkdirSync(relative, { recursive: true });
-  return relative;
+  const dir = path.join(makeTempDir(`${name}-asset-root`), "assets", "generated", `test-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function assetRootFromOutputDir(outputDir: string): string {
+  return path.resolve(outputDir, "..", "..");
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

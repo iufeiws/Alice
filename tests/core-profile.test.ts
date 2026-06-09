@@ -3,11 +3,10 @@ import assert from "node:assert/strict";
 import { createCoreProfileStore } from "../src/contexts/agent-profile/src/adapters/json-core-profile-store.js";
 
 const fs = await import("node:fs");
-const os = await import("node:os");
 const path = await import("node:path");
 
 test("core profile stores appearance description", () => {
-  const dir = path.join(os.tmpdir(), `alice-core-profile-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-core-profile-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "core-profile.json");
   const store = createCoreProfileStore(filePath);

@@ -19,7 +19,7 @@ test("admin assets are constrained to the configured asset root", () => {
     /asset_outside_assets/
   );
   assert.throws(
-    () => resolveAdminAssetPath("/tmp/secret.png", { root, allowedExtensions: [".png"], maxBytes: 10 }),
+    () => resolveAdminAssetPath("/outside-assets/secret.png", { root, allowedExtensions: [".png"], maxBytes: 10 }),
     /asset_must_be_relative/
   );
   assert.throws(
@@ -71,7 +71,7 @@ test("file log store resolves timezone dynamically", () => {
 });
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

@@ -484,6 +484,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
 
 test("admin plugin config patch writes tts config with preset reference only", async () => {
   const root = makeTempDir("admin-plugin-config");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
@@ -496,7 +497,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { tts: { configPath } }
+    pluginConfigs: { tts: { configPath, assetRoot } }
   };
   const handler = createApiRequestHandler(context);
   const modelConfigName = `zh-${path.basename(root)}`;
@@ -550,8 +551,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
   assert.equal(saved.voice.modelConfigs[modelConfigName].speed, 1.2);
   assert.equal(saved.voice.modelConfigs[modelConfigName].partSilenceSeconds, 0.45);
   assert.equal(saved.voice.modelConfigs[modelConfigName].splitText, false);
-  assert.equal(fs.readFileSync(path.join("assets", "tts", "preset", modelConfigName, "reference.txt"), "utf8"), "これは参照テキストです。");
-  fs.rmSync(path.join("assets", "tts", "preset", modelConfigName), { recursive: true, force: true });
+  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", modelConfigName, "reference.txt"), "utf8"), "これは参照テキストです。");
 });
 
 test("admin TTS config schema exposes voice language and language model folder", async () => {
@@ -600,8 +600,10 @@ test("admin TTS config schema exposes voice language and language model folder",
 
 test("admin plugin test can run tts with translation disabled", async () => {
   const root = makeTempDir("admin-plugin-test-no-translate");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  const voicePath = path.join("assets", "generated", "tts", `voice-${path.basename(root)}.opus`);
+  const ttsOutputDir = "generated/tts";
+  const voicePath = path.join(assetRoot, "generated", "tts", `voice-${path.basename(root)}.opus`);
   let capturedText = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
@@ -613,11 +615,12 @@ test("admin plugin test can run tts with translation disabled", async () => {
     ...baseContext(root, memoryStore, promptStore),
     config: {
       ...baseContext(root, memoryStore, promptStore).config,
-      tts: { mossOutputDir: path.join("assets", "generated", "tts") }
+      tts: { mossOutputDir: ttsOutputDir }
     },
     pluginConfigs: {
       tts: {
         configPath,
+        assetRoot,
         testVoiceSynthesizer: async ({ text }: { text: string }) => {
           capturedText = text;
           fs.writeFileSync(voicePath, `voice:${text}`);
@@ -785,6 +788,7 @@ test("admin plugin enable and disable update ASR config", async () => {
 
 test("admin plugin model folder upload flattens files under plugin model root", async () => {
   const root = makeTempDir("admin-plugin-asset");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
@@ -793,7 +797,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { tts: { configPath } }
+    pluginConfigs: { tts: { configPath, assetRoot } }
   };
   const handler = createApiRequestHandler(context);
 
@@ -810,13 +814,13 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   assert.equal(response.statusCode, 200);
   assert.equal(body.assetPath, expectedAssetPath);
   assert.equal(saved.voice.modelConfigs.jp.modelDir, undefined);
-  assert.equal(fs.readFileSync(path.join("assets", "tts", "preset", "jp", "model", fileName), "utf8"), "model");
-  assert.equal(fs.existsSync(path.join("assets", "tts", "preset", "jp", "model", "uploaded-folder", "nested", fileName)), false);
-  fs.rmSync(path.join("assets", "tts", "preset", "jp", "model", fileName), { force: true });
+  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", "jp", "model", fileName), "utf8"), "model");
+  assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "jp", "model", "uploaded-folder", "nested", fileName)), false);
 });
 
 test("admin plugin ASR test audio upload stores plugin asset path", async () => {
   const root = makeTempDir("admin-asr-plugin-asset");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
@@ -828,7 +832,7 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
-    pluginConfigs: { asr: { configPath } }
+    pluginConfigs: { asr: { configPath, assetRoot } }
   };
   const handler = createApiRequestHandler(context);
 
@@ -844,19 +848,19 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
   assert.equal(response.statusCode, 200);
   assert.equal(body.assetPath, expectedAssetPath);
   assert.equal(saved.testAudioPath, expectedAssetPath);
-  assert.equal(fs.readFileSync(path.join("assets", "plugin", "asr", "test-audio", fileName), "utf8"), "audio");
-  fs.rmSync(path.join("assets", "plugin", "asr", "test-audio", fileName), { force: true });
+  assert.equal(fs.readFileSync(path.join(assetRoot, "plugin", "asr", "test-audio", fileName), "utf8"), "audio");
 });
 
 test("admin plugin test runs tts translation and tts with prompt variables and timing", async () => {
   const root = makeTempDir("admin-plugin-test");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  const ttsOutputDir = path.join("assets", "generated", "tts");
+  const ttsOutputDir = "generated/tts";
   const voiceFileName = `voice-${path.basename(root)}.opus`;
-  const voicePath = path.join(ttsOutputDir, voiceFileName);
+  const voicePath = path.join(assetRoot, "generated", "tts", voiceFileName);
   let capturedGenie: unknown;
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.mkdirSync(ttsOutputDir, { recursive: true });
+  fs.mkdirSync(path.dirname(voicePath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
     translationPresetName: "main",
@@ -888,6 +892,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
     pluginConfigs: {
       tts: {
         configPath,
+        assetRoot,
         testVoiceSynthesizer: async ({ text, genie }: { text: string; genie?: unknown }) => {
           capturedGenie = genie;
           fs.writeFileSync(voicePath, `voice:${text}`);
@@ -923,8 +928,10 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
 
 test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   const root = makeTempDir("admin-asr-plugin-test");
+  const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
-  const audioPath = path.join("assets", "plugin", "asr", `test-${path.basename(root)}.wav`);
+  const audioAssetPath = path.join("assets", "plugin", "asr", `test-${path.basename(root)}.wav`);
+  const audioPath = path.join(assetRoot, "plugin", "asr", `test-${path.basename(root)}.wav`);
   let capturedAudioFile = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(audioPath), { recursive: true });
@@ -932,7 +939,7 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
     defaultProvider: "openai_compatible",
-    testAudioPath: audioPath,
+    testAudioPath: audioAssetPath,
     providers: {
       openaiCompatible: {
         apiPresetName: "asr"
@@ -947,6 +954,7 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
     pluginConfigs: {
       asr: {
         configPath,
+        assetRoot,
         testTranscriber: async (input: { audioFile: string }) => {
           capturedAudioFile = input.audioFile;
           return {

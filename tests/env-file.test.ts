@@ -6,7 +6,8 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 test("updateEnvFile persists admin settings without dropping existing secrets", () => {
-  const file = path.join("/tmp", `alice-env-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const file = path.join(process.cwd(), ".tmp-tests", `alice-env-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, "LLM_API_KEY=secret\nFEISHU_APP_SECRET=old\n");
 
   updateEnvFile(file, {
@@ -24,7 +25,8 @@ test("updateEnvFile persists admin settings without dropping existing secrets", 
 });
 
 test("updateEnvFile can remove renamed settings", () => {
-  const file = path.join("/tmp", `alice-env-delete-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const file = path.join(process.cwd(), ".tmp-tests", `alice-env-delete-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, "AGENT_HEARTBEAT_START_PAUSED=true\nLLM_API_KEY=secret\n");
 
   updateEnvFile(file, {

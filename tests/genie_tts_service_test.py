@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import tempfile
 import types
 import unittest
 import wave
@@ -11,27 +12,19 @@ from pathlib import Path
 
 class GenieTtsServiceTest(unittest.TestCase):
     def test_genie_service_splits_on_symbols_and_batches_over_ten_chars(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with make_temp_dir() as temp_dir:
             _run_split_sentence_check(Path(temp_dir))
 
     def test_genie_service_can_disable_text_split(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with make_temp_dir() as temp_dir:
             _run_disable_split_text_check(Path(temp_dir))
 
     def test_genie_service_streams_tts_chunks(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with make_temp_dir() as temp_dir:
             _run_stream_tts_check(Path(temp_dir))
 
     def test_genie_service_reloads_character_when_language_changes(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with make_temp_dir() as temp_dir:
             _run_language_reload_check(Path(temp_dir))
 
     def test_genie_service_disables_roberta_by_default(self) -> None:
@@ -39,6 +32,12 @@ class GenieTtsServiceTest(unittest.TestCase):
 
     def test_genie_service_treats_broken_pipe_as_client_disconnect(self) -> None:
         _run_broken_pipe_response_check()
+
+
+def make_temp_dir() -> tempfile.TemporaryDirectory[str]:
+    root = Path.cwd() / ".tmp-tests"
+    root.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=root)
 
 
 def _run_split_sentence_check(tmp_path: Path) -> None:
@@ -312,10 +311,11 @@ def _run_broken_pipe_response_check() -> None:
         spec.loader.exec_module(module)
 
         writes: list[tuple[int, dict[str, object]]] = []
+        output_path = str(Path.cwd() / ".tmp-tests" / "voice.wav")
         handler = object.__new__(module.GenieHandler)
         handler.path = "/synthesize"
-        handler.read_json_body = lambda: {"text": "hello", "outputPath": "/tmp/voice.wav"}
-        handler.runtime = types.SimpleNamespace(synthesize=lambda **_kwargs: {"audioPath": "/tmp/voice.wav"})
+        handler.read_json_body = lambda: {"text": "hello", "outputPath": output_path}
+        handler.runtime = types.SimpleNamespace(synthesize=lambda **_kwargs: {"audioPath": output_path})
 
         def write_json(status: int, body: dict[str, object]) -> None:
             writes.append((status, body))

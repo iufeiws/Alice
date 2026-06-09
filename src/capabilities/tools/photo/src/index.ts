@@ -91,6 +91,7 @@ export type PhotoToolsDeps = {
   selfieConfigPath?: string;
   selfieReferenceDir?: string;
   selfieOutputDir?: string;
+  selfieAssetRoot?: string;
   selfieCodexCommand?: string;
   selfieCodexTimeoutMs?: number;
   selfieImageApiKey?: string;
@@ -163,7 +164,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
 
     const imageApiOutputFormat = normalizeOutputFormat(photoConfig.selfieImageApiOutputFormat);
     const fullOutputDir = path.resolve(photoConfig.selfieOutputDir);
-    const assetRoot = path.resolve("assets");
+    const assetRoot = path.resolve(deps.selfieAssetRoot ?? "assets");
     const relativeDir = path.relative(assetRoot, fullOutputDir);
     if (relativeDir.startsWith("..") || path.isAbsolute(relativeDir)) {
       return toolError(call, "selfie output directory must be inside assets");

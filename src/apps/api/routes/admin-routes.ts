@@ -276,10 +276,12 @@ export type AdminRoutesContext = {
     };
     tts?: {
       configPath?: string;
+      assetRoot?: string;
       testVoiceSynthesizer?: VoiceSynthesizer;
     };
     asr?: {
       configPath?: string;
+      assetRoot?: string;
       testTranscriber?(input: AsrTranscribeInput, config: AsrPluginConfig): Promise<AsrTranscribeResult | AsrTranscribeError> | AsrTranscribeResult | AsrTranscribeError;
     };
   };
@@ -1643,14 +1645,15 @@ async function testAsrPlugin(context: AdminRoutesContext, input: Record<string, 
   const config = readAsrConfigForAdmin(context);
   const audioFile = optionalString(input.audioFile) ?? config.testAudioPath;
   if (!audioFile) return { error: "missing_audio_file" };
-  if (!isPluginAssetPath("asr", audioFile)) return { error: "invalid_asset_path" };
-  if (!fs.existsSync(audioFile)) return { error: "missing_audio_file" };
+  if (!isPluginAssetPath("asr", audioFile, context.pluginConfigs?.asr?.assetRoot)) return { error: "invalid_asset_path" };
+  const resolvedAudioFile = resolvePluginAssetPath("asr", audioFile, context.pluginConfigs?.asr?.assetRoot);
+  if (!fs.existsSync(resolvedAudioFile)) return { error: "missing_audio_file" };
 
   const totalStartedAt = Date.now();
   const transcriber = context.pluginConfigs?.asr?.testTranscriber;
   const result = await (transcriber
-    ? transcriber({ audioFile }, config)
-    : transcribeWithAsrPlugin({ audioFile }, config, {
+    ? transcriber({ audioFile: resolvedAudioFile }, config)
+    : transcribeWithAsrPlugin({ audioFile: resolvedAudioFile }, config, {
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
@@ -1768,7 +1771,7 @@ async function uploadAsrPluginAsset(
   const relativeDir = decodeHeaderFileName(optionalString(request.headers?.["x-relative-dir"]) ?? "");
   const body = await readRawBody(request, { maxBytes: maxPluginAssetUploadBytes });
   if (body.length === 0) return { error: "empty_upload" };
-  const assetPath = resolvePluginAssetPathForUpload("asr", assetKey, fileName, relativeDir);
+  const assetPath = resolvePluginAssetPathForUpload("asr", assetKey, fileName, relativeDir, context.pluginConfigs?.asr?.assetRoot);
   fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
   fs.writeFileSync(assetPath.fullPath, body);
   const next: AsrPluginConfig = {
@@ -2017,7 +2020,7 @@ function updateTtsConfig(
     splitText: modelPatch.splitText === undefined ? currentModel.splitText ?? false : booleanFromUnknown(modelPatch.splitText)
   };
   const referenceText = modelPatch.referenceText === undefined ? undefined : optionalString(modelPatch.referenceText);
-  if (referenceText !== undefined) writeTtsPresetReferenceText(editModelConfigName, referenceText);
+  if (referenceText !== undefined) writeTtsPresetReferenceText(editModelConfigName, referenceText, context.pluginConfigs?.tts?.assetRoot);
   const nextTranslationPresets = shouldUpdateTranslationPreset
     ? { ...currentTranslationPresets, [editTranslationPresetName]: nextTranslation }
     : currentTranslationPresets;
@@ -2182,16 +2185,16 @@ function normalizeAssetPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
-function ttsPresetRoot(modelConfigName: string): string {
-  return path.join("assets", "tts", "preset", safeTtsPresetName(modelConfigName, "jp"));
+function ttsPresetRoot(modelConfigName: string, assetRoot = "assets"): string {
+  return path.join(assetRoot, "tts", "preset", safeTtsPresetName(modelConfigName, "jp"));
 }
 
 function ttsPresetModelDir(modelConfigName: string): string {
   return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName), "model"));
 }
 
-function ttsPresetReferenceTextPath(modelConfigName: string): string {
-  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName), "reference.txt"));
+function ttsPresetReferenceTextPath(modelConfigName: string, assetRoot = "assets"): string {
+  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName, assetRoot), "reference.txt"));
 }
 
 function ttsPresetReferenceAudioPath(modelConfigName: string): string | undefined {
@@ -2218,8 +2221,8 @@ function readTtsPresetReferenceText(modelConfigName: string): string | undefined
   return undefined;
 }
 
-function writeTtsPresetReferenceText(modelConfigName: string, value: string): void {
-  const filePath = ttsPresetReferenceTextPath(modelConfigName);
+function writeTtsPresetReferenceText(modelConfigName: string, value: string, assetRoot = "assets"): void {
+  const filePath = ttsPresetReferenceTextPath(modelConfigName, assetRoot);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, value);
 }
@@ -2249,7 +2252,7 @@ async function uploadGenericPluginAsset(
 
   const presetName = decodeHeaderFileName(optionalString(request.headers?.["x-preset-name"]) ?? "");
   const assetPath = pluginId === "tts"
-    ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName)
+    ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName, context.pluginConfigs?.tts?.assetRoot)
     : resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
   fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
   fs.writeFileSync(assetPath.fullPath, body);
@@ -2274,9 +2277,9 @@ async function uploadGenericPluginAsset(
   return { config: publicTtsConfig(next), assetPath: assetPath.assetPath };
 }
 
-function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string): { fullPath: string; assetPath: string } {
+function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
   const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
-  const root = path.resolve("assets", "tts", "preset", modelConfigName);
+  const root = path.resolve(assetRoot, "tts", "preset", modelConfigName);
   const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
   const baseRelativeDir = assetKey === "model" ? "model" : "";
   const outputName = assetKey === "reference-text"
@@ -2295,8 +2298,8 @@ function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: st
   };
 }
 
-function resolvePluginAssetPathForUpload(pluginId: string, assetKey: string, fileName: string, relativeDir: string): { fullPath: string; assetPath: string } {
-  const root = path.resolve("assets", "plugin", pluginId);
+function resolvePluginAssetPathForUpload(pluginId: string, assetKey: string, fileName: string, relativeDir: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
+  const root = path.resolve(assetRoot, "plugin", pluginId);
   const normalizedRelativeDir = sanitizePluginAssetRelativePath(relativeDir);
   const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
   const baseRelativeDir = assetKey === "model" || assetKey === "test-audio" ? assetKey : normalizedRelativeDir;
@@ -2328,11 +2331,20 @@ function sanitizePluginAssetRelativePath(value: string): string {
   return normalized === "." ? "" : normalized;
 }
 
-function isPluginAssetPath(pluginId: string, value: string): boolean {
-  const root = path.resolve("assets", "plugin", pluginId);
-  const fullPath = path.resolve(value);
+function isPluginAssetPath(pluginId: string, value: string, assetRoot = "assets"): boolean {
+  const root = path.resolve(assetRoot, "plugin", pluginId);
+  const fullPath = resolvePluginAssetPath(pluginId, value, assetRoot);
   const relative = path.relative(root, fullPath);
   return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function resolvePluginAssetPath(pluginId: string, value: string, assetRoot = "assets"): string {
+  const normalized = path.normalize(value);
+  const prefix = path.join("assets", "plugin", pluginId);
+  if (normalized === prefix || normalized.startsWith(`${prefix}${path.sep}`)) {
+    return path.resolve(assetRoot, path.relative("assets", normalized));
+  }
+  return path.resolve(value);
 }
 
 function ttsConfigPath(context: AdminRoutesContext): string {
@@ -2945,9 +2957,9 @@ async function uploadTtsReferenceAudio(context: AdminRoutesContext, request: any
     writeJson(response, 400, { ok: false, error: "unsupported_reference_audio_type" });
     return;
   }
-  const referencePath = resolveTtsAssetPath(context.config.tts.genieReferenceAudio);
-  const mossReferencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
-  const referenceTextPath = resolveTtsAssetPath(context.config.tts.genieReferenceText);
+  const referencePath = resolveTtsAssetPath(context, context.config.tts.genieReferenceAudio);
+  const mossReferencePath = resolveTtsAssetPath(context, context.config.tts.mossReferenceAudio);
+  const referenceTextPath = resolveTtsAssetPath(context, context.config.tts.genieReferenceText);
   fs.mkdirSync(path.dirname(referencePath), { recursive: true });
   fs.mkdirSync(path.dirname(mossReferencePath), { recursive: true });
   fs.mkdirSync(path.dirname(referenceTextPath), { recursive: true });
@@ -3027,16 +3039,16 @@ async function generateTtsPreview(context: AdminRoutesContext, request: any, res
 }
 
 function resolveTtsOutputDir(context: AdminRoutesContext): string {
-  return resolveTtsAssetPath(context.config.tts.mossOutputDir);
+  return resolveTtsAssetPath(context, context.config.tts.mossOutputDir);
 }
 
-function resolveTtsAssetPath(assetPath: string): string {
-  const assetRoot = path.resolve("assets");
+function resolveTtsAssetPath(context: AdminRoutesContext, assetPath: string): string {
+  const assetRoot = path.resolve(context.pluginConfigs?.tts?.assetRoot ?? "assets");
   const fullPath = path.isAbsolute(assetPath)
     ? assetPath
     : path.normalize(assetPath) === "assets" || path.normalize(assetPath).startsWith(`assets${path.sep}`)
       ? path.resolve(assetPath)
-      : path.resolve("assets", assetPath);
+      : path.resolve(assetRoot, assetPath);
   const relative = path.relative(assetRoot, fullPath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new HttpJsonError(400, "tts_asset_path_outside_assets");
@@ -3053,7 +3065,7 @@ function ttsAudioUrl(context: AdminRoutesContext, filePath: string): string {
 
 function readMossCodecConfig(context: AdminRoutesContext): { sampleRate: number; channels: number } {
   const fallback = { sampleRate: 48_000, channels: 2 };
-  const metaPath = path.join(resolveTtsAssetPath(context.config.tts.mossModelDir), "MOSS-Audio-Tokenizer-Nano-ONNX", "codec_browser_onnx_meta.json");
+  const metaPath = path.join(resolveTtsAssetPath(context, context.config.tts.mossModelDir), "MOSS-Audio-Tokenizer-Nano-ONNX", "codec_browser_onnx_meta.json");
   try {
     const parsed = JSON.parse(fs.readFileSync(metaPath, "utf8")) as { codec_config?: { sample_rate?: unknown; channels?: unknown } };
     const sampleRate = Number(parsed.codec_config?.sample_rate);
@@ -3068,7 +3080,7 @@ function readMossCodecConfig(context: AdminRoutesContext): { sampleRate: number;
 }
 
 async function ensureTtsReferenceWithinLimit(context: AdminRoutesContext): Promise<void> {
-  const referencePath = resolveTtsAssetPath(context.config.tts.genieReferenceAudio);
+  const referencePath = resolveTtsAssetPath(context, context.config.tts.genieReferenceAudio);
   if (!fs.existsSync(referencePath)) throw new Error("TTS reference audio was not found");
   const codecConfig = readMossCodecConfig(context);
   const maxBytes = maxTtsReferencePcmBytes(codecConfig);
@@ -3080,7 +3092,7 @@ async function ensureTtsReferenceWithinLimit(context: AdminRoutesContext): Promi
   try {
     await convertReferenceAudio(referencePath, trimmedPath, context.config.tts.mossFfmpegCommand, codecConfig);
     fs.renameSync(trimmedPath, referencePath);
-    const mossReferencePath = resolveTtsAssetPath(context.config.tts.mossReferenceAudio);
+    const mossReferencePath = resolveTtsAssetPath(context, context.config.tts.mossReferenceAudio);
     if (path.resolve(mossReferencePath) !== path.resolve(referencePath)) {
       fs.mkdirSync(path.dirname(mossReferencePath), { recursive: true });
       fs.writeFileSync(mossReferencePath, fs.readFileSync(referencePath));
@@ -3739,9 +3751,9 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       genieLanguage: context.config.tts.genieLanguage,
       genieReferenceAudio: context.config.tts.genieReferenceAudio,
       genieReferenceText: context.config.tts.genieReferenceText,
-      genieModelAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieModelDir)),
-      genieReferenceAudioAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieReferenceAudio)),
-      genieReferenceTextAvailable: fs.existsSync(resolveTtsAssetPath(context.config.tts.genieReferenceText)),
+      genieModelAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieModelDir)),
+      genieReferenceAudioAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieReferenceAudio)),
+      genieReferenceTextAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieReferenceText)),
       mossBaseURL: context.config.tts.mossBaseURL,
       mossReferenceAudio: context.config.tts.mossReferenceAudio,
       mossOutputDir: context.config.tts.mossOutputDir,

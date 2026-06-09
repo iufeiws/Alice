@@ -629,7 +629,7 @@ class FakeWebSocket {
 }
 
 function writeAudioFixture(fileName: string, size = 14): string {
-  const dir = path.join("/tmp", "alice-asr-plugin-tests");
+  const dir = path.join(process.cwd(), ".tmp-tests", "alice-asr-plugin-tests");
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, fileName);
   fs.writeFileSync(filePath, new Uint8Array(size).fill(1));

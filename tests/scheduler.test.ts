@@ -12,7 +12,8 @@ test("delayUntilNext returns next same-day or next-day delay", () => {
 });
 
 test("daily maintenance tasks clean logs and generated tts files by default", () => {
-  const root = makeAssetTempDir("scheduler-maintenance");
+  const fixture = makeAssetTempDir("scheduler-maintenance");
+  const root = fixture.ttsDir;
   fs.writeFileSync(path.join(root, "20260528_235959_999.opus"), "old");
   fs.writeFileSync(path.join(root, "20260529_000000_000.opus"), "today");
   fs.writeFileSync(path.join(root, "voice_20260528_235959_abcd.opus"), "legacy");
@@ -27,6 +28,7 @@ test("daily maintenance tasks clean logs and generated tts files by default", ()
       }
     },
     ttsOutputDirs: [root],
+    ttsAssetRoot: fixture.assetRoot,
     nowIso: () => "2026-05-29T04:00:00.000",
     log(level, message) {
       logs.push(`${level}:${message}`);
@@ -51,7 +53,8 @@ test("daily maintenance tasks clean logs and generated tts files by default", ()
 });
 
 test("daily maintenance tasks can disable generated tts cleanup", () => {
-  const root = makeAssetTempDir("scheduler-maintenance-disabled");
+  const fixture = makeAssetTempDir("scheduler-maintenance-disabled");
+  const root = fixture.ttsDir;
   fs.writeFileSync(path.join(root, "20260528_235959_999.opus"), "old");
   const tasks = createDailyMaintenanceTasks({
     systemLogStore: { cleanupOlderThan: () => 0 },
@@ -69,13 +72,14 @@ test("daily maintenance tasks can disable generated tts cleanup", () => {
 });
 
 test("cleanupPreviousTtsFiles deduplicates directories and ignores non-tts names", () => {
-  const root = makeAssetTempDir("scheduler-tts-cleanup");
+  const fixture = makeAssetTempDir("scheduler-tts-cleanup");
+  const root = fixture.ttsDir;
   fs.writeFileSync(path.join(root, "20260527_120000_000.wav"), "old wav");
   fs.writeFileSync(path.join(root, "20260527_120000_000.opus"), "old opus");
   fs.writeFileSync(path.join(root, "20260529_120000_000.mp3"), "today");
   fs.writeFileSync(path.join(root, "note.txt"), "keep");
 
-  const removed = cleanupPreviousTtsFiles([root, root], "2026-05-29T04:00:00.000");
+  const removed = cleanupPreviousTtsFiles([root, root], "2026-05-29T04:00:00.000", undefined, fixture.assetRoot);
 
   assert.equal(removed, 2);
   assert.equal(fs.existsSync(path.join(root, "20260527_120000_000.wav")), false);
@@ -96,14 +100,15 @@ test("cleanupPreviousTtsFiles skips directories outside assets", () => {
   assert.match(warnings[0], /must be inside assets/);
 });
 
-function makeAssetTempDir(name: string): string {
-  const dir = path.join("assets", "generated", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+function makeAssetTempDir(name: string): { assetRoot: string; ttsDir: string } {
+  const assetRoot = path.join(makeTempDir(`${name}-assets-root`), "assets");
+  const ttsDir = path.join(assetRoot, "generated", "tts");
+  fs.mkdirSync(ttsDir, { recursive: true });
+  return { assetRoot, ttsDir };
 }
 
 function makeTempDir(name: string): string {
-  const dir = path.join("/tmp", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

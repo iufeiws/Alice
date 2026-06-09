@@ -479,6 +479,20 @@ export function createTalkStore(dbPath: string): TalkStore {
     },
     cancelOtherSessionOutputs(sessionId, keepOutputId, now, nowUtc) {
       db.prepare(`
+        DELETE FROM talk_transcript_entries
+        WHERE session_id = ?
+          AND role = 'assistant'
+          AND entry_id IN (
+            SELECT 'assistant:' || later.output_id
+            FROM talk_outputs AS later
+            JOIN talk_outputs AS target ON target.output_id = ?
+            WHERE later.session_id = ?
+              AND later.output_id <> ?
+              AND later.id > target.id
+              AND later.status IN ('streaming', 'finished')
+          )
+      `).run(sessionId, keepOutputId, sessionId, keepOutputId);
+      db.prepare(`
         UPDATE talk_output_chunks
         SET status = 'cancelled', cancelled_at = ?, cancelled_at_utc = ?
         WHERE session_id = ?

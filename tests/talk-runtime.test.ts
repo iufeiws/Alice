@@ -555,6 +555,10 @@ test("talk runtime cancels later assistant outputs when an earlier playback outp
   assert.deepEqual(runtime.buildNextLoopMessages("session-cancel-later"), [
     { role: "assistant", content: "第一段正在播放..." }
   ]);
+  assert.deepEqual(runtime.store.listTranscriptEntries("session-cancel-later").map((entry) => `${entry.role}:${entry.contentText}`), [
+    "system:开始",
+    "assistant:第一段正在播放...",
+  ]);
 });
 
 test("talk runtime omits the queued next assistant output when interrupt happens between playback segments", () => {

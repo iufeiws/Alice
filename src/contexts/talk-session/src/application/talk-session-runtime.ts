@@ -547,7 +547,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
           sessionId: input.sessionId,
           entryId: `assistant:${input.outputId}`,
           role: "assistant",
-          contentText: visibleText,
+          contentText: `${visibleText}${marker}`,
           occurredAt: now.occurredAt,
           occurredAtUtc: now.occurredAtUtc,
           sourceKind: "assistant.output.interrupted",

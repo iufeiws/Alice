@@ -697,7 +697,7 @@ export function renderVoiceCallHtml(): string {
       if (state === "tts.queue.waiting") setPreConnectedPhase("connecting", "正在准备 Alice 的第一段声音");
       if (state === "tts.queue.ready") setPreConnectedPhase("connecting", "首段音频准备完毕");
       if (state === "voice_call.connected") markConnected();
-      if (state === "tts.playing_text" && detail) aliceTranscript.textContent = detail;
+      if (state === "voice_call.playback_text_cache" && detail) aliceTranscript.textContent = detail;
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
     }
 

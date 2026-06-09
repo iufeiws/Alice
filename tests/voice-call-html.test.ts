@@ -29,6 +29,14 @@ test("voice-call text input matches webrtc voice call typed interrupt behavior",
   assert.doesNotMatch(html, /if \(text\.length <= 3\)/);
 });
 
+test("voice-call displays Alice text from playback consumer cache", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /state === "voice_call\.playback_text_cache" && detail\) aliceTranscript\.textContent = detail;/);
+  assert.doesNotMatch(html, /state === "tts\.playback\.consumer" && detail\) aliceTranscript\.textContent = detail;/);
+  assert.doesNotMatch(html, /state === "tts\.playing_text" && detail\) aliceTranscript\.textContent = detail;/);
+});
+
 test("voice-call hold-to-talk streams microphone PCM chunks to signaling", () => {
   const html = renderVoiceCallHtml();
 

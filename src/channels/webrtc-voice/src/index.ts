@@ -679,6 +679,8 @@ async function createCallState(
     playedMs: 0,
     totalMs: 0
   };
+  let playbackTextCacheStatusTimer: ReturnType<typeof setInterval> | undefined;
+  let lastPublishedPlaybackTextCache = "";
   let currentPlayingItem: PlaybackItem | undefined;
   const synthesisTime = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const nowStamp = () => {
@@ -855,6 +857,23 @@ async function createCallState(
         detail: `前文=${value} 时长=${totalMs}ms`
       });
     }
+  };
+  const publishPlaybackTextCacheStatus = () => {
+    if (closed) return;
+    const value = playbackConsumer.playbackTextCache.trim();
+    if (!value || value === lastPublishedPlaybackTextCache) return;
+    lastPublishedPlaybackTextCache = value;
+    deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail: value });
+  };
+  const startPlaybackTextCacheStatus = () => {
+    if (playbackTextCacheStatusTimer) return;
+    playbackTextCacheStatusTimer = setInterval(publishPlaybackTextCacheStatus, 100);
+    (playbackTextCacheStatusTimer as { unref?: () => void }).unref?.();
+  };
+  const stopPlaybackTextCacheStatus = () => {
+    if (!playbackTextCacheStatusTimer) return;
+    clearInterval(playbackTextCacheStatusTimer);
+    playbackTextCacheStatusTimer = undefined;
   };
   const advancePlaybackConsumer = (item: PlaybackItem, durationMs: number) => {
     if (durationMs <= 0) return;
@@ -1617,6 +1636,7 @@ async function createCallState(
     async close(reason = "closed") {
       if (closed) return;
       closed = true;
+      stopPlaybackTextCacheStatus();
       await runInterrupt("call_close");
       await commitStableInputsIfReady();
       await asrSession.accept({
@@ -1641,6 +1661,7 @@ async function createCallState(
   };
 
   void deps.talkRuntime?.startAgentLoop?.(talkSessionId);
+  startPlaybackTextCacheStatus();
   if (deps.talkRuntime?.claimReadyOutputChunk) {
     deps.emitStatus?.({ state: "voice_call.waiting", detail: talkSessionId });
     const pumpTask = runOutputPump();

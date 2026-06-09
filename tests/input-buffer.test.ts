@@ -86,6 +86,7 @@ test("tts config has genie defaults and moss env overrides", () => {
   assert.equal(defaults.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
   assert.equal(defaults.mossOutputDir, "assets/generated/tts");
   assert.equal(defaults.mossTimeoutMs, 120000);
+  assert.equal(defaults.voiceCallTrainingOutputDir, "assets/generated/tts-training/voice-call");
 
   const custom = loadConfig({
     MOSS_TTS_BASE_URL: "http://localhost:9000/",
@@ -93,7 +94,8 @@ test("tts config has genie defaults and moss env overrides", () => {
     MOSS_TTS_PYTHON_COMMAND: "/opt/moss/bin/python",
     MOSS_TTS_REFERENCE_AUDIO: "assets/tts/references/custom/reference.wav",
     MOSS_TTS_OUTPUT_DIR: "assets/generated/custom-tts",
-    MOSS_TTS_TIMEOUT_MS: "5000"
+    MOSS_TTS_TIMEOUT_MS: "5000",
+    TTS_VOICE_CALL_TRAINING_OUTPUT_DIR: "assets/training/voice-call"
   }).tts;
   assert.equal(custom.mossBaseURL, "http://localhost:9000");
   assert.equal(custom.mossBaseURLExplicit, true);
@@ -102,6 +104,7 @@ test("tts config has genie defaults and moss env overrides", () => {
   assert.equal(custom.mossReferenceAudio, "assets/tts/references/custom/reference.wav");
   assert.equal(custom.mossOutputDir, "assets/generated/custom-tts");
   assert.equal(custom.mossTimeoutMs, 5000);
+  assert.equal(custom.voiceCallTrainingOutputDir, "assets/training/voice-call");
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

@@ -9,6 +9,7 @@ import {
   encodePcmL16StreamToOpusRtpFrames,
   encodePcmL16ToOpusRtpFrames,
   type WebRtcVoiceCall,
+  type WebRtcVoiceTtsArchiveInput,
   type WebRtcVoiceStatusEvent
 } from "../../../channels/webrtc-voice/src/index.js";
 import { createAsrInboundStreamSession } from "../../../channels/asr/src/index.js";
@@ -22,6 +23,7 @@ type AsrPlugin = ReturnType<typeof createAsrPlugin>;
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createWebRtcVoiceRuntime(input: {
+  config?: any;
   time: CurrentTimeProvider;
   asrPlugin: AsrPlugin;
   voiceSynthesizer: unknown;
@@ -57,6 +59,12 @@ export function createWebRtcVoiceRuntime(input: {
     },
     encodePcmL16StreamToFrames(encodeInput) {
       return encodePcmL16StreamToOpusRtpFrames(encodeInput);
+    },
+    archiveTtsOutput(archiveInput) {
+      return archiveVoiceCallTtsOutput(archiveInput, {
+        outputDir: input.config?.tts?.voiceCallTrainingOutputDir ?? "assets/generated/tts-training/voice-call",
+        time: input.time
+      });
     },
     talkRuntime: input.talkRuntime,
     async testAsr() {
@@ -113,4 +121,80 @@ export function createWebRtcVoiceRuntime(input: {
       }
     }
   }
+}
+
+async function archiveVoiceCallTtsOutput(
+  input: WebRtcVoiceTtsArchiveInput,
+  options: { outputDir: string; time: CurrentTimeProvider }
+): Promise<{ filePath: string }> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const outputDir = path.resolve(options.outputDir);
+  await fs.mkdir(outputDir, { recursive: true });
+
+  const stamp = safePathPart(options.time.now().iso.replace(/[:.]/g, "-"));
+  const outputPart = safePathPart(input.outputId ?? "output");
+  const chunkPart = input.chunkId ? `-${safePathPart(input.chunkId)}` : "";
+  const partSuffix = input.partIndex === undefined ? "" : `-part${input.partIndex + 1}`;
+  const baseName = `${stamp}-${safePathPart(input.callId)}-${outputPart}${chunkPart}${partSuffix}`;
+
+  let audioPath: string;
+  if (input.audio) {
+    audioPath = path.join(outputDir, `${baseName}.wav`);
+    await fs.writeFile(audioPath, wrapPcm16AsWav(input.audio.chunks, input.audio.sampleRateHz, input.audio.channels));
+  } else if (input.filePath) {
+    const extension = path.extname(input.filePath) || ".audio";
+    audioPath = path.join(outputDir, `${baseName}${extension}`);
+    await fs.copyFile(input.filePath, audioPath);
+  } else {
+    audioPath = path.join(outputDir, `${baseName}.missing-audio`);
+    await fs.writeFile(audioPath, "");
+  }
+
+  const metadata = {
+    callId: input.callId,
+    talkSessionId: input.talkSessionId,
+    outputId: input.outputId,
+    chunkId: input.chunkId,
+    text: input.text,
+    speakText: input.speakText,
+    createdAt: input.createdAt,
+    archivedAt: options.time.now().iso,
+    status: input.status,
+    source: input.source,
+    partIndex: input.partIndex,
+    partCount: input.partCount,
+    assetId: input.assetId,
+    sourceFilePath: input.filePath,
+    audioFilePath: audioPath,
+    sampleRateHz: input.audio?.sampleRateHz,
+    channels: input.audio?.channels,
+    encoding: input.audio?.encoding,
+    bytes: input.audio?.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  };
+  await fs.writeFile(`${audioPath}.json`, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  return { filePath: audioPath };
+}
+
+function wrapPcm16AsWav(chunks: Uint8Array[], sampleRateHz: number, channels: number): Buffer {
+  const dataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRateHz, 24);
+  header.writeUInt32LE(sampleRateHz * channels * 2, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, ...chunks.map((chunk) => Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))]);
+}
+
+function safePathPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 96) || "unknown";
 }

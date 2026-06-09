@@ -137,6 +137,28 @@ export type WebRtcVoiceStatusEvent = {
   detail?: string;
 };
 
+export type WebRtcVoiceTtsArchiveInput = {
+  callId: string;
+  talkSessionId: string;
+  outputId?: string;
+  chunkId?: string;
+  text: string;
+  speakText: string;
+  createdAt: string;
+  status: PlaybackItem["status"];
+  source: "stream" | "file";
+  partIndex?: number;
+  partCount?: number;
+  assetId?: string;
+  filePath?: string;
+  audio?: {
+    chunks: Uint8Array[];
+    sampleRateHz: number;
+    channels: number;
+    encoding: "pcm_s16le";
+  };
+};
+
 export type WebRtcVoiceTalkRuntime = {
   openSession?(input: unknown): void | { sessionId?: string | number } | Promise<void | { sessionId?: string | number }>;
   closeSession?(input: unknown): void | Promise<void>;
@@ -183,6 +205,7 @@ export type WebRtcVoiceDeps = {
   emitStatus?(event: WebRtcVoiceStatusEvent): void;
   now?(): Date;
   sleep?(ms: number): Promise<void>;
+  archiveTtsOutput?(input: WebRtcVoiceTtsArchiveInput): Promise<{ filePath?: string } | void> | { filePath?: string } | void;
 };
 
 export type CreateWebRtcVoiceCallInput = {
@@ -1178,6 +1201,9 @@ async function createCallState(
           source: "send_chat.voice",
           streamId: outputId
         });
+        const archiveAudioChunks: Uint8Array[] = [];
+        let inputSampleRateHz = 32_000;
+        let inputChannels = 1;
         if (deps.encodePcmL16StreamToFrames) {
           let audioChunks = 0;
           let audioBytes = 0;
@@ -1208,12 +1234,13 @@ async function createCallState(
             firstAudioEvent = event;
             break;
           }
-          const inputSampleRateHz = firstAudioEvent?.sampleRateHz ?? 32_000;
-          const inputChannels = firstAudioEvent?.channels ?? 1;
+          inputSampleRateHz = firstAudioEvent?.sampleRateHz ?? 32_000;
+          inputChannels = firstAudioEvent?.channels ?? 1;
           const pcmChunks = async function* () {
             if (firstAudioEvent) {
               audioChunks += 1;
               audioBytes += firstAudioEvent.chunk.byteLength;
+              archiveAudioChunks.push(copyUint8Array(firstAudioEvent.chunk));
               recordTtsAudioTextSpan(item, firstAudioEvent.text, firstAudioEvent.chunk);
               deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${inputSampleRateHz}Hz` });
               yield firstAudioEvent.chunk;
@@ -1242,6 +1269,7 @@ async function createCallState(
               if (event.type !== "audio") continue;
               audioChunks += 1;
               audioBytes += event.chunk.byteLength;
+              archiveAudioChunks.push(copyUint8Array(event.chunk));
               recordTtsAudioTextSpan(item, event.text, event.chunk);
               if (audioChunks === 1 || audioChunks % 20 === 0) {
                 deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${event.sampleRateHz ?? inputSampleRateHz}Hz` });
@@ -1280,6 +1308,25 @@ async function createCallState(
           deps.emitStatus?.({ state: "tts.queue.ready", detail: `queued=${frameQueue.length} closed=${frameQueue.closed ? "true" : "false"}` });
           if (!await waitForPlaybackTurn(item)) {
             item.status = "interrupted";
+            if (archiveAudioChunks.length > 0) {
+              await archiveTtsOutput(deps, {
+                callId: input.callId,
+                talkSessionId,
+                outputId,
+                chunkId: item.chunkId,
+                text,
+                speakText,
+                createdAt,
+                status: item.status,
+                source: "stream",
+                audio: {
+                  chunks: archiveAudioChunks,
+                  sampleRateHz: inputSampleRateHz,
+                  channels: inputChannels,
+                  encoding: "pcm_s16le"
+                }
+              });
+            }
             return { status: "interrupted", outputId, frameCount: 0 };
           }
           let playbackStartedAt = deps.now?.().getTime() ?? Date.now();
@@ -1388,11 +1435,14 @@ async function createCallState(
               break;
             }
             if (event.type !== "audio") continue;
+            inputSampleRateHz = event.sampleRateHz ?? inputSampleRateHz;
+            inputChannels = event.channels ?? inputChannels;
+            archiveAudioChunks.push(copyUint8Array(event.chunk));
             recordTtsAudioTextSpan(item, event.text, event.chunk);
             const frames = await raceWithAbort(Promise.resolve(deps.encodePcmL16ToFrames({
               pcm: event.chunk,
-              inputSampleRateHz: event.sampleRateHz ?? 32_000,
-              inputChannels: event.channels ?? 1,
+              inputSampleRateHz,
+              inputChannels,
               sampleRateHz: deps.config.outboundAudio.sampleRateHz,
               channels: deps.config.outboundAudio.channels,
               frameMs: deps.config.outboundAudio.frameMs
@@ -1422,6 +1472,25 @@ async function createCallState(
         }
         const interrupted = ttsTask.controller.signal.aborted || generation !== playbackGeneration || !playbackQueue.includes(item);
         item.status = interrupted ? "interrupted" : frameCount > 0 ? "played" : "failed";
+        if (archiveAudioChunks.length > 0) {
+          await archiveTtsOutput(deps, {
+            callId: input.callId,
+            talkSessionId,
+            outputId,
+            chunkId: item.chunkId,
+            text,
+            speakText,
+            createdAt,
+            status: item.status,
+            source: "stream",
+            audio: {
+              chunks: archiveAudioChunks,
+              sampleRateHz: inputSampleRateHz,
+              channels: inputChannels,
+              encoding: "pcm_s16le"
+            }
+          });
+        }
         if (currentPlayingItem === item) currentPlayingItem = undefined;
         playbackQueue.shift();
         deps.emitStatus?.({ state: interrupted ? "tts.interrupted" : frameCount > 0 ? "tts.played" : "tts.failed", detail: frameCount > 0 ? outputId : "no_frames_sent" });
@@ -1465,7 +1534,24 @@ async function createCallState(
         if (!prepared) break;
         item.totalMs = prepared.frames.reduce((sum, frame) => sum + frame.durationMs, 0);
         updatePlaybackTextCache(item, parts[partIndex]!, item.totalMs);
-        if (!await waitForPlaybackTurn(item)) break;
+        if (!await waitForPlaybackTurn(item)) {
+          await archiveTtsOutput(deps, {
+            callId: input.callId,
+            talkSessionId,
+            outputId,
+            chunkId: item.chunkId,
+            text: parts[partIndex]!,
+            speakText: parts[partIndex]!,
+            createdAt,
+            status: "interrupted",
+            source: "file",
+            partIndex,
+            partCount: parts.length,
+            assetId: prepared.voice.assetId,
+            filePath: prepared.voice.filePath
+          });
+          break;
+        }
         updatePlaybackConsumer(item, parts[partIndex], item.totalMs);
         if (frameCount === 0) await playbackOptionCallback(options, "beforeFirstPlayback")?.();
         deps.emitStatus?.({ state: "voice_call.connected", detail: talkSessionId });
@@ -1487,6 +1573,21 @@ async function createCallState(
           }
           await (deps.sleep ?? sleep)(frame.durationMs);
         }
+        await archiveTtsOutput(deps, {
+          callId: input.callId,
+          talkSessionId,
+          outputId,
+          chunkId: item.chunkId,
+          text: parts[partIndex]!,
+          speakText: parts[partIndex]!,
+          createdAt,
+          status: ttsTask.controller.signal.aborted || generation !== playbackGeneration || !playbackQueue.includes(item) ? "interrupted" : "played",
+          source: "file",
+          partIndex,
+          partCount: parts.length,
+          assetId: prepared.voice.assetId,
+          filePath: prepared.voice.filePath
+        });
         deps.emitStatus?.({ state: "tts.part.frames_sent", detail: `${partIndex + 1}/${parts.length}:${frameCount}` });
       }
       const interrupted = ttsTask.controller.signal.aborted || generation !== playbackGeneration || !playbackQueue.includes(item);
@@ -1594,6 +1695,22 @@ async function acceptAsrFinalFrame(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+function copyUint8Array(value: Uint8Array): Uint8Array {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy;
+}
+
+async function archiveTtsOutput(deps: WebRtcVoiceDeps, input: WebRtcVoiceTtsArchiveInput): Promise<void> {
+  if (!deps.archiveTtsOutput) return;
+  try {
+    const result = await deps.archiveTtsOutput(input);
+    deps.emitStatus?.({ state: "tts.archive.saved", detail: result?.filePath ?? input.outputId ?? "" });
+  } catch (error) {
+    deps.emitStatus?.({ state: "tts.archive.failed", detail: error instanceof Error ? error.message : String(error) });
   }
 }
 

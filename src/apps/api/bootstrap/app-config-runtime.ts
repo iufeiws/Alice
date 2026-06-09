@@ -89,6 +89,7 @@ export type AppConfig = {
     mossIdleShutdownMs: number;
     mossFfmpegCommand: string;
     mossVoiceCloneMaxTextTokens: number;
+    voiceCallTrainingOutputDir: string;
   };
 };
 
@@ -238,7 +239,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       mossTimeoutMs: envNumber(env.MOSS_TTS_TIMEOUT_MS, 120_000),
       mossIdleShutdownMs: envNumber(env.MOSS_TTS_IDLE_SHUTDOWN_MS, 15 * 60 * 1000),
       mossFfmpegCommand: env.MOSS_TTS_FFMPEG_COMMAND ?? "ffmpeg-static",
-      mossVoiceCloneMaxTextTokens: envNumber(env.MOSS_TTS_VOICE_CLONE_MAX_TEXT_TOKENS, 75)
+      mossVoiceCloneMaxTextTokens: envNumber(env.MOSS_TTS_VOICE_CLONE_MAX_TEXT_TOKENS, 75),
+      voiceCallTrainingOutputDir: env.TTS_VOICE_CALL_TRAINING_OUTPUT_DIR ?? "assets/generated/tts-training/voice-call"
     }
   };
 }

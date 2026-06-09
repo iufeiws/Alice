@@ -1063,6 +1063,7 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   const peer = new FakePeer();
   const statuses: Array<{ state: string; detail?: string }> = [];
   const streamedTexts: string[] = [];
+  const archives: unknown[] = [];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
     createPeer: async () => peer,
@@ -1089,6 +1090,10 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
         { sequence: 0, pcm: new Int16Array([9]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
       ];
     },
+    archiveTtsOutput: async (input) => {
+      archives.push(input);
+      return { filePath: "/tmp/archive.wav" };
+    },
     emitStatus: (event) => statuses.push(event)
   });
 
@@ -1098,8 +1103,18 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   assert.equal(result.status, "played");
   assert.deepEqual(streamedTexts, ["ストリーム"]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[9]]);
+  assert.equal(archives.length, 1);
+  assert.deepEqual((archives[0] as any).audio.chunks.map((chunk: Uint8Array) => Array.from(chunk)), [[1, 2, 3, 4]]);
+  assert.equal((archives[0] as any).audio.sampleRateHz, 32_000);
+  assert.equal((archives[0] as any).callId, "call-stream");
+  assert.equal((archives[0] as any).talkSessionId, "webrtc_voice:call-stream");
+  assert.equal((archives[0] as any).outputId, "stream-output");
+  assert.equal((archives[0] as any).text, "ストリーム");
+  assert.equal((archives[0] as any).source, "stream");
+  assert.equal((archives[0] as any).status, "played");
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.started"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.frames_sent" && entry.detail === "sent=1"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.archive.saved" && entry.detail === "/tmp/archive.wav"), true);
 });
 
 test("WebRTC voice streaming PCM encoder reuses one ffmpeg process for chunked audio", async () => {

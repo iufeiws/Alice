@@ -28,6 +28,7 @@ export function createApiCommunicationRuntime(input: {
 }) {
   let messageRuntime: any;
   const webRtcVoiceRuntime = createWebRtcVoiceRuntime({
+    config: input.config,
     time: input.time,
     asrPlugin: input.asrPlugin,
     voiceSynthesizer: input.voiceSynthesizer,

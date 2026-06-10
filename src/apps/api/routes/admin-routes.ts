@@ -3864,7 +3864,8 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
       mossReferenceAudio: context.config.tts.mossReferenceAudio,
       mossOutputDir: context.config.tts.mossOutputDir,
       mossTimeoutMs: context.config.tts.mossTimeoutMs,
-      mossVoiceCloneMaxTextTokens: context.config.tts.mossVoiceCloneMaxTextTokens
+      mossVoiceCloneMaxTextTokens: context.config.tts.mossVoiceCloneMaxTextTokens,
+      wechatVoiceFallbackToText: context.config.tts.wechatVoiceFallbackToText
     },
     plugins: {
       feishu: {

@@ -91,6 +91,7 @@ export type AppConfig = {
     mossVoiceCloneMaxTextTokens: number;
     voiceCallTrainingOutputDir: string;
     voiceMessageTrainingOutputDir: string;
+    wechatVoiceFallbackToText: boolean;
     generatedCleanupEnabled: boolean;
   };
 };
@@ -244,6 +245,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       mossVoiceCloneMaxTextTokens: envNumber(env.MOSS_TTS_VOICE_CLONE_MAX_TEXT_TOKENS, 75),
       voiceCallTrainingOutputDir: env.TTS_VOICE_CALL_TRAINING_OUTPUT_DIR ?? "assets/generated/tts-training/voice-call",
       voiceMessageTrainingOutputDir: env.TTS_VOICE_MESSAGE_TRAINING_OUTPUT_DIR ?? "assets/generated/tts-training/voice-massage",
+      wechatVoiceFallbackToText: envBool(env.TTS_WECHAT_VOICE_FALLBACK_TO_TEXT, true),
       generatedCleanupEnabled: envBool(env.TTS_GENERATED_CLEANUP_ENABLED, true)
     }
   };

@@ -42,6 +42,7 @@ export type MessagingToolsDeps = {
   sleep?: (ms: number) => Promise<void>;
   voiceSynthesizer?: VoiceSynthesizer;
   voiceMessageTtsTrainingOutputDir?: string;
+  wechatVoiceFallbackToText?: boolean;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   getShellSwitchLogs?(): Array<{
@@ -345,6 +346,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<SendPartResult[]> {
     await waitForMessageSendSlot(text);
+    if (target.plugin === "wechat" && deps.wechatVoiceFallbackToText !== false) {
+      deps.appendLog?.("info", `wechat voice fallback to text: chars=${Array.from(text).length}`);
+      return [await sendOutputPart(target, "message", text, { retry: true, skipWait: true })];
+    }
     let synthesized: VoiceSynthesisResult | undefined;
     try {
       deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);

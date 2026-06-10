@@ -917,7 +917,7 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
         return { messageId: "voice_1" };
       }
     },
-    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+    getDefaultTarget: () => ({ plugin: "custom", userId: "user-1", sessionId: "custom:dm:user-1" })
   });
 
   const result = await tools.execute({
@@ -939,14 +939,87 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   const metadata = JSON.parse(fs.readFileSync(`${audioFilePath}.json`, "utf8"));
   assert.equal(metadata.text, "晚点见");
   assert.equal(metadata.status, "sent");
-  assert.equal(metadata.plugin, "wechat");
-  assert.equal(metadata.sessionId, "wechat:dm:wx-user");
+  assert.equal(metadata.plugin, "custom");
+  assert.equal(metadata.sessionId, "custom:dm:user-1");
   assert.equal(metadata.assetId, "generated/tts/voice.wav");
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
-  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+  const stored = store.listMessagesForConversation("custom:dm:user-1", 10).filter((message) => message.direction === "outbound");
   assert.equal(stored.length, 1);
   assert.equal(stored[0].contentType, "audio");
   assert.equal(stored[0].externalMessageId, "voice_1");
+});
+
+test("send_chat voice falls back to text for wechat without calling tts", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-wechat-voice-text"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let ttsCalls = 0;
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    wechatVoiceFallbackToText: true,
+    voiceSynthesizer: async () => {
+      ttsCalls += 1;
+      throw new Error("tts should not be called");
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: "text_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_wechat_voice_text",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(ttsCalls, 0);
+  assert.deepEqual(sent.map((output) => output.content), [{ kind: "text", text: "晚点见" }]);
+  assert.match(String(result.output), /Alice:晚点见/);
+  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].contentType, "text");
+  assert.equal(stored[0].contentText, "晚点见");
+  assert.equal(stored[0].externalMessageId, "text_1");
+});
+
+test("send_chat voice can keep audio synthesis for wechat when compatibility fallback is disabled", async () => {
+  const dir = makeTempDir("messaging-send-wechat-voice-audio");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let ttsCalls = 0;
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    wechatVoiceFallbackToText: false,
+    voiceSynthesizer: async ({ text }) => {
+      ttsCalls += 1;
+      const filePath = path.join(dir, "voice.wav");
+      fs.writeFileSync(filePath, text);
+      return { assetId: "generated/tts/voice.wav", filePath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: "voice_1" };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_wechat_voice_audio",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(ttsCalls, 1);
+  assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
 });
 
 test("tts plugin translates before tts while preserving original send_chat voice transcript", async () => {
@@ -992,6 +1065,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
     sleep: async () => {},
+    wechatVoiceFallbackToText: false,
     voiceSynthesizer,
     outputRouter: {
       async send(output) {
@@ -2563,6 +2637,7 @@ test("send_chat voice splits newline and escaped newline text into multiple audi
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
+    wechatVoiceFallbackToText: false,
     voiceSynthesizer: async ({ text }) => {
       synthesizedTexts.push(text);
       const filePath = path.join(dir, "voice.wav");
@@ -2605,6 +2680,7 @@ test("send_chat voice returns tts failure without sending fallback text", async 
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
+    wechatVoiceFallbackToText: false,
     voiceSynthesizer: async () => {
       throw new Error("tts unavailable");
     },
@@ -2645,6 +2721,7 @@ test("send_chat voice send failure marks failed and removes generated file witho
     store,
     sleep: async () => {},
     voiceMessageTtsTrainingOutputDir: trainingDir,
+    wechatVoiceFallbackToText: false,
     voiceSynthesizer: async () => {
       generatedPath = path.join(dir, "voice.wav");
       fs.writeFileSync(generatedPath, "voice");

@@ -29,6 +29,7 @@ export function createToolRuntime(input: {
     time: input.time,
     voiceSynthesizer: input.voiceSynthesizer,
     voiceMessageTtsTrainingOutputDir: input.config.tts?.voiceMessageTrainingOutputDir,
+    wechatVoiceFallbackToText: input.config.tts?.wechatVoiceFallbackToText,
     getUserName: () => input.promptProfileStore.get().userName,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,

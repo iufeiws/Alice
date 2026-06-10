@@ -27,7 +27,7 @@ Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 
   - 缓存 `context_token`，用于向曾经来信的微信用户主动发送消息。
 - Media Tool Plugin：
   - 提供 `selfie` 工具，用 Image API 生成 Alice 自拍照。
-  - 默认经 `src/skills/external/alice-selfie-fast` runner 调用 `/v1/images/edits`。
+  - 默认直接调用 `/v1/images/edits`，使用低质量、小尺寸、单张输出配置。
   - 使用角色、图书馆参考图；如果当前服装参考图存在，会作为第三张参考图，否则降级为文字服装描述。
   - 生成前先发送简短进行中提示。
   - 阻止连续两次调用 `selfie`。

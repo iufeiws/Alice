@@ -497,7 +497,7 @@ function photoConfigDefaultsFromDeps(deps: PhotoToolsDeps): Partial<PhotoPluginC
 }
 
 function selfieExecutorForMode(mode: SelfieGenerationMode): SelfieExecutor {
-  return mode === "codex" ? runCodexSelfie : runAliceSelfieFastSkill;
+  return mode === "codex" ? runAliceSelfieFastSkill : runImageApiSelfie;
 }
 
 async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {

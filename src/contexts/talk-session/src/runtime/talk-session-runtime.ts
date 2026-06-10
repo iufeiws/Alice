@@ -33,7 +33,8 @@ export function createTalkRuntimeRuntime(input: {
       return talkRuntime.store.getSession(sessionId)?.status === "open";
     },
     pendingVoiceOutputCharCount(sessionId) {
-      return talkRuntime.store.pendingVoiceOutputCharCount(sessionId);
+      void sessionId;
+      return 0;
     },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,

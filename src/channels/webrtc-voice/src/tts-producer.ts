@@ -33,17 +33,19 @@ export function createTtsProducer(ctx: {
     }
   };
   return {
-    async playReplyText(text: string, outputId?: string, options?: unknown): Promise<PlaybackResult> {
-      const speakText = ctx.deps.config.ttsTextFilter?.stripParenthesized ? stripParenthesizedText(text) : text;
+    async playReplyText(text: string | AsyncIterable<string>, outputId?: string, options?: unknown): Promise<PlaybackResult> {
+      const originalText = playbackOptionString(options, "originalText") ?? (typeof text === "string" ? text : "");
+      const speakText = typeof text === "string" && ctx.deps.config.ttsTextFilter?.stripParenthesized ? stripParenthesizedText(text) : text;
+      const speakTextForMeta = typeof speakText === "string" ? speakText : originalText;
       const createdAt = (ctx.deps.now?.() ?? new Date()).toISOString();
       const generation = ctx.getPlaybackGeneration();
       let frameCount = 0;
       const item: PlaybackItem = {
         outputId,
         chunkId: playbackOptionString(options, "chunkId"),
-        originalText: playbackOptionString(options, "originalText") ?? text,
-        speakText,
-        textHash: hashText(speakText),
+        originalText,
+        speakText: speakTextForMeta,
+        textHash: hashText(speakTextForMeta),
         assetId: "",
         filePath: "",
         status: "queued",
@@ -250,8 +252,8 @@ export function createTtsProducer(ctx: {
               talkSessionId: ctx.talkSessionId,
               outputId,
               chunkId: item.chunkId,
-              text,
-              speakText,
+              text: originalText,
+              speakText: speakTextForMeta,
               createdAt,
               status: archiveStatus,
               source: "stream",
@@ -344,8 +346,8 @@ export function createTtsProducer(ctx: {
             talkSessionId: ctx.talkSessionId,
             outputId,
             chunkId: item.chunkId,
-            text,
-            speakText,
+            text: originalText,
+            speakText: speakTextForMeta,
             createdAt,
             status: item.status,
             source: "stream",
@@ -367,6 +369,7 @@ export function createTtsProducer(ctx: {
           failureReason: !interrupted && frameCount === 0 ? "no_frames_sent" : undefined
         };
       }
+      if (typeof speakText !== "string") throw new Error("streaming text requires streaming TTS synthesizer");
       const parts = splitTtsPseudoStreamParts(speakText);
       const synthesizePart = async (part: string, partIndex: number) => {
         ctx.deps.emitStatus?.({ state: "tts.part.synthesizing", detail: `${partIndex + 1}/${parts.length}` });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTalkRuntime, defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
+import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { projectClosedTalkSessionToConversationHub } from "../src/contexts/talk-session/src/runtime/talk-session-runtime.js";
@@ -9,35 +9,35 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("talk runtime exposes chunks after punctuation and the default ready character count, then flushes tail", () => {
+test("talk runtime exposes streaming buffered output without ready chunk splitting, then appends finish newline", () => {
   const runtime = createTestRuntime("chunk");
 
   runtime.openSession(sessionInput("session-chunk"));
   runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "你好，" });
-  assert.equal(runtime.claimReadyOutputChunk("session-chunk"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-chunk")?.text, "你好，");
 
   runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "今天要不要一起去公园散步，然后喝茶？" });
-  const first = runtime.claimReadyOutputChunk("session-chunk");
-  assert.equal(first?.text, "你好，今天要不要一起去公园散步，然后喝茶？");
-  assert.ok((first?.text.length ?? 0) >= defaultTalkOutputReadyChars);
+  const first = runtime.claimBufferedOutputText("session-chunk");
+  assert.equal(first?.text, "今天要不要一起去公园散步，然后喝茶？");
   assert.equal(first?.outputId, "output-1");
-  assert.equal(runtime.claimReadyOutputChunk("session-chunk"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-chunk"), undefined);
 
   runtime.appendAssistantDelta({ sessionId: "session-chunk", outputId: "output-1", delta: "好。" });
-  assert.equal(runtime.claimReadyOutputChunk("session-chunk"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-chunk")?.text, "好。");
 
   runtime.finishAssistantOutput({ sessionId: "session-chunk", outputId: "output-1" });
-  assert.equal(runtime.claimReadyOutputChunk("session-chunk")?.text, "好。");
+  assert.equal(runtime.claimBufferedOutputText("session-chunk")?.text, "\n");
+  assert.equal(runtime.store.listTranscriptEntries("session-chunk").at(-1)?.contentText, "你好，今天要不要一起去公园散步，然后喝茶？好。");
 });
 
-test("talk runtime reports pending voice output chars for ready chunks and streaming buffers", () => {
+test("talk runtime reports pending voice output chars for streaming buffers", () => {
   const runtime = createTestRuntime("pending-voice-output");
 
   runtime.openSession(sessionInput("session-pending-output"));
   runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "你好，今天要不要一起去公园散步，然后喝茶？" });
   assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), "你好，今天要不要一起去公园散步，然后喝茶？".length);
 
-  runtime.claimReadyOutputChunk("session-pending-output");
+  runtime.claimBufferedOutputText("session-pending-output");
   assert.equal(runtime.store.pendingVoiceOutputCharCount("session-pending-output"), 0);
 
   runtime.appendAssistantDelta({ sessionId: "session-pending-output", outputId: "output-pending", delta: "好" });
@@ -153,11 +153,11 @@ test("talk runtime keeps parenthesized output in storage but out of TTS chunks a
   runtime.openSession(sessionInput("session-parenthesized"));
   runtime.appendAssistantDelta({ sessionId: "session-parenthesized", outputId: "output-parenthesized", delta: "（指先で" });
   runtime.appendAssistantDelta({ sessionId: "session-parenthesized", outputId: "output-parenthesized", delta: "そっとページの端をなぞるように）\n逆賊の愛卿、" });
-  assert.equal(runtime.claimReadyOutputChunk("session-parenthesized"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-parenthesized")?.text, "\n逆賊の愛卿、");
 
   runtime.appendAssistantDelta({ sessionId: "session-parenthesized", outputId: "output-parenthesized", delta: "何か奏上することがあるのか？" });
-  const chunk = runtime.claimReadyOutputChunk("session-parenthesized");
-  assert.equal(chunk?.text, "\n逆賊の愛卿、何か奏上することがあるのか？");
+  const chunk = runtime.claimBufferedOutputText("session-parenthesized");
+  assert.equal(chunk?.text, "何か奏上することがあるのか？");
 
   const output = runtime.store.getOutput("output-parenthesized");
   assert.equal(output?.fullText, "（指先でそっとページの端をなぞるように）\n逆賊の愛卿、何か奏上することがあるのか？");
@@ -192,8 +192,7 @@ test("talk runtime removes breakpoint and following text from main output and st
   assert.equal(discard?.discardedText, "饭，然后去散步。");
   assert.equal(interrupt.breakMarker, "...");
 
-  const cancelled = runtime.store.listChunks("output-interrupt").filter((chunk) => chunk.status === "cancelled");
-  assert.ok(cancelled.length >= 1);
+  assert.equal(output?.bufferText, "");
 });
 
 test("talk runtime uses voice breakpoint context instead of elapsed ratio", () => {
@@ -382,12 +381,11 @@ test("talk runtime starts the next agent loop without waiting for output playbac
   runtime.startAgentLoop("session-idle");
   assert.deepEqual(loops, ["session-idle"]);
 
-  const chunk = runtime.claimReadyOutputChunk("session-idle");
+  const chunk = runtime.claimBufferedOutputText("session-idle");
   assert.ok(chunk);
   runtime.startAgentLoop("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle"]);
 
-  runtime.markOutputChunkPlayed({ sessionId: "session-idle", chunkId: chunk.chunkId });
   runtime.startAgentLoop("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle", "session-idle"]);
 });
@@ -405,7 +403,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
     delta: "那些宫女太监，你说撤就撤了，一个都不给朕留。"
   });
   runtime.finishAssistantOutput({ sessionId: "session-interrupt-gate", outputId: "output-interrupt-gate" });
-  const chunk = runtime.claimReadyOutputChunk("session-interrupt-gate");
+  const chunk = runtime.claimBufferedOutputText("session-interrupt-gate");
   assert.ok(chunk);
 
   runtime.interruptOutput({
@@ -415,7 +413,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
     breakpointContext: { beforeText: "那些宫女太监，你说撤就撤了" }
   });
 
-  assert.equal(runtime.claimReadyOutputChunk("session-interrupt-gate"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-interrupt-gate"), undefined);
   runtime.startAgentLoop("session-interrupt-gate");
   assert.deepEqual(loops, []);
 
@@ -531,7 +529,7 @@ test("talk runtime can interrupt the latest streaming output when voice has no c
   assert.equal(interrupt?.outputId, "output-latest");
   assert.deepEqual(interrupted, ["session-interrupt-latest:output-latest"]);
   assert.equal(runtime.store.getOutput("output-latest")?.fullText, "正在生成");
-  assert.equal(runtime.claimReadyOutputChunk("session-interrupt-latest"), undefined);
+  assert.equal(runtime.claimBufferedOutputText("session-interrupt-latest"), undefined);
 });
 
 test("talk runtime cancels later assistant outputs when an earlier playback output is interrupted", () => {

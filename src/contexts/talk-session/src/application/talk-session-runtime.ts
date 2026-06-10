@@ -18,6 +18,7 @@ export type TalkRuntime = {
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
+  claimBufferedOutputText(sessionId: string): { outputId: string; sessionId: string; text: string } | undefined;
   claimReadyOutputChunk(sessionId: string): TalkOutputChunk | undefined;
   markOutputChunkPlayed(input: { sessionId: string; chunkId: string }): void;
   interruptOutput(input: {
@@ -98,7 +99,6 @@ const defaultMaxContinuousRoundIdleMs = 60_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
-  const readyChars = deps.readyChars ?? defaultTalkOutputReadyChars;
   const maxContinuousRoundIdleMs = deps.maxContinuousRoundIdleMs ?? defaultMaxContinuousRoundIdleMs;
   const timers = {
     setTimeout: deps.setTimeout ?? ((handler: () => void, ms: number) => setTimeout(handler, ms)),
@@ -325,52 +325,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
       if (output.status === "interrupted" || output.status === "cancelled") return;
 
-      const oldFullLength = charLength(output.fullText);
       const fullText = output.fullText + input.delta;
       const visibleText = fullText;
       const speechDelta = speechDeltaForOutput(input.delta, output.fullText);
-      let bufferText = output.bufferText + speechDelta;
-      let pendingChunkText = output.pendingChunkText;
-      let pendingChunkStartCharIndex = output.pendingChunkStartCharIndex;
-      let nextChunkSequence = output.nextChunkSequence;
-      let bufferStartCharIndex = oldFullLength - charLength(output.bufferText);
-
-      while (true) {
-        const boundary = firstBoundaryIndex(bufferText);
-        if (boundary < 0) break;
-        const chars = Array.from(bufferText);
-        const piece = chars.slice(0, boundary + 1).join("");
-        const remaining = chars.slice(boundary + 1).join("");
-        if (!pendingChunkText) pendingChunkStartCharIndex = bufferStartCharIndex;
-        pendingChunkText += piece;
-        const pendingEndCharIndex = bufferStartCharIndex + charLength(piece);
-        bufferText = remaining;
-        bufferStartCharIndex = pendingEndCharIndex;
-        if (charLength(pendingChunkText) >= readyChars) {
-          deps.store.insertReadyChunk({
-            sessionId: input.sessionId,
-            outputId: input.outputId,
-            sequence: nextChunkSequence,
-            text: pendingChunkText,
-            startCharIndex: pendingChunkStartCharIndex,
-            endCharIndex: pendingEndCharIndex,
-            now: now.occurredAt,
-            nowUtc: now.occurredAtUtc
-          });
-          nextChunkSequence += 1;
-          pendingChunkText = "";
-          pendingChunkStartCharIndex = pendingEndCharIndex;
-        }
-      }
+      const bufferText = output.bufferText + speechDelta;
 
       output = deps.store.updateOutput({
         outputId: input.outputId,
         fullText,
         visibleText,
-        bufferText,
-        pendingChunkText,
-        pendingChunkStartCharIndex,
-        nextChunkSequence
+        bufferText
       });
       void output;
     },
@@ -380,24 +344,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       const output = deps.store.getOutput(input.outputId);
       if (!output || output.status === "interrupted" || output.status === "cancelled") return;
       assertOutputSession(output.sessionId, input.sessionId, input.outputId);
-      const tail = output.pendingChunkText + output.bufferText;
-      let nextChunkSequence = output.nextChunkSequence;
-      if (tail) {
-        const tailStart = output.pendingChunkText
-          ? output.pendingChunkStartCharIndex
-          : charLength(output.fullText) - charLength(output.bufferText);
-        deps.store.insertReadyChunk({
-          sessionId: input.sessionId,
-          outputId: input.outputId,
-          sequence: nextChunkSequence,
-          text: tail,
-          startCharIndex: tailStart,
-          endCharIndex: tailStart + charLength(tail),
-          now: now.occurredAt,
-          nowUtc: now.occurredAtUtc
-        });
-        nextChunkSequence += 1;
-      }
       const segment = deps.store.insertSegment({
         sessionId: input.sessionId,
         segmentId: `assistant:${input.outputId}`,
@@ -413,9 +359,9 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         segmentId: segment.segmentId,
         status: "finished",
         visibleText: output.fullText,
-        bufferText: "",
+        bufferText: output.bufferText.endsWith("\n") ? output.bufferText : `${output.bufferText}\n`,
         pendingChunkText: "",
-        nextChunkSequence
+        nextChunkSequence: output.nextChunkSequence
       });
       recordTranscriptEntry(deps.store, {
         sessionId: input.sessionId,
@@ -427,6 +373,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         sourceKind: "assistant.output",
         sourceId: input.outputId
       });
+    },
+    claimBufferedOutputText(sessionId) {
+      assertOpenSession(deps.store, sessionId);
+      return deps.store.claimBufferedOutputText(sessionId);
     },
     claimReadyOutputChunk(sessionId) {
       assertOpenSession(deps.store, sessionId);
@@ -684,14 +634,6 @@ function recordTranscriptEnd(store: TalkStore, input: {
 
 function isHangupText(text: string): boolean {
   return text.trim() === "已挂断" || text.trim() === "-已挂断-";
-}
-
-function firstBoundaryIndex(text: string): number {
-  const chars = Array.from(text);
-  for (const [index, char] of chars.entries()) {
-    if (/[\p{P}\p{S}\s]/u.test(char)) return index;
-  }
-  return -1;
 }
 
 function speechDeltaForOutput(delta: string, previousFullText: string): string {

@@ -106,7 +106,7 @@ export type WebRtcVoiceTtsStreamEvent =
 
 export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
   stream?(input: {
-    text: string;
+    text: any;
     time: ReturnType<typeof createCurrentTimeProvider>;
     source: "send_chat.voice";
     streamId?: string;
@@ -161,6 +161,7 @@ export type WebRtcVoiceTalkRuntime = {
     }>;
   }): void | Promise<void>;
   startAgentLoop?(sessionId: string): void | Promise<void>;
+  claimBufferedOutputText?(sessionId: string): unknown;
   claimReadyOutputChunk?(sessionId: string): unknown;
   markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
   interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;

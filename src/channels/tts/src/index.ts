@@ -1,5 +1,6 @@
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { renderLLMText, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { bufferTtsStreamInput } from "./stream-input-buffer.js";
 
 const fsp = await import("node:fs/promises");
 const childProcess = await import("node:child_process");
@@ -508,12 +509,15 @@ export async function* streamTtsText(
   }
 
   const pcmFormat = selectedTtsStreamPcmFormat(config);
-  const sourceText = await collectTtsStreamText(input.text);
+  let streamSequence = 0;
+  for await (const sourceText of bufferTtsStreamInput(input.text, {
+    minChars: config.translationEnabled ? 20 : 12,
+    allowCrossNewline: config.translationEnabled
+  })) {
   const sourceChars = Array.from(sourceText).length;
   if (!sourceText.trim()) {
     deps.appendLog?.("info", `tts stream skipped: empty input stream=${input.streamId ?? ""}`);
-    yield { type: "done" };
-    return;
+    continue;
   }
   const symbolOnly = ttsSymbolOnlyInput(sourceText);
   if (symbolOnly) {
@@ -521,7 +525,7 @@ export async function* streamTtsText(
     deps.appendLog?.("info", `tts stream skipped: symbol-only input stream=${input.streamId ?? ""} symbols=${symbolOnly.symbols} silenceMs=${symbolOnly.symbols * ttsSymbolSilenceMs}`);
     yield {
       type: "audio",
-      sequence: 0,
+      sequence: streamSequence,
       text: sourceText,
       textchunk: sourceText,
       chunk,
@@ -530,21 +534,21 @@ export async function* streamTtsText(
       sampleRateHz: pcmFormat.sampleRateHz,
       channels: pcmFormat.channels
     };
-    yield { type: "part_done", sequence: 0 };
-    yield { type: "done" };
-    return;
+    yield { type: "part_done", sequence: streamSequence };
+    streamSequence += 1;
+    continue;
   }
 
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation start: stream=${input.streamId ?? ""} chars=${sourceChars}`);
-    yield { type: "translation_started", sequence: 0, sourceChars };
+    yield { type: "translation_started", sequence: streamSequence, sourceChars };
   }
   const ttsText = await resolveTtsText(sourceText, config, deps);
   const ttsChars = Array.from(ttsText).length;
   deps.appendLog?.("info", `tts stream text lengths: stream=${input.streamId ?? ""} sourceChars=${sourceChars} translatedChars=${ttsChars}`);
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation complete: stream=${input.streamId ?? ""} chars=${ttsChars}`);
-    yield { type: "translation_done", sequence: 0, translatedChars: ttsChars };
+    yield { type: "translation_done", sequence: streamSequence, translatedChars: ttsChars };
   }
 
   const streamGenie = conversion === "genie"
@@ -558,8 +562,8 @@ export async function* streamTtsText(
   const sourceTextMapper = createTtsSourceTextMapper(sourceText, ttsText);
   let totalAudioChunks = 0;
   let totalAudioBytes = 0;
-  for (let sequence = 0; sequence < parts.length; sequence += 1) {
-    const part = parts[sequence]!;
+  for (const part of parts) {
+    const sequence = streamSequence;
     deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
     const audio = await synthesizeTtsAudioChunk(synthesisStream, {
       text: part,
@@ -582,8 +586,10 @@ export async function* streamTtsText(
       channels: audio.format.channels
     };
     yield { type: "part_done", sequence };
+    streamSequence += 1;
   }
   deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${totalAudioChunks} bytes=${totalAudioBytes}`);
+  }
   yield { type: "done" };
 }
 

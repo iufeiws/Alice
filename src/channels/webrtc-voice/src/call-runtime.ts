@@ -144,21 +144,13 @@ export async function createCallState(
   };
   const runOutputPump = async () => {
     while (!closed) {
-      const raw = deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
+      const raw = deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
+        ?? deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
       const chunk = normalizeTalkChunk(raw);
       if (!chunk) {
         await sleep(25);
         continue;
       }
-      let ttsStreamSettled = false;
-      let resolveTtsStreamSettled!: () => void;
-      const ttsStreamSettledPromise = new Promise<void>((resolve) => {
-        resolveTtsStreamSettled = () => {
-          if (ttsStreamSettled) return;
-          ttsStreamSettled = true;
-          resolve();
-        };
-      });
       const playback = call.playReplyText(chunk.text, chunk.outputId, {
         chunkId: chunk.chunkId,
         originalText: chunk.text,
@@ -166,18 +158,15 @@ export async function createCallState(
           if (!firstOutboundPlaybackBufferPending) return;
           firstOutboundPlaybackBufferPending = false;
           await deps.sleep?.(deps.config.outboundAudio.frameMs);
-        },
-        onTtsStreamSettled: resolveTtsStreamSettled
+        }
       });
       void deps.talkRuntime?.startAgentLoop?.(talkSessionId);
       void playback.then(async (result) => {
         if (result?.failureReason) {
           deps.emitStatus?.({ state: "voice_call.tts_fatal", detail: `${result.outputId ?? chunk.outputId ?? ""} ${result.failureReason}`.trim() });
           await call.close("tts_failed");
-          resolveTtsStreamSettled();
           return;
         }
-        resolveTtsStreamSettled();
         if (result?.status !== "played" || !chunk.chunkId) return;
         try {
           await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
@@ -187,9 +176,8 @@ export async function createCallState(
         }
       }).catch((error) => {
         deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });
-        void call.close("tts_failed").finally(resolveTtsStreamSettled);
+        void call.close("tts_failed");
       });
-      await ttsStreamSettledPromise;
     }
   };
 
@@ -469,18 +457,18 @@ function normalizeTalkSessionOpenResult(value: unknown): string | undefined {
 function normalizeTalkChunk(value: unknown): {
   sessionId: string;
   outputId: string;
-  chunkId: string;
+  chunkId?: string;
   text: string;
   startCharIndex: number;
   endCharIndex: number;
 } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const chunk = value as Record<string, unknown>;
-  if (typeof chunk.outputId !== "string" || typeof chunk.chunkId !== "string" || typeof chunk.text !== "string") return undefined;
+  if (typeof chunk.outputId !== "string" || typeof chunk.text !== "string") return undefined;
   return {
     sessionId: typeof chunk.sessionId === "string" ? chunk.sessionId : "",
     outputId: chunk.outputId,
-    chunkId: chunk.chunkId,
+    chunkId: typeof chunk.chunkId === "string" ? chunk.chunkId : undefined,
     text: chunk.text,
     startCharIndex: typeof chunk.startCharIndex === "number" ? chunk.startCharIndex : 0,
     endCharIndex: typeof chunk.endCharIndex === "number" ? chunk.endCharIndex : Array.from(chunk.text).length

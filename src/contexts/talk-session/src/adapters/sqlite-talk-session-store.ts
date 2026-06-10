@@ -95,6 +95,12 @@ export type TalkOutputChunk = {
   status: "buffering" | "ready" | "claimed" | "played" | "cancelled";
 };
 
+export type TalkBufferedOutputText = {
+  outputId: string;
+  sessionId: string;
+  text: string;
+};
+
 export type TalkOutputDiscard = {
   discardId: string;
   sessionId: string;
@@ -167,6 +173,7 @@ export type TalkStore = {
     now: string;
     nowUtc?: string;
   }): TalkOutputChunk;
+  claimBufferedOutputText(sessionId: string): TalkBufferedOutputText | undefined;
   claimReadyOutputChunk(sessionId: string, now: string, nowUtc?: string): TalkOutputChunk | undefined;
   markChunkPlayed(input: { sessionId: string; chunkId: string; now: string; nowUtc?: string }): void;
   listChunks(outputId: string): TalkOutputChunk[];
@@ -437,6 +444,25 @@ export function createTalkStore(dbPath: string): TalkStore {
         WHERE chunk_id = ?
         LIMIT 1
       `).get(chunkId))!;
+    },
+    claimBufferedOutputText(sessionId) {
+      const row = db.prepare(`
+        SELECT output_id AS outputId, session_id AS sessionId, buffer_text AS text
+        FROM talk_outputs
+        WHERE session_id = ?
+          AND status IN ('streaming', 'finished')
+          AND buffer_text <> ''
+        ORDER BY id ASC
+        LIMIT 1
+      `).get(sessionId);
+      const output = normalizeBufferedOutputText(row);
+      if (!output) return undefined;
+      db.prepare(`
+        UPDATE talk_outputs
+        SET buffer_text = ''
+        WHERE output_id = ?
+      `).run(output.outputId);
+      return output;
     },
     claimReadyOutputChunk(sessionId, now, nowUtc) {
       const row = db.prepare(`
@@ -896,6 +922,17 @@ function normalizeChunk(row: unknown): TalkOutputChunk | undefined {
     startCharIndex: Number(value.startCharIndex),
     endCharIndex: Number(value.endCharIndex),
     status: value.status
+  };
+}
+
+function normalizeBufferedOutputText(row: unknown): TalkBufferedOutputText | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as Record<string, unknown>;
+  if (typeof value.outputId !== "string" || typeof value.sessionId !== "string" || typeof value.text !== "string") return undefined;
+  return {
+    outputId: value.outputId,
+    sessionId: value.sessionId,
+    text: value.text
   };
 }
 

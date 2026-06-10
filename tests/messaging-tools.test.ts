@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, splitTtsTextChunks, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1189,7 +1189,7 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
   assert.deepEqual(synthesizedTexts, ["原文", "日本語"]);
 });
 
-test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation text", async () => {
+test("openai-api tts sends non-stream pcm speech request with full text chunk", async () => {
   const requests: Array<{ url: string; body: any; authorization: string | null }> = [];
   const outputDir = path.join(makeTempDir("openai-api-tts-output"), "assets", "generated", "tts");
   const first = new Uint8Array(32_000 * 2);
@@ -1251,12 +1251,10 @@ test("openai-api tts sends pcm speech request and maps PCM chunks to punctuation
     input: "第一句。第二句。",
     model: "higgs-audio-v3-tts",
     voice: "default",
-    response_format: "pcm",
-    stream: true
+    response_format: "pcm"
   });
   assert.deepEqual(chunks, [
-    ["第一句。", 64_000, 16_000, 1],
-    ["第二句。", 64_000, 16_000, 1]
+    ["第一句。第二句。", 128_000, 16_000, 1]
   ]);
 
   const result = await synthesize({
@@ -1346,8 +1344,7 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
     }
   });
   assert.deepEqual(chunks, [
-    ["第一句。", [1, 2], 24000, 1],
-    [undefined, [3, 4], 24000, 1]
+    ["第一句。", [1, 2, 3, 4], 24000, 1]
   ]);
 
   const result = await synthesize({
@@ -1369,6 +1366,13 @@ test("tts PCM progress mapper falls back to UTF character slices without punctua
   assert.equal(mapper.take(2), "ab");
   assert.equal(mapper.take(2), "cd");
   assert.equal(mapper.take(2), "ef");
+});
+
+test("tts text chunk splitter keeps special characters and merges short tail", () => {
+  assert.deepEqual(
+    splitTtsTextChunks("嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面，再来一点。没"),
+    ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面，再来一点。没"]
+  );
 });
 
 test("tts stream translates the full conversation once and yields Genie audio chunks", async () => {
@@ -1430,15 +1434,13 @@ test("tts stream translates the full conversation once and yields Genie audio ch
     "translation_started",
     "translation_done",
     "audio",
-    "audio",
     "part_done",
     "done"
   ]);
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, Array.from(event.chunk)]), [
-    [0, [1, 1]],
-    [0, [1, 2]]
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, event.textchunk, Array.from(event.soundchunk)]), [
+    [0, "ja:1", [1, 1, 1, 2]]
   ]);
-  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=2")), true);
+  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=1")), true);
 });
 
 test("tts stream maps returned translated audio text back to source punctuation", async () => {
@@ -1483,9 +1485,8 @@ test("tts stream maps returned translated audio text back to source punctuation"
     events.push(event);
   }
 
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, Array.from(event.chunk)]), [
-    ["第一句。", [1, 2]],
-    ["第二句。", [3, 4]]
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
+    ["第一句。第二句。", "これは一文目です。二文目です。", [1, 2, 3, 4]]
   ]);
 });
 
@@ -1538,7 +1539,9 @@ test("tts stream returns original text with symbol-length silence for symbol-onl
   assert.equal(streamCalls, 0);
   assert.deepEqual(events.map((event) => event.type), ["audio", "part_done", "done"]);
   assert.equal((events[0] as any).text, "！？…");
+  assert.equal((events[0] as any).textchunk, "！？…");
   assert.equal((events[0] as any).chunk.byteLength, 3 * 100 * 64);
+  assert.equal((events[0] as any).soundchunk.byteLength, 3 * 100 * 64);
   assert.equal((events[0] as any).chunk.every((value: number) => value === 0), true);
   assert.equal(logs.some((message) => message.includes("symbol-only input") && message.includes("symbols=3")), true);
 });
@@ -1619,9 +1622,8 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
     events.push(event);
   }
 
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => event.text), [
-    "着手机看老板有没有回消息呢！",
-    undefined
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
+    ["着手机看老板有没有回消息呢！", "老板から返信があるか確認してるんだよ！", [1, 2]]
   ]);
 });
 

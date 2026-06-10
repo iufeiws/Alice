@@ -144,15 +144,17 @@ export function createTtsProducer(ctx: {
           inputChannels = firstAudioEvent?.channels ?? 1;
           const pcmChunks = async function* () {
             if (firstAudioEvent) {
+              const firstSoundChunk = firstAudioEvent.soundchunk ?? firstAudioEvent.chunk;
+              const firstTextChunk = firstAudioEvent.textchunk ?? firstAudioEvent.text;
               audioChunks += 1;
-              audioBytes += firstAudioEvent.chunk.byteLength;
-              archiveAudioChunks.push(copyUint8Array(firstAudioEvent.chunk));
-              ctx.playback.recordAudioTextSpan(item, firstAudioEvent.text, firstAudioEvent.chunk, {
+              audioBytes += firstSoundChunk.byteLength;
+              archiveAudioChunks.push(copyUint8Array(firstSoundChunk));
+              ctx.playback.recordAudioTextSpan(item, firstTextChunk, firstSoundChunk, {
                 sampleRateHz: firstAudioEvent.sampleRateHz ?? inputSampleRateHz,
                 channels: firstAudioEvent.channels ?? inputChannels
               });
               ctx.deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${inputSampleRateHz}Hz` });
-              yield firstAudioEvent.chunk;
+              yield firstSoundChunk;
             }
             while (true) {
               const next = await ttsIterator.next();
@@ -176,17 +178,19 @@ export function createTtsProducer(ctx: {
                 break;
               }
               if (event.type !== "audio") continue;
+              const soundChunk = event.soundchunk ?? event.chunk;
+              const textChunk = event.textchunk ?? event.text;
               audioChunks += 1;
-              audioBytes += event.chunk.byteLength;
-              archiveAudioChunks.push(copyUint8Array(event.chunk));
-              ctx.playback.recordAudioTextSpan(item, event.text, event.chunk, {
+              audioBytes += soundChunk.byteLength;
+              archiveAudioChunks.push(copyUint8Array(soundChunk));
+              ctx.playback.recordAudioTextSpan(item, textChunk, soundChunk, {
                 sampleRateHz: event.sampleRateHz ?? inputSampleRateHz,
                 channels: event.channels ?? inputChannels
               });
               if (audioChunks === 1 || audioChunks % 20 === 0) {
                 ctx.deps.emitStatus?.({ state: "tts.stream.audio_chunk", detail: `${audioChunks}:${audioBytes}:${event.sampleRateHz ?? inputSampleRateHz}Hz` });
               }
-              yield event.chunk;
+              yield soundChunk;
             }
           };
           const producer = (async () => {
@@ -292,15 +296,17 @@ export function createTtsProducer(ctx: {
               break;
             }
             if (event.type !== "audio") continue;
+            const soundChunk = event.soundchunk ?? event.chunk;
+            const textChunk = event.textchunk ?? event.text;
             inputSampleRateHz = event.sampleRateHz ?? inputSampleRateHz;
             inputChannels = event.channels ?? inputChannels;
-            archiveAudioChunks.push(copyUint8Array(event.chunk));
-            ctx.playback.recordAudioTextSpan(item, event.text, event.chunk, {
+            archiveAudioChunks.push(copyUint8Array(soundChunk));
+            ctx.playback.recordAudioTextSpan(item, textChunk, soundChunk, {
               sampleRateHz: inputSampleRateHz,
               channels: inputChannels
             });
             const frames = await raceWithAbort(Promise.resolve(ctx.deps.encodePcmL16ToFrames({
-              pcm: event.chunk,
+              pcm: soundChunk,
               inputSampleRateHz,
               inputChannels,
               sampleRateHz: ctx.deps.config.outboundAudio.sampleRateHz,
@@ -313,8 +319,8 @@ export function createTtsProducer(ctx: {
               const written = await ctx.outboundTrack.writeFrame(ctx.stampOutboundFrame(frame));
               if (written) {
                 ctx.advanceOutboundRtpClockForFrame(frame);
-                ctx.playback.updateConsumer(item, event.text, eventTotalMs, { emit: true });
-                if (event.text) ctx.playback.emitPlayingText(event.text);
+                ctx.playback.updateConsumer(item, textChunk, eventTotalMs, { emit: true });
+                if (textChunk) ctx.playback.emitPlayingText(textChunk);
                 else ctx.playback.reportMissingPlayingText(item, frameCount + 1);
                 frameCount += 1;
               item.framesWritten = frameCount;

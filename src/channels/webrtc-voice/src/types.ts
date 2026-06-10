@@ -100,7 +100,7 @@ export type EncodePcmL16StreamInput = Omit<EncodePcmL16Input, "pcm"> & {
 export type WebRtcVoiceTtsStreamEvent =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
+  | { type: "audio"; sequence: number; text?: string; textchunk?: string; chunk: Uint8Array; soundchunk?: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
 

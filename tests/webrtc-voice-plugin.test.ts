@@ -1067,7 +1067,15 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
         streamedTexts.push(text);
         yield { type: "translation_started" as const, sequence: 0, sourceChars: text.length };
         yield { type: "translation_done" as const, sequence: 0, translatedChars: 4 };
-        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2, 3, 4]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield {
+          type: "audio" as const,
+          sequence: 0,
+          text: "legacy text",
+          textchunk: "ストリーム",
+          chunk: new Uint8Array([9]),
+          soundchunk: new Uint8Array([1, 2, 3, 4]),
+          contentType: "audio/L16; rate=32000; channels=1"
+        };
         yield { type: "part_done" as const, sequence: 0 };
         yield { type: "done" as const };
       }

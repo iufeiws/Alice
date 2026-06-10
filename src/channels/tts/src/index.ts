@@ -217,7 +217,7 @@ export type TtsStreamInput = {
 export type TtsStreamChunk =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; text?: string; chunk: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
+  | { type: "audio"; sequence: number; text?: string; textchunk?: string; chunk: Uint8Array; soundchunk?: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
 
@@ -507,7 +507,6 @@ export async function* streamTtsText(
     throw new Error("tts stream requires a streaming Genie TTS synthesizer");
   }
 
-  const sequence = 0;
   const pcmFormat = selectedTtsStreamPcmFormat(config);
   const sourceText = await collectTtsStreamText(input.text);
   const sourceChars = Array.from(sourceText).length;
@@ -522,28 +521,30 @@ export async function* streamTtsText(
     deps.appendLog?.("info", `tts stream skipped: symbol-only input stream=${input.streamId ?? ""} symbols=${symbolOnly.symbols} silenceMs=${symbolOnly.symbols * ttsSymbolSilenceMs}`);
     yield {
       type: "audio",
-      sequence,
+      sequence: 0,
       text: sourceText,
+      textchunk: sourceText,
       chunk,
+      soundchunk: chunk,
       contentType: ttsPcmContentType(pcmFormat),
       sampleRateHz: pcmFormat.sampleRateHz,
       channels: pcmFormat.channels
     };
-    yield { type: "part_done", sequence };
+    yield { type: "part_done", sequence: 0 };
     yield { type: "done" };
     return;
   }
 
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation start: stream=${input.streamId ?? ""} chars=${sourceChars}`);
-    yield { type: "translation_started", sequence, sourceChars };
+    yield { type: "translation_started", sequence: 0, sourceChars };
   }
   const ttsText = await resolveTtsText(sourceText, config, deps);
   const ttsChars = Array.from(ttsText).length;
   deps.appendLog?.("info", `tts stream text lengths: stream=${input.streamId ?? ""} sourceChars=${sourceChars} translatedChars=${ttsChars}`);
   if (config.translationEnabled) {
     deps.appendLog?.("info", `tts stream translation complete: stream=${input.streamId ?? ""} chars=${ttsChars}`);
-    yield { type: "translation_done", sequence, translatedChars: ttsChars };
+    yield { type: "translation_done", sequence: 0, translatedChars: ttsChars };
   }
 
   const streamGenie = conversion === "genie"
@@ -552,35 +553,66 @@ export async function* streamTtsText(
       return genie;
     })()
     : undefined;
-  deps.appendLog?.("info", `tts stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars}`);
+  const parts = splitTtsTextChunks(ttsText);
+  deps.appendLog?.("info", `tts stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars} parts=${parts.length}`);
   const sourceTextMapper = createTtsSourceTextMapper(sourceText, ttsText);
-  let audioChunks = 0;
-  let audioBytes = 0;
-  for await (const audio of streamTtsAudioWithOptionalText(synthesisStream, {
-    text: ttsText,
-    time: input.time,
-    ...(streamGenie ? { genie: streamGenie } : {})
-  })) {
-    audioChunks += 1;
-    audioBytes += audio.chunk.byteLength;
-    const text = audio.text ? sourceTextMapper.take(audio.text) : undefined;
-    const audioFormat = {
-      sampleRateHz: audio.sampleRateHz ?? pcmFormat.sampleRateHz,
-      channels: audio.channels ?? pcmFormat.channels
-    };
+  let totalAudioChunks = 0;
+  let totalAudioBytes = 0;
+  for (let sequence = 0; sequence < parts.length; sequence += 1) {
+    const part = parts[sequence]!;
+    deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
+    const audio = await synthesizeTtsAudioChunk(synthesisStream, {
+      text: part,
+      time: input.time,
+      ...(streamGenie ? { genie: streamGenie } : {})
+    }, pcmFormat);
+    totalAudioChunks += 1;
+    totalAudioBytes += audio.chunk.byteLength;
+    const text = sourceTextMapper.take(part);
+    const soundchunk = audio.chunk;
     yield {
       type: "audio",
       sequence,
       ...(text ? { text } : {}),
-      chunk: audio.chunk,
-      contentType: ttsPcmContentType(audioFormat),
-      sampleRateHz: audioFormat.sampleRateHz,
-      channels: audioFormat.channels
+      textchunk: part,
+      chunk: soundchunk,
+      soundchunk,
+      contentType: ttsPcmContentType(audio.format),
+      sampleRateHz: audio.format.sampleRateHz,
+      channels: audio.format.channels
+    };
+    yield { type: "part_done", sequence };
+  }
+  deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${totalAudioChunks} bytes=${totalAudioBytes}`);
+  yield { type: "done" };
+}
+
+async function synthesizeTtsAudioChunk(
+  synthesizer: VoiceSynthesizer,
+  input: VoiceSynthesisInput,
+  fallbackFormat: { sampleRateHz: number; channels: number }
+): Promise<{ chunk: Uint8Array; format: { sampleRateHz: number; channels: number } }> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let format = fallbackFormat;
+  for await (const audio of streamTtsAudioWithOptionalText(synthesizer, input)) {
+    if (!audio.chunk.byteLength) continue;
+    chunks.push(audio.chunk);
+    total += audio.chunk.byteLength;
+    format = {
+      sampleRateHz: audio.sampleRateHz ?? format.sampleRateHz,
+      channels: audio.channels ?? format.channels
     };
   }
-  deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${audioChunks} bytes=${audioBytes}`);
-  yield { type: "part_done", sequence };
-  yield { type: "done" };
+  if (chunks.length === 0) throw new Error("tts stream part returned no audio");
+  if (chunks.length === 1) return { chunk: chunks[0]!, format };
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { chunk: merged, format };
 }
 
 async function* streamTtsAudioWithOptionalText(
@@ -791,6 +823,42 @@ export async function* splitTtsStreamParts(
   }
   const remaining = pending.trim();
   if (remaining) yield remaining;
+}
+
+export function splitTtsTextChunks(text: string, options: { minChars?: number } = {}): string[] {
+  const minChars = options.minChars ?? 12;
+  const blocks = splitTtsTextBlocks(text);
+  const chunks: string[] = [];
+  let pending = "";
+  for (const block of blocks) {
+    pending += block;
+    if (Array.from(pending).length >= minChars) {
+      chunks.push(pending);
+      pending = "";
+    }
+  }
+  if (pending) {
+    if (chunks.length > 0 && Array.from(pending).length < minChars) {
+      chunks[chunks.length - 1] = `${chunks[chunks.length - 1]}${pending}`;
+    } else {
+      chunks.push(pending);
+    }
+  }
+  return chunks.map((chunk) => chunk.trim()).filter(Boolean);
+}
+
+function splitTtsTextBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  let pending = "";
+  for (const char of Array.from(text)) {
+    pending += char;
+    if (/[\p{P}\p{S}]/u.test(char)) {
+      blocks.push(pending);
+      pending = "";
+    }
+  }
+  if (pending) blocks.push(pending);
+  return blocks;
 }
 
 async function* iterateTextChunks(text: AsyncIterable<string> | Iterable<string> | string): AsyncIterable<string> {
@@ -1176,28 +1244,19 @@ export function createOpenAiApiTtsVoiceSynthesizer(
 
   synthesize.streamAudio = async function* (request) {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
-    for await (const chunk of requestOpenAiApiTtsAudioStream(request.text, settings, deps)) yield chunk;
+    const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
+    if (audio.byteLength) yield audio;
   };
   synthesize.streamAudioWithText = async function* (request) {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
-    const chunks: Uint8Array[] = [];
-    let totalBytes = 0;
-    for await (const chunk of requestOpenAiApiTtsAudioStream(request.text, settings, deps)) {
-      chunks.push(chunk);
-      totalBytes += chunk.byteLength;
-    }
-    const mapper = createTtsPcmProgressTextMapper(request.text, totalBytes, {
-      sampleRate: settings.sampleRate,
+    const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
+    if (!audio.byteLength) return;
+    yield {
+      text: request.text,
+      chunk: audio,
+      sampleRateHz: settings.sampleRate,
       channels: settings.channels
-    });
-    for (const chunk of chunks) {
-      yield {
-        text: mapper.take(chunk.byteLength),
-        chunk,
-        sampleRateHz: settings.sampleRate,
-        channels: settings.channels
-      };
-    }
+    };
   };
   return synthesize;
 }
@@ -1337,28 +1396,19 @@ export function createBailianTtsVoiceSynthesizer(
 
   synthesize.streamAudio = async function* (request) {
     const settings = resolveBailianTtsSettings(config, deps);
-    for await (const chunk of requestBailianTtsAudioStream(request.text, settings, deps)) yield chunk;
+    const audio = await requestBailianTtsAudio(request.text, settings, deps);
+    if (audio.byteLength) yield audio;
   };
   synthesize.streamAudioWithText = async function* (request) {
     const settings = resolveBailianTtsSettings(config, deps);
-    const chunks: Uint8Array[] = [];
-    let totalBytes = 0;
-    for await (const chunk of requestBailianTtsAudioStream(request.text, settings, deps)) {
-      chunks.push(chunk);
-      totalBytes += chunk.byteLength;
-    }
-    const mapper = createTtsPcmProgressTextMapper(request.text, totalBytes, {
-      sampleRate: settings.sampleRate,
+    const audio = await requestBailianTtsAudio(request.text, settings, deps);
+    if (!audio.byteLength) return;
+    yield {
+      text: request.text,
+      chunk: audio,
+      sampleRateHz: settings.sampleRate,
       channels: settings.channels
-    });
-    for (const chunk of chunks) {
-      yield {
-        text: mapper.take(chunk.byteLength),
-        chunk,
-        sampleRateHz: settings.sampleRate,
-        channels: settings.channels
-      };
-    }
+    };
   };
   return synthesize;
 }

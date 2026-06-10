@@ -33,24 +33,8 @@ export {
   selectedTtsVoiceModelConfigName,
   ttsGenieOverrides
 } from "./config.js";
-export { createTtsPlugin } from "./plugin.js";
+export { createTtsPlugin, createTtsTranslationSynthesizer } from "./plugin.js";
 export { resolveTtsText, translateTtsText } from "./translation.js";
-export {
-  collectTtsStreamText,
-  createTtsPcmProgressTextMapper,
-  splitTtsStreamParts,
-  splitTtsTextChunks,
-  streamTtsText
-} from "./stream.js";
-export {
-  createBailianTtsVoiceSynthesizer,
-  createOpenAiApiTtsVoiceSynthesizer
-} from "./conversion.js";
-export {
-  createConfiguredVoiceSynthesizer,
-  createFallbackVoiceSynthesizer,
-  createGenieTtsVoiceSynthesizer,
-  createMossOnnxVoiceSynthesizer,
-  createTtsRemoteAwareVoiceSynthesizer
-} from "./synthesizers.js";
-export { createTtsTranslationSynthesizer } from "./translation-synthesizer.js";
+export { collectTtsStreamText, createTtsPcmProgressTextMapper, splitTtsStreamParts, splitTtsTextChunks, streamTtsText } from "./stream.js";
+export { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer } from "./conversion.js";
+export { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer } from "./synthesizers.js";

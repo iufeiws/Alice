@@ -27,6 +27,15 @@ test("TTS stream input buffer does not cross newline when translation is disable
   assert.deepEqual(parts, ["hello world!", "second line!"]);
 });
 
+test("TTS stream input buffer keeps final short line separate when translation is disabled", async () => {
+  const parts = await collect(bufferTtsStreamInput(["hello world!\nabc"], {
+    minChars: 12,
+    allowCrossNewline: false
+  }));
+
+  assert.deepEqual(parts, ["hello world!", "abc"]);
+});
+
 test("TTS stream input buffer can preserve newline inside translated source parts", async () => {
   const parts = await collect(bufferTtsStreamInput(["first line。\nsecond line。third line。"], {
     minChars: 8,

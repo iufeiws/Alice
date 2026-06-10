@@ -121,6 +121,9 @@ export function renderVoiceCallHtml(): string {
       box-shadow: 0 12px 32px var(--call-shadow);
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     .call-button:disabled {
       cursor: default;
@@ -271,6 +274,12 @@ export function renderVoiceCallHtml(): string {
       justify-content: center;
       padding: 0 12px;
       overflow: visible;
+    }
+    #holdTalkButton, #holdTalkButton * {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
     }
     .center-control.active { display: flex; }
     .center-control svg {
@@ -512,6 +521,8 @@ export function renderVoiceCallHtml(): string {
     let audioContext;
     let pcmSource;
     let pcmProcessor;
+    let pcmSink;
+    let pcmWorkletUrl;
     let speechActive = false;
     let connectedAt = 0;
     let elapsedTimer;
@@ -570,6 +581,7 @@ export function renderVoiceCallHtml(): string {
     holdTalkButton.addEventListener("pointerup", stopHoldToTalk);
     holdTalkButton.addEventListener("pointercancel", stopHoldToTalk);
     holdTalkButton.addEventListener("pointerleave", stopHoldToTalk);
+    holdTalkButton.addEventListener("contextmenu", (event) => event.preventDefault());
     messageInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
@@ -603,7 +615,7 @@ export function renderVoiceCallHtml(): string {
           }
         });
         ensureAudioAnalyser(localStream, "local");
-        startPcmStreaming(localStream);
+        await startPcmStreaming(localStream);
         peer = new RTCPeerConnection({ iceServers: config.iceServers || initialIceServers });
         peer.addTransceiver("audio", { direction: "recvonly" });
         peer.addEventListener("track", (event) => {
@@ -1003,30 +1015,102 @@ export function renderVoiceCallHtml(): string {
       await remoteAudio.play().catch(() => {});
     }
 
-    function startPcmStreaming(stream) {
+    async function startPcmStreaming(stream) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext || !stream) throw new Error("浏览器不支持音频采集");
       audioContext ||= new AudioContext();
+      if (!audioContext.audioWorklet) throw new Error("浏览器不支持 AudioWorklet 音频采集");
+      await audioContext.resume?.();
+      if (!pcmWorkletUrl) {
+        pcmWorkletUrl = URL.createObjectURL(new Blob([pcmWorkletSource()], { type: "text/javascript" }));
+        await audioContext.audioWorklet.addModule(pcmWorkletUrl);
+      }
       pcmSource = audioContext.createMediaStreamSource(stream);
-      pcmProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-      pcmProcessor.onaudioprocess = (event) => {
+      pcmProcessor = new AudioWorkletNode(audioContext, "alice-pcm16-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+        outputChannelCount: [1]
+      });
+      pcmProcessor.port.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.type !== "pcm" || !message.buffer) return;
         if (!speechActive || !socket || socket.readyState !== WebSocket.OPEN) return;
-        const input = event.inputBuffer.getChannelData(0);
-        const pcm = downsampleToPcm16(input, audioContext.sampleRate, inboundAudio.sampleRateHz);
-        if (!pcm.byteLength) return;
-        let binary = "";
-        const bytes = new Uint8Array(pcm.buffer);
-        for (const byte of bytes) binary += String.fromCharCode(byte);
-        sendSignal({ type: "audio-chunk", data: btoa(binary) });
+        sendPcmChunk(new Uint8Array(message.buffer), message.timing);
       };
+      pcmProcessor.port.postMessage({
+        type: "config",
+        targetRate: inboundAudio.sampleRateHz,
+        chunkMs: inboundAudio.chunkMs
+      });
       pcmSource.connect(pcmProcessor);
-      pcmProcessor.connect(audioContext.destination);
+      pcmSink = audioContext.createGain();
+      pcmSink.gain.value = 0;
+      pcmProcessor.connect(pcmSink);
+      pcmSink.connect(audioContext.destination);
+    }
+
+    function sendPcmChunk(bytes, timing) {
+      if (!bytes.byteLength) return;
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      sendSignal({ type: "audio-chunk", data: btoa(binary), timing });
+    }
+
+    function pcmWorkletSource() {
+      return \`
+        class AlicePcm16Capture extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.targetRate = 16000;
+            this.chunkMs = 100;
+            this.pending = [];
+            this.emittedSamples = 0;
+            this.port.onmessage = (event) => {
+              const data = event.data || {};
+              if (data.type !== "config") return;
+              this.targetRate = Number.isFinite(data.targetRate) && data.targetRate > 0 ? data.targetRate : 16000;
+              this.chunkMs = Number.isFinite(data.chunkMs) && data.chunkMs > 0 ? data.chunkMs : 100;
+            };
+          }
+          process(inputs, outputs) {
+            const input = inputs[0]?.[0];
+            const output = outputs[0]?.[0];
+            if (output) output.fill(0);
+            if (!input || !input.length) return true;
+            const ratio = sampleRate / this.targetRate;
+            const outputLength = Math.floor(input.length / ratio);
+            for (let index = 0; index < outputLength; index += 1) {
+              const sourceIndex = Math.min(input.length - 1, Math.floor(index * ratio));
+              const sample = Math.max(-1, Math.min(1, input[sourceIndex] || 0));
+              this.pending.push(sample < 0 ? sample * 0x8000 : sample * 0x7fff);
+            }
+            const targetSamples = Math.max(1, Math.round(this.targetRate * this.chunkMs / 1000));
+            while (this.pending.length >= targetSamples) {
+              const chunk = new Int16Array(this.pending.splice(0, targetSamples));
+              const startMs = Math.round(this.emittedSamples * 1000 / this.targetRate);
+              this.emittedSamples += chunk.length;
+              const endMs = Math.round(this.emittedSamples * 1000 / this.targetRate);
+              this.port.postMessage({
+                type: "pcm",
+                buffer: chunk.buffer,
+                timing: { startMs, endMs, durationMs: endMs - startMs }
+              }, [chunk.buffer]);
+            }
+            return true;
+          }
+        }
+        registerProcessor("alice-pcm16-capture", AlicePcm16Capture);
+      \`;
     }
 
     function stopPcmStreaming() {
       pcmProcessor?.disconnect?.();
+      pcmProcessor?.port?.close?.();
+      pcmSink?.disconnect?.();
       pcmSource?.disconnect?.();
       pcmProcessor = undefined;
+      pcmSink = undefined;
       pcmSource = undefined;
       speechActive = false;
     }

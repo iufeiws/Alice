@@ -376,18 +376,25 @@ test("talk runtime starts the next agent loop without waiting for output playbac
 
   runtime.openSession(sessionInput("session-idle"));
   runtime.appendAssistantDelta({ sessionId: "session-idle", outputId: "output-idle", delta: "第一句已经准备好。" });
-  runtime.finishAssistantOutput({ sessionId: "session-idle", outputId: "output-idle" });
-
   runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, ["session-idle"]);
+  assert.deepEqual(loops, []);
+
+  const streamingChunk = runtime.claimBufferedOutputText("session-idle");
+  assert.ok(streamingChunk);
+  runtime.startAgentLoop("session-idle");
+  assert.deepEqual(loops, []);
+
+  runtime.finishAssistantOutput({ sessionId: "session-idle", outputId: "output-idle" });
+  runtime.startAgentLoop("session-idle");
+  assert.deepEqual(loops, []);
 
   const chunk = runtime.claimBufferedOutputText("session-idle");
   assert.ok(chunk);
   runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, ["session-idle", "session-idle"]);
+  assert.deepEqual(loops, ["session-idle"]);
 
   runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, ["session-idle", "session-idle", "session-idle"]);
+  assert.deepEqual(loops, ["session-idle", "session-idle"]);
 });
 
 test("talk runtime blocks output claim and next loop while waiting for final transcript after interrupt", () => {

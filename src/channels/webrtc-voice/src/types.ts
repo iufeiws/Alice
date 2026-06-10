@@ -63,6 +63,10 @@ export type ServerAudioFrame = {
 export type ServerOutboundAudioTrack = {
   writeFrame(frame: ServerAudioFrame): Promise<boolean> | boolean;
   waitUntilReady?(timeoutMs: number): Promise<boolean>;
+  enqueueAudioFile?(input: EnqueuePlaybackAudioFileInput): Promise<{ itemId: string }> | { itemId: string };
+  waitForPlaybackItem?(itemId: string): Promise<PlaybackItemSettled>;
+  interrupt?(input: { reason: "manual" | "barge_in" | "network" | "unknown" | "asr_failure" | "call_close"; targetOutputId?: string }): Promise<void> | void;
+  getCurrentPlayback?(): Promise<PlaybackConsumerSnapshot> | PlaybackConsumerSnapshot;
   stop(): Promise<void> | void;
 };
 
@@ -100,7 +104,7 @@ export type EncodePcmL16StreamInput = Omit<EncodePcmL16Input, "pcm"> & {
 export type WebRtcVoiceTtsStreamEvent =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
-  | { type: "audio"; sequence: number; text?: string; textchunk?: string; chunk: Uint8Array; soundchunk?: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
+  | { type: "audio_file"; sequence: number; text?: string; textchunk?: string; assetId: string; filePath: string }
   | { type: "part_done"; sequence: number }
   | { type: "done" };
 
@@ -110,7 +114,8 @@ export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
     time: ReturnType<typeof createCurrentTimeProvider>;
     source: "send_chat.voice";
     streamId?: string;
-  }): AsyncIterable<WebRtcVoiceTtsStreamEvent>;
+    onInputBufferIdle?(): void | Promise<void>;
+  }): AsyncIterable<unknown>;
 };
 
 export type WebRtcVoiceStatusEvent = {
@@ -163,6 +168,7 @@ export type WebRtcVoiceTalkRuntime = {
   startAgentLoop?(sessionId: string): void | Promise<void>;
   claimBufferedOutputText?(sessionId: string): unknown;
   claimReadyOutputChunk?(sessionId: string): unknown;
+  isSessionOutputIdle?(sessionId: string): unknown;
   markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
   interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
   interruptLatestOutput?(input: { sessionId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
@@ -180,7 +186,9 @@ export type WebRtcVoiceDeps = {
   createAsrSession(start: InboundAudioStreamStartFrame): AsrInboundStreamSession;
   voiceSynthesizer: WebRtcVoiceSynthesizer;
   decodeAudioFileToFrames(input: DecodeAudioFileInput): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
+  /** @deprecated WebRTC voice playback now decodes synthesized file blocks in the playback consumer. */
   encodePcmL16ToFrames?(input: EncodePcmL16Input): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
+  /** @deprecated WebRTC voice playback now decodes synthesized file blocks in the playback consumer. */
   encodePcmL16StreamToFrames?(input: EncodePcmL16StreamInput): AsyncIterable<ServerAudioFrame>;
   talkRuntime?: WebRtcVoiceTalkRuntime;
   testAsr?(): Promise<{ ok: true } | { ok: false; error: string; message?: string }>;
@@ -224,6 +232,28 @@ export type TtsTask = {
   controller: AbortController;
 };
 
+export type EnqueuePlaybackAudioFileInput = {
+  itemId: string;
+  outputId?: string;
+  chunkId?: string;
+  filePath: string;
+  assetId: string;
+  originalText?: string;
+  speakText?: string;
+  text: string;
+  createdAt: string;
+  interruptEpoch?: number;
+  beforeFirstPlayback?: boolean;
+};
+
+export type PlaybackItemSettled = {
+  itemId: string;
+  status: "played" | "interrupted" | "cancelled" | "failed";
+  framesWritten: number;
+  playedMs?: number;
+  totalMs?: number;
+};
+
 export type PlaybackItem = {
   outputId?: string;
   chunkId?: string;
@@ -255,7 +285,10 @@ export type PlaybackConsumer = {
   playbackTextCache: string;
   playedMs: number;
   totalMs: number;
+  status?: "idle" | "queued" | "playing" | "interrupted" | "failed";
 };
+
+export type PlaybackConsumerSnapshot = PlaybackConsumer;
 
 export type PlaybackAudioTextSpan = {
   text: string;
@@ -297,7 +330,7 @@ export type WebRtcVoiceCall = {
   acceptTextInput?(text: string): Promise<void>;
   endInboundAudio(): Promise<AsrInboundStreamAcceptResult | undefined>;
   setSpeechActive(active: boolean): Promise<void>;
-  playReplyText(text: string, outputId?: string, options?: unknown): Promise<PlaybackResult>;
+  playReplyText(text: string | AsyncIterable<string>, outputId?: string, options?: unknown): Promise<PlaybackResult>;
   interrupt(reason?: "manual" | "barge_in" | "network" | "unknown", targetOutputId?: string): Promise<void>;
   close(reason?: string): Promise<void>;
 };

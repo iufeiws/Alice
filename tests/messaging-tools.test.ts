@@ -1449,6 +1449,76 @@ test("tts text chunk splitter keeps special characters and merges short tail", (
   );
 });
 
+test("tts text chunk splitter batches fixed backend text by special-character blocks", () => {
+  assert.deepEqual(
+    splitTtsTextChunks("aaaaaa,bbbbbb!cccccc,dddddd!ee."),
+    ["aaaaaa,bbbbbb!", "cccccc,dddddd!ee."]
+  );
+});
+
+test("tts stream buffers input into takeable segments before translation and chunks backend text after translation", async () => {
+  const dir = makeTempDir("tts-stream-two-stage-splitting");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    translationEnabled: true,
+    apiPresetName: "fixed-flash",
+    prompt: "Translate to Japanese.\nText:"
+  }));
+  const sourceParts = [
+    "入口一入口一入口一入口一入口一入口一入口一。",
+    "入口二入口二入口二入口二入口二入口二入口二。",
+    "入口三入口三入口三入口三入口三入口三入口三。"
+  ];
+  const translatedOutputs = [
+    "aaaaaa,bbbbbb!cccccc,dddddd!ee.",
+    "kkkkkk,llllll!",
+    "mmmmmm,nnnnnn!oo."
+  ];
+  const translatedInputs: string[] = [];
+  const backendRequests: string[] = [];
+  const plugin = createTtsPlugin({
+    configPath,
+    baseSynthesizer: Object.assign(async () => {
+      throw new Error("non-stream synthesizer should not be used");
+    }, {
+      async *streamAudio({ text }: { text: string }) {
+        backendRequests.push(text);
+        yield new Uint8Array([backendRequests.length]);
+      }
+    }),
+    llmRequestSender: async (input) => {
+      const text = String(input.messages.at(-1)?.content ?? "");
+      translatedInputs.push(text);
+      return { message: { role: "assistant", content: translatedOutputs[translatedInputs.length - 1] ?? "" } };
+    },
+    resolveApiPreset() {
+      return {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash"
+      };
+    }
+  });
+
+  for await (const _event of plugin.voiceSynthesizer.stream!({
+    text: sourceParts,
+    time: createCurrentTimeProvider("UTC"),
+    source: "send_chat.voice",
+    streamId: "two-stage-splitting"
+  })) {
+    // Exhaust the stream.
+  }
+
+  assert.deepEqual(translatedInputs, sourceParts);
+  assert.deepEqual(backendRequests, [
+    "aaaaaa,bbbbbb!",
+    "cccccc,dddddd!ee.",
+    "kkkkkk,llllll!",
+    "mmmmmm,nnnnnn!oo."
+  ]);
+});
+
 test("tts stream translates the full conversation once and yields Genie audio chunks", async () => {
   const dir = makeTempDir("tts-stream");
   const configPath = path.join(dir, "config.json");
@@ -1508,13 +1578,15 @@ test("tts stream translates the full conversation once and yields Genie audio ch
     "translation_started",
     "translation_done",
     "audio",
+    "audio",
     "part_done",
     "done"
   ]);
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, event.textchunk, Array.from(event.soundchunk)]), [
-    [0, "ja:1", [1, 1, 1, 2]]
+  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, event.text, event.textchunk, Array.from(event.soundchunk)]), [
+    [0, "第一句第一句啊。第二句第二句啊。", "ja:1", [1, 1]],
+    [0, undefined, "ja:1", [1, 2]]
   ]);
-  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=1")), true);
+  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=2")), true);
 });
 
 test("tts stream maps returned translated audio text back to source punctuation", async () => {
@@ -1560,7 +1632,8 @@ test("tts stream maps returned translated audio text back to source punctuation"
   }
 
   assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
-    ["第一句。第二句。", "これは一文目です。二文目です。", [1, 2, 3, 4]]
+    ["第一句。", "これは一文目です。", [1, 2]],
+    ["第二句。", "二文目です。", [3, 4]]
   ]);
 });
 
@@ -1697,7 +1770,8 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
   }
 
   assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
-    ["着手机看老板有没有回消息呢！", "老板から返信があるか確認してるんだよ！", [1, 2]]
+    ["着手机看老板有没有回消息呢！", "老板から返信があるか", [1]],
+    [undefined, "確認してるんだよ！", [2]]
   ]);
 });
 

@@ -18,12 +18,18 @@ export type VoiceCallPhase =
 
 export type VoiceCallInputMode = "hold_to_talk" | "text";
 
+export type VoiceCallAudioChunkTiming = {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+};
+
 export type VoiceCallControlMessage =
   | { type: "hello"; clientId?: string; locale?: string; timezone?: string }
   | { type: "offer"; sdp: string }
   | { type: "ice"; candidate: unknown }
   | { type: "speech-state"; active: boolean }
-  | { type: "audio-chunk"; data: string }
+  | { type: "audio-chunk"; data: string; timing?: VoiceCallAudioChunkTiming }
   | { type: "input-mode"; mode: VoiceCallInputMode }
   | { type: "hold-to-talk"; active: boolean }
   | { type: "mute"; muted: boolean }

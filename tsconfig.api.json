@@ -7,6 +7,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "files": ["src/apps/api/main.ts"],
+  "files": ["src/apps/api/main.ts", "src/channels/webrtc-voice/src/media-process-worker.ts"],
   "include": []
 }

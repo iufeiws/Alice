@@ -1,6 +1,7 @@
 export type TtsStreamInputBufferOptions = {
   minChars: number;
   allowCrossNewline: boolean;
+  onIdle?(): void | Promise<void>;
 };
 
 export async function* bufferTtsStreamInput(
@@ -8,10 +9,18 @@ export async function* bufferTtsStreamInput(
   options: TtsStreamInputBufferOptions
 ): AsyncIterable<string> {
   const state = createTtsStreamInputBuffer(options);
+  const notifyIdle = () => {
+    if (state.pendingChars() !== 0) return;
+    void options.onIdle?.();
+  };
   for await (const chunk of iterateTextChunks(text)) {
-    for (const part of state.push(chunk)) yield part;
+    const parts = state.push(chunk);
+    if (parts.length > 0) notifyIdle();
+    for (const part of parts) yield part;
   }
-  for (const part of state.finish()) yield part;
+  const parts = state.finish();
+  if (parts.length > 0 || state.pendingChars() === 0) notifyIdle();
+  for (const part of parts) yield part;
 }
 
 export function createTtsStreamInputBuffer(options: TtsStreamInputBufferOptions): {
@@ -22,6 +31,7 @@ export function createTtsStreamInputBuffer(options: TtsStreamInputBufferOptions)
   const minChars = Math.max(1, Math.floor(options.minChars));
   const ready: string[] = [];
   let pending = "";
+  let canMergeShortPendingWithPrevious = false;
 
   const emitAvailable = (): string[] => {
     const out: string[] = [];
@@ -33,19 +43,22 @@ export function createTtsStreamInputBuffer(options: TtsStreamInputBufferOptions)
     if (!normalized) return;
     if (options.allowCrossNewline && ready.length > 0 && ready[ready.length - 1]!.endsWith("\n")) {
       ready[ready.length - 1] = `${ready[ready.length - 1]}${normalized}`;
+      canMergeShortPendingWithPrevious = true;
       return;
     }
     ready.push(normalized);
+    canMergeShortPendingWithPrevious = true;
   };
-  const finishPending = (): void => {
+  const finishPending = (allowShortMerge: boolean): void => {
     const normalized = normalizeBufferedPart(pending);
     pending = "";
     if (!normalized) return;
-    if (ready.length > 0 && charLength(normalized) < minChars) {
+    if (allowShortMerge && canMergeShortPendingWithPrevious && ready.length > 0 && charLength(normalized) < minChars) {
       ready[ready.length - 1] = `${ready[ready.length - 1]}${normalized}`;
       return;
     }
     ready.push(normalized);
+    canMergeShortPendingWithPrevious = true;
   };
 
   return {
@@ -58,7 +71,8 @@ export function createTtsStreamInputBuffer(options: TtsStreamInputBufferOptions)
             else if (ready.length > 0 && !ready[ready.length - 1]!.endsWith("\n")) ready[ready.length - 1] = `${ready[ready.length - 1]}\n`;
             continue;
           }
-          finishPending();
+          finishPending(true);
+          canMergeShortPendingWithPrevious = false;
           if (!options.allowCrossNewline) out.push(...emitAvailable());
           continue;
         }
@@ -72,7 +86,7 @@ export function createTtsStreamInputBuffer(options: TtsStreamInputBufferOptions)
       return out;
     },
     finish() {
-      finishPending();
+      finishPending(options.allowCrossNewline || canMergeShortPendingWithPrevious);
       const out = ready.splice(0, ready.length);
       return out.map((part) => normalizeBufferedPart(part)).filter(Boolean);
     },

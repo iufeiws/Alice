@@ -204,11 +204,13 @@ export type TtsStreamInput = {
   time: CurrentTimeProvider;
   source: "send_chat.voice";
   streamId?: string;
+  onInputBufferIdle?(): void | Promise<void>;
 };
 
 export type TtsStreamChunk =
   | { type: "translation_started"; sequence: number; sourceChars: number }
   | { type: "translation_done"; sequence: number; translatedChars: number }
+  | { type: "audio_file"; sequence: number; text?: string; textchunk?: string; assetId: string; filePath: string }
   | { type: "audio"; sequence: number; text?: string; textchunk?: string; chunk: Uint8Array; soundchunk?: Uint8Array; contentType: string; sampleRateHz?: number; channels?: number }
   | { type: "part_done"; sequence: number }
   | { type: "done" };

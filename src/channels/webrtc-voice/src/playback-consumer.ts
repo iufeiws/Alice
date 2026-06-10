@@ -41,13 +41,16 @@ export function createVoicePlaybackConsumer(input: {
   waitForTurn(item: PlaybackItem, gateOpen: () => boolean): Promise<boolean>;
 } {
   const playbackTextAdvanceDelayMs = input.deps.config.outboundAudio.frameMs;
+  const outboundPlaybackBufferTargetMs = Math.max(playbackTextAdvanceDelayMs, 120);
   const maxFrameWriteFailures = 3;
   const playbackFrameQueue = createAsyncQueue<PlaybackFrame>();
   const playbackTimelineEvents: PlaybackTimelineEvent[] = [];
+  const decodingItems = new WeakSet<PlaybackItem>();
   const consumer: PlaybackConsumer = {
     playbackTextCache: "",
     playedMs: 0,
-    totalMs: 0
+    totalMs: 0,
+    status: "idle"
   };
   let playbackConsumerTask: Promise<void> | undefined;
   let playbackTextCacheStatusTimer: ReturnType<typeof setInterval> | undefined;
@@ -105,6 +108,7 @@ export function createVoicePlaybackConsumer(input: {
     consumer.playbackTextCache = value;
     consumer.playedMs = 0;
     consumer.totalMs = totalMs;
+    consumer.status = item.status === "playing" ? "playing" : "queued";
     if (options?.emit) {
       input.deps.emitStatus?.({
         state: "tts.playback.consumer",
@@ -139,6 +143,20 @@ export function createVoicePlaybackConsumer(input: {
     const span = spans.find((candidate) => value >= candidate.startMs && value < candidate.endMs);
     return span ? span.endMs - span.startMs : undefined;
   };
+  const updateTextCache = (item: PlaybackItem, text: string | undefined, durationMs: number) => {
+    const value = normalizePlaybackTextCache(text);
+    if (!value || durationMs <= 0 || (item.totalMs ?? 0) <= 0 || item.playbackTextCache === value) return;
+    item.playbackTextCache = value;
+  };
+  const enqueueFrame = (item: PlaybackItem, frame: ServerAudioFrame, encodedMs: number) => {
+    item.queuedFrames = (item.queuedFrames ?? 0) + 1;
+    playbackFrameQueue.push({
+      item,
+      frame,
+      text: playbackTextAt(item, encodedMs),
+      textTotalMs: playbackTextTotalMsAt(item, encodedMs)
+    });
+  };
   const cleanupFinishedItems = () => {
     while (input.playbackQueue.length > 0) {
       const item = input.playbackQueue[0]!;
@@ -148,10 +166,40 @@ export function createVoicePlaybackConsumer(input: {
       item.status = item.framesWritten > 0 && item.status !== "failed" ? "played" : item.status === "failed" ? "failed" : "interrupted";
       if (currentPlayingItem === item) currentPlayingItem = undefined;
       input.playbackQueue.shift();
+      if (consumer.outputId === item.outputId && consumer.chunkId === item.chunkId) {
+        consumer.status = item.status === "failed" ? "failed" : "idle";
+      }
       input.deps.emitStatus?.({
         state: item.status === "played" ? "tts.played" : "tts.failed",
         detail: item.status === "played" ? playbackDetail(item, item.outputId) : `${playbackDetail(item, item.outputId)}${item.framesWritten > 0 ? "" : " no_frames_sent"}`.trim()
       });
+    }
+  };
+  const ensureItemFramesQueued = async (item: PlaybackItem) => {
+    if (item.producerDone || decodingItems.has(item)) return;
+    if (!item.filePath) return;
+    decodingItems.add(item);
+    try {
+      const frames = await Promise.resolve(input.deps.decodeAudioFileToFrames({
+        filePath: item.filePath,
+        sampleRateHz: input.deps.config.outboundAudio.sampleRateHz,
+        channels: input.deps.config.outboundAudio.channels,
+        frameMs: input.deps.config.outboundAudio.frameMs
+      }));
+      let encodedMs = 0;
+      for (const frame of frames) {
+        enqueueFrame(item, frame, encodedMs);
+        encodedMs += frame.durationMs;
+      }
+      item.totalMs = Math.max(item.totalMs ?? 0, encodedMs);
+      updateTextCache(item, item.speakText, encodedMs);
+      item.producerDone = true;
+      input.deps.emitStatus?.({ state: "tts.queue.producer_done", detail: `${playbackDetail(item, item.outputId)} encoded=${frames.length} queued=${item.queuedFrames ?? 0}`.trim() });
+      if (frames.length <= 0) item.status = "failed";
+    } catch (error) {
+      item.status = "failed";
+      item.producerDone = true;
+      input.deps.emitStatus?.({ state: "tts.decode.failed", detail: error instanceof Error ? error.message : String(error) });
     }
   };
   const processTimeline = (nowMs = playbackNowMs()) => {
@@ -180,6 +228,7 @@ export function createVoicePlaybackConsumer(input: {
       item.firstPlaybackStarted = true;
     }
     item.status = "playing";
+    consumer.status = "playing";
     currentPlayingItem = item;
     const nowMs = playbackNowMs();
     const frameStartAt = Math.max(outboundBufferedUntilMs, nowMs);
@@ -228,14 +277,15 @@ export function createVoicePlaybackConsumer(input: {
           return;
         }
         const streamLeftMs = Math.max(0, outboundBufferedUntilMs - nowMs);
-        if (streamLeftMs >= playbackTextAdvanceDelayMs) {
+        if (streamLeftMs >= outboundPlaybackBufferTargetMs) {
           await playbackSleep(playbackTextAdvanceDelayMs);
           continue;
         }
         const head = input.playbackQueue.find((item) => item.status === "queued" || item.status === "playing");
+        if (head) await ensureItemFramesQueued(head);
         let drained = false;
         while (head) {
-          if (Math.max(0, outboundBufferedUntilMs - playbackNowMs()) >= playbackTextAdvanceDelayMs) break;
+          if (Math.max(0, outboundBufferedUntilMs - playbackNowMs()) >= outboundPlaybackBufferTargetMs) break;
           const playbackFrame = playbackFrameQueue.shiftWhere((frame) => frame.item === head);
           if (!playbackFrame) break;
           drained = true;
@@ -293,9 +343,7 @@ export function createVoicePlaybackConsumer(input: {
     },
     processTimeline,
     updateTextCache(item, text, durationMs) {
-      const value = normalizePlaybackTextCache(text);
-      if (!value || durationMs <= 0 || (item.totalMs ?? 0) <= 0 || item.playbackTextCache === value) return;
-      item.playbackTextCache = value;
+      updateTextCache(item, text, durationMs);
     },
     updateConsumer,
     advanceConsumer,
@@ -317,13 +365,7 @@ export function createVoicePlaybackConsumer(input: {
     emitPlayingText,
     reportMissingPlayingText,
     enqueueFrame(item, frame, encodedMs) {
-      item.queuedFrames = (item.queuedFrames ?? 0) + 1;
-      playbackFrameQueue.push({
-        item,
-        frame,
-        text: playbackTextAt(item, encodedMs),
-        textTotalMs: playbackTextTotalMsAt(item, encodedMs)
-      });
+      enqueueFrame(item, frame, encodedMs);
     },
     start,
     cleanupFinishedItems,

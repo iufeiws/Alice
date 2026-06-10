@@ -20,6 +20,7 @@ export function createInterruptController(ctx: {
   bumpInterruptEpoch(): number;
   getInterruptEpoch(): number;
   bumpPlaybackGeneration(): number;
+  interruptPlayback?(input: { reason: InterruptItem["reason"]; targetOutputId?: string }): Promise<void> | void;
 }) {
   const batch: { items: InterruptItem[] } = { items: [] };
   const playbackGateOpen = () => batch.items.length === 0;
@@ -120,6 +121,7 @@ export function createInterruptController(ctx: {
 
   const runInterrupt = async (reason: InterruptItem["reason"], explicitTargetOutputId?: string) => {
     if (ctx.deps.now) ctx.playback.processTimeline();
+    await (ctx.playback as unknown as { refresh?: () => Promise<void> }).refresh?.();
     const interruptEpoch = ctx.bumpInterruptEpoch();
     ctx.bumpPlaybackGeneration();
     abortActiveTtsTasks(`voice_call_interrupt:${reason}`);
@@ -151,6 +153,7 @@ export function createInterruptController(ctx: {
       state: "talk_runtime.interrupt.breakpoint",
       detail: `前文=${beforeText} 后文=${afterText}`
     });
+    await ctx.interruptPlayback?.({ reason, targetOutputId });
     try {
       let runtimeInterrupt: unknown;
       if (ctx.deps.talkRuntime && item.targetOutputId) {

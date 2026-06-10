@@ -99,6 +99,7 @@ export type TalkBufferedOutputText = {
   outputId: string;
   sessionId: string;
   text: string;
+  status: Extract<TalkOutput["status"], "streaming" | "finished">;
 };
 
 export type TalkOutputDiscard = {
@@ -447,7 +448,7 @@ export function createTalkStore(dbPath: string): TalkStore {
     },
     claimBufferedOutputText(sessionId) {
       const row = db.prepare(`
-        SELECT output_id AS outputId, session_id AS sessionId, buffer_text AS text
+        SELECT output_id AS outputId, session_id AS sessionId, buffer_text AS text, status
         FROM talk_outputs
         WHERE session_id = ?
           AND status IN ('streaming', 'finished')
@@ -932,7 +933,8 @@ function normalizeBufferedOutputText(row: unknown): TalkBufferedOutputText | und
   return {
     outputId: value.outputId,
     sessionId: value.sessionId,
-    text: value.text
+    text: value.text,
+    status: value.status as Extract<TalkOutput["status"], "streaming" | "finished">
   };
 }
 

@@ -76,7 +76,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
             } else if (message.type === "audio-chunk") {
               const data = (message as { data?: unknown }).data;
               if (typeof data === "string") {
-                await call?.acceptInboundAudioChunk(new Uint8Array(nodeBuffer.from(data, "base64")));
+                await call?.acceptInboundAudioChunk(new Uint8Array(nodeBuffer.from(data, "base64")), normalizeAudioChunkTiming((message as { timing?: unknown }).timing));
               }
             } else if (message.type === "speak-test") {
               try {
@@ -108,6 +108,21 @@ export function attachWebRtcVoiceSignalingServer(input: {
       socket.destroy();
     }
   });
+}
+
+function normalizeAudioChunkTiming(value: unknown): { startMs: number; endMs: number; durationMs: number } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const timing = value as Record<string, unknown>;
+  const startMs = numberValue(timing.startMs);
+  const endMs = numberValue(timing.endMs);
+  const durationMs = numberValue(timing.durationMs);
+  if (startMs === undefined || endMs === undefined || durationMs === undefined) return undefined;
+  if (startMs < 0 || endMs < startMs || durationMs < 0) return undefined;
+  return { startMs, endMs, durationMs };
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function acceptWebSocket(request: any, socket: any): void {

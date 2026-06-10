@@ -18,8 +18,9 @@ export type TalkRuntime = {
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
-  claimBufferedOutputText(sessionId: string): { outputId: string; sessionId: string; text: string } | undefined;
+  claimBufferedOutputText(sessionId: string): { outputId: string; sessionId: string; text: string; status: "streaming" | "finished" } | undefined;
   claimReadyOutputChunk(sessionId: string): TalkOutputChunk | undefined;
+  isSessionOutputIdle(sessionId: string): boolean;
   markOutputChunkPlayed(input: { sessionId: string; chunkId: string }): void;
   interruptOutput(input: {
     sessionId: string;
@@ -168,6 +169,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     startAgentLoop(sessionId) {
       assertOpenSession(deps.store, sessionId);
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
+      if (!deps.store.isSessionOutputIdle(sessionId)) return;
       void deps.runAgentLoop?.(sessionId);
     },
     noteAgentLoopMaxContinuousRounds(input) {
@@ -382,6 +384,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       assertOpenSession(deps.store, sessionId);
       const now = current(deps.time);
       return deps.store.claimReadyOutputChunk(sessionId, now.occurredAt, now.occurredAtUtc);
+    },
+    isSessionOutputIdle(sessionId) {
+      assertOpenSession(deps.store, sessionId);
+      return deps.store.isSessionOutputIdle(sessionId);
     },
     markOutputChunkPlayed(input) {
       assertOpenSession(deps.store, input.sessionId);

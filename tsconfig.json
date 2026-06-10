@@ -28,5 +28,5 @@
       "@alice/feishu": ["src/plugins/feishu/src/index.ts"]
     }
   },
-  "include": ["src/apps/**/*.ts", "src/core/**/*.ts", "src/plugins/**/*.ts", "src/packages/**/*.ts", "src/workers/**/*.ts", "src/tools/**/*.ts", "src/skills/**/*.ts", "contexts/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/apps/**/*.ts", "src/channels/**/*.ts", "src/core/**/*.ts", "src/plugins/**/*.ts", "src/packages/**/*.ts", "src/workers/**/*.ts", "src/tools/**/*.ts", "src/skills/**/*.ts", "contexts/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
 }

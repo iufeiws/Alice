@@ -35,39 +35,17 @@ export async function* streamTtsText(
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
   const conversion = selectedTtsConversionProvider(config);
-  const synthesisStream = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
-  if (!synthesisStream.streamAudio && !synthesisStream.streamAudioWithText) {
-    throw new Error("tts stream requires a streaming Genie TTS synthesizer");
-  }
+  const synthesizer = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
 
-  const pcmFormat = selectedTtsStreamPcmFormat(config);
   let streamSequence = 0;
   for await (const sourceText of bufferTtsStreamInput(input.text, {
     minChars: config.translationEnabled ? 20 : 12,
-    allowCrossNewline: config.translationEnabled
+    allowCrossNewline: config.translationEnabled,
+    onIdle: input.onInputBufferIdle
   })) {
   const sourceChars = Array.from(sourceText).length;
   if (!sourceText.trim()) {
     deps.appendLog?.("info", `tts stream skipped: empty input stream=${input.streamId ?? ""}`);
-    continue;
-  }
-  const symbolOnly = ttsSymbolOnlyInput(sourceText);
-  if (symbolOnly) {
-    const chunk = ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs, pcmFormat);
-    deps.appendLog?.("info", `tts stream skipped: symbol-only input stream=${input.streamId ?? ""} symbols=${symbolOnly.symbols} silenceMs=${symbolOnly.symbols * ttsSymbolSilenceMs}`);
-    yield {
-      type: "audio",
-      sequence: streamSequence,
-      text: sourceText,
-      textchunk: sourceText,
-      chunk,
-      soundchunk: chunk,
-      contentType: ttsPcmContentType(pcmFormat),
-      sampleRateHz: pcmFormat.sampleRateHz,
-      channels: pcmFormat.channels
-    };
-    yield { type: "part_done", sequence: streamSequence };
-    streamSequence += 1;
     continue;
   }
 
@@ -92,65 +70,51 @@ export async function* streamTtsText(
   const parts = splitTtsTextChunks(ttsText);
   deps.appendLog?.("info", `tts stream tts start: stream=${input.streamId ?? ""} chars=${ttsChars} parts=${parts.length}`);
   const sourceTextMapper = createTtsSourceTextMapper(sourceText, ttsText);
-  let totalAudioChunks = 0;
-  let totalAudioBytes = 0;
+  let totalAudioFiles = 0;
   for (const part of parts) {
     const sequence = streamSequence;
     deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
-    const audio = await synthesizeTtsAudioChunk(synthesisStream, {
+    const voice = await synthesizer({
       text: part,
       time: input.time,
       ...(streamGenie ? { genie: streamGenie } : {})
-    }, pcmFormat);
-    totalAudioChunks += 1;
-    totalAudioBytes += audio.chunk.byteLength;
-    const text = sourceTextMapper.take(part);
-    const soundchunk = audio.chunk;
+    });
+    totalAudioFiles += 1;
+    const text = config.translationEnabled ? sourceTextMapper.take(part) : part;
     yield {
-      type: "audio",
+      type: "audio_file",
       sequence,
       ...(text ? { text } : {}),
       textchunk: part,
-      chunk: soundchunk,
-      soundchunk,
-      contentType: ttsPcmContentType(audio.format),
-      sampleRateHz: audio.format.sampleRateHz,
-      channels: audio.format.channels
+      assetId: voice.assetId,
+      filePath: voice.filePath
     };
     yield { type: "part_done", sequence };
     streamSequence += 1;
   }
-  deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} chunks=${totalAudioChunks} bytes=${totalAudioBytes}`);
+  deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} files=${totalAudioFiles}`);
   }
   yield { type: "done" };
 }
 
-async function synthesizeTtsAudioChunk(
+async function* synthesizeTtsAudioChunks(
   synthesizer: VoiceSynthesizer,
   input: VoiceSynthesisInput,
   fallbackFormat: { sampleRateHz: number; channels: number }
-): Promise<{ chunk: Uint8Array; format: { sampleRateHz: number; channels: number } }> {
-  const chunks: Uint8Array[] = [];
-  let total = 0;
+): AsyncIterable<{ text?: string; chunk: Uint8Array; format: { sampleRateHz: number; channels: number } }> {
   let format = fallbackFormat;
   for await (const audio of streamTtsAudioWithOptionalText(synthesizer, input)) {
     if (!audio.chunk.byteLength) continue;
-    chunks.push(audio.chunk);
-    total += audio.chunk.byteLength;
     format = {
       sampleRateHz: audio.sampleRateHz ?? format.sampleRateHz,
       channels: audio.channels ?? format.channels
     };
+    yield {
+      ...(audio.text ? { text: audio.text } : {}),
+      chunk: audio.chunk,
+      format
+    };
   }
-  if (chunks.length === 0) throw new Error("tts stream part returned no audio");
-  if (chunks.length === 1) return { chunk: chunks[0]!, format };
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { chunk: merged, format };
 }
 
 async function* streamTtsAudioWithOptionalText(

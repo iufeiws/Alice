@@ -42,10 +42,19 @@ test("voice-call hold-to-talk streams microphone PCM chunks to signaling", () =>
 
   assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(html, /const inboundAudio = \{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","chunkMs":100\};/);
-  assert.match(html, /startPcmStreaming\(localStream\);/);
-  assert.match(html, /function startPcmStreaming\(stream\)/);
-  assert.match(html, /downsampleToPcm16\(input, audioContext\.sampleRate, inboundAudio\.sampleRateHz\)/);
-  assert.match(html, /sendSignal\(\{ type: "audio-chunk", data: btoa\(binary\) \}\);/);
+  assert.match(html, /await startPcmStreaming\(localStream\);/);
+  assert.match(html, /async function startPcmStreaming\(stream\)/);
+  assert.match(html, /audioContext\.audioWorklet\.addModule\(pcmWorkletUrl\)/);
+  assert.match(html, /new AudioWorkletNode\(audioContext, "alice-pcm16-capture"/);
+  assert.match(html, /registerProcessor\("alice-pcm16-capture", AlicePcm16Capture\);/);
+  assert.match(html, /sendSignal\(\{ type: "audio-chunk", data: btoa\(binary\), timing \}\);/);
+  assert.doesNotMatch(html, /createScriptProcessor/);
+  assert.match(html, /#holdTalkButton, #holdTalkButton \*/);
+  assert.match(html, /-webkit-touch-callout: none;/);
+  assert.match(html, /-webkit-user-select: none;/);
+  assert.match(html, /user-select: none;/);
+  assert.match(html, /touch-action: none;/);
+  assert.match(html, /holdTalkButton\.addEventListener\("contextmenu", \(event\) => event\.preventDefault\(\)\);/);
   assert.match(html, /sendSignal\(\{ type: "hold-to-talk", active: true \}\);/);
   assert.match(html, /sendSignal\(\{ type: "hold-to-talk", active: false \}\);/);
   assert.match(html, /stopPcmStreaming\(\);/);

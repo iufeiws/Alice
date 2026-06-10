@@ -2,12 +2,10 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { createAsrPlugin } from "../../../channels/asr/src/index.js";
 import {
   attachWebRtcVoiceSignalingServer,
+  createMediaProcessPeer,
   createWebRtcVoicePlugin,
-  createWeriftPeer,
   decodeAudioFileToOpusRtpFrames,
   defaultWebRtcVoiceConfig,
-  encodePcmL16StreamToOpusRtpFrames,
-  encodePcmL16ToOpusRtpFrames,
   type WebRtcVoiceCall,
   type WebRtcVoiceTtsArchiveInput,
   type WebRtcVoiceStatusEvent
@@ -37,9 +35,13 @@ export function createWebRtcVoiceRuntime(input: {
     config: defaultWebRtcVoiceConfig(),
     time: input.time,
     async createPeer(peerInput) {
-      return createWeriftPeer({
+      return createMediaProcessPeer({
         ...peerInput,
-        onStatus: (event) => input.appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`)
+        config: defaultWebRtcVoiceConfig(),
+        onStatus: (event) => {
+          input.appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
+          broadcastStatus(event);
+        }
       });
     },
     createAsrSession(start) {
@@ -53,12 +55,6 @@ export function createWebRtcVoiceRuntime(input: {
     voiceSynthesizer: input.voiceSynthesizer as any,
     decodeAudioFileToFrames(decodeInput) {
       return decodeAudioFileToOpusRtpFrames(decodeInput);
-    },
-    encodePcmL16ToFrames(encodeInput) {
-      return encodePcmL16ToOpusRtpFrames(encodeInput);
-    },
-    encodePcmL16StreamToFrames(encodeInput) {
-      return encodePcmL16StreamToOpusRtpFrames(encodeInput);
     },
     archiveTtsOutput(archiveInput) {
       return archiveVoiceCallTtsOutput(archiveInput, {

@@ -4,12 +4,14 @@ export type LLMMessageSanitizationOptions = {
   removeEmptyAssistantToolCalls?: boolean;
   removeAssistantReasoningWithoutToolCall?: boolean;
   removeParenthesizedAssistantResponseContent?: boolean;
+  mergeConsecutiveAssistantContent?: boolean;
 };
 
 export const defaultLLMMessageSanitizationOptions: Required<LLMMessageSanitizationOptions> = {
   removeEmptyAssistantToolCalls: true,
   removeAssistantReasoningWithoutToolCall: true,
-  removeParenthesizedAssistantResponseContent: true
+  removeParenthesizedAssistantResponseContent: true,
+  mergeConsecutiveAssistantContent: true
 };
 
 export function sanitizeLLMRequestMessages(
@@ -17,7 +19,7 @@ export function sanitizeLLMRequestMessages(
   options: LLMMessageSanitizationOptions = {}
 ): LLMMessage[] {
   const resolved = { ...defaultLLMMessageSanitizationOptions, ...options };
-  return messages.map((message) => {
+  const sanitized = messages.map((message) => {
     const sanitized: LLMMessage = {
       ...message,
       toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
@@ -39,6 +41,7 @@ export function sanitizeLLMRequestMessages(
     }
     return sanitized;
   });
+  return resolved.mergeConsecutiveAssistantContent ? mergeConsecutiveAssistantContent(sanitized) : sanitized;
 }
 
 export function sanitizeLLMResponseMessage(
@@ -91,6 +94,27 @@ function cloneLLMMessage(message: LLMMessage): LLMMessage {
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
   };
+}
+
+function mergeConsecutiveAssistantContent(messages: LLMMessage[]): LLMMessage[] {
+  const result: LLMMessage[] = [];
+  for (const message of messages) {
+    const previous = result.at(-1);
+    if (previous && canMergeAssistantContent(previous) && canMergeAssistantContent(message)) {
+      previous.content = `${previous.content}\n${message.content}`;
+      continue;
+    }
+    result.push(message);
+  }
+  return result;
+}
+
+function canMergeAssistantContent(message: LLMMessage): boolean {
+  return message.role === "assistant"
+    && !hasAssistantFunctionCall(message)
+    && message.reasoningContent === undefined
+    && message.name === undefined
+    && message.toolCallId === undefined;
 }
 
 function hasAssistantFunctionCall(message: LLMMessage): boolean {

@@ -266,10 +266,60 @@ test("LLM request message sanitization removes empty assistant tool calls before
     round: 0
   });
 
+  assert.equal(requestMessages?.[0].content, "no tool\nempty tools");
   assert.equal(requestMessages?.[0].reasoningContent, undefined);
-  assert.equal(requestMessages?.[1].toolCalls, undefined);
-  assert.equal(requestMessages?.[1].reasoningContent, undefined);
-  assert.equal(requestMessages?.[2].reasoningContent, "keep me");
+  assert.equal(requestMessages?.[0].toolCalls, undefined);
+  assert.equal(requestMessages?.[1].content, "tool");
+  assert.equal(requestMessages?.[1].reasoningContent, "keep me");
+});
+
+test("LLM request message sanitization merges consecutive assistant content", async () => {
+  let requestMessages: any[] | undefined;
+  const client: LLMClient = {
+    async chat(input) {
+      requestMessages = input.messages as any[];
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [
+      { role: "assistant", content: "one" },
+      { role: "assistant", content: "two" },
+      { role: "user", content: "break" },
+      { role: "assistant", content: "three" },
+      {
+        role: "assistant",
+        content: "tool",
+        toolCalls: [{
+          id: "call_1",
+          type: "function",
+          function: { name: "check_chat", arguments: "{}" }
+        }]
+      },
+      { role: "assistant", content: "four" }
+    ],
+    model: "core-model",
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(requestMessages?.map((message) => `${message.role}:${message.content}`), [
+    "assistant:one\ntwo",
+    "user:break",
+    "assistant:three",
+    "assistant:tool",
+    "assistant:four"
+  ]);
 });
 
 test("LLM request message sanitization settings can be disabled separately", async () => {
@@ -286,7 +336,8 @@ test("LLM request message sanitization settings can be disabled separately", asy
     },
     messageSanitization: {
       removeEmptyAssistantToolCalls: false,
-      removeAssistantReasoningWithoutToolCall: false
+      removeAssistantReasoningWithoutToolCall: false,
+      mergeConsecutiveAssistantContent: false
     },
     retryDelayMs: () => 0,
     sleep: async () => {}
@@ -295,7 +346,10 @@ test("LLM request message sanitization settings can be disabled separately", asy
   await requests.send({
     agentId: "chat",
     client,
-    messages: [{ role: "assistant", content: "", reasoningContent: "keep", toolCalls: [] }],
+    messages: [
+      { role: "assistant", content: "", reasoningContent: "keep", toolCalls: [] },
+      { role: "assistant", content: "separate" }
+    ],
     model: "core-model",
     toolNames: [],
     round: 0
@@ -303,6 +357,7 @@ test("LLM request message sanitization settings can be disabled separately", asy
 
   assert.deepEqual(requestMessages?.[0].toolCalls, []);
   assert.equal(requestMessages?.[0].reasoningContent, "keep");
+  assert.equal(requestMessages?.[1].content, "separate");
 });
 
 test("openai-compatible client removes parenthesized assistant response content", async () => {

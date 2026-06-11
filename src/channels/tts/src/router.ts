@@ -22,7 +22,15 @@ type TtsRouterCache = {
   provider?: VoiceSynthesizer;
 };
 
+type TtsProviderRateLimitState = {
+  starts: number[];
+  tail: Promise<void>;
+};
+
 const routerCaches = new WeakMap<TtsPluginDeps, TtsRouterCache>();
+const providerRateLimits = new Map<string, TtsProviderRateLimitState>();
+const providerRateLimitMaxRequests = 3;
+const providerRateLimitWindowMs = 1000;
 
 export async function synthesizeTtsRouted(
   input: VoiceSynthesisInput,
@@ -37,7 +45,9 @@ export async function synthesizeTtsRouted(
   }
 
   const conversion = selectedTtsConversionProvider(config);
-  const provider = resolveCachedTtsProvider(conversion, config, deps);
+  const providerKey = ttsProviderCacheKey(conversion, config);
+  const provider = resolveCachedTtsProvider(conversion, providerKey, config, deps);
+  await waitForTtsProviderRateLimit(providerKey);
   return provider({
     ...input,
     ...(provider === deps.baseSynthesizer && options.genie !== undefined ? { genie: options.genie } : {})
@@ -60,11 +70,11 @@ export function ttsSilentPcmL16(durationMs: number, format: { sampleRateHz?: num
 
 function resolveCachedTtsProvider(
   conversion: "genie" | "openai-api" | "bailian",
+  key: string,
   config: TtsPluginConfig,
   deps: TtsPluginDeps
 ): VoiceSynthesizer {
   if (conversion === "genie") return deps.baseSynthesizer;
-  const key = ttsProviderCacheKey(conversion, config);
   const cache = routerCaches.get(deps) ?? {};
   if (cache.key === key && cache.provider) return cache.provider;
   const provider = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
@@ -76,6 +86,25 @@ function ttsProviderCacheKey(conversion: "genie" | "openai-api" | "bailian", con
   if (conversion === "openai-api") return JSON.stringify({ conversion, config: config.conversion?.openaiApi });
   if (conversion === "bailian") return JSON.stringify({ conversion, config: config.conversion?.bailian });
   return JSON.stringify({ conversion });
+}
+
+async function waitForTtsProviderRateLimit(key: string): Promise<void> {
+  const state = providerRateLimits.get(key) ?? { starts: [], tail: Promise.resolve() };
+  providerRateLimits.set(key, state);
+  const run = state.tail.then(async () => {
+    while (true) {
+      const now = Date.now();
+      state.starts = state.starts.filter((startedAt) => now - startedAt < providerRateLimitWindowMs);
+      if (state.starts.length < providerRateLimitMaxRequests) {
+        state.starts.push(now);
+        return;
+      }
+      const waitMs = providerRateLimitWindowMs - (now - state.starts[0]!) + 1;
+      await sleep(Math.max(1, waitMs));
+    }
+  });
+  state.tail = run.catch(() => {});
+  await run;
 }
 
 function silenceSynthesizer(input: VoiceSynthesisInput, symbolOnly: { durationMs: number }): VoiceSynthesisResult {
@@ -93,6 +122,10 @@ function silenceSynthesizer(input: VoiceSynthesisInput, symbolOnly: { durationMs
     assetId: path.join(outputDir.relativePath, `${baseName}.wav`),
     filePath
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function uniqueSilenceBaseName(outputDir: string, iso: string): string {

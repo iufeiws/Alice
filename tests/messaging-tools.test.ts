@@ -1180,6 +1180,49 @@ test("tts router returns a silence file for symbol-only text before backend requ
   }
 });
 
+test("tts router rate limits same provider to three requests per second", async () => {
+  const requestStarts: number[] = [];
+  let stampIndex = 0;
+  const files: string[] = [];
+  const providerId = `rate-limit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const config = {
+    enabled: true,
+    translationEnabled: false,
+    conversion: {
+      provider: "openai-api" as const,
+      openaiApi: {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: providerId,
+        voice: "unit"
+      }
+    },
+    prompt: "Read aloud."
+  };
+  const deps = {
+    baseSynthesizer: async () => {
+      throw new Error("base synthesizer should not be used");
+    },
+    fetch: async () => {
+      requestStarts.push(Date.now());
+      return new Response(new Uint8Array([1, 2]));
+    }
+  };
+  const time = createCurrentTimeProvider("UTC", () => new Date(Date.UTC(2026, 4, 26, 0, 0, stampIndex++)));
+
+  try {
+    const results = await Promise.all([0, 1, 2, 3].map((index) => synthesizeTtsRouted({
+      text: `text ${index}`,
+      time
+    }, config, deps)));
+    files.push(...results.map((result) => result.filePath));
+    assert.equal(requestStarts.length, 4);
+    assert.equal(requestStarts[3]! - requestStarts[0]! >= 900, true);
+  } finally {
+    await Promise.all(files.map((filePath) => fsp.rm(filePath, { force: true })));
+  }
+});
+
 test("tts plugin config reads switch, api preset, and prompt from plugin folder config", () => {
   const dir = makeTempDir("tts-config");
   const configPath = path.join(dir, "config.json");

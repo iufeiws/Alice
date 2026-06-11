@@ -690,7 +690,7 @@ function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, us
   const blocks: string[] = [];
   let currentLines: string[] = [];
   let currentTime: Date | undefined;
-  let activeCall: { sessionId: string; lines: string[]; durationMs?: number } | undefined;
+  let activeCall: { sessionId: string; lines: string[]; durationMs?: number; currentSpeaker?: string } | undefined;
 
   const flushChatBlock = () => {
     if (currentLines.length > 0) {
@@ -721,8 +721,7 @@ function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, us
         };
       }
       activeCall.durationMs = transcript.durationMs ?? activeCall.durationMs;
-      const rendered = formatVoiceCallTranscriptRow(transcript, userName);
-      if (rendered) activeCall.lines.push(...rendered.split("\n"));
+      appendVoiceCallTranscriptRow(activeCall, transcript, userName);
       if (transcript.role === "system" && transcript.contentText.trim() === "结束") {
         activeCall.lines.push(`<call-duration>${formatDurationMs(activeCall.durationMs)}</call-duration>`);
         flushActiveCall();
@@ -731,6 +730,7 @@ function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, us
     }
 
     if (activeCall && entry.kind === "message") {
+      activeCall.currentSpeaker = undefined;
       activeCall.lines.push(`[message]${formatMessageContentLine(entry.message, userName)}`);
       continue;
     }
@@ -819,23 +819,31 @@ function transcriptRole(value: unknown): VoiceCallTranscriptRow["role"] | undefi
   return value === "system" || value === "assistant" || value === "user" ? value : undefined;
 }
 
-function formatVoiceCallTranscriptRow(row: VoiceCallTranscriptRow, userName: string): string {
+function appendVoiceCallTranscriptRow(
+  activeCall: { lines: string[]; currentSpeaker?: string },
+  row: VoiceCallTranscriptRow,
+  userName: string
+): void {
   if (row.role === "system") {
     const text = row.contentText.trim();
-    if (text === "开始") return "-已接通-";
-    if (text === "结束") return "-已挂断-";
-    return text;
+    activeCall.currentSpeaker = undefined;
+    if (text === "开始") activeCall.lines.push("-已接通-");
+    else if (text === "结束") activeCall.lines.push("-已挂断-");
+    else if (text) activeCall.lines.push(text);
+    return;
   }
-  return formatSpeakerText(row.role === "assistant" ? "Alice" : userName, row.contentText);
-}
 
-function formatSpeakerText(speaker: string, text: string): string {
-  return text
+  const speaker = row.role === "assistant" ? "Alice" : userName;
+  const lines = row.contentText
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => `${speaker}:${line}`)
-    .join("\n");
+    .filter(Boolean);
+  if (lines.length === 0) return;
+  if (activeCall.currentSpeaker !== speaker) {
+    activeCall.lines.push(`${speaker}:`);
+    activeCall.currentSpeaker = speaker;
+  }
+  activeCall.lines.push(...lines);
 }
 
 function numberValue(value: unknown): number | undefined {

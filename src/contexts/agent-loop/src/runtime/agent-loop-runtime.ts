@@ -1,65 +1,81 @@
-import { createAgentStateController, createJsonAgentStateStore } from "../domain/agent-loop-state.js";
+import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 
-const path = await import("node:path");
+export type AgentLoopKind = "chat" | "talk";
 
-export function createAgentStateRuntime(input: {
-  config: any;
-  time: any;
-  getDiaryStore(): any;
-  getDailyShellStore(): any;
-  clearLLMSession(): void;
-  sendSleepNotice(): Promise<void>;
-  triggerSleepMemoryInduction(): Promise<unknown>;
-  queueMorningEvent(): void;
-  appendLog(level: "info" | "warn" | "error", message: string): void;
-}) {
-  const agentState = createAgentStateController({
-    store: createJsonAgentStateStore(path.join(input.config.memoryFiles.root, "state", "agent-state.json")),
-    time: input.time,
-    onPersistError(error) {
-      input.appendLog("warn", `agent state persist failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  });
+export type AgentLoopPhase = "idle" | "running" | "cancelled";
 
-  let previousAgentBehaviorState = agentState.getSnapshot().state;
-  agentState.onChange((snapshot) => {
-    if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
-      const now = input.time.now();
-      const diaryStore = input.getDiaryStore();
-      diaryStore.recordSleepBoundary({
-        occurredAt: now.iso,
-        occurredAtUtc: now.date.toISOString(),
-        source: "sleep",
-        now: now.iso,
-        nowUtc: now.date.toISOString()
-      });
-      if (snapshot.sleepCocoonEnteredAt) {
-        diaryStore.recordSleepPreparationBoundary({
-          occurredAt: snapshot.sleepCocoonEnteredAt,
-          occurredAtUtc: snapshot.sleepCocoonEnteredAtUtc,
-          now: now.iso,
-          nowUtc: now.date.toISOString()
-        });
+export type ActiveMainLLMSessionState = {
+  id: number | string;
+  agentId: AgentLoopKind;
+  generation: number;
+  phase: AgentLoopPhase;
+};
+
+export type AgentLoopRunRequest = {
+  kind: AgentLoopKind;
+  sessionId: string;
+  reason: string;
+};
+
+export type AgentLoopRunSpec = {
+  kind: AgentLoopKind;
+  agentId: AgentLoopKind;
+  sessionId: string;
+  messages: LLMChatInput["messages"];
+};
+
+export type AgentLoopRuntime = {
+  getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
+  isRunning(): boolean;
+  requestRun(request: AgentLoopRunRequest): Promise<void>;
+  interrupt(reason: string): void;
+};
+
+export function createAgentLoopRuntime(): AgentLoopRuntime {
+  let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
+  let running = false;
+  let generation = 0;
+  let abortController: AbortController | undefined;
+
+  return {
+    getActiveMainLLMSession() {
+      return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
+    },
+    isRunning() {
+      return running;
+    },
+    async requestRun(request) {
+      if (running) return;
+      generation += 1;
+      running = true;
+      abortController = new AbortController();
+      activeMainLLMSession = {
+        id: request.sessionId,
+        agentId: request.kind,
+        generation,
+        phase: "running"
+      };
+      try {
+        // Execution will move here after chat/talk loop inputs are split into run specs.
+      } finally {
+        running = false;
+        abortController = undefined;
+        if (activeMainLLMSession?.generation === generation) {
+          activeMainLLMSession = {
+            ...activeMainLLMSession,
+            phase: "idle"
+          };
+        }
       }
-      input.clearLLMSession();
-      if (snapshot.reason === "sleep_started") void input.sendSleepNotice();
-      void input.triggerSleepMemoryInduction();
+    },
+    interrupt() {
+      abortController?.abort();
+      if (activeMainLLMSession) {
+        activeMainLLMSession = {
+          ...activeMainLLMSession,
+          phase: "cancelled"
+        };
+      }
     }
-    if (previousAgentBehaviorState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
-      const now = input.time.now();
-      const diaryStore = input.getDiaryStore();
-      diaryStore.recordWakeBoundary({
-        occurredAt: now.iso,
-        occurredAtUtc: now.date.toISOString(),
-        now: now.iso,
-        nowUtc: now.date.toISOString()
-      });
-      const daily = input.getDailyShellStore().reroll(now.date, input.time.timeZone);
-      input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
-      input.queueMorningEvent();
-    }
-    previousAgentBehaviorState = snapshot.state;
-  });
-
-  return agentState;
+  };
 }

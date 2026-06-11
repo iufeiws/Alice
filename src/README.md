@@ -91,7 +91,8 @@
 - `ports/policy.ts`: policy port。当前提供 allow-all 默认实现。
 - `contracts/agent-contracts.ts`: AgentEvent、AgentOutput、ChannelPlugin、ToolPlugin、ToolDefinition 等跨模块 contract。
 - `runtime/agent-core-runtime.ts`: 将 app 层 stores、LLM runtime、output router、tools 注入 AgentCore。
-- `runtime/agent-loop-runtime.ts`: agent state runtime 和状态持久化 wiring。
+- `runtime/agent-state-runtime.ts`: agent state runtime 和状态持久化 wiring。
+- `runtime/agent-loop-runtime.ts`: 主 LLM loop runtime，规划中用于统一 chat/talk loop 调度、运行状态和中断。
 
 ## `contexts/agent-profile/`
 

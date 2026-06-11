@@ -116,6 +116,7 @@ type ModeState = ChatAgentModeState;
 export * from "../../../initiative/src/adapters/json-initiated-behavior-store.js";
 export * from "../../../initiative/src/application/evaluate-triggers.js";
 export * from "../runtime/agent-loop-runtime.js";
+export * from "../runtime/agent-state-runtime.js";
 export * from "../../../llm-gateway/src/llm-requests.js";
 export * from "../../../memory/src/memory-console-runtime.js";
 export * from "../../../conversation-hub/src/application/ingest-channel-message.js";

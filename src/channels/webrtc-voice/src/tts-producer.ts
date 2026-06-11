@@ -4,6 +4,8 @@ import { WebRtcVoiceError } from "./errors.js";
 import type { VoicePlaybackConsumer } from "./playback-consumer.js";
 import { abortableAsyncIterable, hashText, raceWithAbort, sleep, stripParenthesizedText } from "./utils.js";
 
+const maxQueuedPlaybackItems = 2;
+
 export function createTtsProducer(ctx: {
   callId: string;
   talkSessionId: string;
@@ -17,6 +19,8 @@ export function createTtsProducer(ctx: {
   getInterruptEpoch(): number;
   archiveTtsOutput(deps: WebRtcVoiceDeps, input: WebRtcVoiceTtsArchiveInput): Promise<void>;
 }) {
+  const mediaPlaybackItems: PlaybackItem[] = [];
+  let reservedPlaybackSlots = 0;
   const playbackDetail = (item: PlaybackItem, fallback?: string) => {
     const output = item.outputId ?? fallback;
     if (!output && !item.chunkId) return fallback ?? "";
@@ -68,10 +72,24 @@ export function createTtsProducer(ctx: {
       const generation = ctx.getPlaybackGeneration();
       const playedItems: PlaybackItem[] = [];
       const remoteSettlements: Array<Promise<void>> = [];
+      let taskReservedPlaybackSlots = 0;
       const ttsTask: TtsTask = {
         id: `tts:${ctx.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
         outputId,
         controller: new AbortController()
+      };
+      const reservePlaybackQueueSlot = async () => {
+        while (activePlaybackItemCount() + reservedPlaybackSlots >= maxQueuedPlaybackItems) {
+          ctx.deps.emitStatus?.({ state: "tts.queue.backpressure", detail: `${outputId ?? ""} active=${activePlaybackItemCount()} reserved=${reservedPlaybackSlots}`.trim() });
+          await raceWithAbort(sleep(20), ttsTask.controller.signal);
+        }
+        reservedPlaybackSlots += 1;
+        taskReservedPlaybackSlots += 1;
+      };
+      const consumePlaybackQueueReservation = async () => {
+        if (taskReservedPlaybackSlots <= 0) await reservePlaybackQueueSlot();
+        reservedPlaybackSlots = Math.max(0, reservedPlaybackSlots - 1);
+        taskReservedPlaybackSlots = Math.max(0, taskReservedPlaybackSlots - 1);
       };
       ctx.activeTtsTasks.add(ttsTask);
       try {
@@ -93,9 +111,10 @@ export function createTtsProducer(ctx: {
             time: ctx.synthesisTime,
             source: "send_chat.voice",
             streamId: outputId,
-            onInputBufferIdle: playbackOptionCallback(options, "onInputBufferIdle")
+            onInputBufferIdle: playbackOptionCallback(options, "onInputBufferIdle"),
+            beforeBackendRequest: reservePlaybackQueueSlot
           })
-          : synthesizeSingleFile(ctx.deps, speakText, ctx.synthesisTime);
+          : synthesizeSingleFile(ctx.deps, speakText, ctx.synthesisTime, reservePlaybackQueueSlot);
 
         ctx.deps.emitStatus?.({ state: "tts.stream.started", detail: outputId });
         for await (const rawEvent of abortableAsyncIterable(stream, ttsTask.controller.signal)) {
@@ -119,6 +138,7 @@ export function createTtsProducer(ctx: {
             break;
           }
           if (event.type !== "audio_file") continue;
+          await consumePlaybackQueueReservation();
           if (ctx.outboundTrack.enqueueAudioFile) {
             const itemId = `playback:${ctx.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
             if (playedItems.length === 0) await playbackOptionCallback(options, "beforeFirstPlayback")?.();
@@ -133,6 +153,7 @@ export function createTtsProducer(ctx: {
               filePath: event.filePath
             });
             playedItems.push(item);
+            mediaPlaybackItems.push(item);
             const enqueued = await ctx.outboundTrack.enqueueAudioFile({
               itemId,
               outputId,
@@ -217,11 +238,28 @@ export function createTtsProducer(ctx: {
         if (ttsTask.controller.signal.aborted) return { status: "interrupted", outputId, frameCount: playedItems.reduce((sum, item) => sum + item.framesWritten, 0) };
         throw new WebRtcVoiceError("tts_failed", error instanceof Error ? error.message : String(error));
       } finally {
+        reservedPlaybackSlots = Math.max(0, reservedPlaybackSlots - taskReservedPlaybackSlots);
+        taskReservedPlaybackSlots = 0;
         ctx.activeTtsTasks.delete(ttsTask);
         ttsTask.controller.abort(new Error("tts_task_finished"));
       }
     }
   };
+
+  function activePlaybackItemCount(): number {
+    if (!ctx.outboundTrack.enqueueAudioFile) {
+      ctx.playback.cleanupFinishedItems();
+      return ctx.playbackQueue.filter(isActivePlaybackItem).length;
+    }
+    for (let index = mediaPlaybackItems.length - 1; index >= 0; index -= 1) {
+      if (!isActivePlaybackItem(mediaPlaybackItems[index]!)) mediaPlaybackItems.splice(index, 1);
+    }
+    return mediaPlaybackItems.length;
+  }
+}
+
+function isActivePlaybackItem(item: PlaybackItem): boolean {
+  return item.status === "queued" || item.status === "playing";
 }
 
 function normalizeTtsStreamEvent(event: unknown) {
@@ -253,9 +291,11 @@ function normalizeTtsStreamEvent(event: unknown) {
 async function* synthesizeSingleFile(
   deps: WebRtcVoiceDeps,
   text: string | AsyncIterable<string>,
-  time: ReturnType<typeof createCurrentTimeProvider>
+  time: ReturnType<typeof createCurrentTimeProvider>,
+  beforeBackendRequest?: (input: { sequence: number; text: string }) => void | Promise<void>
 ) {
   if (typeof text !== "string") throw new Error("streaming text requires tts synthesizer stream");
+  await beforeBackendRequest?.({ sequence: 0, text });
   const voice = await deps.voiceSynthesizer({ text, time });
   yield { type: "audio_file" as const, sequence: 0, text, textchunk: text, assetId: voice.assetId, filePath: voice.filePath };
   yield { type: "done" as const };

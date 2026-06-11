@@ -206,6 +206,7 @@ export type TtsStreamInput = {
   source: "send_chat.voice";
   streamId?: string;
   onInputBufferIdle?(): void | Promise<void>;
+  beforeBackendRequest?(input: { sequence: number; text: string }): void | Promise<void>;
 };
 
 export type TtsStreamChunk =

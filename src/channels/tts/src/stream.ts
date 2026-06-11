@@ -71,6 +71,7 @@ export async function* streamTtsText(
   for (const part of parts) {
     const sequence = streamSequence;
     deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
+    await input.beforeBackendRequest?.({ sequence, text: part });
     const voice = await synthesizeTtsRouted({
       text: part,
       time: input.time,

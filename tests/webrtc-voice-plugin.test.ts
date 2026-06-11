@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
+import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type PlaybackItemSettled, type ServerAudioFrame, type ServerOutboundAudioTrack, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
 import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../src/channels/asr/src/index.js";
 import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
@@ -217,6 +217,63 @@ test("WebRTC voice playback synthesizes Japanese voice and writes frames to outb
   assert.deepEqual(decodedFiles, [tempFilePath("reply.opus")]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1, 2], [3, 4]]);
   assert.equal(peer.outboundTrack?.stopped, false);
+  await call.close("test_done");
+});
+
+test("WebRTC voice backpressures TTS backend when playback queue has two active items", async () => {
+  const track = new ControlledQueueTrack();
+  const backendRequests: string[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("single-file synthesizer should not be used");
+    }, {
+      async *stream(input: { beforeBackendRequest?(request: { sequence: number; text: string }): Promise<void> | void }) {
+        for (const [sequence, text] of ["第一段。", "第二段。", "第三段。"].entries()) {
+          await input.beforeBackendRequest?.({ sequence, text });
+          backendRequests.push(text);
+          yield {
+            type: "audio_file" as const,
+            sequence,
+            text,
+            textchunk: text,
+            assetId: `generated/tts/${sequence}.opus`,
+            filePath: tempFilePath(`${sequence}.opus`)
+          };
+          yield { type: "part_done" as const, sequence };
+        }
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used with enqueueAudioFile track");
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-backpressure", userId: "browser-backpressure", offerSdp: "offer" });
+  const playback = call.playReplyText("第一段。第二段。第三段。", "output-backpressure");
+
+  await waitFor(() => backendRequests.length === 2 && track.enqueued.length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(backendRequests, ["第一段。", "第二段。"]);
+  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  await waitFor(() => backendRequests.length === 3 && track.enqueued.length === 3);
+  track.settle(1, { itemId: track.enqueued[1]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  track.settle(2, { itemId: track.enqueued[2]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+
+  const result = await playback;
+  assert.equal(result.status, "played");
+  assert.deepEqual(backendRequests, ["第一段。", "第二段。", "第三段。"]);
   await call.close("test_done");
 });
 
@@ -2898,6 +2955,39 @@ class FakeOutboundTrack {
     if (!result) return false;
     this.frames.push(frame);
     return true;
+  }
+
+  stop() {
+    this.stopped = true;
+  }
+}
+
+class ControlledQueueTrack implements ServerOutboundAudioTrack {
+  readonly enqueued: Array<{ itemId: string; filePath: string }> = [];
+  private readonly settlements: Array<{ resolve(value: PlaybackItemSettled): void }> = [];
+  stopped = false;
+
+  async writeFrame() {
+    return true;
+  }
+
+  async waitUntilReady() {
+    return true;
+  }
+
+  enqueueAudioFile(input: { itemId: string; filePath: string }) {
+    this.enqueued.push({ itemId: input.itemId, filePath: input.filePath });
+    return { itemId: input.itemId };
+  }
+
+  waitForPlaybackItem(_itemId: string) {
+    return new Promise<PlaybackItemSettled>((resolve) => {
+      this.settlements.push({ resolve });
+    });
+  }
+
+  settle(index: number, value: PlaybackItemSettled) {
+    this.settlements[index]?.resolve(value);
   }
 
   stop() {

@@ -115,6 +115,7 @@ export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
     source: "send_chat.voice";
     streamId?: string;
     onInputBufferIdle?(): void | Promise<void>;
+    beforeBackendRequest?(input: { sequence: number; text: string }): void | Promise<void>;
   }): AsyncIterable<unknown>;
 };
 

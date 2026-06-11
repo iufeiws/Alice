@@ -10,7 +10,6 @@ import os
 import signal
 import threading
 import time
-import unicodedata
 import gc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +22,7 @@ import numpy as np
 import soundfile as sf
 
 GENIE_TTS_PART_SILENCE_SECONDS = 2 / 3
+TTS_SENTENCE_ENDINGS = set("。！？.!?．")
 
 _memory_peak_lock = threading.Lock()
 _memory_peak_label = "startup"
@@ -479,8 +479,7 @@ def split_text_by_symbols(text: str) -> list[str]:
 
 
 def is_split_symbol(char: str) -> bool:
-    category = unicodedata.category(char)
-    return category.startswith("P") or category.startswith("S")
+    return char in TTS_SENTENCE_ENDINGS
 
 
 def iterate_async_bytes(source: AsyncIterator[bytes]) -> Iterator[bytes]:

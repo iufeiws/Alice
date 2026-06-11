@@ -219,10 +219,8 @@ export function createTtsPcmProgressTextMapper(
 
 function snapTtsTextBoundary(chars: string[], rawTarget: number, cursor: number): number {
   if (rawTarget >= chars.length) return chars.length;
-  const hard = nearestBoundary(chars, rawTarget, cursor, /[。！？.!?]/u);
-  if (hard !== undefined) return hard;
-  const soft = nearestBoundary(chars, rawTarget, cursor, /[，、,;；:：]/u);
-  if (soft !== undefined) return soft;
+  const boundary = nearestBoundary(chars, rawTarget, cursor, TTS_SENTENCE_ENDING_PATTERN);
+  if (boundary !== undefined) return boundary;
   return Math.min(chars.length, Math.max(cursor + 1, rawTarget));
 }
 
@@ -322,12 +320,14 @@ export function splitTtsTextChunks(text: string, options: { minChars?: number } 
   return chunks.map((chunk) => chunk.trim()).filter(Boolean);
 }
 
+const TTS_SENTENCE_ENDING_PATTERN = /[。！？.!?．]/u;
+
 function splitTtsTextBlocks(text: string): string[] {
   const blocks: string[] = [];
   let pending = "";
   for (const char of Array.from(text)) {
     pending += char;
-    if (/[\p{P}\p{S}]/u.test(char)) {
+    if (TTS_SENTENCE_ENDING_PATTERN.test(char)) {
       blocks.push(pending);
       pending = "";
     }
@@ -353,7 +353,7 @@ function takeTtsStreamPart(
   const chars = Array.from(pending);
   if (chars.length < options.minFlushChars) return undefined;
   for (let index = 0; index < pending.length; index += 1) {
-    if (/[。！？.!?\n]/.test(pending[index]!)) {
+    if (TTS_SENTENCE_ENDING_PATTERN.test(pending[index]!)) {
       return pending.slice(0, index + 1);
     }
   }
@@ -361,7 +361,7 @@ function takeTtsStreamPart(
   for (let index = 0, seen = 0; index < pending.length; index += 1) {
     const char = pending[index]!;
     seen += 1;
-    if (seen >= options.softBoundaryChars && /[。！？.!?\n]/.test(char)) {
+    if (seen >= options.softBoundaryChars && TTS_SENTENCE_ENDING_PATTERN.test(char)) {
       return pending.slice(0, index + 1);
     }
     if (seen >= hardLimit) {

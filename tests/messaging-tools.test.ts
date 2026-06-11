@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, resolveTtsText, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1654,14 +1654,14 @@ test("tts PCM progress mapper falls back to UTF character slices without punctua
   assert.equal(mapper.take(2), "ef");
 });
 
-test("tts text chunk splitter keeps special characters and merges short tail", () => {
+test("tts text chunk splitter keeps special characters and only splits on sentence endings", () => {
   assert.deepEqual(
-    splitTtsTextChunks("嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面，再来一点。没"),
-    ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面，再来一点。没"]
+    splitTtsTextChunks("嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面．再来一点。没"),
+    ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面．再来一点。没"]
   );
 });
 
-test("tts text chunk splitter batches fixed backend text by special-character blocks", () => {
+test("tts text chunk splitter batches fixed backend text by sentence-ending blocks", () => {
   assert.deepEqual(
     splitTtsTextChunks("aaaaaa,bbbbbb!cccccc,dddddd!ee."),
     ["aaaaaa,bbbbbb!", "cccccc,dddddd!ee."]
@@ -1989,6 +1989,19 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
 test("tts stream text collection preserves full conversation order", async () => {
   const text = await collectTtsStreamText(["第一句", "。", "第二句"]);
   assert.equal(text, "第一句。第二句");
+});
+
+test("tts stream splitter only flushes on configured sentence endings before hard limit", async () => {
+  const parts: string[] = [];
+  for await (const part of splitTtsStreamParts(["第一行，先不断\n第二行还不断．第三句"], {
+    minFlushChars: 4,
+    maxFlushChars: 40,
+    softBoundaryChars: 4
+  })) {
+    parts.push(part);
+  }
+
+  assert.deepEqual(parts, ["第一行，先不断\n第二行还不断．", "第三句"]);
 });
 
 test("tts passes Genie language and plugin voice assets as per-request overrides", () => {

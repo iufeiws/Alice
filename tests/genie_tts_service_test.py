@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 class GenieTtsServiceTest(unittest.TestCase):
-    def test_genie_service_splits_on_symbols_and_batches_over_ten_chars(self) -> None:
+    def test_genie_service_splits_on_sentence_endings_and_batches_over_ten_chars(self) -> None:
         with make_temp_dir() as temp_dir:
             _run_split_sentence_check(Path(temp_dir))
 
@@ -86,7 +86,7 @@ def _run_split_sentence_check(tmp_path: Path) -> None:
 
         output_path = tmp_path / "out.wav"
         runtime.synthesize(
-            text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面，再来一点。没",
+            text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面．再来一点。没",
             output_path=output_path,
             part_silence_seconds=0.25,
         )
@@ -106,7 +106,7 @@ def _run_split_sentence_check(tmp_path: Path) -> None:
 
     tts_calls = [call for call in calls if call.get("method") == "tts"]
     assert len(tts_calls) == 2
-    assert [call["text"] for call in tts_calls] == ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面，再来一点。没"]
+    assert [call["text"] for call in tts_calls] == ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面．再来一点。没"]
     assert all(call["split_sentence"] is False for call in tts_calls)
     assert [chunk.shape for chunk in concatenate_chunks] == [(16, 1), (8000, 1), (16, 1)]
     assert (tmp_path / "out.wav").is_file()

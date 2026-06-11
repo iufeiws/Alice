@@ -20,10 +20,10 @@ import type {
   VoiceSynthesizer
 } from "./types.js";
 
-import { readTtsPluginConfig, selectedTtsConversionProvider, ttsGenieOverrides } from "./config.js";
-import { createTtsConversionSynthesizer } from "./conversion.js";
+import { readTtsPluginConfig, ttsGenieOverrides } from "./config.js";
 import { streamAudioWithSymbolSilence, streamTtsText } from "./stream.js";
 import { resolveTtsText } from "./translation.js";
+import { synthesizeTtsRouted } from "./router.js";
 
 export function createTtsPlugin(deps: TtsPluginDeps): TtsPlugin {
   const config = readTtsPluginConfig(deps.configPath);
@@ -43,18 +43,10 @@ export function createTtsTranslationSynthesizer(
   const synthesize = (async (input) => {
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
-    const conversion = selectedTtsConversionProvider(config);
-    const conversionSynthesizer = createTtsConversionSynthesizer(conversion, config, deps);
-    const result = conversionSynthesizer
-      ? await conversionSynthesizer({
-        ...input,
-        text: ttsText
-      })
-      : await base({
+    const result = await synthesizeTtsRouted({
       ...input,
-      text: ttsText,
-      genie: ttsGenieOverrides(config)
-    });
+      text: ttsText
+    }, config, deps, { genie: ttsGenieOverrides(config) });
     deps.appendLog?.("info", `tts synthesis complete: asset=${result.assetId}`);
     return result;
   }) as TtsSynthesizer;
@@ -80,18 +72,10 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     if (!config.enabled) return base(input);
     const ttsText = await resolveTtsText(input.text, config, deps);
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
-    const conversion = selectedTtsConversionProvider(config);
-    const conversionSynthesizer = createTtsConversionSynthesizer(conversion, config, deps);
-    const result = conversionSynthesizer
-      ? await conversionSynthesizer({
-        ...input,
-        text: ttsText
-      })
-      : await base({
+    const result = await synthesizeTtsRouted({
       ...input,
-      text: ttsText,
-      genie: ttsGenieOverrides(config)
-    });
+      text: ttsText
+    }, config, deps, { genie: ttsGenieOverrides(config) });
     deps.appendLog?.("info", `tts synthesis complete: asset=${result.assetId}`);
     return result;
   }) as TtsSynthesizer;

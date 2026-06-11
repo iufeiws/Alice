@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, splitTtsTextChunks, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, resolveTtsText, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1125,6 +1125,61 @@ test("tts plugin can skip translation and send original text to jp tts", async (
   assert.deepEqual(synthesizedTexts, ["原文"]);
 });
 
+test("tts translation skips symbol-only text without calling llm", async () => {
+  let llmCalls = 0;
+  const translated = await resolveTtsText(" ... ", {
+    enabled: true,
+    translationEnabled: true,
+    api_preset: {
+      baseURL: "https://example.invalid/v1",
+      apiKey: "test-key",
+      model: "flash"
+    },
+    prompt: "Translate to Japanese.\nText:"
+  }, {
+    baseSynthesizer: async () => {
+      throw new Error("base synthesizer should not be used");
+    },
+    llmRequestSender: async () => {
+      llmCalls += 1;
+      return { message: { role: "assistant", content: "日本語" } };
+    }
+  });
+
+  assert.equal(translated, " ... ");
+  assert.equal(llmCalls, 0);
+});
+
+test("tts router returns a silence file for symbol-only text before backend request", async () => {
+  let backendCalls = 0;
+  const result = await synthesizeTtsRouted({
+    text: "...",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"))
+  }, {
+    enabled: true,
+    translationEnabled: false,
+    api_preset: {
+      baseURL: "",
+      model: "flash"
+    },
+    prompt: "Translate to Japanese.\nText:"
+  }, {
+    baseSynthesizer: async () => {
+      backendCalls += 1;
+      throw new Error("base synthesizer should not be used");
+    }
+  });
+
+  try {
+    assert.equal(backendCalls, 0);
+    assert.equal(result.assetId.endsWith("-silence.wav"), true);
+    assert.equal(fs.existsSync(result.filePath), true);
+    assert.equal(fs.statSync(result.filePath).size, 44 + 3 * 200 * 64);
+  } finally {
+    await fsp.rm(result.filePath, { force: true });
+  }
+});
+
 test("tts plugin config reads switch, api preset, and prompt from plugin folder config", () => {
   const dir = makeTempDir("tts-config");
   const configPath = path.join(dir, "config.json");
@@ -1541,16 +1596,16 @@ test("tts stream buffers input into takeable segments before translation and chu
   ];
   const translatedInputs: string[] = [];
   const backendRequests: string[] = [];
+  let fileIndex = 0;
   const plugin = createTtsPlugin({
     configPath,
-    baseSynthesizer: Object.assign(async () => {
-      throw new Error("non-stream synthesizer should not be used");
-    }, {
-      async *streamAudio({ text }: { text: string }) {
-        backendRequests.push(text);
-        yield new Uint8Array([backendRequests.length]);
-      }
-    }),
+    baseSynthesizer: async ({ text }) => {
+      backendRequests.push(text);
+      fileIndex += 1;
+      const filePath = path.join(dir, `voice-${fileIndex}.wav`);
+      fs.writeFileSync(filePath, `voice:${text}`);
+      return { assetId: `generated/tts/voice-${fileIndex}.wav`, filePath };
+    },
     llmRequestSender: async (input) => {
       const text = String(input.messages.at(-1)?.content ?? "");
       translatedInputs.push(text);
@@ -1598,18 +1653,17 @@ test("tts stream translates the full conversation once and yields Genie audio ch
   const streamedTexts: string[] = [];
   const streamedGenie: unknown[] = [];
   const logs: string[] = [];
+  let fileIndex = 0;
   const plugin = createTtsPlugin({
     configPath,
-    baseSynthesizer: Object.assign(async () => {
-      throw new Error("non-stream synthesizer should not be used");
-    }, {
-      async *streamAudio({ text, genie }: { text: string; genie?: unknown }) {
-        streamedTexts.push(text);
-        streamedGenie.push(genie);
-        yield new Uint8Array([streamedTexts.length, 1]);
-        yield new Uint8Array([streamedTexts.length, 2]);
-      }
-    }),
+    baseSynthesizer: async ({ text, genie }) => {
+      streamedTexts.push(text);
+      streamedGenie.push(genie);
+      fileIndex += 1;
+      const filePath = path.join(dir, `voice-${fileIndex}.wav`);
+      fs.writeFileSync(filePath, `voice:${text}`);
+      return { assetId: `generated/tts/voice-${fileIndex}.wav`, filePath };
+    },
     llmRequestSender: async (input) => {
       const text = String(input.messages.at(-1)?.content ?? "");
       translatedInputs.push(text);
@@ -1641,16 +1695,14 @@ test("tts stream translates the full conversation once and yields Genie audio ch
   assert.deepEqual(events.map((event) => event.type), [
     "translation_started",
     "translation_done",
-    "audio",
-    "audio",
+    "audio_file",
     "part_done",
     "done"
   ]);
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.sequence, event.text, event.textchunk, Array.from(event.soundchunk)]), [
-    [0, "第一句第一句啊。第二句第二句啊。", "ja:1", [1, 1]],
-    [0, undefined, "ja:1", [1, 2]]
+  assert.deepEqual(events.filter((event) => event.type === "audio_file").map((event: any) => [event.sequence, event.text, event.textchunk, path.basename(event.filePath)]), [
+    [0, "第一句第一句啊。第二句第二句啊。", "ja:1", "voice-1.wav"]
   ]);
-  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("chunks=2")), true);
+  assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("files=1")), true);
 });
 
 test("tts stream maps returned translated audio text back to source punctuation", async () => {
@@ -1661,19 +1713,17 @@ test("tts stream maps returned translated audio text back to source punctuation"
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
   }));
+  const backendTexts: string[] = [];
+  let fileIndex = 0;
   const plugin = createTtsPlugin({
     configPath,
-    baseSynthesizer: Object.assign(async () => {
-      throw new Error("non-stream synthesizer should not be used");
-    }, {
-      async *streamAudioWithText() {
-        yield { text: "これは一文目です。", chunk: new Uint8Array([1, 2]) };
-        yield { text: "二文目です。", chunk: new Uint8Array([3, 4]) };
-      },
-      async *streamAudio() {
-        throw new Error("streamAudio should not be used when streamAudioWithText is available");
-      }
-    }),
+    baseSynthesizer: async ({ text }) => {
+      backendTexts.push(text);
+      fileIndex += 1;
+      const filePath = path.join(dir, `voice-${fileIndex}.wav`);
+      fs.writeFileSync(filePath, `voice:${text}`);
+      return { assetId: `generated/tts/voice-${fileIndex}.wav`, filePath };
+    },
     llmRequestSender: async () => ({
       message: { role: "assistant", content: "これは一文目です。二文目です。" }
     }),
@@ -1695,9 +1745,9 @@ test("tts stream maps returned translated audio text back to source punctuation"
     events.push(event);
   }
 
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
-    ["第一句。", "これは一文目です。", [1, 2]],
-    ["第二句。", "二文目です。", [3, 4]]
+  assert.deepEqual(backendTexts, ["これは一文目です。二文目です。"]);
+  assert.deepEqual(events.filter((event) => event.type === "audio_file").map((event: any) => [event.text, event.textchunk, path.basename(event.filePath)]), [
+    ["第一句。第二句。", "これは一文目です。二文目です。", "voice-1.wav"]
   ]);
 });
 
@@ -1748,13 +1798,16 @@ test("tts stream returns original text with symbol-length silence for symbol-onl
 
   assert.equal(llmCalls, 0);
   assert.equal(streamCalls, 0);
-  assert.deepEqual(events.map((event) => event.type), ["audio", "part_done", "done"]);
-  assert.equal((events[0] as any).text, "！？…");
-  assert.equal((events[0] as any).textchunk, "！？…");
-  assert.equal((events[0] as any).chunk.byteLength, 3 * 100 * 64);
-  assert.equal((events[0] as any).soundchunk.byteLength, 3 * 100 * 64);
-  assert.equal((events[0] as any).chunk.every((value: number) => value === 0), true);
-  assert.equal(logs.some((message) => message.includes("symbol-only input") && message.includes("symbols=3")), true);
+  assert.deepEqual(events.map((event) => event.type), ["translation_started", "translation_done", "audio_file", "part_done", "done"]);
+  const audioFile = events.find((event) => event.type === "audio_file") as any;
+  try {
+    assert.equal(audioFile.text, "！？…");
+    assert.equal(audioFile.textchunk, "！？…");
+    assert.equal(fs.statSync(audioFile.filePath).size, 44 + 3 * 200 * 64);
+  } finally {
+    await fsp.rm(audioFile.filePath, { force: true });
+  }
+  assert.equal(logs.some((message) => message.includes("tts routed silence") && message.includes("symbols=3")), true);
 });
 
 test("tts streamAudioWithText returns symbol-only input as original text and silence", async () => {
@@ -1790,7 +1843,7 @@ test("tts streamAudioWithText returns symbol-only input as original text and sil
   assert.equal(streamCalls, 0);
   assert.equal(chunks.length, 1);
   assert.equal(chunks[0].text, "!!!");
-  assert.equal(chunks[0].chunk.byteLength, 3 * 100 * 64);
+  assert.equal(chunks[0].chunk.byteLength, 3 * 200 * 64);
   assert.equal(chunks[0].chunk.every((value) => value === 0), true);
 });
 
@@ -1802,16 +1855,17 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
   }));
+  const backendTexts: string[] = [];
+  let fileIndex = 0;
   const plugin = createTtsPlugin({
     configPath,
-    baseSynthesizer: Object.assign(async () => {
-      throw new Error("non-stream synthesizer should not be used");
-    }, {
-      async *streamAudioWithText() {
-        yield { text: "老板から返信があるか", chunk: new Uint8Array([1]) };
-        yield { text: "確認してるんだよ！", chunk: new Uint8Array([2]) };
-      }
-    }),
+    baseSynthesizer: async ({ text }) => {
+      backendTexts.push(text);
+      fileIndex += 1;
+      const filePath = path.join(dir, `voice-${fileIndex}.wav`);
+      fs.writeFileSync(filePath, `voice:${text}`);
+      return { assetId: `generated/tts/voice-${fileIndex}.wav`, filePath };
+    },
     llmRequestSender: async () => ({
       message: { role: "assistant", content: "老板から返信があるか確認してるんだよ！" }
     }),
@@ -1833,9 +1887,9 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
     events.push(event);
   }
 
-  assert.deepEqual(events.filter((event) => event.type === "audio").map((event: any) => [event.text, event.textchunk, Array.from(event.soundchunk)]), [
-    ["着手机看老板有没有回消息呢！", "老板から返信があるか", [1]],
-    [undefined, "確認してるんだよ！", [2]]
+  assert.deepEqual(backendTexts, ["老板から返信があるか確認してるんだよ！"]);
+  assert.deepEqual(events.filter((event) => event.type === "audio_file").map((event: any) => [event.text, event.textchunk, path.basename(event.filePath)]), [
+    ["着手机看老板有没有回消息呢！", "老板から返信があるか確認してるんだよ！", "voice-1.wav"]
   ]);
 });
 

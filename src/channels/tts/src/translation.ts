@@ -21,8 +21,14 @@ import type {
 } from "./types.js";
 
 import { renderTtsPrompt, resolveEffectivePreset } from "./config.js";
+import { ttsSymbolOnlyInput } from "./router.js";
 
 export async function resolveTtsText(text: string, config: TtsPluginConfig, deps: TtsPluginDeps): Promise<string> {
+  const symbolOnly = ttsSymbolOnlyInput(text);
+  if (symbolOnly) {
+    deps.appendLog?.("info", `tts translation skipped: symbol-only chars=${Array.from(text).length} symbols=${symbolOnly.symbols}`);
+    return text;
+  }
   if (!config.translationEnabled) {
     deps.appendLog?.("info", `tts translation skipped: disabled chars=${Array.from(text).length}`);
     return text;
@@ -33,6 +39,11 @@ export async function resolveTtsText(text: string, config: TtsPluginConfig, deps
 }
 
 export async function translateTtsText(text: string, config: TtsPluginConfig, deps: TtsPluginDeps): Promise<string | undefined> {
+  const symbolOnly = ttsSymbolOnlyInput(text);
+  if (symbolOnly) {
+    deps.appendLog?.("info", `tts translation skipped: symbol-only chars=${Array.from(text).length} symbols=${symbolOnly.symbols}`);
+    return text;
+  }
   const preset = resolveEffectivePreset(config, deps);
   const client = deps.llm ?? (preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined);
   if (!client && !deps.llmRequestSender) {

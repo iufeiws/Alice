@@ -22,10 +22,8 @@ import type {
 
 import { bufferTtsStreamInput } from "./stream-input-buffer.js";
 import { selectedTtsConversionProvider, ttsGenieOverrides } from "./config.js";
-import { createTtsConversionSynthesizer } from "./conversion.js";
 import { resolveTtsText } from "./translation.js";
-
-const ttsSymbolSilenceMs = 100;
+import { synthesizeTtsRouted, ttsSilentPcmL16, ttsSymbolOnlyInput } from "./router.js";
 
 export async function* streamTtsText(
   input: TtsStreamInput,
@@ -35,7 +33,6 @@ export async function* streamTtsText(
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
   const conversion = selectedTtsConversionProvider(config);
-  const synthesizer = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
 
   let streamSequence = 0;
   for await (const sourceText of bufferTtsStreamInput(input.text, {
@@ -74,11 +71,11 @@ export async function* streamTtsText(
   for (const part of parts) {
     const sequence = streamSequence;
     deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
-    const voice = await synthesizer({
+    const voice = await synthesizeTtsRouted({
       text: part,
       time: input.time,
       ...(streamGenie ? { genie: streamGenie } : {})
-    });
+    }, config, deps, { ...(streamGenie ? { genie: streamGenie } : {}) });
     totalAudioFiles += 1;
     const text = config.translationEnabled ? sourceTextMapper.take(part) : part;
     yield {
@@ -136,27 +133,12 @@ export function streamAudioWithSymbolSilence(synthesizer: VoiceSynthesizer): ((i
     if (symbolOnly) {
       yield {
         text: input.text,
-        chunk: ttsSilentPcmL16(symbolOnly.symbols * ttsSymbolSilenceMs)
+        chunk: ttsSilentPcmL16(symbolOnly.durationMs)
       };
       return;
     }
     yield* streamTtsAudioWithOptionalText(synthesizer, input);
   };
-}
-
-function ttsSymbolOnlyInput(text: string): { symbols: number } | undefined {
-  let symbols = 0;
-  for (const char of Array.from(text)) {
-    if (/\s/u.test(char)) continue;
-    if (!/[\p{P}\p{S}]/u.test(char)) return undefined;
-    symbols += 1;
-  }
-  return symbols > 0 ? { symbols } : undefined;
-}
-
-function ttsSilentPcmL16(durationMs: number, format: { sampleRateHz?: number; channels?: number } = {}): Uint8Array {
-  const bytesPerMs = ((format.sampleRateHz ?? 32_000) * (format.channels ?? 1) * 2) / 1000;
-  return new Uint8Array(Math.max(0, Math.round(durationMs * bytesPerMs)));
 }
 
 function selectedTtsStreamPcmFormat(config: TtsPluginConfig): { sampleRateHz: number; channels: number } {

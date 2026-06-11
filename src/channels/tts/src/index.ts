@@ -37,6 +37,12 @@ export {
 export { createTtsPlugin } from "./plugin.js";
 export { resolveTtsText, translateTtsText } from "./translation.js";
 export {
+  synthesizeTtsRouted,
+  ttsSilentPcmL16,
+  ttsSymbolOnlyInput,
+  ttsSymbolSilenceMs
+} from "./router.js";
+export {
   collectTtsStreamText,
   createTtsPcmProgressTextMapper,
   splitTtsStreamParts,

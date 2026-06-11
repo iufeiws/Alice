@@ -1,4 +1,6 @@
 import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import { createAgentHeartbeatRuntime } from "../../../agent-loop/src/runtime/agent-heartbeat-runtime.js";
+import type { AgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { AgentStateController, AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
@@ -37,6 +39,12 @@ export type MessageRuntimeDeps = {
   onInboundUserMessage?: (input: { sessionId: string; receivedAt: string; receivedAtUtc?: string }) => void;
   clearLLMSession?(reason: string): void;
   isLLMSessionActive?: () => boolean;
+  agentLoopRuntime?: AgentLoopRuntime;
+  talkRuntime?: {
+    startAgentLoop?(sessionId: string): void;
+    claimReadyAgentLoopSession?(): string | undefined;
+    runReadyAgentLoopSession?(sessionId: string): Promise<void> | void;
+  };
   setTypingIndicator?(input: {
     plugin: string;
     accountId?: string;
@@ -134,8 +142,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
-  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
-  let heartbeatPaused = deps.startHeartbeatPaused === true;
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,
+    startPaused: deps.startHeartbeatPaused,
+    run: runHeartbeat,
+    onPausedChange: deps.onHeartbeatPausedChange,
+    appendLog: deps.appendLog
+  });
   let previousAgentState = deps.agentState?.getSnapshot?.().state;
   const unsubscribeState = deps.agentState?.onChange((snapshot: AgentStateSnapshot | undefined) => {
     if (!snapshot) return;
@@ -143,9 +156,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.clearLLMSession?.("mode_transition");
     }
     previousAgentState = snapshot.state;
-    scheduleHeartbeat(0);
+    heartbeat.schedule(0);
   });
-  scheduleHeartbeat(0);
+  heartbeat.schedule(0);
 
   return {
     ingestEvent(event) {
@@ -237,16 +250,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       recoverPendingSessionsFromStore();
     },
     pauseHeartbeat() {
-      heartbeatPaused = true;
-      persistHeartbeatPaused();
-      clearHeartbeat();
-      deps.appendLog("info", "message runtime heartbeat paused");
+      heartbeat.pause();
     },
     resumeHeartbeat() {
-      heartbeatPaused = false;
-      persistHeartbeatPaused();
-      deps.appendLog("info", "message runtime heartbeat resumed");
-      scheduleHeartbeat(0);
+      heartbeat.resume();
     },
     async processNow() {
       recoverPendingSessionsFromStore();
@@ -255,21 +262,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     },
     getStatus() {
       return {
-        heartbeatPaused,
+        heartbeatPaused: heartbeat.isPaused(),
         pendingSessions: [...pendingSessions],
         processingSessions: [...processingSessions],
-        heartbeatScheduled: Boolean(heartbeatTimer)
+        heartbeatScheduled: heartbeat.isScheduled()
       };
     },
     async flushAll() {
-      clearHeartbeat();
+      heartbeat.flush();
       unsubscribeState?.();
     }
   };
 
   function markPending(sessionId: string): void {
     pendingSessions.add(sessionId);
-    scheduleHeartbeat(0);
+    heartbeat.schedule(0);
   }
 
   function shouldProcessInboundWithCore(event: AgentEvent): boolean {
@@ -280,30 +287,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   function recoverPendingSessionsFromStore(): void {
     for (const session of deps.store.listPendingCoreConversations()) {
       markPending(session.conversationId);
-    }
-  }
-
-  function scheduleHeartbeat(delayMs = deps.getHeartbeatIntervalMs?.() ?? 1000): void {
-    if (heartbeatPaused) return;
-    if (heartbeatTimer) return;
-    heartbeatTimer = setTimeout(() => {
-      heartbeatTimer = undefined;
-      void runHeartbeat();
-    }, Math.max(0, delayMs));
-    (heartbeatTimer as { unref?: () => void }).unref?.();
-  }
-
-  function clearHeartbeat(): void {
-    if (!heartbeatTimer) return;
-    clearTimeout(heartbeatTimer);
-    heartbeatTimer = undefined;
-  }
-
-  function persistHeartbeatPaused(): void {
-    try {
-      deps.onHeartbeatPausedChange?.(heartbeatPaused);
-    } catch (error) {
-      deps.appendLog("warn", `message runtime heartbeat state persist failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -321,15 +304,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       const handled = await runGeneratedSession(randomizedInitiatedEvent, "randomized initiated behavior");
       if (handled) processed += 1;
       deps.agentState?.setState?.("waiting", { reason: "randomized_initiated_behavior" });
-      if (!force) scheduleHeartbeat();
+      if (!force) heartbeat.schedule();
       return processed;
     }
     deps.agentState?.tick();
     if (!force && !canRunHeartbeat()) {
-      scheduleHeartbeat();
+      heartbeat.schedule();
       return 0;
     }
     if (canRunHeartbeat()) deps.onHeartbeatTick?.();
+    const talkSessionId = !force && canRunHeartbeat() ? deps.talkRuntime?.claimReadyAgentLoopSession?.() : undefined;
+    if (talkSessionId) {
+      const started = await (deps.agentLoopRuntime?.requestRun({
+        kind: "talk",
+        sessionId: talkSessionId,
+        reason: "heartbeat_talk_ready",
+        run: () => deps.talkRuntime?.runReadyAgentLoopSession?.(talkSessionId)
+      }) ?? (async () => {
+        await deps.talkRuntime?.runReadyAgentLoopSession?.(talkSessionId);
+        return true;
+      })());
+      if (!started) deps.talkRuntime?.startAgentLoop?.(talkSessionId);
+      if (started) processed += 1;
+    }
     const sleepCocoonWakeEvent = !force && canRunHeartbeat()
       ? (deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.())
       : undefined;
@@ -370,7 +367,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       }
     }
 
-    if (!force) scheduleHeartbeat();
+    if (!force) heartbeat.schedule();
     return processed;
   }
 
@@ -389,7 +386,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       await setTypingIndicator({ ...target, typing: true });
       const event = buildManualProcessEvent(target);
       deps.appendLog("info", `manual process now session started: ${target.sessionId}`);
-      const outputs = await deps.core.handleEvent(event);
+      const outputs = await runChatEvent(event, "manual_process_now");
       const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
         plugin: output.target.plugin,
         conversationId: output.target.sessionId,
@@ -450,7 +447,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     try {
       await setTypingIndicator({ ...event.source, sessionId: event.session.sessionId, typing: true });
       deps.appendLog("info", `${label} session started: ${event.session.sessionId}`);
-      const outputs = await deps.core.handleEvent(event);
+      const outputs = await runChatEvent(event, label);
       const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
         plugin: output.target.plugin,
         conversationId: output.target.sessionId,
@@ -501,8 +498,30 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function canRunHeartbeat(): boolean {
+    if (deps.agentLoopRuntime?.isRunning()) return false;
     if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
+  }
+
+  async function runChatEvent(event: AgentEvent, reason: string): Promise<AgentOutput[]> {
+    let outputs: AgentOutput[] = [];
+    const started = await (deps.agentLoopRuntime?.requestRun({
+      kind: "chat",
+      sessionId: event.session.sessionId,
+      reason,
+      run: async () => {
+        outputs = await deps.core.handleEvent(event);
+      }
+    }) ?? (async () => {
+      outputs = await deps.core.handleEvent(event);
+      return true;
+    })());
+    if (!started) throw new Error("agent_loop_busy");
+    return outputs;
+  }
+
+  function isAgentLoopBusyError(error: unknown): boolean {
+    return error instanceof Error && error.message === "agent_loop_busy";
   }
 
   function hasPendingUserMessages(): boolean {
@@ -588,8 +607,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     try {
       let outputs: AgentOutput[];
       try {
-        outputs = await deps.core.handleEvent(agentEvent);
+        outputs = await runChatEvent(agentEvent, "dirty_session");
       } catch (error) {
+        if (isAgentLoopBusyError(error)) {
+          deps.appendLog("warn", `chat session skipped: agent loop busy ${sessionId}`);
+          return;
+        }
         await sendSystemNotice(typingTargetFromPending(sessionId, pending, agentEvent, false), llmFailureNotice);
         markPendingCoreFailed(pending, error);
         throw error;

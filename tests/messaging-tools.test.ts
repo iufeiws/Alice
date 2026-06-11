@@ -186,6 +186,40 @@ test("check_chat defaults to recent outside llm sessions", async () => {
   assert.match(String(recentAgain.output), /after today check/);
 });
 
+test("check_chat default scope resets when active main llm session generation changes", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-main-session-generation"), "alice.sqlite"));
+  const baseTime = Date.parse("2026-06-11T00:00:00.000Z");
+  let generation = 1;
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "first generation history",
+    createdAt: new Date(baseTime).toISOString()
+  });
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("UTC", () => new Date(baseTime + 60_000)),
+    getSleepCocoonEnteredAt: () => new Date(baseTime - 1_000).toISOString(),
+    getActiveMainLLMSession: () => ({ generation, phase: "running" }),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const first = await tools.execute({ id: "call_generation_1_first", toolName: "check_chat", input: {} });
+  assert.match(String(first.output), /first generation history/);
+
+  const second = await tools.execute({ id: "call_generation_1_second", toolName: "check_chat", input: {} });
+  assert.doesNotMatch(String(second.output), /first generation history/);
+  assert.match(String(second.output), /nothing new/);
+
+  generation = 2;
+  const afterSwitch = await tools.execute({ id: "call_generation_2_first", toolName: "check_chat", input: {} });
+  assert.match(String(afterSwitch.output), /first generation history/);
+});
+
 test("check_chat returns current time from configured timezone provider", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-current-time"), "alice.sqlite"));
   const tools = createMessagingTools({

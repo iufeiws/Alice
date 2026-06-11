@@ -93,6 +93,7 @@
 - `runtime/agent-core-runtime.ts`: 将 app 层 stores、LLM runtime、output router、tools 注入 AgentCore。
 - `runtime/agent-state-runtime.ts`: agent state runtime 和状态持久化 wiring。
 - `runtime/agent-loop-runtime.ts`: 主 LLM loop runtime，规划中用于统一 chat/talk loop 调度、运行状态和中断。
+- `runtime/agent-heartbeat-runtime.ts`: heartbeat timer/pause/resume runtime，驱动 chat/talk 下一轮调度。
 
 ## `contexts/agent-profile/`
 

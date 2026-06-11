@@ -51,14 +51,14 @@
 
 ### 迁移步骤
 
-1. 将 `agent-loop/src/runtime/agent-loop-runtime.ts` 改名为 `agent-state-runtime.ts`，更新 import/export，保持行为不变。
-2. 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，先放入主 loop runtime 的接口和状态骨架，不接管现有执行路径。
-3. 引入 `activeMainLLMSession` 命名和主 session 状态 port；让 `messagingTools` 从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
-4. 从 `run-chat-loop.ts` 抽出通用 loop spec，先让 chat 走通用执行器，保持行为一致。
-5. 将 message runtime 中 heartbeat 相关逻辑迁移到 `agent-heartbeat-runtime.ts`；message runtime 只负责 ingest、store、pending 标记和 lifecycle。
-6. 将普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的发起统一改由 heartbeat 调 `agent-loop-runtime.requestRun(...)`。
-7. 将 talk runtime 的自旋改为 ready/claim 模式；calling 状态下 heartbeat 每秒向 talk runtime 询问是否可以发起下一轮。
-8. 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并接入通用 loop executor。
+1. [done] 将 `agent-loop/src/runtime/agent-loop-runtime.ts` 改名为 `agent-state-runtime.ts`，更新 import/export，保持行为不变。
+2. [done] 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，维护全局 `activeMainLLMSession`、running 状态和 interrupt。
+3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；让 `messagingTools` 从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
+4. [done] 将 message runtime 中 heartbeat timer/pause/resume 迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending 标记和具体消息处理任务。
+5. [done] 将普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的发起统一改由 heartbeat 调 `agent-loop-runtime.requestRun(...)`。
+6. [done] 将 talk runtime 的自旋改为 ready/claim 模式；calling 状态下 heartbeat 每秒向 talk runtime 询问是否可以发起下一轮。
+7. [todo] 从 `run-chat-loop.ts` 抽出通用 loop spec，先让 chat 走通用执行器，保持行为一致。
+8. [todo] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并接入通用 loop executor。
 9. 删除旧发起点和兼容层，更新测试与文档。
 
 ### 当前已知风险

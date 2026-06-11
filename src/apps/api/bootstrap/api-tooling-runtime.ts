@@ -7,6 +7,7 @@ export function createApiToolingRuntime(input: {
   apiContextRuntime: any;
   apiLLMRuntime: any;
   apiRuntimeState: any;
+  agentLoopRuntime: any;
   store: any;
   outputRouter: any;
   agentState: any;
@@ -28,6 +29,7 @@ export function createApiToolingRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
     agentState: input.agentState,
+    getActiveMainLLMSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
     getDefaultTarget: input.getDefaultTarget,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,

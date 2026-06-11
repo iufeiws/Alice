@@ -5,9 +5,11 @@ import { createApiToolingRuntime } from "./api-tooling-runtime.js";
 import { createApiServerStackRuntime } from "../server/api-server-stack-runtime.js";
 import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
 import { createApiControlRuntime } from "./api-control-runtime.js";
+import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 
 export function createApiRootRuntime() {
   const apiRuntimeState = createApiRuntimeState();
+  const agentLoopRuntime = createAgentLoopRuntime();
   const foundation = createApiFoundationRuntime();
   const apiLLMRuntime = createApiLLMRuntime({
     config: foundation.config,
@@ -34,6 +36,7 @@ export function createApiRootRuntime() {
     apiContextRuntime: apiControlRuntime.apiContextRuntime,
     apiLLMRuntime,
     apiRuntimeState,
+    agentLoopRuntime,
     readLLMApiPresets: foundation.readLLMApiPresets,
     store: foundation.store,
     outputRouter: apiControlRuntime.outputRouter,
@@ -53,6 +56,7 @@ export function createApiRootRuntime() {
     apiContextRuntime: apiControlRuntime.apiContextRuntime,
     apiLLMRuntime,
     apiRuntimeState,
+    agentLoopRuntime,
     store: foundation.store,
     agentState: apiControlRuntime.agentState,
     time: foundation.currentTime,
@@ -67,6 +71,7 @@ export function createApiRootRuntime() {
     serviceLock: foundation.serviceLock,
     time: foundation.currentTime,
     apiRuntimeState,
+    agentLoopRuntime,
     apiContextRuntime: apiControlRuntime.apiContextRuntime,
     apiLLMRuntime,
     apiToolingRuntime,

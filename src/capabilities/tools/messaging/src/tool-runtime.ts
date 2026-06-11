@@ -19,6 +19,7 @@ export function createToolRuntime(input: {
   diaryStore: any;
   coreProfileStore: any;
   agentState: any;
+  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
@@ -33,6 +34,7 @@ export function createToolRuntime(input: {
     getUserName: () => input.promptProfileStore.get().userName,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
+    getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget() {
       return input.getDefaultTarget();
     },

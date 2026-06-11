@@ -9,6 +9,7 @@ export function createApiCommunicationRuntime(input: {
   asrPlugin: any;
   voiceSynthesizer: any;
   talkRuntime: any;
+  agentLoopRuntime: any;
   readLLMApiPresets(): any[];
   apiContextRuntime: any;
   store: any;
@@ -51,6 +52,8 @@ export function createApiCommunicationRuntime(input: {
     time: input.time,
     store: input.store,
     core: input.core,
+    agentLoopRuntime: input.agentLoopRuntime,
+    talkRuntime: input.talkRuntime,
     agentState: input.agentState,
     outputRouter: input.outputRouter,
     isLLMSessionActive: input.isLLMSessionActive,

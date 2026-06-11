@@ -20,6 +20,7 @@ export function createApiAgentRuntime(input: {
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
   activeLLMSessionRuntime: any;
+  agentLoopRuntime: any;
   conversationStore: any;
   getActiveLLMSession(): any;
   setLLMSessionBusy(busy: boolean): void;

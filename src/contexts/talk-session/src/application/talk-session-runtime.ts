@@ -13,6 +13,8 @@ export type TalkRuntime = {
   openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
   closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
   startAgentLoop(sessionId: string): void;
+  claimReadyAgentLoopSession(): string | undefined;
+  runReadyAgentLoopSession(sessionId: string): Promise<void> | void;
   noteAgentLoopMaxContinuousRounds(input: { sessionId: string; rounds: number }): void;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
@@ -96,6 +98,7 @@ export type TalkRuntimeDeps = {
 };
 
 export const defaultTalkOutputReadyChars = 20;
+export const defaultTalkAgentLoopHardWaitMs = 5_000;
 const defaultMaxContinuousRoundIdleMs = 60_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
@@ -106,6 +109,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     clearTimeout: deps.clearTimeout ?? ((timer: ReturnType<typeof setTimeout>) => clearTimeout(timer))
   };
   const maxRoundCloseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const readyAgentLoopSessions = new Map<string, number>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -151,6 +155,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     closeSession(input) {
       assertSessionExists(deps.store, input.sessionId);
       clearMaxRoundCloseTimer(input.sessionId);
+      readyAgentLoopSessions.delete(input.sessionId);
       const now = current(deps.time);
       deps.store.closeSession({
         sessionId: input.sessionId,
@@ -168,9 +173,31 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     startAgentLoop(sessionId) {
       assertOpenSession(deps.store, sessionId);
+      markAgentLoopReady(sessionId);
+    },
+    claimReadyAgentLoopSession() {
+      const nowMs = deps.time.now().epochMs;
+      for (const [sessionId, readyAtMs] of readyAgentLoopSessions) {
+        if (nowMs < readyAtMs) continue;
+        readyAgentLoopSessions.delete(sessionId);
+        if (deps.store.getSession(sessionId)?.status !== "open") continue;
+        if (deps.store.latestUnresolvedInterrupt(sessionId)) continue;
+        if (!deps.store.isSessionOutputIdle(sessionId)) {
+          markAgentLoopReady(sessionId);
+          continue;
+        }
+        return sessionId;
+      }
+      return undefined;
+    },
+    runReadyAgentLoopSession(sessionId) {
+      assertOpenSession(deps.store, sessionId);
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
-      if (!deps.store.isSessionOutputIdle(sessionId)) return;
-      void deps.runAgentLoop?.(sessionId);
+      if (!deps.store.isSessionOutputIdle(sessionId)) {
+        markAgentLoopReady(sessionId);
+        return;
+      }
+      return deps.runAgentLoop?.(sessionId);
     },
     noteAgentLoopMaxContinuousRounds(input) {
       assertOpenSession(deps.store, input.sessionId);
@@ -221,7 +248,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
           sourceKind: event.kind,
           sourceId: segment.segmentId ?? String(segment.id)
         });
-        void deps.runAgentLoop?.(event.sessionId);
+        markAgentLoopReady(event.sessionId);
       } else if (event.kind === "input.interrupted") {
         deps.store.insertSegment({
           sessionId: event.sessionId,
@@ -313,7 +340,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       };
       if (deps.store.transaction) deps.store.transaction(commit);
       else commit();
-      if (shouldRunAgentLoop) void deps.runAgentLoop?.(batch.sessionId);
+      if (shouldRunAgentLoop) markAgentLoopReady(batch.sessionId);
     },
     appendAssistantDelta(input) {
       if (!input.delta) return;
@@ -555,6 +582,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     if (!timer) return;
     timers.clearTimeout(timer);
     maxRoundCloseTimers.delete(sessionId);
+  }
+
+  function markAgentLoopReady(sessionId: string): void {
+    readyAgentLoopSessions.set(sessionId, deps.time.now().epochMs + defaultTalkAgentLoopHardWaitMs);
   }
 }
 

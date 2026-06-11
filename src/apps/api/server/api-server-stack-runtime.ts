@@ -14,6 +14,7 @@ export function createApiServerStackRuntime(input: {
   apiContextRuntime: any;
   apiLLMRuntime: any;
   apiToolingRuntime: any;
+  agentLoopRuntime: any;
   store: any;
   outputRouter: any;
   readLLMApiPresets(): any;
@@ -32,6 +33,7 @@ export function createApiServerStackRuntime(input: {
     asrPlugin: input.apiToolingRuntime.asrPlugin,
     voiceSynthesizer: input.apiToolingRuntime.ttsPlugin.voiceSynthesizer,
     talkRuntime: input.talkRuntime,
+    agentLoopRuntime: input.agentLoopRuntime,
     readLLMApiPresets: input.readLLMApiPresets,
     apiContextRuntime: input.apiContextRuntime,
     store: input.store,

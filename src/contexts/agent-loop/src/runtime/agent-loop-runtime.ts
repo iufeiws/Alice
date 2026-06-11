@@ -15,6 +15,7 @@ export type AgentLoopRunRequest = {
   kind: AgentLoopKind;
   sessionId: string;
   reason: string;
+  run(signal: AbortSignal): Promise<void> | void;
 };
 
 export type AgentLoopRunSpec = {
@@ -27,7 +28,7 @@ export type AgentLoopRunSpec = {
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   isRunning(): boolean;
-  requestRun(request: AgentLoopRunRequest): Promise<void>;
+  requestRun(request: AgentLoopRunRequest): Promise<boolean>;
   interrupt(reason: string): void;
 };
 
@@ -45,28 +46,30 @@ export function createAgentLoopRuntime(): AgentLoopRuntime {
       return running;
     },
     async requestRun(request) {
-      if (running) return;
+      if (running) return false;
       generation += 1;
+      const runGeneration = generation;
       running = true;
       abortController = new AbortController();
       activeMainLLMSession = {
         id: request.sessionId,
         agentId: request.kind,
-        generation,
+        generation: runGeneration,
         phase: "running"
       };
       try {
-        // Execution will move here after chat/talk loop inputs are split into run specs.
+        await request.run(abortController.signal);
       } finally {
         running = false;
         abortController = undefined;
-        if (activeMainLLMSession?.generation === generation) {
+        if (activeMainLLMSession?.generation === runGeneration) {
           activeMainLLMSession = {
             ...activeMainLLMSession,
             phase: "idle"
           };
         }
       }
+      return true;
     },
     interrupt() {
       abortController?.abort();

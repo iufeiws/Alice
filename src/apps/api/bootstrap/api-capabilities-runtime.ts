@@ -14,6 +14,7 @@ export function createApiCapabilitiesRuntime(input: {
   diaryStore: any;
   coreProfileStore: any;
   agentState: any;
+  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
@@ -56,6 +57,7 @@ export function createApiCapabilitiesRuntime(input: {
     diaryStore: input.diaryStore,
     coreProfileStore: input.coreProfileStore,
     agentState: input.agentState,
+    getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget: input.getDefaultTarget,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog

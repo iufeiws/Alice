@@ -9,6 +9,7 @@ export function createApiAgentStackRuntime(input: {
   apiContextRuntime: any;
   apiLLMRuntime: any;
   apiRuntimeState: any;
+  agentLoopRuntime: any;
   store: any;
   agentState: any;
   time: any;
@@ -34,6 +35,7 @@ export function createApiAgentStackRuntime(input: {
     getAgentInitiatedBehaviorPlans: input.apiContextRuntime.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.apiContextRuntime.initiatedBehaviorRunStore,
     activeLLMSessionRuntime: input.apiLLMRuntime.activeLLMSessionRuntime,
+    agentLoopRuntime: input.agentLoopRuntime,
     conversationStore: input.store,
     getActiveLLMSession: input.apiRuntimeState.getActiveLLMSession,
     setLLMSessionBusy: input.apiRuntimeState.setLLMSessionBusy,

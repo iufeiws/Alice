@@ -7,6 +7,8 @@ export function createMessageRuntimeRuntime(input: {
   time: any;
   store: any;
   core: any;
+  agentLoopRuntime: any;
+  talkRuntime: any;
   agentState: any;
   outputRouter: any;
   isLLMSessionActive(): boolean;
@@ -38,6 +40,8 @@ export function createMessageRuntimeRuntime(input: {
     },
     store: input.store,
     core: input.core,
+    agentLoopRuntime: input.agentLoopRuntime,
+    talkRuntime: input.talkRuntime,
     agentState: input.agentState,
     outputRouter: input.outputRouter,
     isLLMSessionActive: input.isLLMSessionActive,

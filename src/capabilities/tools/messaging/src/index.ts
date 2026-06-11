@@ -51,6 +51,7 @@ export type MessagingToolsDeps = {
     relationshipName: string;
   }>;
   getSleepCocoonEnteredAt?(): string | undefined;
+  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   appendMessageLog?(input: {
     direction: "inbound" | "outbound";
     plugin: string;
@@ -106,16 +107,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const voiceSynthesizer = deps.voiceSynthesizer ?? missingVoiceSynthesizer();
   const shouldPrepareVoiceSynthesizer = Boolean(deps.voiceSynthesizer);
   let lastMessageTimestampMs: number | undefined;
-  let activeLLMSession = false;
-  let checkChatCallsInLLMSession = 0;
+  let fallbackActiveLLMSession = false;
+  let fallbackCheckChatCallsInLLMSession = 0;
+  let observedMainLLMSessionGeneration: number | undefined;
+  let checkChatCallsInObservedMainLLMSession = 0;
   let retryQueue = Promise.resolve();
 
   return {
     id: "messaging",
     noteLLMRequestStarted() {
-      if (!activeLLMSession) {
-        activeLLMSession = true;
-        checkChatCallsInLLMSession = 0;
+      if (!fallbackActiveLLMSession) {
+        fallbackActiveLLMSession = true;
+        fallbackCheckChatCallsInLLMSession = 0;
       }
       lastMessageTimestampMs = time.now().epochMs;
       voiceSynthesizer.noteActivity?.();
@@ -126,8 +129,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       }
     },
     noteLLMSessionCompleted() {
-      activeLLMSession = false;
-      checkChatCallsInLLMSession = 0;
+      fallbackActiveLLMSession = false;
+      fallbackCheckChatCallsInLLMSession = 0;
     },
     listTools() {
       return [checkChatTool, sendChatTool, waitChatTool];
@@ -223,9 +226,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (scopeHint === "new") return "new";
     if (scopeHint === "from_prefix") return "from_prefix";
     if (scopeHint === "range") return "range";
-    if (!activeLLMSession) return "today";
-    checkChatCallsInLLMSession += 1;
-    return checkChatCallsInLLMSession === 1 ? "today" : "new";
+    const mainSession = deps.getActiveMainLLMSession?.();
+    if (mainSession?.phase === "running") {
+      if (observedMainLLMSessionGeneration !== mainSession.generation) {
+        observedMainLLMSessionGeneration = mainSession.generation;
+        checkChatCallsInObservedMainLLMSession = 0;
+      }
+      checkChatCallsInObservedMainLLMSession += 1;
+      return checkChatCallsInObservedMainLLMSession === 1 ? "today" : "new";
+    }
+    if (!fallbackActiveLLMSession) return "today";
+    fallbackCheckChatCallsInLLMSession += 1;
+    return fallbackCheckChatCallsInLLMSession === 1 ? "today" : "new";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {

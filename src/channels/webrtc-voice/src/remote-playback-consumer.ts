@@ -80,7 +80,7 @@ export function createRemoteVoicePlaybackConsumer(input: {
         void refresh().then(() => {
           publishPlaybackTextBeforeBreakpoint();
         });
-      }, Math.max(16, input.deps.config.outboundAudio.frameMs));
+      }, 100);
       (statusTimer as { unref?: () => void }).unref?.();
     },
     stopTextCacheStatus() {

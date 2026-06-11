@@ -156,14 +156,6 @@ export function createVoicePlaybackConsumer(input: {
       text: beforeText
     };
   };
-  const publishPlaybackTextBeforeBreakpoint = () => {
-    const value = playbackTextBeforeBreakpoint();
-    if (!value) return;
-    const detail = JSON.stringify(value);
-    if (detail === lastPublishedPlaybackTextCache) return;
-    lastPublishedPlaybackTextCache = detail;
-    input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail });
-  };
   const updateTextCache = (item: PlaybackItem, text: string | undefined, durationMs: number) => {
     const value = normalizePlaybackTextCache(text);
     if (!value || durationMs <= 0 || (item.totalMs ?? 0) <= 0 || item.playbackTextCache === value) return;
@@ -338,7 +330,6 @@ export function createVoicePlaybackConsumer(input: {
     if (durationMs <= 0) return;
     if (consumer.outputId !== item.outputId || consumer.chunkId !== item.chunkId) return;
     consumer.playedMs = Math.max(0, Math.min(consumer.totalMs, consumer.playedMs + durationMs));
-    publishPlaybackTextBeforeBreakpoint();
   }
 
   return {
@@ -351,7 +342,12 @@ export function createVoicePlaybackConsumer(input: {
       if (playbackTextCacheStatusTimer) return;
       playbackTextCacheStatusTimer = setInterval(() => {
         if (input.isClosed()) return;
-        publishPlaybackTextBeforeBreakpoint();
+        const value = playbackTextBeforeBreakpoint();
+        if (!value) return;
+        const detail = JSON.stringify(value);
+        if (detail === lastPublishedPlaybackTextCache) return;
+        lastPublishedPlaybackTextCache = detail;
+        input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail });
       }, 100);
       (playbackTextCacheStatusTimer as { unref?: () => void }).unref?.();
     },

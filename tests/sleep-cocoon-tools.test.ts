@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentStateController, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { createSleepCocoonTools, resolveSleepDurationMs } from "../src/capabilities/tools/sleep-cocoon/src/index.js";
+import { createSleepCocoonEventRuntime, createSleepCocoonTools, resolveSleepDurationMs } from "../src/capabilities/tools/sleep-cocoon/src/index.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("sleep_cocoon schema exposes in and out actions with Chinese descriptions", () => {
@@ -212,6 +212,43 @@ test("sleep_cocoon out does not wake sleeping state", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.error, "already sleeping");
   assert.equal(controller.getSnapshot().state, "sleeping");
+});
+
+test("sleep cocoon goodnight event only runs from idle state", () => {
+  const time = createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"));
+  let state = "waiting";
+  let autoChecked = 0;
+  const runtime = createSleepCocoonEventRuntime({
+    agentState: {
+      getSnapshot() {
+        return {
+          state,
+          sleepCocoonEnteredAt: "2026-05-25T00:00:00.000"
+        };
+      },
+      setState() {},
+      canRunHeartbeat() {
+        return true;
+      },
+      noteSleepCocoonAutoChecked() {
+        autoChecked += 1;
+      }
+    },
+    time,
+    getDefaultTarget() {
+      return { plugin: "feishu", sessionId: "session-1" };
+    },
+    random: () => 0
+  });
+
+  assert.equal(runtime.maybeBuildGoodnightEvent(), undefined);
+  assert.equal(autoChecked, 0);
+
+  state = "idle";
+  const event = runtime.maybeBuildGoodnightEvent();
+
+  assert.equal(event?.meta.raw.sleepCocoonGoodnight, true);
+  assert.equal(autoChecked, 1);
 });
 
 function memoryStore(initial?: string): AgentStateStore & { content?: string } {

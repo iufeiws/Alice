@@ -39,7 +39,7 @@ export function createSleepCocoonEventRuntime(input: {
   function maybeBuildGoodnightEvent() {
     const snapshot = input.agentState.getSnapshot();
     if (!snapshot.sleepCocoonEnteredAt) return undefined;
-    if (snapshot.state === "going_to_sleep" || snapshot.state === "sleeping") return undefined;
+    if (snapshot.state !== "idle") return undefined;
     if (!input.agentState.canRunHeartbeat()) return undefined;
     const enteredAt = parseZonedIso(snapshot.sleepCocoonEnteredAt, input.time.timeZone).getTime();
     const nowMs = input.time.now().epochMs;

@@ -5,7 +5,7 @@
       "title": "Real World Suggestion",
       "role": "user",
       "enabled": true,
-      "content": "给{{user}}一个提议, 如晚饭吃什么, 来一杯奶茶, 推荐什么零食",
+      "content": "给{{user}}*一个*提议, 可能的提案:\n- 晚饭吃XXX \n- 想喝奶茶吗? \n- 你玩过XXX吗? \n确保仅一个",
       "order": 10
     }
   ]

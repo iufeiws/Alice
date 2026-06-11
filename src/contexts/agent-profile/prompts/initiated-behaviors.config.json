@@ -1,0 +1,13 @@
+{
+  "behaviors": {
+    "review": {
+      "enabled": true
+    },
+    "real_world_suggestion": {
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 2,
+      "priority": 0
+    }
+  }
+}

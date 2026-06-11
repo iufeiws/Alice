@@ -74,6 +74,7 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
     let pcmProcessor;
     let pendingRemoteIce = [];
     let typedInputInterruptSent = false;
+    let signalingKeepaliveTimer;
     function log(line, error = false) {
       const prefix = new Date().toLocaleTimeString();
       status.textContent += "[" + prefix + "] " + line + "\\n";
@@ -140,12 +141,14 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
         socket = new WebSocket(wsUrl);
         socket.addEventListener("open", async () => {
           log("signaling connected; creating offer");
+          startSignalingKeepalive();
           const offer = await peer.createOffer();
           await peer.setLocalDescription(offer);
           socket.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
         });
         socket.addEventListener("message", async (event) => {
           const message = JSON.parse(event.data);
+          if (message.type === "pong") return;
           if (message.type === "answer") {
             await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
             log("answer applied");
@@ -166,6 +169,7 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
         });
         socket.addEventListener("error", () => log("signaling websocket error", true));
         socket.addEventListener("close", () => {
+          stopSignalingKeepalive();
           stopTalking();
           talkButton.disabled = true;
           log("signaling closed");
@@ -202,6 +206,7 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
       stopTalking();
       talkButton.disabled = true;
       socket?.send(JSON.stringify({ type: "hangup", reason: "manual" }));
+      stopSignalingKeepalive();
       peer?.close();
       for (const track of localStream?.getTracks?.() || []) track.stop();
     });
@@ -260,6 +265,16 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
       talkButton.textContent = "Hold to talk";
       log("talk stopped");
       socket?.send(JSON.stringify({ type: "speech-state", active: false }));
+    }
+    function startSignalingKeepalive() {
+      stopSignalingKeepalive();
+      signalingKeepaliveTimer = window.setInterval(() => {
+        socket?.send(JSON.stringify({ type: "ping" }));
+      }, 15000);
+    }
+    function stopSignalingKeepalive() {
+      clearInterval(signalingKeepaliveTimer);
+      signalingKeepaliveTimer = undefined;
     }
     function startPcmStreaming(stream) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;

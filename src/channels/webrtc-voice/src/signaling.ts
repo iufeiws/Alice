@@ -10,7 +10,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
   path?: string;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   onCallCreated?(call: WebRtcVoiceCall): void;
-  onClientConnected?(client: { send(message: unknown): void }): void | (() => void);
+  onClientConnected?(client: { callId: string; send(message: unknown): void }): void | (() => void);
 }): void {
   const signalingPath = input.path ?? input.plugin.config.signalingPath;
   input.server.on("upgrade", (request: any, socket: any) => {
@@ -23,7 +23,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
       let call: WebRtcVoiceCall | undefined;
       let wsBuffer = nodeBuffer.alloc(0);
       const send = (message: unknown) => sendWebSocketFrame(socket, JSON.stringify(message));
-      const cleanupClient = input.onClientConnected?.({ send });
+      const cleanupClient = input.onClientConnected?.({ callId, send });
       let cleanedUp = false;
       const cleanup = () => {
         if (cleanedUp) return;
@@ -55,8 +55,8 @@ export function attachWebRtcVoiceSignalingServer(input: {
               } catch (error) {
                 const detail = error instanceof Error ? error.message : String(error);
                 input.appendLog?.("error", `webrtc voice call create failed: ${detail}`);
-                send({ type: "status", state: "tts.failed", detail });
-                send({ type: "status", state: "voice_call.hangup", detail: "tts_failed" });
+                send({ type: "status", callId, state: "tts.failed", detail });
+                send({ type: "status", callId, state: "voice_call.hangup", detail: "tts_failed" });
                 socket.end();
                 return;
               }
@@ -64,7 +64,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
               send({ type: "answer", sdp: call.answerSdp });
               answerSent = true;
               for (const candidate of pendingCandidates) send({ type: "ice", candidate });
-              send({ type: "status", state: "webrtc.answer.created" });
+              send({ type: "status", callId, state: "webrtc.answer.created" });
             } else if (message.type === "ice") {
               await call?.acceptIceCandidate(message.candidate);
             } else if (message.type === "speech-state") {
@@ -85,10 +85,12 @@ export function attachWebRtcVoiceSignalingServer(input: {
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 input.appendLog?.("error", `webrtc voice tts failed: ${message}`);
-                send({ type: "status", state: "tts.failed", detail: message });
+                send({ type: "status", callId, state: "tts.failed", detail: message });
               }
             } else if (message.type === "interrupt") {
               await call?.interrupt("manual");
+            } else if (message.type === "ping") {
+              send({ type: "pong" });
             } else if (message.type === "hangup") {
               await call?.close(message.reason);
               socket.end();

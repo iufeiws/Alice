@@ -65,6 +65,8 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.doesNotMatch(html, /typedInputFinalIdleMs/);
   assert.doesNotMatch(html, /setTimeout\(\(\) => \{/);
   assert.match(html, /type: "interrupt", reason: "manual"/);
+  assert.match(html, /type: "ping"/);
+  assert.match(html, /message\.type === "pong"/);
   assert.match(html, /-已撤回-/);
   assert.match(html, /normalizeTypedInputText/);
   assert.match(html, /\\uFFFC/);

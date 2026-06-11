@@ -119,6 +119,7 @@ export type WebRtcVoiceSynthesizer = VoiceSynthesizer & {
 };
 
 export type WebRtcVoiceStatusEvent = {
+  callId?: string;
   state: string;
   detail?: string;
 };

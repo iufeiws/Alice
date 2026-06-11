@@ -70,3 +70,24 @@ test("voice-call hold-to-talk streams microphone PCM chunks to signaling", () =>
   assert.match(html, /sendSignal\(\{ type: "hold-to-talk", active: false \}\);/);
   assert.match(html, /stopPcmStreaming\(\);/);
 });
+
+test("voice-call page keeps signaling websocket active", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /let currentCallId = "";/);
+  assert.match(html, /wsUrl\.searchParams\.set\("callId", currentCallId\);/);
+  assert.match(html, /let signalingKeepaliveTimer;/);
+  assert.match(html, /function startSignalingKeepalive\(\)/);
+  assert.match(html, /sendSignal\(\{ type: "ping" \}\);/);
+  assert.match(html, /}, 15000\);/);
+  assert.match(html, /function stopSignalingKeepalive\(\)/);
+  assert.match(html, /if \(message\.type === "pong"\) return;/);
+  assert.match(html, /if \(message\.callId && message\.callId !== currentCallId\) return;/);
+});
+
+test("voice-call page shows TTS hangup as an error instead of reconnecting", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /if \(phase === "error" \|\| phase === "ended"\) return;/);
+  assert.match(html, /state === "voice_call\.hangup" && detail === "tts_failed"\) showError\("语音生成失败", "TTS 服务异常，通话已结束。"\);/);
+});

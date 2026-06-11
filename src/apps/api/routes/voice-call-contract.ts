@@ -36,13 +36,15 @@ export type VoiceCallControlMessage =
   | { type: "wait"; active: boolean }
   | { type: "text-input"; text: string }
   | { type: "interrupt"; reason?: "manual" | "barge_in" }
+  | { type: "ping" }
   | { type: "hold"; reason?: "reload" | "pagehide" | "visibility" }
   | { type: "hangup"; reason?: string };
 
 export type VoiceCallServerMessage =
   | { type: "answer"; sdp: string }
   | { type: "ice"; candidate: unknown }
-  | { type: "status"; state: string; detail?: string }
+  | { type: "status"; callId?: string; state: string; detail?: string }
+  | { type: "pong" }
   | { type: "error"; error: string; message?: string };
 
 export type VoiceCallConfigResponse = {

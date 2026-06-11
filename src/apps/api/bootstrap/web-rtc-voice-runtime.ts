@@ -15,7 +15,7 @@ import type { TalkRuntime } from "../../../contexts/talk-session/src/application
 import type { voiceCallRoutes } from "../routes/voice-call-contract.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 
-type WebRtcVoiceClient = { send(message: unknown): void };
+type WebRtcVoiceClient = { callId: string; send(message: unknown): void };
 type AsrPlugin = ReturnType<typeof createAsrPlugin>;
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
@@ -40,7 +40,7 @@ export function createWebRtcVoiceRuntime(input: {
         config: defaultWebRtcVoiceConfig(),
         onStatus: (event) => {
           input.appendLog("info", `webrtc voice ${event.state}${event.detail ? `: ${event.detail}` : ""}`);
-          broadcastStatus(event);
+          broadcastStatus({ ...event, callId: event.callId ?? peerInput.callId });
         }
       });
     },
@@ -107,8 +107,9 @@ export function createWebRtcVoiceRuntime(input: {
   };
 
   function broadcastStatus(event: WebRtcVoiceStatusEvent) {
-    const message = { type: "status", state: event.state, detail: event.detail };
+    const message = { type: "status", callId: event.callId, state: event.state, detail: event.detail };
     for (const client of clients) {
+      if (event.callId && client.callId !== event.callId) continue;
       try {
         client.send(message);
       } catch (error) {

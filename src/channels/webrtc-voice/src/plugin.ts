@@ -44,7 +44,12 @@ export function createWebRtcVoicePlugin(deps: WebRtcVoiceDeps): WebRtcVoicePlugi
         throw new WebRtcVoiceError("webrtc_negotiation_failed", error instanceof Error ? error.message : String(error));
       }
 
-      return await createCallState(input, answerSdp, peer, outboundTrack, deps);
+      return await createCallState(input, answerSdp, peer, outboundTrack, {
+        ...deps,
+        emitStatus(event) {
+          deps.emitStatus?.({ ...event, callId: event.callId ?? input.callId });
+        }
+      });
     }
   };
 }

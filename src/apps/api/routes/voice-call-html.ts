@@ -543,6 +543,7 @@ export function renderVoiceCallHtml(): string {
     let speechActive = false;
     let connectedAt = 0;
     let elapsedTimer;
+    let signalingKeepaliveTimer;
     let animationFrame;
     let pendingRemoteIce = [];
     let waiting = false;
@@ -557,6 +558,7 @@ export function renderVoiceCallHtml(): string {
     let previousAliceText = "";
     let currentAliceText = "";
     let currentAliceChunkId = "";
+    let currentCallId = "";
     const inputModes = ["text", "hold_to_talk"];
     const popupWidth = 420;
     const popupHeight = 747;
@@ -645,6 +647,7 @@ export function renderVoiceCallHtml(): string {
           void remoteAudio.play().catch(() => showError("远端音频播放失败", "点击页面后继续播放。"));
         });
         peer.addEventListener("connectionstatechange", () => {
+          if (phase === "error" || phase === "ended") return;
           if (peer.connectionState === "connected") setPreConnectedPhase("connecting", "链路已建立，等待首段音频");
           if (peer.connectionState === "connecting") setPreConnectedPhase("connecting");
           if (peer.connectionState === "disconnected") setPhase("reconnecting");
@@ -679,10 +682,12 @@ export function renderVoiceCallHtml(): string {
     async function openSignaling(signalingPath) {
       const wsUrl = new URL(signalingPath, window.location.href);
       wsUrl.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      wsUrl.searchParams.set("callId", crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+      currentCallId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+      wsUrl.searchParams.set("callId", currentCallId);
       socket = new WebSocket(wsUrl);
       socket.addEventListener("open", async () => {
         setPhase("ringing");
+        startSignalingKeepalive();
         sendSignal({ type: "hello", locale: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
@@ -691,12 +696,14 @@ export function renderVoiceCallHtml(): string {
       socket.addEventListener("message", (event) => void handleServerSignal(JSON.parse(event.data)));
       socket.addEventListener("error", () => showError("无法连接通话服务", "信令连接失败。"));
       socket.addEventListener("close", () => {
+        stopSignalingKeepalive();
         if (pageHolding) return;
         if (phase !== "ended" && phase !== "error") setPhase("ended");
       });
     }
 
     async function handleServerSignal(message) {
+      if (message.type === "pong") return;
       if (message.type === "answer") {
         await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
         for (const candidate of pendingRemoteIce.splice(0)) {
@@ -710,6 +717,7 @@ export function renderVoiceCallHtml(): string {
         return;
       }
       if (message.type === "status") {
+        if (message.callId && message.callId !== currentCallId) return;
         applyBackendStatus(message.state, message.detail);
         return;
       }
@@ -732,6 +740,7 @@ export function renderVoiceCallHtml(): string {
       if (state === "voice_call.playback_text_cache" && detail) updateAlicePlaybackText(detail);
       if ((state === "talk_runtime.ingress" || state === "talk_runtime.ingress.todo") && detail) updateUserFinalTranscript(detail);
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
+      if (state === "voice_call.hangup" && detail === "tts_failed") showError("语音生成失败", "TTS 服务异常，通话已结束。");
     }
 
     function updateAlicePlaybackText(detail) {
@@ -810,8 +819,21 @@ export function renderVoiceCallHtml(): string {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     }
 
+    function startSignalingKeepalive() {
+      stopSignalingKeepalive();
+      signalingKeepaliveTimer = window.setInterval(() => {
+        sendSignal({ type: "ping" });
+      }, 15000);
+    }
+
+    function stopSignalingKeepalive() {
+      clearInterval(signalingKeepaliveTimer);
+      signalingKeepaliveTimer = undefined;
+    }
+
     function endCall(reason) {
       sendSignal({ type: "hangup", reason });
+      stopSignalingKeepalive();
       socket?.close();
       peer?.close();
       stopLocalAudio();
@@ -824,6 +846,7 @@ export function renderVoiceCallHtml(): string {
       if (phase === "idle" || phase === "ended" || phase === "error") return;
       pageHolding = true;
       sendSignal({ type: "hold", reason });
+      stopSignalingKeepalive();
       stopTalking();
       for (const track of localStream?.getAudioTracks?.() || []) track.enabled = false;
       clearInterval(elapsedTimer);

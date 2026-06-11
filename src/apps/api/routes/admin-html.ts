@@ -457,7 +457,7 @@ export function renderAdminHtmlV2(): string {
               <select id="tokenUsageModel"><option value="all">all</option></select>
             </label>
             <label for="tokenUsageAgent">Agent
-              <select id="tokenUsageAgent"><option value="all">all</option><option value="chat">chat</option><option value="talk">talk</option><option value="memorize">memorize</option></select>
+              <select id="tokenUsageAgent"><option value="all">all</option><option value="chat">chat</option><option value="talk">talk</option><option value="memorize">memorize</option><option value="tts">tts</option></select>
             </label>
             <button type="button" id="tokenUsageRefresh">Refresh</button>
           </div>

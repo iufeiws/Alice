@@ -277,6 +277,67 @@ test("WebRTC voice backpressures TTS backend when playback queue has two active 
   await call.close("test_done");
 });
 
+test("WebRTC voice keeps playback slot reserved until remote enqueue completes", async () => {
+  const track = new DelayedEnqueueTrack();
+  const backendRequests: string[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("single-file synthesizer should not be used");
+    }, {
+      async *stream(input: { text: string; beforeBackendRequest?(request: { sequence: number; text: string }): Promise<void> | void }) {
+        await input.beforeBackendRequest?.({ sequence: 0, text: input.text });
+        backendRequests.push(input.text);
+        yield {
+          type: "audio_file" as const,
+          sequence: 0,
+          text: input.text,
+          textchunk: input.text,
+          assetId: `generated/tts/${input.text}.opus`,
+          filePath: tempFilePath(`${input.text}.opus`)
+        };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used with enqueueAudioFile track");
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-enqueue-backpressure", userId: "browser-enqueue-backpressure", offerSdp: "offer" });
+  const first = call.playReplyText("one", "output-one");
+  const second = call.playReplyText("two", "output-two");
+  const third = call.playReplyText("three", "output-three");
+
+  await waitFor(() => backendRequests.length === 2 && track.pendingEnqueues.length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(backendRequests, ["one", "two"]);
+  track.resolveEnqueue(0);
+  await waitFor(() => track.waitingSettlements >= 1);
+  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  await waitFor(() => backendRequests.length === 3 && track.pendingEnqueues.length === 3);
+  track.resolveEnqueue(1);
+  track.resolveEnqueue(2);
+  await waitFor(() => track.waitingSettlements >= 3);
+  track.settle(1, { itemId: track.enqueued[1]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  track.settle(2, { itemId: track.enqueued[2]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+
+  assert.equal((await first).status, "played");
+  assert.equal((await second).status, "played");
+  assert.equal((await third).status, "played");
+  await call.close("test_done");
+});
+
 test("WebRTC voice passes injected project time to TTS synthesis", async () => {
   const peer = new FakePeer();
   const timeZones: string[] = [];
@@ -2967,6 +3028,10 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
   private readonly settlements: Array<{ resolve(value: PlaybackItemSettled): void }> = [];
   stopped = false;
 
+  get waitingSettlements() {
+    return this.settlements.length;
+  }
+
   async writeFrame() {
     return true;
   }
@@ -2975,7 +3040,7 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
     return true;
   }
 
-  enqueueAudioFile(input: { itemId: string; filePath: string }) {
+  async enqueueAudioFile(input: { itemId: string; filePath: string }) {
     this.enqueued.push({ itemId: input.itemId, filePath: input.filePath });
     return { itemId: input.itemId };
   }
@@ -2992,6 +3057,22 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
 
   stop() {
     this.stopped = true;
+  }
+}
+
+class DelayedEnqueueTrack extends ControlledQueueTrack {
+  readonly pendingEnqueues: Array<{ resolve(): void }> = [];
+
+  override async enqueueAudioFile(input: { itemId: string; filePath: string }) {
+    const result = super.enqueueAudioFile(input);
+    await new Promise<void>((resolve) => {
+      this.pendingEnqueues.push({ resolve });
+    });
+    return result;
+  }
+
+  resolveEnqueue(index: number) {
+    this.pendingEnqueues[index]?.resolve();
   }
 }
 

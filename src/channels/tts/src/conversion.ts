@@ -25,6 +25,7 @@ import type {
 import { defaultBailianTtsEndpoint } from "./config.js";
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
+import { recordTtsApiUsage } from "./usage.js";
 
 export function createTtsConversionSynthesizer(
   conversion: "genie" | "openai-api" | "bailian",
@@ -38,10 +39,11 @@ export function createTtsConversionSynthesizer(
 
 export function createOpenAiApiTtsVoiceSynthesizer(
   config: TtsPluginConfig,
-  deps: Pick<TtsPluginDeps, "fetch" | "env" | "resolveApiPreset" | "appendLog"> & { outputDir?: string } = {}
+  deps: Pick<TtsPluginDeps, "fetch" | "env" | "resolveApiPreset" | "appendLog" | "recordTokenUsageEvent"> & { outputDir?: string } = {}
 ): VoiceSynthesizer {
   const synthesize = (async (request) => {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: "openai-api", model: settings.model, text: request.text });
     const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
     const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
     const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
@@ -56,11 +58,13 @@ export function createOpenAiApiTtsVoiceSynthesizer(
 
   synthesize.streamAudio = async function* (request) {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: "openai-api", model: settings.model, text: request.text });
     const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
     if (audio.byteLength) yield audio;
   };
   synthesize.streamAudioWithText = async function* (request) {
     const settings = resolveOpenAiApiTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: "openai-api", model: settings.model, text: request.text });
     const audio = await requestOpenAiApiTtsAudio(request.text, settings, deps, { stream: false });
     if (!audio.byteLength) return;
     yield {
@@ -190,10 +194,11 @@ function normalizeOpenAiApiSpeechBaseURL(value: string): string {
 
 export function createBailianTtsVoiceSynthesizer(
   config: TtsPluginConfig,
-  deps: Pick<TtsPluginDeps, "env" | "fetch" | "appendLog"> & { outputDir?: string } = {}
+  deps: Pick<TtsPluginDeps, "env" | "fetch" | "appendLog" | "recordTokenUsageEvent"> & { outputDir?: string } = {}
 ): VoiceSynthesizer {
   const synthesize = (async (request) => {
     const settings = resolveBailianTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `bailian-${settings.service}`, model: settings.model, text: request.text });
     const audio = await requestBailianTtsAudio(request.text, settings, deps);
     const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
     const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
@@ -208,11 +213,13 @@ export function createBailianTtsVoiceSynthesizer(
 
   synthesize.streamAudio = async function* (request) {
     const settings = resolveBailianTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `bailian-${settings.service}`, model: settings.model, text: request.text });
     const audio = await requestBailianTtsAudio(request.text, settings, deps);
     if (audio.byteLength) yield audio;
   };
   synthesize.streamAudioWithText = async function* (request) {
     const settings = resolveBailianTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `bailian-${settings.service}`, model: settings.model, text: request.text });
     const audio = await requestBailianTtsAudio(request.text, settings, deps);
     if (!audio.byteLength) return;
     yield {

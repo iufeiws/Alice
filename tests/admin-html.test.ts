@@ -147,12 +147,13 @@ test("chat and memorize previews share llm request block renderer", () => {
   assert.doesNotMatch(html, /tool: feishu\\n/);
 });
 
-test("token usage filter includes chat, talk, and memorize agents", () => {
+test("token usage filter includes chat, talk, memorize, and tts agents", () => {
   const html = renderAdminHtmlV2();
 
   assert.match(html, /<option value="chat">chat<\/option>/);
   assert.match(html, /<option value="talk">talk<\/option>/);
   assert.match(html, /<option value="memorize">memorize<\/option>/);
+  assert.match(html, /<option value="tts">tts<\/option>/);
 });
 
 test("memory page shows selected day chat with undo and redo actions", () => {

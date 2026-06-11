@@ -14,6 +14,7 @@ export function createVoicePluginRuntime(input: {
   promptProfileStore: any;
   sendLLMRequest(request: any): Promise<any>;
   readLLMApiPresets(): LLMApiPreset[];
+  recordTokenUsageEvent(event: any): void;
   appendLog: AppendLog;
 }) {
   const ttsConfigPath = "config/plugin/tts/config.json";
@@ -30,6 +31,7 @@ export function createVoicePluginRuntime(input: {
       return input.readLLMApiPresets().find((entry) => entry.name === name);
     },
     createLlmClientFromPreset: createTtsLlmClientFromPreset,
+    recordTokenUsageEvent: input.recordTokenUsageEvent,
     promptVariables: () => buildLLMTextVariables({
       userName: input.promptProfileStore.get().userName,
       time: input.time

@@ -181,6 +181,24 @@ export type TtsLlmClient = {
 
 export type TtsLlmRequestSender = (request: TtsLlmRequest) => Promise<TtsLlmResult>;
 
+export type TtsTokenUsageRecorder = (event: {
+  createdAt: string;
+  createdAtUtc?: string;
+  agentId: string;
+  model?: string;
+  result: {
+    message: { role?: string; content: string };
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
+    };
+    raw?: unknown;
+  };
+}) => void;
+
 export type TtsPluginDeps = {
   baseSynthesizer: VoiceSynthesizer;
   configPath?: string;
@@ -191,6 +209,7 @@ export type TtsPluginDeps = {
   resolveApiPreset?(name: string): TtsApiPreset | undefined;
   createLlmClientFromPreset?(preset: TtsApiPreset, env: Record<string, string | undefined>): TtsLlmClient | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
+  recordTokenUsageEvent?: TtsTokenUsageRecorder;
   promptVariables?: LLMTextVariables | (() => LLMTextVariables);
 };
 

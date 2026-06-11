@@ -41,6 +41,7 @@ export function createApiCapabilitiesRuntime(input: {
     promptProfileStore: input.promptProfileStore,
     sendLLMRequest: (request) => llmRequests.send(request),
     readLLMApiPresets: input.readLLMApiPresets,
+    recordTokenUsageEvent: input.recordTokenUsageEvent,
     appendLog: input.appendLog
   });
 

@@ -88,8 +88,11 @@ export function createTtsProducer(ctx: {
       };
       const consumePlaybackQueueReservation = async () => {
         if (taskReservedPlaybackSlots <= 0) await reservePlaybackQueueSlot();
+      };
+      const releasePlaybackQueueReservation = () => {
+        if (taskReservedPlaybackSlots <= 0) return;
         reservedPlaybackSlots = Math.max(0, reservedPlaybackSlots - 1);
-        taskReservedPlaybackSlots = Math.max(0, taskReservedPlaybackSlots - 1);
+        taskReservedPlaybackSlots -= 1;
       };
       ctx.activeTtsTasks.add(ttsTask);
       try {
@@ -153,7 +156,6 @@ export function createTtsProducer(ctx: {
               filePath: event.filePath
             });
             playedItems.push(item);
-            mediaPlaybackItems.push(item);
             const enqueued = await ctx.outboundTrack.enqueueAudioFile({
               itemId,
               outputId,
@@ -167,6 +169,8 @@ export function createTtsProducer(ctx: {
               interruptEpoch: item.interruptEpoch,
               beforeFirstPlayback: playedItems.length === 1
             });
+            mediaPlaybackItems.push(item);
+            releasePlaybackQueueReservation();
             ctx.deps.emitStatus?.({ state: "tts.queue.ready", detail: playbackDetail(item, outputId) });
             await ctx.archiveTtsOutput(ctx.deps, {
               callId: ctx.callId,
@@ -203,6 +207,7 @@ export function createTtsProducer(ctx: {
           });
           ctx.playbackQueue.push(item);
           playedItems.push(item);
+          releasePlaybackQueueReservation();
           ctx.playback.start();
           ctx.deps.emitStatus?.({ state: "tts.queue.ready", detail: playbackDetail(item, outputId) });
           await ctx.archiveTtsOutput(ctx.deps, {

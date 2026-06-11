@@ -70,8 +70,8 @@ export async function* streamTtsText(
   let totalAudioFiles = 0;
   for (const part of parts) {
     const sequence = streamSequence;
-    deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
     await input.beforeBackendRequest?.({ sequence, text: part });
+    deps.appendLog?.("info", `tts stream part request: stream=${input.streamId ?? ""} sequence=${sequence} chars=${Array.from(part).length}`);
     const voice = await synthesizeTtsRouted({
       text: part,
       time: input.time,

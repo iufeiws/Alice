@@ -738,6 +738,7 @@ export function renderVoiceCallHtml(): string {
       if (state === "tts.queue.ready") setPreConnectedPhase("connecting", "首段音频准备完毕");
       if (state === "voice_call.connected") markConnected();
       if (state === "voice_call.playback_text_cache" && detail) updateAlicePlaybackText(detail);
+      if (state === "asr.partial" && detail) updateUserRealtimeTranscript(detail);
       if ((state === "talk_runtime.ingress" || state === "talk_runtime.ingress.todo") && detail) updateUserFinalTranscript(detail);
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
       if (state === "voice_call.hangup" && detail === "tts_failed") showError("语音生成失败", "TTS 服务异常，通话已结束。");
@@ -760,6 +761,11 @@ export function renderVoiceCallHtml(): string {
       currentAliceChunkId = chunkId;
       currentAliceText = value;
       aliceCurrentTranscript.textContent = currentAliceText;
+    }
+
+    function updateUserRealtimeTranscript(detail) {
+      const text = String(detail || "").trim();
+      if (text) userTranscript.textContent = text;
     }
 
     function updateUserFinalTranscript(detail) {

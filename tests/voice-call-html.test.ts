@@ -43,6 +43,9 @@ test("voice-call displays Alice text from playback consumer cache", () => {
 test("voice-call displays ASR final transcript after recording ends", () => {
   const html = renderVoiceCallHtml();
 
+  assert.match(html, /state === "asr\.partial" && detail\) updateUserRealtimeTranscript\(detail\);/);
+  assert.match(html, /function updateUserRealtimeTranscript\(detail\)/);
+  assert.match(html, /const text = String\(detail \|\| ""\)\.trim\(\);/);
   assert.match(html, /\(state === "talk_runtime\.ingress" \|\| state === "talk_runtime\.ingress\.todo"\) && detail\) updateUserFinalTranscript\(detail\);/);
   assert.match(html, /const prefix = "audio\.transcript\.final:";/);
   assert.match(html, /if \(text\) userTranscript\.textContent = text;/);

@@ -82,6 +82,13 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
     }
     function updateTranscript(message) {
       if (message.type !== "status") return;
+      if (message.state === "asr.partial") {
+        const text = String(message.detail || "").trim();
+        if (!text) return;
+        document.getElementById("userInputText").textContent = text;
+        partialTranscript.textContent = text;
+        return;
+      }
       if (message.state === "tts.playback.consumer") {
         const detail = String(message.detail || "");
         const match = detail.match(/^前文=(.*) 时长=[^ ]+$/);

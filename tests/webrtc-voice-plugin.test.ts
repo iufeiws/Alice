@@ -76,7 +76,8 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.match(html, /tts\.output_text/);
   assert.match(html, /tts\.playback\.consumer/);
   assert.match(html, /audio\.transcript\.final/);
-  assert.doesNotMatch(html, /message\.state === "asr\.partial"[\s\S]*partialTranscript\.textContent/);
+  assert.match(html, /message\.state === "asr\.partial"/);
+  assert.match(html, /partialTranscript\.textContent = text;/);
   assert.match(html, /これは疑似ストリーミング音声のテストです。/);
   assert.match(html, /"sampleRateHz":16000/);
   assert.match(html, /"encoding":"pcm_s16le"/);
@@ -908,11 +909,11 @@ test("WebRTC voice ASR final is marked as TalkRuntime TODO and not ingested yet"
   assert.deepEqual(statuses, [
     { state: "tts.prepare.started", detail: "connecting" },
     { state: "tts.prepare.ready", detail: "connected" },
-    { state: "talk_runtime.open.todo", detail: "webrtc_voice:call-3" },
-    { state: "asr.stream.started", detail: "asr-call-3-0" },
-    { state: "asr.partial", detail: "もし" },
-    { state: "talk_runtime.ingress.todo", detail: "audio.transcript.final: もしもし" },
-    { state: "asr.stream.final", detail: "asr-call-3-0 chunks=1 bytes=2 durationMs=100 result=final:4" }
+    { state: "talk_runtime.open.todo", detail: "webrtc_voice:call-3", callId: "call-3" },
+    { state: "asr.stream.started", detail: "asr-call-3-0", callId: "call-3" },
+    { state: "asr.partial", detail: "もし", callId: "call-3" },
+    { state: "talk_runtime.ingress.todo", detail: "audio.transcript.final: もしもし", callId: "call-3" },
+    { state: "asr.stream.final", detail: "asr-call-3-0 chunks=1 bytes=2 durationMs=100 result=final:4", callId: "call-3" }
   ]);
 });
 

@@ -31,7 +31,7 @@ import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
-import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
@@ -111,6 +111,7 @@ type TtsAdminConfig = {
       extraParamsJson?: string;
     };
     bailian?: {
+      service?: "qwen" | "cosy";
       endpoint?: string;
       apiKey?: string;
       apiKeyEnv?: string;
@@ -1455,7 +1456,11 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "conversion.openaiApi.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_openai_api", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used to estimate chunk text timing. Default is 32000." },
         { key: "conversion.openaiApi.channels", label: "PCM Channels", type: "number", group: "conversion_openai_api", min: 1, max: 2, step: 1, description: "PCM channel count used to estimate chunk text timing. Default is 1." },
         { key: "conversion.openaiApi.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_openai_api", description: "Optional JSON object merged into the speech request before input/model/voice/response_format." },
-        { key: "conversion.bailian.endpoint", label: "HTTP SSE Endpoint", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime HTTP endpoint used with X-DashScope-SSE: enable." },
+        { key: "conversion.bailian.service", label: "Bailian Service", type: "select", group: "conversion_bailian", options: [
+          { value: "qwen", label: "Qwen TTS" },
+          { value: "cosy", label: "CosyVoice" }
+        ], description: "Bailian TTS service family. CosyVoice uses the SpeechSynthesizer endpoint." },
+        { key: "conversion.bailian.endpoint", label: "HTTP Endpoint", type: "text", group: "conversion_bailian", description: "Bailian HTTP endpoint. Qwen defaults to aigc/multimodal-generation; CosyVoice defaults to audio/tts/SpeechSynthesizer." },
         { key: "conversion.bailian.apiKey", label: "API Key", type: "password", group: "conversion_bailian", description: "Bailian DashScope API key stored in the local ignored plugin config. Leave blank to keep unchanged." },
         { key: "conversion.bailian.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_bailian", description: "Environment variable containing the Bailian DashScope API key. Default is DASHSCOPE_API_KEY." },
         { key: "conversion.bailian.workspaceId", label: "Workspace ID", type: "text", group: "conversion_bailian", description: "Optional Bailian workspace id sent as X-DashScope-WorkSpace." },
@@ -2031,8 +2036,20 @@ function updateTtsConfig(
   const currentBailian = current.conversion?.bailian ?? {};
   const bailianExtraParamsResult = parseOptionalJsonObject(bailianPatch.extraParamsJson, currentBailian.extraParams ?? {});
   if ("error" in bailianExtraParamsResult) return { error: "invalid_bailian_extra_params" };
+  const nextBailianService = bailianPatch.service === "cosy" ? "cosy" as const : bailianPatch.service === "qwen" ? "qwen" as const : currentBailian.service ?? "qwen" as const;
+  const currentBailianService = currentBailian.service ?? "qwen";
+  const submittedBailianEndpoint = bailianPatch.endpoint === undefined ? undefined : requiredString(bailianPatch.endpoint);
+  const currentBailianEndpoint = currentBailian.endpoint ?? defaultBailianTtsEndpoint(currentBailianService);
+  const nextBailianEndpoint = submittedBailianEndpoint === undefined
+    ? nextBailianService === currentBailianService
+      ? currentBailianEndpoint
+      : defaultBailianTtsEndpoint(nextBailianService)
+    : nextBailianService !== currentBailianService && submittedBailianEndpoint === defaultBailianTtsEndpoint(currentBailianService)
+      ? defaultBailianTtsEndpoint(nextBailianService)
+      : submittedBailianEndpoint;
   const nextBailian = {
-    endpoint: bailianPatch.endpoint === undefined ? currentBailian.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation" : requiredString(bailianPatch.endpoint),
+    service: nextBailianService,
+    endpoint: nextBailianEndpoint,
     apiKey: bailianPatch.apiKey === undefined ? currentBailian.apiKey : optionalString(bailianPatch.apiKey) ?? currentBailian.apiKey,
     apiKeyEnv: bailianPatch.apiKeyEnv === undefined ? currentBailian.apiKeyEnv ?? "DASHSCOPE_API_KEY" : optionalString(bailianPatch.apiKeyEnv),
     workspaceId: bailianPatch.workspaceId === undefined ? currentBailian.workspaceId : optionalString(bailianPatch.workspaceId),
@@ -2466,7 +2483,8 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
         extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
       },
       bailian: {
-        endpoint: bailian.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        service: bailian.service ?? "qwen",
+        endpoint: bailian.endpoint ?? defaultBailianTtsEndpoint(bailian.service),
         apiKey: "",
         apiKeyEnv: bailian.apiKeyEnv ?? "DASHSCOPE_API_KEY",
         workspaceId: bailian.workspaceId,
@@ -2539,7 +2557,8 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
         extraParams: openaiApi?.extraParams ?? {}
       },
       bailian: {
-        endpoint: bailian?.endpoint ?? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        service: bailian?.service ?? "qwen",
+        endpoint: bailian?.endpoint ?? defaultBailianTtsEndpoint(bailian?.service),
         apiKey: bailian?.apiKey,
         apiKeyEnv: bailian?.apiKeyEnv ?? "DASHSCOPE_API_KEY",
         workspaceId: bailian?.workspaceId,

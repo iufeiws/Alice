@@ -1381,6 +1381,7 @@ export function renderAdminHtmlV2(): string {
             <section class="plugin-config-section" data-plugin-config-section="conversion-bailian" data-plugin-conversion-panel="bailian">
               <div class="plugin-section-head"><h2>Conversion / Bailian</h2></div>
               <div class="plugin-public-grid">
+                \${render("conversion.bailian.service")}
                 \${render("conversion.bailian.endpoint")}
                 \${render("conversion.bailian.apiKey")}
                 \${render("conversion.bailian.apiKeyEnv")}
@@ -1468,6 +1469,20 @@ export function renderAdminHtmlV2(): string {
         };
         conversionProviderSelect?.addEventListener("change", applyConversionPanel);
         applyConversionPanel();
+        const bailianServiceSelect = document.querySelector('[data-plugin-field="conversion.bailian.service"]');
+        const bailianEndpointInput = document.querySelector('[data-plugin-field="conversion.bailian.endpoint"]');
+        const bailianDefaultEndpoints = {
+          qwen: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+          cosy: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+        };
+        bailianServiceSelect?.addEventListener("change", () => {
+          if (!bailianEndpointInput) return;
+          const next = bailianServiceSelect.value === "cosy" ? "cosy" : "qwen";
+          const current = bailianEndpointInput.value || "";
+          if (!current || current === bailianDefaultEndpoints.qwen || current === bailianDefaultEndpoints.cosy) {
+            bailianEndpointInput.value = bailianDefaultEndpoints[next];
+          }
+        });
       }
 
       function setPluginFieldValue(field, value) {

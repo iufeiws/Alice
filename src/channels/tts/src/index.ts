@@ -26,6 +26,7 @@ export type {
   VoiceSynthesizer
 } from "./types.js";
 export {
+  defaultBailianTtsEndpoint,
   readTtsPluginConfig,
   selectedTtsConversionProvider,
   selectedTtsTranslationPreset,

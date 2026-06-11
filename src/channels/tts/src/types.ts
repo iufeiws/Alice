@@ -120,6 +120,7 @@ export type TtsOpenAiApiConversionConfig = {
 };
 
 export type TtsBailianConversionConfig = {
+  service?: "qwen" | "cosy";
   endpoint?: string;
   apiKey?: string;
   apiKeyEnv?: string;

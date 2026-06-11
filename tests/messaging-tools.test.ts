@@ -1186,6 +1186,7 @@ test("tts plugin config reads Bailian conversion settings", () => {
     conversion: {
       provider: "bailian",
       bailian: {
+        service: "qwen",
         endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
         apiKey: "inline-key",
         apiKeyEnv: "DASHSCOPE_API_KEY",
@@ -1209,6 +1210,7 @@ test("tts plugin config reads Bailian conversion settings", () => {
   const config = readTtsPluginConfig(configPath);
 
   assert.equal(config.conversion?.provider, "bailian");
+  assert.equal(config.conversion?.bailian?.service, "qwen");
   assert.equal(config.conversion?.bailian?.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
   assert.equal(config.conversion?.bailian?.apiKey, "inline-key");
   assert.equal(config.conversion?.bailian?.apiKeyEnv, "DASHSCOPE_API_KEY");
@@ -1365,6 +1367,7 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
     conversion: {
       provider: "bailian",
       bailian: {
+        service: "qwen",
         endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
         apiKey: "inline-key",
         workspaceId: "workspace-1",
@@ -1432,6 +1435,67 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
   } finally {
     fs.rmSync(result.filePath, { force: true });
   }
+});
+
+test("bailian tts uses CosyVoice SpeechSynthesizer endpoint and parameters", async () => {
+  const requests: Array<{ url: string; headers: Headers; body: any }> = [];
+  const synthesize = createBailianTtsVoiceSynthesizer({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        service: "cosy",
+        apiKey: "inline-key",
+        model: "cosyvoice-v2",
+        voice: "longxiaochun",
+        responseFormat: "pcm",
+        sampleRate: 24000,
+        channels: 1,
+        extraParams: { volume: 50 }
+      }
+    }
+  }, {
+    env: { DASHSCOPE_API_KEY: "env-key" },
+    fetch: async (url, init) => {
+      requests.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body))
+      });
+      return new Response(new Uint8Array([5, 6]), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" }
+      });
+    }
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({
+    text: "第一句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    chunks.push([chunk.text, Array.from(chunk.chunk), chunk.sampleRateHz, chunk.channels]);
+  }
+
+  assert.equal(requests[0].url, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+  assert.equal(requests[0].headers.get("Authorization"), "Bearer inline-key");
+  assert.deepEqual(requests[0].body, {
+    model: "cosyvoice-v2",
+    input: {
+      text: "第一句。"
+    },
+    parameters: {
+      volume: 50,
+      voice: "longxiaochun",
+      format: "pcm",
+      sample_rate: 24000
+    }
+  });
+  assert.deepEqual(chunks, [
+    ["第一句。", [5, 6], 24000, 1]
+  ]);
 });
 
 test("tts PCM progress mapper falls back to UTF character slices without punctuation", () => {

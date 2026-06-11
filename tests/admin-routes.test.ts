@@ -577,6 +577,7 @@ test("admin TTS config schema exposes voice language and language model folder",
   const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.enabled");
   const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.baseURL");
   const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.openaiApi.apiPresetName");
+  const bailianServiceField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.service");
   const bailianKeyField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.apiKey");
   const bailianModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.model");
 
@@ -598,6 +599,8 @@ test("admin TTS config schema exposes voice language and language model folder",
   assert.equal(remoteUrlField.group, "model_genie");
   assert.equal(openAiPresetField.type, "apiPresetSelect");
   assert.equal(openAiPresetField.group, "conversion_openai_api");
+  assert.equal(bailianServiceField.type, "select");
+  assert.deepEqual(bailianServiceField.options.map((option: { value: string }) => option.value), ["qwen", "cosy"]);
   assert.equal(bailianKeyField.type, "password");
   assert.equal(bailianKeyField.group, "conversion_bailian");
   assert.equal(bailianModelField.type, "text");
@@ -615,6 +618,7 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     conversion: {
       provider: "bailian",
       bailian: {
+        service: "qwen",
         endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
         apiKeyEnv: "DASHSCOPE_API_KEY",
         model: "qwen3-tts-vc-2026-01-22",
@@ -662,6 +666,47 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
   assert.equal(second.statusCode, 200);
   assert.equal(JSON.parse(second.body).ok, true);
   assert.equal(secondSaved.conversion.bailian.apiKey, "dashscope-secret");
+});
+
+test("admin TTS config patch switches Bailian service default endpoint", async () => {
+  const root = makeTempDir("admin-tts-bailian-service");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        service: "qwen",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "Cherry"
+      }
+    }
+  })}\n`);
+  const context = {
+    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
+    pluginConfigs: { tts: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        service: "cosy",
+        model: "cosyvoice-v2",
+        voice: "longxiaochun"
+      }
+    }
+  }), response);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.conversion.bailian.service, "cosy");
+  assert.equal(saved.conversion.bailian.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {

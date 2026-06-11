@@ -22,6 +22,7 @@ import type {
   VoiceSynthesizer
 } from "./types.js";
 
+import { defaultBailianTtsEndpoint } from "./config.js";
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
 
@@ -225,6 +226,7 @@ export function createBailianTtsVoiceSynthesizer(
 }
 
 type BailianTtsSettings = {
+  service: "qwen" | "cosy";
   endpoint: string;
   apiKey: string;
   workspaceId?: string;
@@ -248,8 +250,10 @@ function resolveBailianTtsSettings(
   const env = deps.env ?? process.env;
   const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("Bailian TTS conversion requires apiKey or DASHSCOPE_API_KEY");
+  const service = conversion.service === "cosy" ? "cosy" : "qwen";
   return {
-    endpoint: conversion.endpoint || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    service,
+    endpoint: conversion.endpoint || defaultBailianTtsEndpoint(service),
     apiKey,
     workspaceId: conversion.workspaceId,
     userAgent: conversion.userAgent,
@@ -293,7 +297,7 @@ async function* requestBailianTtsAudioStream(
   const fetchImpl = deps.fetch ?? fetch;
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(), settings.timeoutMs);
-  deps.appendLog?.("info", `tts Bailian non-realtime stream start: chars=${Array.from(text).length}`);
+  deps.appendLog?.("info", `tts Bailian ${settings.service} stream start: chars=${Array.from(text).length}`);
   try {
     const response = await fetchImpl(settings.endpoint, {
       method: "POST",
@@ -305,25 +309,17 @@ async function* requestBailianTtsAudioStream(
         ...(settings.userAgent ? { "user-agent": settings.userAgent } : {}),
         ...(settings.workspaceId ? { "X-DashScope-WorkSpace": settings.workspaceId } : {})
       },
-      body: JSON.stringify({
-        model: settings.model,
-        input: {
-          ...settings.extraParams,
-          text,
-          voice: settings.voice,
-          language_type: settings.languageType
-        }
-      })
+      body: JSON.stringify(bailianTtsRequestBody(text, settings))
     });
     if (!response.ok) {
       throw new Error(`Bailian TTS HTTP error ${response.status}: ${await response.text()}`);
     }
     let chunks = 0;
     let bytes = 0;
-    for await (const event of readBailianSseEvents(response)) {
-      const error = parseBailianHttpError(event);
+    for await (const event of readBailianAudioEvents(response)) {
+      const error = event.json ? parseBailianHttpError(event.json) : undefined;
       if (error) throw error;
-      const audio = bailianHttpAudioData(event);
+      const audio = event.audio ?? (event.json ? bailianHttpAudioData(event.json) : undefined);
       if (audio?.byteLength) {
         chunks += 1;
         bytes += audio.byteLength;
@@ -331,10 +327,49 @@ async function* requestBailianTtsAudioStream(
       }
     }
     if (bytes <= 0) throw new Error("Bailian TTS returned no audio data");
-    deps.appendLog?.("info", `tts Bailian non-realtime stream complete: chunks=${chunks} bytes=${bytes}`);
+    deps.appendLog?.("info", `tts Bailian ${settings.service} stream complete: chunks=${chunks} bytes=${bytes}`);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function bailianTtsRequestBody(text: string, settings: BailianTtsSettings): Record<string, unknown> {
+  if (settings.service === "cosy") {
+    return {
+      model: settings.model,
+      input: { text },
+      parameters: {
+        ...settings.extraParams,
+        voice: settings.voice,
+        format: settings.responseFormat,
+        sample_rate: settings.sampleRate
+      }
+    };
+  }
+  return {
+    model: settings.model,
+    input: {
+      ...settings.extraParams,
+      text,
+      voice: settings.voice,
+      language_type: settings.languageType
+    }
+  };
+}
+
+async function* readBailianAudioEvents(response: Response): AsyncIterable<{ json?: Record<string, unknown>; audio?: Uint8Array }> {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.startsWith("audio/") || contentType.includes("octet-stream")) {
+    const audio = new Uint8Array(await response.arrayBuffer());
+    if (audio.byteLength) yield { audio };
+    return;
+  }
+  if (contentType.includes("application/json")) {
+    const json = parseJsonObject(await response.text());
+    if (Object.keys(json).length) yield { json };
+    return;
+  }
+  for await (const json of readBailianSseEvents(response)) yield { json };
 }
 
 async function* readBailianSseEvents(response: Response): AsyncIterable<Record<string, unknown>> {

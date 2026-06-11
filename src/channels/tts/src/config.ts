@@ -38,6 +38,8 @@ import {
 const defaultConfigPath = "config/plugin/tts/config.json";
 const legacyTtsConfigPath = "src/channels/tts/config.json";
 const ttsPresetAssetRoot = path.join("assets", "tts", "preset");
+export const defaultBailianQwenTtsEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+export const defaultBailianCosyTtsEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer";
 
 export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginConfig {
   const resolved = resolveTtsConfigReadPath(configPath);
@@ -223,8 +225,10 @@ function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpe
 }
 
 function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBailianConversionConfig {
+  const service = raw.service === "cosy" ? "cosy" : "qwen";
   return {
-    endpoint: stringValue(raw.endpoint) || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    service,
+    endpoint: stringValue(raw.endpoint) || defaultBailianTtsEndpoint(service),
     apiKey: stringValue(raw.apiKey),
     apiKeyEnv: stringValue(raw.apiKeyEnv) || "DASHSCOPE_API_KEY",
     workspaceId: stringValue(raw.workspaceId),
@@ -239,6 +243,10 @@ function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBaili
     timeoutMs: numberValue(raw.timeoutMs, 60_000),
     extraParams: recordValue(raw.extraParams)
   };
+}
+
+export function defaultBailianTtsEndpoint(service: "qwen" | "cosy" | undefined): string {
+  return service === "cosy" ? defaultBailianCosyTtsEndpoint : defaultBailianQwenTtsEndpoint;
 }
 
 export function selectedTtsConversionProvider(config: TtsPluginConfig): "genie" | "openai-api" | "bailian" {

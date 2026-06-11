@@ -82,8 +82,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
     assert.equal(sent[1].content.kind, "image");
     assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
-    assert.equal((result.output as { sent?: boolean; messageId?: string }).sent, true);
-    assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
+    assert.equal(result.output, "照片已发送");
     assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
     assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
   } finally {
@@ -152,7 +151,7 @@ test("selfie default api executor calls Image API directly", async () => {
     assert.equal(apiCalled, true);
     assert.equal(result.ok, true);
     assert.equal(sent[1].content.kind, "image");
-    assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
+    assert.equal(result.output, "照片已发送");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousRunner === undefined) {
@@ -224,7 +223,7 @@ test("selfie codex mode calls alice-selfie-fast runner", async () => {
 
     assert.equal(result.ok, true);
     assert.equal(sent[1].content.kind, "image");
-    assert.equal((result.output as { messageId?: string }).messageId, "om_selfie_2");
+    assert.equal(result.output, "照片已发送");
   } finally {
     if (previousRunner === undefined) {
       delete process.env.ALICE_SELFIE_FAST_RUNNER;

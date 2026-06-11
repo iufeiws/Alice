@@ -235,12 +235,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       return {
         callId: call.id,
         ok: true,
-        output: {
-          assetId,
-          path: finalFilePath,
-          sent: true,
-          messageId: extractSentMessageId(sent)
-        }
+        output: "照片已发送"
       };
     } catch (error) {
       const reason = [

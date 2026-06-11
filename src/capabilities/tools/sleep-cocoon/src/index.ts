@@ -69,7 +69,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
   async function enterSleepCocoon(call: ToolCall): Promise<ToolResult> {
     const sleepDurationMs = resolveSleepDurationMs(call.input.hours, random);
     const now = deps.time.now();
-    const state = deps.agentState.setState("going_to_sleep", {
+    deps.agentState.setState("going_to_sleep", {
       reason: "sleep_cocoon_in",
       sleepCocoonEnteredAt: now.iso,
       sleepCocoonEnteredAtUtc: now.date.toISOString(),
@@ -83,12 +83,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       resetLLMSession: true,
       fixedPrefixKind: "sleep_cocoon",
       fixedPrefixTtlMs: 2 * HOUR,
-      output: {
-        action: "in",
-        message: "已进入睡眠茧，开始入睡倒计时。",
-        sleepDurationMs,
-        state
-      }
+      output: "success"
     };
   }
 
@@ -97,7 +92,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
     if (current.state !== "going_to_sleep") {
       return toolError(call, current.state === "sleeping" ? "already sleeping" : "no sleep cocoon countdown to cancel");
     }
-    const state = deps.agentState.setState("waiting", { reason: "sleep_cocoon_out", clearSleepCocoon: true });
+    deps.agentState.setState("waiting", { reason: "sleep_cocoon_out", clearSleepCocoon: true });
     await sendSuccessNotice(call, "-少女起床-");
     return {
       callId: call.id,
@@ -105,11 +100,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       resetLLMSession: true,
       clearFixedPrefix: true,
       invalidateLLMSession: true,
-      output: {
-        action: "out",
-        message: "已从睡眠茧出来，撤销入睡倒计时。",
-        state
-      }
+      output: "success"
     };
   }
 

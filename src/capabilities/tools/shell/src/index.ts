@@ -115,8 +115,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       ok: true,
       output: JSON.stringify({
         current: toOutfitOutput(shell.outfit, true),
-        message: `服装已切换为${shell.outfit.name}`,
-        rendered: deps.dailyShellStore.render(time.now().date, time.timeZone)
+        message: `服装已切换为${shell.outfit.name}`
       })
     };
   }

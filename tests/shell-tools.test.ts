@@ -126,7 +126,9 @@ test("wardrobe switches outfit without shell switch messages or logs", async () 
     status: "sent",
     summary: "-少女已更衣-"
   }]);
-  assert.match(String(result.output), /服装已切换为O Two/);
+  const output = JSON.parse(String(result.output));
+  assert.equal(output.message, "服装已切换为O Two");
+  assert.equal(output.rendered, undefined);
   assert.doesNotMatch(messages[0].contentText, /壳|切换为O Two/);
 });
 

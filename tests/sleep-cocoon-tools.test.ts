@@ -37,6 +37,7 @@ test("sleep_cocoon in enters going_to_sleep and stores sleep pointers", async ()
   assert.equal(result.resetLLMSession, true);
   assert.equal(result.fixedPrefixKind, "sleep_cocoon");
   assert.equal(result.fixedPrefixTtlMs, 2 * 60 * 60 * 1000);
+  assert.equal(result.output, "success");
   assert.equal(controller.getSnapshot().state, "going_to_sleep");
   assert.equal(controller.getSnapshot().reason, "sleep_cocoon_in");
   assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T00:00:00.000");
@@ -151,6 +152,7 @@ test("sleep_cocoon out returns going_to_sleep to waiting", async () => {
   assert.equal(result.resetLLMSession, true);
   assert.equal(result.clearFixedPrefix, true);
   assert.equal(result.invalidateLLMSession, true);
+  assert.equal(result.output, "success");
   assert.equal(controller.getSnapshot().state, "waiting");
   assert.equal(controller.getSnapshot().reason, "sleep_cocoon_out");
   assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, undefined);

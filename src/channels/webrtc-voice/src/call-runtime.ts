@@ -1,9 +1,9 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../../asr/src/index.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type {
   CreateWebRtcVoiceCallInput,
-  PlaybackItem,
-  ServerAudioFrame,
   ServerOutboundAudioTrack,
   ServerWebRtcPeer,
   TtsTask,
@@ -12,7 +12,6 @@ import type {
   WebRtcVoiceTtsArchiveInput
 } from "./types.js";
 import { WebRtcVoiceError } from "./errors.js";
-import { createVoicePlaybackConsumer } from "./playback-consumer.js";
 import { createRemoteVoicePlaybackConsumer } from "./remote-playback-consumer.js";
 import { createTtsProducer } from "./tts-producer.js";
 import { createInterruptController } from "./interrupt-controller.js";
@@ -20,6 +19,21 @@ import {
   normalizeTypedInputText,
   sleep,
 } from "./utils.js";
+
+const frontendPlaybackIdleAckDelayMs = 250;
+const frontendPlaybackIdleAckTimeoutMs = 2_500;
+const voiceCallFillerDelayMs = 1_500;
+const voiceCallFillerDir = path.resolve(process.cwd(), "assets", "voice-call");
+
+type TalkRuntimeOutputChunk = {
+  sessionId: string;
+  outputId: string;
+  chunkId?: string;
+  text: string;
+  status?: string;
+  startCharIndex: number;
+  endCharIndex: number;
+};
 
 export async function createCallState(
   input: CreateWebRtcVoiceCallInput,
@@ -33,17 +47,18 @@ export async function createCallState(
   let asrStreamId = `asr-${input.callId}-${asrStreamIndex}`;
   let inboundSequence = 0;
   let inboundAudioStats = createInboundAudioStats();
-  let outboundFrameSequence = 0;
   let closed = false;
   let speechActive = false;
   let playbackGeneration = 0;
   let interruptEpoch = 0;
   let stableSequence = 20_000;
-  let outboundRtpTimestamp = 0;
   const activeTtsTasks = new Set<TtsTask>();
   const activePlaybackTasks = new Set<Promise<unknown>>();
-  const playbackQueue: PlaybackItem[] = [];
+  const playbackIdleAckWaiters = new Map<string, { resolve(value: boolean): void; timer: ReturnType<typeof setTimeout> }>();
   let firstOutboundPlaybackBufferPending = true;
+  if (!outboundTrack.enqueueAudioFile) {
+    throw new WebRtcVoiceError("outbound_track_failed", "server WebRTC outbound audio track must support enqueueAudioFile");
+  }
   const synthesisTime = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const nowStamp = () => {
     const current = synthesisTime.now();
@@ -71,54 +86,47 @@ export async function createCallState(
     deps.emitStatus?.({ state: "talk_runtime.open.todo", detail: talkSessionId });
   }
   let asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
-  const outboundTimestampIncrement = (frame: ServerAudioFrame) => frame.rtpTimestampIncrement ?? Math.round(frame.sampleRateHz * frame.durationMs / 1000);
-  const stampOutboundFrame = (frame: ServerAudioFrame): ServerAudioFrame => ({
-    ...frame,
-    sequence: outboundFrameSequence++,
-    rtpTimestamp: outboundRtpTimestamp >>> 0
-  });
-  const advanceOutboundRtpClockForFrame = (frame: ServerAudioFrame) => {
-    outboundRtpTimestamp = (outboundRtpTimestamp + outboundTimestampIncrement(frame)) >>> 0;
-  };
-  const createOutboundSilenceFrame = (durationMs = deps.config.outboundAudio.frameMs): ServerAudioFrame => ({
-    sequence: 0,
-    pcm: new Int16Array(),
-    sampleRateHz: deps.config.outboundAudio.sampleRateHz,
-    channels: deps.config.outboundAudio.channels,
-    durationMs,
-    rtpPayload: new Uint8Array([0xf8, 0xff, 0xfe]),
-    rtpTimestampIncrement: Math.round(deps.config.outboundAudio.sampleRateHz * durationMs / 1000),
-    payloadType: 111
-  });
-  const writeOutboundSilenceFrame = async (durationMs = deps.config.outboundAudio.frameMs) => {
-    const frame = createOutboundSilenceFrame(durationMs);
-    const written = await outboundTrack.writeFrame(stampOutboundFrame(frame));
-    if (written) advanceOutboundRtpClockForFrame(frame);
-    return written;
-  };
-  const playback = outboundTrack.enqueueAudioFile
-    ? createRemoteVoicePlaybackConsumer({
-      deps,
-      outboundTrack,
-      isClosed: () => closed
-    })
-    : createVoicePlaybackConsumer({
+  const playback = createRemoteVoicePlaybackConsumer({
     deps,
-    talkSessionId,
-    playbackQueue,
     outboundTrack,
-    stampOutboundFrame,
-    advanceOutboundRtpClockForFrame,
-    writeOutboundSilenceFrame,
     isClosed: () => closed
   });
+  const enqueueRandomFiller = async (items: ReadonlyArray<{ reason: string; interruptEpoch: number }>) => {
+    if (closed || !items.some((item) => item.reason !== "call_close")) return;
+    const asset = selectRandomVoiceCallFillerAsset();
+    if (!asset) {
+      deps.emitStatus?.({ state: "voice_call.filler_skipped", detail: "no_assets" });
+      return;
+    }
+    const itemId = `filler:${input.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    const createdAt = (deps.now?.() ?? new Date()).toISOString();
+    const interruptEpoch = Math.max(...items.map((item) => item.interruptEpoch));
+    await delay(voiceCallFillerDelayMs, deps);
+    if (closed) return;
+    try {
+      await outboundTrack.enqueueAudioFile!({
+        itemId,
+        outputId: `filler:${input.callId}:${interruptEpoch}`,
+        filePath: asset.filePath,
+        assetId: asset.assetId,
+        originalText: "",
+        speakText: asset.text,
+        text: asset.text,
+        createdAt,
+        interruptEpoch,
+        beforeFirstPlayback: true
+      });
+      deps.emitStatus?.({ state: "voice_call.filler_queued", detail: asset.assetId });
+    } catch (error) {
+      deps.emitStatus?.({ state: "voice_call.filler_failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  };
   const interruptController = createInterruptController({
     callId: input.callId,
     talkSessionId,
     deps,
     source,
     playback,
-    playbackQueue,
     activeTtsTasks,
     nowStamp,
     getAsrStreamId: () => asrStreamId,
@@ -129,16 +137,15 @@ export async function createCallState(
     interruptPlayback: (interrupt) => outboundTrack.interrupt?.({
       reason: interrupt.reason,
       targetOutputId: interrupt.targetOutputId
-    })
+    }),
+    enqueuePostStableInputFiller: enqueueRandomFiller
   });
   const ttsProducer = createTtsProducer({
     callId: input.callId,
     talkSessionId,
     deps,
     outboundTrack,
-    playbackQueue,
     activeTtsTasks,
-    playback,
     synthesisTime,
     getPlaybackGeneration: () => playbackGeneration,
     getInterruptEpoch: () => interruptEpoch,
@@ -157,16 +164,43 @@ export async function createCallState(
     text: AsyncTextQueue;
     playback: Promise<unknown>;
   } | undefined;
-  const startAgentLoopWhenOutputDrained = async () => {
-    const talkRuntimeIdle = deps.talkRuntime?.isSessionOutputIdle
-      ? await Promise.resolve(deps.talkRuntime.isSessionOutputIdle(talkSessionId)) === true
-      : true;
-    if (!talkRuntimeIdle) return;
-    await deps.talkRuntime?.startAgentLoop?.(talkSessionId);
+  const pendingOutputChunks: TalkRuntimeOutputChunk[] = [];
+  const waitForForegroundPlaybackIdle = async () => {
+    return await outboundTrack.waitForPlaybackIdle?.() === true;
+  };
+  const waitForFrontendPlaybackIdleAck = async (outputId?: string, chunkId?: string) => {
+    if (closed) return false;
+    const ackId = `${input.callId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+    const ack = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        playbackIdleAckWaiters.delete(ackId);
+        deps.emitStatus?.({ state: "voice_call.playback_idle_ack.timeout", detail: ackId });
+        resolve(true);
+      }, frontendPlaybackIdleAckTimeoutMs);
+      playbackIdleAckWaiters.set(ackId, {
+        timer,
+        resolve(value) {
+          clearTimeout(timer);
+          resolve(value);
+        }
+      });
+    });
+    deps.emitStatus?.({
+      state: "voice_call.playback_idle_ack.request",
+      detail: JSON.stringify({ ackId, delayMs: frontendPlaybackIdleAckDelayMs, outputId, chunkId })
+    });
+    return await ack;
+  };
+  const resolveFrontendPlaybackIdleAck = (ackId: string, value: boolean) => {
+    const waiter = playbackIdleAckWaiters.get(ackId);
+    if (!waiter) return;
+    playbackIdleAckWaiters.delete(ackId);
+    waiter.resolve(value);
   };
   const runOutputPump = async () => {
     while (!closed) {
-      const raw = deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
+      const raw = pendingOutputChunks.shift()
+        ?? deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
         ?? deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
       const chunk = normalizeTalkChunk(raw);
       if (!chunk) {
@@ -175,8 +209,9 @@ export async function createCallState(
       }
       const hasSpeakableText = chunk.text.trim().length > 0;
       if (activeOutputStream && activeOutputStream.outputId !== chunk.outputId) {
-        activeOutputStream.text.finish();
-        activeOutputStream = undefined;
+        pendingOutputChunks.unshift(chunk);
+        await sleep(25);
+        continue;
       }
       if (!hasSpeakableText) {
         if (activeOutputStream && chunk.status === "finished") activeOutputStream.text.finish();
@@ -192,8 +227,7 @@ export async function createCallState(
             if (!firstOutboundPlaybackBufferPending) return;
             firstOutboundPlaybackBufferPending = false;
             await deps.sleep?.(deps.config.outboundAudio.frameMs);
-          },
-          onInputBufferIdle: startAgentLoopWhenOutputDrained
+          }
         });
         const stream = { outputId: chunk.outputId, text, playback };
         activeOutputStream = stream;
@@ -204,12 +238,17 @@ export async function createCallState(
             await call.close("tts_failed");
             return;
           }
-          if (playbackResult?.status !== "played" || !chunk.chunkId) return;
+          if (playbackResult?.status !== "played") return;
           try {
-            await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
-            deps.emitStatus?.({ state: "talk_runtime.chunk_played", detail: `${chunk.outputId} chunk=${chunk.chunkId}` });
+            const idle = await waitForForegroundPlaybackIdle();
+            const frontendAcked = idle && await waitForFrontendPlaybackIdleAck(playbackResult.outputId ?? chunk.outputId, chunk.chunkId);
+            if (frontendAcked) await deps.talkRuntime?.markForegroundPlaybackIdle?.({ sessionId: talkSessionId });
+            if (chunk.chunkId) {
+              await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
+              deps.emitStatus?.({ state: "talk_runtime.chunk_played", detail: `${chunk.outputId} chunk=${chunk.chunkId}` });
+            }
           } catch (error) {
-            deps.emitStatus?.({ state: "talk_runtime.chunk_played_failed", detail: `${chunk.outputId} chunk=${chunk.chunkId}: ${error instanceof Error ? error.message : String(error)}` });
+            deps.emitStatus?.({ state: "talk_runtime.playback_finished_failed", detail: `${chunk.outputId}${chunk.chunkId ? ` chunk=${chunk.chunkId}` : ""}: ${error instanceof Error ? error.message : String(error)}` });
           }
         }).catch((error) => {
           deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });
@@ -234,7 +273,6 @@ export async function createCallState(
       return asrStreamId;
     },
     talkRuntimeIngressStatus: deps.talkRuntime ? "connected" : "todo",
-    playbackQueue,
     async acceptIceCandidate(candidate) {
       await peer.addIceCandidate?.(candidate);
     },
@@ -265,7 +303,8 @@ export async function createCallState(
       if (closed) return;
       const stableText = normalizeTypedInputText(text) || "-已撤回-";
       if (stableText === "-已撤回-" && interruptController.batch.items.length === 0) return;
-      if (stableText !== "-已撤回-" && playbackQueue.some((item) => item.status === "playing" || item.status === "queued")) {
+      await (playback as unknown as { refresh?: () => Promise<void> }).refresh?.();
+      if (stableText !== "-已撤回-" && (playback.consumer.status === "playing" || playback.consumer.status === "queued")) {
         await interruptController.runInterrupt("manual");
       }
       await interruptController.markStableInput(stableText, "manual");
@@ -325,12 +364,19 @@ export async function createCallState(
     async playReplyText(text, outputId, options) {
       return ttsProducer.playReplyText(text, outputId, options);
     },
+    ackPlaybackIdle(ackId) {
+      resolveFrontendPlaybackIdleAck(ackId, true);
+    },
     async interrupt(reason = "manual", targetOutputId) {
       await interruptController.runInterrupt(reason === "network" || reason === "unknown" ? "manual" : reason, targetOutputId);
     },
     async close(reason = "closed") {
       if (closed) return;
       closed = true;
+      for (const [ackId, waiter] of playbackIdleAckWaiters) {
+        playbackIdleAckWaiters.delete(ackId);
+        waiter.resolve(false);
+      }
       deps.emitStatus?.({ state: "voice_call.hangup", detail: reason });
       playback.stopTextCacheStatus();
       await interruptController.runInterrupt("call_close");
@@ -606,14 +652,25 @@ class AsyncTextQueue implements AsyncIterable<string> {
   }
 }
 
-function playbackOptionString(options: unknown, key: string): string | undefined {
-  return options && typeof options === "object" && typeof (options as Record<string, unknown>)[key] === "string"
-    ? (options as Record<string, string>)[key]
-    : undefined;
+function selectRandomVoiceCallFillerAsset(): { assetId: string; filePath: string; text: string } | undefined {
+  let files: string[];
+  try {
+    files = fs.readdirSync(voiceCallFillerDir)
+      .filter((file) => file.toLowerCase().endsWith(".wav"))
+      .sort();
+  } catch {
+    return undefined;
+  }
+  if (files.length === 0) return undefined;
+  const file = files[Math.floor(Math.random() * files.length)]!;
+  return {
+    assetId: `voice-call/${file}`,
+    filePath: path.join(voiceCallFillerDir, file),
+    text: "voice call filler"
+  };
 }
 
-function playbackOptionCallback(options: unknown, key: string): (() => Promise<void> | void) | undefined {
-  return options && typeof options === "object" && typeof (options as Record<string, unknown>)[key] === "function"
-    ? (options as Record<string, () => Promise<void> | void>)[key]
-    : undefined;
+async function delay(ms: number, deps: WebRtcVoiceDeps): Promise<void> {
+  if (deps.sleep) return deps.sleep(ms);
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }

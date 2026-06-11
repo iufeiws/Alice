@@ -431,12 +431,12 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
         assert.notEqual(typeof text, "string");
         synthesizedTexts.push(await collectVoiceTextInput(text));
         await onInputBufferIdle?.();
-        yield { type: "audio" as const, sequence: 0, text: synthesizedTexts.at(-1), chunk: new Uint8Array([7]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio_file" as const, sequence: 0, text: synthesizedTexts.at(-1), assetId: "asset-runtime-output", filePath: "/tmp/runtime-output.wav" };
         yield { type: "done" as const };
       }
     }),
     decodeAudioFileToFrames: async () => {
-      throw new Error("file decoder should not be used");
+      return [{ sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 }];
     },
     encodePcmL16StreamToFrames: async function* (input) {
       for await (const _chunk of input.chunks) {
@@ -460,6 +460,9 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
           text: "接通测试。",
           outputTextLength: 5
         };
+      },
+      markOutputChunkPlayed(input: { sessionId: string; chunkId: string }) {
+        playedChunks.push(`${input.sessionId}:${input.chunkId}`);
       }
     },
     sleep: async (ms) => {
@@ -473,8 +476,8 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
   assert.equal(statuses.some((entry) => entry.state === "voice_call.waiting" && entry.detail === "webrtc_voice:call-runtime-output"), true);
   await waitFor(() => synthesizedTexts.length === 1);
   assert.deepEqual(synthesizedTexts, ["接通测试。"]);
+  assert.deepEqual(startedLoops, ["webrtc_voice:call-runtime-output"]);
   assert.deepEqual(playedChunks, []);
-  assert.deepEqual(startedLoops, ["webrtc_voice:call-runtime-output", "webrtc_voice:call-runtime-output"]);
   await waitFor(() => statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === "webrtc_voice:call-runtime-output"));
   assert.equal(sleeps.includes(20), true);
   assert.equal(sleeps.includes(1000), false);
@@ -801,69 +804,134 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
   await call.close("test_done");
 });
 
-test("WebRTC voice starts the next TalkRuntime loop after chunk is queued, before playback ends", async () => {
-  const peer = new FakePeer();
-  const startedLoops: string[] = [];
-  let talkRuntimeIdle = false;
-  let releasePlaybackSleep!: () => void;
-  const playbackSleep = new Promise<void>((resolve) => {
-    releasePlaybackSleep = resolve;
-  });
+test("WebRTC voice waits for remote worker playback idle and frontend ACK before marking TalkRuntime idle", async () => {
+  const track = new ControlledQueueTrack();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const foregroundIdle: string[] = [];
   let claimed = false;
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
-    createPeer: async () => peer,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
     createAsrSession: () => new FakeAsrSession([]),
     voiceSynthesizer: Object.assign(async () => {
-      throw new Error("file synthesizer should not be used");
+      throw new Error("single-file synthesizer should not be used");
     }, {
-      async *stream({ text, onInputBufferIdle }: { text: AsyncIterable<string> | string; onInputBufferIdle?: () => void | Promise<void> }) {
+      async *stream({ text }: { text: AsyncIterable<string> | string }) {
         await collectVoiceTextInput(text);
-        await onInputBufferIdle?.();
-        talkRuntimeIdle = true;
-        await onInputBufferIdle?.();
-        yield { type: "audio" as const, sequence: 0, text: "原文播放片段", chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "audio_file" as const, sequence: 0, text: "远端播放片段", assetId: "asset-remote-idle", filePath: "/tmp/remote-idle.wav" };
         yield { type: "done" as const };
       }
     }),
     decodeAudioFileToFrames: async () => {
-      throw new Error("file decoder should not be used");
-    },
-    encodePcmL16StreamToFrames: async function* (input) {
-      for await (const _chunk of input.chunks) {
-        for (let index = 0; index < 60; index += 1) {
-          yield { sequence: index, pcm: new Int16Array([index + 1]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
-        }
-      }
+      throw new Error("file decoder should not be used with enqueueAudioFile track");
     },
     talkRuntime: {
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop(sessionId: string) {
-        startedLoops.push(sessionId);
-      },
-      isSessionOutputIdle() {
-        return talkRuntimeIdle;
-      },
+      startAgentLoop() {},
       claimReadyOutputChunk(sessionId: string) {
-        if (claimed || sessionId !== "webrtc_voice:call-loop-after-claim") return undefined;
+        if (claimed || sessionId !== "webrtc_voice:call-remote-idle") return undefined;
         claimed = true;
-        return { sessionId, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" };
+        return { sessionId, outputId: "output-remote-idle", chunkId: "chunk-remote-idle", text: "第一段。" };
+      },
+      markForegroundPlaybackIdle(input: { sessionId: string }) {
+        foregroundIdle.push(input.sessionId);
       }
     },
-    sleep: async (ms) => {
-      if (ms === 20) await playbackSleep;
-    }
+    emitStatus: (event) => statuses.push(event)
   });
 
-  const call = await plugin.createCall({ callId: "call-loop-after-claim", userId: "browser-loop-after-claim", offerSdp: "offer" });
-  await waitFor(() => startedLoops.length >= 2);
+  const call = await plugin.createCall({ callId: "call-remote-idle", userId: "browser-remote-idle", offerSdp: "offer" });
+  await waitFor(() => track.enqueued.length === 1 && track.waitingSettlements === 1);
+  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(foregroundIdle, []);
 
-  assert.deepEqual(startedLoops, ["webrtc_voice:call-loop-after-claim", "webrtc_voice:call-loop-after-claim"]);
-  assert.ok((peer.outboundTrack?.frames.length ?? 0) < 60);
+  track.resolveIdle();
+  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"));
+  assert.deepEqual(foregroundIdle, []);
 
-  releasePlaybackSleep();
+  const request = statuses.find((entry) => entry.state === "voice_call.playback_idle_ack.request");
+  const ackId = JSON.parse(request?.detail ?? "{}").ackId;
+  assert.equal(typeof ackId, "string");
+  call.ackPlaybackIdle?.(ackId);
+  await waitFor(() => foregroundIdle.length === 1);
+  assert.deepEqual(foregroundIdle, ["webrtc_voice:call-remote-idle"]);
+  await call.close("test_done");
+});
+
+test("WebRTC voice does not start a later TalkRuntime output while the current output is still playing", async () => {
+  const track = new ControlledQueueTrack();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const foregroundIdle: string[] = [];
+  const outputs = [
+    { sessionId: "webrtc_voice:call-output-serial", outputId: "output-one", text: "第一轮。", status: "finished" },
+    { sessionId: "webrtc_voice:call-output-serial", outputId: "output-two", text: "第二轮。", status: "finished" }
+  ];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("single-file synthesizer should not be used");
+    }, {
+      async *stream({ text }: { text: AsyncIterable<string> | string }) {
+        const value = await collectVoiceTextInput(text);
+        yield { type: "audio_file" as const, sequence: 0, text: value, assetId: `asset-${value}`, filePath: `/tmp/${value}.wav` };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used with enqueueAudioFile track");
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      startAgentLoop() {},
+      claimBufferedOutputText(sessionId: string) {
+        const output = outputs.shift();
+        return output && output.sessionId === sessionId ? output : undefined;
+      },
+      markForegroundPlaybackIdle(input: { sessionId: string }) {
+        foregroundIdle.push(input.sessionId);
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-output-serial", userId: "browser-output-serial", offerSdp: "offer" });
+  await waitFor(() => track.enqueued.length === 1 && track.enqueued[0]!.outputId === "output-one");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(track.enqueued.map((item) => item.outputId), ["output-one"]);
+
+  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  track.resolveIdle();
+  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"));
+  assert.deepEqual(track.enqueued.map((item) => item.outputId), ["output-one"]);
+
+  const ackId = JSON.parse(statuses.find((entry) => entry.state === "voice_call.playback_idle_ack.request")?.detail ?? "{}").ackId;
+  call.ackPlaybackIdle?.(ackId);
+
+  await waitFor(() => track.enqueued.length === 2 && track.enqueued[1]!.outputId === "output-two");
+  assert.deepEqual(foregroundIdle, ["webrtc_voice:call-output-serial"]);
   await call.close("test_done");
 });
 
@@ -1037,7 +1105,6 @@ test("WebRTC voice interrupt stops outbound playback queue and records interrupt
   call.interrupt("manual", "output-2");
 
   assert.equal(peer.outboundTrack?.stopped, false);
-  assert.equal(call.playbackQueue.length, 0);
   assert.deepEqual(statuses.at(-1), { state: "talk_runtime.interrupt.todo", detail: "manual:output-2" });
 });
 
@@ -1165,6 +1232,60 @@ test("WebRTC voice manual interrupt asks TalkRuntime to interrupt latest output 
   assert.deepEqual(ingestedKinds, []);
 });
 
+test("WebRTC voice queues a random voice-call filler after stable interrupt input is committed", async () => {
+  const track = new ControlledQueueTrack();
+  const batches: unknown[] = [];
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const sleeps: number[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used with enqueueAudioFile track");
+    },
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      ingestInput() {},
+      interruptLatestOutput() {
+        return { interruptId: "runtime-interrupt-filler" };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-filler-after-stable", userId: "browser-filler-after-stable", offerSdp: "offer" });
+  await call.interrupt("manual");
+  assert.equal(track.enqueued.length, 0);
+
+  await call.acceptTextInput?.("はい");
+
+  await waitFor(() => track.enqueued.length === 1);
+  assert.equal(batches.length, 1);
+  assert.deepEqual(sleeps, [1_500]);
+  assert.match(track.enqueued[0]!.assetId, /^voice-call\/.+\.wav$/);
+  assert.match(track.enqueued[0]!.filePath, /assets\/voice-call\/.+\.wav$/);
+  assert.equal(track.enqueued[0]!.outputId, "filler:call-filler-after-stable:1");
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.filler_queued"), true);
+  await call.close("test_done");
+});
+
 test("WebRTC voice barge-in before consumer has audio interrupts latest output", async () => {
   const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
   let resolveVoice!: () => void;
@@ -1197,7 +1318,6 @@ test("WebRTC voice barge-in before consumer has audio interrupts latest output",
 
   const call = await plugin.createCall({ callId: "call-between-segments", userId: "browser-between-segments", offerSdp: "offer" });
   const playback = call.playReplyText("第二段已经生成但还没有开始播放。", "output-17");
-  await waitFor(() => call.playbackQueue.some((item) => item.outputId === "output-17" && item.status === "queued"));
 
   await call.setSpeechActive(true);
   await waitFor(() => latestInterrupts.length === 1);
@@ -2194,6 +2314,7 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
       closeSession() {},
       interruptLatestOutput(input) {
         latestInterrupts.push({ reason: input.reason, omitAssistantMessage: input.omitAssistantMessage });
+        return { interruptId: "runtime-interrupt-barge-batch" };
       },
       commitStableInputBatch(batch) {
         batches.push(batch);
@@ -2208,11 +2329,12 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
 
   assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
   assert.equal(batches.length, 1);
-  assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+  assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
+    interruptId: input.interruptId,
     reason: input.reason,
     text: input.text,
     asrStreamId: input.asrStreamId
-  })), [{ reason: "barge_in", text: "もしもし", asrStreamId: "asr-call-barge-batch-0" }]);
+  })), [{ interruptId: "runtime-interrupt-barge-batch", reason: "barge_in", text: "もしもし", asrStreamId: "asr-call-barge-batch-0" }]);
   assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), true);
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
 });
@@ -2554,7 +2676,6 @@ test("WebRTC voice keeps consecutive interrupts isolated in the interrupt queue"
   call.interrupt("manual", "output-first");
 
   const second = call.playReplyText("第二句。", "output-second");
-  await waitFor(() => call.playbackQueue.some((item) => item.outputId === "output-second"));
   call.interrupt("manual", "output-second");
 
   assert.equal((await first).status, "interrupted");
@@ -3025,8 +3146,9 @@ class FakeOutboundTrack {
 }
 
 class ControlledQueueTrack implements ServerOutboundAudioTrack {
-  readonly enqueued: Array<{ itemId: string; filePath: string }> = [];
+  readonly enqueued: Array<{ itemId: string; outputId?: string; filePath: string; assetId: string; text?: string }> = [];
   private readonly settlements: Array<{ resolve(value: PlaybackItemSettled): void }> = [];
+  private readonly idleWaiters: Array<{ resolve(value: boolean): void }> = [];
   stopped = false;
 
   get waitingSettlements() {
@@ -3041,8 +3163,8 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
     return true;
   }
 
-  async enqueueAudioFile(input: { itemId: string; filePath: string }) {
-    this.enqueued.push({ itemId: input.itemId, filePath: input.filePath });
+  async enqueueAudioFile(input: { itemId: string; outputId?: string; filePath: string; assetId: string; text?: string }) {
+    this.enqueued.push({ itemId: input.itemId, outputId: input.outputId, filePath: input.filePath, assetId: input.assetId, text: input.text });
     return { itemId: input.itemId };
   }
 
@@ -3052,8 +3174,19 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
     });
   }
 
+  waitForPlaybackIdle() {
+    return new Promise<boolean>((resolve) => {
+      this.idleWaiters.push({ resolve });
+    });
+  }
+
   settle(index: number, value: PlaybackItemSettled) {
     this.settlements[index]?.resolve(value);
+  }
+
+  resolveIdle(value = true) {
+    const waiters = this.idleWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve(value);
   }
 
   stop() {
@@ -3064,7 +3197,7 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
 class DelayedEnqueueTrack extends ControlledQueueTrack {
   readonly pendingEnqueues: Array<{ resolve(): void }> = [];
 
-  override async enqueueAudioFile(input: { itemId: string; filePath: string }) {
+  override async enqueueAudioFile(input: { itemId: string; outputId?: string; filePath: string; assetId: string; text?: string }) {
     const result = super.enqueueAudioFile(input);
     await new Promise<void>((resolve) => {
       this.pendingEnqueues.push({ resolve });

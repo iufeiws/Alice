@@ -1,4 +1,4 @@
-import type { InterruptItem, PlaybackItem, TtsTask, WebRtcVoiceDeps } from "./types.js";
+import type { InterruptItem, TtsTask, WebRtcVoiceDeps } from "./types.js";
 import type { VoicePlaybackConsumer } from "./playback-consumer.js";
 
 export function createInterruptController(ctx: {
@@ -12,7 +12,6 @@ export function createInterruptController(ctx: {
     userId: string;
   };
   playback: VoicePlaybackConsumer;
-  playbackQueue: PlaybackItem[];
   activeTtsTasks: Set<TtsTask>;
   nowStamp(): { occurredAt: string; occurredAtUtc: string };
   getAsrStreamId(): string;
@@ -21,6 +20,7 @@ export function createInterruptController(ctx: {
   getInterruptEpoch(): number;
   bumpPlaybackGeneration(): number;
   interruptPlayback?(input: { reason: InterruptItem["reason"]; targetOutputId?: string }): Promise<void> | void;
+  enqueuePostStableInputFiller?(items: ReadonlyArray<InterruptItem>): Promise<void> | void;
 }) {
   const batch: { items: InterruptItem[] } = { items: [] };
   const playbackGateOpen = () => batch.items.length === 0;
@@ -33,9 +33,6 @@ export function createInterruptController(ctx: {
     try {
       await Promise.all(items.map((item) => item.runtimeInterruptPromise).filter((promise): promise is Promise<void> => Boolean(promise)));
       if (playbackGateOpen()) throw new Error("voice call transaction assert failed: playback gate open");
-      if (ctx.playbackQueue.some((item) => item.status === "queued" || item.status === "playing")) {
-        throw new Error("voice call transaction assert failed: playable queue not cleared");
-      }
       if (ctx.deps.talkRuntime?.commitStableInputBatch) {
         await ctx.deps.talkRuntime.commitStableInputBatch({
           sessionId: ctx.talkSessionId,
@@ -62,6 +59,7 @@ export function createInterruptController(ctx: {
           ctx.deps.emitStatus?.({ state: "talk_runtime.ingress.todo", detail: `audio.transcript.final: ${item.stableInputText ?? "-杂音-"}` });
         }
       }
+      await ctx.enqueuePostStableInputFiller?.(items);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       ctx.deps.emitStatus?.({ state: "talk_runtime.stable_batch.failed", detail: `${batchId}:${detail}` });
@@ -140,10 +138,8 @@ export function createInterruptController(ctx: {
       sequence: ctx.nextStableSequence()
     };
     batch.items.push(item);
-    for (const queued of ctx.playbackQueue) queued.status = queued.outputId === targetOutputId ? "interrupted" : "cancelled";
     ctx.playback.setCurrentPlayingItem(undefined);
     ctx.playback.clearPendingPlayback();
-    ctx.playbackQueue.length = 0;
     const elapsedMs = ctx.playback.consumer.playedMs;
     const totalMs = ctx.playback.consumer.totalMs;
     const breakpoint = breakpointFromPlaybackConsumer();
@@ -179,6 +175,8 @@ export function createInterruptController(ctx: {
         ctx.deps.emitStatus?.({ state: "talk_runtime.interrupt.todo", detail: `${reason}:${item.targetOutputId ?? ""}` });
       }
       item.runtimeInterruptPromise = Promise.resolve(runtimeInterrupt).then(() => {
+        const runtimeInterruptId = interruptIdFromRuntime(runtimeInterrupt);
+        if (runtimeInterruptId) item.interruptId = runtimeInterruptId;
         item.runtimeInterrupted = true;
       });
       await item.runtimeInterruptPromise;
@@ -205,4 +203,10 @@ export function createInterruptController(ctx: {
     markStableInput,
     runInterrupt
   };
+}
+
+function interruptIdFromRuntime(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const interruptId = (value as { interruptId?: unknown }).interruptId;
+  return typeof interruptId === "string" && interruptId ? interruptId : undefined;
 }

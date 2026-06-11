@@ -65,6 +65,7 @@ export type ServerOutboundAudioTrack = {
   waitUntilReady?(timeoutMs: number): Promise<boolean>;
   enqueueAudioFile?(input: EnqueuePlaybackAudioFileInput): Promise<{ itemId: string }> | { itemId: string };
   waitForPlaybackItem?(itemId: string): Promise<PlaybackItemSettled>;
+  waitForPlaybackIdle?(): Promise<boolean>;
   interrupt?(input: { reason: "manual" | "barge_in" | "network" | "unknown" | "asr_failure" | "call_close"; targetOutputId?: string }): Promise<void> | void;
   getCurrentPlayback?(): Promise<PlaybackConsumerSnapshot> | PlaybackConsumerSnapshot;
   stop(): Promise<void> | void;
@@ -171,6 +172,7 @@ export type WebRtcVoiceTalkRuntime = {
   claimBufferedOutputText?(sessionId: string): unknown;
   claimReadyOutputChunk?(sessionId: string): unknown;
   isSessionOutputIdle?(sessionId: string): unknown;
+  markForegroundPlaybackIdle?(input: { sessionId: string }): void | Promise<void>;
   markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
   interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
   interruptLatestOutput?(input: { sessionId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
@@ -326,13 +328,13 @@ export type WebRtcVoiceCall = {
   talkSessionId: string;
   asrStreamId: string;
   talkRuntimeIngressStatus: "todo" | "connected";
-  playbackQueue: PlaybackItem[];
   acceptIceCandidate(candidate: unknown): Promise<void>;
   acceptInboundAudioChunk(bytes: Uint8Array, timing?: InboundAudioStreamChunkFrame["timing"]): Promise<AsrInboundStreamAcceptResult | undefined>;
   acceptTextInput?(text: string): Promise<void>;
   endInboundAudio(): Promise<AsrInboundStreamAcceptResult | undefined>;
   setSpeechActive(active: boolean): Promise<void>;
   playReplyText(text: string | AsyncIterable<string>, outputId?: string, options?: unknown): Promise<PlaybackResult>;
+  ackPlaybackIdle?(ackId: string): void;
   interrupt(reason?: "manual" | "barge_in" | "network" | "unknown", targetOutputId?: string): Promise<void>;
   close(reason?: string): Promise<void>;
 };

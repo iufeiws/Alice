@@ -1,7 +1,6 @@
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { PlaybackItem, PlaybackResult, ServerOutboundAudioTrack, TtsTask, WebRtcVoiceDeps, WebRtcVoiceTtsArchiveInput } from "./types.js";
 import { WebRtcVoiceError } from "./errors.js";
-import type { VoicePlaybackConsumer } from "./playback-consumer.js";
 import { abortableAsyncIterable, hashText, raceWithAbort, sleep, stripParenthesizedText } from "./utils.js";
 
 const maxQueuedPlaybackItems = 2;
@@ -11,9 +10,7 @@ export function createTtsProducer(ctx: {
   talkSessionId: string;
   deps: WebRtcVoiceDeps;
   outboundTrack: ServerOutboundAudioTrack;
-  playbackQueue: PlaybackItem[];
   activeTtsTasks: Set<TtsTask>;
-  playback: VoicePlaybackConsumer;
   synthesisTime: ReturnType<typeof createCurrentTimeProvider>;
   getPlaybackGeneration(): number;
   getInterruptEpoch(): number;
@@ -25,13 +22,6 @@ export function createTtsProducer(ctx: {
     const output = item.outputId ?? fallback;
     if (!output && !item.chunkId) return fallback ?? "";
     return `${output ?? ""}${item.chunkId ? ` chunk=${item.chunkId}` : ""}`;
-  };
-  const waitForPlaybackItemSettled = async (item: PlaybackItem) => {
-    while (ctx.playbackQueue.includes(item) && item.status !== "failed" && item.status !== "interrupted" && item.status !== "cancelled") {
-      ctx.playback.cleanupFinishedItems();
-      if (!ctx.playbackQueue.includes(item)) break;
-      await sleep(5);
-    }
   };
   const createPlaybackItem = (input: {
     outputId?: string;
@@ -142,58 +132,9 @@ export function createTtsProducer(ctx: {
           }
           if (event.type !== "audio_file") continue;
           await consumePlaybackQueueReservation();
-          if (ctx.outboundTrack.enqueueAudioFile) {
-            const itemId = `playback:${ctx.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
-            if (playedItems.length === 0) await playbackOptionCallback(options, "beforeFirstPlayback")?.();
-            const item = createPlaybackItem({
-              outputId,
-              chunkId: playbackOptionString(options, "chunkId"),
-              originalText,
-              speakText: speakTextForMeta,
-              text: event.text ?? event.textchunk ?? speakTextForMeta,
-              createdAt,
-              assetId: event.assetId,
-              filePath: event.filePath
-            });
-            playedItems.push(item);
-            const enqueued = await ctx.outboundTrack.enqueueAudioFile({
-              itemId,
-              outputId,
-              chunkId: item.chunkId,
-              originalText,
-              speakText: speakTextForMeta,
-              text: event.text ?? event.textchunk ?? speakTextForMeta,
-              createdAt,
-              assetId: event.assetId,
-              filePath: event.filePath,
-              interruptEpoch: item.interruptEpoch,
-              beforeFirstPlayback: playedItems.length === 1
-            });
-            mediaPlaybackItems.push(item);
-            releasePlaybackQueueReservation();
-            ctx.deps.emitStatus?.({ state: "tts.queue.ready", detail: playbackDetail(item, outputId) });
-            await ctx.archiveTtsOutput(ctx.deps, {
-              callId: ctx.callId,
-              talkSessionId: ctx.talkSessionId,
-              outputId,
-              chunkId: item.chunkId,
-              text: item.originalText ?? "",
-              speakText: item.speakText ?? "",
-              createdAt,
-              status: item.status,
-              source: "file",
-              assetId: item.assetId,
-              filePath: item.filePath
-            });
-            remoteSettlements.push(Promise.resolve(ctx.outboundTrack.waitForPlaybackItem?.(enqueued.itemId)).then((settled) => {
-              if (!settled) return;
-              item.status = settled.status === "played" ? "played" : settled.status === "failed" ? "failed" : "interrupted";
-              item.framesWritten = settled.framesWritten;
-              item.playedMs = settled.playedMs;
-              item.totalMs = settled.totalMs;
-            }));
-            continue;
-          }
+          if (!ctx.outboundTrack.enqueueAudioFile) throw new Error("outbound audio track does not support enqueueAudioFile");
+          const itemId = `playback:${ctx.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+          if (playedItems.length === 0) await playbackOptionCallback(options, "beforeFirstPlayback")?.();
           const item = createPlaybackItem({
             outputId,
             chunkId: playbackOptionString(options, "chunkId"),
@@ -203,12 +144,23 @@ export function createTtsProducer(ctx: {
             createdAt,
             assetId: event.assetId,
             filePath: event.filePath,
-            beforeFirstPlayback: playedItems.length === 0 ? playbackOptionCallback(options, "beforeFirstPlayback") : undefined
           });
-          ctx.playbackQueue.push(item);
           playedItems.push(item);
+          const enqueued = await ctx.outboundTrack.enqueueAudioFile({
+            itemId,
+            outputId,
+            chunkId: item.chunkId,
+            originalText,
+            speakText: speakTextForMeta,
+            text: event.text ?? event.textchunk ?? speakTextForMeta,
+            createdAt,
+            assetId: event.assetId,
+            filePath: event.filePath,
+            interruptEpoch: item.interruptEpoch,
+            beforeFirstPlayback: playedItems.length === 1
+          });
+          mediaPlaybackItems.push(item);
           releasePlaybackQueueReservation();
-          ctx.playback.start();
           ctx.deps.emitStatus?.({ state: "tts.queue.ready", detail: playbackDetail(item, outputId) });
           await ctx.archiveTtsOutput(ctx.deps, {
             callId: ctx.callId,
@@ -223,10 +175,16 @@ export function createTtsProducer(ctx: {
             assetId: item.assetId,
             filePath: item.filePath
           });
+          remoteSettlements.push(Promise.resolve(ctx.outboundTrack.waitForPlaybackItem?.(enqueued.itemId)).then((settled) => {
+            if (!settled) return;
+            item.status = settled.status === "played" ? "played" : settled.status === "failed" ? "failed" : "interrupted";
+            item.framesWritten = settled.framesWritten;
+            item.playedMs = settled.playedMs;
+            item.totalMs = settled.totalMs;
+          }));
         }
 
         if (remoteSettlements.length > 0) await Promise.all(remoteSettlements);
-        else for (const item of playedItems) await waitForPlaybackItemSettled(item);
         const interrupted = ttsTask.controller.signal.aborted || generation !== ctx.getPlaybackGeneration();
         const failed = !interrupted && (playedItems.length === 0 || playedItems.every((item) => item.status === "failed"));
         const frameCount = playedItems.reduce((sum, item) => sum + item.framesWritten, 0);
@@ -252,10 +210,6 @@ export function createTtsProducer(ctx: {
   };
 
   function activePlaybackItemCount(): number {
-    if (!ctx.outboundTrack.enqueueAudioFile) {
-      ctx.playback.cleanupFinishedItems();
-      return ctx.playbackQueue.filter(isActivePlaybackItem).length;
-    }
     for (let index = mediaPlaybackItems.length - 1; index >= 0; index -= 1) {
       if (!isActivePlaybackItem(mediaPlaybackItems[index]!)) mediaPlaybackItems.splice(index, 1);
     }

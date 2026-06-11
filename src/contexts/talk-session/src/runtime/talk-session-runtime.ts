@@ -33,8 +33,10 @@ export function createTalkRuntimeRuntime(input: {
       return talkRuntime.store.getSession(sessionId)?.status === "open";
     },
     pendingVoiceOutputCharCount(sessionId) {
-      void sessionId;
-      return 0;
+      return talkRuntime.store.pendingVoiceOutputCharCount(sessionId);
+    },
+    isForegroundPlaybackIdle(sessionId) {
+      return talkRuntime.isForegroundPlaybackIdle(sessionId);
     },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,
@@ -55,8 +57,8 @@ export function createTalkRuntimeRuntime(input: {
     finishAssistantOutput({ sessionId, outputId }) {
       talkRuntime.finishAssistantOutput({ sessionId, outputId });
     },
-    onMaxContinuousRounds({ sessionId, rounds }) {
-      talkRuntime.noteAgentLoopMaxContinuousRounds({ sessionId, rounds });
+    onRoundNeedsFollowup(sessionId) {
+      talkRuntime.startAgentLoop(sessionId);
     },
     log(level, message) {
       input.appendLog(level, message);

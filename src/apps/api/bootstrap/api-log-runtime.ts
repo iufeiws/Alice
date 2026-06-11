@@ -68,6 +68,7 @@ export function createApiLogRuntime(input: {
 
   function appendLog(level: LogLevel, message: string): void {
     const now = input.time.now();
+    if (shouldDropNoisyLog(level, message)) return;
     const entry = {
       id: nextLogId,
       time: now.iso,
@@ -125,6 +126,17 @@ export function createApiLogRuntime(input: {
     }
     return entry;
   }
+
+  function shouldDropNoisyLog(level: LogLevel, message: string): boolean {
+    return level === "info" && isNoisyWebRtcStatusMessage(message);
+  }
+}
+
+function isNoisyWebRtcStatusMessage(message: string): boolean {
+  return message.startsWith("webrtc voice tts.queue.backpressure:")
+    || message.startsWith("webrtc voice tts.queue.silence:")
+    || message.startsWith("webrtc voice tts.queue.underrun:")
+    || message.startsWith("webrtc voice voice_call.playback_text_cache:");
 }
 
 export function formatLogArg(value: unknown): string {

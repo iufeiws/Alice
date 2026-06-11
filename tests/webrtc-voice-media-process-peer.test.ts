@@ -47,6 +47,10 @@ test("media process peer proxies signaling, playback controls, status, and close
         process.send?.({ type: "response", id, ok: true, result: { itemId: params.itemId, status: "played", framesWritten: 3, playedMs: 60, totalMs: 60 } });
         return;
       }
+      if (method === "waitForPlaybackIdle") {
+        process.send?.({ type: "response", id, ok: true, result: true });
+        return;
+      }
       if (method === "close") {
         process.send?.({ type: "response", id, ok: true, result: calls.map((call) => call.method) });
         setTimeout(() => process.exit(0), 0);
@@ -101,6 +105,7 @@ test("media process peer proxies signaling, playback controls, status, and close
     playedMs: 60,
     totalMs: 60
   });
+  assert.equal(await track?.waitForPlaybackIdle?.(), true);
   await peer.close();
 
   assert.deepEqual(candidates, [{ candidate: "candidate" }]);

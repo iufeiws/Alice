@@ -130,6 +130,9 @@ function createMediaProcessOutboundTrack(
     async waitForPlaybackItem(itemId: string) {
       return await request<PlaybackItemSettled>("waitForPlaybackItem", { itemId });
     },
+    async waitForPlaybackIdle() {
+      return await request<boolean>("waitForPlaybackIdle");
+    },
     async interrupt(input) {
       await request("interrupt", input);
     },

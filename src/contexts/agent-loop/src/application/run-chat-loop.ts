@@ -2,8 +2,9 @@ import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-cont
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
+import { runAgentLoopExecutionSpec, type AgentLoopExecutionSpec, type AgentLoopToolExecution } from "./agent-loop-executor.js";
 
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
@@ -90,7 +91,7 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
   const visibleToolNames = input.llmInput.toolNames;
   let sendChatCallCount = 0;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
-  const loopResult = await runLLMToolLoop({
+  const spec: AgentLoopExecutionSpec = {
     initialMessages: session.messages,
     limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
     async beforeRound({ round }) {
@@ -152,7 +153,7 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
       return calls.some((entry) => isWaitChatToolName(entry.function.name))
         && isInboundToolName(call.function.name);
     },
-    async executeTool(call, { result }): Promise<LLMToolLoopExecution> {
+    async executeTool(call, { result }): Promise<AgentLoopToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
       const isConsecutiveSelfie = call.function.name === "selfie" && input.getLastCompletedToolName() === "selfie";
       let reachedToolCallLimit = false;
@@ -300,7 +301,8 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
       session.messages = messages;
       input.noteSessionUpdated();
     }
-  });
+  };
+  const loopResult = await runAgentLoopExecutionSpec(spec);
   if (loopResult.stopReason === "reset") {
     input.noteSessionUpdated();
   }

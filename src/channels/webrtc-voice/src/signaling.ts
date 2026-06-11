@@ -38,7 +38,7 @@ export function attachWebRtcVoiceSignalingServer(input: {
           const decoded = readWebSocketTextFrames(nodeBuffer.concat([wsBuffer, chunk]));
           wsBuffer = decoded.rest;
           for (const text of decoded.messages) {
-            const message = JSON.parse(text) as { type?: string; sdp?: string; candidate?: unknown; reason?: string; text?: unknown };
+            const message = JSON.parse(text) as { type?: string; sdp?: string; candidate?: unknown; reason?: string; text?: unknown; ackId?: unknown };
             if (message.type === "offer" && message.sdp) {
               let answerSent = false;
               const pendingCandidates: unknown[] = [];
@@ -89,6 +89,8 @@ export function attachWebRtcVoiceSignalingServer(input: {
               }
             } else if (message.type === "interrupt") {
               await call?.interrupt("manual");
+            } else if (message.type === "playback-idle-ack") {
+              if (typeof message.ackId === "string") call?.ackPlaybackIdle?.(message.ackId);
             } else if (message.type === "ping") {
               send({ type: "pong" });
             } else if (message.type === "hangup") {

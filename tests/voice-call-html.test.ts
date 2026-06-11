@@ -40,6 +40,16 @@ test("voice-call displays Alice text from playback consumer cache", () => {
   assert.doesNotMatch(html, /state === "tts\.playing_text" && detail\) aliceTranscript\.textContent = detail;/);
 });
 
+test("voice-call page acknowledges frontend playback idle requests", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /state === "voice_call\.playback_idle_ack\.request" && detail\) acknowledgePlaybackIdle\(detail\);/);
+  assert.match(html, /function acknowledgePlaybackIdle\(detail\)/);
+  assert.match(html, /payload = JSON\.parse\(String\(detail \|\| ""\)\);/);
+  assert.match(html, /const ackId = String\(payload\?\.ackId \|\| ""\);/);
+  assert.match(html, /sendSignal\(\{ type: "playback-idle-ack", ackId \}\);/);
+});
+
 test("voice-call displays ASR final transcript after recording ends", () => {
   const html = renderVoiceCallHtml();
 

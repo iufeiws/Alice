@@ -58,7 +58,6 @@ type LLMApiPreset = {
   stream: boolean;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
-  maxContinuousRounds?: number;
 };
 
 type PromptApiProfile = {
@@ -3506,7 +3505,6 @@ function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string,
   const temperature = numberFromUnknown(body.temperature, existing?.temperature ?? 0.2);
   const timeoutMs = numberFromUnknown(body.timeoutMs, existing?.timeoutMs ?? 60_000);
   const stream = body.stream === undefined ? existing?.stream ?? true : booleanFromUnknown(body.stream);
-  const maxContinuousRounds = optionalPositiveInteger(body.maxContinuousRounds) ?? existing?.maxContinuousRounds;
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
   const followupExtraParamsResult = parseJsonObject(optionalString(body.followupExtraParams) ?? "{}");
   if (baseURL && !isValidHttpUrl(baseURL)) return { error: "invalid_base_url" };
@@ -3515,7 +3513,7 @@ function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string,
   if (timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
   if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
   if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
-  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value, maxContinuousRounds };
+  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
 }
 
 function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
@@ -3547,8 +3545,7 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
-    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {},
-    maxContinuousRounds: optionalPositiveInteger(value.maxContinuousRounds)
+    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
   };
 }
 
@@ -4008,13 +4005,6 @@ function isValidTimeZone(value: string): boolean {
 function numberFromUnknown(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function optionalPositiveInteger(value: unknown): number | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return undefined;
-  return Math.floor(parsed);
 }
 
 function parseJsonObject(value: string): { ok: true; value: Record<string, unknown> } | { ok: false } {

@@ -6,6 +6,7 @@ import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile
 import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
+import { runAgentLoopExecutionSpec, type AgentLoopExecutionSpec, type AgentLoopToolExecution } from "./agent-loop-executor.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
 export type TalkAgentLoopInput = Omit<ChatAgentLoopInput, "llmInput"> & {
@@ -21,7 +22,6 @@ type TalkAgentLoopLLMConfig = {
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
   stream?: boolean;
-  maxContinuousRounds?: number;
 };
 
 type TalkAgentLoopState = {
@@ -37,6 +37,7 @@ type TalkAgentLoopDeps = {
   getActiveTalkLLMSessionId(): string | number | undefined;
   isTalkSessionOpen(sessionId: string): boolean;
   pendingVoiceOutputCharCount(sessionId: string): number;
+  isForegroundPlaybackIdle(sessionId: string): boolean;
   getTalkPromptProfile(): PromptProfile;
   time: CurrentTimeProvider;
   dailyShellStore: {
@@ -54,7 +55,7 @@ type TalkAgentLoopDeps = {
   sendRequest: LLMRequestSender;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
-  onMaxContinuousRounds?(input: { sessionId: string; rounds: number }): Promise<void> | void;
+  onRoundNeedsFollowup?(sessionId: string): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
   sleep?(ms: number): Promise<void>;
 };
@@ -69,6 +70,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   const activeTalkAgentLoops = new Set<string>();
   const activeTalkAgentLoopControllers = new Map<string, AbortController>();
   const activeTalkConversationStartIndexes = new Map<string, number>();
+  const pendingContinuationMessages = new Map<string, LLMMessage[]>();
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
   async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
@@ -90,61 +92,71 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       activeTalkConversationStartIndexes.set(sessionId, promptMessages.length);
       let messages: LLMMessage[] = [
         ...promptMessages,
-        ...initialTalkMessages
+        ...initialTalkMessages,
+        ...(pendingContinuationMessages.get(sessionId) ?? [])
       ];
       const config = deps.getLLMConfig();
-      const maxContinuousRounds = normalizeMaxContinuousRounds(config.maxContinuousRounds);
-      for (let round = 0; round < maxContinuousRounds; round += 1) {
-        const guard = await waitForTalkLoopRound(sessionId, round, controller);
-        if (!guard.continue) return;
-        const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
-        let streamedContent = "";
-        const result = await deps.sendRequest({
-          agentId: "talk",
-          client: config.client,
-          messages,
-          model: config.model,
-          temperature: config.temperature,
-          extraParams: round === 0 ? config.extraParams : config.followupExtraParams,
-          toolNames,
-          toolVariables,
-          round,
-          stream: config.stream !== false,
-          signal: controller.signal,
-          streamHandlers: {
-            onContentDelta(delta) {
-              streamedContent += delta;
-              deps.appendAssistantDelta({ sessionId, outputId, delta });
+      const guard = await waitForTalkLoopRound(sessionId, 0, controller);
+      if (!guard.continue) return;
+      const outputId = `talk:${sessionId}:${Date.now()}:0`;
+      let streamedContent = "";
+      const baseMessageCount = promptMessages.length + initialTalkMessages.length;
+      const spec: AgentLoopExecutionSpec = {
+        initialMessages: messages,
+        limits: { maxRounds: 1, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
+        buildRequest({ messages }) {
+          return {
+            agentId: "talk",
+            client: config.client,
+            messages,
+            model: config.model,
+            temperature: config.temperature,
+            extraParams: config.extraParams,
+            toolNames,
+            toolVariables,
+            stream: config.stream !== false,
+            signal: controller.signal,
+            streamHandlers: {
+              onContentDelta(delta) {
+                streamedContent += delta;
+                deps.appendAssistantDelta({ sessionId, outputId, delta });
+              }
             }
-          }
-        });
-        const calls = result.message.toolCalls ?? [];
-        if (calls.length === 0) {
+          };
+        },
+        sendRequest: deps.sendRequest,
+        async executeTool(call): Promise<AgentLoopToolExecution> {
+          return {
+            message: {
+              role: "tool" as const,
+              toolCallId: call.id,
+              name: call.function.name,
+              content: await executeToolCall(call)
+            }
+          };
+        },
+        afterRequest({ result }) {
+          const calls = result.message.toolCalls ?? [];
+          if (calls.length > 0) return;
+          pendingContinuationMessages.delete(sessionId);
           if (!streamedContent && result.message.content) {
             deps.appendAssistantDelta({ sessionId, outputId, delta: result.message.content });
           }
           deps.finishAssistantOutput({ sessionId, outputId });
           deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
+        },
+        async onMessagesChanged({ messages, reason }) {
+          if (reason === "completed") {
+            pendingContinuationMessages.delete(sessionId);
+            return;
+          }
+          const continuationMessages = messages.slice(baseMessageCount);
+          if (continuationMessages.length === 0) return;
+          pendingContinuationMessages.set(sessionId, continuationMessages);
+          deps.onRoundNeedsFollowup?.(sessionId);
         }
-        const assistantMessage: LLMMessage = {
-          role: "assistant",
-          content: result.message.content,
-          reasoningContent: result.message.reasoningContent
-        };
-        if (calls.length > 0) assistantMessage.toolCalls = calls;
-        messages = [
-          ...messages,
-          assistantMessage,
-          ...await Promise.all(calls.map(async (call) => ({
-            role: "tool" as const,
-            toolCallId: call.id,
-            name: call.function.name,
-            content: await executeToolCall(call)
-          })))
-        ];
-      }
-      deps.log("info", `talk loop reached max continuous rounds: session=${sessionId} rounds=${maxContinuousRounds}`);
-      await deps.onMaxContinuousRounds?.({ sessionId, rounds: maxContinuousRounds });
+      };
+      await runAgentLoopExecutionSpec(spec);
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
@@ -183,9 +195,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         return { continue: false };
       }
       const pendingChars = deps.pendingVoiceOutputCharCount(sessionId);
-      if (pendingChars < maxPendingVoiceOutputChars) return { continue: true };
+      const foregroundPlaybackIdle = deps.isForegroundPlaybackIdle(sessionId);
+      if (pendingChars === 0 && foregroundPlaybackIdle) return { continue: true };
       if (!loggedBackpressure) {
-        deps.log("info", `talk loop waiting: voice output buffer pending_chars=${pendingChars} limit=${maxPendingVoiceOutputChars} session=${sessionId}`);
+        deps.log("info", `talk loop waiting: voice output pending_chars=${pendingChars} foreground_idle=${foregroundPlaybackIdle} limit=${maxPendingVoiceOutputChars} session=${sessionId}`);
         loggedBackpressure = true;
       }
       await (deps.sleep ?? sleep)(25);

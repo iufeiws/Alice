@@ -63,6 +63,10 @@ export function createApiRootRuntime() {
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendLog: foundation.appendLog
   });
+  agentLoopRuntime.setRunners({
+    runChat: ({ event }) => apiAgentStackRuntime.core.handleEvent(event),
+    runTalk: ({ sessionId }) => apiAgentStackRuntime.talkRuntime.runReadyAgentLoopSession(sessionId)
+  });
   const apiServerStackRuntime = createApiServerStackRuntime({
     config: foundation.config,
     logs: foundation.logs,

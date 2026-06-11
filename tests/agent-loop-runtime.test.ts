@@ -1,0 +1,65 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createAgentLoopRuntime } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+
+test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
+  const runtime = createAgentLoopRuntime();
+  const observedGenerations: number[] = [];
+  runtime.setRunners({
+    runChat({ sessionId }) {
+      const active = runtime.getActiveMainLLMSession();
+      assert.equal(active?.id, sessionId);
+      assert.equal(active?.agentId, "chat");
+      assert.equal(active?.phase, "running");
+      observedGenerations.push(active.generation);
+      return [{
+        id: "out_1",
+        target: { plugin: "test", sessionId },
+        content: { kind: "text", text: "ok" },
+        meta: { createdAt: "2026-06-12T00:00:00.000Z", urgency: "normal" }
+      }];
+    }
+  });
+
+  const result = await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-1",
+    reason: "test",
+    event: textEvent("session-1")
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.outputs.length, 1);
+  assert.deepEqual(observedGenerations, [1]);
+  assert.equal(runtime.getActiveMainLLMSession()?.phase, "idle");
+});
+
+test("agent loop runtime rejects overlapping runs", async () => {
+  let releaseRun: (() => void) | undefined;
+  const runtime = createAgentLoopRuntime({
+    runTalk() {
+      return new Promise<void>((resolve) => {
+        releaseRun = resolve;
+      });
+    }
+  });
+
+  const first = runtime.requestRun({ kind: "talk", sessionId: "talk-1", reason: "first" });
+  assert.equal(runtime.isRunning(), true);
+  const second = await runtime.requestRun({ kind: "talk", sessionId: "talk-1", reason: "second" });
+  assert.deepEqual(second, { started: false, outputs: [] });
+  releaseRun?.();
+  assert.deepEqual(await first, { started: true, outputs: [] });
+});
+
+function textEvent(sessionId: string): AgentEvent {
+  return {
+    id: "evt_1",
+    type: "message.text",
+    source: { plugin: "test", userId: "user-1" },
+    session: { scope: "dm", sessionId },
+    payload: { kind: "text", text: "hello" },
+    meta: { receivedAt: "2026-06-12T00:00:00.000Z" }
+  };
+}

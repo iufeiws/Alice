@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createAgentHeartbeatRuntime } from "../../../agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import type { AgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
+import { createAgentLoopRuntime, type AgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { AgentStateController, AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
@@ -142,10 +142,52 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
+  const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
+    runChat: ({ event }) => deps.core.handleEvent(event),
+    runTalk: ({ sessionId }) => deps.talkRuntime?.runReadyAgentLoopSession?.(sessionId)
+  });
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,
     startPaused: deps.startHeartbeatPaused,
-    run: runHeartbeat,
+    tasks: {
+      isIdleTransitionDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
+      canRunHeartbeat,
+      tickAgentState: () => {
+        deps.agentState?.tick();
+      },
+      onHeartbeatTick: deps.onHeartbeatTick,
+      hasPendingUserMessages,
+      buildRandomizedInitiatedBehaviorEvent,
+      runGeneratedSession,
+      setAgentWaiting: (reason) => {
+        deps.agentState?.setState?.("waiting", { reason });
+      },
+      claimReadyTalkSession: () => deps.talkRuntime?.claimReadyAgentLoopSession?.(),
+      runTalkSession: runTalkSession,
+      requeueTalkSession: (sessionId) => {
+        deps.talkRuntime?.startAgentLoop?.(sessionId);
+      },
+      getPendingSessionIds: () => [...pendingSessions],
+      isProcessingSession: (sessionId) => processingSessions.has(sessionId),
+      beginProcessingSession: (sessionId) => {
+        processingSessions.add(sessionId);
+      },
+      finishProcessingSession: (sessionId) => {
+        processingSessions.delete(sessionId);
+      },
+      getPendingMessageCount: (sessionId) => deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER).length,
+      shouldProcessPendingSession: (sessionId) => {
+        const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
+        return pending.length > 0 && shouldProcessPending(pending);
+      },
+      markSessionNotPending: (sessionId) => {
+        pendingSessions.delete(sessionId);
+      },
+      processPendingSession: handleDirtySession,
+      getSleepCocoonWakeEvent: () => deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.(),
+      getSleepCocoonGoodnightEvent: deps.getSleepCocoonGoodnightEvent,
+      appendLog: deps.appendLog
+    },
     onPausedChange: deps.onHeartbeatPausedChange,
     appendLog: deps.appendLog
   });
@@ -257,7 +299,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     },
     async processNow() {
       recoverPendingSessionsFromStore();
-      const processed = await runHeartbeat({ force: true });
+      const processed = await heartbeat.run({ force: true });
       if (processed === 0) await runManualSession();
     },
     getStatus() {
@@ -288,87 +330,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     for (const session of deps.store.listPendingCoreConversations()) {
       markPending(session.conversationId);
     }
-  }
-
-  async function runHeartbeat(options: { force?: boolean } = {}): Promise<number> {
-    const force = options.force ?? false;
-    const beforeTick = deps.agentState?.getSnapshot?.();
-    let processed = 0;
-    const randomizedInitiatedEvent = !force
-      && isIdleTransitionDue(beforeTick)
-      && canRunHeartbeat()
-      && !hasPendingUserMessages()
-      ? buildRandomizedInitiatedBehaviorEvent()
-      : undefined;
-    if (randomizedInitiatedEvent) {
-      const handled = await runGeneratedSession(randomizedInitiatedEvent, "randomized initiated behavior");
-      if (handled) processed += 1;
-      deps.agentState?.setState?.("waiting", { reason: "randomized_initiated_behavior" });
-      if (!force) heartbeat.schedule();
-      return processed;
-    }
-    deps.agentState?.tick();
-    if (!force && !canRunHeartbeat()) {
-      heartbeat.schedule();
-      return 0;
-    }
-    if (canRunHeartbeat()) deps.onHeartbeatTick?.();
-    const talkSessionId = !force && canRunHeartbeat() ? deps.talkRuntime?.claimReadyAgentLoopSession?.() : undefined;
-    if (talkSessionId) {
-      const started = await (deps.agentLoopRuntime?.requestRun({
-        kind: "talk",
-        sessionId: talkSessionId,
-        reason: "heartbeat_talk_ready",
-        run: () => deps.talkRuntime?.runReadyAgentLoopSession?.(talkSessionId)
-      }) ?? (async () => {
-        await deps.talkRuntime?.runReadyAgentLoopSession?.(talkSessionId);
-        return true;
-      })());
-      if (!started) deps.talkRuntime?.startAgentLoop?.(talkSessionId);
-      if (started) processed += 1;
-    }
-    const sleepCocoonWakeEvent = !force && canRunHeartbeat()
-      ? (deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.())
-      : undefined;
-    if (sleepCocoonWakeEvent) {
-      const handled = await runGeneratedSession(sleepCocoonWakeEvent, "sleep cocoon wake");
-      if (handled) processed += 1;
-    }
-    const sleepCocoonGoodnightEvent = !force && canRunHeartbeat() && !hasPendingUserMessages()
-      ? deps.getSleepCocoonGoodnightEvent?.()
-      : undefined;
-    if (sleepCocoonGoodnightEvent) {
-      const handled = await runGeneratedSession(sleepCocoonGoodnightEvent, "sleep cocoon goodnight");
-      if (handled) processed += 1;
-    }
-    const sessionIds = [...pendingSessions];
-    for (const sessionId of sessionIds) {
-      if (processingSessions.has(sessionId)) continue;
-      const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
-      if (pending.length === 0) {
-        pendingSessions.delete(sessionId);
-        continue;
-      }
-      if (!force && !shouldProcessPending(pending)) {
-        continue;
-      }
-
-      processingSessions.add(sessionId);
-      try {
-        await handleDirtySession(sessionId);
-        processed += 1;
-        if (deps.store.listUnprocessedCoreMessagesForConversation(sessionId, 1).length === 0) {
-          pendingSessions.delete(sessionId);
-        }
-      } catch (error) {
-        deps.appendLog("error", `agent session failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        processingSessions.delete(sessionId);
-      }
-    }
-
-    if (!force) heartbeat.schedule();
-    return processed;
   }
 
   async function runManualSession(): Promise<void> {
@@ -498,26 +459,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function canRunHeartbeat(): boolean {
-    if (deps.agentLoopRuntime?.isRunning()) return false;
+    if (agentLoopRuntime.isRunning()) return false;
     if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
   }
 
+  async function runTalkSession(sessionId: string): Promise<boolean> {
+    const result = await agentLoopRuntime.requestRun({
+      kind: "talk",
+      sessionId,
+      reason: "heartbeat_talk_ready"
+    });
+    return result.started;
+  }
+
   async function runChatEvent(event: AgentEvent, reason: string): Promise<AgentOutput[]> {
-    let outputs: AgentOutput[] = [];
-    const started = await (deps.agentLoopRuntime?.requestRun({
+    const result = await agentLoopRuntime.requestRun({
       kind: "chat",
       sessionId: event.session.sessionId,
       reason,
-      run: async () => {
-        outputs = await deps.core.handleEvent(event);
-      }
-    }) ?? (async () => {
-      outputs = await deps.core.handleEvent(event);
-      return true;
-    })());
-    if (!started) throw new Error("agent_loop_busy");
-    return outputs;
+      event
+    });
+    if (!result.started) throw new Error("agent_loop_busy");
+    return result.outputs;
   }
 
   function isAgentLoopBusyError(error: unknown): boolean {

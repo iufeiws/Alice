@@ -25,16 +25,6 @@ const frontendPlaybackIdleAckTimeoutMs = 2_500;
 const voiceCallFillerDelayMs = 1_500;
 const voiceCallFillerDir = path.resolve(process.cwd(), "assets", "voice-call");
 
-type TalkRuntimeOutputChunk = {
-  sessionId: string;
-  outputId: string;
-  chunkId?: string;
-  text: string;
-  status?: string;
-  startCharIndex: number;
-  endCharIndex: number;
-};
-
 export async function createCallState(
   input: CreateWebRtcVoiceCallInput,
   answerSdp: string,
@@ -164,7 +154,6 @@ export async function createCallState(
     text: AsyncTextQueue;
     playback: Promise<unknown>;
   } | undefined;
-  const pendingOutputChunks: TalkRuntimeOutputChunk[] = [];
   const waitForForegroundPlaybackIdle = async () => {
     return await outboundTrack.waitForPlaybackIdle?.() === true;
   };
@@ -199,8 +188,7 @@ export async function createCallState(
   };
   const runOutputPump = async () => {
     while (!closed) {
-      const raw = pendingOutputChunks.shift()
-        ?? deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
+      const raw = deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
         ?? deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
       const chunk = normalizeTalkChunk(raw);
       if (!chunk) {
@@ -209,9 +197,8 @@ export async function createCallState(
       }
       const hasSpeakableText = chunk.text.trim().length > 0;
       if (activeOutputStream && activeOutputStream.outputId !== chunk.outputId) {
-        pendingOutputChunks.unshift(chunk);
-        await sleep(25);
-        continue;
+        activeOutputStream.text.finish();
+        activeOutputStream = undefined;
       }
       if (!hasSpeakableText) {
         if (activeOutputStream && chunk.status === "finished") activeOutputStream.text.finish();

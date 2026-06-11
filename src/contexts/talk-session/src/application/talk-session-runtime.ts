@@ -15,7 +15,6 @@ export type TalkRuntime = {
   startAgentLoop(sessionId: string): void;
   claimReadyAgentLoopSession(): string | undefined;
   runReadyAgentLoopSession(sessionId: string): Promise<void> | void;
-  noteAgentLoopMaxContinuousRounds(input: { sessionId: string; rounds: number }): void;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
@@ -23,6 +22,8 @@ export type TalkRuntime = {
   claimBufferedOutputText(sessionId: string): { outputId: string; sessionId: string; text: string; status: "streaming" | "finished" } | undefined;
   claimReadyOutputChunk(sessionId: string): TalkOutputChunk | undefined;
   isSessionOutputIdle(sessionId: string): boolean;
+  isForegroundPlaybackIdle(sessionId: string): boolean;
+  markForegroundPlaybackIdle(input: { sessionId: string }): void;
   markOutputChunkPlayed(input: { sessionId: string; chunkId: string }): void;
   interruptOutput(input: {
     sessionId: string;
@@ -92,24 +93,15 @@ export type TalkRuntimeDeps = {
   interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
   onSessionOpened?(sessionId: string): void;
   onSessionClosed?(sessionId: string): void;
-  maxContinuousRoundIdleMs?: number;
-  setTimeout?: (handler: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
 };
 
 export const defaultTalkOutputReadyChars = 20;
-export const defaultTalkAgentLoopHardWaitMs = 5_000;
-const defaultMaxContinuousRoundIdleMs = 60_000;
+export const defaultTalkAgentLoopPlaybackIdleMs = 3_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
-  const maxContinuousRoundIdleMs = deps.maxContinuousRoundIdleMs ?? defaultMaxContinuousRoundIdleMs;
-  const timers = {
-    setTimeout: deps.setTimeout ?? ((handler: () => void, ms: number) => setTimeout(handler, ms)),
-    clearTimeout: deps.clearTimeout ?? ((timer: ReturnType<typeof setTimeout>) => clearTimeout(timer))
-  };
-  const maxRoundCloseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const readyAgentLoopSessions = new Map<string, number>();
+  const foregroundPlaybackPendingSessions = new Set<string>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -154,7 +146,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     closeSession(input) {
       assertSessionExists(deps.store, input.sessionId);
-      clearMaxRoundCloseTimer(input.sessionId);
       readyAgentLoopSessions.delete(input.sessionId);
       const now = current(deps.time);
       deps.store.closeSession({
@@ -162,6 +153,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         occurredAt: input.occurredAt ?? now.occurredAt,
         occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc
       });
+      foregroundPlaybackPendingSessions.delete(input.sessionId);
       recordTranscriptEnd(deps.store, {
         sessionId: input.sessionId,
         occurredAt: input.occurredAt ?? now.occurredAt,
@@ -182,10 +174,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         readyAgentLoopSessions.delete(sessionId);
         if (deps.store.getSession(sessionId)?.status !== "open") continue;
         if (deps.store.latestUnresolvedInterrupt(sessionId)) continue;
-        if (!deps.store.isSessionOutputIdle(sessionId)) {
-          markAgentLoopReady(sessionId);
-          continue;
-        }
+        if (!isAgentLoopOutputReady(sessionId)) continue;
         return sessionId;
       }
       return undefined;
@@ -193,32 +182,14 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     runReadyAgentLoopSession(sessionId) {
       assertOpenSession(deps.store, sessionId);
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
-      if (!deps.store.isSessionOutputIdle(sessionId)) {
-        markAgentLoopReady(sessionId);
-        return;
-      }
+      if (!isAgentLoopOutputReady(sessionId)) return;
       return deps.runAgentLoop?.(sessionId);
-    },
-    noteAgentLoopMaxContinuousRounds(input) {
-      assertOpenSession(deps.store, input.sessionId);
-      const now = current(deps.time);
-      deps.store.insertEvent({
-        kind: "agent.max_continuous_rounds",
-        sessionId: input.sessionId,
-        source: { plugin: "talk_runtime" },
-        sequence: nextSyntheticSequence(),
-        occurredAt: now.occurredAt,
-        occurredAtUtc: now.occurredAtUtc,
-        payload: { kind: "agent.max_continuous_rounds", rounds: input.rounds, idleTimeoutMs: maxContinuousRoundIdleMs }
-      });
-      scheduleMaxRoundClose(input.sessionId);
     },
     ingestInput(event) {
       assertOpenSession(deps.store, event.sessionId);
       const inserted = deps.store.insertEvent(event);
       if (!inserted.inserted) return;
       if (event.kind === "audio.transcript.final" || event.kind === "text.final") {
-        clearMaxRoundCloseTimer(event.sessionId);
         const text = payloadText(event.payload);
         if (!text) return;
         const segment = deps.store.insertSegment({
@@ -298,6 +269,12 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
               sourceKind: "call_close",
               sourceId: item.interruptId
             });
+            deps.store.resolveInterrupt({
+              interruptId: item.interruptId,
+              finalUserSegmentId: `system:call_close:${batch.batchId}:${item.sequence}`,
+              now: item.occurredAt,
+              nowUtc: item.occurredAtUtc
+            });
             continue;
           }
           shouldRunAgentLoop = true;
@@ -358,6 +335,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       const visibleText = fullText;
       const speechDelta = speechDeltaForOutput(input.delta, output.fullText);
       const bufferText = output.bufferText + speechDelta;
+      if (speechDelta.trim()) foregroundPlaybackPendingSessions.add(input.sessionId);
 
       output = deps.store.updateOutput({
         outputId: input.outputId,
@@ -416,6 +394,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       assertOpenSession(deps.store, sessionId);
       return deps.store.isSessionOutputIdle(sessionId);
     },
+    isForegroundPlaybackIdle(sessionId) {
+      assertOpenSession(deps.store, sessionId);
+      return !foregroundPlaybackPendingSessions.has(sessionId);
+    },
     markOutputChunkPlayed(input) {
       assertOpenSession(deps.store, input.sessionId);
       const now = current(deps.time);
@@ -426,9 +408,13 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         nowUtc: now.occurredAtUtc
       });
     },
+    markForegroundPlaybackIdle(input) {
+      assertOpenSession(deps.store, input.sessionId);
+      foregroundPlaybackPendingSessions.delete(input.sessionId);
+      markAgentLoopReady(input.sessionId, defaultTalkAgentLoopPlaybackIdleMs);
+    },
     interruptLatestOutput(input) {
       assertOpenSession(deps.store, input.sessionId);
-      clearMaxRoundCloseTimer(input.sessionId);
       const output = deps.store.latestOutput(input.sessionId);
       if (!output) return undefined;
       return runtime.interruptOutput({
@@ -438,7 +424,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     interruptOutput(input) {
       assertOpenSession(deps.store, input.sessionId);
-      clearMaxRoundCloseTimer(input.sessionId);
+      foregroundPlaybackPendingSessions.delete(input.sessionId);
       const now = current(deps.time);
       const output = deps.store.getOutput(input.outputId);
       if (!output) throw new Error(`talk output not found: ${input.outputId}`);
@@ -567,25 +553,12 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
 
   return runtime;
 
-  function scheduleMaxRoundClose(sessionId: string): void {
-    clearMaxRoundCloseTimer(sessionId);
-    const timer = timers.setTimeout(() => {
-      maxRoundCloseTimers.delete(sessionId);
-      if (deps.store.getSession(sessionId)?.status !== "open") return;
-      runtime.closeSession({ sessionId });
-    }, maxContinuousRoundIdleMs);
-    maxRoundCloseTimers.set(sessionId, timer);
+  function markAgentLoopReady(sessionId: string, delayMs = 0): void {
+    readyAgentLoopSessions.set(sessionId, deps.time.now().epochMs + delayMs);
   }
 
-  function clearMaxRoundCloseTimer(sessionId: string): void {
-    const timer = maxRoundCloseTimers.get(sessionId);
-    if (!timer) return;
-    timers.clearTimeout(timer);
-    maxRoundCloseTimers.delete(sessionId);
-  }
-
-  function markAgentLoopReady(sessionId: string): void {
-    readyAgentLoopSessions.set(sessionId, deps.time.now().epochMs + defaultTalkAgentLoopHardWaitMs);
+  function isAgentLoopOutputReady(sessionId: string): boolean {
+    return deps.store.isSessionOutputIdle(sessionId) && !foregroundPlaybackPendingSessions.has(sessionId);
   }
 }
 

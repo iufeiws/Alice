@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTalkRuntime, defaultTalkAgentLoopHardWaitMs } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
+import { createTalkRuntime, defaultTalkAgentLoopPlaybackIdleMs } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { projectClosedTalkSessionToConversationHub } from "../src/contexts/talk-session/src/runtime/talk-session-runtime.js";
@@ -59,58 +59,6 @@ test("talk runtime notifies agent state callbacks on session open and close", ()
   runtime.closeSession({ sessionId: "session-agent-state" });
 
   assert.deepEqual(states, ["calling", "waiting"]);
-});
-
-test("talk runtime closes an open session after max continuous rounds timeout", () => {
-  let scheduled: (() => void) | undefined;
-  const store = createTalkStore(path.join(makeTempDir("talk-runtime-max-round-close"), "talk.sqlite"));
-  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
-  const runtime = createTalkRuntime({
-    store,
-    time,
-    maxContinuousRoundIdleMs: 60_000,
-    setTimeout(handler, ms) {
-      assert.equal(ms, 60_000);
-      scheduled = handler;
-      return 1 as unknown as ReturnType<typeof setTimeout>;
-    },
-    clearTimeout: () => {}
-  });
-
-  runtime.openSession(sessionInput("session-max-round-close"));
-  runtime.noteAgentLoopMaxContinuousRounds({ sessionId: "session-max-round-close", rounds: 30 });
-
-  assert.equal(runtime.store.getSession("session-max-round-close")?.status, "open");
-  scheduled?.();
-  assert.equal(runtime.store.getSession("session-max-round-close")?.status, "closed");
-});
-
-test("talk runtime cancels max continuous rounds timeout when user interrupts", () => {
-  let timerCleared = false;
-  const store = createTalkStore(path.join(makeTempDir("talk-runtime-max-round-interrupt"), "talk.sqlite"));
-  const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
-  const runtime = createTalkRuntime({
-    store,
-    time,
-    setTimeout() {
-      return 1 as unknown as ReturnType<typeof setTimeout>;
-    },
-    clearTimeout() {
-      timerCleared = true;
-    }
-  });
-
-  runtime.openSession(sessionInput("session-max-round-interrupt"));
-  runtime.appendAssistantDelta({ sessionId: "session-max-round-interrupt", outputId: "output-max-round-interrupt", delta: "まだ話しています。" });
-  runtime.noteAgentLoopMaxContinuousRounds({ sessionId: "session-max-round-interrupt", rounds: 30 });
-  runtime.interruptLatestOutput({
-    sessionId: "session-max-round-interrupt",
-    reason: "barge_in",
-    breakpointContext: { beforeText: "まだ" }
-  });
-
-  assert.equal(timerCleared, true);
-  assert.equal(runtime.store.getSession("session-max-round-interrupt")?.status, "open");
 });
 
 test("talk runtime uses created LLM session id and rejects stale session writes", () => {
@@ -368,7 +316,7 @@ test("talk runtime builds next loop messages with default break marker, not lite
   assert.doesNotMatch(messages.map((message) => message.content).join("\n"), /\[断点\]/);
 });
 
-test("talk runtime starts the next agent loop without waiting for output playback", () => {
+test("talk runtime starts the next agent loop three seconds after foreground playback becomes idle", () => {
   const loops: string[] = [];
   let current = new Date("2026-06-06T15:00:00.000Z");
   const runtime = createTestRuntime("idle-loop", (sessionId) => {
@@ -377,35 +325,56 @@ test("talk runtime starts the next agent loop without waiting for output playbac
 
   runtime.openSession(sessionInput("session-idle"));
   runtime.appendAssistantDelta({ sessionId: "session-idle", outputId: "output-idle", delta: "第一句已经准备好。" });
-  runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, []);
 
   const streamingChunk = runtime.claimBufferedOutputText("session-idle");
   assert.ok(streamingChunk);
-  runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, []);
 
   runtime.finishAssistantOutput({ sessionId: "session-idle", outputId: "output-idle" });
-  runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, []);
 
   const chunk = runtime.claimBufferedOutputText("session-idle");
   assert.ok(chunk);
-  runtime.startAgentLoop("session-idle");
-  assert.deepEqual(loops, []);
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopHardWaitMs);
+  runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
+  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
+  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs - 1);
+  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
+  current = new Date(current.getTime() + 1);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
   runtime.runReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle"]);
 
-  runtime.startAgentLoop("session-idle");
+  runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
   assert.deepEqual(loops, ["session-idle"]);
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopHardWaitMs);
+  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
   runtime.runReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle"]);
+});
+
+test("talk runtime drops stale ready while foreground playback is still pending", () => {
+  const loops: string[] = [];
+  let current = new Date("2026-06-06T15:00:00.000Z");
+  const runtime = createTestRuntime("stale-ready", (sessionId) => {
+    loops.push(sessionId);
+  }, undefined, undefined, () => current);
+
+  runtime.openSession(sessionInput("session-stale-ready"));
+  runtime.startAgentLoop("session-stale-ready");
+  runtime.appendAssistantDelta({ sessionId: "session-stale-ready", outputId: "output-stale-ready", delta: "第一句。" });
+  assert.ok(runtime.claimBufferedOutputText("session-stale-ready"));
+  runtime.finishAssistantOutput({ sessionId: "session-stale-ready", outputId: "output-stale-ready" });
+  assert.ok(runtime.claimBufferedOutputText("session-stale-ready"));
+
+  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
+  current = new Date(current.getTime() + 60_000);
+  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
+
+  runtime.markForegroundPlaybackIdle({ sessionId: "session-stale-ready" });
+  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs);
+  assert.equal(runtime.claimReadyAgentLoopSession(), "session-stale-ready");
+  runtime.runReadyAgentLoopSession("session-stale-ready");
+  assert.deepEqual(loops, ["session-stale-ready"]);
 });
 
 test("talk runtime blocks output claim and next loop while waiting for final transcript after interrupt", () => {
@@ -447,8 +416,6 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
   });
 
   assert.deepEqual(loops, []);
-  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopHardWaitMs);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-interrupt-gate");
   runtime.runReadyAgentLoopSession("session-interrupt-gate");
   assert.deepEqual(loops, ["session-interrupt-gate"]);
@@ -516,8 +483,6 @@ test("talk runtime commits stable input batch in interrupt order", () => {
   ]);
   assert.equal(runtime.store.latestUnresolvedInterrupt("session-stable-batch"), undefined);
   assert.deepEqual(loops, []);
-  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopHardWaitMs);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-stable-batch");
   runtime.runReadyAgentLoopSession("session-stable-batch");
   assert.deepEqual(loops, ["session-stable-batch"]);
@@ -793,12 +758,23 @@ test("talk runtime records call_close hangup as one system end transcript entry"
   });
 
   runtime.openSession(sessionInput("session-call-close"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-call-close",
+    outputId: "output-call-close",
+    delta: "通話はまだ続いています。"
+  });
+  const interrupt = runtime.interruptOutput({
+    sessionId: "session-call-close",
+    outputId: "output-call-close",
+    reason: "network",
+    omitAssistantMessage: true
+  });
   runtime.commitStableInputBatch({
     sessionId: "session-call-close",
     batchId: "batch-close",
     interruptEpoch: 1,
     inputs: [{
-      interruptId: "interrupt-close",
+      interruptId: interrupt.interruptId,
       sequence: 2,
       reason: "call_close",
       text: "-已挂断-",
@@ -821,8 +797,9 @@ test("talk runtime records call_close hangup as one system end transcript entry"
   assert.equal(endEntries.length, 1);
   assert.equal(endEntries[0].occurredAt, "2026-06-07T00:00:19.000");
   assert.equal(endEntries[0].sourceKind, "call_close");
-  assert.equal(endEntries[0].sourceId, "interrupt-close");
+  assert.equal(endEntries[0].sourceId, interrupt.interruptId);
   assert.equal(entries.some((entry) => entry.role === "user" && /已挂断/.test(entry.contentText)), false);
+  assert.equal(runtime.store.latestUnresolvedInterrupt("session-call-close"), undefined);
   assert.deepEqual(loops, []);
 });
 

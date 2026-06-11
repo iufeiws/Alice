@@ -87,6 +87,8 @@ async function handleRequest(message: RequestMessage): Promise<unknown> {
       return enqueueAudioFile(message.params as EnqueuePlaybackAudioFileInput);
     case "waitForPlaybackItem":
       return await waitForPlaybackItem((message.params as { itemId: string }).itemId);
+    case "waitForPlaybackIdle":
+      return await waitForPlaybackIdle();
     case "getCurrentPlayback":
       playback?.processTimeline();
       return playback?.consumer ?? { playbackTextCache: "", playedMs: 0, totalMs: 0, status: "idle" };
@@ -200,6 +202,16 @@ async function waitForPlaybackItem(itemId: string) {
     playedMs: item.playedMs,
     totalMs: item.totalMs
   };
+}
+
+async function waitForPlaybackIdle(): Promise<boolean> {
+  while (!closed) {
+    playback?.processTimeline();
+    playback?.cleanupFinishedItems();
+    if (playbackQueue.length === 0) return true;
+    await sleep(5);
+  }
+  return false;
 }
 
 function interruptPlayback(input: { reason: string; targetOutputId?: string }): void {

@@ -26,8 +26,8 @@
 
 ### 设计原则
 
-- `activeMainLLMSession` 是全局唯一主 LLM session；`archive/current` pointer 指向当前主 session，chat/talk 混用这条主 session 语义。
-- 当前阶段保留 `ensureActiveLLMSession(agentId)` 遇到不同 `agentId` 时切 session 的行为，因为 chat/talk static prefix 不兼容。
+- `activeMainLLMSession` 是 agent loop 运行态的全局唯一主 LLM session boundary，chat/talk 都通过它暴露当前 loop/session 状态。
+- 当前阶段保留 `ensureActiveLLMSession(agentId)` 遇到不同 `agentId` 时切 session 的行为，因为 chat/talk static prefix 不兼容；因此 llm-session 存储层的 `archive/current` pointer 尚未彻底统一成 chat/talk 混用同一条主 session。
 - `messagingTools` 不再自行推断 LLM session 边界；它应从 `agent-loop-runtime` 暴露的主 session 状态读取当前 loop/session 信息。
 - 所有下一轮发起收敛到 heartbeat。message runtime 和 talk runtime 只记录输入、状态和 ready/dirty 标记，不直接启动 LLM loop。
 - LLM request 运行时 heartbeat 暂停或跳过调度；请求完成后由 runtime 恢复调度。
@@ -52,17 +52,18 @@
 ### 迁移步骤
 
 1. [done] 将 `agent-loop/src/runtime/agent-loop-runtime.ts` 改名为 `agent-state-runtime.ts`，更新 import/export，保持行为不变。
-2. [done] 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，维护全局 `activeMainLLMSession`、running 状态和 interrupt。
-3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；让 `messagingTools` 从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
-4. [done] 将 message runtime 中 heartbeat timer/pause/resume 迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending 标记和具体消息处理任务。
-5. [done] 将普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的发起统一改由 heartbeat 调 `agent-loop-runtime.requestRun(...)`。
-6. [done] 将 talk runtime 的自旋改为 ready/claim 模式；calling 状态下 heartbeat 每秒向 talk runtime 询问是否可以发起下一轮。
-7. [todo] 从 `run-chat-loop.ts` 抽出通用 loop spec，先让 chat 走通用执行器，保持行为一致。
-8. [todo] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并接入通用 loop executor。
-9. 删除旧发起点和兼容层，更新测试与文档。
+2. [done] 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，维护全局 `activeMainLLMSession`、running 状态和 interrupt，并通过注册的 chat/talk runner 统一发起 loop run。
+3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；`messagingTools` 默认 `check_chat` scope 已从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
+4. [done] 将 message runtime 中 heartbeat timer/pause/resume、tick、pending 扫描和 generated/talk 触发编排迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending set 和具体任务回调。
+5. [done] 普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
+6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；`runTalkAgentLoopForSession` 每次只执行一个 LLM round，tool follow-up 和播放后的下一轮通过 ready 标记交回 heartbeat。
+7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec，chat 走 `runAgentLoopExecutionSpec(...)`，保持行为一致。
+8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并接入通用 loop executor。
+9. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档。
 
 ### 当前已知风险
 
-- `wait_chat` resume 依赖主 session 中未完成 tool call，迁移时必须保留 pending tool result 拼接语义。
+- `wait_chat` resume 依赖主 session 中未完成 tool call，后续迁移 llm-session 存储层 pointer 时必须保留 pending tool result 拼接语义。
 - talk 对延迟敏感；calling 状态下 heartbeat 可能需要短 tick 或事件唤醒，而非固定 1 秒。
 - `messagingTools` 的默认 `check_chat` scope 必须由主 loop/session 状态明确决定，不能再由工具私有计数跨 agent 边界推断。
+- `activeMainLLMSession` 当前只证明 loop 运行态唯一；llm-session 的 archive/current pointer 仍由 `activeLLMSessionRuntime` 维护，并保留 chat/talk agentId 切换行为。

@@ -738,10 +738,26 @@ export function renderVoiceCallHtml(): string {
       if (state === "tts.queue.ready") setPreConnectedPhase("connecting", "首段音频准备完毕");
       if (state === "voice_call.connected") markConnected();
       if (state === "voice_call.playback_text_cache" && detail) updateAlicePlaybackText(detail);
+      if (state === "voice_call.playback_idle_ack.request" && detail) acknowledgePlaybackIdle(detail);
       if (state === "asr.partial" && detail) updateUserRealtimeTranscript(detail);
       if ((state === "talk_runtime.ingress" || state === "talk_runtime.ingress.todo") && detail) updateUserFinalTranscript(detail);
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
       if (state === "voice_call.hangup" && detail === "tts_failed") showError("语音生成失败", "TTS 服务异常，通话已结束。");
+    }
+
+    function acknowledgePlaybackIdle(detail) {
+      let payload;
+      try {
+        payload = JSON.parse(String(detail || ""));
+      } catch {
+        return;
+      }
+      const ackId = String(payload?.ackId || "");
+      if (!ackId) return;
+      const delayMs = Number.isFinite(payload?.delayMs) ? Math.max(0, Math.min(1000, Number(payload.delayMs))) : 250;
+      window.setTimeout(() => {
+        sendSignal({ type: "playback-idle-ack", ackId });
+      }, delayMs);
     }
 
     function updateAlicePlaybackText(detail) {

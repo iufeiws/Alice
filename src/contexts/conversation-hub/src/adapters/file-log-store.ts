@@ -17,7 +17,7 @@ export type FileLogStore = {
 
 export function createFileLogStore(root: string, options: { timeZone?: string; getTimeZone?: () => string | undefined } = {}): FileLogStore {
   fs.mkdirSync(root, { recursive: true });
-  let nextId = Math.max(1, ...readAll(root).map((entry) => entry.id + 1));
+  let nextId = nextIdFromLatestLogFile(root);
   const getTimeZone = options.getTimeZone ?? (() => options.timeZone);
 
   return {
@@ -32,7 +32,7 @@ export function createFileLogStore(root: string, options: { timeZone?: string; g
       return entry;
     },
     listRecent(limit) {
-      return readAll(root).slice(-limit);
+      return readRecent(root, limit);
     },
     cleanupOlderThan(retentionDays, now = new Date()) {
       const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
@@ -50,18 +50,41 @@ export function createFileLogStore(root: string, options: { timeZone?: string; g
   };
 }
 
-function readAll(root: string): FileSystemLogEntry[] {
-  if (!fs.existsSync(root)) return [];
+function nextIdFromLatestLogFile(root: string): number {
+  const file = logFiles(root).at(-1);
+  if (!file) return 1;
+  let nextId = 1;
+  for (const entry of readFileEntries(path.join(root, file))) {
+    nextId = Math.max(nextId, entry.id + 1);
+  }
+  return nextId;
+}
+
+function readRecent(root: string, limit: number): FileSystemLogEntry[] {
+  if (limit <= 0) return [];
   const entries: FileSystemLogEntry[] = [];
-  for (const file of fs.readdirSync(root).filter((item) => item.endsWith(".log.jsonl")).sort()) {
-    const content = fs.readFileSync(path.join(root, file), "utf8");
-    for (const line of content.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        entries.push(JSON.parse(line) as FileSystemLogEntry);
-      } catch {
-        // Ignore malformed debug lines.
-      }
+  for (const file of logFiles(root).reverse()) {
+    const fileEntries = readFileEntries(path.join(root, file));
+    entries.unshift(...fileEntries.slice(-Math.max(0, limit - entries.length)));
+    if (entries.length >= limit) return entries.slice(-limit);
+  }
+  return entries.slice(-limit);
+}
+
+function logFiles(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root).filter((item) => item.endsWith(".log.jsonl")).sort();
+}
+
+function readFileEntries(filePath: string): FileSystemLogEntry[] {
+  const entries: FileSystemLogEntry[] = [];
+  const content = fs.readFileSync(filePath, "utf8");
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as FileSystemLogEntry);
+    } catch {
+      // Ignore malformed debug lines.
     }
   }
   return entries;

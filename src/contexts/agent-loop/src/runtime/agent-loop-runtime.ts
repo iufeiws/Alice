@@ -1,4 +1,5 @@
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
+import type { AgentEvent, AgentOutput } from "../contracts/agent-contracts.js";
 
 export type AgentLoopKind = "chat" | "talk";
 
@@ -11,11 +12,29 @@ export type ActiveMainLLMSessionState = {
   phase: AgentLoopPhase;
 };
 
-export type AgentLoopRunRequest = {
-  kind: AgentLoopKind;
+export type AgentLoopChatRunRequest = {
+  kind: "chat";
   sessionId: string;
   reason: string;
-  run(signal: AbortSignal): Promise<void> | void;
+  event: AgentEvent;
+};
+
+export type AgentLoopTalkRunRequest = {
+  kind: "talk";
+  sessionId: string;
+  reason: string;
+};
+
+export type AgentLoopRunRequest = AgentLoopChatRunRequest | AgentLoopTalkRunRequest;
+
+export type AgentLoopRunResult = {
+  started: boolean;
+  outputs: AgentOutput[];
+};
+
+export type AgentLoopRunners = {
+  runChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal }): Promise<AgentOutput[]> | AgentOutput[];
+  runTalk(input: { sessionId: string; reason: string; signal: AbortSignal }): Promise<void> | void;
 };
 
 export type AgentLoopRunSpec = {
@@ -28,15 +47,17 @@ export type AgentLoopRunSpec = {
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   isRunning(): boolean;
-  requestRun(request: AgentLoopRunRequest): Promise<boolean>;
+  setRunners(runners: Partial<AgentLoopRunners>): void;
+  requestRun(request: AgentLoopRunRequest): Promise<AgentLoopRunResult>;
   interrupt(reason: string): void;
 };
 
-export function createAgentLoopRuntime(): AgentLoopRuntime {
+export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): AgentLoopRuntime {
   let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
   let running = false;
   let generation = 0;
   let abortController: AbortController | undefined;
+  let runners: Partial<AgentLoopRunners> = { ...input };
 
   return {
     getActiveMainLLMSession() {
@@ -45,8 +66,14 @@ export function createAgentLoopRuntime(): AgentLoopRuntime {
     isRunning() {
       return running;
     },
+    setRunners(nextRunners) {
+      runners = {
+        ...runners,
+        ...nextRunners
+      };
+    },
     async requestRun(request) {
-      if (running) return false;
+      if (running) return { started: false, outputs: [] };
       generation += 1;
       const runGeneration = generation;
       running = true;
@@ -58,7 +85,8 @@ export function createAgentLoopRuntime(): AgentLoopRuntime {
         phase: "running"
       };
       try {
-        await request.run(abortController.signal);
+        const outputs = await executeRequest(request, abortController.signal);
+        return { started: true, outputs };
       } finally {
         running = false;
         abortController = undefined;
@@ -69,7 +97,6 @@ export function createAgentLoopRuntime(): AgentLoopRuntime {
           };
         }
       }
-      return true;
     },
     interrupt() {
       abortController?.abort();
@@ -81,4 +108,23 @@ export function createAgentLoopRuntime(): AgentLoopRuntime {
       }
     }
   };
+
+  async function executeRequest(request: AgentLoopRunRequest, signal: AbortSignal): Promise<AgentOutput[]> {
+    if (request.kind === "chat") {
+      if (!runners.runChat) throw new Error("agent_loop_chat_runner_unavailable");
+      return await runners.runChat({
+        event: request.event,
+        sessionId: request.sessionId,
+        reason: request.reason,
+        signal
+      });
+    }
+    if (!runners.runTalk) throw new Error("agent_loop_talk_runner_unavailable");
+    await runners.runTalk({
+      sessionId: request.sessionId,
+      reason: request.reason,
+      signal
+    });
+    return [];
+  }
 }

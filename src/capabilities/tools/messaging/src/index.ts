@@ -107,8 +107,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const voiceSynthesizer = deps.voiceSynthesizer ?? missingVoiceSynthesizer();
   const shouldPrepareVoiceSynthesizer = Boolean(deps.voiceSynthesizer);
   let lastMessageTimestampMs: number | undefined;
-  let fallbackActiveLLMSession = false;
-  let fallbackCheckChatCallsInLLMSession = 0;
   let observedMainLLMSessionGeneration: number | undefined;
   let checkChatCallsInObservedMainLLMSession = 0;
   let retryQueue = Promise.resolve();
@@ -116,10 +114,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   return {
     id: "messaging",
     noteLLMRequestStarted() {
-      if (!fallbackActiveLLMSession) {
-        fallbackActiveLLMSession = true;
-        fallbackCheckChatCallsInLLMSession = 0;
-      }
       lastMessageTimestampMs = time.now().epochMs;
       voiceSynthesizer.noteActivity?.();
       if (shouldPrepareVoiceSynthesizer) {
@@ -129,8 +123,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       }
     },
     noteLLMSessionCompleted() {
-      fallbackActiveLLMSession = false;
-      fallbackCheckChatCallsInLLMSession = 0;
     },
     listTools() {
       return [checkChatTool, sendChatTool, waitChatTool];
@@ -235,9 +227,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       checkChatCallsInObservedMainLLMSession += 1;
       return checkChatCallsInObservedMainLLMSession === 1 ? "today" : "new";
     }
-    if (!fallbackActiveLLMSession) return "today";
-    fallbackCheckChatCallsInLLMSession += 1;
-    return fallbackCheckChatCallsInLLMSession === 1 ? "today" : "new";
+    return "today";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {

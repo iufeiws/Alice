@@ -6,11 +6,10 @@ import { defaultPromptProfile } from "../src/contexts/agent-profile/src/applicat
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 
-test("talk loop waits for voice output backpressure instead of exiting", async () => {
+test("talk loop waits for voice output backpressure and runs one LLM round per launch", async () => {
   let pendingChars = defaultTalkOutputReadyChars;
   let sleepCalls = 0;
   let sendCalls = 0;
-  let maxRoundEvent: { sessionId: string; rounds: number } | undefined;
   const sentMessages: unknown[][] = [];
   const finishedOutputs: string[] = [];
   const logs: Array<{ level: string; message: string }> = [];
@@ -19,6 +18,7 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
     getActiveTalkLLMSessionId: () => "session-backpressure",
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => pendingChars,
+    isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     dailyShellStore: {
@@ -33,7 +33,6 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
     toolPlugins: [],
     getLLMConfig: () => ({
       client: noopClient,
-      maxContinuousRounds: 2,
       stream: false
     }),
     async sendRequest(input) {
@@ -44,9 +43,6 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
     appendAssistantDelta: () => {},
     finishAssistantOutput(input) {
       finishedOutputs.push(input.outputId);
-    },
-    onMaxContinuousRounds(input) {
-      maxRoundEvent = input;
     },
     log(level, message) {
       logs.push({ level, message });
@@ -60,20 +56,23 @@ test("talk loop waits for voice output backpressure instead of exiting", async (
   await controller.runTalkAgentLoopForSession("session-backpressure");
 
   assert.equal(sleepCalls, 1);
-  assert.equal(sendCalls, 2);
-  assert.equal(finishedOutputs.length, 2);
-  assert.equal("toolCalls" in (sentMessages[1]?.at(-1) as Record<string, unknown>), false);
-  assert.deepEqual(maxRoundEvent, { sessionId: "session-backpressure", rounds: 2 });
-  assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output buffer")), true);
+  assert.equal(sendCalls, 1);
+  assert.equal(finishedOutputs.length, 1);
+  assert.equal(sentMessages.length, 1);
+  assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output")), true);
 });
 
-test("talk loop logs llm cancellation without error severity", async () => {
+test("talk loop waits for foreground playback idle even when voice buffer is empty", async () => {
+  let foregroundIdle = false;
+  let sleepCalls = 0;
+  let sendCalls = 0;
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-cancel",
+    getActiveTalkLLMSessionId: () => "session-foreground-idle",
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => foregroundIdle,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     dailyShellStore: {
@@ -88,7 +87,125 @@ test("talk loop logs llm cancellation without error severity", async () => {
     toolPlugins: [],
     getLLMConfig: () => ({
       client: noopClient,
-      maxContinuousRounds: 1,
+      stream: false
+    }),
+    async sendRequest() {
+      sendCalls += 1;
+      return { message: { role: "assistant", content: "reply" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log(level, message) {
+      logs.push({ level, message });
+    },
+    async sleep() {
+      sleepCalls += 1;
+      foregroundIdle = true;
+    }
+  });
+
+  await controller.runTalkAgentLoopForSession("session-foreground-idle");
+
+  assert.equal(sleepCalls, 1);
+  assert.equal(sendCalls, 1);
+  assert.equal(logs.some((entry) => entry.message.includes("foreground_idle=false")), true);
+});
+
+test("talk tool-call followup is launched by the next ready loop run", async () => {
+  let sendCalls = 0;
+  let followupSessionId: string | undefined;
+  const sentMessages: unknown[][] = [];
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-tool-followup",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    visibleToolNames: () => ["test_tool"],
+    toolPlugins: [{
+      id: "test",
+      listTools: () => [{
+        name: "test_tool",
+        description: "test",
+        inputSchema: { type: "object", properties: {} }
+      }],
+      async execute() {
+        return { callId: "call-1", ok: true, output: "tool result" };
+      }
+    }],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
+      sendCalls += 1;
+      if (sendCalls === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "call-1",
+              type: "function",
+              function: { name: "test_tool", arguments: "{}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    onRoundNeedsFollowup(sessionId) {
+      followupSessionId = sessionId;
+    },
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-tool-followup");
+  assert.equal(sendCalls, 1);
+  assert.equal(followupSessionId, "session-tool-followup");
+
+  await controller.runTalkAgentLoopForSession("session-tool-followup");
+  assert.equal(sendCalls, 2);
+  assert.equal((sentMessages[1]?.at(-2) as { role?: string }).role, "assistant");
+  assert.equal((sentMessages[1]?.at(-1) as { role?: string }).role, "tool");
+});
+
+test("talk loop logs llm cancellation without error severity", async () => {
+  const logs: Array<{ level: string; message: string }> = [];
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-cancel",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    visibleToolNames: () => [],
+    toolPlugins: [],
+    getLLMConfig: () => ({
+      client: noopClient,
       stream: false
     }),
     async sendRequest() {

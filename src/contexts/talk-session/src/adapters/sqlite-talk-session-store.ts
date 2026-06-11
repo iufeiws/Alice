@@ -560,7 +560,7 @@ export function createTalkStore(dbPath: string): TalkStore {
       const activeChunk = db.prepare(`
         SELECT 1
         FROM talk_output_chunks
-        WHERE session_id = ? AND status IN ('buffering', 'ready')
+        WHERE session_id = ? AND status IN ('buffering', 'ready', 'claimed')
         LIMIT 1
       `).get(sessionId);
       return !activeChunk;

@@ -348,7 +348,20 @@ export function renderVoiceCallHtml(): string {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .transcript-line.alice { color: var(--call-text); }
+    .transcript-line.alice {
+      color: var(--call-text);
+      display: grid;
+      gap: 4px;
+    }
+    .transcript-line.alice .previous {
+      color: var(--call-text-muted);
+    }
+    .transcript-line.alice .previous,
+    .transcript-line.alice .current {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .transcript-line.user { text-align: right; color: #e1b785; }
     .overlay {
       position: fixed;
@@ -442,7 +455,10 @@ export function renderVoiceCallHtml(): string {
     </section>
 
     <section class="transcript-panel" aria-label="实时对话">
-      <div class="transcript-line alice" id="aliceTranscript">Alice 的实时回复会显示在这里</div>
+      <div class="transcript-line alice" id="aliceTranscript">
+        <div class="previous" id="alicePreviousTranscript"></div>
+        <div class="current" id="aliceCurrentTranscript">Alice 的实时回复会显示在这里</div>
+      </div>
       <div class="transcript-line user" id="userTranscript">你的实时输入会显示在这里</div>
     </section>
 
@@ -500,7 +516,8 @@ export function renderVoiceCallHtml(): string {
     const messageInput = document.getElementById("messageInput");
     const textControl = document.getElementById("textControl");
     const holdTalkButton = document.getElementById("holdTalkButton");
-    const aliceTranscript = document.getElementById("aliceTranscript");
+    const alicePreviousTranscript = document.getElementById("alicePreviousTranscript");
+    const aliceCurrentTranscript = document.getElementById("aliceCurrentTranscript");
     const userTranscript = document.getElementById("userTranscript");
     const overlay = document.getElementById("overlay");
     const overlayTitle = document.getElementById("overlayTitle");
@@ -537,6 +554,9 @@ export function renderVoiceCallHtml(): string {
     let stableViewportWidth = 0;
     let stableViewportHeight = 0;
     let popupShouldCenter = true;
+    let previousAliceText = "";
+    let currentAliceText = "";
+    let currentAliceChunkId = "";
     const inputModes = ["text", "hold_to_talk"];
     const popupWidth = 420;
     const popupHeight = 747;
@@ -709,8 +729,36 @@ export function renderVoiceCallHtml(): string {
       if (state === "tts.queue.waiting") setPreConnectedPhase("connecting", "正在准备 Alice 的第一段声音");
       if (state === "tts.queue.ready") setPreConnectedPhase("connecting", "首段音频准备完毕");
       if (state === "voice_call.connected") markConnected();
-      if (state === "voice_call.playback_text_cache" && detail) aliceTranscript.textContent = detail;
+      if (state === "voice_call.playback_text_cache" && detail) updateAlicePlaybackText(detail);
+      if ((state === "talk_runtime.ingress" || state === "talk_runtime.ingress.todo") && detail) updateUserFinalTranscript(detail);
       if (state === "tts.failed") showError("语音生成失败", detail || "TTS 服务异常。");
+    }
+
+    function updateAlicePlaybackText(detail) {
+      let payload;
+      try {
+        payload = JSON.parse(String(detail || ""));
+      } catch {
+        return;
+      }
+      const value = String(payload?.text || "").trim();
+      const chunkId = String(payload?.chunkId || "");
+      if (!value) return;
+      if (currentAliceText && chunkId && chunkId !== currentAliceChunkId) {
+        previousAliceText = currentAliceText;
+        alicePreviousTranscript.textContent = previousAliceText;
+      }
+      currentAliceChunkId = chunkId;
+      currentAliceText = value;
+      aliceCurrentTranscript.textContent = currentAliceText;
+    }
+
+    function updateUserFinalTranscript(detail) {
+      const prefix = "audio.transcript.final:";
+      const index = String(detail || "").indexOf(prefix);
+      if (index < 0) return;
+      const text = String(detail).slice(index + prefix.length).trim();
+      if (text) userTranscript.textContent = text;
     }
 
     function setPreConnectedPhase(nextPhase, detail) {

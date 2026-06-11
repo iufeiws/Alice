@@ -32,9 +32,20 @@ test("voice-call text input matches webrtc voice call typed interrupt behavior",
 test("voice-call displays Alice text from playback consumer cache", () => {
   const html = renderVoiceCallHtml();
 
-  assert.match(html, /state === "voice_call\.playback_text_cache" && detail\) aliceTranscript\.textContent = detail;/);
+  assert.match(html, /state === "voice_call\.playback_text_cache" && detail\) updateAlicePlaybackText\(detail\);/);
+  assert.match(html, /function updateAlicePlaybackText\(detail\)/);
+  assert.match(html, /payload = JSON\.parse\(String\(detail \|\| ""\)\);/);
+  assert.match(html, /chunkId && chunkId !== currentAliceChunkId/);
   assert.doesNotMatch(html, /state === "tts\.playback\.consumer" && detail\) aliceTranscript\.textContent = detail;/);
   assert.doesNotMatch(html, /state === "tts\.playing_text" && detail\) aliceTranscript\.textContent = detail;/);
+});
+
+test("voice-call displays ASR final transcript after recording ends", () => {
+  const html = renderVoiceCallHtml();
+
+  assert.match(html, /\(state === "talk_runtime\.ingress" \|\| state === "talk_runtime\.ingress\.todo"\) && detail\) updateUserFinalTranscript\(detail\);/);
+  assert.match(html, /const prefix = "audio\.transcript\.final:";/);
+  assert.match(html, /if \(text\) userTranscript\.textContent = text;/);
 });
 
 test("voice-call hold-to-talk streams microphone PCM chunks to signaling", () => {

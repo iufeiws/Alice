@@ -143,6 +143,19 @@ export function createVoicePlaybackConsumer(input: {
     const span = spans.find((candidate) => value >= candidate.startMs && value < candidate.endMs);
     return span ? span.endMs - span.startMs : undefined;
   };
+  const playbackTextBeforeBreakpoint = (): { chunkId: string; text: string } | undefined => {
+    const text = consumer.playbackTextCache.trim();
+    if (!text || consumer.totalMs <= 0) return undefined;
+    const chars = Array.from(text);
+    const playedRatio = Math.max(0, Math.min(1, consumer.playedMs / consumer.totalMs));
+    const localIndex = Math.max(0, Math.min(chars.length, Math.round(chars.length * playedRatio)));
+    const beforeText = chars.slice(0, localIndex).join("");
+    if (!beforeText) return undefined;
+    return {
+      chunkId: consumer.chunkId ?? consumer.outputId ?? "",
+      text: beforeText
+    };
+  };
   const updateTextCache = (item: PlaybackItem, text: string | undefined, durationMs: number) => {
     const value = normalizePlaybackTextCache(text);
     if (!value || durationMs <= 0 || (item.totalMs ?? 0) <= 0 || item.playbackTextCache === value) return;
@@ -329,10 +342,12 @@ export function createVoicePlaybackConsumer(input: {
       if (playbackTextCacheStatusTimer) return;
       playbackTextCacheStatusTimer = setInterval(() => {
         if (input.isClosed()) return;
-        const value = consumer.playbackTextCache.trim();
-        if (!value || value === lastPublishedPlaybackTextCache) return;
-        lastPublishedPlaybackTextCache = value;
-        input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail: value });
+        const value = playbackTextBeforeBreakpoint();
+        if (!value) return;
+        const detail = JSON.stringify(value);
+        if (detail === lastPublishedPlaybackTextCache) return;
+        lastPublishedPlaybackTextCache = detail;
+        input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail });
       }, 100);
       (playbackTextCacheStatusTimer as { unref?: () => void }).unref?.();
     },

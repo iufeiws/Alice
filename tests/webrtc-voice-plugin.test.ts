@@ -1514,9 +1514,9 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
   ]);
   assert.ok(statuses.findIndex((entry) => entry.state === "voice_call.connected") < statuses.findIndex((entry) => entry.state === "tts.playback.consumer"));
   assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail === "前文= 时长=20ms"), false);
-  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_text_cache" && entry.detail === "原文播放片段"));
+  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_text_cache" && entry.detail === JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" })));
   assert.deepEqual(statuses.filter((entry) => entry.state === "voice_call.playback_text_cache"), [
-    { state: "voice_call.playback_text_cache", detail: "原文播放片段" }
+    { state: "voice_call.playback_text_cache", detail: JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" }) }
   ]);
   assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text"), [{ state: "tts.playing_text", detail: "原文播放片段" }]);
   await waitFor(() => statuses.some((entry) => entry.state === "tts.playing_text.missing" && entry.detail === "output=queue-output frame=2 spans=1"));

@@ -22,6 +22,29 @@ export function createRemoteVoicePlaybackConsumer(input: {
   let statusTimer: ReturnType<typeof setInterval> | undefined;
   let lastPublishedPlaybackTextCache = "";
 
+  const playbackTextBeforeBreakpoint = (): { chunkId: string; text: string } | undefined => {
+    const text = consumer.playbackTextCache.trim();
+    if (!text || consumer.totalMs <= 0) return undefined;
+    const chars = Array.from(text);
+    const playedRatio = Math.max(0, Math.min(1, consumer.playedMs / consumer.totalMs));
+    const localIndex = Math.max(0, Math.min(chars.length, Math.round(chars.length * playedRatio)));
+    const beforeText = chars.slice(0, localIndex).join("");
+    if (!beforeText) return undefined;
+    return {
+      chunkId: consumer.chunkId ?? consumer.outputId ?? "",
+      text: beforeText
+    };
+  };
+
+  const publishPlaybackTextBeforeBreakpoint = () => {
+    const value = playbackTextBeforeBreakpoint();
+    if (!value) return;
+    const detail = JSON.stringify(value);
+    if (detail === lastPublishedPlaybackTextCache) return;
+    lastPublishedPlaybackTextCache = detail;
+    input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail });
+  };
+
   const applySnapshot = (snapshot: PlaybackConsumerSnapshot | undefined) => {
     if (!snapshot) return;
     consumer.outputId = snapshot.outputId;
@@ -55,12 +78,9 @@ export function createRemoteVoicePlaybackConsumer(input: {
       statusTimer = setInterval(() => {
         if (input.isClosed()) return;
         void refresh().then(() => {
-          const value = consumer.playbackTextCache.trim();
-          if (!value || value === lastPublishedPlaybackTextCache) return;
-          lastPublishedPlaybackTextCache = value;
-          input.deps.emitStatus?.({ state: "voice_call.playback_text_cache", detail: value });
+          publishPlaybackTextBeforeBreakpoint();
         });
-      }, 100);
+      }, Math.max(16, input.deps.config.outboundAudio.frameMs));
       (statusTimer as { unref?: () => void }).unref?.();
     },
     stopTextCacheStatus() {

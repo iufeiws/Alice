@@ -53,6 +53,22 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(await first, { started: true, outputs: [] });
 });
 
+test("agent loop runtime stores loop session state by kind", () => {
+  const runtime = createAgentLoopRuntime();
+  const chatState = { id: "chat-state" };
+  const talkState = { id: "talk-state" };
+
+  runtime.setLoopSessionState("chat", chatState);
+  runtime.setLoopSessionState("talk", talkState);
+
+  assert.equal(runtime.getLoopSessionState("chat"), chatState);
+  assert.equal(runtime.getLoopSessionState("talk"), talkState);
+
+  runtime.clearLoopSessionState("chat");
+  assert.equal(runtime.getLoopSessionState("chat"), undefined);
+  assert.equal(runtime.getLoopSessionState("talk"), talkState);
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

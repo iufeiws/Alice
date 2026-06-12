@@ -38,6 +38,12 @@ export function createAgentCoreRuntime(input: {
     runFunctionCallLoop: input.agentLoopRuntime
       ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
       : undefined,
+    getLoopSessionState: input.agentLoopRuntime
+      ? () => input.agentLoopRuntime.getLoopSessionState("chat")
+      : undefined,
+    setLoopSessionState: input.agentLoopRuntime
+      ? (state) => input.agentLoopRuntime.setLoopSessionState("chat", state)
+      : undefined,
     getLLMConfig: input.currentChatLLMConfig,
     isLLMRunCancelled: () => input.llmRequests.isCancelRequested(),
     outputRouter: input.outputRouter,

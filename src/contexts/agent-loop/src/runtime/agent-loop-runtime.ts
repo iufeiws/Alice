@@ -62,6 +62,9 @@ export type AgentLoopRunSpec = {
 
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
+  getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
+  setLoopSessionState<T = unknown>(kind: AgentLoopKind, state: T | undefined): void;
+  clearLoopSessionState(kind: AgentLoopKind): void;
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
@@ -79,10 +82,24 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   let generation = 0;
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
+  const loopSessionStates = new Map<AgentLoopKind, unknown>();
 
   return {
     getActiveMainLLMSession() {
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
+    },
+    getLoopSessionState(kind) {
+      return loopSessionStates.get(kind) as never;
+    },
+    setLoopSessionState(kind, state) {
+      if (state === undefined) {
+        loopSessionStates.delete(kind);
+        return;
+      }
+      loopSessionStates.set(kind, state);
+    },
+    clearLoopSessionState(kind) {
+      loopSessionStates.delete(kind);
     },
     isRunning() {
       return running;

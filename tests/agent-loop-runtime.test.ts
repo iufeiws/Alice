@@ -59,24 +59,31 @@ test("agent loop runtime executes prepared chat runs before legacy runners", asy
       throw new Error("legacy chat runner should not be used when prepareChat is available");
     }
   });
+  let prepareCalls = 0;
   runtime.setRunners({
     prepareChat({ sessionId }) {
       return {
-        spec: {
-          initialMessages: [{ role: "user", content: "hello" }],
-          buildRequest({ messages }) {
-            return {
-              agentId: "chat",
-              messages,
-              toolNames: []
-            };
-          },
-          async sendRequest() {
-            return { message: { role: "assistant", content: "prepared" }, finishReason: "stop" };
-          },
-          executeTool() {
-            throw new Error("unexpected tool call");
-          }
+        prepare() {
+          prepareCalls += 1;
+          const active = runtime.getActiveMainLLMSession();
+          assert.equal(active?.phase, "running");
+          assert.equal(active?.id, sessionId);
+          return {
+            initialMessages: [{ role: "user", content: "hello" }],
+            buildRequest({ messages }) {
+              return {
+                agentId: "chat",
+                messages,
+                toolNames: []
+              };
+            },
+            async sendRequest() {
+              return { message: { role: "assistant", content: "prepared" }, finishReason: "stop" };
+            },
+            executeTool() {
+              throw new Error("unexpected tool call");
+            }
+          };
         },
         complete(result) {
           assert.equal(result.finalMessage.content, "prepared");
@@ -99,6 +106,7 @@ test("agent loop runtime executes prepared chat runs before legacy runners", asy
   });
 
   assert.equal(result.started, true);
+  assert.equal(prepareCalls, 1);
   assert.equal(result.outputs[0]?.id, "out_prepared");
 });
 

@@ -170,7 +170,9 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     const prepared = await prepareTalkAgentLoopForSession(sessionId);
     if (!prepared) return;
     try {
-      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec));
+      const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+      if (!spec || Array.isArray(spec)) return;
+      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(spec));
     } catch (error) {
       await prepared.onError?.(error);
     } finally {

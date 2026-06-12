@@ -39,7 +39,8 @@ export type AgentLoopRunResult = {
 };
 
 export type PreparedAgentLoopRun = {
-  spec: AgentFunctionCallLoopSpec;
+  spec?: AgentFunctionCallLoopSpec;
+  prepare?(): Promise<AgentFunctionCallLoopSpec | AgentOutput[] | void> | AgentFunctionCallLoopSpec | AgentOutput[] | void;
   complete(result: AgentFunctionCallLoopResult): Promise<AgentOutput[] | void> | AgentOutput[] | void;
   onError?(error: unknown): Promise<void> | void;
   dispose?(): Promise<void> | void;
@@ -171,7 +172,10 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   async function executePreparedOrOutputs(prepared: PreparedAgentLoopRun | AgentOutput[]): Promise<AgentOutput[]> {
     if (Array.isArray(prepared)) return prepared;
     try {
-      const result = await runAgentFunctionCallLoop(prepared.spec);
+      const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+      if (!spec) return [];
+      if (Array.isArray(spec)) return spec;
+      const result = await runAgentFunctionCallLoop(spec);
       return await Promise.resolve(prepared.complete(result)) ?? [];
     } catch (error) {
       await prepared.onError?.(error);

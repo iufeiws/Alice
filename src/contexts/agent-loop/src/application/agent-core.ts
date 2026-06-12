@@ -249,7 +249,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const prepared = await this.prepareEventRun(event);
       if (Array.isArray(prepared)) return prepared;
       try {
-        const result = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec);
+        const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+        if (!spec) return [];
+        if (Array.isArray(spec)) return spec;
+        const result = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(spec);
         return await Promise.resolve(prepared.complete(result)) ?? [];
       } catch (error) {
         await prepared.onError?.(error);
@@ -441,75 +444,36 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         if (!activeLLMSession) throw new Error("llm_session_unavailable");
         return activeLLMSession;
       };
-      await ensureActiveLLMSession();
-      if (!activeLLMSession || activeLLMSession.messages.length === 0) {
-        if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
-          recordInitiatedBehaviorRun({
-            result: "skipped",
-            steps: [
-              ...initiatedBehaviorExecution.steps,
-              ...initiatedBehaviorLlmSteps("skipped", "llm_messages_empty")
-            ],
-            error: "llm_messages_empty"
-          });
-        }
-        return [];
-      }
-      deps.onLLMHeartbeatStarted?.();
       let sentMessage = false;
-      try {
-        const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
-          const waitChatResumeMessages = await buildWaitChatResumeMessages({
-            session,
+      let sessionRunStarted = false;
+      let llmInput: ChatAgentLoopInput["llmInput"] | undefined;
+      let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
+      const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
+        const waitChatResumeMessages = await buildWaitChatResumeMessages({
+          session,
+          event,
+          toolPlugins,
+          time,
+          buildTextVariables: buildTurnTextVariables,
+          onLLMLog: deps.onLLMLog
+        });
+        if (waitChatResumeMessages.length > 0) {
+          session.messages = [
+            ...session.messages,
+            ...waitChatResumeMessages
+          ];
+          session.waitChatStartedAt = undefined;
+          noteLLMSessionUpdated();
+          return;
+        }
+        const promptContext = makePromptContext();
+        if (session.mode === "fixed_prefix") {
+          const appendMessages = await buildFixedPrefixAppendMessages({
+            mode: modeStateFromSession(session),
             event,
             toolPlugins,
-            time,
-            buildTextVariables: buildTurnTextVariables,
-            onLLMLog: deps.onLLMLog
-          });
-          if (waitChatResumeMessages.length > 0) {
-            session.messages = [
-              ...session.messages,
-              ...waitChatResumeMessages
-            ];
-            session.waitChatStartedAt = undefined;
-            noteLLMSessionUpdated();
-            return;
-          }
-          const promptContext = makePromptContext();
-          if (session.mode === "fixed_prefix") {
-            const appendMessages = await buildFixedPrefixAppendMessages({
-              mode: modeStateFromSession(session),
-              event,
-              toolPlugins,
-              nextToolCallId: () => "append_fixed_prefix_check_chat",
-              buildTextVariables: buildTurnTextVariables
-            });
-            if (appendMessages.length === 0) return;
-            session.messages = [
-              ...session.messages,
-              ...appendMessages
-            ];
-            noteLLMSessionUpdated();
-            return;
-          }
-          const appendProfile = {
-            ...promptProfile,
-            appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
-              layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
-            )).map((layer) => {
-              if (layer.role !== "tool_request") return layer;
-              return {
-                ...layer,
-                toolCallId: layer.toolCallId ?? `append_${layer.id}`
-              };
-            })
-          };
-          const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
-            return runPromptToolRequest(layer, call, toolPlugins).then((result) => {
-              session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
-              return result;
-            });
+            nextToolCallId: () => "append_fixed_prefix_check_chat",
+            buildTextVariables: buildTurnTextVariables
           });
           if (appendMessages.length === 0) return;
           session.messages = [
@@ -517,136 +481,177 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             ...appendMessages
           ];
           noteLLMSessionUpdated();
+          return;
+        }
+        const appendProfile = {
+          ...promptProfile,
+          appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
+            layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
+          )).map((layer) => {
+            if (layer.role !== "tool_request") return layer;
+            return {
+              ...layer,
+              toolCallId: layer.toolCallId ?? `append_${layer.id}`
+            };
+          })
         };
-        await appendSessionContext(activeLLMSession);
-        const llmConfig = deps.getLLMConfig?.() ?? {
-          client: deps.llm,
-          model: deps.config.llm.model,
-          temperature: deps.config.llm.temperature,
-          extraParams: deps.config.llm.extraParams,
-          followupExtraParams: deps.config.llm.followupExtraParams,
-          stream: deps.config.llm.stream
-        };
-        const llmInput: ChatAgentLoopInput["llmInput"] = {
-          messages: activeLLMSession.messages,
-          client: llmConfig.client,
-          model: llmConfig.model,
-          temperature: llmConfig.temperature,
-          extraParams: llmConfig.extraParams,
-          followupExtraParams: llmConfig.followupExtraParams,
-          stream: llmConfig.stream,
-          toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
-        };
-        const preparedLoop = buildChatAgentLoop({
-          llmInput,
-          event,
-          toolPlugins,
-          session: activeLLMSession,
-          ensureSession: ensureActiveLLMSession,
-          appendSessionContext,
-          llm: deps.llm,
-          llmRequestSender: deps.llmRequestSender,
-          time,
-          buildTextVariables: buildTurnTextVariables,
-          noteSessionUpdated: noteLLMSessionUpdated,
-          getLastCompletedToolName: () => lastCompletedToolName,
-          setLastCompletedToolName(name) {
-            lastCompletedToolName = name;
-          },
-          applyModeStateToNewSession(mode) {
-            applyModeStateToNewSession = mode;
-            activeLLMSession = undefined;
-          },
-          onSessionRebuilt: deps.onLLMSessionRebuilt,
-          isLLMRunCancelled: deps.isLLMRunCancelled,
-          onLLMRequestPrepared: deps.onLLMRequestPrepared,
-          onLLMResponseReceived: deps.onLLMResponseReceived,
-          onLLMLog: deps.onLLMLog
+        const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
+          return runPromptToolRequest(layer, call, toolPlugins).then((result) => {
+            session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
+            return result;
+          });
         });
-        return {
-          spec: preparedLoop.spec,
-          onError(error) {
+        if (appendMessages.length === 0) return;
+        session.messages = [
+          ...session.messages,
+          ...appendMessages
+        ];
+        noteLLMSessionUpdated();
+      };
+      return {
+        async prepare() {
+          await ensureActiveLLMSession();
+          if (!activeLLMSession || activeLLMSession.messages.length === 0) {
             if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
-              const message = error instanceof Error ? error.message : String(error);
+              recordInitiatedBehaviorRun({
+                result: "skipped",
+                steps: [
+                  ...initiatedBehaviorExecution.steps,
+                  ...initiatedBehaviorLlmSteps("skipped", "llm_messages_empty")
+                ],
+                error: "llm_messages_empty"
+              });
+            }
+            return [];
+          }
+          deps.onLLMHeartbeatStarted?.();
+          sessionRunStarted = true;
+          await appendSessionContext(activeLLMSession);
+          const llmConfig = deps.getLLMConfig?.() ?? {
+            client: deps.llm,
+            model: deps.config.llm.model,
+            temperature: deps.config.llm.temperature,
+            extraParams: deps.config.llm.extraParams,
+            followupExtraParams: deps.config.llm.followupExtraParams,
+            stream: deps.config.llm.stream
+          };
+          llmInput = {
+            messages: activeLLMSession.messages,
+            client: llmConfig.client,
+            model: llmConfig.model,
+            temperature: llmConfig.temperature,
+            extraParams: llmConfig.extraParams,
+            followupExtraParams: llmConfig.followupExtraParams,
+            stream: llmConfig.stream,
+            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
+          };
+          preparedLoop = buildChatAgentLoop({
+            llmInput,
+            event,
+            toolPlugins,
+            session: activeLLMSession,
+            ensureSession: ensureActiveLLMSession,
+            appendSessionContext,
+            llm: deps.llm,
+            llmRequestSender: deps.llmRequestSender,
+            time,
+            buildTextVariables: buildTurnTextVariables,
+            noteSessionUpdated: noteLLMSessionUpdated,
+            getLastCompletedToolName: () => lastCompletedToolName,
+            setLastCompletedToolName(name) {
+              lastCompletedToolName = name;
+            },
+            applyModeStateToNewSession(mode) {
+              applyModeStateToNewSession = mode;
+              activeLLMSession = undefined;
+            },
+            onSessionRebuilt: deps.onLLMSessionRebuilt,
+            isLLMRunCancelled: deps.isLLMRunCancelled,
+            onLLMRequestPrepared: deps.onLLMRequestPrepared,
+            onLLMResponseReceived: deps.onLLMResponseReceived,
+            onLLMLog: deps.onLLMLog
+          });
+          return preparedLoop.spec;
+        },
+        onError(error) {
+          if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+            const message = error instanceof Error ? error.message : String(error);
+            recordInitiatedBehaviorRun({
+              result: "failed",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("failed", message)
+              ],
+              error: message
+            });
+          }
+        },
+        dispose() {
+          if (sessionRunStarted) deps.onLLMSessionCompleted?.({ sentMessage });
+        },
+        complete(loopResult) {
+          if (!preparedLoop) return [];
+          const llmResult = preparedLoop.complete(loopResult);
+          sentMessage = llmResult.sentMessage;
+          if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+            if (llmResult.cancelled) {
+              recordInitiatedBehaviorRun({
+                result: "skipped",
+                steps: [
+                  ...initiatedBehaviorExecution.steps,
+                  ...initiatedBehaviorLlmSteps("skipped", "llm_cancelled")
+                ],
+                error: "llm_cancelled"
+              });
+            } else if (!llmResult.finalResult) {
               recordInitiatedBehaviorRun({
                 result: "failed",
                 steps: [
                   ...initiatedBehaviorExecution.steps,
-                  ...initiatedBehaviorLlmSteps("failed", message)
+                  ...initiatedBehaviorLlmSteps("failed", "llm_result_missing")
                 ],
-                error: message
+                error: "llm_result_missing"
+              });
+            } else {
+              if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
+                applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+                noteLLMSessionUpdated();
+              }
+              recordInitiatedBehaviorRun({
+                result: "completed",
+                steps: [
+                  ...initiatedBehaviorExecution.steps,
+                  ...initiatedBehaviorLlmSteps("completed")
+                ]
               });
             }
-          },
-          dispose() {
-            deps.onLLMSessionCompleted?.({ sentMessage });
-          },
-          complete(loopResult) {
-            const llmResult = preparedLoop.complete(loopResult);
-            sentMessage = llmResult.sentMessage;
-            if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
-              if (llmResult.cancelled) {
-                recordInitiatedBehaviorRun({
-                  result: "skipped",
-                  steps: [
-                    ...initiatedBehaviorExecution.steps,
-                    ...initiatedBehaviorLlmSteps("skipped", "llm_cancelled")
-                  ],
-                  error: "llm_cancelled"
-                });
-              } else if (!llmResult.finalResult) {
-                recordInitiatedBehaviorRun({
-                  result: "failed",
-                  steps: [
-                    ...initiatedBehaviorExecution.steps,
-                    ...initiatedBehaviorLlmSteps("failed", "llm_result_missing")
-                  ],
-                  error: "llm_result_missing"
-                });
-              } else {
-                if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
-                  applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
-                  noteLLMSessionUpdated();
-                }
-                recordInitiatedBehaviorRun({
-                  result: "completed",
-                  steps: [
-                    ...initiatedBehaviorExecution.steps,
-                    ...initiatedBehaviorLlmSteps("completed")
-                  ]
-                });
-              }
-            }
-            if (llmResult.cancelled) {
-              if (activeLLMSession) {
-                deps.onLLMSessionCleared?.("admin_cancel");
-                activeLLMSession = undefined;
-              }
-              return [];
-            }
-            if (llmResult.invalidateSession) {
-              deps.onLLMSessionCleared?.("prompt_static_changed");
+          }
+          if (llmResult.cancelled) {
+            if (activeLLMSession) {
+              deps.onLLMSessionCleared?.("admin_cancel");
               activeLLMSession = undefined;
-            }
-            const usage = llmResult.finalResult?.usage;
-            const usageModel = llmResult.finalResult?.model ?? llmInput.model;
-            if (activeLLMSession && usage) {
-              if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-                activeLLMSession.lastTotalTokens = usage.totalTokens;
-              }
-              if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
-                activeLLMSession.lastInputTokens = usage.inputTokens;
-              }
-              if (usageModel) activeLLMSession.lastUsageModel = usageModel;
-              noteLLMSessionUpdated();
             }
             return [];
           }
-        };
-      } catch (error) {
-        deps.onLLMSessionCompleted?.({ sentMessage });
-        throw error;
-      }
+          if (llmResult.invalidateSession) {
+            deps.onLLMSessionCleared?.("prompt_static_changed");
+            activeLLMSession = undefined;
+          }
+          const usage = llmResult.finalResult?.usage;
+          const usageModel = llmResult.finalResult?.model ?? llmInput?.model;
+          if (activeLLMSession && usage) {
+            if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
+              activeLLMSession.lastTotalTokens = usage.totalTokens;
+            }
+            if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
+              activeLLMSession.lastInputTokens = usage.inputTokens;
+            }
+            if (usageModel) activeLLMSession.lastUsageModel = usageModel;
+            noteLLMSessionUpdated();
+          }
+          return [];
+        }
+      };
     }
   };
 

@@ -56,6 +56,61 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(await first, { started: true, outputs: [] });
 });
 
+test("agent loop runtime exposes active llm session pointer operations", () => {
+  const runtime = createAgentLoopRuntime();
+  const calls: string[] = [];
+  const transcript = { messages: [{ role: "user", content: "hello" }] };
+  runtime.setActiveLLMSessionRuntime({
+    createTalkLLMSession(time) {
+      calls.push(`create:${time}`);
+      return { id: "talk-session" };
+    },
+    isActiveTalkLLMSession(sessionId) {
+      calls.push(`is-talk:${sessionId}`);
+      return sessionId === "talk-session";
+    },
+    loadActiveLLMSessionTranscript() {
+      calls.push("load");
+      return transcript;
+    },
+    updateActiveLLMSessionTranscript(session) {
+      calls.push(`update-chat:${(session as { id: string }).id}`);
+    },
+    updateActiveTalkLLMSessionTranscript(session) {
+      calls.push(`update-talk:${(session as { id: string }).id}`);
+    },
+    rewriteActiveTalkLLMSessionFromRuntime(sessionId) {
+      calls.push(`rewrite-talk:${sessionId}`);
+    },
+    clearActiveLLMSession(reason) {
+      calls.push(`clear:${String(reason)}`);
+    },
+    getActiveLLMSessionSnapshot() {
+      calls.push("snapshot");
+      return { id: "active" };
+    }
+  });
+
+  assert.deepEqual(runtime.createTalkLLMSession("2026-06-12T00:00:00.000").id, "talk-session");
+  assert.equal(runtime.isActiveTalkLLMSession("talk-session"), true);
+  assert.equal(runtime.loadActiveLLMSessionTranscript(), transcript);
+  runtime.updateActiveLLMSessionTranscript({ id: "chat-session" });
+  runtime.updateActiveTalkLLMSessionTranscript({ id: "talk-session" });
+  runtime.rewriteActiveTalkLLMSessionFromRuntime("talk-session");
+  runtime.clearActiveLLMSession("admin_clear");
+  assert.deepEqual(runtime.getActiveLLMSessionSnapshot(), { id: "active" });
+  assert.deepEqual(calls, [
+    "create:2026-06-12T00:00:00.000",
+    "is-talk:talk-session",
+    "load",
+    "update-chat:chat-session",
+    "update-talk:talk-session",
+    "rewrite-talk:talk-session",
+    "clear:admin_clear",
+    "snapshot"
+  ]);
+});
+
 test("agent loop runtime stores loop session state by kind", () => {
   const runtime = createAgentLoopRuntime();
   const chatState = { id: "chat-state" };

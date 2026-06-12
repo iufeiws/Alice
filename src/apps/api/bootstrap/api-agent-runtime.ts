@@ -19,7 +19,6 @@ export function createApiAgentRuntime(input: {
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
-  activeLLMSessionRuntime: any;
   agentLoopRuntime: any;
   conversationStore: any;
   getActiveLLMSession(): any;
@@ -31,7 +30,7 @@ export function createApiAgentRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const { talkAgentLoop, talkRuntime } = createTalkRuntimeRuntime({
-    isActiveTalkLLMSession: (sessionId) => input.activeLLMSessionRuntime.isActiveTalkLLMSession(sessionId),
+    isActiveTalkLLMSession: (sessionId) => input.agentLoopRuntime.isActiveTalkLLMSession(sessionId),
     getActiveTalkLLMSessionId: () => input.getActiveLLMSession()?.id,
     getTalkPromptProfile: () => input.talkPromptProfileStore.get(),
     time: input.time,
@@ -44,10 +43,10 @@ export function createApiAgentRuntime(input: {
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     agentLoopRuntime: input.agentLoopRuntime,
-    createLLMSession: (occurredAt) => input.activeLLMSessionRuntime.createTalkLLMSession(occurredAt).id,
-    loadActiveTalkLLMSessionTranscript: () => input.activeLLMSessionRuntime.loadActiveLLMSessionTranscript(),
-    updateActiveTalkLLMSessionTranscript: (session) => input.activeLLMSessionRuntime.updateActiveTalkLLMSessionTranscript(session),
-    rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.activeLLMSessionRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),
+    createLLMSession: (occurredAt) => input.agentLoopRuntime.createTalkLLMSession(occurredAt).id,
+    loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadActiveLLMSessionTranscript(),
+    updateActiveTalkLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveTalkLLMSessionTranscript(session),
+    rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.agentLoopRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),
     conversationStore: input.conversationStore,
     agentState: input.agentState,
     appendLog: input.appendLog
@@ -70,13 +69,13 @@ export function createApiAgentRuntime(input: {
     agentState: input.agentState,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
-    loadActiveLLMSessionTranscript: () => input.activeLLMSessionRuntime.loadActiveLLMSessionTranscript(),
+    loadActiveLLMSessionTranscript: () => input.agentLoopRuntime.loadActiveLLMSessionTranscript(),
     appendLLMRequestLog: (requestInput, agentId = "chat") => input.llmLogRuntime.appendRequestLog(requestInput, agentId),
     appendLLMResponseLog: (result, agentId = "chat") => input.llmLogRuntime.appendResponseLog(result, agentId),
     setLLMSessionBusy: input.setLLMSessionBusy,
     messagingTools: input.messagingTools,
-    updateActiveLLMSessionTranscript: (session) => input.activeLLMSessionRuntime.updateActiveLLMSessionTranscript(session),
-    clearActiveLLMSession: (reason) => input.activeLLMSessionRuntime.clearActiveLLMSession(reason),
+    updateActiveLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveLLMSessionTranscript(session),
+    clearActiveLLMSession: (reason) => input.agentLoopRuntime.clearActiveLLMSession(reason),
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,
     initialLLMSession: input.getActiveLLMSession()

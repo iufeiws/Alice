@@ -21,6 +21,7 @@ export function createApiRootRuntime() {
     buildTalkRuntimeMessages: (sessionId) => apiAgentStackRuntime.talkRuntime.buildNextLoopMessagePatch(sessionId).messages,
     appendLog: foundation.appendLog
   });
+  agentLoopRuntime.setActiveLLMSessionRuntime(apiLLMRuntime.activeLLMSessionRuntime);
   const apiControlRuntime = createApiControlRuntime({
     config: foundation.config,
     time: foundation.currentTime,

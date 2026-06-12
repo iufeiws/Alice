@@ -236,7 +236,9 @@ test("check_chat returns current time from configured timezone provider", async 
 });
 
 test("check_chat today starts ten messages before sleep cocoon pointer and todayold keeps old anchor", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"));
+  const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_old_anchor",
@@ -291,9 +293,36 @@ test("check_chat today starts ten messages before sleep cocoon pointer and today
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
   const todayWithoutSleepPointer = await toolsWithoutSleepPointer.execute({ id: "call_today_no_sleep", toolName: "check_chat", input: { scope: "today" } });
-  assert.doesNotMatch(String(todayWithoutSleepPointer.output), /after old today anchor/);
-  assert.doesNotMatch(String(todayWithoutSleepPointer.output), /after sleep cocoon/);
-  assert.match(String(todayWithoutSleepPointer.output), /nothing new/);
+  assert.match(String(todayWithoutSleepPointer.output), /after old today anchor/);
+  assert.match(String(todayWithoutSleepPointer.output), /after sleep cocoon/);
+});
+
+test("check_chat today is not truncated by the recent message window", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-today-not-windowed"), "alice.sqlite"));
+  for (let index = 0; index < 520; index += 1) {
+    const createdAt = new Date(Date.UTC(2026, 4, 25, 12, index, 0)).toISOString();
+    store.upsertInboundMessage({
+      plugin: "feishu",
+      externalMessageId: `om_after_sleep_${index}`,
+      conversationId: "session-1",
+      senderId: "user-1",
+      contentType: "text",
+      contentText: index === 0 ? "first after sleep should remain visible" : `after sleep ${index}`,
+      createdAt
+    });
+  }
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T23:00:00.000Z")),
+    getSleepCocoonEnteredAt: () => "2026-05-25T12:00:00.000Z",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const today = await tools.execute({ id: "call_today_full_range", toolName: "check_chat", input: { scope: "today" } });
+
+  assert.match(String(today.output), /first after sleep should remain visible/);
+  assert.match(String(today.output), /after sleep 519/);
 });
 
 test("check_chat from_prefix reads messages after injected cursor", async () => {

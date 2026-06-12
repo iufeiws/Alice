@@ -360,15 +360,21 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return messageDb.prepare(conversationMessageSelect("ORDER BY created_at ASC, id ASC LIMIT ?"))
         .all(limit);
     },
-    listMessagesByCreatedAtRange(startAt, endAt, limit = 10_000) {
-      const normalizedStartAt = startAt ? normalizeQueryTime(startAt, time.timeZone) : undefined;
-      const normalizedEndAt = normalizeQueryTime(endAt, time.timeZone);
+    listMessagesByCreatedAtRange(startAt, endAt, limit) {
+      const normalizedStartAt = startAt ? normalizeQueryTimeUtc(startAt, time.timeZone) : undefined;
+      const normalizedEndAt = normalizeQueryTimeUtc(endAt, time.timeZone);
+      const hasLimit = typeof limit === "number" && Number.isFinite(limit);
+      const suffix = hasLimit ? " LIMIT ?" : "";
       const where = startAt
-        ? "WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?"
-        : "WHERE created_at < ? ORDER BY created_at ASC, id ASC LIMIT ?";
+        ? `WHERE COALESCE(created_at_utc, created_at) >= ? AND COALESCE(created_at_utc, created_at) < ? ORDER BY created_at ASC, id ASC${suffix}`
+        : `WHERE COALESCE(created_at_utc, created_at) < ? ORDER BY created_at ASC, id ASC${suffix}`;
       return startAt
-        ? messageDb.prepare(conversationMessageSelect(where)).all(normalizedStartAt, normalizedEndAt, limit)
-        : messageDb.prepare(conversationMessageSelect(where)).all(normalizedEndAt, limit);
+        ? hasLimit
+          ? messageDb.prepare(conversationMessageSelect(where)).all(normalizedStartAt, normalizedEndAt, limit)
+          : messageDb.prepare(conversationMessageSelect(where)).all(normalizedStartAt, normalizedEndAt)
+        : hasLimit
+          ? messageDb.prepare(conversationMessageSelect(where)).all(normalizedEndAt, limit)
+          : messageDb.prepare(conversationMessageSelect(where)).all(normalizedEndAt);
     },
     listMessagesForConversation(conversationId, limit) {
       return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? ORDER BY id DESC LIMIT ?"))
@@ -947,8 +953,8 @@ function localIsoFromUtc(value: string, timeZone: string): string {
   return formatZonedIso(new Date(value), timeZone);
 }
 
-function normalizeQueryTime(value: string, timeZone: string): string {
-  return /[zZ]$|[+-]\d{2}:\d{2}$/.test(value) ? formatZonedIso(new Date(value), timeZone) : value;
+function normalizeQueryTimeUtc(value: string, timeZone: string): string {
+  return parseZonedIso(value, timeZone).toISOString();
 }
 
 function updateReactionJson(raw: string, emoji: string, actorId: string | undefined, op: "add" | "remove"): Record<string, { count: number; users: string[] }> {

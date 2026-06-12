@@ -32,6 +32,7 @@ export type MessagingToolsDeps = {
     AliceStore,
     | "listMessagesForConversation"
     | "listMessages"
+    | "listMessagesByCreatedAtRange"
     | "searchMessages"
     | "markMessagesReadAndCoreProcessed"
     | "insertOutboundMessage"
@@ -79,6 +80,7 @@ const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
 const todaySleepContextMessageCount = 10;
+const maxRangeEndTime = "9999-12-31T23:59:59.999Z";
 const userSpeakerPlaceholder = "{{user}}";
 type SendType = "message" | "markdown" | "image" | "voice";
 type SendPartResult = {
@@ -155,30 +157,27 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     scope: "recent" | "today" | "todayold" | "new" | "from_prefix" | "range",
     options: { readonly?: boolean; fromPrefixAfterMessageId?: number; from?: string; to?: string } = {}
   ): ToolResult {
-    const all = deps.store.listMessages(checkChatMessageLimit);
-    const cursorMessageId = all.reduce((max, message) => Math.max(max, message.id), 0);
+    const cursorMessageId = latestMessageCursorId();
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
     if (scope === "recent") {
+      const all = deps.store.listMessages(checkChatMessageLimit);
       messages = all.slice(-recentCheckChatMessageCount);
       sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : new Date(0);
     } else if (scope === "from_prefix") {
+      const all = deps.store.listMessages(checkChatMessageLimit);
       const afterId = options.fromPrefixAfterMessageId ?? 0;
       messages = all.filter((message) => message.id > afterId);
       sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : time.now().date;
     } else if (scope === "range") {
-      const fromMs = options.from ? parseMessageTime(options.from, time.timeZone).getTime() : Number.NEGATIVE_INFINITY;
-      const toMs = options.to ? parseMessageTime(options.to, time.timeZone).getTime() : Number.POSITIVE_INFINITY;
-      messages = all.filter((message) => {
-        const createdMs = parseMessageTime(message.createdAt, time.timeZone).getTime();
-        return createdMs >= fromMs && createdMs < toMs;
-      });
-      sinceDate = Number.isFinite(fromMs)
-        ? new Date(fromMs)
+      messages = deps.store.listMessagesByCreatedAtRange(options.from, options.to ?? maxRangeEndTime);
+      sinceDate = options.from
+        ? parseMessageTime(options.from, time.timeZone)
         : messages.length > 0
           ? parseMessageTime(messages[0].createdAt, time.timeZone)
           : time.now().date;
     } else if (scope === "new") {
+      const all = deps.store.listMessages(checkChatMessageLimit);
       const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
       sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
       messages = firstUnread ? all.filter((message) => message.id >= firstUnread.id) : [];
@@ -186,20 +185,22 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       const sleepCocoonEnteredAt = deps.getSleepCocoonEnteredAt?.();
       const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
       if (sleepCocoonDate) {
-        const sleepCocoonMs = sleepCocoonDate.getTime();
-        const firstAfterSleepIndex = all.findIndex((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= sleepCocoonMs);
-        const boundaryIndex = firstAfterSleepIndex === -1 ? all.length : firstAfterSleepIndex;
-        const startIndex = Math.max(0, boundaryIndex - todaySleepContextMessageCount);
-        messages = all.slice(startIndex);
+        const sleepCocoonRangeStart = sleepCocoonDate.toISOString();
+        const beforeSleep = deps.store
+          .listMessagesByCreatedAtRange(undefined, sleepCocoonRangeStart)
+          .slice(-todaySleepContextMessageCount);
+        const afterSleep = deps.store.listMessagesByCreatedAtRange(sleepCocoonRangeStart, maxRangeEndTime);
+        messages = [...beforeSleep, ...afterSleep];
         sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : sleepCocoonDate;
       } else {
-        sinceDate = time.now().date;
-        messages = [];
+        const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
+        sinceDate = new Date(after);
+        messages = deps.store.listMessagesByCreatedAtRange(sinceDate.toISOString(), maxRangeEndTime);
       }
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);
-      messages = all.filter((message) => parseMessageTime(message.createdAt, time.timeZone).getTime() >= after);
+      messages = deps.store.listMessagesByCreatedAtRange(sinceDate.toISOString(), maxRangeEndTime);
     }
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
@@ -211,6 +212,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       messageCursorId: cursorMessageId,
       output: appendCurrentTime(body, time.now().iso)
     };
+  }
+
+  function latestMessageCursorId(): number {
+    return deps.store.listMessages(1).reduce((max, message) => Math.max(max, message.id), 0);
   }
 
   function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "from_prefix" | "range" {

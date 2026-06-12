@@ -2992,7 +2992,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
 
   await core.handleEvent(textEvent());
   assert.equal(requests.length, 3);
-  assert.deepEqual(calls.filter((id) => !id.startsWith("append_append_check_chat_")), ["tool_view_1", "tool_view_2", "tool_view_3"]);
+  assert.deepEqual(calls.filter((id) => id !== "append_append_check_chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
 });
 
 test("agent core falls back after max llm requests when tool calls alternate", async () => {

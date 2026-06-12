@@ -191,7 +191,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const channels: ChannelPlugin[] = [];
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   let lastCompletedToolName: string | undefined;
-  let nextAppendToolCallId = 1;
   type ActiveLLMSession = ChatAgentLoopSession & {
     messages: LLMChatInput["messages"];
     staticPromptFingerprint: string;
@@ -462,7 +461,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               mode: modeStateFromSession(session),
               event,
               toolPlugins,
-              nextToolCallId: () => `append_fixed_prefix_check_chat_${nextAppendToolCallId++}`,
+              nextToolCallId: () => "append_fixed_prefix_check_chat",
               buildTextVariables: buildTurnTextVariables
             });
             if (appendMessages.length === 0) return;
@@ -481,7 +480,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               if (layer.role !== "tool_request") return layer;
               return {
                 ...layer,
-                toolCallId: layer.toolCallId ?? `append_${layer.id}_${nextAppendToolCallId++}`
+                toolCallId: layer.toolCallId ?? `append_${layer.id}`
               };
             })
           };

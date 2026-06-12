@@ -127,6 +127,54 @@ test("talk loop delegates prepared spec execution to injected function-call runt
   assert.equal(activeSession.messages.at(-1)?.content, "runtime talk reply");
 });
 
+test("talk loop stores runtime state in injected loop session holder", async () => {
+  let runtimeState: unknown;
+  let activeSession: any;
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-holder",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    visibleToolNames: () => [],
+    toolPlugins: [],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest() {
+      return { message: { role: "assistant", content: "holder reply" }, finishReason: "stop" };
+    },
+    getLoopSessionState: () => runtimeState,
+    setLoopSessionState: (state) => {
+      runtimeState = state;
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-holder");
+
+  assert.equal(controller.getConversationStartIndex("session-holder"), 0);
+  assert.equal(runtimeState && typeof runtimeState === "object", true);
+});
+
 test("talk loop waits for foreground playback idle even when voice buffer is empty", async () => {
   let foregroundIdle = false;
   let sleepCalls = 0;

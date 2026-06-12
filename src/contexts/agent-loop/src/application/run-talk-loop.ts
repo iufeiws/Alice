@@ -41,6 +41,12 @@ type TalkLoopMessagePatch = {
   messages: LLMMessage[];
 };
 
+type TalkLoopRuntimeState = {
+  activeLoops: Set<string>;
+  controllers: Map<string, AbortController>;
+  conversationStartIndexes: Map<string, number>;
+};
+
 type TalkAgentLoopDeps = {
   isActiveTalkLLMSession(sessionId: string): boolean;
   getActiveTalkLLMSessionId(): string | number | undefined;
@@ -84,6 +90,8 @@ type TalkAgentLoopDeps = {
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
   runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
+  getLoopSessionState?(): unknown;
+  setLoopSessionState?(state: unknown | undefined): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
@@ -103,13 +111,12 @@ export type PreparedTalkAgentLoop = {
 };
 
 export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgentLoopController {
-  const activeTalkAgentLoops = new Set<string>();
-  const activeTalkAgentLoopControllers = new Map<string, AbortController>();
-  const activeTalkConversationStartIndexes = new Map<string, number>();
+  const state = restoreTalkLoopRuntimeState(deps.getLoopSessionState?.());
+  deps.setLoopSessionState?.(state);
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
   async function prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined> {
-    if (activeTalkAgentLoops.has(sessionId)) return;
+    if (state.activeLoops.has(sessionId)) return;
     if (!deps.isActiveTalkLLMSession(sessionId)) {
       deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
       return;
@@ -118,9 +125,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       deps.log("info", `talk loop skipped: session closed session=${sessionId}`);
       return;
     }
-    activeTalkAgentLoops.add(sessionId);
+    state.activeLoops.add(sessionId);
     const controller = new AbortController();
-    activeTalkAgentLoopControllers.set(sessionId, controller);
+    state.controllers.set(sessionId, controller);
+    deps.setLoopSessionState?.(state);
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
       const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
@@ -181,10 +189,11 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   }
 
   function cleanupTalkAgentLoop(sessionId: string, controller: AbortController): void {
-    if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
-      activeTalkAgentLoopControllers.delete(sessionId);
+    if (state.controllers.get(sessionId) === controller) {
+      state.controllers.delete(sessionId);
     }
-    activeTalkAgentLoops.delete(sessionId);
+    state.activeLoops.delete(sessionId);
+    deps.setLoopSessionState?.(state);
   }
 
   function buildTalkAgentLoopSpec(input: {
@@ -266,11 +275,11 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   }
 
   function interruptTalkAgentLoop(sessionId: string): void {
-    activeTalkAgentLoopControllers.get(sessionId)?.abort();
+    state.controllers.get(sessionId)?.abort();
   }
 
   function getConversationStartIndex(sessionId: string): number | undefined {
-    return activeTalkConversationStartIndexes.get(sessionId);
+    return state.conversationStartIndexes.get(sessionId);
   }
 
   async function waitForTalkLoopRound(sessionId: string, round: number, controller: AbortController): Promise<{ continue: boolean }> {
@@ -335,7 +344,8 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       deps.updateActiveTalkLLMSessionTranscript(session);
     }
     const prefixMessageCount = session.staticPromptMessageCount ?? session.messages.length;
-    activeTalkConversationStartIndexes.set(sessionId, prefixMessageCount);
+    state.conversationStartIndexes.set(sessionId, prefixMessageCount);
+    deps.setLoopSessionState?.(state);
     deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
     const patch = await Promise.resolve(deps.buildNextLoopMessagePatch(sessionId));
     session = {
@@ -467,4 +477,21 @@ export async function runTalkAgentLoop(input: TalkAgentLoopInput): Promise<TalkA
       agentId: "talk"
     }
   });
+}
+
+function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {
+  if (isTalkLoopRuntimeState(value)) return value;
+  return {
+    activeLoops: new Set<string>(),
+    controllers: new Map<string, AbortController>(),
+    conversationStartIndexes: new Map<string, number>()
+  };
+}
+
+function isTalkLoopRuntimeState(value: unknown): value is TalkLoopRuntimeState {
+  if (!value || typeof value !== "object") return false;
+  const state = value as Partial<TalkLoopRuntimeState>;
+  return state.activeLoops instanceof Set
+    && state.controllers instanceof Map
+    && state.conversationStartIndexes instanceof Map;
 }

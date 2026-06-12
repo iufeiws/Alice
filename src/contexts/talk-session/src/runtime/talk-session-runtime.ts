@@ -62,6 +62,12 @@ export function createTalkRuntimeRuntime(input: {
     runFunctionCallLoop: input.agentLoopRuntime
       ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
       : undefined,
+    getLoopSessionState: input.agentLoopRuntime
+      ? () => input.agentLoopRuntime.getLoopSessionState("talk")
+      : undefined,
+    setLoopSessionState: input.agentLoopRuntime
+      ? (state) => input.agentLoopRuntime.setLoopSessionState("talk", state)
+      : undefined,
     appendAssistantDelta({ sessionId, outputId, delta }) {
       talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
     },

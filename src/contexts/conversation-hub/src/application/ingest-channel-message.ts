@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createAgentHeartbeatRuntime } from "../../../agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import { createAgentLoopRuntime, type AgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
+import { createAgentLoopRuntime, type AgentLoopRuntime, type PreparedAgentLoopRun } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { AgentStateController, AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
@@ -43,6 +43,7 @@ export type MessageRuntimeDeps = {
   talkRuntime?: {
     startAgentLoop?(sessionId: string): void;
     claimReadyAgentLoopSession?(): string | undefined;
+    prepareReadyAgentLoopSession?(sessionId: string): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
     runReadyAgentLoopSession?(sessionId: string): Promise<void> | void;
   };
   setTypingIndicator?(input: {
@@ -79,6 +80,7 @@ export type MessageRuntimeDeps = {
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
   core: {
+    prepareEventRun?(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
     handleEvent(event: AgentEvent): Promise<AgentOutput[]>;
   };
   agentState?: Pick<
@@ -143,6 +145,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
+    ...(deps.core.prepareEventRun
+      ? { prepareChat: ({ event }) => deps.core.prepareEventRun?.(event) ?? [] }
+      : {}),
+    ...(deps.talkRuntime?.prepareReadyAgentLoopSession
+      ? { prepareTalk: ({ sessionId }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId) }
+      : {}),
     runChat: ({ event }) => deps.core.handleEvent(event),
     runTalk: ({ sessionId }) => deps.talkRuntime?.runReadyAgentLoopSession?.(sessionId)
   });

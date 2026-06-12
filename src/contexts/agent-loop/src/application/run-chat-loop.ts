@@ -5,7 +5,6 @@ import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type 
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
 import {
-  runAgentFunctionCallLoop,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallToolExecution
@@ -94,11 +93,6 @@ export type PreparedChatAgentLoop = {
   spec: AgentFunctionCallLoopSpec;
   complete(result: AgentFunctionCallLoopResult): ChatAgentLoopResult;
 };
-
-export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatAgentLoopResult> {
-  const prepared = buildChatAgentLoop(input);
-  return prepared.complete(await runAgentFunctionCallLoop(prepared.spec));
-}
 
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;

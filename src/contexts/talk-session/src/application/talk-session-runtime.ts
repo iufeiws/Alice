@@ -15,7 +15,6 @@ export type TalkRuntime = {
   startAgentLoop(sessionId: string): void;
   claimReadyAgentLoopSession(): string | undefined;
   prepareReadyAgentLoopSession(sessionId: string): Promise<unknown> | unknown;
-  runReadyAgentLoopSession(sessionId: string): Promise<void> | void;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
@@ -98,7 +97,6 @@ export type TalkRuntimeDeps = {
     metadata?: unknown;
   }): string | number;
   prepareAgentLoop?(sessionId: string): Promise<unknown> | unknown;
-  runAgentLoop?(sessionId: string): Promise<void> | void;
   interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
   onSessionOpened?(sessionId: string): void;
   onSessionClosed?(sessionId: string): void;
@@ -192,13 +190,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         return sessionId;
       }
       return undefined;
-    },
-    runReadyAgentLoopSession(sessionId) {
-      assertOpenSession(deps.store, sessionId);
-      if (agentLoopInterruptedSessions.has(sessionId)) return;
-      if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
-      if (!isAgentLoopOutputReady(sessionId)) return;
-      return deps.runAgentLoop?.(sessionId);
     },
     prepareReadyAgentLoopSession(sessionId) {
       assertOpenSession(deps.store, sessionId);

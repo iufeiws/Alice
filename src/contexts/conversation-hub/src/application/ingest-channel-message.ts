@@ -44,7 +44,6 @@ export type MessageRuntimeDeps = {
     startAgentLoop?(sessionId: string): void;
     claimReadyAgentLoopSession?(): string | undefined;
     prepareReadyAgentLoopSession?(sessionId: string): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
-    runReadyAgentLoopSession?(sessionId: string): Promise<void> | void;
   };
   setTypingIndicator?(input: {
     plugin: string;

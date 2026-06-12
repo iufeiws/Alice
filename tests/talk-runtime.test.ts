@@ -336,13 +336,13 @@ test("talk runtime starts the next agent loop when foreground playback becomes i
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
   runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
-  runtime.runReadyAgentLoopSession("session-idle");
+  runtime.prepareReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle"]);
 
   runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
   assert.deepEqual(loops, ["session-idle"]);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
-  runtime.runReadyAgentLoopSession("session-idle");
+  runtime.prepareReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle"]);
 });
 
@@ -366,7 +366,7 @@ test("talk runtime drops stale ready while foreground playback is still pending"
 
   runtime.markForegroundPlaybackIdle({ sessionId: "session-stale-ready" });
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-stale-ready");
-  runtime.runReadyAgentLoopSession("session-stale-ready");
+  runtime.prepareReadyAgentLoopSession("session-stale-ready");
   assert.deepEqual(loops, ["session-stale-ready"]);
 });
 
@@ -410,7 +410,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
 
   assert.deepEqual(loops, []);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-interrupt-gate");
-  runtime.runReadyAgentLoopSession("session-interrupt-gate");
+  runtime.prepareReadyAgentLoopSession("session-interrupt-gate");
   assert.deepEqual(loops, ["session-interrupt-gate"]);
   assert.deepEqual(runtime.buildNextLoopMessagePatch("session-interrupt-gate").messages.slice(-2), [
     { role: "assistant", content: "那些宫女太监，你说撤就撤了..." },
@@ -477,7 +477,7 @@ test("talk runtime commits stable input batch in interrupt order", () => {
   assert.equal(runtime.store.latestUnresolvedInterrupt("session-stable-batch"), undefined);
   assert.deepEqual(loops, []);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-stable-batch");
-  runtime.runReadyAgentLoopSession("session-stable-batch");
+  runtime.prepareReadyAgentLoopSession("session-stable-batch");
   assert.deepEqual(loops, ["session-stable-batch"]);
 });
 
@@ -505,7 +505,7 @@ test("talk runtime keeps agent loop blocked when a stale stable batch commits af
   });
 
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  runtime.runReadyAgentLoopSession("session-stale-stable");
+  runtime.prepareReadyAgentLoopSession("session-stale-stable");
   assert.deepEqual(loops, []);
 
   runtime.commitStableInputBatch({
@@ -523,7 +523,7 @@ test("talk runtime keeps agent loop blocked when a stale stable batch commits af
   });
 
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-stale-stable");
-  runtime.runReadyAgentLoopSession("session-stale-stable");
+  runtime.prepareReadyAgentLoopSession("session-stale-stable");
   assert.deepEqual(loops, ["session-stale-stable"]);
 });
 
@@ -844,14 +844,14 @@ test("talk runtime records call_close hangup as one system end transcript entry"
 
 function createTestRuntime(
   name: string,
-  runAgentLoop?: (sessionId: string) => void,
+  prepareAgentLoop?: (sessionId: string) => void,
   interruptAgentLoop?: (sessionId: string, outputId: string) => void,
   createLLMSession?: () => string | number,
   now?: () => Date
 ): ReturnType<typeof createTalkRuntime> {
   const store = createTalkStore(path.join(makeTempDir(`talk-runtime-${name}`), "talk.sqlite"));
   const time = createCurrentTimeProvider("Asia/Tokyo", now ?? (() => new Date("2026-06-06T15:00:00.000Z")));
-  return createTalkRuntime({ store, time, runAgentLoop, interruptAgentLoop, createLLMSession });
+  return createTalkRuntime({ store, time, prepareAgentLoop, interruptAgentLoop, createLLMSession });
 }
 
 function sessionInput(sessionId: string) {

@@ -62,9 +62,6 @@ export function createTalkRuntimeRuntime(input: {
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,
     sendRequest: input.sendRequest,
-    runFunctionCallLoop: input.agentLoopRuntime
-      ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
-      : undefined,
     getLoopSessionState: input.agentLoopRuntime
       ? () => input.agentLoopRuntime.getLoopSessionState("talk")
       : undefined,
@@ -89,7 +86,6 @@ export function createTalkRuntimeRuntime(input: {
       return input.createLLMSession(sessionInput.occurredAt);
     },
     prepareAgentLoop: talkAgentLoop.prepareTalkAgentLoopForSession,
-    runAgentLoop: talkAgentLoop.runTalkAgentLoopForSession,
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
       talkAgentLoop.interruptTalkAgentLoop(sessionId);

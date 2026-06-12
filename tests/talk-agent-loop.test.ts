@@ -1,10 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTalkAgentLoopForSession } from "../src/contexts/agent-loop/src/application/run-talk-loop.js";
+import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+
+async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalkAgentLoopForSession>, sessionId: string): Promise<void> {
+  const prepared = await controller.prepareTalkAgentLoopForSession(sessionId);
+  if (!prepared) return;
+  try {
+    const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+    if (!spec || Array.isArray(spec)) return;
+    prepared.complete(await runAgentFunctionCallLoop(spec));
+  } catch (error) {
+    await prepared.onError?.(error);
+  } finally {
+    await prepared.dispose?.();
+  }
+}
 
 test("talk loop waits for voice output backpressure and runs one LLM round per launch", async () => {
   let pendingChars = defaultTalkOutputReadyChars;
@@ -59,7 +74,7 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
     }
   });
 
-  await controller.runTalkAgentLoopForSession("session-backpressure");
+  await runPreparedTalkAgentLoop(controller, "session-backpressure");
 
   assert.equal(sleepCalls, 1);
   assert.equal(sendCalls, 1);
@@ -68,8 +83,7 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
   assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output")), true);
 });
 
-test("talk loop delegates prepared spec execution to injected function-call runtime", async () => {
-  let runtimeCalls = 0;
+test("talk loop prepares spec for external function-call runtime execution", async () => {
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
@@ -99,31 +113,31 @@ test("talk loop delegates prepared spec execution to injected function-call runt
       stream: false
     }),
     async sendRequest() {
-      throw new Error("sendRequest should be called by the injected runtime in this test");
-    },
-    async runFunctionCallLoop(spec) {
-      runtimeCalls += 1;
-      assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "hello" });
-      const finalMessage = { role: "assistant" as const, content: "runtime talk reply" };
-      return {
-        messages: [...spec.initialMessages, finalMessage],
-        rounds: 1,
-        finalResult: { message: finalMessage },
-        finalMessage,
-        stopReason: "completed",
-        sentMessage: false,
-        invalidateSession: false,
-        toolCallCount: 0
-      };
+      throw new Error("sendRequest should be called by the external runtime in this test");
     },
     appendAssistantDelta: () => {},
     finishAssistantOutput: () => {},
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-runtime");
+  const prepared = await controller.prepareTalkAgentLoopForSession("session-runtime");
+  assert.ok(prepared);
+  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+  assert.ok(spec && !Array.isArray(spec));
+  assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "hello" });
+  const finalMessage = { role: "assistant" as const, content: "runtime talk reply" };
+  prepared.complete({
+    messages: [...spec.initialMessages, finalMessage],
+    rounds: 1,
+    finalResult: { message: finalMessage },
+    finalMessage,
+    stopReason: "completed",
+    sentMessage: false,
+    invalidateSession: false,
+    toolCallCount: 0
+  });
+  await prepared.dispose?.();
 
-  assert.equal(runtimeCalls, 1);
   assert.equal(activeSession.messages.at(-1)?.content, "runtime talk reply");
 });
 
@@ -169,7 +183,7 @@ test("talk loop stores runtime state in injected loop session holder", async () 
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-holder");
+  await runPreparedTalkAgentLoop(controller, "session-holder");
 
   assert.equal(controller.getConversationStartIndex("session-holder"), 0);
   assert.equal(runtimeState && typeof runtimeState === "object", true);
@@ -225,29 +239,31 @@ test("talk loop delegates transcript preparation to injected session context run
       client: noopClient,
       stream: false
     }),
-    async sendRequest() {
-      throw new Error("sendRequest should be called by the injected function-call runtime in this test");
-    },
-    async runFunctionCallLoop(spec) {
-      assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "delegated hello" });
-      const finalMessage = { role: "assistant" as const, content: "delegated reply" };
-      return {
-        messages: [...spec.initialMessages, finalMessage],
-        rounds: 1,
-        finalResult: { message: finalMessage },
-        finalMessage,
-        stopReason: "completed",
-        sentMessage: false,
-        invalidateSession: false,
-        toolCallCount: 0
-      };
+    async sendRequest(input) {
+      assert.deepEqual(input.messages.at(-1), { role: "user", content: "delegated hello" });
+      return { message: { role: "assistant", content: "delegated reply" }, finishReason: "stop" };
     },
     appendAssistantDelta: () => {},
     finishAssistantOutput: () => {},
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-context-runtime");
+  const prepared = await controller.prepareTalkAgentLoopForSession("session-context-runtime");
+  assert.ok(prepared);
+  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+  assert.ok(spec && !Array.isArray(spec));
+  const finalMessage = { role: "assistant" as const, content: "delegated reply" };
+  prepared.complete({
+    messages: [...spec.initialMessages, finalMessage],
+    rounds: 1,
+    finalResult: { message: finalMessage },
+    finalMessage,
+    stopReason: "completed",
+    sentMessage: false,
+    invalidateSession: false,
+    toolCallCount: 0
+  });
+  await prepared.dispose?.();
 
   assert.equal(prepareCalls, 1);
   assert.equal(activeSession.messages.at(-1)?.content, "delegated reply");
@@ -301,7 +317,7 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
     }
   });
 
-  await controller.runTalkAgentLoopForSession("session-foreground-idle");
+  await runPreparedTalkAgentLoop(controller, "session-foreground-idle");
 
   assert.equal(sleepCalls, 1);
   assert.equal(sendCalls, 1);
@@ -373,7 +389,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-tool-followup");
+  await runPreparedTalkAgentLoop(controller, "session-tool-followup");
   assert.equal(sendCalls, 2);
   assert.equal((sentMessages[1]?.at(-2) as { role?: string }).role, "assistant");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string }).role, "tool");
@@ -446,7 +462,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-send-chat-tool");
+  await runPreparedTalkAgentLoop(controller, "session-send-chat-tool");
 
   assert.equal(sendCalls, 2);
   assert.equal(executedCalls.length, 1);
@@ -515,7 +531,7 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
     log: () => {}
   });
 
-  await controller.runTalkAgentLoopForSession("session-patch");
+  await runPreparedTalkAgentLoop(controller, "session-patch");
 
   assert.equal(promptBuildCalls, 1);
   assert.equal(prefixCount, 1);
@@ -570,7 +586,7 @@ test("talk loop logs llm cancellation without error severity", async () => {
     }
   });
 
-  await controller.runTalkAgentLoopForSession("session-cancel");
+  await runPreparedTalkAgentLoop(controller, "session-cancel");
 
   assert.equal(logs.some((entry) => entry.level === "error"), false);
   assert.equal(logs.some((entry) => entry.level === "info" && entry.message.includes("talk loop cancelled")), true);

@@ -4,11 +4,10 @@ import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gatew
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
+import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
 import {
   prepareAgentLoopSessionContext,
-  runAgentFunctionCallLoop,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallToolExecution,
@@ -92,7 +91,6 @@ type TalkAgentLoopDeps = {
   toolPlugins: readonly ToolPlugin[];
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
-  runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   getLoopSessionState?(): unknown;
   setLoopSessionState?(state: unknown | undefined): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
@@ -103,7 +101,6 @@ type TalkAgentLoopDeps = {
 
 export type TalkAgentLoopController = {
   prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined>;
-  runTalkAgentLoopForSession(sessionId: string): Promise<void>;
   interruptTalkAgentLoop(sessionId: string): void;
   getConversationStartIndex(sessionId: string): number | undefined;
 };
@@ -174,20 +171,6 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
       }
       cleanupTalkAgentLoop(sessionId, controller);
-    }
-  }
-
-  async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
-    const prepared = await prepareTalkAgentLoopForSession(sessionId);
-    if (!prepared) return;
-    try {
-      const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
-      if (!spec || Array.isArray(spec)) return;
-      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(spec));
-    } catch (error) {
-      await prepared.onError?.(error);
-    } finally {
-      await prepared.dispose?.();
     }
   }
 
@@ -392,7 +375,6 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
 
   return {
     prepareTalkAgentLoopForSession,
-    runTalkAgentLoopForSession,
     interruptTalkAgentLoop,
     getConversationStartIndex
   };
@@ -446,16 +428,6 @@ function parseToolArguments(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-export async function runTalkAgentLoop(input: TalkAgentLoopInput): Promise<TalkAgentLoopResult> {
-  return runChatAgentLoop({
-    ...input,
-    llmInput: {
-      ...input.llmInput,
-      agentId: "talk"
-    }
-  });
 }
 
 function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {

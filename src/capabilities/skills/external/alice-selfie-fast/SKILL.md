@@ -23,7 +23,7 @@ node src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie
 
 ## 固定设置
 
-runner 已经强制使用一张图、`gpt-image-2`、`768x1024`、`low`、`jpeg`、compression `45` 和 120 秒 API timeout。普通快速自拍请求不要覆盖这些设置。
+runner 已经强制使用一张图、`gpt-image-2`、`768x1024`、`high`、`jpeg`、compression `45` 和 120 秒 API timeout。普通快速自拍请求不要覆盖这些设置。
 
 ## 仅在失败时
 

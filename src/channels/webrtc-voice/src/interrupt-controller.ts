@@ -21,18 +21,36 @@ export function createInterruptController(ctx: {
   bumpPlaybackGeneration(): number;
   interruptPlayback?(input: { reason: InterruptItem["reason"]; targetOutputId?: string }): Promise<void> | void;
   enqueuePostStableInputFiller?(items: ReadonlyArray<InterruptItem>): Promise<void> | void;
+  stableSettleWindowMs?: number;
 }) {
   const batch: { items: InterruptItem[] } = { items: [] };
+  let stableCommitVersion = 0;
   const playbackGateOpen = () => batch.items.length === 0;
 
-  const commitStableInputsIfReady = async () => {
+  const commitStableInputsIfReady = async (options?: { immediate?: boolean }) => {
+    if (batch.items.length === 0) return;
+    if (!batch.items.every((item) => item.stableInputReady)) return;
+    const version = ++stableCommitVersion;
+    if (!options?.immediate && (ctx.stableSettleWindowMs ?? 0) > 0) {
+      void (async () => {
+        await sleep(ctx.stableSettleWindowMs ?? 0, ctx.deps);
+        if (version !== stableCommitVersion) return;
+        await flushStableInputs();
+      })();
+      return;
+    }
+    await flushStableInputs();
+  };
+
+  const flushStableInputs = async () => {
     if (batch.items.length === 0) return;
     if (!batch.items.every((item) => item.stableInputReady)) return;
     const batchId = `stable:${ctx.callId}:${ctx.getInterruptEpoch()}:${Date.now()}`;
     const items = [...batch.items].sort((a, b) => a.sequence - b.sequence);
+    const itemSet = new Set(items);
+    batch.items = batch.items.filter((item) => !itemSet.has(item));
     try {
       await Promise.all(items.map((item) => item.runtimeInterruptPromise).filter((promise): promise is Promise<void> => Boolean(promise)));
-      if (playbackGateOpen()) throw new Error("voice call transaction assert failed: playback gate open");
       if (ctx.deps.talkRuntime?.commitStableInputBatch) {
         await ctx.deps.talkRuntime.commitStableInputBatch({
           sessionId: ctx.talkSessionId,
@@ -63,8 +81,6 @@ export function createInterruptController(ctx: {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       ctx.deps.emitStatus?.({ state: "talk_runtime.stable_batch.failed", detail: `${batchId}:${detail}` });
-    } finally {
-      batch.items.length = 0;
     }
   };
 
@@ -118,6 +134,7 @@ export function createInterruptController(ctx: {
   };
 
   const runInterrupt = async (reason: InterruptItem["reason"], explicitTargetOutputId?: string) => {
+    stableCommitVersion += 1;
     if (ctx.deps.now) ctx.playback.processTimeline();
     await (ctx.playback as unknown as { refresh?: () => Promise<void> }).refresh?.();
     const interruptEpoch = ctx.bumpInterruptEpoch();
@@ -174,9 +191,13 @@ export function createInterruptController(ctx: {
       } else {
         ctx.deps.emitStatus?.({ state: "talk_runtime.interrupt.todo", detail: `${reason}:${item.targetOutputId ?? ""}` });
       }
-      item.runtimeInterruptPromise = Promise.resolve(runtimeInterrupt).then(() => {
-        const runtimeInterruptId = interruptIdFromRuntime(runtimeInterrupt);
+      item.runtimeInterruptPromise = Promise.resolve(runtimeInterrupt).then(async (resolved) => {
+        const runtimeInterruptId = interruptIdFromRuntime(resolved);
         if (runtimeInterruptId) item.interruptId = runtimeInterruptId;
+        if (!runtimeInterruptId && !item.targetOutputId) {
+          await ctx.deps.talkRuntime?.interruptAgentLoop?.(ctx.talkSessionId, reason);
+          ctx.deps.emitStatus?.({ state: "talk_runtime.agent_loop_interrupted", detail: reason });
+        }
         item.runtimeInterrupted = true;
       });
       await item.runtimeInterruptPromise;
@@ -187,12 +208,12 @@ export function createInterruptController(ctx: {
     if (reason === "call_close") {
       item.stableInputText = "-已挂断-";
       item.stableInputReady = true;
-      await commitStableInputsIfReady();
+      await commitStableInputsIfReady({ immediate: true });
     }
     if (reason === "asr_failure") {
       item.stableInputText = "-杂音-";
       item.stableInputReady = true;
-      await commitStableInputsIfReady();
+      await commitStableInputsIfReady({ immediate: true });
     }
   };
 
@@ -203,6 +224,14 @@ export function createInterruptController(ctx: {
     markStableInput,
     runInterrupt
   };
+}
+
+async function sleep(ms: number, deps: WebRtcVoiceDeps): Promise<void> {
+  if (deps.sleep) return deps.sleep(ms);
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 function interruptIdFromRuntime(value: unknown): string | undefined {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTalkRuntime, defaultTalkAgentLoopPlaybackIdleMs } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
+import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createTalkStore } from "../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { projectClosedTalkSessionToConversationHub } from "../src/contexts/talk-session/src/runtime/talk-session-runtime.js";
@@ -316,7 +316,7 @@ test("talk runtime builds next loop messages with default break marker, not lite
   assert.doesNotMatch(messages.map((message) => message.content).join("\n"), /\[断点\]/);
 });
 
-test("talk runtime starts the next agent loop three seconds after foreground playback becomes idle", () => {
+test("talk runtime starts the next agent loop when foreground playback becomes idle", () => {
   const loops: string[] = [];
   let current = new Date("2026-06-06T15:00:00.000Z");
   const runtime = createTestRuntime("idle-loop", (sessionId) => {
@@ -335,18 +335,12 @@ test("talk runtime starts the next agent loop three seconds after foreground pla
   assert.ok(chunk);
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
   runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
-  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs - 1);
-  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + 1);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
   runtime.runReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle"]);
 
   runtime.markForegroundPlaybackIdle({ sessionId: "session-idle" });
   assert.deepEqual(loops, ["session-idle"]);
-  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
-  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-idle");
   runtime.runReadyAgentLoopSession("session-idle");
   assert.deepEqual(loops, ["session-idle", "session-idle"]);
@@ -371,7 +365,6 @@ test("talk runtime drops stale ready while foreground playback is still pending"
   assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
 
   runtime.markForegroundPlaybackIdle({ sessionId: "session-stale-ready" });
-  current = new Date(current.getTime() + defaultTalkAgentLoopPlaybackIdleMs);
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-stale-ready");
   runtime.runReadyAgentLoopSession("session-stale-ready");
   assert.deepEqual(loops, ["session-stale-ready"]);

@@ -44,6 +44,7 @@ export type TalkRuntime = {
     omitAssistantMessage?: boolean;
     breakMarker?: string;
   }): TalkOutputInterrupt | undefined;
+  interruptAgentLoop(sessionId: string, reason?: string): void;
   buildNextLoopMessages(sessionId: string): LLMMessage[];
 };
 
@@ -96,7 +97,6 @@ export type TalkRuntimeDeps = {
 };
 
 export const defaultTalkOutputReadyChars = 20;
-export const defaultTalkAgentLoopPlaybackIdleMs = 3_000;
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
@@ -411,7 +411,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     markForegroundPlaybackIdle(input) {
       assertOpenSession(deps.store, input.sessionId);
       foregroundPlaybackPendingSessions.delete(input.sessionId);
-      markAgentLoopReady(input.sessionId, defaultTalkAgentLoopPlaybackIdleMs);
+      markAgentLoopReady(input.sessionId);
     },
     interruptLatestOutput(input) {
       assertOpenSession(deps.store, input.sessionId);
@@ -421,6 +421,11 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         ...input,
         outputId: output.outputId
       });
+    },
+    interruptAgentLoop(sessionId) {
+      assertOpenSession(deps.store, sessionId);
+      readyAgentLoopSessions.delete(sessionId);
+      deps.interruptAgentLoop?.(sessionId, "");
     },
     interruptOutput(input) {
       assertOpenSession(deps.store, input.sessionId);

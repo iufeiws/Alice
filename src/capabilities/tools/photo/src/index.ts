@@ -3,6 +3,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore, InsertOutboundMessageInput } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 
@@ -108,6 +109,7 @@ export type PhotoToolsDeps = {
   getUserName?: () => string;
   getAppearanceDescription?: () => string;
   getDefaultTarget?(): PhotoToolTarget | undefined;
+  resolveOutputTarget?: ToolOutputTargetResolver;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog?(input: {
     direction: "outbound";
@@ -395,6 +397,8 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   }
 
   function resolveTarget(call: ToolCall): PhotoToolTarget | undefined {
+    const resolved = deps.resolveOutputTarget?.(call);
+    if (resolved) return normalizeTarget(resolved);
     if (call.requester?.plugin && call.session?.sessionId) {
       return normalizeTarget({
         plugin: call.requester.plugin,

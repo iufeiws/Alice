@@ -4,6 +4,7 @@ import { todayMessagingAnchor } from "../../../../platform/time/src/index.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeMessageText, summarizeAudioText } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { VoiceSynthesisResult, VoiceSynthesizer } from "../../../../channels/tts/src/index.js";
@@ -45,6 +46,7 @@ export type MessagingToolsDeps = {
   wechatVoiceFallbackToText?: boolean;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
+  resolveOutputTarget?: ToolOutputTargetResolver;
   getShellSwitchLogs?(): Array<{
     time: string;
     personalityName: string;
@@ -518,6 +520,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 
   function resolveTarget(call: ToolCall): MessagingToolTarget | undefined {
+    const resolved = deps.resolveOutputTarget?.(call);
+    if (resolved) return normalizeTarget(resolved);
     if (call.requester?.plugin && call.session?.sessionId) {
       return normalizeTarget({
         plugin: call.requester.plugin,

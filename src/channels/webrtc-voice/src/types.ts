@@ -177,6 +177,7 @@ export type WebRtcVoiceTalkRuntime = {
   markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
   interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
   interruptLatestOutput?(input: { sessionId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
+  interruptAgentLoop?(sessionId: string, reason?: string): void | Promise<void>;
 };
 
 export type WebRtcVoiceDeps = {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createPhotoTools, type SelfieExecutorInput } from "../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createToolOutputTargetResolver } from "../src/contexts/capabilities/src/tool-output-target.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
@@ -89,6 +90,65 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie uses default output target for voice call requester", async () => {
+  const outputRoot = makeAssetTempDir("selfie-voice-requester");
+  const referenceRoot = makeTempDir("selfie-ref-voice-requester");
+  const store = createAliceStore(path.join(makeTempDir("selfie-voice-requester-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  writeReferenceFiles(referenceRoot);
+
+  try {
+    const defaultTarget = { plugin: "feishu", channelId: "chat-default", sessionId: "session-default" };
+    const expectedTarget = {
+      plugin: "feishu",
+      accountId: undefined,
+      channelId: "chat-default",
+      userId: undefined,
+      sessionId: "session-default"
+    };
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieExecutor: async (input) => {
+        fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from("fake-jpg"));
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+          return { messageId: `om_voice_selfie_${sent.length}` };
+        }
+      },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => defaultTarget,
+      resolveOutputTarget: createToolOutputTargetResolver({
+        getDefaultTarget: () => defaultTarget
+      })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_voice",
+      toolName: "selfie",
+      input: { action: "对镜头挥手" },
+      requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
+      session: { scope: "dm", sessionId: "talk-session-1" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent.map((output) => output.target), [
+      expectedTarget,
+      expectedTarget
+    ]);
+    assert.deepEqual(store.listMessagesForConversation("session-default", 10).map((message) => message.contentType), ["text", "image"]);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
   }
 });
 

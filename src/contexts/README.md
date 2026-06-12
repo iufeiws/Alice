@@ -67,3 +67,21 @@
 - talk 对延迟敏感；calling 状态下 heartbeat 可能需要短 tick 或事件唤醒，而非固定 1 秒。
 - `messagingTools` 的默认 `check_chat` scope 必须由主 loop/session 状态明确决定，不能再由工具私有计数跨 agent 边界推断。
 - `activeMainLLMSession` 当前只证明 loop 运行态唯一；llm-session 的 archive/current pointer 仍由 `activeLLMSessionRuntime` 维护，并保留 chat/talk agentId 切换行为。
+
+## Capability tool output target refactor
+
+目标：LLM session 构筑仍通过统一 `toolNames` 暴露工具；工具能否使用不由 `requester/channel` 决定。`requester` 只描述本次 tool call 来源，产生 `AgentOutput` 的工具通过 capabilities 层统一解析投递目标。
+
+### 当前状态
+
+1. [done] `llm-gateway`/`AgentCore` 的 `toolNames -> getTool -> buildTools` 注册链路保持不变；chat/talk 不减少 tool call 暴露。
+2. [done] 新增 `capabilities/src/tool-output-target.ts`，提供统一 `ToolOutputTargetResolver`。
+3. [done] `messaging/photo/shell/bookcase/sleep-cocoon` 工具运行时接入统一 resolver。
+4. [done] `webrtc_voice` 这类非消息 requester 不再被当作图片/文本投递 channel；工具输出回落到当前默认消息目标。
+5. [done] 新增覆盖：voice call requester 触发 `selfie` 时，开始通知和图片输出都投递到默认消息目标。
+
+### 约束
+
+- 不通过隐藏 talk tool、减少 toolNames 或按 channel 裁剪工具来规避问题。
+- 具体工具仍可以定义自己的固定输出语义，但公共投递目标解析必须走 capabilities 层接口。
+- 后续如果新增非消息 requester，应扩展 resolver 配置，而不是在单个 tool 内硬编码 channel fallback。

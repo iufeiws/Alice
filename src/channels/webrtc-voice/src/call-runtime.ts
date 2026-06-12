@@ -26,7 +26,7 @@ import {
 
 const frontendPlaybackIdleAckDelayMs = 250;
 const frontendPlaybackIdleAckTimeoutMs = 2_500;
-const voiceCallFillerDelayMs = 3_000;
+const voiceCallStableSettleWindowMs = 3_000;
 const voiceCallFillerDir = path.resolve(process.cwd(), "assets", "voice-call");
 
 export async function createCallState(
@@ -118,7 +118,6 @@ export async function createCallState(
     const itemId = `filler:${input.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const createdAt = (deps.now?.() ?? new Date()).toISOString();
     const interruptEpoch = Math.max(...items.map((item) => item.interruptEpoch));
-    await delay(voiceCallFillerDelayMs, deps);
     if (closed) return;
     try {
       await outboundTrack.enqueueAudioFile!({
@@ -152,7 +151,8 @@ export async function createCallState(
     getInterruptEpoch: () => interruptEpoch,
     bumpPlaybackGeneration: () => { playbackGeneration += 1; return playbackGeneration; },
     interruptPlayback: interruptPlaybackQueue,
-    enqueuePostStableInputFiller: enqueueRandomFiller
+    enqueuePostStableInputFiller: enqueueRandomFiller,
+    stableSettleWindowMs: voiceCallStableSettleWindowMs
   });
   const ttsProducer = createTtsProducer({
     callId: input.callId,
@@ -931,11 +931,18 @@ function selectRandomVoiceCallFillerAsset(): { assetId: string; filePath: string
   return {
     assetId: `voice-call/${file}`,
     filePath: path.join(voiceCallFillerDir, file),
-    text: "voice call filler"
+    text: readVoiceCallFillerText(path.join(voiceCallFillerDir, `${file}.json`)) ?? "voice call filler"
   };
 }
 
-async function delay(ms: number, deps: WebRtcVoiceDeps): Promise<void> {
-  if (deps.sleep) return deps.sleep(ms);
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+function readVoiceCallFillerText(metadataPath: string): string | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
+    const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
+    if (text) return text;
+    const speakText = typeof parsed.speakText === "string" ? parsed.speakText.trim() : "";
+    return speakText || undefined;
+  } catch {
+    return undefined;
+  }
 }

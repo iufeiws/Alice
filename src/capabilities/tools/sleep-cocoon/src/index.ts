@@ -1,6 +1,7 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 
 type SleepCocoonAgentState = {
@@ -24,6 +25,7 @@ export type SleepCocoonToolsDeps = {
   time: CurrentTimeProvider;
   outputRouter?: Pick<OutputRouter, "send">;
   getDefaultTarget?(): SleepCocoonToolTarget | undefined;
+  resolveOutputTarget?: ToolOutputTargetResolver;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   random?: () => number;
 };
@@ -137,6 +139,8 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
   }
 
   function resolveTarget(call: ToolCall): SleepCocoonToolTarget | undefined {
+    const resolved = deps.resolveOutputTarget?.(call);
+    if (resolved) return resolved;
     if (call.requester?.plugin && call.session?.sessionId) {
       return {
         plugin: call.requester.plugin,

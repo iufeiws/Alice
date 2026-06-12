@@ -1205,9 +1205,65 @@ test("WebRTC voice queues a random voice-call filler after stable interrupt inpu
   assert.deepEqual(sleeps, [3_000]);
   assert.match(track.enqueued[0]!.assetId, /^voice-call\/.+\.wav$/);
   assert.match(track.enqueued[0]!.filePath, /assets\/voice-call\/.+\.wav$/);
+  assert.notEqual(track.enqueued[0]!.text, "voice call filler");
   assert.equal(track.enqueued[0]!.outputId, "filler:call-filler-after-stable:1");
   assert.equal(statuses.some((entry) => entry.state === "voice_call.filler_queued"), true);
   await call.close("test_done");
+});
+
+test("WebRTC voice aggregates consecutive stable interrupt inputs within the settle window", async () => {
+  const batches: unknown[] = [];
+  const sleeps: Array<{ ms: number; resolve(): void }> = [];
+  const latestInterrupts: string[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      ingestInput() {
+        throw new Error("settled interrupt input should be committed through a batch");
+      },
+      interruptLatestOutput(input) {
+        latestInterrupts.push(input.reason);
+        return { interruptId: `runtime-interrupt-${latestInterrupts.length}` };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    sleep: async (ms) => {
+      await new Promise<void>((resolve) => {
+        sleeps.push({ ms, resolve });
+      });
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-stable-settle-aggregate", userId: "browser-stable-settle-aggregate", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("first");
+  await waitFor(() => sleeps.length === 1);
+  assert.equal(batches.length, 0);
+
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("second");
+  await waitFor(() => sleeps.length === 2);
+  sleeps[0]!.resolve();
+  await assert.rejects(() => waitFor(() => batches.length > 0, 50), /timeout waiting for condition/);
+
+  sleeps[1]!.resolve();
+  await waitFor(() => batches.length === 1);
+
+  assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; text: string }> }).inputs.map((input) => ({
+    interruptId: input.interruptId,
+    text: input.text
+  })), [
+    { interruptId: "runtime-interrupt-1", text: "first" },
+    { interruptId: "runtime-interrupt-2", text: "second" }
+  ]);
 });
 
 test("WebRTC voice barge-in before consumer has audio interrupts latest output", async () => {
@@ -2238,6 +2294,7 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
         batches.push(batch);
       }
     },
+    sleep: async () => {},
     emitStatus: (event) => statuses.push(event)
   });
 
@@ -2246,7 +2303,7 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
   await call.setSpeechActive(false);
 
   assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
-  assert.equal(batches.length, 1);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     interruptId: input.interruptId,
     reason: input.reason,
@@ -2278,7 +2335,8 @@ test("WebRTC voice commits typed final text into the active manual interrupt bat
       commitStableInputBatch(batch) {
         batches.push(batch);
       }
-    }
+    },
+    sleep: async () => {}
   });
 
   const call = await plugin.createCall({ callId: "call-typed-batch", userId: "browser-typed-batch", offerSdp: "offer" });
@@ -2286,7 +2344,7 @@ test("WebRTC voice commits typed final text into the active manual interrupt bat
   await call.acceptTextInput?.("typed final");
 
   assert.deepEqual(latestInterrupts, [{ reason: "manual", omitAssistantMessage: false }]);
-  assert.equal(batches.length, 1);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     reason: input.reason,
     text: input.text,
@@ -2312,14 +2370,15 @@ test("WebRTC voice closes an active manual interrupt batch when typed input is w
       commitStableInputBatch(batch) {
         batches.push(batch);
       }
-    }
+    },
+    sleep: async () => {}
   });
 
   const call = await plugin.createCall({ callId: "call-typed-withdrawn", userId: "browser-typed-withdrawn", offerSdp: "offer" });
   await call.interrupt("manual");
   await call.acceptTextInput?.("");
 
-  assert.equal(batches.length, 1);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     reason: input.reason,
     text: input.text,
@@ -2345,7 +2404,8 @@ test("WebRTC voice ignores empty typed input when no interrupt batch is active",
       commitStableInputBatch(batch) {
         batches.push(batch);
       }
-    }
+    },
+    sleep: async () => {}
   });
 
   const call = await plugin.createCall({ callId: "call-empty-no-batch", userId: "browser-empty-no-batch", offerSdp: "offer" });
@@ -2373,7 +2433,8 @@ test("WebRTC voice treats iOS dictation placeholder-only typed input as empty", 
       commitStableInputBatch(batch) {
         batches.push(batch);
       }
-    }
+    },
+    sleep: async () => {}
   });
 
   const call = await plugin.createCall({ callId: "call-ios-dictation-empty", userId: "browser-ios-dictation-empty", offerSdp: "offer" });
@@ -2401,14 +2462,15 @@ test("WebRTC voice closes active manual interrupt batch for iOS dictation placeh
       commitStableInputBatch(batch) {
         batches.push(batch);
       }
-    }
+    },
+    sleep: async () => {}
   });
 
   const call = await plugin.createCall({ callId: "call-ios-dictation-withdrawn", userId: "browser-ios-dictation-withdrawn", offerSdp: "offer" });
   await call.interrupt("manual");
   await call.acceptTextInput?.("\uFFFC\u200B\u200C\u200D\u2060\uFEFF");
 
-  assert.equal(batches.length, 1);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     reason: input.reason,
     text: input.text,
@@ -2442,6 +2504,7 @@ test("WebRTC voice times out ASR final and commits interrupt batch as noise", as
         batches.push(batch);
       }
     },
+    sleep: async () => {},
     emitStatus: (event) => statuses.push(event)
   });
 
@@ -2451,6 +2514,7 @@ test("WebRTC voice times out ASR final and commits interrupt batch as noise", as
 
   assert.equal(result, undefined);
   assert.equal(statuses.some((entry) => entry.state === "asr.final.timeout" && entry.detail === "asr-call-asr-final-timeout-0:1"), true);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     reason: input.reason,
     text: input.text,
@@ -2489,12 +2553,14 @@ test("WebRTC voice marks stable batch commit failure and reopens playback gate",
         throw new Error("commit failed");
       }
     },
+    sleep: async () => {},
     emitStatus: (event) => statuses.push(event)
   });
 
   const call = await plugin.createCall({ callId: "call-batch-failure", userId: "browser-batch-failure", offerSdp: "offer" });
   await call.setSpeechActive(true);
   await call.setSpeechActive(false);
+  await waitFor(() => statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed"));
   const playback = await call.playReplyText("gate reopened", "after-batch-failure");
 
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed" && entry.detail?.includes("commit failed")), true);

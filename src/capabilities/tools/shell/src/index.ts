@@ -4,6 +4,7 @@ import type { OutputRouter } from "../../../../platform/output-router/src/index.
 import type { DailyShellStore, ShellOption } from "../../../../contexts/agent-profile/src/ports/shell-store.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 
 export type ShellToolTarget = {
@@ -20,6 +21,7 @@ export type ShellToolsDeps = {
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
   getDefaultTarget?(): ShellToolTarget | undefined;
+  resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?(input: {
     direction: "outbound";
     plugin: string;
@@ -186,6 +188,8 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
   }
 
   function resolveTarget(call: ToolCall): ShellToolTarget | undefined {
+    const resolved = deps.resolveOutputTarget?.(call);
+    if (resolved) return resolved;
     if (call.requester?.plugin && call.session?.sessionId) {
       return {
         plugin: call.requester.plugin,

@@ -1,6 +1,7 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
@@ -25,6 +26,7 @@ export type BookcaseToolsDeps = {
   store?: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter?: Pick<OutputRouter, "send">;
   getDefaultTarget?(): BookcaseToolTarget | undefined;
+  resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?(input: {
     direction: "outbound";
     plugin: string;
@@ -202,6 +204,8 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
   }
 
   function resolveTarget(call: ToolCall): BookcaseToolTarget | undefined {
+    const resolved = deps.resolveOutputTarget?.(call);
+    if (resolved) return resolved;
     if (call.requester?.plugin && call.session?.sessionId) {
       return {
         plugin: call.requester.plugin,

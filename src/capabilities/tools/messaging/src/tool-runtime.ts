@@ -4,6 +4,7 @@ import { createPhotoTools } from "../../photo/src/index.js";
 import { createShellTools } from "../../shell/src/index.js";
 import { createBookcaseTools } from "../../bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
+import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
@@ -24,6 +25,11 @@ export function createToolRuntime(input: {
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
 }) {
+  const resolveOutputTarget = createToolOutputTargetResolver({
+    getDefaultTarget() {
+      return input.getDefaultTarget();
+    }
+  });
   const messagingTools = createMessagingTools({
     store: input.store,
     outputRouter: input.outputRouter,
@@ -38,6 +44,7 @@ export function createToolRuntime(input: {
     getDefaultTarget() {
       return input.getDefaultTarget();
     },
+    resolveOutputTarget,
     appendMessageLog: input.appendMessageLog,
     appendLog: input.appendLog
   });
@@ -79,6 +86,7 @@ export function createToolRuntime(input: {
     getDefaultTarget() {
       return input.getDefaultTarget();
     },
+    resolveOutputTarget,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
@@ -91,6 +99,7 @@ export function createToolRuntime(input: {
     getDefaultTarget() {
       return input.getDefaultTarget();
     },
+    resolveOutputTarget,
     appendMessageLog: input.appendMessageLog
   });
 
@@ -99,6 +108,10 @@ export function createToolRuntime(input: {
     time: input.time,
     store: input.store,
     outputRouter: input.outputRouter,
+    getDefaultTarget() {
+      return input.getDefaultTarget();
+    },
+    resolveOutputTarget,
     appendMessageLog: input.appendMessageLog
   });
 
@@ -109,6 +122,7 @@ export function createToolRuntime(input: {
     getDefaultTarget() {
       return input.getDefaultTarget();
     },
+    resolveOutputTarget,
     appendLog: input.appendLog
   });
 

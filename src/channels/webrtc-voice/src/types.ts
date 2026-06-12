@@ -131,6 +131,7 @@ export type WebRtcVoiceTtsArchiveInput = {
   talkSessionId: string;
   outputId?: string;
   chunkId?: string;
+  originalText?: string;
   text: string;
   speakText: string;
   createdAt: string;

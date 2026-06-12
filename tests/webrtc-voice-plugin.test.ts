@@ -1396,10 +1396,10 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   });
 
   const call = await plugin.createCall({ callId: "call-stream", userId: "browser-stream", offerSdp: "offer" });
-  const result = await call.playReplyText("ストリーム", "stream-output");
+  const result = await call.playReplyText("元の返事。", "stream-output");
 
   assert.equal(result.status, "played");
-  assert.deepEqual(streamedTexts, ["ストリーム"]);
+  assert.deepEqual(streamedTexts, ["元の返事。"]);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[9]]);
   assert.equal(archives.length, 1);
   assert.deepEqual((archives[0] as any).audio.chunks.map((chunk: Uint8Array) => Array.from(chunk)), [[1, 2, 3, 4]]);
@@ -1407,7 +1407,9 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   assert.equal((archives[0] as any).callId, "call-stream");
   assert.equal((archives[0] as any).talkSessionId, "webrtc_voice:call-stream");
   assert.equal((archives[0] as any).outputId, "stream-output");
+  assert.equal((archives[0] as any).originalText, "元の返事。");
   assert.equal((archives[0] as any).text, "ストリーム");
+  assert.equal((archives[0] as any).speakText, "ストリーム");
   assert.equal((archives[0] as any).source, "stream");
   assert.equal((archives[0] as any).status, "queued");
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.started"), true);

@@ -129,6 +129,10 @@ export function createTtsProducer(ctx: {
     const speakTextForMeta = () => ctx.deps.config.ttsTextFilter?.stripParenthesized
       ? stripParenthesizedText(state.originalText)
       : state.originalText;
+    const speakTextForEvent = (event: { text?: string; textchunk?: string }) => {
+      const text = event.text?.trim() || event.textchunk?.trim();
+      return text || speakTextForMeta();
+    };
     let produced = false;
     try {
       let ready: boolean | undefined;
@@ -191,7 +195,7 @@ export function createTtsProducer(ctx: {
           break;
         }
         if (event.type === "audio") {
-          const speakText = speakTextForMeta();
+          const speakText = speakTextForEvent(event);
           await publishReadyChunk({
             outputId,
             chunkId: state.chunkId,
@@ -212,18 +216,18 @@ export function createTtsProducer(ctx: {
           continue;
         }
         if (event.type !== "audio_file") continue;
-        const speakText = speakTextForMeta();
+        const speakText = speakTextForEvent(event);
         await publishReadyChunk({
-            outputId,
+          outputId,
           chunkId: state.chunkId,
           originalText: state.originalText,
           speakText,
           text: event.text ?? event.textchunk ?? speakText,
           createdAt: state.createdAt,
-            assetId: event.assetId,
-            filePath: event.filePath,
+          assetId: event.assetId,
+          filePath: event.filePath,
           interruptEpoch: ctx.getInterruptEpoch()
-          });
+        });
         produced = true;
       }
       if (!produced && !state.task.controller.signal.aborted && generation === ctx.getPlaybackGeneration()) {
@@ -257,7 +261,8 @@ export function createTtsProducer(ctx: {
         talkSessionId: ctx.talkSessionId,
         outputId: chunk.outputId,
         chunkId: chunk.chunkId,
-        text: chunk.originalText,
+        originalText: chunk.originalText,
+        text: chunk.text,
         speakText: chunk.speakText,
         createdAt: chunk.createdAt,
         status: "queued",

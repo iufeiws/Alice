@@ -153,6 +153,7 @@ async function archiveVoiceCallTtsOutput(
     talkSessionId: input.talkSessionId,
     outputId: input.outputId,
     chunkId: input.chunkId,
+    originalText: input.originalText,
     text: input.text,
     speakText: input.speakText,
     createdAt: input.createdAt,

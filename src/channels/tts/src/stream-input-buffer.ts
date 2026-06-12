@@ -4,6 +4,8 @@ export type TtsStreamInputBufferOptions = {
   onIdle?(): void | Promise<void>;
 };
 
+const TTS_SENTENCE_ENDING_PATTERN = /[。！？.!?．]/u;
+
 export async function* bufferTtsStreamInput(
   text: AsyncIterable<string> | Iterable<string> | string,
   options: TtsStreamInputBufferOptions
@@ -109,7 +111,7 @@ function normalizeBufferedPart(value: string): string {
 }
 
 function isSpeechBoundary(char: string): boolean {
-  return /[\p{P}\p{S}]/u.test(char);
+  return TTS_SENTENCE_ENDING_PATTERN.test(char);
 }
 
 function charLength(value: string): number {

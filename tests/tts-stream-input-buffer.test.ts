@@ -9,6 +9,15 @@ test("TTS stream input buffer waits for lookahead before yielding previous chunk
   assert.deepEqual(await iterator.next(), { value: undefined, done: true });
 });
 
+test("TTS stream input buffer only treats configured sentence endings as speech boundaries", async () => {
+  const parts = await collect(bufferTtsStreamInput(["第一段，逗号不断；分号不断．第二段？第三"], {
+    minChars: 6,
+    allowCrossNewline: true
+  }));
+
+  assert.deepEqual(parts, ["第一段，逗号不断；分号不断．", "第二段？第三"]);
+});
+
 test("TTS stream input buffer merges short tail before newline and removes empty lines", async () => {
   const parts = await collect(bufferTtsStreamInput(["abcdefghijklmn", "abc", "\n\nnext sentence。"], {
     minChars: 12,

@@ -6,7 +6,12 @@ import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile
 import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
-import { runAgentLoopExecutionSpec, type AgentLoopExecutionSpec, type AgentLoopToolExecution } from "./agent-loop-executor.js";
+import {
+  runAgentFunctionCallLoop,
+  type AgentFunctionCallLoopSpec,
+  type AgentFunctionCallLoopResult,
+  type AgentFunctionCallToolExecution
+} from "../runtime/agent-loop-runtime.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
 export type TalkAgentLoopInput = Omit<ChatAgentLoopInput, "llmInput"> & {
@@ -89,6 +94,11 @@ export type TalkAgentLoopController = {
   getConversationStartIndex(sessionId: string): number | undefined;
 };
 
+export type PreparedTalkAgentLoop = {
+  spec: AgentFunctionCallLoopSpec;
+  complete(result: AgentFunctionCallLoopResult): void;
+};
+
 export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgentLoopController {
   const activeTalkAgentLoops = new Set<string>();
   const activeTalkAgentLoopControllers = new Map<string, AbortController>();
@@ -114,60 +124,16 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       const config = deps.getLLMConfig();
       const guard = await waitForTalkLoopRound(sessionId, 0, controller);
       if (!guard.continue) return;
-      const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
-      const spec: AgentLoopExecutionSpec = {
-        initialMessages: session.messages,
-        limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
-        buildRequest({ round, messages }) {
-          const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
-          roundOutputs.set(round, { outputId, streamedContent: "" });
-          return {
-            agentId: "talk",
-            client: config.client,
-            messages,
-            model: config.model,
-            temperature: config.temperature,
-            extraParams: config.extraParams,
-            toolNames,
-            toolVariables,
-            stream: config.stream !== false,
-            signal: controller.signal,
-            streamHandlers: {
-              onContentDelta(delta) {
-                const output = roundOutputs.get(round);
-                if (output) output.streamedContent += delta;
-                deps.appendAssistantDelta({ sessionId, outputId, delta });
-              }
-            }
-          };
-        },
-        sendRequest: deps.sendRequest,
-        async executeTool(call): Promise<AgentLoopToolExecution> {
-          return {
-            message: {
-              role: "tool" as const,
-              toolCallId: call.id,
-              name: call.function.name,
-              content: await executeToolCall(call)
-            }
-          };
-        },
-        afterRequest({ round, result }) {
-          const output = roundOutputs.get(round);
-          if (!output) return;
-          const { outputId, streamedContent } = output;
-          if (!streamedContent && result.message.content) {
-            deps.appendAssistantDelta({ sessionId, outputId, delta: result.message.content });
-          }
-          if (streamedContent || result.message.content) {
-            deps.finishAssistantOutput({ sessionId, outputId });
-            deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
-          }
-        }
-      };
-      const result = await runAgentLoopExecutionSpec(spec);
-      session.messages = result.messages;
-      deps.updateActiveTalkLLMSessionTranscript(session);
+      const prepared = buildTalkAgentLoopSpec({
+        sessionId,
+        session,
+        toolNames,
+        toolVariables,
+        executeToolCall,
+        config,
+        controller
+      });
+      prepared.complete(await runAgentFunctionCallLoop(prepared.spec));
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
@@ -180,6 +146,84 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       }
       activeTalkAgentLoops.delete(sessionId);
     }
+  }
+
+  function buildTalkAgentLoopSpec(input: {
+    sessionId: string;
+    session: {
+      messages: LLMMessage[];
+      staticPromptFingerprint?: string;
+      staticPromptMessageCount?: number;
+      requestTimestamps?: string[];
+      lastTotalTokens?: number;
+      lastInputTokens?: number;
+      lastUsageModel?: string;
+      mode?: string;
+    };
+    toolNames: string[];
+    toolVariables: Record<string, unknown> | undefined;
+    executeToolCall(call: LLMToolCall): Promise<string>;
+    config: TalkAgentLoopLLMConfig;
+    controller: AbortController;
+  }): PreparedTalkAgentLoop {
+    const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
+    const spec: AgentFunctionCallLoopSpec = {
+      initialMessages: input.session.messages,
+      limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
+      buildRequest({ round, messages }) {
+        const outputId = `talk:${input.sessionId}:${Date.now()}:${round}`;
+        roundOutputs.set(round, { outputId, streamedContent: "" });
+        return {
+          agentId: "talk",
+          client: input.config.client,
+          messages,
+          model: input.config.model,
+          temperature: input.config.temperature,
+          extraParams: input.config.extraParams,
+          toolNames: input.toolNames,
+          toolVariables: input.toolVariables,
+          stream: input.config.stream !== false,
+          signal: input.controller.signal,
+          streamHandlers: {
+            onContentDelta(delta) {
+              const output = roundOutputs.get(round);
+              if (output) output.streamedContent += delta;
+              deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta });
+            }
+          }
+        };
+      },
+      sendRequest: deps.sendRequest,
+      async executeTool(call): Promise<AgentFunctionCallToolExecution> {
+        return {
+          message: {
+            role: "tool" as const,
+            toolCallId: call.id,
+            name: call.function.name,
+            content: await input.executeToolCall(call)
+          }
+        };
+      },
+      afterRequest({ round, result }) {
+        const output = roundOutputs.get(round);
+        if (!output) return;
+        const { outputId, streamedContent } = output;
+        if (!streamedContent && result.message.content) {
+          deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta: result.message.content });
+        }
+        if (streamedContent || result.message.content) {
+          deps.finishAssistantOutput({ sessionId: input.sessionId, outputId });
+          deps.log("info", `talk loop output ready: session=${input.sessionId} output=${outputId}`);
+        }
+      }
+    };
+    return {
+      spec,
+      complete(result) {
+        input.session.messages = result.messages;
+        deps.updateActiveTalkLLMSessionTranscript(input.session);
+      }
+    };
   }
 
   function interruptTalkAgentLoop(sessionId: string): void {

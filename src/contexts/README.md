@@ -41,13 +41,14 @@
   - 新建主 loop runtime。
   - 维护 `activeMainLLMSession`、当前 running 状态、取消控制、loop kind、session boundary。
   - 统一启动 chat/talk loop run spec，并向 tools 暴露主 session 状态。
+  - 提供通用 function-call loop 执行入口，负责调用 `llm-tool-loop`。
 - `agent-loop/src/runtime/agent-heartbeat-runtime.ts`
   - 从 message runtime 拆出的独立 heartbeat。
   - 负责 tick agent state、扫描 pending inbound、触发 initiated behavior/sleep events、calling 状态下驱动 talk loop。
 - `agent-loop/src/application/run-chat-loop.ts`
-  - 逐步改为构建 chat loop 启动参数：prompt、append context、tool specs、tool execution。
+  - 构建 chat function-call loop 启动参数、tool execution adapter、streaming send adapter 和完成写回 adapter。
 - `agent-loop/src/application/run-talk-loop.ts`
-  - 逐步改为构建 talk loop 启动参数：talk prompt、transcript messages、stream output handlers、tool execution。
+  - 构建 talk function-call loop 启动参数、runtime transcript patch、stream output adapter 和完成写回 adapter。
 
 ### 迁移步骤
 
@@ -57,8 +58,8 @@
 4. [done] 将 message runtime 中 heartbeat timer/pause/resume、tick、pending 扫描和 generated/talk 触发编排迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending set 和具体任务回调。
 5. [done] 普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
-7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec，chat 走 `runAgentLoopExecutionSpec(...)`，保持行为一致。
-8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并接入通用 loop executor；talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
+7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec，chat 通过 `agent-loop-runtime` 的 function-call loop 入口执行，保持行为一致。
+8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并通过 `agent-loop-runtime` 的 function-call loop 入口执行；talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
 9. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档。
 
 ### 当前已知风险

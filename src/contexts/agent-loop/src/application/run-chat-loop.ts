@@ -4,7 +4,12 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
-import { runAgentLoopExecutionSpec, type AgentLoopExecutionSpec, type AgentLoopToolExecution } from "./agent-loop-executor.js";
+import {
+  runAgentFunctionCallLoop,
+  type AgentFunctionCallLoopSpec,
+  type AgentFunctionCallLoopResult,
+  type AgentFunctionCallToolExecution
+} from "../runtime/agent-loop-runtime.js";
 
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
@@ -85,12 +90,22 @@ export type ChatAgentLoopResult = {
   finalResult?: LLMChatResult;
 };
 
+export type PreparedChatAgentLoop = {
+  spec: AgentFunctionCallLoopSpec;
+  complete(result: AgentFunctionCallLoopResult): ChatAgentLoopResult;
+};
+
 export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatAgentLoopResult> {
+  const prepared = buildChatAgentLoop(input);
+  return prepared.complete(await runAgentFunctionCallLoop(prepared.spec));
+}
+
+export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
   const toolMap = buildToolMap(input.toolPlugins);
   const visibleToolNames = input.llmInput.toolNames;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
-  const spec: AgentLoopExecutionSpec = {
+  const spec: AgentFunctionCallLoopSpec = {
     initialMessages: session.messages,
     limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
     async beforeRound({ round }) {
@@ -139,7 +154,7 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
-    async executeTool(call, { result }): Promise<AgentLoopToolExecution> {
+    async executeTool(call, { result }): Promise<AgentFunctionCallToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
       const streamedResult = streamingToolSender?.resultFor(call.id);
       if (streamedResult) {
@@ -266,16 +281,20 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
       input.noteSessionUpdated();
     }
   };
-  const loopResult = await runAgentLoopExecutionSpec(spec);
-  if (loopResult.stopReason === "reset") {
-    input.noteSessionUpdated();
-  }
   return {
-    message: loopResult.finalMessage,
-    sentMessage: loopResult.sentMessage,
-    invalidateSession: loopResult.invalidateSession,
-    cancelled: loopResult.stopReason === "cancelled",
-    finalResult: loopResult.finalResult
+    spec,
+    complete(loopResult) {
+      if (loopResult.stopReason === "reset") {
+        input.noteSessionUpdated();
+      }
+      return {
+        message: loopResult.finalMessage,
+        sentMessage: loopResult.sentMessage,
+        invalidateSession: loopResult.invalidateSession,
+        cancelled: loopResult.stopReason === "cancelled",
+        finalResult: loopResult.finalResult
+      };
+    }
   };
 }
 

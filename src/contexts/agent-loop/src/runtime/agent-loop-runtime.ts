@@ -1,4 +1,10 @@
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
+import {
+  runLLMToolLoop,
+  type LLMToolLoopExecution,
+  type LLMToolLoopInput,
+  type LLMToolLoopResult
+} from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, AgentOutput } from "../contracts/agent-contracts.js";
 
 export type AgentLoopKind = "chat" | "talk";
@@ -48,9 +54,14 @@ export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
+  runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   requestRun(request: AgentLoopRunRequest): Promise<AgentLoopRunResult>;
   interrupt(reason: string): void;
 };
+
+export type AgentFunctionCallLoopSpec = LLMToolLoopInput;
+export type AgentFunctionCallLoopResult = LLMToolLoopResult;
+export type AgentFunctionCallToolExecution = LLMToolLoopExecution;
 
 export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): AgentLoopRuntime {
   let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
@@ -71,6 +82,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
         ...runners,
         ...nextRunners
       };
+    },
+    runFunctionCallLoop(spec) {
+      return runAgentFunctionCallLoop(spec);
     },
     async requestRun(request) {
       if (running) return { started: false, outputs: [] };
@@ -127,4 +141,8 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     });
     return [];
   }
+}
+
+export function runAgentFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult> {
+  return runLLMToolLoop(spec);
 }

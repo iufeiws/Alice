@@ -6,6 +6,7 @@ import { createSessionResolver } from "../application/session-resolver.js";
 export function createAgentCoreRuntime(input: {
   config: any;
   activeLLM: any;
+  agentLoopRuntime?: any;
   llmRequests: any;
   currentChatLLMConfig(): any;
   outputRouter: any;
@@ -34,6 +35,9 @@ export function createAgentCoreRuntime(input: {
     config: input.config,
     llm: input.activeLLM,
     llmRequestSender: input.llmRequests.send,
+    runFunctionCallLoop: input.agentLoopRuntime
+      ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
+      : undefined,
     getLLMConfig: input.currentChatLLMConfig,
     isLLMRunCancelled: () => input.llmRequests.isCancelRequested(),
     outputRouter: input.outputRouter,

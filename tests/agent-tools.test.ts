@@ -69,6 +69,41 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
 
+test("agent core delegates prepared chat loop execution to injected function-call runtime", async () => {
+  let runtimeCalls = 0;
+  const core = createAgentCore({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    llm: {
+      async chat() {
+        throw new Error("direct llm client should not be called");
+      }
+    },
+    runFunctionCallLoop: async (spec) => {
+      runtimeCalls += 1;
+      assert.equal(spec.initialMessages.length > 0, true);
+      const finalMessage = { role: "assistant" as const, content: "runtime reply" };
+      return {
+        messages: [...spec.initialMessages, finalMessage],
+        rounds: 1,
+        finalResult: { message: finalMessage },
+        finalMessage,
+        stopReason: "completed",
+        sentMessage: false,
+        invalidateSession: false,
+        toolCallCount: 0
+      };
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy()
+  });
+
+  await core.handleEvent(textEvent());
+
+  assert.equal(runtimeCalls, 1);
+});
+
 test("token pressure calculation is independent from preview execution", () => {
   assert.deepEqual(calculateTokenPressureSwitch({
     lastInputTokens: 8000,

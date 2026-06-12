@@ -82,6 +82,7 @@ type TalkAgentLoopDeps = {
   toolPlugins: readonly ToolPlugin[];
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
+  runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
@@ -133,7 +134,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         config,
         controller
       });
-      prepared.complete(await runAgentFunctionCallLoop(prepared.spec));
+      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec));
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);

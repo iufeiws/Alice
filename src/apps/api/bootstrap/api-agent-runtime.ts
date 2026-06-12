@@ -43,6 +43,7 @@ export function createApiAgentRuntime(input: {
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
+    agentLoopRuntime: input.agentLoopRuntime,
     createLLMSession: (occurredAt) => input.activeLLMSessionRuntime.createTalkLLMSession(occurredAt).id,
     loadActiveTalkLLMSessionTranscript: () => input.activeLLMSessionRuntime.loadActiveLLMSessionTranscript(),
     updateActiveTalkLLMSessionTranscript: (session) => input.activeLLMSessionRuntime.updateActiveTalkLLMSessionTranscript(session),
@@ -55,6 +56,7 @@ export function createApiAgentRuntime(input: {
   const core = createAgentCoreRuntime({
     config: input.config,
     activeLLM: input.activeLLM,
+    agentLoopRuntime: input.agentLoopRuntime,
     llmRequests: input.llmRequests,
     currentChatLLMConfig: input.currentChatLLMConfig,
     outputRouter: input.outputRouter,

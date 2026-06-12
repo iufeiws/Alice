@@ -58,9 +58,10 @@
 4. [done] 将 message runtime 中 heartbeat timer/pause/resume、tick、pending 扫描和 generated/talk 触发编排迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending set 和具体任务回调。
 5. [done] 普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
-7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec，chat 通过 `agent-loop-runtime` 的 function-call loop 入口执行，保持行为一致。
-8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器，并通过 `agent-loop-runtime` 的 function-call loop 入口执行；talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
-9. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档。
+7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec；生产 chat runtime 先构建 prepared spec，再交给 `agent-loop-runtime.runFunctionCallLoop(...)` 执行，保持行为一致。
+8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 通过 `agent-loop-runtime.runFunctionCallLoop(...)` 执行 spec。talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
+9. [todo] 将 chat/talk 的 session 构筑和写回继续从 `AgentCore`/talk adapter 上移到 `agent-loop-runtime.requestRun(kind)`，让 `run-chat-loop`/`run-talk-loop` 只保留启动参数和 IO adapter。
+10. [todo] 删除旧兼容层和历史配置/接口残留，更新测试与文档。
 
 ### 当前已知风险
 

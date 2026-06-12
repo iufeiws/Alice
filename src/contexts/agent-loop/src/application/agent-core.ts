@@ -34,13 +34,18 @@ import {
   estimateMessagesTokens,
   estimateTextTokens,
   findToolPlugin,
-  runChatAgentLoop,
+  buildChatAgentLoop,
   runPromptToolRequest,
   toolResultText,
   type ChatAgentLoopInput,
   type ChatAgentLoopSession,
   type ChatAgentModeState
 } from "./run-chat-loop.js";
+import {
+  runAgentFunctionCallLoop,
+  type AgentFunctionCallLoopResult,
+  type AgentFunctionCallLoopSpec
+} from "../runtime/agent-loop-runtime.js";
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
 export type LLMSessionSnapshot = {
@@ -164,6 +169,7 @@ export type AgentCoreDeps = {
   onLLMRequestPrepared?(input: LLMChatInput): void;
   onLLMResponseReceived?(result: LLMChatResult): void;
   llmRequestSender?: LLMRequestSender;
+  runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
@@ -516,7 +522,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           stream: llmConfig.stream,
           toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
         };
-        const llmResult = await runChatAgentLoop({
+        const preparedLoop = buildChatAgentLoop({
           llmInput,
           event,
           toolPlugins,
@@ -541,7 +547,10 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           onLLMRequestPrepared: deps.onLLMRequestPrepared,
           onLLMResponseReceived: deps.onLLMResponseReceived,
           onLLMLog: deps.onLLMLog
-        }).catch((error) => {
+        });
+        const llmResult = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(preparedLoop.spec)
+          .then((result) => preparedLoop.complete(result))
+          .catch((error) => {
           if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
             const message = error instanceof Error ? error.message : String(error);
             recordInitiatedBehaviorRun({

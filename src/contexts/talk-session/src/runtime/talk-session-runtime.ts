@@ -19,6 +19,7 @@ export function createTalkRuntimeRuntime(input: {
   toolPlugins: any[];
   getLLMConfig(): any;
   sendRequest(input: any): Promise<any>;
+  agentLoopRuntime?: any;
   createLLMSession(occurredAt: string): number;
   loadActiveTalkLLMSessionTranscript(): any;
   updateActiveTalkLLMSessionTranscript(session: any): void;
@@ -58,6 +59,9 @@ export function createTalkRuntimeRuntime(input: {
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,
     sendRequest: input.sendRequest,
+    runFunctionCallLoop: input.agentLoopRuntime
+      ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
+      : undefined,
     appendAssistantDelta({ sessionId, outputId, delta }) {
       talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
     },

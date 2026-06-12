@@ -68,6 +68,65 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
   assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output")), true);
 });
 
+test("talk loop delegates prepared spec execution to injected function-call runtime", async () => {
+  let runtimeCalls = 0;
+  let activeSession: any;
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-runtime",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    visibleToolNames: () => [],
+    toolPlugins: [],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest() {
+      throw new Error("sendRequest should be called by the injected runtime in this test");
+    },
+    async runFunctionCallLoop(spec) {
+      runtimeCalls += 1;
+      assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "hello" });
+      const finalMessage = { role: "assistant" as const, content: "runtime talk reply" };
+      return {
+        messages: [...spec.initialMessages, finalMessage],
+        rounds: 1,
+        finalResult: { message: finalMessage },
+        finalMessage,
+        stopReason: "completed",
+        sentMessage: false,
+        invalidateSession: false,
+        toolCallCount: 0
+      };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-runtime");
+
+  assert.equal(runtimeCalls, 1);
+  assert.equal(activeSession.messages.at(-1)?.content, "runtime talk reply");
+});
+
 test("talk loop waits for foreground playback idle even when voice buffer is empty", async () => {
   let foregroundIdle = false;
   let sleepCalls = 0;

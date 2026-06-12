@@ -2548,6 +2548,92 @@ test("genie tts can synthesize an opus asset from remote stream audio", async ()
   await fsp.unlink(result.filePath);
 });
 
+test("genie explicit remote synthesizes wav bytes through synthesize without server outputPath", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-synthesize");
+  const calls: string[] = [];
+  const requestBodies: Array<Record<string, unknown>> = [];
+  const uploadBodies: Uint8Array[] = [];
+  const ffmpegArgs: string[][] = [];
+  let synthesizeAttempts = 0;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/synthesize") {
+      synthesizeAttempts += 1;
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (synthesizeAttempts === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "MODEL_NOT_UPLOADED",
+          modelDir: path.resolve("assets", fixture.modelDir),
+          uploadUrl: `/models/upload?modelDir=${encodeURIComponent(path.resolve("assets", fixture.modelDir))}`
+        }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(new Uint8Array([0x52, 0x49, 0x46, 0x46]), { status: 200, headers: { "content-type": "audio/wav" } });
+    }
+    if (parsed.pathname === "/models/upload") {
+      uploadBodies.push(init?.body as Uint8Array);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const ffmpegSpawn = fakeFfmpegSpawn();
+  const spawn = ((command: string, args: readonly string[]) => {
+    if (command === "ffmpeg") ffmpegArgs.push([...args]);
+    return ffmpegSpawn(command, args);
+  }) as any;
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
+    genieIdleShutdownMs: 0,
+    genieFfmpegCommand: "ffmpeg"
+  }, { fetch: fakeFetch as typeof fetch, spawn });
+
+  try {
+    const result = await synthesize({
+      text: "第一段。",
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+      genie: {
+        language: "zh",
+        modelDir: fixture.modelDir,
+        referenceAudio: fixture.referenceAudio,
+        referenceText: "参照テキスト",
+        speed: 1.15,
+        splitText: false
+      }
+    });
+
+    assert.deepEqual(calls, ["GET /health", "POST /synthesize", "POST /models/upload", "POST /synthesize"]);
+    assert.equal(uploadBodies.length, 1);
+    assert.deepEqual(requestBodies, [
+      {
+        text: "第一段。",
+        language: "zh",
+        modelDir: path.resolve("assets", fixture.modelDir),
+        referenceText: "参照テキスト",
+        splitText: false
+      },
+      {
+        text: "第一段。",
+        language: "zh",
+        modelDir: path.resolve("assets", fixture.modelDir),
+        referenceText: "参照テキスト",
+        splitText: false
+      }
+    ]);
+    assert.match(result.assetId, /^generated\/tts\/20260526_000000_000\.opus$/);
+    assert.equal(fs.readFileSync(result.filePath, "utf8"), "opus");
+    assert.ok(ffmpegArgs.some((args) => args.includes("-filter:a") && args.includes("atempo=1.15")));
+    await fsp.unlink(result.filePath);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("genie remote stream uploads missing model and retries original stream-input request", async () => {
   const fixture = makeTtsAssetFixture("tts-genie-remote-upload");
   fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
@@ -2603,7 +2689,8 @@ test("genie remote stream uploads missing model and retries original stream-inpu
       genie: {
         language: "zh",
         modelDir: fixture.modelDir,
-        referenceText: "参照テキスト"
+        referenceText: "参照テキスト",
+        splitText: false
       }
     })) {
       chunks.push(Array.from(chunk));
@@ -2613,6 +2700,7 @@ test("genie remote stream uploads missing model and retries original stream-inpu
     assert.equal(streamQueries.length, 2);
     assert.equal(streamQueries[0].language, "zh");
     assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.equal(streamQueries[0].splitText, "false");
     assert.equal(streamQueries[0].responseFormat, "ndjson");
     assert.deepEqual(streamQueries[1], streamQueries[0]);
     assert.deepEqual(streamBodies, [

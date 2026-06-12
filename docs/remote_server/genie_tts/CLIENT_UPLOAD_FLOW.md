@@ -230,3 +230,16 @@ The final line is:
 ```
 
 `audioBase64` is the same PCM data that the default `audio/L16` response would return, base64 encoded so it can share the stream with text metadata.
+
+## 8. Non-Streaming Remote Synthesis
+
+For remote clients, do not send `outputPath`. Without `outputPath`, `/synthesize` returns the WAV bytes directly:
+
+```powershell
+curl.exe -X POST "$server/synthesize" `
+  -H "content-type: application/json" `
+  --data "{`"text`":`"これは疑似ストリーミング音声のテストです。`",`"language`":`"jp`",`"modelDir`":`"$modelDir`",`"splitText`":false}" `
+  --output out.wav
+```
+
+`outputPath` is only for server-local debugging, because it writes to a path on the server machine.

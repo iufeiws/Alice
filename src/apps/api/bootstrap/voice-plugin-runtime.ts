@@ -22,7 +22,7 @@ export function createVoicePluginRuntime(input: {
     ...input.config.tts,
     ttsConfigPath
   }, { appendLog: input.appendLog });
-  input.appendLog("info", `tts configured: plugin_config=${ttsConfigPath} remote-aware Genie stream-input fallback=local-genie`);
+  input.appendLog("info", `tts configured: plugin_config=${ttsConfigPath} remote-aware Genie synthesize fallback=local-genie`);
   const ttsPlugin = createTtsPlugin({
     baseSynthesizer: ttsGenieSynthesizer,
     configPath: ttsConfigPath,

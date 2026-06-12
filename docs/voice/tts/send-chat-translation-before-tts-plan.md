@@ -177,15 +177,15 @@ assets/tts/preset/{配置名}/reference.txt
 
 ```text
 TTS text
-  -> POST /stream-input?language={language}&modelDir={local_model_dir}
-     content-type: application/x-ndjson
-     body: {"text":"...", "referenceText":"显式参考文本"}\n
-  -> 如果正常返回，直接消费 PCM stream
+  -> POST /synthesize
+     content-type: application/json
+     body: {"text":"...", "language":"...", "modelDir":"...", "referenceText":"显式参考文本", "splitText":false}
+  -> 如果正常返回，把 response WAV bytes 写入本地生成文件，再走 loudness / opus 转换
   -> 如果返回 409 MODEL_NOT_UPLOADED 或 REFERENCE_NOT_UPLOADED:
        zip preset dir that contains local_model_dir, reference audio, and reference text
        POST returned uploadUrl as application/zip
        如果没有 uploadUrl, POST /models/upload?modelDir={local_model_dir}
-       retry original /stream-input request unchanged
+       retry original /synthesize request unchanged
 ```
 
 约束：
@@ -193,9 +193,9 @@ TTS text
 - `modelDir` 必须是原始请求里的同一个本地路径，不换成 model id。
 - `referenceText` 必须是显式文本内容，不能传 `reference.txt` 路径。
 - zip 内容来自 `assets/tts/preset/{模型配置名}/`，需要包含该 preset 的 `model/`、`reference.*` 和 `reference.txt`。
-- 上传成功后重试原请求，不改变 `language`、`modelDir` 或文本。
+- 上传成功后重试原请求，不改变 `language`、`modelDir`、`splitText` 或文本。
 - 远端请求在产出音频前失败时可以 fallback 到 local Genie。
-- local Genie 继续使用本地 `/stream` JSON 请求路径；`/stream-input` 只用于显式远端 Genie URL。
+- local Genie 继续使用本地 `/stream` JSON 请求路径；显式远端文件合成使用 `/synthesize`，远端流式接口仍保留给真正需要 PCM stream 的调用。
 
 ## Migration Rules
 

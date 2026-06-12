@@ -158,7 +158,7 @@ export function createTtsRemoteAwareVoiceSynthesizer(
       genieBaseURL: normalized,
       genieBaseURLExplicit: true,
       genieIdleShutdownMs: 0,
-      genieUseStreamForSynthesis: true
+      genieUseStreamForSynthesis: false
     }, deps);
     remotes.set(normalized, remote);
     return remote;

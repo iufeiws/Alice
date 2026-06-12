@@ -124,11 +124,11 @@ When `remote.enabled` is true, runtime first tries `remote.baseURL`. If the remo
 
 Explicit remote Genie requests use the LAN upload protocol documented in `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md`:
 
-1. Send the original stream request to `/stream-input?language={language}&modelDir={modelDir}` with `content-type: application/x-ndjson`.
+1. Send the original synthesis request to `/synthesize` with `content-type: application/json`; do not send `outputPath` for explicit remote requests.
 2. Keep `modelDir` as the local model directory path derived from `assets/tts/preset/{model}/model`.
-3. Put `referenceText` in the NDJSON body as explicit text content. Do not send a `reference.txt` path.
+3. Put `referenceText` in the JSON body as explicit text content. Do not send a `reference.txt` path.
 4. If the server returns `409` with `code: "MODEL_NOT_UPLOADED"` or `code: "REFERENCE_NOT_UPLOADED"`, zip the preset directory that contains `modelDir` and its matching `reference.*` / `reference.txt`, then POST it to the returned `uploadUrl` as `application/zip`. If the response does not include `uploadUrl`, use `/models/upload?modelDir={modelDir}`.
-5. After upload succeeds, retry the original `/stream-input` request unchanged.
+5. After upload succeeds, retry the original `/synthesize` request unchanged.
 
 Local Genie still uses the older local `/stream` JSON request path, but its `referenceText` value is also resolved to text before being sent or passed to the local service process.
 

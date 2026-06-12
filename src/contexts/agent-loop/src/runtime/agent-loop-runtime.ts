@@ -139,6 +139,21 @@ export type AgentLoopPrepareChatSessionContextResult<TSession = unknown> = {
   messages: LLMChatInput["messages"];
 };
 
+export type AgentLoopEnsureChatSessionContextInput<TSession = unknown, TMode = unknown> = {
+  getSession(): TSession | undefined;
+  getPendingMode(): TMode | undefined;
+  setPendingMode(mode: TMode | undefined): void;
+  defaultMode(): TMode;
+  shouldClearForInitiatedBehavior(session: TSession): boolean;
+  isModeExpired(session: TSession): boolean;
+  isHydratedFixedPrefixPendingRebuild(session: TSession): boolean;
+  isStaticPromptChanged(session: TSession): boolean;
+  shouldResetForTokenPressure(session: TSession): Promise<boolean> | boolean;
+  modeFromSession(session: TSession): TMode;
+  clearSession(reason?: string): boolean;
+  prepareSession(mode: TMode): Promise<TSession> | TSession;
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
@@ -150,6 +165,7 @@ export type AgentLoopRuntime = {
   clearActiveSessionContext<TSession = unknown>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
   createActiveSessionContext<TSession = unknown>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
   prepareChatSessionContext<TSession = unknown>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
+  ensureChatSessionContext<TSession = unknown, TMode = unknown>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   appendSessionContext<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
@@ -206,6 +222,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     prepareChatSessionContext(input) {
       return prepareAgentLoopChatSessionContext(input, loopSessionStates);
+    },
+    ensureChatSessionContext(input) {
+      return ensureAgentLoopChatSessionContext(input);
     },
     prepareSessionContext(input) {
       return prepareAgentLoopSessionContext(input);
@@ -411,4 +430,49 @@ export async function prepareAgentLoopChatSessionContext<TSession = unknown>(
     session,
     messages
   };
+}
+
+export async function ensureAgentLoopChatSessionContext<TSession = unknown, TMode = unknown>(
+  input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>
+): Promise<TSession> {
+  let session = input.getSession();
+  if (session && input.shouldClearForInitiatedBehavior(session) && !input.getPendingMode()) {
+    input.clearSession("mode_transition");
+  }
+
+  session = input.getSession();
+  if (session && input.isModeExpired(session)) {
+    input.clearSession("mode_timeout");
+    input.setPendingMode(input.defaultMode());
+  }
+
+  session = input.getSession();
+  if (session && input.isHydratedFixedPrefixPendingRebuild(session) && !input.getPendingMode()) {
+    const mode = input.modeFromSession(session);
+    input.clearSession();
+    input.setPendingMode(mode);
+  }
+
+  session = input.getSession();
+  if (session && input.isStaticPromptChanged(session)) {
+    const mode = input.modeFromSession(session);
+    input.clearSession("prompt_static_changed");
+    input.setPendingMode(mode);
+  }
+
+  session = input.getSession();
+  if (session && await Promise.resolve(input.shouldResetForTokenPressure(session))) {
+    const mode = input.modeFromSession(session);
+    input.clearSession("token_pressure");
+    input.setPendingMode(mode);
+  }
+
+  session = input.getSession();
+  if (!session) {
+    const mode = input.getPendingMode() ?? input.defaultMode();
+    input.setPendingMode(undefined);
+    session = await Promise.resolve(input.prepareSession(mode));
+  }
+  if (!session) throw new Error("llm_session_unavailable");
+  return session;
 }

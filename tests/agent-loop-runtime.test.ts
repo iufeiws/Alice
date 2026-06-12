@@ -179,6 +179,41 @@ test("agent loop runtime prepares chat session context", async () => {
   assert.equal(runtime.getLoopSessionState("chat"), prepared.session);
 });
 
+test("agent loop runtime ensures chat session context through reset callbacks", async () => {
+  const runtime = createAgentLoopRuntime();
+  let session: { id: string; expired?: boolean } | undefined = { id: "old", expired: true };
+  let pendingMode: { id: string } | undefined;
+  const clears: string[] = [];
+
+  const ensured = await runtime.ensureChatSessionContext({
+    getSession: () => session,
+    getPendingMode: () => pendingMode,
+    setPendingMode(mode) {
+      pendingMode = mode;
+    },
+    defaultMode: () => ({ id: "normal" }),
+    shouldClearForInitiatedBehavior: () => false,
+    isModeExpired: (current) => current.expired === true,
+    isHydratedFixedPrefixPendingRebuild: () => false,
+    isStaticPromptChanged: () => false,
+    shouldResetForTokenPressure: () => false,
+    modeFromSession: () => ({ id: "from-old" }),
+    clearSession(reason) {
+      if (reason) clears.push(reason);
+      session = undefined;
+      return true;
+    },
+    prepareSession(mode) {
+      session = { id: `new:${mode.id}` };
+      return session;
+    }
+  });
+
+  assert.deepEqual(clears, ["mode_timeout"]);
+  assert.deepEqual(ensured, { id: "new:normal" });
+  assert.equal(session, ensured);
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

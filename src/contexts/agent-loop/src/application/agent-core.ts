@@ -45,6 +45,7 @@ import {
   appendAgentLoopSessionContext,
   clearAgentLoopActiveSessionContext,
   createAgentLoopActiveSessionContext,
+  ensureAgentLoopChatSessionContext,
   prepareAgentLoopChatSessionContext,
   runAgentFunctionCallLoop,
   setAgentLoopActiveSessionContext,
@@ -54,6 +55,7 @@ import {
   type AgentLoopAppendSessionContextResult,
   type AgentLoopClearActiveSessionContextInput,
   type AgentLoopCreateActiveSessionContextInput,
+  type AgentLoopEnsureChatSessionContextInput,
   type AgentLoopMutableSession,
   type AgentLoopPrepareChatSessionContextInput,
   type AgentLoopPrepareChatSessionContextResult,
@@ -189,6 +191,7 @@ export type AgentCoreDeps = {
   clearActiveLoopSessionContext?<TSession>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
   createActiveLoopSessionContext?<TSession>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
   prepareChatLoopSessionContext?<TSession>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
+  ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   getLoopSessionState?(): unknown;
   setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
@@ -262,6 +265,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
     });
   });
+  const ensureChatLoopSessionContext = deps.ensureChatLoopSessionContext ?? ensureAgentLoopChatSessionContext;
   let activeLLMSession: ActiveLLMSession | undefined;
   let applyModeStateToNewSession: ModeState | undefined;
 
@@ -435,79 +439,71 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
-        if (initiatedBehavior && activeLLMSession && !applyModeStateToNewSession) {
-          clearActiveLLMSession(() => deps.onLLMSessionCleared?.("mode_transition"));
-        }
-        if (activeLLMSession && isModeExpired(activeLLMSession)) {
-          clearActiveLLMSession(() => deps.onLLMSessionCleared?.("mode_timeout"));
-          applyModeStateToNewSession = defaultModeState();
-        }
-        if (activeLLMSession?.hydratedFixedPrefixPendingRebuild && !applyModeStateToNewSession) {
-          const mode = modeStateFromSession(activeLLMSession);
-          clearActiveLLMSession();
-          applyModeStateToNewSession = mode;
-        }
-        if (activeLLMSession && activeLLMSession.mode !== "fixed_prefix" && activeLLMSession.staticPromptFingerprint !== fingerprint) {
-          const mode = modeStateFromSession(activeLLMSession);
-          clearActiveLLMSession(() => deps.onLLMSessionCleared?.("prompt_static_changed"));
-          applyModeStateToNewSession = mode;
-        }
-        if (activeLLMSession
-          && await shouldResetSessionForTokenPressure(activeLLMSession, event, findToolPlugin(toolPlugins, "check_chat"))) {
-          const mode = modeStateFromSession(activeLLMSession);
-          clearActiveLLMSession(() => deps.onLLMSessionCleared?.("token_pressure"));
-          applyModeStateToNewSession = mode;
-        }
-        if (!activeLLMSession) {
-          const mode = applyModeStateToNewSession ?? defaultModeState();
-          applyModeStateToNewSession = undefined;
-          let promptCheckChatCursor: number | undefined;
-          let initiatedBehaviorPromptToolResult: ToolResult | undefined;
-          const preparedSession = await prepareChatLoopSessionContext({
-            buildMessages: async () => {
-              if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
-              return [
-                ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                  const result = await runPromptToolRequest(layer, call, toolPlugins);
-                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                  return result;
-                }),
-                ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
-                  const result = await runPromptToolRequest(layer, call, toolPlugins);
-                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                  initiatedBehaviorPromptToolResult = result;
-                  return result;
-                }),
-                ...mode.modeStaticMessages
-              ];
-            },
-            createSession(promptMessages): ActiveLLMSession {
-              return {
-                messages: promptMessages,
-                staticPromptFingerprint: fingerprint,
-                staticPromptMessageCount: promptMessages.length,
-                requestTimestamps: [],
-                tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
-                mode: mode.mode,
-                modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
-                modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
-                modeStartedAt: mode.modeStartedAt,
-                modeExpiresAt: mode.modeExpiresAt,
-                fixedPrefixKind: mode.fixedPrefixKind,
-                fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
-                waitChatStartedAt: undefined,
-                lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
-              };
-            },
-            setLocalSession(session) {
-              activeLLMSession = session;
-            }
-          });
-          initiatedBehavior = undefined;
-          const newSession = preparedSession.session;
-          if (initiatedBehaviorPromptToolResult) {
-            applyBackendToolSessionControlToActiveSession(newSession, initiatedBehaviorPromptToolResult, time.now().epochMs);
+        let initiatedBehaviorPromptToolResult: ToolResult | undefined;
+        const session = await ensureChatLoopSessionContext<ActiveLLMSession, ModeState>({
+          getSession: () => activeLLMSession,
+          getPendingMode: () => applyModeStateToNewSession,
+          setPendingMode(mode) {
+            applyModeStateToNewSession = mode;
+          },
+          defaultMode: defaultModeState,
+          shouldClearForInitiatedBehavior: () => Boolean(initiatedBehavior),
+          isModeExpired,
+          isHydratedFixedPrefixPendingRebuild: (session) => session.hydratedFixedPrefixPendingRebuild === true,
+          isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
+          shouldResetForTokenPressure: (session) => shouldResetSessionForTokenPressure(session, event, findToolPlugin(toolPlugins, "check_chat")),
+          modeFromSession: modeStateFromSession,
+          clearSession(reason) {
+            return clearActiveLLMSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
+          },
+          async prepareSession(mode) {
+            let promptCheckChatCursor: number | undefined;
+            const preparedSession = await prepareChatLoopSessionContext({
+              buildMessages: async () => {
+                if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
+                return [
+                  ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
+                    const result = await runPromptToolRequest(layer, call, toolPlugins);
+                    promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                    return result;
+                  }),
+                  ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
+                    const result = await runPromptToolRequest(layer, call, toolPlugins);
+                    promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                    initiatedBehaviorPromptToolResult = result;
+                    return result;
+                  }),
+                  ...mode.modeStaticMessages
+                ];
+              },
+              createSession(promptMessages): ActiveLLMSession {
+                return {
+                  messages: promptMessages,
+                  staticPromptFingerprint: fingerprint,
+                  staticPromptMessageCount: promptMessages.length,
+                  requestTimestamps: [],
+                  tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
+                  mode: mode.mode,
+                  modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
+                  modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
+                  modeStartedAt: mode.modeStartedAt,
+                  modeExpiresAt: mode.modeExpiresAt,
+                  fixedPrefixKind: mode.fixedPrefixKind,
+                  fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
+                  waitChatStartedAt: undefined,
+                  lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
+                };
+              },
+              setLocalSession(session) {
+                activeLLMSession = session;
+              }
+            });
+            initiatedBehavior = undefined;
+            return preparedSession.session;
           }
+        });
+        if (initiatedBehaviorPromptToolResult) {
+          applyBackendToolSessionControlToActiveSession(session, initiatedBehaviorPromptToolResult, time.now().epochMs);
           noteLLMSessionUpdated();
         }
         if (!activeLLMSession) throw new Error("llm_session_unavailable");

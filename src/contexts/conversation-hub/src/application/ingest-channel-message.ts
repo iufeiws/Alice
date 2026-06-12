@@ -43,7 +43,7 @@ export type MessageRuntimeDeps = {
   talkRuntime?: {
     markAgentLoopReady?(sessionId: string): void;
     claimReadyAgentLoopSession?(): string | undefined;
-    prepareReadyAgentLoopSession?(sessionId: string): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
+    prepareReadyAgentLoopSession?(sessionId: string, options?: { signal?: AbortSignal }): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
   };
   setTypingIndicator?(input: {
     plugin: string;
@@ -144,7 +144,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
     prepareChat: ({ event }) => deps.core.prepareEventRun(event),
-    prepareTalk: ({ sessionId }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId)
+    prepareTalk: ({ sessionId, signal }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal })
   });
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,

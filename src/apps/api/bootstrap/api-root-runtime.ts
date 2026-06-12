@@ -66,7 +66,7 @@ export function createApiRootRuntime() {
   });
   agentLoopRuntime.setRunners({
     prepareChat: ({ event }) => apiAgentStackRuntime.core.prepareEventRun(event),
-    prepareTalk: ({ sessionId }) => apiAgentStackRuntime.talkRuntime.prepareReadyAgentLoopSession(sessionId) as any
+    prepareTalk: ({ sessionId, signal }) => apiAgentStackRuntime.talkRuntime.prepareReadyAgentLoopSession(sessionId, { signal }) as any
   });
   const apiServerStackRuntime = createApiServerStackRuntime({
     config: foundation.config,

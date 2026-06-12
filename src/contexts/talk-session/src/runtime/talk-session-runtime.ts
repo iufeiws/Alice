@@ -88,6 +88,7 @@ export function createTalkRuntimeRuntime(input: {
     prepareAgentLoop: talkAgentLoop.prepareTalkAgentLoopForSession,
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+      input.agentLoopRuntime?.interrupt?.("talk_interrupt");
       talkAgentLoop.interruptTalkAgentLoop(sessionId);
     },
     onSessionOpened() {

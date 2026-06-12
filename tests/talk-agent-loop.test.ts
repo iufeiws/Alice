@@ -21,9 +21,8 @@ async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalk
   }
 }
 
-test("talk loop waits for voice output backpressure and runs one LLM round per launch", async () => {
+test("talk loop returns no prepared run while voice output backpressure is active", async () => {
   let pendingChars = defaultTalkOutputReadyChars;
-  let sleepCalls = 0;
   let sendCalls = 0;
   let activeSession: any;
   const sentMessages: unknown[][] = [];
@@ -67,20 +66,27 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
     },
     log(level, message) {
       logs.push({ level, message });
-    },
-    async sleep() {
-      sleepCalls += 1;
-      pendingChars = 0;
     }
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-backpressure");
+  let prepared = await controller.prepareTalkAgentLoopForSession("session-backpressure");
+  assert.equal(prepared, undefined);
+  assert.equal(sendCalls, 0);
+  assert.equal(finishedOutputs.length, 0);
+  assert.equal(sentMessages.length, 0);
+  assert.equal(logs.some((entry) => entry.message.includes("talk loop not ready: voice output")), true);
 
-  assert.equal(sleepCalls, 1);
+  pendingChars = 0;
+  prepared = await controller.prepareTalkAgentLoopForSession("session-backpressure");
+  assert.ok(prepared);
+  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+  assert.ok(spec && !Array.isArray(spec));
+  prepared.complete(await runAgentFunctionCallLoop(spec));
+  await prepared.dispose?.();
+
   assert.equal(sendCalls, 1);
   assert.equal(finishedOutputs.length, 1);
   assert.equal(sentMessages.length, 1);
-  assert.equal(logs.some((entry) => entry.message.includes("talk loop waiting: voice output")), true);
 });
 
 test("talk loop prepares spec for external function-call runtime execution", async () => {
@@ -120,11 +126,14 @@ test("talk loop prepares spec for external function-call runtime execution", asy
     log: () => {}
   });
 
-  const prepared = await controller.prepareTalkAgentLoopForSession("session-runtime");
+  const abortController = new AbortController();
+  const prepared = await controller.prepareTalkAgentLoopForSession("session-runtime", { signal: abortController.signal });
   assert.ok(prepared);
   const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
   assert.ok(spec && !Array.isArray(spec));
   assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "hello" });
+  const request = await Promise.resolve(spec.buildRequest({ round: 0, messages: spec.initialMessages }));
+  assert.equal(request.signal, abortController.signal);
   const finalMessage = { role: "assistant" as const, content: "runtime talk reply" };
   prepared.complete({
     messages: [...spec.initialMessages, finalMessage],
@@ -269,9 +278,8 @@ test("talk loop delegates transcript preparation to injected session context run
   assert.equal(activeSession.messages.at(-1)?.content, "delegated reply");
 });
 
-test("talk loop waits for foreground playback idle even when voice buffer is empty", async () => {
+test("talk loop returns no prepared run until foreground playback is idle", async () => {
   let foregroundIdle = false;
-  let sleepCalls = 0;
   let sendCalls = 0;
   let activeSession: any;
   const logs: Array<{ level: string; message: string }> = [];
@@ -310,18 +318,23 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
     finishAssistantOutput: () => {},
     log(level, message) {
       logs.push({ level, message });
-    },
-    async sleep() {
-      sleepCalls += 1;
-      foregroundIdle = true;
     }
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-foreground-idle");
-
-  assert.equal(sleepCalls, 1);
-  assert.equal(sendCalls, 1);
+  let prepared = await controller.prepareTalkAgentLoopForSession("session-foreground-idle");
+  assert.equal(prepared, undefined);
+  assert.equal(sendCalls, 0);
   assert.equal(logs.some((entry) => entry.message.includes("foreground_idle=false")), true);
+
+  foregroundIdle = true;
+  prepared = await controller.prepareTalkAgentLoopForSession("session-foreground-idle");
+  assert.ok(prepared);
+  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+  assert.ok(spec && !Array.isArray(spec));
+  prepared.complete(await runAgentFunctionCallLoop(spec));
+  await prepared.dispose?.();
+
+  assert.equal(sendCalls, 1);
 });
 
 test("talk tool-call followup runs in the same function-call loop", async () => {

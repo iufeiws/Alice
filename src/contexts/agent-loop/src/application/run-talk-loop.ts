@@ -43,8 +43,6 @@ type TalkAgentLoopState = {
 type TalkLoopMessagePatch = AgentLoopMessagePatch;
 
 type TalkLoopRuntimeState = {
-  activeLoops: Set<string>;
-  controllers: Map<string, AbortController>;
   conversationStartIndexes: Map<string, number>;
 };
 
@@ -96,11 +94,10 @@ type TalkAgentLoopDeps = {
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
-  sleep?(ms: number): Promise<void>;
 };
 
 export type TalkAgentLoopController = {
-  prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined>;
+  prepareTalkAgentLoopForSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<PreparedAgentLoopRun | undefined>;
   interruptTalkAgentLoop(sessionId: string): void;
   getConversationStartIndex(sessionId: string): number | undefined;
 };
@@ -115,8 +112,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   deps.setLoopSessionState?.(state);
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
-  async function prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined> {
-    if (state.activeLoops.has(sessionId)) return;
+  async function prepareTalkAgentLoopForSession(sessionId: string, options: { signal?: AbortSignal } = {}): Promise<PreparedAgentLoopRun | undefined> {
     if (!deps.isActiveTalkLLMSession(sessionId)) {
       deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
       return;
@@ -125,19 +121,11 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       deps.log("info", `talk loop skipped: session closed session=${sessionId}`);
       return;
     }
-    state.activeLoops.add(sessionId);
-    const controller = new AbortController();
-    state.controllers.set(sessionId, controller);
-    deps.setLoopSessionState?.(state);
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
       const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
       const config = deps.getLLMConfig();
-      const guard = await waitForTalkLoopRound(sessionId, 0, controller);
-      if (!guard.continue) {
-        cleanupTalkAgentLoop(sessionId, controller);
-        return;
-      }
+      if (!canStartTalkLoop(sessionId, options.signal)) return;
       const prepared = buildTalkAgentLoopSpec({
         sessionId,
         session,
@@ -145,7 +133,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         toolVariables,
         executeToolCall,
         config,
-        controller
+        signal: options.signal
       });
       return {
         spec: prepared.spec,
@@ -154,32 +142,21 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           return [];
         },
         onError(error) {
-          if (controller.signal.aborted || isCancellationError(error)) {
+          if (options.signal?.aborted || isCancellationError(error)) {
             deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
             return;
           }
           deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
         },
-        dispose() {
-          cleanupTalkAgentLoop(sessionId, controller);
-        }
+        dispose() {}
       };
     } catch (error) {
-      if (controller.signal.aborted || isCancellationError(error)) {
+      if (options.signal?.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
       } else {
         deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
       }
-      cleanupTalkAgentLoop(sessionId, controller);
     }
-  }
-
-  function cleanupTalkAgentLoop(sessionId: string, controller: AbortController): void {
-    if (state.controllers.get(sessionId) === controller) {
-      state.controllers.delete(sessionId);
-    }
-    state.activeLoops.delete(sessionId);
-    deps.setLoopSessionState?.(state);
   }
 
   function buildTalkAgentLoopSpec(input: {
@@ -189,7 +166,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     toolVariables: Record<string, unknown> | undefined;
     executeToolCall(call: LLMToolCall): Promise<string>;
     config: TalkAgentLoopLLMConfig;
-    controller: AbortController;
+    signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
     const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
     const spec: AgentFunctionCallLoopSpec = {
@@ -208,7 +185,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           toolNames: input.toolNames,
           toolVariables: input.toolVariables,
           stream: input.config.stream !== false,
-          signal: input.controller.signal,
+          signal: input.signal,
           streamHandlers: {
             onContentDelta(delta) {
               const output = roundOutputs.get(round);
@@ -252,37 +229,31 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   }
 
   function interruptTalkAgentLoop(sessionId: string): void {
-    state.controllers.get(sessionId)?.abort();
+    deps.log("info", `talk loop interrupt requested: session=${sessionId}`);
   }
 
   function getConversationStartIndex(sessionId: string): number | undefined {
     return state.conversationStartIndexes.get(sessionId);
   }
 
-  async function waitForTalkLoopRound(sessionId: string, round: number, controller: AbortController): Promise<{ continue: boolean }> {
-    let loggedBackpressure = false;
-    while (true) {
-      if (controller.signal.aborted) {
-        deps.log("info", `talk loop cancelled before round: session=${sessionId} round=${round}`);
-        return { continue: false };
-      }
-      if (!deps.isActiveTalkLLMSession(sessionId)) {
-        deps.log("warn", `talk loop stopped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
-        return { continue: false };
-      }
-      if (!deps.isTalkSessionOpen(sessionId)) {
-        deps.log("info", `talk loop stopped: session closed session=${sessionId}`);
-        return { continue: false };
-      }
-      const pendingChars = deps.pendingVoiceOutputCharCount(sessionId);
-      const foregroundPlaybackIdle = deps.isForegroundPlaybackIdle(sessionId);
-      if (pendingChars === 0 && foregroundPlaybackIdle) return { continue: true };
-      if (!loggedBackpressure) {
-        deps.log("info", `talk loop waiting: voice output pending_chars=${pendingChars} foreground_idle=${foregroundPlaybackIdle} limit=${maxPendingVoiceOutputChars} session=${sessionId}`);
-        loggedBackpressure = true;
-      }
-      await (deps.sleep ?? sleep)(25);
+  function canStartTalkLoop(sessionId: string, signal?: AbortSignal): boolean {
+    if (signal?.aborted) {
+      deps.log("info", `talk loop cancelled before request: session=${sessionId}`);
+      return false;
     }
+    if (!deps.isActiveTalkLLMSession(sessionId)) {
+      deps.log("warn", `talk loop stopped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
+      return false;
+    }
+    if (!deps.isTalkSessionOpen(sessionId)) {
+      deps.log("info", `talk loop stopped: session closed session=${sessionId}`);
+      return false;
+    }
+    const pendingChars = deps.pendingVoiceOutputCharCount(sessionId);
+    const foregroundPlaybackIdle = deps.isForegroundPlaybackIdle(sessionId);
+    if (pendingChars === 0 && foregroundPlaybackIdle) return true;
+    deps.log("info", `talk loop not ready: voice output pending_chars=${pendingChars} foreground_idle=${foregroundPlaybackIdle} limit=${maxPendingVoiceOutputChars} session=${sessionId}`);
+    return false;
   }
 
   async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
@@ -392,10 +363,6 @@ function isCancellationError(error: unknown): boolean {
   return message === "llm_request_cancelled" || /abort/i.test(message);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider): AgentEvent {
   const now = time.now();
   return {
@@ -433,8 +400,6 @@ function parseToolArguments(value: string): Record<string, unknown> {
 function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {
   if (isTalkLoopRuntimeState(value)) return value;
   return {
-    activeLoops: new Set<string>(),
-    controllers: new Map<string, AbortController>(),
     conversationStartIndexes: new Map<string, number>()
   };
 }
@@ -442,7 +407,5 @@ function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {
 function isTalkLoopRuntimeState(value: unknown): value is TalkLoopRuntimeState {
   if (!value || typeof value !== "object") return false;
   const state = value as Partial<TalkLoopRuntimeState>;
-  return state.activeLoops instanceof Set
-    && state.controllers instanceof Map
-    && state.conversationStartIndexes instanceof Map;
+  return state.conversationStartIndexes instanceof Map;
 }

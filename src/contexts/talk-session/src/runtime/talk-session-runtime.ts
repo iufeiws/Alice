@@ -57,9 +57,6 @@ export function createTalkRuntimeRuntime(input: {
     finishAssistantOutput({ sessionId, outputId }) {
       talkRuntime.finishAssistantOutput({ sessionId, outputId });
     },
-    onRoundNeedsFollowup(sessionId) {
-      talkRuntime.startAgentLoop(sessionId);
-    },
     log(level, message) {
       input.appendLog(level, message);
     }

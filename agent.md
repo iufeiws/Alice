@@ -27,6 +27,12 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 - Prompt Preview 必须反映实际发送给 LLM 的消息序列；不得存在 preview 看不到但运行时会发送的 prompt 内容。
 - **重点：项目中所有 prompt layer 解析必须共用同一个解析器入口。** 当前公共入口是 `src/contexts/agent-profile/src/domain/prompt-layer.ts`；不要在 Core、Memorize 或其他模块里复制 `normalize layer`、`layer -> LLMMessage`、tool argument 解析逻辑。
 
+## Tool / Loop 硬约束
+
+- Tool 是否可用只能由 LLM request 构筑阶段的 `toolNames`/visible tools 决定；loop 执行期不得再按 loop kind、requester、channel 或 tool name 做二次拦截。
+- LLM 已经收到并调用的 tool 必须走统一 `ToolPlugin.execute` 路径执行，并把 tool result 写回同一个 function-call run loop；不得把 tool result follow-up 交给 heartbeat 或下一次外部 loop 启动。
+- `requester` 只表示 tool call 来源，不表示输出投递目标，也不能决定 tool 能不能用。产生 `AgentOutput` 的工具必须通过 capabilities 层的 output target resolver 解析投递目标。
+
 ## 运行命令
 
 - `npm run build`：编译 TypeScript 到 `dist/`。

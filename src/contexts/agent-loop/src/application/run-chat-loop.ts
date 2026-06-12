@@ -89,7 +89,6 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
   let session = input.session;
   const toolMap = buildToolMap(input.toolPlugins);
   const visibleToolNames = input.llmInput.toolNames;
-  let sendChatCallCount = 0;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
   const spec: AgentLoopExecutionSpec = {
     initialMessages: session.messages,
@@ -140,27 +139,8 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
-    selectToolCalls(calls) {
-      if (calls.some((call) => isWaitChatToolName(call.function.name))) return calls;
-      return calls.some((call) => isSendChatToolName(call.function.name))
-        ? calls.filter((call) => isSendChatToolName(call.function.name))
-        : calls;
-    },
-    shouldYieldReturn(calls) {
-      return calls.some((call) => isWaitChatToolName(call.function.name));
-    },
-    shouldDeferToolResult(call, calls) {
-      return calls.some((entry) => isWaitChatToolName(entry.function.name))
-        && isInboundToolName(call.function.name);
-    },
     async executeTool(call, { result }): Promise<AgentLoopToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
-      const isConsecutiveSelfie = call.function.name === "selfie" && input.getLastCompletedToolName() === "selfie";
-      let reachedToolCallLimit = false;
-      if (isSendChatToolName(call.function.name)) {
-        sendChatCallCount += 1;
-        if (sendChatCallCount >= 5) reachedToolCallLimit = true;
-      }
       const streamedResult = streamingToolSender?.resultFor(call.id);
       if (streamedResult) {
         session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, streamedResult) ?? session.lastCheckChatCursorMessageId;
@@ -175,20 +155,13 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
           control: {
             sentMessage: isSendChatToolName(call.function.name) && streamedResult.ok,
             invalidateSession: streamedResult.invalidateLLMSession === true,
-            yieldReturn: streamedResult.meta?.yieldReturn === true,
-            reachedToolCallLimit
+            yieldReturn: streamedResult.meta?.yieldReturn === true
           }
         };
       }
       const plugin = toolMap.get(call.function.name);
       let toolResult: ToolResult;
-      if (isConsecutiveSelfie) {
-        toolResult = {
-          callId: call.id,
-          ok: false,
-          error: "selfie cannot be called twice in a row"
-        };
-      } else if (!plugin) {
+      if (!plugin) {
         toolResult = {
           callId: call.id,
           ok: false,
@@ -196,22 +169,14 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
         };
       } else {
         try {
-          if (isSendChatToolName(call.function.name) && hasUnsafeSendChatArguments(call.function.arguments)) {
-            toolResult = {
-              callId: call.id,
-              ok: false,
-              error: "unsafe send_chat arguments"
-            };
-          } else {
-            const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), session);
-            toolResult = await plugin.execute({
-              id: call.id,
-              toolName: call.function.name,
-              input: toolInput,
-              requester: input.event.source,
-              session: input.event.session
-            });
-          }
+          const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), session);
+          toolResult = await plugin.execute({
+            id: call.id,
+            toolName: call.function.name,
+            input: toolInput,
+            requester: input.event.source,
+            session: input.event.session
+          });
         } catch (error) {
           toolResult = {
             callId: call.id,
@@ -236,7 +201,6 @@ export async function runChatAgentLoop(input: ChatAgentLoopInput): Promise<ChatA
         sentMessage: isSendChatToolName(call.function.name) && toolResult.ok,
         invalidateSession: toolResult.invalidateLLMSession === true,
         yieldReturn: toolResult.meta?.yieldReturn === true,
-        reachedToolCallLimit,
         resetSession: false,
         continueAfterReset: false
       };
@@ -730,10 +694,6 @@ function fixedPrefixToolInput(toolName: string, input: Record<string, unknown>, 
 
 function isCheckChatToolName(toolName: string): boolean {
   return toolName === "check_chat" || toolName === "check_feishu" || toolName === "check_wechat" || toolName === "view_messages";
-}
-
-function isInboundToolName(toolName: string | undefined): boolean {
-  return isCheckChatToolName(toolName ?? "") || toolName === "search_messages";
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {

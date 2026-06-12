@@ -411,7 +411,7 @@ test("agent core resumes pending wait_chat with check_chat result on heartbeat",
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
 
-test("agent core defers inbound tool results when wait_chat appears in the same round", async () => {
+test("agent core executes same-round tools when wait_chat appears and resumes wait result later", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -473,12 +473,12 @@ test("agent core defers inbound tool results when wait_chat appears in the same 
 
   await core.handleEvent(textEvent());
 
-  assert.deepEqual(calls, ["wait_chat", "later_tool"]);
+  assert.deepEqual(calls, ["check_chat", "wait_chat", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
   const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "wait_chat"));
   assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["check_chat", "wait_chat", "later_tool"]);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
-  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), false);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
 
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
@@ -1259,7 +1259,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
-test("agent core rejects two consecutive selfie tool calls", async () => {
+test("agent core executes consecutive exposed selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
   const llm: LLMClient = {
@@ -1309,9 +1309,9 @@ test("agent core rejects two consecutive selfie tool calls", async () => {
 
   await core.handleEvent(textEvent());
 
-  assert.deepEqual(executed, ["first"]);
+  assert.deepEqual(executed, ["first", "second"]);
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
-  assert.equal(requests[1].messages.at(-1)?.content, "error: selfie cannot be called twice in a row");
+  assert.equal(requests[1].messages.at(-1)?.content, "sent");
 });
 
 test("agent core adds fallback reasoning content for tool requests when missing", async () => {
@@ -1643,7 +1643,7 @@ test("agent core streams send_chat message content on newlines before final tool
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("agent core blocks unsafe streamed send_chat arguments before sending held line", async () => {
+test("agent core holds unsafe streamed send_chat prefix before sending safe line", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const llm: LLMClient = {
@@ -1687,7 +1687,7 @@ test("agent core blocks unsafe streamed send_chat arguments before sending held 
       }
       if (requests.length === 2) {
         const toolMessage = input.messages.find((message) => message.role === "tool");
-        assert.equal(toolMessage?.content, "error: unsafe send_chat arguments");
+        assert.equal(toolMessage?.content, "sent: 算是通过了吗,父皇？");
         return {
           message: {
             role: "assistant",
@@ -1719,6 +1719,9 @@ test("agent core blocks unsafe streamed send_chat arguments before sending held 
         return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
+        if (typeof call.input.content !== "string") {
+          return { callId: call.id, ok: false, error: "invalid send_chat arguments" };
+        }
         sentLines.push(String(call.input.content));
         return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
       }
@@ -1726,7 +1729,8 @@ test("agent core blocks unsafe streamed send_chat arguments before sending held 
   });
 
   await core.handleEvent(textEvent());
-  assert.deepEqual(sentLines, ["原来如此。那这个测试算是通过了吗,父皇？"]);
+  assert.equal(sentLines.includes("原来如此。那这个测试,"), false);
+  assert.deepEqual(sentLines, ["算是通过了吗,父皇？", "原来如此。那这个测试算是通过了吗,父皇？"]);
 });
 
 test("agent core streams send_chat voice content on newlines before final tool JSON", async () => {
@@ -3091,12 +3095,14 @@ test("agent core stops after three consecutive identical send_chat calls", async
   ]);
 });
 
-test("agent core stops after five total send_chat calls even when not consecutive identical", async () => {
+test("agent core stops after the generic total tool call limit", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
+      nowMs += 61_000;
       const content = requests.length % 2 === 0 ? "even" : "odd";
       return {
         message: {
@@ -3116,6 +3122,7 @@ test("agent core stops after five total send_chat calls even when not consecutiv
   };
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -3134,17 +3141,19 @@ test("agent core stops after five total send_chat calls even when not consecutiv
   });
 
   await core.handleEvent(textEvent());
-  assert.equal(requests.length, 5);
-  assert.deepEqual(sent, [
+  assert.equal(requests.length, 20);
+  assert.equal(sent.length, 20);
+  assert.deepEqual(sent.slice(0, 5), [
     "tool_send_1:odd",
     "tool_send_2:even",
     "tool_send_3:odd",
     "tool_send_4:even",
     "tool_send_5:odd"
   ]);
+  assert.equal(sent.at(-1), "tool_send_20:even");
 });
 
-test("agent core skips non-send tools when send_chat appears in the same round", async () => {
+test("agent core executes all exposed tools when send_chat appears in the same round", async () => {
   const calls: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -3200,7 +3209,7 @@ test("agent core skips non-send tools when send_chat appears in the same round",
   });
 
   await core.handleEvent(textEvent());
-  assert.deepEqual(calls.filter((name, index) => !(index === 0 && name === "check_chat")), ["send_chat"]);
+  assert.deepEqual(calls.filter((name, index) => !(index === 0 && name === "check_chat")), ["check_chat", "send_chat"]);
 });
 
 test("agent core does not stream send_chat when non-message type is explicit", async () => {

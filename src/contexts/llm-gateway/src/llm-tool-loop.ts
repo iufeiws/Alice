@@ -72,9 +72,6 @@ export type LLMToolLoopInput = {
   beforeTool?(input: { round: number; call: LLMToolCall; callIndex: number }): Promise<void> | void;
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
   shouldCancel?(): boolean;
-  selectToolCalls?(calls: LLMToolCall[], result: LLMChatResult): LLMToolCall[];
-  shouldYieldReturn?(calls: LLMToolCall[], result: LLMChatResult): boolean;
-  shouldDeferToolResult?(call: LLMToolCall, calls: LLMToolCall[], result: LLMChatResult): boolean;
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
   limits?: LLMToolLoopLimits;
 };
@@ -136,9 +133,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     await input.afterRequest?.({ round, result, messages });
     if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
 
-    const calls = input.selectToolCalls
-      ? input.selectToolCalls(result.message.toolCalls ?? [], result)
-      : result.message.toolCalls ?? [];
+    const calls = result.message.toolCalls ?? [];
     if (calls.length === 0) {
       messages = [
         ...messages,
@@ -165,7 +160,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     let resetSession = false;
     let continueAfterReset = false;
     let yieldReturn = false;
-    const yieldReturnRound = input.shouldYieldReturn?.(calls, result) === true;
     const executedCalls: LLMToolCall[] = [];
     const toolMessages: LLMMessage[] = [];
     for (const [callIndex, call] of calls.entries()) {
@@ -184,7 +178,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       await input.beforeTool?.({ round, call, callIndex });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       executedCalls.push(call);
-      if (yieldReturnRound && input.shouldDeferToolResult?.(call, calls, result)) continue;
       const execution = await input.executeTool(call, {
         round,
         result,

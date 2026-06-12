@@ -111,9 +111,8 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
   assert.equal(logs.some((entry) => entry.message.includes("foreground_idle=false")), true);
 });
 
-test("talk tool-call followup is launched by the next ready loop run", async () => {
+test("talk tool-call followup runs in the same function-call loop", async () => {
   let sendCalls = 0;
-  let followupSessionId: string | undefined;
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
@@ -168,20 +167,85 @@ test("talk tool-call followup is launched by the next ready loop run", async () 
     },
     appendAssistantDelta: () => {},
     finishAssistantOutput: () => {},
-    onRoundNeedsFollowup(sessionId) {
-      followupSessionId = sessionId;
-    },
     log: () => {}
   });
-
-  await controller.runTalkAgentLoopForSession("session-tool-followup");
-  assert.equal(sendCalls, 1);
-  assert.equal(followupSessionId, "session-tool-followup");
 
   await controller.runTalkAgentLoopForSession("session-tool-followup");
   assert.equal(sendCalls, 2);
   assert.equal((sentMessages[1]?.at(-2) as { role?: string }).role, "assistant");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string }).role, "tool");
+});
+
+test("talk send_chat tool-call executes through the common tool plugin path", async () => {
+  let sendCalls = 0;
+  const executedCalls: unknown[] = [];
+  const sentMessages: unknown[][] = [];
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-send-chat-tool",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    buildNextLoopMessages: () => [{ role: "user", content: "send a message" }],
+    visibleToolNames: () => ["send_chat"],
+    toolPlugins: [{
+      id: "messaging",
+      listTools: () => [{
+        name: "send_chat",
+        description: "send",
+        inputSchema: { type: "object", properties: {} }
+      }],
+      async execute(call) {
+        executedCalls.push(call);
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
+      sendCalls += 1;
+      if (sendCalls === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "sending",
+            toolCalls: [{
+              id: "call-send",
+              type: "function",
+              function: { name: "send_chat", arguments: "{\"type\":\"message\",\"content\":\"hello\"}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-send-chat-tool");
+
+  assert.equal(sendCalls, 2);
+  assert.equal(executedCalls.length, 1);
+  assert.equal((executedCalls[0] as { toolName?: string }).toolName, "send_chat");
+  assert.equal((executedCalls[0] as { requester?: { plugin?: string } }).requester?.plugin, "webrtc_voice");
+  assert.equal((executedCalls[0] as { session?: { sessionId?: string } }).session?.sessionId, "session-send-chat-tool");
+  assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).role, "tool");
+  assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });
 
 test("talk loop logs llm cancellation without error severity", async () => {

@@ -83,15 +83,9 @@ http_proxy
 
 ## 保护规则
 
-AgentCore 会拒绝连续两次 `selfie` tool call。如果上一个完成的工具调用也是 `selfie`，下一次 `selfie` 会返回：
+Agent loop 不按 tool name 拦截已经暴露的 `selfie` 调用。是否暴露工具由 request 构筑阶段决定；成本、频率和参数限制应由工具自身或上游可见性策略处理。
 
-```text
-selfie cannot be called twice in a row
-```
-
-两次自拍之间有任意其他 tool call 时，这个保护会重置。
-
-工具还会要求输出目录位于项目 `assets/` 内，并检查生成文件扩展名和 `SELFIE_MAX_BYTES`。
+工具会要求输出目录位于项目 `assets/` 内，并检查生成文件扩展名和 `SELFIE_MAX_BYTES`。
 
 ## 手动测速
 

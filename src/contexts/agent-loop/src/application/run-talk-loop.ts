@@ -55,7 +55,6 @@ type TalkAgentLoopDeps = {
   sendRequest: LLMRequestSender;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
-  onRoundNeedsFollowup?(sessionId: string): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
   sleep?(ms: number): Promise<void>;
 };
@@ -70,7 +69,6 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   const activeTalkAgentLoops = new Set<string>();
   const activeTalkAgentLoopControllers = new Map<string, AbortController>();
   const activeTalkConversationStartIndexes = new Map<string, number>();
-  const pendingContinuationMessages = new Map<string, LLMMessage[]>();
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
   async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
@@ -90,21 +88,20 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       deps.log("info", `talk loop start: session=${sessionId}`);
       const { promptMessages, initialTalkMessages, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
       activeTalkConversationStartIndexes.set(sessionId, promptMessages.length);
-      let messages: LLMMessage[] = [
+      const messages: LLMMessage[] = [
         ...promptMessages,
-        ...initialTalkMessages,
-        ...(pendingContinuationMessages.get(sessionId) ?? [])
+        ...initialTalkMessages
       ];
       const config = deps.getLLMConfig();
       const guard = await waitForTalkLoopRound(sessionId, 0, controller);
       if (!guard.continue) return;
-      const outputId = `talk:${sessionId}:${Date.now()}:0`;
-      let streamedContent = "";
-      const baseMessageCount = promptMessages.length + initialTalkMessages.length;
+      const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
       const spec: AgentLoopExecutionSpec = {
         initialMessages: messages,
-        limits: { maxRounds: 1, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
-        buildRequest({ messages }) {
+        limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
+        buildRequest({ round, messages }) {
+          const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
+          roundOutputs.set(round, { outputId, streamedContent: "" });
           return {
             agentId: "talk",
             client: config.client,
@@ -118,7 +115,8 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
             signal: controller.signal,
             streamHandlers: {
               onContentDelta(delta) {
-                streamedContent += delta;
+                const output = roundOutputs.get(round);
+                if (output) output.streamedContent += delta;
                 deps.appendAssistantDelta({ sessionId, outputId, delta });
               }
             }
@@ -135,25 +133,17 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
             }
           };
         },
-        afterRequest({ result }) {
-          const calls = result.message.toolCalls ?? [];
-          if (calls.length > 0) return;
-          pendingContinuationMessages.delete(sessionId);
+        afterRequest({ round, result }) {
+          const output = roundOutputs.get(round);
+          if (!output) return;
+          const { outputId, streamedContent } = output;
           if (!streamedContent && result.message.content) {
             deps.appendAssistantDelta({ sessionId, outputId, delta: result.message.content });
           }
-          deps.finishAssistantOutput({ sessionId, outputId });
-          deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
-        },
-        async onMessagesChanged({ messages, reason }) {
-          if (reason === "completed") {
-            pendingContinuationMessages.delete(sessionId);
-            return;
+          if (streamedContent || result.message.content) {
+            deps.finishAssistantOutput({ sessionId, outputId });
+            deps.log("info", `talk loop output ready: session=${sessionId} output=${outputId}`);
           }
-          const continuationMessages = messages.slice(baseMessageCount);
-          if (continuationMessages.length === 0) return;
-          pendingContinuationMessages.set(sessionId, continuationMessages);
-          deps.onRoundNeedsFollowup?.(sessionId);
         }
       };
       await runAgentLoopExecutionSpec(spec);
@@ -256,13 +246,6 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     call: ToolCall,
     _variables: ReturnType<typeof promptVariables>
   ): Promise<ToolResult> {
-    if (isOutboundMessagingTool(call.toolName)) {
-      return {
-        callId: call.id,
-        ok: false,
-        error: "Talk loop outputs through TalkRuntime voice chunks; do not use messaging send tools."
-      };
-    }
     const plugin = deps.toolPlugins.find((entry) => entry.listTools().some((tool) => tool.name === call.toolName));
     if (!plugin) {
       return {
@@ -334,10 +317,6 @@ function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider): Agen
       receivedAtUtc: now.date.toISOString()
     }
   } as const;
-}
-
-function isOutboundMessagingTool(name: string): boolean {
-  return name === "send_chat" || name === "send_feishu" || name === "send_wechat";
 }
 
 function parseToolArguments(value: string): Record<string, unknown> {

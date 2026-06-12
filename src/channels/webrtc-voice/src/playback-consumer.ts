@@ -162,7 +162,17 @@ export function createVoicePlaybackConsumer(input: {
     if (!value || durationMs <= 0 || (item.totalMs ?? 0) <= 0 || item.playbackTextCache === value) return;
     item.playbackTextCache = value;
   };
+  const isPlaybackItemActive = (item: PlaybackItem) => {
+    return input.playbackQueue.includes(item)
+      && item.status !== "cancelled"
+      && item.status !== "interrupted"
+      && item.status !== "failed";
+  };
+  const discardInactiveQueuedFrames = () => {
+    playbackFrameQueue.removeWhere((frame) => !isPlaybackItemActive(frame.item));
+  };
   const enqueueFrame = (item: PlaybackItem, frame: ServerAudioFrame, encodedMs: number) => {
+    if (!isPlaybackItemActive(item)) return;
     item.queuedFrames = (item.queuedFrames ?? 0) + 1;
     playbackFrameQueue.push({
       item,
@@ -234,7 +244,7 @@ export function createVoicePlaybackConsumer(input: {
   };
   const consumeQueuedPlaybackFrame = async (playbackFrame: PlaybackFrame) => {
     const { item, frame, text: frameText, textTotalMs } = playbackFrame;
-    if (!input.playbackQueue.includes(item) || item.status === "cancelled" || item.status === "interrupted") return false;
+    if (!isPlaybackItemActive(item)) return false;
     if (!item.firstPlaybackStarted) {
       updateConsumer(item, frameText, Math.max(textTotalMs ?? 0, item.totalMs ?? 0));
       await item.beforeFirstPlayback?.();
@@ -286,6 +296,7 @@ export function createVoicePlaybackConsumer(input: {
         const nowMs = playbackNowMs();
         processTimeline(nowMs);
         cleanupFinishedItems();
+        discardInactiveQueuedFrames();
         const hasActivePlayback = input.playbackQueue.some((item) => item.status === "queued" || item.status === "playing");
         if (!hasActivePlayback && playbackFrameQueue.length === 0) {
           playbackConsumerTask = undefined;

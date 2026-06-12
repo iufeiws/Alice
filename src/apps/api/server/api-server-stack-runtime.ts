@@ -61,7 +61,7 @@ export function createApiServerStackRuntime(input: {
     adminLLMSessionRuntime: input.apiToolingRuntime.adminLLMSessionRuntime,
     apiCapabilitiesRuntime: input.apiToolingRuntime.apiCapabilitiesRuntime,
     getActiveSession: input.apiRuntimeState.getActiveLLMSession,
-    getActiveLLMSessionSnapshot: () => input.apiLLMRuntime.activeLLMSessionRuntime.getActiveLLMSessionSnapshot(),
+    getActiveLLMSessionSnapshot: () => input.agentLoopRuntime.getActiveLLMSessionSnapshot(),
     store: input.store,
     getTokenUsageReport: input.apiLLMRuntime.getTokenUsageReport,
     core: input.core,

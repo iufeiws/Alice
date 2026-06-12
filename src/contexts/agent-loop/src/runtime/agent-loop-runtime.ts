@@ -19,7 +19,10 @@ export type ActiveMainLLMSessionState = {
 };
 
 export type ActiveLLMSessionRuntimePort = {
+  ensureActiveLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
+  noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteActiveLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: string): boolean;
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
@@ -166,7 +169,10 @@ export type AgentLoopEnsureChatSessionContextInput<TSession = unknown, TMode = u
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   setActiveLLMSessionRuntime(runtime: ActiveLLMSessionRuntimePort | undefined): void;
+  ensureActiveLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
+  noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteActiveLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: string): boolean;
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
@@ -211,8 +217,17 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     setActiveLLMSessionRuntime(runtime) {
       activeLLMSessionRuntime = runtime;
     },
+    ensureActiveLLMSession(time, agentId) {
+      return requireActiveLLMSessionRuntime().ensureActiveLLMSession(time, agentId);
+    },
     createTalkLLMSession(time) {
       return requireActiveLLMSessionRuntime().createTalkLLMSession(time);
+    },
+    noteActiveLLMRequest(entry, agentId) {
+      requireActiveLLMSessionRuntime().noteActiveLLMRequest(entry, agentId);
+    },
+    noteActiveLLMResponse(entry) {
+      requireActiveLLMSessionRuntime().noteActiveLLMResponse(entry);
     },
     isActiveTalkLLMSession(sessionId) {
       return activeLLMSessionRuntime?.isActiveTalkLLMSession(sessionId) ?? false;

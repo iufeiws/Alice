@@ -16,12 +16,12 @@ export function createApiRootRuntime() {
     time: foundation.currentTime,
     tokenUsageStore: foundation.tokenUsageStore,
     apiRuntimeState,
+    agentLoopRuntime,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     getConversationStartIndex: (sessionId) => apiAgentStackRuntime.talkAgentLoop.getConversationStartIndex(sessionId),
     buildTalkRuntimeMessages: (sessionId) => apiAgentStackRuntime.talkRuntime.buildNextLoopMessagePatch(sessionId).messages,
     appendLog: foundation.appendLog
   });
-  agentLoopRuntime.setActiveLLMSessionRuntime(apiLLMRuntime.activeLLMSessionRuntime);
   const apiControlRuntime = createApiControlRuntime({
     config: foundation.config,
     time: foundation.currentTime,

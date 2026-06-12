@@ -6,6 +6,7 @@ export function createApiLLMRuntime(input: {
   time: any;
   tokenUsageStore: any;
   apiRuntimeState: any;
+  agentLoopRuntime: any;
   resolvePromptApiPreset(kind: any): any;
   getConversationStartIndex(sessionId: string): number | undefined;
   buildTalkRuntimeMessages(sessionId: string): any;
@@ -23,6 +24,7 @@ export function createApiLLMRuntime(input: {
   const llmSessionArchive = apiSessionRuntime.llmSessionArchive;
   const activeLLMSessionRuntime = apiSessionRuntime.activeLLMSessionRuntime;
   apiSessionRuntime.restoreActiveLLMSession();
+  input.agentLoopRuntime.setActiveLLMSessionRuntime(activeLLMSessionRuntime);
 
   const llmObservabilityRuntime = createLLMObservabilityRuntime({
     time: input.time,
@@ -30,7 +32,7 @@ export function createApiLLMRuntime(input: {
     requestLogs: input.apiRuntimeState.llmRequestLogs,
     responseLogs: input.apiRuntimeState.llmResponseLogs,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
-    activeLLMSessionRuntime,
+    agentLoopRuntime: input.agentLoopRuntime,
     getActiveSession: input.apiRuntimeState.getActiveLLMSession,
     appendLog: input.appendLog
   });

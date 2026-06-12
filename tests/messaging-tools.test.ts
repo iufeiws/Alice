@@ -1217,6 +1217,37 @@ test("tts router returns a silence file for symbol-only text before backend requ
   }
 });
 
+test("tts plugin disabled mode still routes symbol-only text to silence before backend request", async () => {
+  const dir = makeTempDir("tts-plugin-disabled-symbol-only");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: false,
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+  let backendCalls = 0;
+  const plugin = createTtsPlugin({
+    configPath,
+    baseSynthesizer: async () => {
+      backendCalls += 1;
+      throw new Error("base synthesizer should not be used");
+    }
+  });
+
+  const result = await plugin.voiceSynthesizer({
+    text: "  ...  ",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"))
+  });
+
+  try {
+    assert.equal(backendCalls, 0);
+    assert.equal(result.assetId.endsWith("-silence.wav"), true);
+    assert.equal(fs.existsSync(result.filePath), true);
+  } finally {
+    await fsp.rm(result.filePath, { force: true });
+  }
+});
+
 test("tts router rate limits same provider to three requests per second", async () => {
   const requestStarts: number[] = [];
   let stampIndex = 0;
@@ -1906,8 +1937,7 @@ test("tts stream returns original text with symbol-length silence for symbol-onl
   assert.equal(logs.some((message) => message.includes("tts routed silence") && message.includes("symbols=3")), true);
 });
 
-test("tts streamAudioWithText returns symbol-only input as original text and silence", async () => {
-  let streamCalls = 0;
+test("tts plugin does not expose direct backend streamAudio entrypoints", async () => {
   const synthesize = createTtsTranslationSynthesizer({
     enabled: true,
     translationEnabled: true,
@@ -1922,25 +1952,17 @@ test("tts streamAudioWithText returns symbol-only input as original text and sil
       throw new Error("non-stream synthesizer should not be used");
     }, {
       async *streamAudioWithText() {
-        streamCalls += 1;
         yield { text: "should not stream", chunk: new Uint8Array([1]) };
+      },
+      async *streamAudio() {
+        yield new Uint8Array([1]);
       }
     })
   });
 
-  const chunks = [];
-  for await (const chunk of synthesize.streamAudioWithText!({
-    text: "!!!",
-    time: createCurrentTimeProvider("UTC")
-  })) {
-    chunks.push(chunk);
-  }
-
-  assert.equal(streamCalls, 0);
-  assert.equal(chunks.length, 1);
-  assert.equal(chunks[0].text, "!!!");
-  assert.equal(chunks[0].chunk.byteLength, 3 * 200 * 64);
-  assert.equal(chunks[0].chunk.every((value) => value === 0), true);
+  const runtimeSynthesizer = synthesize as unknown as { streamAudioWithText?: unknown; streamAudio?: unknown };
+  assert.equal(runtimeSynthesizer.streamAudioWithText, undefined);
+  assert.equal(runtimeSynthesizer.streamAudio, undefined);
 });
 
 test("tts stream never hard-cuts source text between punctuation boundaries", async () => {

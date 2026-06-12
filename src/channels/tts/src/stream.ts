@@ -1,29 +1,14 @@
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
-  MossOnnxVoiceSynthesizerDeps,
-  TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
-  TtsBailianConversionConfig,
-  TtsConversionConfig,
-  TtsOpenAiApiConversionConfig,
-  TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
   TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
-  TtsTranslationPreset,
-  TtsVoiceModelConfig,
-  VoiceSynthesisInput,
-  VoiceSynthesizer
+  TtsStreamInput
 } from "./types.js";
 
 import { bufferTtsStreamInput } from "./stream-input-buffer.js";
 import { selectedTtsConversionProvider, ttsGenieOverrides } from "./config.js";
 import { resolveTtsText } from "./translation.js";
-import { synthesizeTtsRouted, ttsSilentPcmL16, ttsSymbolOnlyInput } from "./router.js";
+import { synthesizeTtsRouted } from "./router.js";
 
 export async function* streamTtsText(
   input: TtsStreamInput,
@@ -93,76 +78,6 @@ export async function* streamTtsText(
   deps.appendLog?.("info", `tts stream tts complete: stream=${input.streamId ?? ""} files=${totalAudioFiles}`);
   }
   yield { type: "done" };
-}
-
-async function* synthesizeTtsAudioChunks(
-  synthesizer: VoiceSynthesizer,
-  input: VoiceSynthesisInput,
-  fallbackFormat: { sampleRateHz: number; channels: number }
-): AsyncIterable<{ text?: string; chunk: Uint8Array; format: { sampleRateHz: number; channels: number } }> {
-  let format = fallbackFormat;
-  for await (const audio of streamTtsAudioWithOptionalText(synthesizer, input)) {
-    if (!audio.chunk.byteLength) continue;
-    format = {
-      sampleRateHz: audio.sampleRateHz ?? format.sampleRateHz,
-      channels: audio.channels ?? format.channels
-    };
-    yield {
-      ...(audio.text ? { text: audio.text } : {}),
-      chunk: audio.chunk,
-      format
-    };
-  }
-}
-
-async function* streamTtsAudioWithOptionalText(
-  synthesizer: VoiceSynthesizer,
-  input: VoiceSynthesisInput
-): AsyncIterable<TtsAudioTextChunk> {
-  if (synthesizer.streamAudioWithText) {
-    yield* synthesizer.streamAudioWithText(input);
-    return;
-  }
-  if (!synthesizer.streamAudio) throw new Error("tts stream requires a streaming Genie TTS synthesizer");
-  for await (const chunk of synthesizer.streamAudio(input)) yield { chunk };
-}
-
-export function streamAudioWithSymbolSilence(synthesizer: VoiceSynthesizer): ((input: VoiceSynthesisInput) => AsyncIterable<TtsAudioTextChunk>) | undefined {
-  if (!synthesizer.streamAudioWithText && !synthesizer.streamAudio) return undefined;
-  return async function* (input) {
-    const symbolOnly = ttsSymbolOnlyInput(input.text);
-    if (symbolOnly) {
-      yield {
-        text: input.text,
-        chunk: ttsSilentPcmL16(symbolOnly.durationMs)
-      };
-      return;
-    }
-    yield* streamTtsAudioWithOptionalText(synthesizer, input);
-  };
-}
-
-function selectedTtsStreamPcmFormat(config: TtsPluginConfig): { sampleRateHz: number; channels: number } {
-  const openaiApi = config.conversion?.openaiApi;
-  const provider = selectedTtsConversionProvider(config);
-  if (provider === "openai-api") {
-    return {
-      sampleRateHz: openaiApi?.sampleRate ?? 32_000,
-      channels: openaiApi?.channels ?? 1
-    };
-  }
-  const bailian = config.conversion?.bailian;
-  if (provider === "bailian") {
-    return {
-      sampleRateHz: bailian?.sampleRate ?? 24_000,
-      channels: bailian?.channels ?? 1
-    };
-  }
-  return { sampleRateHz: 32_000, channels: 1 };
-}
-
-function ttsPcmContentType(format: { sampleRateHz: number; channels: number }): string {
-  return `audio/L16; rate=${format.sampleRateHz}; channels=${format.channels}`;
 }
 
 function createTtsSourceTextMapper(sourceText: string, translatedText: string): { take(translatedChunkText: string): string | undefined } {

@@ -21,7 +21,7 @@ import type {
 } from "./types.js";
 
 import { readTtsPluginConfig, ttsGenieOverrides } from "./config.js";
-import { streamAudioWithSymbolSilence, streamTtsText } from "./stream.js";
+import { streamTtsText } from "./stream.js";
 import { resolveTtsText } from "./translation.js";
 import { synthesizeTtsRouted } from "./router.js";
 
@@ -52,8 +52,6 @@ export function createTtsTranslationSynthesizer(
   }) as TtsSynthesizer;
 
   synthesize.stream = (input) => streamTtsText(input, config, deps);
-  synthesize.streamAudio = base.streamAudio?.bind(base);
-  synthesize.streamAudioWithText = streamAudioWithSymbolSilence(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();
@@ -69,8 +67,7 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
   const base = deps.baseSynthesizer;
   const synthesize = (async (input) => {
     const config = readTtsPluginConfig(deps.configPath);
-    if (!config.enabled) return base(input);
-    const ttsText = await resolveTtsText(input.text, config, deps);
+    const ttsText = config.enabled ? await resolveTtsText(input.text, config, deps) : input.text;
     deps.appendLog?.("info", `tts synthesis start: chars=${Array.from(ttsText).length}`);
     const result = await synthesizeTtsRouted({
       ...input,
@@ -84,8 +81,6 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     const config = readTtsPluginConfig(deps.configPath);
     return streamTtsText(input, config, deps);
   };
-  synthesize.streamAudio = base.streamAudio?.bind(base);
-  synthesize.streamAudioWithText = streamAudioWithSymbolSilence(base);
   synthesize.noteActivity = () => base.noteActivity?.();
   synthesize.prepare = async () => {
     base.noteActivity?.();

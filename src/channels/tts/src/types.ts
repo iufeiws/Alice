@@ -243,8 +243,11 @@ export type TtsAudioTextChunk = {
   channels?: number;
 };
 
-export type TtsSynthesizer = VoiceSynthesizer & {
+export type TtsSynthesizer = ((input: VoiceSynthesisInput) => Promise<VoiceSynthesisResult>) & {
   stream?(input: TtsStreamInput): AsyncIterable<TtsStreamChunk>;
+  noteActivity?(): void;
+  prepare?(): Promise<void>;
+  shutdown?(): Promise<void>;
 };
 
 export type MossOnnxVoiceSynthesizerDeps = {

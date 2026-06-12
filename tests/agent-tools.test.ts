@@ -71,6 +71,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
 
 test("agent core delegates prepared chat loop execution to injected function-call runtime", async () => {
   let runtimeCalls = 0;
+  let setActiveCalls = 0;
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
@@ -93,6 +94,10 @@ test("agent core delegates prepared chat loop execution to injected function-cal
         toolCallCount: 0
       };
     },
+    setActiveLoopSessionContext(input) {
+      setActiveCalls += 1;
+      input.setLocalSession(input.session);
+    },
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
@@ -102,6 +107,7 @@ test("agent core delegates prepared chat loop execution to injected function-cal
   await core.handleEvent(textEvent());
 
   assert.equal(runtimeCalls, 1);
+  assert.equal(setActiveCalls > 0, true);
 });
 
 test("token pressure calculation is independent from preview execution", () => {
@@ -265,6 +271,7 @@ test("agent core stops before another llm request when a tool invalidates the se
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMChatInput["messages"][] = [];
   const clearedReasons: string[] = [];
+  let clearActiveCalls = 0;
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -309,6 +316,13 @@ test("agent core stops before another llm request when a tool invalidates the se
         };
       }
     }],
+    clearActiveLoopSessionContext(input) {
+      if (!input.getLocalSession()) return false;
+      clearActiveCalls += 1;
+      input.setLocalSession(undefined);
+      input.onCleared?.();
+      return true;
+    },
     onLLMSessionUpdated(session) {
       sessionUpdates.push(session.messages);
     },
@@ -320,6 +334,7 @@ test("agent core stops before another llm request when a tool invalidates the se
   await core.handleEvent(textEvent());
 
   assert.equal(requests.length, 1);
+  assert.equal(clearActiveCalls, 1);
   assert.equal(clearedReasons.at(-1), "prompt_static_changed");
   const latestMessages = sessionUpdates.at(-1) ?? [];
   assert.equal(latestMessages.at(-2)?.role, "assistant");

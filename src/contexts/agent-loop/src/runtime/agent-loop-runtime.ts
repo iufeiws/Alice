@@ -107,6 +107,19 @@ export type AgentLoopAppendSessionContextResult<TSession extends AgentLoopMutabl
   appended: boolean;
 };
 
+export type AgentLoopSetActiveSessionContextInput<TSession = unknown> = {
+  kind: AgentLoopKind;
+  session: TSession | undefined;
+  setLocalSession(session: TSession | undefined): void;
+};
+
+export type AgentLoopClearActiveSessionContextInput<TSession = unknown> = {
+  kind: AgentLoopKind;
+  getLocalSession(): TSession | undefined;
+  setLocalSession(session: TSession | undefined): void;
+  onCleared?(): void;
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
@@ -114,6 +127,8 @@ export type AgentLoopRuntime = {
   clearLoopSessionState(kind: AgentLoopKind): void;
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
+  setActiveSessionContext<TSession = unknown>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
+  clearActiveSessionContext<TSession = unknown>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
   prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   appendSessionContext<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
@@ -158,6 +173,12 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
         ...runners,
         ...nextRunners
       };
+    },
+    setActiveSessionContext(input) {
+      setAgentLoopActiveSessionContext(input, loopSessionStates);
+    },
+    clearActiveSessionContext(input) {
+      return clearAgentLoopActiveSessionContext(input, loopSessionStates);
     },
     prepareSessionContext(input) {
       return prepareAgentLoopSessionContext(input);
@@ -311,4 +332,28 @@ export function appendAgentLoopSessionContext<TSession extends AgentLoopMutableS
     session: input.session,
     appended: true
   };
+}
+
+export function setAgentLoopActiveSessionContext<TSession = unknown>(
+  input: AgentLoopSetActiveSessionContextInput<TSession>,
+  holder?: Map<AgentLoopKind, unknown>
+): void {
+  input.setLocalSession(input.session);
+  if (!holder) return;
+  if (input.session === undefined) {
+    holder.delete(input.kind);
+    return;
+  }
+  holder.set(input.kind, input.session);
+}
+
+export function clearAgentLoopActiveSessionContext<TSession = unknown>(
+  input: AgentLoopClearActiveSessionContextInput<TSession>,
+  holder?: Map<AgentLoopKind, unknown>
+): boolean {
+  if (!input.getLocalSession()) return false;
+  input.setLocalSession(undefined);
+  holder?.delete(input.kind);
+  input.onCleared?.();
+  return true;
 }

@@ -159,6 +159,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       hasPendingUserMessages,
       buildRandomizedInitiatedBehaviorEvent,
       runGeneratedSession,
+      runManualSession,
       setAgentWaiting: (reason) => {
         deps.agentState?.setState?.("waiting", { reason });
       },
@@ -299,8 +300,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     },
     async processNow() {
       recoverPendingSessionsFromStore();
-      const processed = await heartbeat.run({ force: true });
-      if (processed === 0) await runManualSession();
+      await heartbeat.run({ force: true, runManualSessionWhenIdle: true });
     },
     getStatus() {
       return {
@@ -332,15 +332,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
   }
 
-  async function runManualSession(): Promise<void> {
+  async function runManualSession(): Promise<boolean> {
     const target = deps.getProcessNowTarget?.();
     if (!target) {
       deps.appendLog("warn", "process now skipped: no default messaging target");
-      return;
+      return false;
     }
     if (processingSessions.has(target.sessionId)) {
       deps.appendLog("warn", `manual process now skipped: session already processing ${target.sessionId}`);
-      return;
+      return false;
     }
     processingSessions.add(target.sessionId);
     try {
@@ -387,6 +387,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         });
       }
       deps.appendLog("info", `manual process now session handled: ${outputs.length} output(s)`);
+      return true;
     } catch (error) {
       await sendSystemNotice({
         plugin: target.plugin,
@@ -396,6 +397,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         sessionId: target.sessionId
       }, llmFailureNotice);
       deps.appendLog("error", `manual process now failed: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     } finally {
       await setTypingIndicator({ ...target, typing: false });
       processingSessions.delete(target.sessionId);

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createAgentHeartbeatRuntime } from "../src/contexts/agent-loop/src/runtime/agent-heartbeat-runtime.js";
 import { createAgentLoopRuntime } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -54,6 +55,46 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(second, { started: false, outputs: [] });
   releaseRun?.();
   assert.deepEqual(await first, { started: true, outputs: [] });
+});
+
+test("agent heartbeat forced run owns manual session fallback", async () => {
+  let pendingSessionIds = ["session-pending"];
+  let pendingProcessed = 0;
+  let manualProcessed = 0;
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => pendingSessionIds.length > 0,
+      runGeneratedSession: async () => false,
+      runManualSession: async () => {
+        manualProcessed += 1;
+        return true;
+      },
+      getPendingSessionIds: () => pendingSessionIds,
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: (sessionId) => sessionId === "session-pending" ? 1 : 0,
+      shouldProcessPendingSession: () => true,
+      markSessionNotPending: (sessionId) => {
+        pendingSessionIds = pendingSessionIds.filter((id) => id !== sessionId);
+      },
+      processPendingSession: async () => {
+        pendingProcessed += 1;
+      },
+      appendLog: () => {}
+    }
+  });
+
+  assert.equal(await heartbeat.run({ force: true, runManualSessionWhenIdle: true }), 1);
+  assert.equal(pendingProcessed, 1);
+  assert.equal(manualProcessed, 0);
+
+  pendingSessionIds = [];
+  assert.equal(await heartbeat.run({ force: true, runManualSessionWhenIdle: true }), 1);
+  assert.equal(manualProcessed, 1);
 });
 
 test("agent loop runtime exposes active llm session pointer operations", () => {

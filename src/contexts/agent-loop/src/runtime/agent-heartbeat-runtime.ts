@@ -5,8 +5,13 @@ export type AgentHeartbeatRuntime = {
   resume(): void;
   isPaused(): boolean;
   isScheduled(): boolean;
-  run(options?: { force?: boolean }): Promise<number>;
+  run(options?: AgentHeartbeatRunOptions): Promise<number>;
   flush(): void;
+};
+
+export type AgentHeartbeatRunOptions = {
+  force?: boolean;
+  runManualSessionWhenIdle?: boolean;
 };
 
 export type AgentHeartbeatRunTaskDeps = {
@@ -17,6 +22,7 @@ export type AgentHeartbeatRunTaskDeps = {
   hasPendingUserMessages(): boolean;
   buildRandomizedInitiatedBehaviorEvent?(): unknown;
   runGeneratedSession(event: unknown, label: string): Promise<boolean>;
+  runManualSession?(): Promise<boolean>;
   setAgentWaiting?(reason: string): void;
   claimReadyTalkSession?(): string | undefined;
   runTalkSession?(sessionId: string): Promise<boolean>;
@@ -37,7 +43,7 @@ export type AgentHeartbeatRunTaskDeps = {
 export function createAgentHeartbeatRuntime(input: {
   getIntervalMs(): number;
   startPaused?: boolean;
-  run?(options?: { force?: boolean }): Promise<number>;
+  run?(options?: AgentHeartbeatRunOptions): Promise<number>;
   tasks?: AgentHeartbeatRunTaskDeps;
   onPausedChange?(paused: boolean): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -88,7 +94,7 @@ export function createAgentHeartbeatRuntime(input: {
     }
   }
 
-  async function run(options: { force?: boolean } = {}): Promise<number> {
+  async function run(options: AgentHeartbeatRunOptions = {}): Promise<number> {
     try {
       if (input.run) return await input.run(options);
       if (!input.tasks) return 0;
@@ -111,7 +117,7 @@ export function createAgentHeartbeatRuntime(input: {
   }
 }
 
-async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: { force?: boolean } = {}): Promise<number> {
+async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: AgentHeartbeatRunOptions = {}): Promise<number> {
   const force = options.force ?? false;
   let processed = 0;
   const randomizedInitiatedEvent = !force
@@ -175,6 +181,11 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: { fo
     } finally {
       tasks.finishProcessingSession(sessionId);
     }
+  }
+
+  if (force && options.runManualSessionWhenIdle && processed === 0) {
+    const handled = await (tasks.runManualSession?.() ?? Promise.resolve(false));
+    if (handled) processed += 1;
   }
 
   return processed;

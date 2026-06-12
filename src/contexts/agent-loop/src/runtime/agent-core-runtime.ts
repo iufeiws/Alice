@@ -35,9 +35,6 @@ export function createAgentCoreRuntime(input: {
     config: input.config,
     llm: input.activeLLM,
     llmRequestSender: input.llmRequests.send,
-    runFunctionCallLoop: input.agentLoopRuntime
-      ? (spec) => input.agentLoopRuntime.runFunctionCallLoop(spec)
-      : undefined,
     appendLoopSessionContext: input.agentLoopRuntime
       ? (contextInput: any) => input.agentLoopRuntime.appendSessionContext(contextInput)
       : undefined,

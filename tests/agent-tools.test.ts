@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/agent-core.js";
 import type { LLMRequestSenderInput } from "../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
-import type { AgentEvent, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../src/contexts/agent-loop/src/ports/policy.js";
@@ -11,6 +11,25 @@ import { createIntentRouter } from "../src/contexts/agent-loop/src/application/i
 import { createSessionResolver } from "../src/contexts/agent-loop/src/application/session-resolver.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
+import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+
+type TestAgentCore = ReturnType<typeof createAgentCore>;
+
+async function runPreparedCoreEvent(core: TestAgentCore, event: AgentEvent): Promise<AgentOutput[]> {
+  const prepared = await core.prepareEventRun(event);
+  if (Array.isArray(prepared)) return prepared;
+  try {
+    const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+    if (!spec) return [];
+    if (Array.isArray(spec)) return spec;
+    return await Promise.resolve(prepared.complete(await runAgentFunctionCallLoop(spec))) ?? [];
+  } catch (error) {
+    await prepared.onError?.(error);
+    throw error;
+  } finally {
+    await prepared.dispose?.();
+  }
+}
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
@@ -60,7 +79,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
     }]
   });
 
-  const outputs = await core.handleEvent(textEvent());
+  const outputs = await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.equal(requests[0].tools?.[0].function.name, "check_chat");
   assert.equal(toolCalls[0].toolName, "check_chat");
@@ -69,8 +88,8 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
 
-test("agent core delegates prepared chat loop execution to injected function-call runtime", async () => {
-  let runtimeCalls = 0;
+test("agent core prepares chat loop execution for external function-call runtime", async () => {
+  let externalRuntimeCalls = 0;
   let setActiveCalls = 0;
   let createActiveCalls = 0;
   let prepareChatSessionCalls = 0;
@@ -81,21 +100,6 @@ test("agent core delegates prepared chat loop execution to injected function-cal
       async chat() {
         throw new Error("direct llm client should not be called");
       }
-    },
-    runFunctionCallLoop: async (spec) => {
-      runtimeCalls += 1;
-      assert.equal(spec.initialMessages.length > 0, true);
-      const finalMessage = { role: "assistant" as const, content: "runtime reply" };
-      return {
-        messages: [...spec.initialMessages, finalMessage],
-        rounds: 1,
-        finalResult: { message: finalMessage },
-        finalMessage,
-        stopReason: "completed",
-        sentMessage: false,
-        invalidateSession: false,
-        toolCallCount: 0
-      };
     },
     setActiveLoopSessionContext(input) {
       setActiveCalls += 1;
@@ -123,9 +127,27 @@ test("agent core delegates prepared chat loop execution to injected function-cal
     policy: createAllowAllPolicy()
   });
 
-  await core.handleEvent(textEvent());
+  const prepared = await core.prepareEventRun(textEvent());
+  assert.equal(Array.isArray(prepared), false);
+  if (Array.isArray(prepared)) throw new Error("expected prepared run");
+  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
+  assert.ok(spec && !Array.isArray(spec));
+  externalRuntimeCalls += 1;
+  assert.equal(spec.initialMessages.length > 0, true);
+  const finalMessage = { role: "assistant" as const, content: "runtime reply" };
+  prepared.complete({
+    messages: [...spec.initialMessages, finalMessage],
+    rounds: 1,
+    finalResult: { message: finalMessage },
+    finalMessage,
+    stopReason: "completed",
+    sentMessage: false,
+    invalidateSession: false,
+    toolCallCount: 0
+  });
+  await prepared.dispose?.();
 
-  assert.equal(runtimeCalls, 1);
+  assert.equal(externalRuntimeCalls, 1);
   assert.equal(setActiveCalls > 0, true);
   assert.equal(createActiveCalls, 0);
   assert.equal(prepareChatSessionCalls, 1);
@@ -195,7 +217,7 @@ test("agent core sends tool names to injected LLM sender without rendering schem
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(senderInputs[0].toolNames, ["check_chat"]);
 });
@@ -223,7 +245,7 @@ test("agent core ordinary chat does not enter deprecated working state", async (
     state: controller
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(states.includes("working"), false);
 });
@@ -276,7 +298,7 @@ test("agent core appends assistant tool call and tool result before the next llm
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   const toolCallIndex = requests[1].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === "tool_1");
@@ -353,7 +375,7 @@ test("agent core stops before another llm request when a tool invalidates the se
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 1);
   assert.equal(clearActiveCalls, 1);
@@ -406,7 +428,7 @@ test("agent core exits the current loop after wait_chat", async () => {
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, "2026-05-26T00:00:00.000Z");
@@ -467,9 +489,9 @@ test("agent core resumes pending wait_chat with check_chat result on heartbeat",
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await core.handleEvent({ ...textEvent(), id: "evt_2", type: "system.heartbeat" });
+  await runPreparedCoreEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
 
   assert.equal(requests.length, 2);
   assert.deepEqual(checkInputs, [{}, {}]);
@@ -543,7 +565,7 @@ test("agent core executes same-round tools when wait_chat appears and resumes wa
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(calls, ["check_chat", "wait_chat", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
@@ -554,7 +576,7 @@ test("agent core executes same-round tools when wait_chat appears and resumes wa
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
 
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await core.handleEvent({ ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
+  await runPreparedCoreEvent(core, { ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
 
   const resumedMessages = requests[1].messages;
   assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
@@ -646,7 +668,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   const secondMessages = requests[1].messages;
@@ -665,7 +687,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   assert.equal(sessionUpdates.at(-1)?.id, 2);
   assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 3);
   const thirdMessages = requests[2].messages;
@@ -735,7 +757,7 @@ test("agent core does not duplicate fixed prefix messages when appending fixed p
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   const messages = requests[0].messages;
   assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
@@ -814,7 +836,7 @@ test("agent core injects fixed prefix cursor into model requested from_prefix ch
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(checkChatInputs.find((entry) => entry.id === "tool_check")?.input.__fromPrefixAfterMessageId, 12);
 });
@@ -883,7 +905,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
     }
   });
 
-  await core.handleEvent(event);
+  await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
@@ -961,7 +983,7 @@ test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async 
     }
   });
 
-  await core.handleEvent(event);
+  await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 0);
   assert.deepEqual(sleepCalls, []);
@@ -1007,7 +1029,7 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
     })
   });
 
-  await core.handleEvent(event);
+  await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("早安")), true);
@@ -1053,7 +1075,7 @@ test("agent core appends force wake instruction from heartbeat event", async () 
     })
   });
 
-  await core.handleEvent(event);
+  await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("强制唤醒")), true);
@@ -1089,7 +1111,7 @@ test("agent core keeps fixed prefix static messages when token pressure rebuilds
       capturedSession = session;
     }
   });
-  await primerCore.handleEvent(textEvent());
+  await runPreparedCoreEvent(primerCore, textEvent());
   assert.ok(capturedSession?.staticPromptFingerprint);
 
   const fixedPrefixStatic: LLMChatInput["messages"] = [
@@ -1149,7 +1171,7 @@ test("agent core keeps fixed prefix static messages when token pressure rebuilds
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
@@ -1232,7 +1254,7 @@ test("agent core restores fixed prefix static messages from an initial session s
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
@@ -1318,7 +1340,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, ["mode_timeout"]);
   assert.equal(requests.length, 1);
@@ -1379,7 +1401,7 @@ test("agent core executes consecutive exposed selfie tool calls", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(executed, ["first", "second"]);
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
@@ -1428,7 +1450,7 @@ test("agent core adds fallback reasoning content for tool requests when missing"
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "Need to call the requested tool.");
@@ -1469,7 +1491,7 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(requests[0].tools, []);
 });
 
@@ -1512,7 +1534,7 @@ test("agent core filters photo tools when photo visibility is disabled", async (
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_chat"]);
 });
 
@@ -1538,7 +1560,7 @@ test("agent core skips llm calls when prompt profile has no enabled messages", a
     })
   });
 
-  const outputs = await core.handleEvent(textEvent());
+  const outputs = await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.equal(requests.length, 0);
 });
@@ -1568,7 +1590,7 @@ test("agent core renders prompt profile layers before user message", async () =>
     })
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests[0].messages[0].role, "system");
   assert.equal(requests[0].messages[0].content, "hello 小王");
   assert.equal(requests[0].messages[1].role, "user");
@@ -1624,7 +1646,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].id, "call_prompt_history");
@@ -1708,7 +1730,7 @@ test("agent core streams send_chat message content on newlines before final tool
     }]
   });
 
-  const outputs = await core.handleEvent(textEvent());
+  const outputs = await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.deepEqual(sentLines, ["one", "two", "three"]);
   assert.equal(requests.length, 2);
@@ -1800,7 +1822,7 @@ test("agent core holds unsafe streamed send_chat prefix before sending safe line
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(sentLines.includes("原来如此。那这个测试,"), false);
   assert.deepEqual(sentLines, ["算是通过了吗,父皇？", "原来如此。那这个测试算是通过了吗,父皇？"]);
 });
@@ -1871,7 +1893,7 @@ test("agent core streams send_chat voice content on newlines before final tool J
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sentLines, ["voice:第一句", "voice:第二句", "voice:第三句"]);
 });
 
@@ -1940,7 +1962,7 @@ test("agent core waits for final send_chat JSON when type is omitted", async () 
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sentLines, ["one", "two"]);
 });
 
@@ -2008,7 +2030,7 @@ test("agent core keeps streamed send_chat lines when tool metadata arrives after
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sentLines, [
     "对、对不起……主人不是在凶您。",
     "只是上次您熬到凌晨五点，",
@@ -2082,7 +2104,7 @@ test("agent core does not stream send_chat before type is known", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
 });
 
@@ -2150,7 +2172,7 @@ test("agent core merges streamed send_chat chat outputs into one tool message", 
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   const toolMessage = requests[1].messages.find((message) => message.role === "tool");
   assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\n[today 22:48]\nAlice:two\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
 });
@@ -2206,7 +2228,7 @@ test("agent core can disable LLM streaming from config", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(chatCalls, 2);
   assert.deepEqual(sentLines, ["one\ntwo"]);
 });
@@ -2232,7 +2254,7 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
     }
   });
 
-  await streamCore.handleEvent(textEvent());
+  await runPreparedCoreEvent(streamCore, textEvent());
   assert.deepEqual(streamLogs, ["call_start:true", "stream_start:true", "stream_end:true"]);
 
   const nonStreamLogs: string[] = [];
@@ -2255,7 +2277,7 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
     }
   });
 
-  await nonStreamCore.handleEvent(textEvent());
+  await runPreparedCoreEvent(nonStreamCore, textEvent());
   assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
 });
 
@@ -2327,7 +2349,7 @@ test("agent core continues after send_chat until the next response has no tool c
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sent, ["final"]);
   assert.equal(requests.length, 4);
 });
@@ -2378,7 +2400,7 @@ test("agent core uses first-call and follow-up extra params", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(requests.map((request) => request.extraParams), [
     { cache_prompt: true },
     { cache_prompt: false, reasoning_effort: "low" }
@@ -2448,7 +2470,7 @@ test("agent core fake append tool requests do not consume first llm round", asyn
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(senderInputs.length, 2);
   assert.equal(senderInputs[0].round, 0);
@@ -2484,7 +2506,7 @@ test("agent core retries transient llm failures", async () => {
     }
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(attempts.length, 3);
   assert.deepEqual(retryLogs, [
@@ -2510,7 +2532,7 @@ test("agent core does not retry non-transient llm failures", async () => {
     policy: createAllowAllPolicy()
   });
 
-  await assert.rejects(() => core.handleEvent(textEvent()), /400 Bad Request/);
+  await assert.rejects(() => runPreparedCoreEvent(core, textEvent()), /400 Bad Request/);
   assert.equal(attempts, 1);
 });
 
@@ -2561,8 +2583,8 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
     }]
   });
 
-  await core.handleEvent(textEvent());
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   assert.equal(requests[0].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
@@ -2659,19 +2681,19 @@ test("agent core clears session before the next request when cached input cost e
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(events, ["completed"]);
   assert.deepEqual(normalCheckCalls, [{}]);
   assert.deepEqual(previewCalls, []);
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(events, ["completed", "completed"]);
   assert.deepEqual(previewCalls, [
     { __preview: true, __scope: "today" },
     { __preview: true, __scope: "today" }
   ]);
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(events, ["completed", "completed", "cleared:token_pressure", "completed"]);
   assert.deepEqual(previewCalls, [
@@ -2745,7 +2767,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
   };
   const firstCore = createAgentCore(baseDeps);
 
-  await firstCore.handleEvent(textEvent());
+  await runPreparedCoreEvent(firstCore, textEvent());
   assert.ok(persistedSession);
   persistedSession = {
     ...persistedSession,
@@ -2755,7 +2777,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
   };
 
   const restartedCore = createAgentCore(baseDeps);
-  await restartedCore.handleEvent(textEvent());
+  await runPreparedCoreEvent(restartedCore, textEvent());
 
   assert.deepEqual(previewCalls, [{ __preview: true, __scope: "today" }]);
   assert.deepEqual(events, ["cleared:token_pressure"]);
@@ -2828,8 +2850,8 @@ test("agent core uses fixed prefix check chat preview scope for token pressure b
     }]
   });
 
-  await core.handleEvent(textEvent());
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(previewCalls.at(0), { __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
 });
@@ -2889,8 +2911,8 @@ test("agent core token pressure comparison uses model-specific prices", async ()
       }]
     });
 
-    await core.handleEvent(textEvent());
-    await core.handleEvent(textEvent());
+    await runPreparedCoreEvent(core, textEvent());
+    await runPreparedCoreEvent(core, textEvent());
     return events;
   }
 
@@ -2940,11 +2962,11 @@ test("agent core clears only when static prompt fingerprint changes", async () =
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   appendContent = "append two";
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   staticContent = "static two";
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(clears, ["prompt_static_changed"]);
   assert.equal(requests[1].messages.some((message) => message.content === "ok"), true);
@@ -3024,7 +3046,7 @@ test("agent core rechecks static prompt before each LLM request", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
 
   assert.deepEqual(clears, ["prompt_static_changed"]);
   assert.equal(requests.length, 2);
@@ -3076,7 +3098,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests.length, 3);
   assert.deepEqual(calls.filter((id) => id !== "append_append_check_chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
 });
@@ -3126,7 +3148,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests.length, 10);
   assert.equal(calls.filter((name, index) => !(index === 0 && name === "check_chat")).length, 10);
 });
@@ -3172,7 +3194,7 @@ test("agent core stops after three consecutive identical send_chat calls", async
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests.length, 3);
   assert.deepEqual(sent, [
     "tool_send_1:same",
@@ -3226,7 +3248,7 @@ test("agent core stops after the generic total tool call limit", async () => {
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests.length, 20);
   assert.equal(sent.length, 20);
   assert.deepEqual(sent.slice(0, 5), [
@@ -3294,7 +3316,7 @@ test("agent core executes all exposed tools when send_chat appears in the same r
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(calls.filter((name, index) => !(index === 0 && name === "check_chat")), ["check_chat", "send_chat"]);
 });
 
@@ -3363,7 +3385,7 @@ test("agent core does not stream send_chat when non-message type is explicit", a
     }]
   });
 
-  await core.handleEvent(textEvent());
+  await runPreparedCoreEvent(core, textEvent());
   assert.deepEqual(sentLines, ["markdown:should not send\n"]);
 });
 

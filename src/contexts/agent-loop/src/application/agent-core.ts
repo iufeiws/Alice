@@ -47,9 +47,7 @@ import {
   createAgentLoopActiveSessionContext,
   ensureAgentLoopChatSessionContext,
   prepareAgentLoopChatSessionContext,
-  runAgentFunctionCallLoop,
   setAgentLoopActiveSessionContext,
-  type AgentFunctionCallLoopResult,
   type AgentFunctionCallLoopSpec,
   type AgentLoopAppendSessionContextInput,
   type AgentLoopAppendSessionContextResult,
@@ -185,7 +183,6 @@ export type AgentCoreDeps = {
   onLLMRequestPrepared?(input: LLMChatInput): void;
   onLLMResponseReceived?(result: LLMChatResult): void;
   llmRequestSender?: LLMRequestSender;
-  runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   setActiveLoopSessionContext?<TSession>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
   clearActiveLoopSessionContext?<TSession>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
@@ -211,7 +208,6 @@ export type AgentCoreDeps = {
 export interface AgentCore {
   start(): Promise<void>;
   stop(): Promise<void>;
-  handleEvent(event: AgentEvent): Promise<AgentOutput[]>;
   prepareEventRun(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
@@ -312,22 +308,6 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     },
     clearLLMSession(reason) {
       clearActiveLLMSession(() => deps.onLLMSessionCleared?.(reason));
-    },
-    async handleEvent(event) {
-      const prepared = await this.prepareEventRun(event);
-      if (Array.isArray(prepared)) return prepared;
-      try {
-        const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
-        if (!spec) return [];
-        if (Array.isArray(spec)) return spec;
-        const result = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(spec);
-        return await Promise.resolve(prepared.complete(result)) ?? [];
-      } catch (error) {
-        await prepared.onError?.(error);
-        throw error;
-      } finally {
-        await prepared.dispose?.();
-      }
     },
     async prepareEventRun(event) {
       const decision = await deps.policy.check(event);

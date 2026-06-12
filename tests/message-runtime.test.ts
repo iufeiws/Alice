@@ -17,7 +17,7 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
     getDelayMs: () => 10,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return outputs;
       }
@@ -60,7 +60,7 @@ test("message runtime processes inbound audio transcript while storing it as voi
     startHeartbeatPaused: true,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -122,7 +122,7 @@ test("message runtime uses agent state delay and records inbound activity", asyn
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -174,7 +174,7 @@ test("message runtime heartbeat waits until latest pending message exceeds saved
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -239,7 +239,7 @@ test("message runtime heartbeat does not count delay while state cannot reply", 
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -272,7 +272,7 @@ test("message runtime heartbeat waits while another llm session is active", asyn
     isLLMSessionActive: () => llmActive,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -327,7 +327,7 @@ test("message runtime flushAll stops heartbeat without force-processing pending 
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -358,7 +358,7 @@ test("message runtime marks inbound core failed and does not retry the same batc
     getHeartbeatIntervalMs: () => 10,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         coreCalls += 1;
         throw new Error("llm failed");
       }
@@ -395,7 +395,7 @@ test("message runtime can pause heartbeat and process pending messages on demand
     getHeartbeatIntervalMs: () => 10,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -431,7 +431,7 @@ test("message runtime can start with heartbeat paused", async () => {
     startHeartbeatPaused: true,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -468,7 +468,7 @@ test("message runtime reports heartbeat paused changes for env persistence", asy
       },
       store,
       core: {
-        async handleEvent() {
+        async prepareEventRun() {
           return [];
         }
       },
@@ -511,7 +511,7 @@ test("message runtime processNow starts a manual LLM session without pending mes
     }),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -551,7 +551,7 @@ test("message runtime can recover pending sessions from storage", async () => {
     getDelayMs: () => 10,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
       }
@@ -588,7 +588,7 @@ test("message runtime recovers wechat user id from persisted conversation id", a
     getDelayMs: () => 10,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -618,7 +618,7 @@ test("message runtime records lifecycle events as message state updates without 
     getDelayMs: () => 10,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         handled += 1;
         return [];
       }
@@ -682,7 +682,7 @@ test("message runtime handles force wake without calling core", async () => {
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -746,7 +746,7 @@ test("message runtime queues sleep cocoon force wake event on force wake", async
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -783,7 +783,7 @@ test("message runtime can run sleep cocoon morning event on heartbeat", async ()
     }),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -842,7 +842,7 @@ test("message runtime runs sleep cocoon morning event after wake tick", async ()
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -879,7 +879,7 @@ test("message runtime can run sleep cocoon goodnight event on heartbeat", async 
     }),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -914,7 +914,7 @@ test("message runtime does not count sleep cocoon goodnight when generated sessi
     } : undefined,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         attempts += 1;
         throw new Error("llm down");
       }
@@ -955,7 +955,7 @@ test("message runtime does not run sleep cocoon goodnight while user messages ar
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -999,7 +999,7 @@ test("message runtime applies documented state landing after processing inbound 
       agentState: controller,
       store,
       core: {
-        async handleEvent(event) {
+        async prepareEventRun(event) {
           coreInputs.push(event);
           return [];
         }
@@ -1037,7 +1037,7 @@ test("message runtime does not run idle no-message transition before processing 
     agentState: controller,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -1076,7 +1076,7 @@ test("message runtime clears LLM session when waiting degrades to idle", async (
     },
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         return [];
       }
     },
@@ -1118,7 +1118,7 @@ test("message runtime keeps going_to_sleep after processing and only postpones s
     agentState: controller,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         return [];
       }
     },
@@ -1197,7 +1197,7 @@ test("message runtime triggers randomized initiated behavior on eligible idle ti
     },
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "checking in")];
       }
@@ -1254,7 +1254,7 @@ test("message runtime does not trigger randomized initiated behavior when probab
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -1288,7 +1288,7 @@ test("message runtime skips randomized initiated behavior while pending inbound 
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -1339,7 +1339,7 @@ test("message runtime skips randomized initiated behavior without target or mess
       agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
       store,
       core: {
-        async handleEvent(event) {
+        async prepareEventRun(event) {
           coreInputs.push(event);
           return [];
         }
@@ -1383,7 +1383,7 @@ test("message runtime evaluates randomized initiated behavior only once per idle
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }
@@ -1411,7 +1411,7 @@ test("message runtime processes all currently unprocessed messages for a session
     startHeartbeatPaused: true,
     store,
     core: {
-      async handleEvent(event) {
+      async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
       }

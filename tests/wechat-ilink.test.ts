@@ -499,7 +499,7 @@ test("wechat inbound messages are persisted through message runtime logs", async
     getHeartbeatIntervalMs: () => 60_000,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         return [];
       }
     },
@@ -554,7 +554,7 @@ test("wechat quoted inbound messages are visible in persisted chat context", asy
     getHeartbeatIntervalMs: () => 60_000,
     store,
     core: {
-      async handleEvent() {
+      async prepareEventRun() {
         return [];
       }
     },

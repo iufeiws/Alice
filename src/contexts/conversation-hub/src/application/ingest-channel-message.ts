@@ -79,8 +79,7 @@ export type MessageRuntimeDeps = {
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
   core: {
-    prepareEventRun?(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
-    handleEvent(event: AgentEvent): Promise<AgentOutput[]>;
+    prepareEventRun(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   };
   agentState?: Pick<
     AgentStateController,
@@ -144,7 +143,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
-    prepareChat: ({ event }) => deps.core.prepareEventRun?.(event) ?? deps.core.handleEvent(event),
+    prepareChat: ({ event }) => deps.core.prepareEventRun(event),
     prepareTalk: ({ sessionId }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId)
   });
   const heartbeat = createAgentHeartbeatRuntime({

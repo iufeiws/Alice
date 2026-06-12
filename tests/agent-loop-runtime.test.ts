@@ -142,6 +142,23 @@ test("agent loop runtime sets and clears active session context", () => {
   assert.equal(runtime.getLoopSessionState("chat"), undefined);
 });
 
+test("agent loop runtime creates active session context", () => {
+  const runtime = createAgentLoopRuntime();
+  let localSession: { id: string; messages: unknown[] } | undefined;
+
+  const created = runtime.createActiveSessionContext({
+    kind: "chat",
+    session: { id: "created-chat", messages: [] },
+    setLocalSession(session) {
+      localSession = session;
+    }
+  });
+
+  assert.equal(created.id, "created-chat");
+  assert.equal(localSession, created);
+  assert.equal(runtime.getLoopSessionState("chat"), created);
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

@@ -44,6 +44,7 @@ import {
 import {
   appendAgentLoopSessionContext,
   clearAgentLoopActiveSessionContext,
+  createAgentLoopActiveSessionContext,
   runAgentFunctionCallLoop,
   setAgentLoopActiveSessionContext,
   type AgentFunctionCallLoopResult,
@@ -51,6 +52,7 @@ import {
   type AgentLoopAppendSessionContextInput,
   type AgentLoopAppendSessionContextResult,
   type AgentLoopClearActiveSessionContextInput,
+  type AgentLoopCreateActiveSessionContextInput,
   type AgentLoopMutableSession,
   type AgentLoopSetActiveSessionContextInput,
   type PreparedAgentLoopRun
@@ -182,6 +184,7 @@ export type AgentCoreDeps = {
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   setActiveLoopSessionContext?<TSession>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
   clearActiveLoopSessionContext?<TSession>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
+  createActiveLoopSessionContext?<TSession>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
   getLoopSessionState?(): unknown;
   setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
@@ -240,6 +243,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     const cleared = clearAgentLoopActiveSessionContext(input);
     if (cleared) deps.setLoopSessionState?.(undefined);
     return cleared;
+  });
+  const createActiveLoopSessionContext = deps.createActiveLoopSessionContext ?? ((input: AgentLoopCreateActiveSessionContextInput<ActiveLLMSession>) => {
+    const session = createAgentLoopActiveSessionContext(input);
+    deps.setLoopSessionState?.(session);
+    return session;
   });
   let activeLLMSession: ActiveLLMSession | undefined;
   let applyModeStateToNewSession: ModeState | undefined;
@@ -475,7 +483,13 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             waitChatStartedAt: undefined,
             lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
           };
-          setActiveLLMSession(newSession);
+          createActiveLoopSessionContext({
+            kind: "chat",
+            session: newSession,
+            setLocalSession(session) {
+              activeLLMSession = session;
+            }
+          });
           if (initiatedBehaviorPromptToolResult) {
             applyBackendToolSessionControlToActiveSession(newSession, initiatedBehaviorPromptToolResult, time.now().epochMs);
           }

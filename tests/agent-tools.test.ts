@@ -72,6 +72,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
 test("agent core delegates prepared chat loop execution to injected function-call runtime", async () => {
   let runtimeCalls = 0;
   let setActiveCalls = 0;
+  let createActiveCalls = 0;
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
@@ -98,6 +99,11 @@ test("agent core delegates prepared chat loop execution to injected function-cal
       setActiveCalls += 1;
       input.setLocalSession(input.session);
     },
+    createActiveLoopSessionContext(input) {
+      createActiveCalls += 1;
+      input.setLocalSession(input.session);
+      return input.session;
+    },
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
@@ -108,6 +114,7 @@ test("agent core delegates prepared chat loop execution to injected function-cal
 
   assert.equal(runtimeCalls, 1);
   assert.equal(setActiveCalls > 0, true);
+  assert.equal(createActiveCalls, 1);
 });
 
 test("token pressure calculation is independent from preview execution", () => {

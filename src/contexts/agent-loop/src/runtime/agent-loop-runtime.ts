@@ -92,6 +92,21 @@ export type AgentLoopPreparedSessionContext = {
   prefixMessageCount: number;
 };
 
+export type AgentLoopMutableSession = {
+  messages: LLMChatInput["messages"];
+};
+
+export type AgentLoopAppendSessionContextInput<TSession extends AgentLoopMutableSession = AgentLoopMutableSession> = {
+  session: TSession;
+  messages: LLMChatInput["messages"];
+  updateSession(session: TSession): void;
+};
+
+export type AgentLoopAppendSessionContextResult<TSession extends AgentLoopMutableSession = AgentLoopMutableSession> = {
+  session: TSession;
+  appended: boolean;
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
@@ -100,6 +115,7 @@ export type AgentLoopRuntime = {
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
   prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
+  appendSessionContext<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   requestRun(request: AgentLoopRunRequest): Promise<AgentLoopRunResult>;
   interrupt(reason: string): void;
@@ -145,6 +161,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     prepareSessionContext(input) {
       return prepareAgentLoopSessionContext(input);
+    },
+    appendSessionContext(input) {
+      return appendAgentLoopSessionContext(input);
     },
     runFunctionCallLoop(spec) {
       return runAgentFunctionCallLoop(spec);
@@ -271,5 +290,25 @@ export async function prepareAgentLoopSessionContext(input: AgentLoopSessionCont
   return {
     session,
     prefixMessageCount
+  };
+}
+
+export function appendAgentLoopSessionContext<TSession extends AgentLoopMutableSession>(
+  input: AgentLoopAppendSessionContextInput<TSession>
+): AgentLoopAppendSessionContextResult<TSession> {
+  if (input.messages.length === 0) {
+    return {
+      session: input.session,
+      appended: false
+    };
+  }
+  input.session.messages = [
+    ...input.session.messages,
+    ...input.messages
+  ];
+  input.updateSession(input.session);
+  return {
+    session: input.session,
+    appended: true
   };
 }

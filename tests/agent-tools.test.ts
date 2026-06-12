@@ -2480,6 +2480,7 @@ test("agent core does not retry non-transient llm failures", async () => {
 test("agent core keeps an active transcript and appends fake check_chat on the next heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   let appendCheckCount = 0;
+  let appendContextCalls = 0;
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -2493,6 +2494,18 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
+    appendLoopSessionContext(input) {
+      appendContextCalls += 1;
+      input.session.messages = [
+        ...input.session.messages,
+        ...input.messages
+      ];
+      input.updateSession(input.session);
+      return {
+        session: input.session,
+        appended: input.messages.length > 0
+      };
+    },
     getPromptProfile: () => ({
       userName: "user",
       visibleTools: { feishu: true },
@@ -2520,6 +2533,7 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
   assert.equal(requests[0].messages.at(-1)?.content, "recent");
   assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
   assert.equal(requests[1].messages.at(-1)?.content, "new");
+  assert.equal(appendContextCalls, 2);
 });
 
 test("agent core clears session before the next request when cached input cost exceeds check chat miss cost", async () => {

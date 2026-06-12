@@ -91,6 +91,29 @@ test("agent loop runtime prepares and writes loop session context", async () => 
   assert.equal(transcript.staticPromptFingerprint, "talk");
 });
 
+test("agent loop runtime appends and writes loop session context", () => {
+  const runtime = createAgentLoopRuntime();
+  const session = {
+    messages: [{ role: "system" as const, content: "prefix" }]
+  };
+  let written: typeof session | undefined;
+
+  const result = runtime.appendSessionContext({
+    session,
+    messages: [{ role: "user", content: "new turn" }],
+    updateSession(updated) {
+      written = updated;
+    }
+  });
+
+  assert.equal(result.appended, true);
+  assert.equal(written, session);
+  assert.deepEqual(session.messages, [
+    { role: "system", content: "prefix" },
+    { role: "user", content: "new turn" }
+  ]);
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

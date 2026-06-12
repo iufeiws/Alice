@@ -42,9 +42,13 @@ import {
   type ChatAgentModeState
 } from "./run-chat-loop.js";
 import {
+  appendAgentLoopSessionContext,
   runAgentFunctionCallLoop,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallLoopSpec,
+  type AgentLoopAppendSessionContextInput,
+  type AgentLoopAppendSessionContextResult,
+  type AgentLoopMutableSession,
   type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
 
@@ -171,6 +175,7 @@ export type AgentCoreDeps = {
   onLLMResponseReceived?(result: LLMChatResult): void;
   llmRequestSender?: LLMRequestSender;
   runFunctionCallLoop?(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
+  appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   getLoopSessionState?(): unknown;
   setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
@@ -462,6 +467,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       let sessionRunStarted = false;
       let llmInput: ChatAgentLoopInput["llmInput"] | undefined;
       let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
+      const appendLoopSessionContext = deps.appendLoopSessionContext ?? appendAgentLoopSessionContext;
       const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
         const waitChatResumeMessages = await buildWaitChatResumeMessages({
           session,
@@ -472,12 +478,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           onLLMLog: deps.onLLMLog
         });
         if (waitChatResumeMessages.length > 0) {
-          session.messages = [
-            ...session.messages,
-            ...waitChatResumeMessages
-          ];
           session.waitChatStartedAt = undefined;
-          noteLLMSessionUpdated();
+          appendLoopSessionContext({
+            session,
+            messages: waitChatResumeMessages,
+            updateSession: noteLLMSessionUpdated
+          });
           return;
         }
         const promptContext = makePromptContext();
@@ -490,11 +496,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             buildTextVariables: buildTurnTextVariables
           });
           if (appendMessages.length === 0) return;
-          session.messages = [
-            ...session.messages,
-            ...appendMessages
-          ];
-          noteLLMSessionUpdated();
+          appendLoopSessionContext({
+            session,
+            messages: appendMessages,
+            updateSession: noteLLMSessionUpdated
+          });
           return;
         }
         const appendProfile = {
@@ -516,11 +522,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           });
         });
         if (appendMessages.length === 0) return;
-        session.messages = [
-          ...session.messages,
-          ...appendMessages
-        ];
-        noteLLMSessionUpdated();
+        appendLoopSessionContext({
+          session,
+          messages: appendMessages,
+          updateSession: noteLLMSessionUpdated
+        });
       };
       return {
         async prepare() {

@@ -159,6 +159,26 @@ test("agent loop runtime creates active session context", () => {
   assert.equal(runtime.getLoopSessionState("chat"), created);
 });
 
+test("agent loop runtime prepares chat session context", async () => {
+  const runtime = createAgentLoopRuntime();
+  let localSession: { messages: unknown[]; fingerprint: string } | undefined;
+
+  const prepared = await runtime.prepareChatSessionContext({
+    buildMessages: () => [{ role: "system", content: "chat prefix" }],
+    createSession(messages) {
+      return { messages, fingerprint: "chat-fingerprint" };
+    },
+    setLocalSession(session) {
+      localSession = session;
+    }
+  });
+
+  assert.equal(prepared.session.fingerprint, "chat-fingerprint");
+  assert.equal(prepared.messages.length, 1);
+  assert.equal(localSession, prepared.session);
+  assert.equal(runtime.getLoopSessionState("chat"), prepared.session);
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

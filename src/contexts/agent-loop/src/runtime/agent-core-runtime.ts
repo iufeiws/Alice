@@ -50,6 +50,9 @@ export function createAgentCoreRuntime(input: {
     createActiveLoopSessionContext: input.agentLoopRuntime
       ? (contextInput: any) => input.agentLoopRuntime.createActiveSessionContext(contextInput)
       : undefined,
+    prepareChatLoopSessionContext: input.agentLoopRuntime
+      ? (contextInput: any) => input.agentLoopRuntime.prepareChatSessionContext(contextInput)
+      : undefined,
     getLoopSessionState: input.agentLoopRuntime
       ? () => input.agentLoopRuntime.getLoopSessionState("chat")
       : undefined,

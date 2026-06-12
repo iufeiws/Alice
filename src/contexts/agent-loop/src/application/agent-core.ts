@@ -45,6 +45,7 @@ import {
   appendAgentLoopSessionContext,
   clearAgentLoopActiveSessionContext,
   createAgentLoopActiveSessionContext,
+  prepareAgentLoopChatSessionContext,
   runAgentFunctionCallLoop,
   setAgentLoopActiveSessionContext,
   type AgentFunctionCallLoopResult,
@@ -54,6 +55,8 @@ import {
   type AgentLoopClearActiveSessionContextInput,
   type AgentLoopCreateActiveSessionContextInput,
   type AgentLoopMutableSession,
+  type AgentLoopPrepareChatSessionContextInput,
+  type AgentLoopPrepareChatSessionContextResult,
   type AgentLoopSetActiveSessionContextInput,
   type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
@@ -185,6 +188,7 @@ export type AgentCoreDeps = {
   setActiveLoopSessionContext?<TSession>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
   clearActiveLoopSessionContext?<TSession>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
   createActiveLoopSessionContext?<TSession>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
+  prepareChatLoopSessionContext?<TSession>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
   getLoopSessionState?(): unknown;
   setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
@@ -248,6 +252,15 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     const session = createAgentLoopActiveSessionContext(input);
     deps.setLoopSessionState?.(session);
     return session;
+  });
+  const prepareChatLoopSessionContext = deps.prepareChatLoopSessionContext ?? ((input: AgentLoopPrepareChatSessionContextInput<ActiveLLMSession>) => {
+    return prepareAgentLoopChatSessionContext({
+      ...input,
+      updateSession(session) {
+        input.updateSession?.(session);
+        deps.setLoopSessionState?.(session);
+      }
+    });
   });
   let activeLLMSession: ActiveLLMSession | undefined;
   let applyModeStateToNewSession: ModeState | undefined;
@@ -450,46 +463,48 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           applyModeStateToNewSession = undefined;
           let promptCheckChatCursor: number | undefined;
           let initiatedBehaviorPromptToolResult: ToolResult | undefined;
-          const promptMessages = mode.mode === "fixed_prefix"
-            ? cloneLLMMessages(mode.modeStaticMessages)
-            : [
-              ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                const result = await runPromptToolRequest(layer, call, toolPlugins);
-                promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                return result;
-              }),
-              ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
-                const result = await runPromptToolRequest(layer, call, toolPlugins);
-                promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                initiatedBehaviorPromptToolResult = result;
-                return result;
-              }),
-              ...mode.modeStaticMessages
-            ];
-          initiatedBehavior = undefined;
-          const newSession: ActiveLLMSession = {
-            messages: promptMessages,
-            staticPromptFingerprint: fingerprint,
-            staticPromptMessageCount: promptMessages.length,
-            requestTimestamps: [],
-            tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
-            mode: mode.mode,
-            modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
-            modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
-            modeStartedAt: mode.modeStartedAt,
-            modeExpiresAt: mode.modeExpiresAt,
-            fixedPrefixKind: mode.fixedPrefixKind,
-            fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
-            waitChatStartedAt: undefined,
-            lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
-          };
-          createActiveLoopSessionContext({
-            kind: "chat",
-            session: newSession,
+          const preparedSession = await prepareChatLoopSessionContext({
+            buildMessages: async () => {
+              if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
+              return [
+                ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
+                  const result = await runPromptToolRequest(layer, call, toolPlugins);
+                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                  return result;
+                }),
+                ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
+                  const result = await runPromptToolRequest(layer, call, toolPlugins);
+                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                  initiatedBehaviorPromptToolResult = result;
+                  return result;
+                }),
+                ...mode.modeStaticMessages
+              ];
+            },
+            createSession(promptMessages): ActiveLLMSession {
+              return {
+                messages: promptMessages,
+                staticPromptFingerprint: fingerprint,
+                staticPromptMessageCount: promptMessages.length,
+                requestTimestamps: [],
+                tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
+                mode: mode.mode,
+                modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
+                modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
+                modeStartedAt: mode.modeStartedAt,
+                modeExpiresAt: mode.modeExpiresAt,
+                fixedPrefixKind: mode.fixedPrefixKind,
+                fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
+                waitChatStartedAt: undefined,
+                lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
+              };
+            },
             setLocalSession(session) {
               activeLLMSession = session;
             }
           });
+          initiatedBehavior = undefined;
+          const newSession = preparedSession.session;
           if (initiatedBehaviorPromptToolResult) {
             applyBackendToolSessionControlToActiveSession(newSession, initiatedBehaviorPromptToolResult, time.now().epochMs);
           }

@@ -127,6 +127,18 @@ export type AgentLoopCreateActiveSessionContextInput<TSession = unknown> = {
   updateSession?(session: TSession): void;
 };
 
+export type AgentLoopPrepareChatSessionContextInput<TSession = unknown> = {
+  buildMessages(): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
+  createSession(messages: LLMChatInput["messages"]): TSession;
+  setLocalSession(session: TSession): void;
+  updateSession?(session: TSession): void;
+};
+
+export type AgentLoopPrepareChatSessionContextResult<TSession = unknown> = {
+  session: TSession;
+  messages: LLMChatInput["messages"];
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
@@ -137,6 +149,7 @@ export type AgentLoopRuntime = {
   setActiveSessionContext<TSession = unknown>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
   clearActiveSessionContext<TSession = unknown>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
   createActiveSessionContext<TSession = unknown>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
+  prepareChatSessionContext<TSession = unknown>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
   prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   appendSessionContext<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
@@ -190,6 +203,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     createActiveSessionContext(input) {
       return createAgentLoopActiveSessionContext(input, loopSessionStates);
+    },
+    prepareChatSessionContext(input) {
+      return prepareAgentLoopChatSessionContext(input, loopSessionStates);
     },
     prepareSessionContext(input) {
       return prepareAgentLoopSessionContext(input);
@@ -377,4 +393,22 @@ export function createAgentLoopActiveSessionContext<TSession = unknown>(
   holder?.set(input.kind, input.session);
   input.updateSession?.(input.session);
   return input.session;
+}
+
+export async function prepareAgentLoopChatSessionContext<TSession = unknown>(
+  input: AgentLoopPrepareChatSessionContextInput<TSession>,
+  holder?: Map<AgentLoopKind, unknown>
+): Promise<AgentLoopPrepareChatSessionContextResult<TSession>> {
+  const messages = await Promise.resolve(input.buildMessages());
+  const session = input.createSession(messages);
+  createAgentLoopActiveSessionContext({
+    kind: "chat",
+    session,
+    setLocalSession: input.setLocalSession,
+    updateSession: input.updateSession
+  }, holder);
+  return {
+    session,
+    messages
+  };
 }

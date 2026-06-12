@@ -73,6 +73,7 @@ test("agent core delegates prepared chat loop execution to injected function-cal
   let runtimeCalls = 0;
   let setActiveCalls = 0;
   let createActiveCalls = 0;
+  let prepareChatSessionCalls = 0;
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
@@ -104,6 +105,13 @@ test("agent core delegates prepared chat loop execution to injected function-cal
       input.setLocalSession(input.session);
       return input.session;
     },
+    async prepareChatLoopSessionContext(input) {
+      prepareChatSessionCalls += 1;
+      const messages = await input.buildMessages();
+      const session = input.createSession(messages);
+      input.setLocalSession(session);
+      return { session, messages };
+    },
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
@@ -114,7 +122,8 @@ test("agent core delegates prepared chat loop execution to injected function-cal
 
   assert.equal(runtimeCalls, 1);
   assert.equal(setActiveCalls > 0, true);
-  assert.equal(createActiveCalls, 1);
+  assert.equal(createActiveCalls, 0);
+  assert.equal(prepareChatSessionCalls, 1);
 });
 
 test("token pressure calculation is independent from preview execution", () => {

@@ -64,6 +64,8 @@ export function createApiRootRuntime() {
     appendLog: foundation.appendLog
   });
   agentLoopRuntime.setRunners({
+    prepareChat: ({ event }) => apiAgentStackRuntime.core.prepareEventRun(event),
+    prepareTalk: ({ sessionId }) => apiAgentStackRuntime.talkRuntime.prepareReadyAgentLoopSession(sessionId) as any,
     runChat: ({ event }) => apiAgentStackRuntime.core.handleEvent(event),
     runTalk: ({ sessionId }) => apiAgentStackRuntime.talkRuntime.runReadyAgentLoopSession(sessionId)
   });

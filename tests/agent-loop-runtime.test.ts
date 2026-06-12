@@ -53,6 +53,55 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(await first, { started: true, outputs: [] });
 });
 
+test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
+  const runtime = createAgentLoopRuntime({
+    runChat() {
+      throw new Error("legacy chat runner should not be used when prepareChat is available");
+    }
+  });
+  runtime.setRunners({
+    prepareChat({ sessionId }) {
+      return {
+        spec: {
+          initialMessages: [{ role: "user", content: "hello" }],
+          buildRequest({ messages }) {
+            return {
+              agentId: "chat",
+              messages,
+              toolNames: []
+            };
+          },
+          async sendRequest() {
+            return { message: { role: "assistant", content: "prepared" }, finishReason: "stop" };
+          },
+          executeTool() {
+            throw new Error("unexpected tool call");
+          }
+        },
+        complete(result) {
+          assert.equal(result.finalMessage.content, "prepared");
+          return [{
+            id: "out_prepared",
+            target: { plugin: "test", sessionId },
+            content: { kind: "text", text: result.finalMessage.content ?? "" },
+            meta: { createdAt: "2026-06-12T00:00:00.000Z", urgency: "normal" }
+          }];
+        }
+      };
+    }
+  });
+
+  const result = await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-prepared",
+    reason: "test",
+    event: textEvent("session-prepared")
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.outputs[0]?.id, "out_prepared");
+});
+
 test("agent loop runtime runs function-call specs through the shared tool loop", async () => {
   const runtime = createAgentLoopRuntime();
   const result = await runtime.runFunctionCallLoop({

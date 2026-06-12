@@ -10,7 +10,8 @@ import {
   runAgentFunctionCallLoop,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
-  type AgentFunctionCallToolExecution
+  type AgentFunctionCallToolExecution,
+  type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
@@ -90,6 +91,7 @@ type TalkAgentLoopDeps = {
 };
 
 export type TalkAgentLoopController = {
+  prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined>;
   runTalkAgentLoopForSession(sessionId: string): Promise<void>;
   interruptTalkAgentLoop(sessionId: string): void;
   getConversationStartIndex(sessionId: string): number | undefined;
@@ -106,7 +108,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   const activeTalkConversationStartIndexes = new Map<string, number>();
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
-  async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
+  async function prepareTalkAgentLoopForSession(sessionId: string): Promise<PreparedAgentLoopRun | undefined> {
     if (activeTalkAgentLoops.has(sessionId)) return;
     if (!deps.isActiveTalkLLMSession(sessionId)) {
       deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
@@ -124,7 +126,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
       const config = deps.getLLMConfig();
       const guard = await waitForTalkLoopRound(sessionId, 0, controller);
-      if (!guard.continue) return;
+      if (!guard.continue) {
+        cleanupTalkAgentLoop(sessionId, controller);
+        return;
+      }
       const prepared = buildTalkAgentLoopSpec({
         sessionId,
         session,
@@ -134,19 +139,50 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         config,
         controller
       });
-      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec));
+      return {
+        spec: prepared.spec,
+        complete(result) {
+          prepared.complete(result);
+          return [];
+        },
+        onError(error) {
+          if (controller.signal.aborted || isCancellationError(error)) {
+            deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
+            return;
+          }
+          deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
+        },
+        dispose() {
+          cleanupTalkAgentLoop(sessionId, controller);
+        }
+      };
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
-        return;
+      } else {
+        deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
       }
-      deps.log("error", `talk loop failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
-        activeTalkAgentLoopControllers.delete(sessionId);
-      }
-      activeTalkAgentLoops.delete(sessionId);
+      cleanupTalkAgentLoop(sessionId, controller);
     }
+  }
+
+  async function runTalkAgentLoopForSession(sessionId: string): Promise<void> {
+    const prepared = await prepareTalkAgentLoopForSession(sessionId);
+    if (!prepared) return;
+    try {
+      prepared.complete(await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec));
+    } catch (error) {
+      await prepared.onError?.(error);
+    } finally {
+      await prepared.dispose?.();
+    }
+  }
+
+  function cleanupTalkAgentLoop(sessionId: string, controller: AbortController): void {
+    if (activeTalkAgentLoopControllers.get(sessionId) === controller) {
+      activeTalkAgentLoopControllers.delete(sessionId);
+    }
+    activeTalkAgentLoops.delete(sessionId);
   }
 
   function buildTalkAgentLoopSpec(input: {
@@ -364,6 +400,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   }
 
   return {
+    prepareTalkAgentLoopForSession,
     runTalkAgentLoopForSession,
     interruptTalkAgentLoop,
     getConversationStartIndex

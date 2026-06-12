@@ -44,7 +44,8 @@ import {
 import {
   runAgentFunctionCallLoop,
   type AgentFunctionCallLoopResult,
-  type AgentFunctionCallLoopSpec
+  type AgentFunctionCallLoopSpec,
+  type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
@@ -188,6 +189,7 @@ export interface AgentCore {
   start(): Promise<void>;
   stop(): Promise<void>;
   handleEvent(event: AgentEvent): Promise<AgentOutput[]>;
+  prepareEventRun(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
   clearLLMSession(reason: LLMSessionClearReason): void;
@@ -244,6 +246,19 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       deps.onLLMSessionCleared?.(reason);
     },
     async handleEvent(event) {
+      const prepared = await this.prepareEventRun(event);
+      if (Array.isArray(prepared)) return prepared;
+      try {
+        const result = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(prepared.spec);
+        return await Promise.resolve(prepared.complete(result)) ?? [];
+      } catch (error) {
+        await prepared.onError?.(error);
+        throw error;
+      } finally {
+        await prepared.dispose?.();
+      }
+    },
+    async prepareEventRun(event) {
       const decision = await deps.policy.check(event);
       if (!decision.allowed) {
         return [
@@ -548,84 +563,90 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           onLLMResponseReceived: deps.onLLMResponseReceived,
           onLLMLog: deps.onLLMLog
         });
-        const llmResult = await (deps.runFunctionCallLoop ?? runAgentFunctionCallLoop)(preparedLoop.spec)
-          .then((result) => preparedLoop.complete(result))
-          .catch((error) => {
-          if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
-            const message = error instanceof Error ? error.message : String(error);
-            recordInitiatedBehaviorRun({
-              result: "failed",
-              steps: [
-                ...initiatedBehaviorExecution.steps,
-                ...initiatedBehaviorLlmSteps("failed", message)
-              ],
-              error: message
-            });
-          }
-          throw error;
-        });
-        sentMessage = llmResult.sentMessage;
-        if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
-          if (llmResult.cancelled) {
-            recordInitiatedBehaviorRun({
-              result: "skipped",
-              steps: [
-                ...initiatedBehaviorExecution.steps,
-                ...initiatedBehaviorLlmSteps("skipped", "llm_cancelled")
-              ],
-              error: "llm_cancelled"
-            });
-          } else if (!llmResult.finalResult) {
-            recordInitiatedBehaviorRun({
-              result: "failed",
-              steps: [
-                ...initiatedBehaviorExecution.steps,
-                ...initiatedBehaviorLlmSteps("failed", "llm_result_missing")
-              ],
-              error: "llm_result_missing"
-            });
-          } else {
-            if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
-              applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+        return {
+          spec: preparedLoop.spec,
+          onError(error) {
+            if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+              const message = error instanceof Error ? error.message : String(error);
+              recordInitiatedBehaviorRun({
+                result: "failed",
+                steps: [
+                  ...initiatedBehaviorExecution.steps,
+                  ...initiatedBehaviorLlmSteps("failed", message)
+                ],
+                error: message
+              });
+            }
+          },
+          dispose() {
+            deps.onLLMSessionCompleted?.({ sentMessage });
+          },
+          complete(loopResult) {
+            const llmResult = preparedLoop.complete(loopResult);
+            sentMessage = llmResult.sentMessage;
+            if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
+              if (llmResult.cancelled) {
+                recordInitiatedBehaviorRun({
+                  result: "skipped",
+                  steps: [
+                    ...initiatedBehaviorExecution.steps,
+                    ...initiatedBehaviorLlmSteps("skipped", "llm_cancelled")
+                  ],
+                  error: "llm_cancelled"
+                });
+              } else if (!llmResult.finalResult) {
+                recordInitiatedBehaviorRun({
+                  result: "failed",
+                  steps: [
+                    ...initiatedBehaviorExecution.steps,
+                    ...initiatedBehaviorLlmSteps("failed", "llm_result_missing")
+                  ],
+                  error: "llm_result_missing"
+                });
+              } else {
+                if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
+                  applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+                  noteLLMSessionUpdated();
+                }
+                recordInitiatedBehaviorRun({
+                  result: "completed",
+                  steps: [
+                    ...initiatedBehaviorExecution.steps,
+                    ...initiatedBehaviorLlmSteps("completed")
+                  ]
+                });
+              }
+            }
+            if (llmResult.cancelled) {
+              if (activeLLMSession) {
+                deps.onLLMSessionCleared?.("admin_cancel");
+                activeLLMSession = undefined;
+              }
+              return [];
+            }
+            if (llmResult.invalidateSession) {
+              deps.onLLMSessionCleared?.("prompt_static_changed");
+              activeLLMSession = undefined;
+            }
+            const usage = llmResult.finalResult?.usage;
+            const usageModel = llmResult.finalResult?.model ?? llmInput.model;
+            if (activeLLMSession && usage) {
+              if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
+                activeLLMSession.lastTotalTokens = usage.totalTokens;
+              }
+              if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
+                activeLLMSession.lastInputTokens = usage.inputTokens;
+              }
+              if (usageModel) activeLLMSession.lastUsageModel = usageModel;
               noteLLMSessionUpdated();
             }
-            recordInitiatedBehaviorRun({
-              result: "completed",
-              steps: [
-                ...initiatedBehaviorExecution.steps,
-                ...initiatedBehaviorLlmSteps("completed")
-              ]
-            });
+            return [];
           }
-        }
-        if (llmResult.cancelled) {
-          if (activeLLMSession) {
-            deps.onLLMSessionCleared?.("admin_cancel");
-            activeLLMSession = undefined;
-          }
-          return [];
-        }
-        if (llmResult.invalidateSession) {
-          deps.onLLMSessionCleared?.("prompt_static_changed");
-          activeLLMSession = undefined;
-        }
-        const usage = llmResult.finalResult?.usage;
-        const usageModel = llmResult.finalResult?.model ?? llmInput.model;
-        if (activeLLMSession && usage) {
-          if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-            activeLLMSession.lastTotalTokens = usage.totalTokens;
-          }
-          if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
-            activeLLMSession.lastInputTokens = usage.inputTokens;
-          }
-          if (usageModel) activeLLMSession.lastUsageModel = usageModel;
-          noteLLMSessionUpdated();
-        }
-      } finally {
+        };
+      } catch (error) {
         deps.onLLMSessionCompleted?.({ sentMessage });
+        throw error;
       }
-
-      return [];
     }
   };
 

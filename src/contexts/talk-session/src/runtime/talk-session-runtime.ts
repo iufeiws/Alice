@@ -79,6 +79,7 @@ export function createTalkRuntimeRuntime(input: {
     createLLMSession(sessionInput) {
       return input.createLLMSession(sessionInput.occurredAt);
     },
+    prepareAgentLoop: talkAgentLoop.prepareTalkAgentLoopForSession,
     runAgentLoop: talkAgentLoop.runTalkAgentLoopForSession,
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);

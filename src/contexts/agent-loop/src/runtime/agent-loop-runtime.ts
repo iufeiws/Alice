@@ -49,8 +49,6 @@ export type PreparedAgentLoopRun = {
 export type AgentLoopRunners = {
   prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   prepareTalk(input: { sessionId: string; reason: string; signal: AbortSignal }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
-  runChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal }): Promise<AgentOutput[]> | AgentOutput[];
-  runTalk(input: { sessionId: string; reason: string; signal: AbortSignal }): Promise<void> | void;
 };
 
 export type AgentLoopRunSpec = {
@@ -274,38 +272,22 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
 
   async function executeRequest(request: AgentLoopRunRequest, signal: AbortSignal): Promise<AgentOutput[]> {
     if (request.kind === "chat") {
-      if (runners.prepareChat) {
-        return await executePreparedOrOutputs(await runners.prepareChat({
-          event: request.event,
-          sessionId: request.sessionId,
-          reason: request.reason,
-          signal
-        }));
-      }
-      if (!runners.runChat) throw new Error("agent_loop_chat_runner_unavailable");
-      return await runners.runChat({
+      if (!runners.prepareChat) throw new Error("agent_loop_chat_runner_unavailable");
+      return await executePreparedOrOutputs(await runners.prepareChat({
         event: request.event,
         sessionId: request.sessionId,
         reason: request.reason,
         signal
-      });
+      }));
     }
-    if (runners.prepareTalk) {
-      const prepared = await runners.prepareTalk({
-        sessionId: request.sessionId,
-        reason: request.reason,
-        signal
-      });
-      if (!prepared) return [];
-      return await executePreparedOrOutputs(prepared);
-    }
-    if (!runners.runTalk) throw new Error("agent_loop_talk_runner_unavailable");
-    await runners.runTalk({
+    if (!runners.prepareTalk) throw new Error("agent_loop_talk_runner_unavailable");
+    const prepared = await runners.prepareTalk({
       sessionId: request.sessionId,
       reason: request.reason,
       signal
     });
-    return [];
+    if (!prepared) return [];
+    return await executePreparedOrOutputs(prepared);
   }
 
   async function executePreparedOrOutputs(prepared: PreparedAgentLoopRun | AgentOutput[]): Promise<AgentOutput[]> {

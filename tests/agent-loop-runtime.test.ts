@@ -7,7 +7,7 @@ test("agent loop runtime runs chat requests through configured runner and expose
   const runtime = createAgentLoopRuntime();
   const observedGenerations: number[] = [];
   runtime.setRunners({
-    runChat({ sessionId }) {
+    prepareChat({ sessionId }) {
       const active = runtime.getActiveMainLLMSession();
       assert.equal(active?.id, sessionId);
       assert.equal(active?.agentId, "chat");
@@ -38,9 +38,12 @@ test("agent loop runtime runs chat requests through configured runner and expose
 test("agent loop runtime rejects overlapping runs", async () => {
   let releaseRun: (() => void) | undefined;
   const runtime = createAgentLoopRuntime({
-    runTalk() {
-      return new Promise<void>((resolve) => {
-        releaseRun = resolve;
+    prepareTalk() {
+      return new Promise((resolve) => {
+        releaseRun = () => resolve({
+          prepare: () => [],
+          complete: () => []
+        });
       });
     }
   });
@@ -214,12 +217,8 @@ test("agent loop runtime ensures chat session context through reset callbacks", 
   assert.equal(session, ensured);
 });
 
-test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
-  const runtime = createAgentLoopRuntime({
-    runChat() {
-      throw new Error("legacy chat runner should not be used when prepareChat is available");
-    }
-  });
+test("agent loop runtime executes prepared chat runs through the function-call loop", async () => {
+  const runtime = createAgentLoopRuntime();
   let prepareCalls = 0;
   runtime.setRunners({
     prepareChat({ sessionId }) {

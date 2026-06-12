@@ -145,14 +145,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
-    ...(deps.core.prepareEventRun
-      ? { prepareChat: ({ event }) => deps.core.prepareEventRun?.(event) ?? [] }
-      : {}),
-    ...(deps.talkRuntime?.prepareReadyAgentLoopSession
-      ? { prepareTalk: ({ sessionId }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId) }
-      : {}),
-    runChat: ({ event }) => deps.core.handleEvent(event),
-    runTalk: ({ sessionId }) => deps.talkRuntime?.runReadyAgentLoopSession?.(sessionId)
+    prepareChat: ({ event }) => deps.core.prepareEventRun?.(event) ?? deps.core.handleEvent(event),
+    prepareTalk: ({ sessionId }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId)
   });
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,

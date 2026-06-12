@@ -26,7 +26,7 @@ import {
 
 const frontendPlaybackIdleAckDelayMs = 250;
 const frontendPlaybackIdleAckTimeoutMs = 2_500;
-const voiceCallFillerDelayMs = 1_500;
+const voiceCallFillerDelayMs = 3_000;
 const voiceCallFillerDir = path.resolve(process.cwd(), "assets", "voice-call");
 
 export async function createCallState(

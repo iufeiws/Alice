@@ -1202,7 +1202,7 @@ test("WebRTC voice queues a random voice-call filler after stable interrupt inpu
 
   await waitFor(() => track.enqueued.length === 1);
   assert.equal(batches.length, 1);
-  assert.deepEqual(sleeps, [1_500]);
+  assert.deepEqual(sleeps, [3_000]);
   assert.match(track.enqueued[0]!.assetId, /^voice-call\/.+\.wav$/);
   assert.match(track.enqueued[0]!.filePath, /assets\/voice-call\/.+\.wav$/);
   assert.equal(track.enqueued[0]!.outputId, "filler:call-filler-after-stable:1");

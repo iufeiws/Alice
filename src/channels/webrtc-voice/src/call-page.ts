@@ -248,6 +248,7 @@ export function renderCallPage(config: WebRtcVoiceConfig): string {
       if (text.length <= 1) {
         return;
       }
+      socket?.send(JSON.stringify({ type: "text-draft", text }));
       if (!typedInputInterruptSent) {
         typedInputInterruptSent = true;
         log("typed interrupt requested");

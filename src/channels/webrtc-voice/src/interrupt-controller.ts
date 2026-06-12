@@ -1,6 +1,8 @@
 import type { InterruptItem, TtsTask, WebRtcVoiceDeps } from "./types.js";
 import type { VoicePlaybackConsumer } from "./playback-consumer.js";
 
+const interruptStableInputTimeoutMs = 30_000;
+
 export function createInterruptController(ctx: {
   callId: string;
   talkSessionId: string;
@@ -51,6 +53,7 @@ export function createInterruptController(ctx: {
     batch.items = batch.items.filter((item) => !itemSet.has(item));
     try {
       await Promise.all(items.map((item) => item.runtimeInterruptPromise).filter((promise): promise is Promise<void> => Boolean(promise)));
+      for (const item of items) clearStableInputTimeout(item);
       if (ctx.deps.talkRuntime?.commitStableInputBatch) {
         await ctx.deps.talkRuntime.commitStableInputBatch({
           sessionId: ctx.talkSessionId,
@@ -85,9 +88,7 @@ export function createInterruptController(ctx: {
   };
 
   const markStableInput = async (text: string, reason: InterruptItem["reason"], streamId?: string) => {
-    const target = streamId
-      ? batch.items.find((item) => item.asrStreamId === streamId && !item.stableInputReady)
-      : batch.items.find((item) => !item.stableInputReady);
+    const target = findLatestPendingStableInput(streamId);
     if (!target) {
       const stamp = ctx.nowStamp();
       if (ctx.deps.talkRuntime?.ingestInput) {
@@ -106,6 +107,8 @@ export function createInterruptController(ctx: {
       }
       return;
     }
+    failEarlierPendingStableInputs(target, "superseded_by_later_stable_input");
+    clearStableInputTimeout(target);
     target.reason = reason;
     target.stableInputText = text;
     target.stableInputReady = true;
@@ -154,6 +157,7 @@ export function createInterruptController(ctx: {
       stableInputReady: false,
       sequence: ctx.nextStableSequence()
     };
+    item.stableInputTimeout = scheduleStableInputTimeout(item);
     batch.items.push(item);
     ctx.playback.setCurrentPlayingItem(undefined);
     ctx.playback.clearPendingPlayback();
@@ -195,7 +199,7 @@ export function createInterruptController(ctx: {
         const runtimeInterruptId = interruptIdFromRuntime(resolved);
         if (runtimeInterruptId) item.interruptId = runtimeInterruptId;
         if (!runtimeInterruptId && !item.targetOutputId) {
-          await ctx.deps.talkRuntime?.interruptAgentLoop?.(ctx.talkSessionId, reason);
+          await ctx.deps.talkRuntime?.interruptAgentLoop?.(ctx.talkSessionId, { reason, interruptEpoch });
           ctx.deps.emitStatus?.({ state: "talk_runtime.agent_loop_interrupted", detail: reason });
         }
         item.runtimeInterrupted = true;
@@ -221,9 +225,57 @@ export function createInterruptController(ctx: {
     batch,
     playbackGateOpen,
     commitStableInputsIfReady,
+    hasPendingStableInput(reason?: InterruptItem["reason"]) {
+      return batch.items.some((item) => !item.stableInputReady && (!reason || item.reason === reason));
+    },
+    extendPendingStableInputTimeout(input?: { reason?: InterruptItem["reason"]; streamId?: string }) {
+      const item = findLatestPendingStableInput(input?.streamId, input?.reason);
+      if (!item) return false;
+      clearStableInputTimeout(item);
+      item.stableInputTimeout = scheduleStableInputTimeout(item);
+      ctx.deps.emitStatus?.({ state: "talk_runtime.stable_input_timeout_extended", detail: item.interruptId });
+      return true;
+    },
     markStableInput,
     runInterrupt
   };
+
+  function findLatestPendingStableInput(streamId?: string, reason?: InterruptItem["reason"]): InterruptItem | undefined {
+    for (let index = batch.items.length - 1; index >= 0; index -= 1) {
+      const item = batch.items[index]!;
+      if (item.stableInputReady) continue;
+      if (reason && item.reason !== reason) continue;
+      if (streamId && item.asrStreamId !== streamId) continue;
+      return item;
+    }
+    return undefined;
+  }
+
+  function failEarlierPendingStableInputs(target: InterruptItem, reason: string): void {
+    for (const item of batch.items) {
+      if (item === target) return;
+      if (item.stableInputReady) continue;
+      failStableInput(item, reason);
+    }
+  }
+
+  function failStableInput(item: InterruptItem, reason: string): void {
+    clearStableInputTimeout(item);
+    item.reason = "asr_failure";
+    item.stableInputText = "-杂音-";
+    item.stableInputReady = true;
+    ctx.deps.emitStatus?.({ state: "talk_runtime.stable_input_failed", detail: `${reason}:${item.interruptId}` });
+  }
+
+  function scheduleStableInputTimeout(item: InterruptItem): NodeJS.Timeout {
+    const timer = setTimeout(() => {
+      if (!batch.items.includes(item) || item.stableInputReady) return;
+      failStableInput(item, "timeout");
+      void commitStableInputsIfReady({ immediate: true });
+    }, interruptStableInputTimeoutMs);
+    timer.unref?.();
+    return timer;
+  }
 }
 
 async function sleep(ms: number, deps: WebRtcVoiceDeps): Promise<void> {
@@ -232,6 +284,12 @@ async function sleep(ms: number, deps: WebRtcVoiceDeps): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+function clearStableInputTimeout(item: InterruptItem): void {
+  if (!item.stableInputTimeout) return;
+  clearTimeout(item.stableInputTimeout);
+  item.stableInputTimeout = undefined;
 }
 
 function interruptIdFromRuntime(value: unknown): string | undefined {

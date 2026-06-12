@@ -44,7 +44,7 @@ export type TalkRuntime = {
     omitAssistantMessage?: boolean;
     breakMarker?: string;
   }): TalkOutputInterrupt | undefined;
-  interruptAgentLoop(sessionId: string, reason?: string): void;
+  interruptAgentLoop(sessionId: string, input?: { reason?: string; interruptEpoch?: number }): void;
   buildNextLoopMessages(sessionId: string): LLMMessage[];
 };
 
@@ -102,6 +102,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
   const readyAgentLoopSessions = new Map<string, number>();
   const foregroundPlaybackPendingSessions = new Set<string>();
+  const agentLoopInterruptedSessions = new Map<string, number>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -147,6 +148,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     closeSession(input) {
       assertSessionExists(deps.store, input.sessionId);
       readyAgentLoopSessions.delete(input.sessionId);
+      agentLoopInterruptedSessions.delete(input.sessionId);
       const now = current(deps.time);
       deps.store.closeSession({
         sessionId: input.sessionId,
@@ -173,6 +175,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         if (nowMs < readyAtMs) continue;
         readyAgentLoopSessions.delete(sessionId);
         if (deps.store.getSession(sessionId)?.status !== "open") continue;
+        if (agentLoopInterruptedSessions.has(sessionId)) continue;
         if (deps.store.latestUnresolvedInterrupt(sessionId)) continue;
         if (!isAgentLoopOutputReady(sessionId)) continue;
         return sessionId;
@@ -181,6 +184,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
     },
     runReadyAgentLoopSession(sessionId) {
       assertOpenSession(deps.store, sessionId);
+      if (agentLoopInterruptedSessions.has(sessionId)) return;
       if (deps.store.latestUnresolvedInterrupt(sessionId)) return;
       if (!isAgentLoopOutputReady(sessionId)) return;
       return deps.runAgentLoop?.(sessionId);
@@ -190,6 +194,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       const inserted = deps.store.insertEvent(event);
       if (!inserted.inserted) return;
       if (event.kind === "audio.transcript.final" || event.kind === "text.final") {
+        agentLoopInterruptedSessions.delete(event.sessionId);
         const text = payloadText(event.payload);
         if (!text) return;
         const segment = deps.store.insertSegment({
@@ -239,6 +244,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       if (batch.inputs.length === 0) return;
       let shouldRunAgentLoop = false;
       const commit = () => {
+        const blockedEpoch = agentLoopInterruptedSessions.get(batch.sessionId);
+        if (blockedEpoch === undefined || batch.interruptEpoch >= blockedEpoch) {
+          agentLoopInterruptedSessions.delete(batch.sessionId);
+        }
         const ordered = [...batch.inputs].sort((a, b) => a.sequence - b.sequence);
         for (const item of ordered) {
           const event = deps.store.insertEvent({
@@ -422,8 +431,11 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         outputId: output.outputId
       });
     },
-    interruptAgentLoop(sessionId) {
+    interruptAgentLoop(sessionId, input) {
       assertOpenSession(deps.store, sessionId);
+      const interruptEpoch = typeof input?.interruptEpoch === "number" ? input.interruptEpoch : Number.MAX_SAFE_INTEGER;
+      const currentEpoch = agentLoopInterruptedSessions.get(sessionId);
+      agentLoopInterruptedSessions.set(sessionId, Math.max(currentEpoch ?? 0, interruptEpoch));
       readyAgentLoopSessions.delete(sessionId);
       deps.interruptAgentLoop?.(sessionId, "");
     },
@@ -559,6 +571,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   return runtime;
 
   function markAgentLoopReady(sessionId: string, delayMs = 0): void {
+    if (agentLoopInterruptedSessions.has(sessionId)) return;
     readyAgentLoopSessions.set(sessionId, deps.time.now().epochMs + delayMs);
   }
 

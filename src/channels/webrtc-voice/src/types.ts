@@ -177,7 +177,7 @@ export type WebRtcVoiceTalkRuntime = {
   markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
   interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
   interruptLatestOutput?(input: { sessionId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
-  interruptAgentLoop?(sessionId: string, reason?: string): void | Promise<void>;
+  interruptAgentLoop?(sessionId: string, input?: { reason?: string; interruptEpoch?: number }): void | Promise<void>;
 };
 
 export type WebRtcVoiceDeps = {
@@ -230,6 +230,7 @@ export type InterruptItem = {
   stableInputText?: string;
   sequence: number;
   runtimeInterruptPromise?: Promise<void>;
+  stableInputTimeout?: NodeJS.Timeout;
 };
 
 export type TtsTask = {
@@ -332,6 +333,7 @@ export type WebRtcVoiceCall = {
   talkRuntimeIngressStatus: "todo" | "connected";
   acceptIceCandidate(candidate: unknown): Promise<void>;
   acceptInboundAudioChunk(bytes: Uint8Array, timing?: InboundAudioStreamChunkFrame["timing"]): Promise<AsrInboundStreamAcceptResult | undefined>;
+  acceptTextDraft?(text: string): Promise<void>;
   acceptTextInput?(text: string): Promise<void>;
   endInboundAudio(): Promise<AsrInboundStreamAcceptResult | undefined>;
   setSpeechActive(active: boolean): Promise<void>;

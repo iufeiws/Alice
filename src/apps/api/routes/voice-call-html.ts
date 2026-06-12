@@ -901,6 +901,7 @@ export function renderVoiceCallHtml(): string {
       if (text.length <= 1) {
         return;
       }
+      sendSignal({ type: "text-draft", text });
       if (textInputInterruptSent) return;
       textInputInterruptSent = true;
       sendSignal({ type: "interrupt", reason: "manual" });

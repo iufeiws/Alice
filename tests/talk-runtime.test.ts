@@ -481,6 +481,52 @@ test("talk runtime commits stable input batch in interrupt order", () => {
   assert.deepEqual(loops, ["session-stable-batch"]);
 });
 
+test("talk runtime keeps agent loop blocked when a stale stable batch commits after a newer interrupt", () => {
+  const loops: string[] = [];
+  const runtime = createTestRuntime("stale-stable-after-interrupt", (sessionId) => {
+    loops.push(sessionId);
+  });
+
+  runtime.openSession(sessionInput("session-stale-stable"));
+  runtime.interruptAgentLoop("session-stale-stable", { reason: "barge_in", interruptEpoch: 2 });
+
+  runtime.commitStableInputBatch({
+    sessionId: "session-stale-stable",
+    batchId: "batch-old",
+    interruptEpoch: 1,
+    inputs: [{
+      interruptId: "interrupt-old",
+      sequence: 1,
+      reason: "barge_in",
+      text: "上一轮已经结束的输入",
+      occurredAt: "2026-06-07T00:00:01.000",
+      occurredAtUtc: "2026-06-06T15:00:01.000Z"
+    }]
+  });
+
+  assert.equal(runtime.claimReadyAgentLoopSession(), undefined);
+  runtime.runReadyAgentLoopSession("session-stale-stable");
+  assert.deepEqual(loops, []);
+
+  runtime.commitStableInputBatch({
+    sessionId: "session-stale-stable",
+    batchId: "batch-new",
+    interruptEpoch: 2,
+    inputs: [{
+      interruptId: "interrupt-new",
+      sequence: 2,
+      reason: "barge_in",
+      text: "新的打断输入",
+      occurredAt: "2026-06-07T00:00:02.000",
+      occurredAtUtc: "2026-06-06T15:00:02.000Z"
+    }]
+  });
+
+  assert.equal(runtime.claimReadyAgentLoopSession(), "session-stale-stable");
+  runtime.runReadyAgentLoopSession("session-stale-stable");
+  assert.deepEqual(loops, ["session-stale-stable"]);
+});
+
 test("talk runtime notifies agent loop interrupt when assistant output is interrupted", () => {
   const interrupted: string[] = [];
   const runtime = createTestRuntime("interrupt-agent", undefined, (sessionId, outputId) => {

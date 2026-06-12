@@ -34,6 +34,7 @@ export type VoiceCallControlMessage =
   | { type: "hold-to-talk"; active: boolean }
   | { type: "mute"; muted: boolean }
   | { type: "wait"; active: boolean }
+  | { type: "text-draft"; text: string }
   | { type: "text-input"; text: string }
   | { type: "interrupt"; reason?: "manual" | "barge_in" }
   | { type: "ping" }

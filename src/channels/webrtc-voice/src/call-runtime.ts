@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../../asr/src/index.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type {
@@ -27,7 +25,6 @@ import {
 const frontendPlaybackIdleAckDelayMs = 250;
 const frontendPlaybackIdleAckTimeoutMs = 2_500;
 const voiceCallStableSettleWindowMs = 3_000;
-const voiceCallFillerDir = path.resolve(process.cwd(), "assets", "voice-call");
 
 export async function createCallState(
   input: CreateWebRtcVoiceCallInput,
@@ -110,32 +107,7 @@ export async function createCallState(
     });
   const enqueueRandomFiller = async (items: ReadonlyArray<{ reason: string; interruptEpoch: number }>) => {
     if (closed || !items.some((item) => item.reason !== "call_close")) return;
-    const asset = selectRandomVoiceCallFillerAsset();
-    if (!asset) {
-      deps.emitStatus?.({ state: "voice_call.filler_skipped", detail: "no_assets" });
-      return;
-    }
-    const itemId = `filler:${input.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
-    const createdAt = (deps.now?.() ?? new Date()).toISOString();
-    const interruptEpoch = Math.max(...items.map((item) => item.interruptEpoch));
-    if (closed) return;
-    try {
-      await outboundTrack.enqueueAudioFile!({
-        itemId,
-        outputId: `filler:${input.callId}:${interruptEpoch}`,
-        filePath: asset.filePath,
-        assetId: asset.assetId,
-        originalText: "",
-        speakText: asset.text,
-        text: asset.text,
-        createdAt,
-        interruptEpoch,
-        beforeFirstPlayback: true
-      });
-      deps.emitStatus?.({ state: "voice_call.filler_queued", detail: asset.assetId });
-    } catch (error) {
-      deps.emitStatus?.({ state: "voice_call.filler_failed", detail: error instanceof Error ? error.message : String(error) });
-    }
+    deps.emitStatus?.({ state: "voice_call.filler_skipped", detail: "disabled" });
   };
   const interruptController = createInterruptController({
     callId: input.callId,
@@ -536,6 +508,9 @@ export async function createCallState(
         }
       }, deps);
       handleAsrResult(result, deps);
+      if (result.ok && result.type === "partial") {
+        interruptController.extendPendingStableInputTimeout({ streamId: result.streamId });
+      }
       if (!result.ok && isRecoverableAsrError(result.error)) {
         await interruptController.runInterrupt("asr_failure");
         restartAsrStream(result.error);
@@ -547,10 +522,17 @@ export async function createCallState(
       const stableText = normalizeTypedInputText(text) || "-已撤回-";
       if (stableText === "-已撤回-" && interruptController.batch.items.length === 0) return;
       await (playback as unknown as { refresh?: () => Promise<void> }).refresh?.();
-      if (stableText !== "-已撤回-" && (playback.consumer.status === "playing" || playback.consumer.status === "queued")) {
+      const hasActiveTypedInterrupt = interruptController.hasPendingStableInput("manual");
+      if (!hasActiveTypedInterrupt && stableText !== "-已撤回-" && (playback.consumer.status === "playing" || playback.consumer.status === "queued")) {
         await interruptController.runInterrupt("manual");
       }
       await interruptController.markStableInput(stableText, "manual");
+    },
+    async acceptTextDraft(text) {
+      if (closed) return;
+      const draftText = normalizeTypedInputText(text);
+      if (!draftText) return;
+      interruptController.extendPendingStableInputTimeout({ reason: "manual" });
     },
     async endInboundAudio() {
       if (closed) return undefined;
@@ -915,34 +897,4 @@ function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return out;
-}
-
-function selectRandomVoiceCallFillerAsset(): { assetId: string; filePath: string; text: string } | undefined {
-  let files: string[];
-  try {
-    files = fs.readdirSync(voiceCallFillerDir)
-      .filter((file) => file.toLowerCase().endsWith(".wav"))
-      .sort();
-  } catch {
-    return undefined;
-  }
-  if (files.length === 0) return undefined;
-  const file = files[Math.floor(Math.random() * files.length)]!;
-  return {
-    assetId: `voice-call/${file}`,
-    filePath: path.join(voiceCallFillerDir, file),
-    text: readVoiceCallFillerText(path.join(voiceCallFillerDir, `${file}.json`)) ?? "voice call filler"
-  };
-}
-
-function readVoiceCallFillerText(metadataPath: string): string | undefined {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
-    const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
-    if (text) return text;
-    const speakText = typeof parsed.speakText === "string" ? parsed.speakText.trim() : "";
-    return speakText || undefined;
-  } catch {
-    return undefined;
-  }
 }

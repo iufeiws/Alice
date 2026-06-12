@@ -23,6 +23,7 @@ test("voice-call text input matches webrtc voice call typed interrupt behavior",
   assert.match(html, /if \(event\.key !== "Enter" \|\| event\.isComposing\) return;/);
   assert.doesNotMatch(html, /event\.shiftKey/);
   assert.match(html, /const payloadText = normalizeTypedInputText\(messageInput\.value\) \|\| "-已撤回-";/);
+  assert.match(html, /sendSignal\(\{ type: "text-draft", text \}\);/);
   assert.match(html, /sendSignal\(\{ type: "text-input", text: payloadText \}\);/);
   assert.match(html, /function normalizeTypedInputText\(text\)/);
   assert.match(html, /if \(text\.length <= 1\) \{/);

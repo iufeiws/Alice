@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type PlaybackItemSettled, type ServerAudioFrame, type ServerOutboundAudioTrack, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
+import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type PlaybackConsumerSnapshot, type PlaybackItemSettled, type ServerAudioFrame, type ServerOutboundAudioTrack, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
 import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../src/channels/asr/src/index.js";
 import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
@@ -65,6 +65,7 @@ test("WebRTC voice call page exposes signaling and remote audio playback shell",
   assert.doesNotMatch(html, /typedInputFinalIdleMs/);
   assert.doesNotMatch(html, /setTimeout\(\(\) => \{/);
   assert.match(html, /type: "interrupt", reason: "manual"/);
+  assert.match(html, /type: "text-draft", text/);
   assert.match(html, /type: "ping"/);
   assert.match(html, /message\.type === "pong"/);
   assert.match(html, /-已撤回-/);
@@ -1156,7 +1157,7 @@ test("WebRTC voice manual interrupt asks TalkRuntime to interrupt latest output 
   assert.deepEqual(ingestedKinds, []);
 });
 
-test("WebRTC voice queues a random voice-call filler after stable interrupt input is committed", async () => {
+test("WebRTC voice skips random voice-call filler after stable interrupt input is committed", async () => {
   const track = new ControlledQueueTrack();
   const batches: unknown[] = [];
   const statuses: Array<{ state: string; detail?: string }> = [];
@@ -1200,14 +1201,11 @@ test("WebRTC voice queues a random voice-call filler after stable interrupt inpu
 
   await call.acceptTextInput?.("はい");
 
-  await waitFor(() => track.enqueued.length === 1);
-  assert.equal(batches.length, 1);
+  await waitFor(() => batches.length === 1);
   assert.deepEqual(sleeps, [3_000]);
-  assert.match(track.enqueued[0]!.assetId, /^voice-call\/.+\.wav$/);
-  assert.match(track.enqueued[0]!.filePath, /assets\/voice-call\/.+\.wav$/);
-  assert.notEqual(track.enqueued[0]!.text, "voice call filler");
-  assert.equal(track.enqueued[0]!.outputId, "filler:call-filler-after-stable:1");
-  assert.equal(statuses.some((entry) => entry.state === "voice_call.filler_queued"), true);
+  assert.equal(track.enqueued.length, 0);
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.filler_skipped" && entry.detail === "disabled"), true);
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.filler_queued"), false);
   await call.close("test_done");
 });
 
@@ -1264,6 +1262,57 @@ test("WebRTC voice aggregates consecutive stable interrupt inputs within the set
     { interruptId: "runtime-interrupt-1", text: "first" },
     { interruptId: "runtime-interrupt-2", text: "second" }
   ]);
+});
+
+test("WebRTC voice commits noise for earlier pending interrupts when a later interrupt input finishes", async () => {
+  const batches: unknown[] = [];
+  const sleeps: Array<{ ms: number; resolve(): void }> = [];
+  let interruptCount = 0;
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      ingestInput() {
+        throw new Error("settled interrupt input should be committed through a batch");
+      },
+      interruptLatestOutput() {
+        interruptCount += 1;
+        return { interruptId: `runtime-interrupt-${interruptCount}` };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    sleep: async (ms) => {
+      await new Promise<void>((resolve) => {
+        sleeps.push({ ms, resolve });
+      });
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-later-stable-fails-earlier", userId: "browser-later-stable-fails-earlier", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("second");
+
+  await waitFor(() => sleeps.length === 1);
+  sleeps[0]!.resolve();
+  await waitFor(() => batches.length === 1);
+
+  assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; reason: string; text: string }> }).inputs.map((input) => ({
+    interruptId: input.interruptId,
+    reason: input.reason,
+    text: input.text
+  })), [
+    { interruptId: "runtime-interrupt-1", reason: "asr_failure", text: "-杂音-" },
+    { interruptId: "runtime-interrupt-2", reason: "manual", text: "second" }
+  ]);
+  await call.close("test_done");
 });
 
 test("WebRTC voice barge-in before consumer has audio interrupts latest output", async () => {
@@ -2314,6 +2363,36 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
 });
 
+test("WebRTC voice ASR partial extends active stream interrupt timeout", async () => {
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const asr = new FakeAsrSession([
+    { ok: true, type: "partial", streamId: "asr-call-barge-partial-0", text: "もし", stable: false }
+  ]);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => asr,
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      ingestInput() {},
+      interruptLatestOutput() {
+        return { interruptId: "runtime-interrupt-barge-partial" };
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-barge-partial", userId: "browser-barge-partial", offerSdp: "offer" });
+  await call.setSpeechActive(true);
+  await call.acceptInboundAudioChunk(new Uint8Array([1, 2]), { startMs: 0, endMs: 100, durationMs: 100 });
+
+  assert.equal(statuses.some((entry) => entry.state === "asr.partial" && entry.detail === "もし"), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_input_timeout_extended" && entry.detail === "runtime-interrupt-barge-partial"), true);
+});
+
 test("WebRTC voice commits typed final text into the active manual interrupt batch", async () => {
   const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
   const batches: unknown[] = [];
@@ -2350,6 +2429,93 @@ test("WebRTC voice commits typed final text into the active manual interrupt bat
     text: input.text,
     asrStreamId: input.asrStreamId
   })), [{ reason: "manual", text: "typed final", asrStreamId: "asr-call-typed-batch-0" }]);
+});
+
+test("WebRTC voice finalizes active typed interrupt without creating a second interrupt while remote playback still reports playing", async () => {
+  const track = new RemotePlayingQueueTrack({
+    outputId: "typed-output",
+    playbackTextCache: "assistant still playing",
+    playedMs: 10,
+    totalMs: 100,
+    status: "playing"
+  });
+  const interrupts: string[] = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => ({
+      async createAnswer() {
+        return "answer";
+      },
+      async createOutboundAudioTrack() {
+        return track;
+      },
+      close() {}
+    }),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("typed final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptOutput(input) {
+        interrupts.push(input.outputId);
+        return { interruptId: `runtime-interrupt-${interrupts.length}` };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    sleep: async () => {}
+  });
+
+  const call = await plugin.createCall({ callId: "call-typed-stream-playing", userId: "browser-typed-stream-playing", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextInput?.("typed final");
+
+  assert.deepEqual(interrupts, ["typed-output"]);
+  await waitFor(() => batches.length === 1);
+  assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; reason: string; text: string }> }).inputs.map((input) => ({
+    interruptId: input.interruptId,
+    reason: input.reason,
+    text: input.text
+  })), [{ interruptId: "runtime-interrupt-1", reason: "manual", text: "typed final" }]);
+});
+
+test("WebRTC voice text draft extends active typed interrupt timeout without committing input", async () => {
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const batches: unknown[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      closeSession() {},
+      ingestInput() {
+        throw new Error("draft text should not be ingested");
+      },
+      interruptLatestOutput() {
+        return { interruptId: "runtime-interrupt-draft" };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+
+  const call = await plugin.createCall({ callId: "call-typed-draft", userId: "browser-typed-draft", offerSdp: "offer" });
+  await call.interrupt("manual");
+  await call.acceptTextDraft?.("draft text");
+
+  assert.equal(batches.length, 0);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_input_timeout_extended" && entry.detail === "runtime-interrupt-draft"), true);
 });
 
 test("WebRTC voice closes an active manual interrupt batch when typed input is withdrawn", async () => {
@@ -3169,6 +3335,16 @@ class ControlledQueueTrack implements ServerOutboundAudioTrack {
 
   stop() {
     this.stopped = true;
+  }
+}
+
+class RemotePlayingQueueTrack extends ControlledQueueTrack {
+  constructor(private readonly snapshot: PlaybackConsumerSnapshot) {
+    super();
+  }
+
+  getCurrentPlayback() {
+    return this.snapshot;
   }
 }
 

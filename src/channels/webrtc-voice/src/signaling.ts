@@ -71,6 +71,8 @@ export function attachWebRtcVoiceSignalingServer(input: {
               await call?.setSpeechActive(Boolean((message as { active?: unknown }).active));
             } else if (message.type === "hold-to-talk") {
               await call?.setSpeechActive(Boolean((message as { active?: unknown }).active));
+            } else if (message.type === "text-draft") {
+              if (typeof message.text === "string") await call?.acceptTextDraft?.(message.text);
             } else if (message.type === "text-input") {
               if (typeof message.text === "string") await call?.acceptTextInput?.(message.text);
             } else if (message.type === "audio-chunk") {

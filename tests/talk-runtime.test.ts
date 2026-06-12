@@ -92,7 +92,7 @@ test("talk runtime uses created LLM session id and rejects stale session writes"
     occurredAtUtc: "2026-06-06T15:00:01.000Z",
     payload: { kind: "text", text: "fresh id" }
   });
-  assert.deepEqual(runtime.buildNextLoopMessages(opened.sessionId), [{ role: "user", content: "fresh id" }]);
+  assert.deepEqual(runtime.buildNextLoopMessagePatch(opened.sessionId).messages, [{ role: "user", content: "fresh id" }]);
 });
 
 test("talk runtime keeps parenthesized output in storage but out of TTS chunks across deltas", () => {
@@ -163,7 +163,7 @@ test("talk runtime uses voice breakpoint context instead of elapsed ratio", () =
     breakpointContext: { beforeText: "你说撤就撤了" }
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-explicit-breakpoint"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-explicit-breakpoint").messages, [
     { role: "assistant", content: "那些宫女太监，你说撤就撤了..." }
   ]);
 });
@@ -191,7 +191,7 @@ test("talk runtime resolves breakpoint from playback text context", () => {
     }
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-context-breakpoint"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-context-breakpoint").messages, [
     { role: "assistant", content: "第一段重复内容。第二段重复..." }
   ]);
 });
@@ -221,7 +221,7 @@ test("talk runtime resolves logged voice context across whitespace and ellipsis 
 
   assert.equal(runtime.store.getOutput("output-normalized-breakpoint")?.fullText, "——喂喂喂！老板！？\n\n是老板吧！？\n\n这个点打电话过来…");
   assert.equal(runtime.store.getDiscard(interrupt.discardId!)?.discardedText, "…等等现在几点了！？");
-  assert.deepEqual(runtime.buildNextLoopMessages("session-normalized-breakpoint"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-normalized-breakpoint").messages, [
     { role: "assistant", content: "——喂喂喂！老板！？\n\n是老板吧！？\n\n这个点打电话过来…" + "..." }
   ]);
 });
@@ -249,7 +249,7 @@ test("talk runtime ignores whitespace differences while resolving voice context"
     breakpointContext: { beforeText: "第一句。第二句继续说。" }
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-whitespace-breakpoint"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-whitespace-breakpoint").messages, [
     { role: "assistant", content: "第一句。\n\n第二句继续说。..." }
   ]);
 });
@@ -275,7 +275,7 @@ test("talk runtime resolves breakpoint context across omitted parenthesized text
     breakpointContext: { beforeText: "你好", afterText: "世界。" }
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-context-parenthesized-breakpoint"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-context-parenthesized-breakpoint").messages, [
     { role: "assistant", content: "你好..." }
   ]);
 });
@@ -308,7 +308,7 @@ test("talk runtime builds next loop messages with default break marker, not lite
     payload: { kind: "transcript", text: "我想先问一个问题" }
   });
 
-  const messages = runtime.buildNextLoopMessages("session-messages");
+  const messages = runtime.buildNextLoopMessagePatch("session-messages").messages;
   assert.deepEqual(messages.slice(-2), [
     { role: "assistant", content: "我刚才说到..." },
     { role: "user", content: "我想先问一个问题" }
@@ -412,7 +412,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
   assert.equal(runtime.claimReadyAgentLoopSession(), "session-interrupt-gate");
   runtime.runReadyAgentLoopSession("session-interrupt-gate");
   assert.deepEqual(loops, ["session-interrupt-gate"]);
-  assert.deepEqual(runtime.buildNextLoopMessages("session-interrupt-gate").slice(-2), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-interrupt-gate").messages.slice(-2), [
     { role: "assistant", content: "那些宫女太监，你说撤就撤了..." },
     { role: "user", content: "Hello,爱丽丝, hello hello hello." }
   ]);
@@ -469,7 +469,7 @@ test("talk runtime commits stable input batch in interrupt order", () => {
     ]
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-stable-batch").slice(-3), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-stable-batch").messages.slice(-3), [
     { role: "assistant", content: "第一段..." },
     { role: "user", content: "第一次输入" },
     { role: "user", content: "第二次输入" }
@@ -584,7 +584,7 @@ test("talk runtime cancels later assistant outputs when an earlier playback outp
 
   assert.equal(runtime.store.getOutput("output-later")?.status, "cancelled");
   assert.equal(runtime.store.listChunks("output-later").every((chunk) => chunk.status === "cancelled"), true);
-  assert.deepEqual(runtime.buildNextLoopMessages("session-cancel-later"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-cancel-later").messages, [
     { role: "assistant", content: "第一段正在播放..." }
   ]);
   assert.deepEqual(runtime.store.listTranscriptEntries("session-cancel-later").map((entry) => `${entry.role}:${entry.contentText}`), [
@@ -654,7 +654,7 @@ test("talk runtime omits the queued next assistant output when interrupt happens
   assert.equal(runtime.store.getOutput("output-17")?.fullText, "");
   assert.ok(interrupt.discardId);
   assert.equal(runtime.store.getDiscard(interrupt.discardId)?.discardedText, "第二段已经生成但还没有开始播放。");
-  assert.deepEqual(runtime.buildNextLoopMessages("session-between-segments"), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-between-segments").messages, [
     { role: "assistant", content: "第一段已经完整播放。" }
   ]);
 
@@ -668,7 +668,7 @@ test("talk runtime omits the queued next assistant output when interrupt happens
     payload: { kind: "transcript", text: "只有一半吗？只有" }
   });
 
-  assert.deepEqual(runtime.buildNextLoopMessages("session-between-segments").slice(-2), [
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-between-segments").messages.slice(-2), [
     { role: "assistant", content: "第一段已经完整播放。" },
     { role: "user", content: "只有一半吗？只有" }
   ]);

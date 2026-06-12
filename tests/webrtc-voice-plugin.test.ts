@@ -943,7 +943,7 @@ test("WebRTC voice uses injected TalkRuntime for session open, final transcript,
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open" && entry.detail === "webrtc_voice:call-talk-runtime"), true);
 
   await call.endInboundAudio();
-  assert.deepEqual(talkRuntime.buildNextLoopMessages(call.talkSessionId), [
+  assert.deepEqual(talkRuntime.buildNextLoopMessagePatch(call.talkSessionId).messages, [
     { role: "user", content: "もしもし" }
   ]);
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress" && entry.detail === "audio.transcript.final: もしもし"), true);

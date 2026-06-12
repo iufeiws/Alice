@@ -29,6 +29,7 @@ export function createActiveLLMSessionRuntime(input: {
     rewriteActiveTalkLLMSessionFromRuntime,
     isActiveTalkLLMSession,
     updateActiveLLMSessionTranscript,
+    updateActiveTalkLLMSessionTranscript,
     clearActiveLLMSession,
     getActiveLLMSessionSnapshot,
     loadActiveLLMSessionTranscript,
@@ -232,6 +233,40 @@ export function createActiveLLMSessionRuntime(input: {
     session.waitChatStartedAt = nextWaitChatStartedAt;
     if (delta.length > 0) input.archive.appendMessages(session, delta);
     if (delta.length > 0 || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
+  }
+
+  function updateActiveTalkLLMSessionTranscript(sessionInput: LLMSessionSnapshot): void {
+    const current = input.time.now();
+    const now = current.iso;
+    const nowUtc = current.date.toISOString();
+    const session = ensureActiveLLMSession(now, "talk");
+    const previousMessages = session.messages;
+    session.updatedAt = now;
+    session.updatedAtUtc = nowUtc;
+    session.messages = cloneLLMMessages(sessionInput.messages);
+    session.staticPromptFingerprint = sessionInput.staticPromptFingerprint;
+    session.staticPromptMessageCount = sessionInput.staticPromptMessageCount;
+    session.requestTimestamps = sessionInput.requestTimestamps ?? session.requestTimestamps ?? [];
+    session.lastTotalTokens = sessionInput.lastTotalTokens;
+    session.lastInputTokens = sessionInput.lastInputTokens;
+    session.lastUsageModel = sessionInput.lastUsageModel;
+    session.tokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines);
+    session.mode = sessionInput.mode ?? "normal";
+    session.modeStaticMessages = sessionInput.modeStaticMessages ?? [];
+    session.modeStaticTokenEstimate = sessionInput.modeStaticTokenEstimate ?? 0;
+    session.modeStartedAt = sessionInput.modeStartedAt;
+    session.modeExpiresAt = sessionInput.modeExpiresAt;
+    session.fixedPrefixKind = sessionInput.fixedPrefixKind;
+    session.fixedPrefixCursorMessageId = sessionInput.fixedPrefixCursorMessageId;
+    session.waitChatStartedAt = sessionInput.waitChatStartedAt;
+    if (commonMessagePrefixLength(previousMessages, session.messages) === previousMessages.length) {
+      const delta = session.messages.slice(previousMessages.length);
+      if (delta.length > 0) input.archive.appendMessages(session, delta);
+      input.archive.writeMetadata(session);
+      return;
+    }
+    input.archive.writeFile(session);
+    input.archive.writeMetadata(session);
   }
 
   function clearActiveLLMSession(reason: LLMSessionClearReason): void {

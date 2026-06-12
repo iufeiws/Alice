@@ -10,6 +10,7 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
   let pendingChars = defaultTalkOutputReadyChars;
   let sleepCalls = 0;
   let sendCalls = 0;
+  let activeSession: any;
   const sentMessages: unknown[][] = [];
   const finishedOutputs: string[] = [];
   const logs: Array<{ level: string; message: string }> = [];
@@ -28,7 +29,12 @@ test("talk loop waits for voice output backpressure and runs one LLM round per l
     getAppearanceDescription: () => undefined,
     memoryStore: { read: () => undefined },
     diaryStore: { latestWakeBoundary: () => undefined },
-    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
     visibleToolNames: () => [],
     toolPlugins: [],
     getLLMConfig: () => ({
@@ -66,6 +72,7 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
   let foregroundIdle = false;
   let sleepCalls = 0;
   let sendCalls = 0;
+  let activeSession: any;
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
@@ -82,7 +89,12 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
     getAppearanceDescription: () => undefined,
     memoryStore: { read: () => undefined },
     diaryStore: { latestWakeBoundary: () => undefined },
-    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
     visibleToolNames: () => [],
     toolPlugins: [],
     getLLMConfig: () => ({
@@ -113,6 +125,7 @@ test("talk loop waits for foreground playback idle even when voice buffer is emp
 
 test("talk tool-call followup runs in the same function-call loop", async () => {
   let sendCalls = 0;
+  let activeSession: any;
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
@@ -129,7 +142,12 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
     getAppearanceDescription: () => undefined,
     memoryStore: { read: () => undefined },
     diaryStore: { latestWakeBoundary: () => undefined },
-    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
     visibleToolNames: () => ["test_tool"],
     toolPlugins: [{
       id: "test",
@@ -178,6 +196,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
 
 test("talk send_chat tool-call executes through the common tool plugin path", async () => {
   let sendCalls = 0;
+  let activeSession: any;
   const executedCalls: unknown[] = [];
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
@@ -195,7 +214,12 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
     getAppearanceDescription: () => undefined,
     memoryStore: { read: () => undefined },
     diaryStore: { latestWakeBoundary: () => undefined },
-    buildNextLoopMessages: () => [{ role: "user", content: "send a message" }],
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "send a message" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
     visibleToolNames: () => ["send_chat"],
     toolPlugins: [{
       id: "messaging",
@@ -248,8 +272,82 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });
 
+test("talk loop reuses active session prefix and replaces runtime transcript tail", async () => {
+  let promptBuildCalls = 0;
+  let prefixCount: number | undefined;
+  let activeSession: any = {
+    messages: [
+      { role: "system", content: "fixed talk prefix" },
+      { role: "user", content: "old runtime input" },
+      { role: "assistant", content: "old runtime output" }
+    ],
+    staticPromptMessageCount: 1,
+    requestTimestamps: [],
+    mode: "normal"
+  };
+  const sentMessages: unknown[][] = [];
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-patch",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => {
+      promptBuildCalls += 1;
+      return ({ ...defaultPromptProfile(), layers: [{ id: "unused", role: "system", content: "rebuilt" }], appendLayers: [] }) as any;
+    },
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    setLoopPrefixMessageCount: (_sessionId, count) => {
+      prefixCount = count;
+    },
+    buildNextLoopMessagePatch: () => ({
+      replaceFrom: prefixCount ?? 0,
+      messages: [{ role: "user", content: "new runtime input" }]
+    }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    visibleToolNames: () => [],
+    toolPlugins: [],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
+      return { message: { role: "assistant", content: "new reply" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-patch");
+
+  assert.equal(promptBuildCalls, 1);
+  assert.equal(prefixCount, 1);
+  assert.deepEqual(sentMessages[0], [
+    { role: "system", content: "fixed talk prefix", toolCalls: undefined },
+    { role: "user", content: "new runtime input", toolCalls: undefined }
+  ]);
+  assert.deepEqual(activeSession.messages, [
+    { role: "system", content: "fixed talk prefix", toolCalls: undefined },
+    { role: "user", content: "new runtime input", toolCalls: undefined },
+    { role: "assistant", content: "new reply", reasoningContent: undefined }
+  ]);
+});
+
 test("talk loop logs llm cancellation without error severity", async () => {
   const logs: Array<{ level: string; message: string }> = [];
+  let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getActiveTalkLLMSessionId: () => "session-cancel",
@@ -265,7 +363,12 @@ test("talk loop logs llm cancellation without error severity", async () => {
     getAppearanceDescription: () => undefined,
     memoryStore: { read: () => undefined },
     diaryStore: { latestWakeBoundary: () => undefined },
-    buildNextLoopMessages: () => [{ role: "user", content: "hello" }],
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
     visibleToolNames: () => [],
     toolPlugins: [],
     getLLMConfig: () => ({

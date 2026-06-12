@@ -45,7 +45,13 @@ export type TalkRuntime = {
     breakMarker?: string;
   }): TalkOutputInterrupt | undefined;
   interruptAgentLoop(sessionId: string, input?: { reason?: string; interruptEpoch?: number }): void;
-  buildNextLoopMessages(sessionId: string): LLMMessage[];
+  setLoopPrefixMessageCount(sessionId: string, count: number): void;
+  buildNextLoopMessagePatch(sessionId: string): TalkLoopMessagePatch;
+};
+
+export type TalkLoopMessagePatch = {
+  replaceFrom: number;
+  messages: LLMMessage[];
 };
 
 export type TalkSessionOpenInput = {
@@ -103,6 +109,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const readyAgentLoopSessions = new Map<string, number>();
   const foregroundPlaybackPendingSessions = new Set<string>();
   const agentLoopInterruptedSessions = new Map<string, number>();
+  const loopPrefixMessageCounts = new Map<string, number>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -123,6 +130,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         occurredAtUtc,
         metadata: input.metadata
       });
+      loopPrefixMessageCounts.set(sessionId, 0);
       deps.store.insertEvent({
         kind: "session.started",
         sessionId,
@@ -156,6 +164,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc
       });
       foregroundPlaybackPendingSessions.delete(input.sessionId);
+      loopPrefixMessageCounts.delete(input.sessionId);
       recordTranscriptEnd(deps.store, {
         sessionId: input.sessionId,
         occurredAt: input.occurredAt ?? now.occurredAt,
@@ -543,7 +552,11 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       void deps.interruptAgentLoop?.(input.sessionId, input.outputId);
       return interrupt;
     },
-    buildNextLoopMessages(sessionId) {
+    setLoopPrefixMessageCount(sessionId, count) {
+      assertSessionExists(deps.store, sessionId);
+      loopPrefixMessageCounts.set(sessionId, Math.max(0, count));
+    },
+    buildNextLoopMessagePatch(sessionId) {
       assertSessionExists(deps.store, sessionId);
       const latestInterrupt = deps.store.latestUnresolvedInterrupt(sessionId);
       const segments = deps.store.listSegments(sessionId).filter((segment) => segment.kind !== "interrupt");
@@ -564,7 +577,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         }
         messages.push({ role: segment.role, content: segment.contentText });
       }
-      return messages;
+      if (messages.length === 0) {
+        messages.push({
+          role: "user" as const,
+          content: "A realtime voice call has just connected. Start with a short, natural voice greeting."
+        });
+      }
+      return {
+        replaceFrom: loopPrefixMessageCounts.get(sessionId) ?? 0,
+        messages
+      };
     }
   };
 

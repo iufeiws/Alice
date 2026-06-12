@@ -44,6 +44,8 @@ export function createApiAgentRuntime(input: {
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     createLLMSession: (occurredAt) => input.activeLLMSessionRuntime.createTalkLLMSession(occurredAt).id,
+    loadActiveTalkLLMSessionTranscript: () => input.activeLLMSessionRuntime.loadActiveLLMSessionTranscript(),
+    updateActiveTalkLLMSessionTranscript: (session) => input.activeLLMSessionRuntime.updateActiveTalkLLMSessionTranscript(session),
     rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.activeLLMSessionRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),
     conversationStore: input.conversationStore,
     agentState: input.agentState,

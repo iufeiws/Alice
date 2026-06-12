@@ -20,6 +20,8 @@ export function createTalkRuntimeRuntime(input: {
   getLLMConfig(): any;
   sendRequest(input: any): Promise<any>;
   createLLMSession(occurredAt: string): number;
+  loadActiveTalkLLMSessionTranscript(): any;
+  updateActiveTalkLLMSessionTranscript(session: any): void;
   rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
   conversationStore: Pick<AliceStore, "upsertInboundMessage">;
   agentState?: { setState(state: "calling" | "waiting", options?: { reason?: string }): unknown };
@@ -44,9 +46,14 @@ export function createTalkRuntimeRuntime(input: {
     getAppearanceDescription: input.getAppearanceDescription,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
-    buildNextLoopMessages(sessionId) {
-      return talkRuntime.buildNextLoopMessages(sessionId);
+    setLoopPrefixMessageCount(sessionId, count) {
+      talkRuntime.setLoopPrefixMessageCount(sessionId, count);
     },
+    buildNextLoopMessagePatch(sessionId) {
+      return talkRuntime.buildNextLoopMessagePatch(sessionId);
+    },
+    loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
+    updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,
     visibleToolNames: input.visibleToolNames,
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,

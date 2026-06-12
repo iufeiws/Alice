@@ -25,11 +25,14 @@ type TalkAgentLoopLLMConfig = {
 };
 
 type TalkAgentLoopState = {
-  promptMessages: LLMMessage[];
-  initialTalkMessages: LLMMessage[];
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
   executeToolCall(call: LLMToolCall): Promise<string>;
+};
+
+type TalkLoopMessagePatch = {
+  replaceFrom: number;
+  messages: LLMMessage[];
 };
 
 type TalkAgentLoopDeps = {
@@ -47,7 +50,28 @@ type TalkAgentLoopDeps = {
   getAppearanceDescription(): string | undefined;
   memoryStore: { read(): PromptRenderContext["memory"] };
   diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
-  buildNextLoopMessages(sessionId: string): Promise<LLMMessage[]> | LLMMessage[];
+  setLoopPrefixMessageCount(sessionId: string, count: number): void;
+  buildNextLoopMessagePatch(sessionId: string): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
+  loadActiveTalkLLMSessionTranscript(): {
+    messages: LLMMessage[];
+    staticPromptFingerprint?: string;
+    staticPromptMessageCount?: number;
+    requestTimestamps?: string[];
+    lastTotalTokens?: number;
+    lastInputTokens?: number;
+    lastUsageModel?: string;
+    mode?: string;
+  } | undefined;
+  updateActiveTalkLLMSessionTranscript(session: {
+    messages: LLMMessage[];
+    staticPromptFingerprint?: string;
+    staticPromptMessageCount?: number;
+    requestTimestamps?: string[];
+    lastTotalTokens?: number;
+    lastInputTokens?: number;
+    lastUsageModel?: string;
+    mode?: string;
+  }): void;
   maxPendingVoiceOutputChars?: number;
   visibleToolNames(profile: PromptProfile): string[];
   toolPlugins: readonly ToolPlugin[];
@@ -86,18 +110,13 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     activeTalkAgentLoopControllers.set(sessionId, controller);
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
-      const { promptMessages, initialTalkMessages, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
-      activeTalkConversationStartIndexes.set(sessionId, promptMessages.length);
-      const messages: LLMMessage[] = [
-        ...promptMessages,
-        ...initialTalkMessages
-      ];
+      const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
       const config = deps.getLLMConfig();
       const guard = await waitForTalkLoopRound(sessionId, 0, controller);
       if (!guard.continue) return;
       const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
       const spec: AgentLoopExecutionSpec = {
-        initialMessages: messages,
+        initialMessages: session.messages,
         limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
         buildRequest({ round, messages }) {
           const outputId = `talk:${sessionId}:${Date.now()}:${round}`;
@@ -146,7 +165,9 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           }
         }
       };
-      await runAgentLoopExecutionSpec(spec);
+      const result = await runAgentLoopExecutionSpec(spec);
+      session.messages = result.messages;
+      deps.updateActiveTalkLLMSessionTranscript(session);
     } catch (error) {
       if (controller.signal.aborted || isCancellationError(error)) {
         deps.log("info", `talk loop cancelled: session=${sessionId} reason=${error instanceof Error ? error.message : String(error)}`);
@@ -195,7 +216,16 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     }
   }
 
-  async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState> {
+  async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: {
+    messages: LLMMessage[];
+    staticPromptFingerprint?: string;
+    staticPromptMessageCount?: number;
+    requestTimestamps?: string[];
+    lastTotalTokens?: number;
+    lastInputTokens?: number;
+    lastUsageModel?: string;
+    mode?: string;
+  } }> {
     const profile = deps.getTalkPromptProfile();
     const event = buildTalkAgentEvent(sessionId, deps.time);
     const context = {
@@ -209,15 +239,32 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     };
     const variables = promptVariables(profile, context);
     const runPromptTool = async (_layer: unknown, call: ToolCall) => executeTalkToolCall(context.event, call, variables);
-    const promptMessages: LLMMessage[] = await buildPromptMessagesWithToolResults(profile, context, runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]);
-    const talkMessages = await Promise.resolve(deps.buildNextLoopMessages(sessionId));
-    const initialTalkMessages = talkMessages.length ? talkMessages : [{
-      role: "user" as const,
-      content: "A realtime voice call has just connected. Start with a short, natural voice greeting."
-    }];
+    let session = deps.loadActiveTalkLLMSessionTranscript();
+    if (!session || session.messages.length === 0) {
+      const promptMessages: LLMMessage[] = await buildPromptMessagesWithToolResults(profile, context, runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]);
+      session = {
+        messages: promptMessages,
+        staticPromptFingerprint: "talk",
+        staticPromptMessageCount: promptMessages.length,
+        requestTimestamps: [],
+        mode: "normal"
+      };
+      deps.updateActiveTalkLLMSessionTranscript(session);
+    }
+    const prefixMessageCount = session.staticPromptMessageCount ?? session.messages.length;
+    activeTalkConversationStartIndexes.set(sessionId, prefixMessageCount);
+    deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
+    const patch = await Promise.resolve(deps.buildNextLoopMessagePatch(sessionId));
+    session = {
+      ...session,
+      messages: [
+        ...session.messages.slice(0, patch.replaceFrom),
+        ...patch.messages
+      ]
+    };
+    deps.updateActiveTalkLLMSessionTranscript(session);
     return {
-      promptMessages,
-      initialTalkMessages,
+      session,
       toolNames: deps.visibleToolNames(profile),
       toolVariables: variables,
       executeToolCall: (call: LLMToolCall) => executeTalkLLMToolCall(event, call)

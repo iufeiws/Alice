@@ -169,7 +169,7 @@ export type WebRtcVoiceTalkRuntime = {
       targetChunkId?: string;
     }>;
   }): void | Promise<void>;
-  startAgentLoop?(sessionId: string): void | Promise<void>;
+  markAgentLoopReady?(sessionId: string): void | Promise<void>;
   claimBufferedOutputText?(sessionId: string): unknown;
   claimReadyOutputChunk?(sessionId: string): unknown;
   isSessionOutputIdle?(sessionId: string): unknown;

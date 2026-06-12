@@ -41,7 +41,7 @@ export type MessageRuntimeDeps = {
   isLLMSessionActive?: () => boolean;
   agentLoopRuntime?: AgentLoopRuntime;
   talkRuntime?: {
-    startAgentLoop?(sessionId: string): void;
+    markAgentLoopReady?(sessionId: string): void;
     claimReadyAgentLoopSession?(): string | undefined;
     prepareReadyAgentLoopSession?(sessionId: string): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
   };
@@ -164,8 +164,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       },
       claimReadyTalkSession: () => deps.talkRuntime?.claimReadyAgentLoopSession?.(),
       runTalkSession: runTalkSession,
-      requeueTalkSession: (sessionId) => {
-        deps.talkRuntime?.startAgentLoop?.(sessionId);
+      markTalkSessionReady: (sessionId) => {
+        deps.talkRuntime?.markAgentLoopReady?.(sessionId);
       },
       getPendingSessionIds: () => [...pendingSessions],
       isProcessingSession: (sessionId) => processingSessions.has(sessionId),

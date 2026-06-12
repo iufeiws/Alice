@@ -20,7 +20,7 @@ export type AgentHeartbeatRunTaskDeps = {
   setAgentWaiting?(reason: string): void;
   claimReadyTalkSession?(): string | undefined;
   runTalkSession?(sessionId: string): Promise<boolean>;
-  requeueTalkSession?(sessionId: string): void;
+  markTalkSessionReady?(sessionId: string): void;
   getPendingSessionIds(): string[];
   isProcessingSession(sessionId: string): boolean;
   beginProcessingSession(sessionId: string): void;
@@ -134,7 +134,7 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: { fo
   const talkSessionId = !force && tasks.canRunHeartbeat() ? tasks.claimReadyTalkSession?.() : undefined;
   if (talkSessionId) {
     const started = await (tasks.runTalkSession?.(talkSessionId) ?? Promise.resolve(false));
-    if (!started) tasks.requeueTalkSession?.(talkSessionId);
+    if (!started) tasks.markTalkSessionReady?.(talkSessionId);
     if (started) processed += 1;
   }
 

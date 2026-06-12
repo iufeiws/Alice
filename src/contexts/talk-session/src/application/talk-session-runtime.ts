@@ -12,7 +12,7 @@ export type TalkRuntime = {
   store: TalkStore;
   openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
   closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
-  startAgentLoop(sessionId: string): void;
+  markAgentLoopReady(sessionId: string): void;
   claimReadyAgentLoopSession(): string | undefined;
   prepareReadyAgentLoopSession(sessionId: string): Promise<unknown> | unknown;
   ingestInput(event: TalkEvent): void;
@@ -174,7 +174,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       });
       deps.onSessionClosed?.(input.sessionId);
     },
-    startAgentLoop(sessionId) {
+    markAgentLoopReady(sessionId) {
       assertOpenSession(deps.store, sessionId);
       markAgentLoopReady(sessionId);
     },

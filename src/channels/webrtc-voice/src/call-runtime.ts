@@ -661,7 +661,7 @@ export async function createCallState(
     }
   };
 
-  void deps.talkRuntime?.startAgentLoop?.(talkSessionId);
+  void deps.talkRuntime?.markAgentLoopReady?.(talkSessionId);
   playback.startTextCacheStatus();
   if (deps.talkRuntime?.claimBufferedOutputText || deps.talkRuntime?.claimReadyOutputChunk) {
     deps.emitStatus?.({ state: "voice_call.waiting", detail: talkSessionId });

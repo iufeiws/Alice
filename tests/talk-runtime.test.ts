@@ -354,7 +354,7 @@ test("talk runtime drops stale ready while foreground playback is still pending"
   }, undefined, undefined, () => current);
 
   runtime.openSession(sessionInput("session-stale-ready"));
-  runtime.startAgentLoop("session-stale-ready");
+  runtime.markAgentLoopReady("session-stale-ready");
   runtime.appendAssistantDelta({ sessionId: "session-stale-ready", outputId: "output-stale-ready", delta: "第一句。" });
   assert.ok(runtime.claimBufferedOutputText("session-stale-ready"));
   runtime.finishAssistantOutput({ sessionId: "session-stale-ready", outputId: "output-stale-ready" });
@@ -395,7 +395,7 @@ test("talk runtime blocks output claim and next loop while waiting for final tra
   });
 
   assert.equal(runtime.claimBufferedOutputText("session-interrupt-gate"), undefined);
-  runtime.startAgentLoop("session-interrupt-gate");
+  runtime.markAgentLoopReady("session-interrupt-gate");
   assert.deepEqual(loops, []);
 
   runtime.ingestInput({

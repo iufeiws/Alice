@@ -115,7 +115,7 @@ test("WebRTC voice records talk timestamps with configured local time and UTC", 
       openSession(input) {
         opened.push(input);
       },
-      startAgentLoop() {}
+      markAgentLoopReady() {}
     }
   });
 
@@ -439,7 +439,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop(sessionId: string) {
+      markAgentLoopReady(sessionId: string) {
         startedLoops.push(sessionId);
       },
       claimReadyOutputChunk(sessionId: string) {
@@ -519,7 +519,7 @@ test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finish
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || sessionId !== chunk.sessionId) return undefined;
@@ -588,7 +588,7 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || sessionId !== chunk.sessionId) return undefined;
@@ -661,7 +661,7 @@ test("WebRTC voice does not synthesize later TalkRuntime chunks after current TT
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || sessionId !== chunk.sessionId) return undefined;
@@ -720,7 +720,7 @@ test("WebRTC voice feeds buffered TalkRuntime output into one TTS plugin stream"
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimBufferedOutputText(sessionId: string) {
         const output = outputs.shift();
         return output && output.sessionId === sessionId ? output : undefined;
@@ -774,7 +774,7 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimBufferedOutputText(sessionId: string) {
         const output = outputs.shift();
         return output && output.sessionId === sessionId ? output : undefined;
@@ -829,7 +829,7 @@ test("WebRTC voice waits for remote worker playback idle and frontend ACK before
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         if (claimed || sessionId !== "webrtc_voice:call-remote-idle") return undefined;
         claimed = true;
@@ -1389,7 +1389,7 @@ test("WebRTC voice continues claiming TalkRuntime output during interrupt handli
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || chunk.sessionId !== sessionId) return undefined;
@@ -1586,7 +1586,7 @@ test("WebRTC voice fails a chunk after repeated outbound write failures and cont
     talkRuntime: {
       openSession() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || chunk.sessionId !== sessionId) return undefined;
@@ -1641,7 +1641,7 @@ test("WebRTC voice closes the call and stops output pump when TTS cannot produce
     talkRuntime: {
       openSession() {},
       closeSession() {},
-      startAgentLoop() {},
+      markAgentLoopReady() {},
       claimReadyOutputChunk(sessionId: string) {
         const chunk = chunks.shift();
         if (!chunk || chunk.sessionId !== sessionId) return undefined;

@@ -69,6 +69,28 @@ test("agent loop runtime stores loop session state by kind", () => {
   assert.equal(runtime.getLoopSessionState("talk"), talkState);
 });
 
+test("agent loop runtime prepares and writes loop session context", async () => {
+  const runtime = createAgentLoopRuntime();
+  let transcript: any;
+  const prepared = await runtime.prepareSessionContext({
+    kind: "talk",
+    sessionId: "talk-context",
+    loadTranscript: () => transcript,
+    buildInitialMessages: () => [{ role: "system", content: "prefix" }],
+    buildMessagePatch: () => ({ replaceFrom: 1, messages: [{ role: "user", content: "voice turn" }] }),
+    updateTranscript(session) {
+      transcript = session;
+    }
+  });
+
+  assert.equal(prepared.prefixMessageCount, 1);
+  assert.deepEqual(transcript.messages, [
+    { role: "system", content: "prefix" },
+    { role: "user", content: "voice turn" }
+  ]);
+  assert.equal(transcript.staticPromptFingerprint, "talk");
+});
+
 test("agent loop runtime executes prepared chat runs before legacy runners", async () => {
   const runtime = createAgentLoopRuntime({
     runChat() {

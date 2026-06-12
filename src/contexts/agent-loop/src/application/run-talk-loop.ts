@@ -7,10 +7,15 @@ import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/a
 import { runChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
 import {
+  prepareAgentLoopSessionContext,
   runAgentFunctionCallLoop,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallToolExecution,
+  type AgentLoopMessagePatch,
+  type AgentLoopPreparedSessionContext,
+  type AgentLoopSessionContextInput,
+  type AgentLoopTranscriptSession,
   type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
 
@@ -36,10 +41,7 @@ type TalkAgentLoopState = {
   executeToolCall(call: LLMToolCall): Promise<string>;
 };
 
-type TalkLoopMessagePatch = {
-  replaceFrom: number;
-  messages: LLMMessage[];
-};
+type TalkLoopMessagePatch = AgentLoopMessagePatch;
 
 type TalkLoopRuntimeState = {
   activeLoops: Set<string>;
@@ -84,6 +86,7 @@ type TalkAgentLoopDeps = {
     lastUsageModel?: string;
     mode?: string;
   }): void;
+  prepareSessionContext?(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   maxPendingVoiceOutputChars?: number;
   visibleToolNames(profile: PromptProfile): string[];
   toolPlugins: readonly ToolPlugin[];
@@ -198,16 +201,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
 
   function buildTalkAgentLoopSpec(input: {
     sessionId: string;
-    session: {
-      messages: LLMMessage[];
-      staticPromptFingerprint?: string;
-      staticPromptMessageCount?: number;
-      requestTimestamps?: string[];
-      lastTotalTokens?: number;
-      lastInputTokens?: number;
-      lastUsageModel?: string;
-      mode?: string;
-    };
+    session: AgentLoopTranscriptSession;
     toolNames: string[];
     toolVariables: Record<string, unknown> | undefined;
     executeToolCall(call: LLMToolCall): Promise<string>;
@@ -308,16 +302,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     }
   }
 
-  async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: {
-    messages: LLMMessage[];
-    staticPromptFingerprint?: string;
-    staticPromptMessageCount?: number;
-    requestTimestamps?: string[];
-    lastTotalTokens?: number;
-    lastInputTokens?: number;
-    lastUsageModel?: string;
-    mode?: string;
-  } }> {
+  async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
     const profile = deps.getTalkPromptProfile();
     const event = buildTalkAgentEvent(sessionId, deps.time);
     const context = {
@@ -331,33 +316,27 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     };
     const variables = promptVariables(profile, context);
     const runPromptTool = async (_layer: unknown, call: ToolCall) => executeTalkToolCall(context.event, call, variables);
-    let session = deps.loadActiveTalkLLMSessionTranscript();
-    if (!session || session.messages.length === 0) {
-      const promptMessages: LLMMessage[] = await buildPromptMessagesWithToolResults(profile, context, runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]);
-      session = {
-        messages: promptMessages,
-        staticPromptFingerprint: "talk",
-        staticPromptMessageCount: promptMessages.length,
-        requestTimestamps: [],
-        mode: "normal"
-      };
-      deps.updateActiveTalkLLMSessionTranscript(session);
-    }
-    const prefixMessageCount = session.staticPromptMessageCount ?? session.messages.length;
-    state.conversationStartIndexes.set(sessionId, prefixMessageCount);
-    deps.setLoopSessionState?.(state);
-    deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
-    const patch = await Promise.resolve(deps.buildNextLoopMessagePatch(sessionId));
-    session = {
-      ...session,
-      messages: [
-        ...session.messages.slice(0, patch.replaceFrom),
-        ...patch.messages
-      ]
-    };
-    deps.updateActiveTalkLLMSessionTranscript(session);
+    const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
+      kind: "talk",
+      sessionId,
+      loadTranscript: deps.loadActiveTalkLLMSessionTranscript,
+      buildInitialMessages: () => buildPromptMessagesWithToolResults(
+        profile,
+        context,
+        runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]
+      ),
+      buildMessagePatch: () => deps.buildNextLoopMessagePatch(sessionId),
+      updateTranscript: deps.updateActiveTalkLLMSessionTranscript,
+      onConversationStartIndex(prefixMessageCount) {
+        state.conversationStartIndexes.set(sessionId, prefixMessageCount);
+        deps.setLoopSessionState?.(state);
+      },
+      onPrefixMessageCount(prefixMessageCount) {
+        deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
+      }
+    });
     return {
-      session,
+      session: preparedSession.session,
       toolNames: deps.visibleToolNames(profile),
       toolVariables: variables,
       executeToolCall: (call: LLMToolCall) => executeTalkLLMToolCall(event, call)

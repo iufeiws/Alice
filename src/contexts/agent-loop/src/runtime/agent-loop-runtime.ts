@@ -60,6 +60,38 @@ export type AgentLoopRunSpec = {
   messages: LLMChatInput["messages"];
 };
 
+export type AgentLoopTranscriptSession = {
+  messages: LLMChatInput["messages"];
+  staticPromptFingerprint?: string;
+  staticPromptMessageCount?: number;
+  requestTimestamps?: string[];
+  lastTotalTokens?: number;
+  lastInputTokens?: number;
+  lastUsageModel?: string;
+  mode?: string;
+};
+
+export type AgentLoopMessagePatch = {
+  replaceFrom: number;
+  messages: LLMChatInput["messages"];
+};
+
+export type AgentLoopSessionContextInput = {
+  kind: AgentLoopKind;
+  sessionId: string;
+  loadTranscript(): AgentLoopTranscriptSession | undefined;
+  buildInitialMessages(): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
+  buildMessagePatch(): Promise<AgentLoopMessagePatch> | AgentLoopMessagePatch;
+  updateTranscript(session: AgentLoopTranscriptSession): void;
+  onConversationStartIndex?(count: number): void;
+  onPrefixMessageCount?(count: number): void;
+};
+
+export type AgentLoopPreparedSessionContext = {
+  session: AgentLoopTranscriptSession;
+  prefixMessageCount: number;
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
@@ -67,6 +99,7 @@ export type AgentLoopRuntime = {
   clearLoopSessionState(kind: AgentLoopKind): void;
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
+  prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   requestRun(request: AgentLoopRunRequest): Promise<AgentLoopRunResult>;
   interrupt(reason: string): void;
@@ -109,6 +142,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
         ...runners,
         ...nextRunners
       };
+    },
+    prepareSessionContext(input) {
+      return prepareAgentLoopSessionContext(input);
     },
     runFunctionCallLoop(spec) {
       return runAgentFunctionCallLoop(spec);
@@ -205,4 +241,35 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
 
 export function runAgentFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult> {
   return runLLMToolLoop(spec);
+}
+
+export async function prepareAgentLoopSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext> {
+  let session = input.loadTranscript();
+  if (!session || session.messages.length === 0) {
+    const initialMessages = await Promise.resolve(input.buildInitialMessages());
+    session = {
+      messages: initialMessages,
+      staticPromptFingerprint: input.kind,
+      staticPromptMessageCount: initialMessages.length,
+      requestTimestamps: [],
+      mode: "normal"
+    };
+    input.updateTranscript(session);
+  }
+  const prefixMessageCount = session.staticPromptMessageCount ?? session.messages.length;
+  input.onConversationStartIndex?.(prefixMessageCount);
+  input.onPrefixMessageCount?.(prefixMessageCount);
+  const patch = await Promise.resolve(input.buildMessagePatch());
+  session = {
+    ...session,
+    messages: [
+      ...session.messages.slice(0, patch.replaceFrom),
+      ...patch.messages
+    ]
+  };
+  input.updateTranscript(session);
+  return {
+    session,
+    prefixMessageCount
+  };
 }

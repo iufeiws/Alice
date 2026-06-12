@@ -175,6 +175,84 @@ test("talk loop stores runtime state in injected loop session holder", async () 
   assert.equal(runtimeState && typeof runtimeState === "object", true);
 });
 
+test("talk loop delegates transcript preparation to injected session context runtime", async () => {
+  let prepareCalls = 0;
+  let activeSession: any;
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-context-runtime",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => {
+      throw new Error("talk loop should delegate patching to injected session context runtime");
+    },
+    loadActiveTalkLLMSessionTranscript: () => {
+      throw new Error("talk loop should delegate transcript loading to injected session context runtime");
+    },
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    async prepareSessionContext(input) {
+      prepareCalls += 1;
+      assert.equal(input.kind, "talk");
+      assert.equal(input.sessionId, "session-context-runtime");
+      activeSession = {
+        messages: [{ role: "user", content: "delegated hello" }],
+        staticPromptFingerprint: "talk",
+        staticPromptMessageCount: 0,
+        requestTimestamps: [],
+        mode: "normal"
+      };
+      return {
+        session: activeSession,
+        prefixMessageCount: 0
+      };
+    },
+    visibleToolNames: () => [],
+    toolPlugins: [],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest() {
+      throw new Error("sendRequest should be called by the injected function-call runtime in this test");
+    },
+    async runFunctionCallLoop(spec) {
+      assert.deepEqual(spec.initialMessages.at(-1), { role: "user", content: "delegated hello" });
+      const finalMessage = { role: "assistant" as const, content: "delegated reply" };
+      return {
+        messages: [...spec.initialMessages, finalMessage],
+        rounds: 1,
+        finalResult: { message: finalMessage },
+        finalMessage,
+        stopReason: "completed",
+        sentMessage: false,
+        invalidateSession: false,
+        toolCallCount: 0
+      };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await controller.runTalkAgentLoopForSession("session-context-runtime");
+
+  assert.equal(prepareCalls, 1);
+  assert.equal(activeSession.messages.at(-1)?.content, "delegated reply");
+});
+
 test("talk loop waits for foreground playback idle even when voice buffer is empty", async () => {
   let foregroundIdle = false;
   let sleepCalls = 0;

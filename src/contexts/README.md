@@ -60,7 +60,7 @@
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
 7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec；生产 chat runtime 先构建 prepared spec，再交给 `agent-loop-runtime.runFunctionCallLoop(...)` 执行，保持行为一致。
 8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 通过 `agent-loop-runtime.runFunctionCallLoop(...)` 执行 spec。talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
-9. [in_progress] `agent-loop-runtime.requestRun(kind)` 已支持并优先执行 `prepareChat/prepareTalk` 返回的 prepared run；API 生产 chat/talk wiring 只注册 prepared 入口，legacy `runChat/runTalk` 仅作为测试/兼容 fallback。prepared run 支持 lazy `prepare()`，chat 的 `ensureActiveLLMSession`、append session context、spec 构建已进入 runtime 执行链调用阶段；chat/talk session state holder 已接入 `agent-loop-runtime` 按 kind 持有。下一步继续将 chat/talk 的具体 session 构筑实现从 `AgentCore`/talk adapter 上移到 `agent-loop-runtime` 内部。
+9. [in_progress] `agent-loop-runtime.requestRun(kind)` 已支持并优先执行 `prepareChat/prepareTalk` 返回的 prepared run；API 生产 chat/talk wiring 只注册 prepared 入口，legacy `runChat/runTalk` 仅作为测试/兼容 fallback。prepared run 支持 lazy `prepare()`，chat 的 `ensureActiveLLMSession`、append session context、spec 构建已进入 runtime 执行链调用阶段；chat/talk session state holder 已接入 `agent-loop-runtime` 按 kind 持有。talk transcript 的 load/create prefix、`{ replaceFrom, messages }` patch append 和 writeback 已通过 `agent-loop-runtime.prepareSessionContext(...)` 执行，`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。下一步继续将 chat 的具体 session 构筑实现从 `AgentCore` 上移到 `agent-loop-runtime` 内部。
 10. [todo] 删除旧兼容层和历史配置/接口残留，更新测试与文档。
 
 ### 当前已知风险

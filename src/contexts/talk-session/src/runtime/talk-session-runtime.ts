@@ -55,6 +55,9 @@ export function createTalkRuntimeRuntime(input: {
     },
     loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,
+    prepareSessionContext: input.agentLoopRuntime
+      ? (contextInput: any) => input.agentLoopRuntime.prepareSessionContext(contextInput)
+      : undefined,
     visibleToolNames: input.visibleToolNames,
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,

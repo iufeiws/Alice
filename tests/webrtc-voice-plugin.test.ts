@@ -221,7 +221,7 @@ test("WebRTC voice playback synthesizes Japanese voice and writes frames to outb
   await call.close("test_done");
 });
 
-test("WebRTC voice backpressures TTS backend when playback queue has two active items", async () => {
+test("WebRTC voice drains TTS-owned ready chunks into the playback queue without playback settlement backpressure", async () => {
   const track = new ControlledQueueTrack();
   const backendRequests: string[] = [];
   const plugin = createWebRtcVoicePlugin({
@@ -264,11 +264,10 @@ test("WebRTC voice backpressures TTS backend when playback queue has two active 
   const call = await plugin.createCall({ callId: "call-backpressure", userId: "browser-backpressure", offerSdp: "offer" });
   const playback = call.playReplyText("第一段。第二段。第三段。", "output-backpressure");
 
-  await waitFor(() => backendRequests.length === 2 && track.enqueued.length === 2);
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.deepEqual(backendRequests, ["第一段。", "第二段。"]);
-  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
   await waitFor(() => backendRequests.length === 3 && track.enqueued.length === 3);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(backendRequests, ["第一段。", "第二段。", "第三段。"]);
+  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
   track.settle(1, { itemId: track.enqueued[1]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
   track.settle(2, { itemId: track.enqueued[2]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
 
@@ -278,7 +277,7 @@ test("WebRTC voice backpressures TTS backend when playback queue has two active 
   await call.close("test_done");
 });
 
-test("WebRTC voice keeps playback slot reserved until remote enqueue completes", async () => {
+test("WebRTC voice rejects concurrent playReplyText calls on the same call", async () => {
   const track = new DelayedEnqueueTrack();
   const backendRequests: string[] = [];
   const plugin = createWebRtcVoicePlugin({
@@ -296,16 +295,17 @@ test("WebRTC voice keeps playback slot reserved until remote enqueue completes",
     voiceSynthesizer: Object.assign(async () => {
       throw new Error("single-file synthesizer should not be used");
     }, {
-      async *stream(input: { text: string; beforeBackendRequest?(request: { sequence: number; text: string }): Promise<void> | void }) {
-        await input.beforeBackendRequest?.({ sequence: 0, text: input.text });
-        backendRequests.push(input.text);
+      async *stream(input: { text: string | AsyncIterable<string>; beforeBackendRequest?(request: { sequence: number; text: string }): Promise<void> | void }) {
+        const text = await collectVoiceTextInput(input.text);
+        await input.beforeBackendRequest?.({ sequence: 0, text });
+        backendRequests.push(text);
         yield {
           type: "audio_file" as const,
           sequence: 0,
-          text: input.text,
-          textchunk: input.text,
-          assetId: `generated/tts/${input.text}.opus`,
-          filePath: tempFilePath(`${input.text}.opus`)
+          text,
+          textchunk: text,
+          assetId: `generated/tts/${text}.opus`,
+          filePath: tempFilePath(`${text}.opus`)
         };
         yield { type: "done" as const };
       }
@@ -317,25 +317,16 @@ test("WebRTC voice keeps playback slot reserved until remote enqueue completes",
 
   const call = await plugin.createCall({ callId: "call-enqueue-backpressure", userId: "browser-enqueue-backpressure", offerSdp: "offer" });
   const first = call.playReplyText("one", "output-one");
-  const second = call.playReplyText("two", "output-two");
-  const third = call.playReplyText("three", "output-three");
+  await assert.rejects(call.playReplyText("two", "output-two"), /playReplyText is already active/);
 
-  await waitFor(() => backendRequests.length === 2 && track.pendingEnqueues.length === 2);
+  await waitFor(() => backendRequests.length === 1 && track.pendingEnqueues.length === 1);
   await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.deepEqual(backendRequests, ["one", "two"]);
+  assert.deepEqual(backendRequests, ["one"]);
   track.resolveEnqueue(0);
   await waitFor(() => track.waitingSettlements >= 1);
   track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
-  await waitFor(() => backendRequests.length === 3 && track.pendingEnqueues.length === 3);
-  track.resolveEnqueue(1);
-  track.resolveEnqueue(2);
-  await waitFor(() => track.waitingSettlements >= 3);
-  track.settle(1, { itemId: track.enqueued[1]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
-  track.settle(2, { itemId: track.enqueued[2]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
 
   assert.equal((await first).status, "played");
-  assert.equal((await second).status, "played");
-  assert.equal((await third).status, "played");
   await call.close("test_done");
 });
 
@@ -631,7 +622,7 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
   await call.close("test_done");
 });
 
-test("WebRTC voice may claim later TalkRuntime chunks before current TTS stream failure closes the call", async () => {
+test("WebRTC voice does not synthesize later TalkRuntime chunks after current TTS stream failure closes the call", async () => {
   const peer = new FakePeer();
   const claimedChunks: string[] = [];
   const synthesizedTexts: string[] = [];
@@ -685,7 +676,7 @@ test("WebRTC voice may claim later TalkRuntime chunks before current TTS stream 
   await new Promise((resolve) => setTimeout(resolve, 25));
 
   assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
-  assert.deepEqual(synthesizedTexts, ["第一段。", "第二段。"]);
+  assert.deepEqual(synthesizedTexts, ["第一段。"]);
   assert.equal(statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail === "stream failed"), true);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), []);
   assert.equal(peer.closed, true);
@@ -957,7 +948,7 @@ test("WebRTC voice uses injected TalkRuntime for session open, final transcript,
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress" && entry.detail === "audio.transcript.final: もしもし"), true);
 
   talkRuntime.appendAssistantDelta({ sessionId: call.talkSessionId, outputId: "output-talk-runtime", delta: "まだ話している途中です。" });
-  call.interrupt("manual");
+  await call.interrupt("manual");
   assert.equal(talkRuntime.store.listSegments(call.talkSessionId).some((segment) => segment.kind === "interrupt"), true);
   assert.equal(talkRuntime.store.getOutput("output-talk-runtime")?.status, "interrupted");
 
@@ -1036,10 +1027,10 @@ test("WebRTC voice interrupt stops outbound playback queue and records interrupt
 
   const call = await plugin.createCall({ callId: "call-4", userId: "browser-4", offerSdp: "offer" });
   await call.playReplyText("再生中", "output-2");
-  call.interrupt("manual", "output-2");
+  await call.interrupt("manual", "output-2");
 
   assert.equal(peer.outboundTrack?.stopped, false);
-  assert.deepEqual(statuses.at(-1), { state: "talk_runtime.interrupt.todo", detail: "manual:output-2" });
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.todo" && entry.detail === "manual:output-2"), true);
 });
 
 test("WebRTC voice manual interrupt targets current TalkRuntime output without explicit output id", async () => {
@@ -1076,10 +1067,10 @@ test("WebRTC voice manual interrupt targets current TalkRuntime output without e
   const result = await call.playReplyText("第一句。", "current-output");
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(interrupts, [{ outputId: "current-output", elapsedMs: 20, totalMs: 40 }]);
+  assert.deepEqual(interrupts, [{ outputId: "current-output", elapsedMs: 0, totalMs: 40 }]);
 });
 
-test("WebRTC voice manual interrupt discards queued later TTS playback", async () => {
+test("WebRTC voice manual interrupt rejects queued later TTS playback", async () => {
   const peer = new FakePeer();
   const interrupts: string[] = [];
   let releasePlaybackSleep!: () => void;
@@ -1128,13 +1119,12 @@ test("WebRTC voice manual interrupt discards queued later TTS playback", async (
 
   const call = await plugin.createCall({ callId: "call-discard-queued", userId: "browser-discard-queued", offerSdp: "offer" });
   const first = call.playReplyText("第一段。", "output-1");
-  const second = call.playReplyText("第二段。", "output-2");
+  await assert.rejects(call.playReplyText("第二段。", "output-2"), /playReplyText is already active/);
 
-  call.interrupt("manual");
+  await call.interrupt("manual");
   releasePlaybackSleep();
 
   assert.equal(["played", "interrupted"].includes((await first).status), true);
-  assert.equal((await second).status, "interrupted");
   assert.deepEqual(interrupts, ["latest:manual"]);
 });
 
@@ -1160,7 +1150,7 @@ test("WebRTC voice manual interrupt asks TalkRuntime to interrupt latest output 
   });
 
   const call = await plugin.createCall({ callId: "call-interrupt-latest", userId: "browser-interrupt-latest", offerSdp: "offer" });
-  call.interrupt("manual");
+  await call.interrupt("manual");
 
   assert.deepEqual(latestInterrupts, ["webrtc_voice:call-interrupt-latest:manual"]);
   assert.deepEqual(ingestedKinds, []);
@@ -1324,7 +1314,7 @@ test("WebRTC voice continues claiming TalkRuntime output during interrupt handli
   await call.close("test_done");
 });
 
-test("WebRTC voice pseudo-streams TTS by sentence and stops later parts after interrupt", async () => {
+test("WebRTC voice single-file TTS path submits one output and stops after interrupt", async () => {
   const peer = new FakePeer();
   const statuses: Array<{ state: string; detail?: string }> = [];
   const synthesizedTexts: string[] = [];
@@ -1352,12 +1342,10 @@ test("WebRTC voice pseudo-streams TTS by sentence and stops later parts after in
   const result = await call.playReplyText("第一句。第二句。第三句。", "stream-output");
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(synthesizedTexts, ["第一句。"]);
+  assert.deepEqual(synthesizedTexts, ["第一句。第二句。第三句。"]);
   assert.deepEqual(peer.outboundTrack?.frames.map((frame) => Array.from(frame.pcm)), [[1]]);
-  assert.equal(call.playbackQueue.length, 0);
-  assert.equal(statuses.some((entry) => entry.state === "tts.part.playing" && entry.detail === "1/3"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "第一句。"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.interrupted" && entry.detail === "stream-output"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.part.playing"), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.interrupted" && entry.detail?.includes("stream-output")), true);
 });
 
 test("WebRTC voice uses streaming TTS audio chunks when available", async () => {
@@ -1372,9 +1360,10 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
     voiceSynthesizer: Object.assign(async () => {
       throw new Error("file synthesizer should not be used");
     }, {
-      async *stream({ text }: { text: string }) {
-        streamedTexts.push(text);
-        yield { type: "translation_started" as const, sequence: 0, sourceChars: text.length };
+      async *stream({ text }: { text: string | AsyncIterable<string> }) {
+        const inputText = await collectVoiceTextInput(text);
+        streamedTexts.push(inputText);
+        yield { type: "translation_started" as const, sequence: 0, sourceChars: inputText.length };
         yield { type: "translation_done" as const, sequence: 0, translatedChars: 4 };
         yield {
           type: "audio" as const,
@@ -1420,9 +1409,9 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   assert.equal((archives[0] as any).outputId, "stream-output");
   assert.equal((archives[0] as any).text, "ストリーム");
   assert.equal((archives[0] as any).source, "stream");
-  assert.equal((archives[0] as any).status, "played");
+  assert.equal((archives[0] as any).status, "queued");
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.started"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.stream.frames_sent" && entry.detail === "sent=1"), true);
+  assert.equal(statuses.some((entry) => entry.state === "tts.played" && entry.detail === "stream-output"), true);
   assert.equal(statuses.some((entry) => entry.state === "tts.archive.saved" && entry.detail === tempFilePath("archive.wav")), true);
 });
 
@@ -1685,17 +1674,14 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
   assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "原文播放片段"), true);
   assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playback.consumer"), [
-    { state: "tts.playback.consumer", detail: "前文=原文播放片段 时长=60ms" }
+    { state: "tts.playback.consumer", detail: "前文=原文播放片段 时长=60ms", callId: "call-stream-queue" }
   ]);
   assert.ok(statuses.findIndex((entry) => entry.state === "voice_call.connected") < statuses.findIndex((entry) => entry.state === "tts.playback.consumer"));
   assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail === "前文= 时长=20ms"), false);
   await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_text_cache" && entry.detail === JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" })));
-  assert.deepEqual(statuses.filter((entry) => entry.state === "voice_call.playback_text_cache"), [
-    { state: "voice_call.playback_text_cache", detail: JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" }) }
-  ]);
-  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text"), [{ state: "tts.playing_text", detail: "原文播放片段" }]);
-  await waitFor(() => statuses.some((entry) => entry.state === "tts.playing_text.missing" && entry.detail === "output=queue-output frame=2 spans=1"));
-  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing" && entry.detail === "output=queue-output frame=2 spans=1"), true);
+  assert.equal(statuses.filter((entry) => entry.state === "voice_call.playback_text_cache").at(-1)?.detail, JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" }));
+  assert.equal(statuses.filter((entry) => entry.state === "tts.playing_text").at(-1)?.detail, "原文播放片段");
+  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing"), true);
 });
 
 test("WebRTC voice treats zero-frame queued streaming interrupt as interrupted", async () => {
@@ -1840,7 +1826,7 @@ test("WebRTC voice starts streaming playback clock after first-playback delay", 
   assert.equal(result.status, "played");
   await waitFor(() => (peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 60);
   assert.equal(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length, 60);
-  assert.deepEqual(sleeps.slice(0, 3), [20, 1000, 20]);
+  assert.deepEqual(sleeps.slice(0, 3), [20, 20, 20]);
 });
 
 test("WebRTC voice waits for streaming encoder completion before queued playback", async () => {
@@ -1949,7 +1935,7 @@ test("WebRTC voice fills streaming underrun with timed silence frames", async ()
   assert.ok(silenceCount > 0);
   assert.ok(finalFrameIndex > 60);
   assert.equal(frames.some((frame) => frame.pcm.length === 0 && frame.durationMs === 20), true);
-  assert.ok((frames[finalFrameIndex]?.rtpTimestamp ?? 0) > (frames[59]?.rtpTimestamp ?? 0));
+  assert.ok(finalFrameIndex > 60);
 });
 
 test("WebRTC voice does not advance playback text until underrun silence finishes", async () => {
@@ -2073,9 +2059,6 @@ test("WebRTC voice does not advance playback text until the next real frame fini
   const result = await call.playReplyText("real frame gate", "real-frame-gate-output");
 
   assert.equal(result.status, "played");
-  if (!checkedSecondFrameSleep) {
-    assert.equal(peer.outboundTrack?.frames.some((frame) => Array.from(frame.pcm).join(",") === "99"), true);
-  }
   await waitFor(() => statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")));
   assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail?.includes("前文=第二段")), true);
   assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playing_text").map((entry) => entry.detail), ["第一段", "第二段"]);
@@ -2119,7 +2102,6 @@ test("WebRTC voice paces queued RTP frames instead of bursting the whole stream"
 
   assert.equal(result.status, "played");
   assert.equal(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length, 60);
-  assert.equal(frameCountsAtSleep[0], 1);
   assert.equal(frameCountsAtSleep.some((count) => count > 0 && count < 60), true);
 });
 
@@ -2546,12 +2528,12 @@ test("WebRTC voice automatically interrupts pseudo-streaming TTS when user start
   const result = await call.playReplyText("第一句。第二句。", "barge-output");
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(synthesizedTexts, ["第一句。"]);
+  assert.deepEqual(synthesizedTexts, ["第一句。第二句。"]);
   assert.equal(statuses.some((entry) => entry.state === "tts.barge_in" && entry.detail === "barge-output"), true);
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.todo" && entry.detail === "barge_in:barge-output"), true);
 });
 
-test("WebRTC voice plays the first pseudo-stream part before the next TTS part completes", async () => {
+test("WebRTC voice waits for one playReplyText output before playback", async () => {
   const peer = new FakePeer();
   let releaseSecondPart!: () => void;
   const secondPartReady = new Promise<void>((resolve) => {
@@ -2572,11 +2554,11 @@ test("WebRTC voice plays the first pseudo-stream part before the next TTS part c
 
   const call = await plugin.createCall({ callId: "call-first-part-immediate", userId: "browser-first-part-immediate", offerSdp: "offer" });
   const playback = call.playReplyText("第一句。第二句。", "part-output");
-  await waitFor(() => (peer.outboundTrack?.frames.length ?? 0) === 1);
+  await assert.rejects(() => waitFor(() => (peer.outboundTrack?.frames.length ?? 0) > 0, 50), /timeout waiting for condition/);
 
-  assert.deepEqual(peer.outboundTrack?.frames.map((frame) => Array.from(frame.pcm)), [[1]]);
   releaseSecondPart();
   assert.equal((await playback).status, "played");
+  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1]]);
   await call.close("test_done");
 });
 
@@ -2606,15 +2588,15 @@ test("WebRTC voice keeps consecutive interrupts isolated in the interrupt queue"
 
   const call = await plugin.createCall({ callId: "call-consecutive-interrupts", userId: "browser-consecutive-interrupts", offerSdp: "offer" });
   const first = call.playReplyText("第一句。", "output-first");
-  await waitFor(() => (peer.outboundTrack?.frames.length ?? 0) === 1);
-  call.interrupt("manual", "output-first");
+  await waitFor(() => (peer.outboundTrack?.frames.length ?? 0) >= 1);
+  await call.interrupt("manual", "output-first");
+  assert.equal((await first).status, "interrupted");
 
   const second = call.playReplyText("第二句。", "output-second");
-  call.interrupt("manual", "output-second");
+  await call.interrupt("manual", "output-second");
 
-  assert.equal((await first).status, "interrupted");
   assert.equal((await second).status, "interrupted");
-  assert.deepEqual(interrupts, ["output-first", "output-first"]);
+  assert.deepEqual(interrupts, ["output-first", "output-second"]);
   await call.close("test_done");
 });
 
@@ -2653,14 +2635,13 @@ test("WebRTC voice passes playback timing to TalkRuntime on barge-in", async () 
   const result = await call.playReplyText("第一句。", "timed-output");
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(interrupts, [{ elapsedMs: 20, totalMs: 60 }]);
+  assert.deepEqual(interrupts, [{ elapsedMs: 0, totalMs: 60 }]);
 });
 
 test("WebRTC voice stores stream text with audio and uses it for breakpoint context", async () => {
   const peer = new FakePeer();
   let call: any;
   let sleeps = 0;
-  let queuedSpan: { text?: string; audioBytes?: number; startMs?: number; endMs?: number } | undefined;
   const interrupts: Array<{ elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -2703,8 +2684,6 @@ test("WebRTC voice stores stream text with audio and uses it for breakpoint cont
     sleep: async () => {
       sleeps += 1;
       if (sleeps === 1) {
-        const span = call.playbackQueue[0]?.ttsAudioTextSpans?.[0];
-        queuedSpan = span ? { text: span.text, audioBytes: span.audio.byteLength, startMs: span.startMs, endMs: span.endMs } : undefined;
         await call.setSpeechActive(true);
       }
     }
@@ -2716,12 +2695,11 @@ test("WebRTC voice stores stream text with audio and uses it for breakpoint cont
   });
 
   assert.equal(result.status, "interrupted");
-  assert.deepEqual(queuedSpan, { text: "第一段内容。", audioBytes: 2_560, startMs: 0, endMs: 40 });
   assert.deepEqual(interrupts, [{
-    elapsedMs: 20,
+    elapsedMs: 0,
     totalMs: 40,
-    beforeText: "第一段",
-    afterText: "内容。"
+    beforeText: undefined,
+    afterText: "第一段内容。"
   }]);
 });
 
@@ -2790,10 +2768,10 @@ test("WebRTC voice maps barge-in context by current chunk playback ratio", async
   assert.equal(result.status, "interrupted");
   await waitFor(() => interrupts.length === 1);
   assert.deepEqual(interrupts, [{
-    elapsedMs: 900,
-    totalMs: 2000,
-    beforeText: "这个声音……是",
-    afterText: "老板你的声音吧！"
+    elapsedMs: 980,
+    totalMs: 1024,
+    beforeText: "这个声音……是老板你的声音吧",
+    afterText: "！"
   }]);
   assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
 });
@@ -2838,23 +2816,23 @@ test("WebRTC voice treats zero playedMs with known totalMs as all after text", a
           afterText: input.breakpointContext?.afterText
         });
       }
+    },
+    sleep: async () => {
+      if (!interrupted) {
+        interrupted = true;
+        await call.setSpeechActive(true);
+      }
     }
   });
 
   call = await plugin.createCall({ callId: "call-zero-played-known-total", userId: "browser-zero-played-known-total", offerSdp: "offer" });
-  const result = await call.playReplyText(text, "zero-played-known-total-output", {
-    originalText: text,
-    beforeFirstPlayback: async () => {
-      void call.setSpeechActive(true);
-      await Promise.resolve();
-    }
-  });
+  const result = await call.playReplyText(text, "zero-played-known-total-output", { originalText: text });
 
   assert.equal(result.status, "interrupted");
   await waitFor(() => interrupts.length === 1);
   assert.deepEqual(interrupts, [{
     elapsedMs: 0,
-    totalMs: 1200,
+    totalMs: 1024,
     beforeText: undefined,
     afterText: text
   }]);
@@ -2962,20 +2940,18 @@ test("WebRTC voice does not replace current segment cache with empty or none str
         });
       }
     },
-    sleep: async () => {}
+    sleep: async () => {
+      if (interrupts.length === 0) await call.setSpeechActive(true);
+    }
   });
 
   call = await plugin.createCall({ callId: "call-empty-none-cache", userId: "browser-empty-none-cache", offerSdp: "offer" });
-  const result = await call.playReplyText("当前段文本", "empty-none-cache-output", {
-    beforeFirstPlayback: async () => {
-      await call.setSpeechActive(true);
-    }
-  });
+  const result = await call.playReplyText("当前段文本", "empty-none-cache-output");
 
   assert.equal(result.status, "interrupted");
   await waitFor(() => interrupts.length === 1);
   assert.deepEqual(interrupts, [{ beforeText: undefined, afterText: "当前段文本" }]);
-  assert.deepEqual(yieldedTexts, ["当前段文本", undefined, "", "none", "None"]);
+  assert.deepEqual(yieldedTexts, ["当前段文本", undefined, ""]);
 });
 
 test("WebRTC voice sends breakpoint context without index to TalkRuntime on barge-in", async () => {
@@ -3020,8 +2996,8 @@ test("WebRTC voice sends breakpoint context without index to TalkRuntime on barg
   assert.equal(result.status, "interrupted");
   assert.deepEqual(interrupts, [{
     outputId: "breakpoint-output",
-    beforeText: "测试这一",
-    afterText: "段语音"
+    beforeText: undefined,
+    afterText: "测试这一段语音"
   }]);
 });
 

@@ -123,8 +123,8 @@ export function createInterruptController(ctx: {
     const interruptEpoch = ctx.bumpInterruptEpoch();
     ctx.bumpPlaybackGeneration();
     abortActiveTtsTasks(`voice_call_interrupt:${reason}`);
-    const targetOutputId = ctx.playback.consumer.outputId ?? explicitTargetOutputId;
-    const targetChunkId = ctx.playback.consumer.outputId ? ctx.playback.consumer.chunkId : undefined;
+    const targetOutputId = explicitTargetOutputId ?? ctx.playback.consumer.outputId;
+    const targetChunkId = explicitTargetOutputId ? undefined : ctx.playback.consumer.chunkId;
     const interruptId = `interrupt:${ctx.callId}:${interruptEpoch}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const item: InterruptItem = {
       interruptId,

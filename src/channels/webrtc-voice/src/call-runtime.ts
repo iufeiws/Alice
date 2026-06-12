@@ -7,16 +7,20 @@ import type {
   ServerOutboundAudioTrack,
   ServerWebRtcPeer,
   TtsTask,
+  PlaybackResult,
+  PlaybackItem,
   WebRtcVoiceCall,
   WebRtcVoiceDeps,
   WebRtcVoiceTtsArchiveInput
 } from "./types.js";
 import { WebRtcVoiceError } from "./errors.js";
 import { createRemoteVoicePlaybackConsumer } from "./remote-playback-consumer.js";
-import { createTtsProducer } from "./tts-producer.js";
+import { createVoicePlaybackConsumer } from "./playback-consumer.js";
+import { createTtsProducer, type TtsReadyChunk } from "./tts-producer.js";
 import { createInterruptController } from "./interrupt-controller.js";
 import {
   normalizeTypedInputText,
+  hashText,
   sleep,
 } from "./utils.js";
 
@@ -46,9 +50,6 @@ export async function createCallState(
   const activePlaybackTasks = new Set<Promise<unknown>>();
   const playbackIdleAckWaiters = new Map<string, { resolve(value: boolean): void; timer: ReturnType<typeof setTimeout> }>();
   let firstOutboundPlaybackBufferPending = true;
-  if (!outboundTrack.enqueueAudioFile) {
-    throw new WebRtcVoiceError("outbound_track_failed", "server WebRTC outbound audio track must support enqueueAudioFile");
-  }
   const synthesisTime = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const nowStamp = () => {
     const current = synthesisTime.now();
@@ -76,11 +77,37 @@ export async function createCallState(
     deps.emitStatus?.({ state: "talk_runtime.open.todo", detail: talkSessionId });
   }
   let asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
-  const playback = createRemoteVoicePlaybackConsumer({
-    deps,
-    outboundTrack,
-    isClosed: () => closed
+  let outboundFrameSequence = 0;
+  const playbackQueue: PlaybackItem[] = [];
+  const localPlaybackItemsById = new Map<string, PlaybackItem>();
+  const stampOutboundFrame = (frame: import("./types.js").ServerAudioFrame) => ({
+    ...frame,
+    sequence: outboundFrameSequence++
   });
+  const playback = outboundTrack.enqueueAudioFile
+    ? createRemoteVoicePlaybackConsumer({
+      deps,
+      outboundTrack,
+      isClosed: () => closed
+    })
+    : createVoicePlaybackConsumer({
+      deps,
+      talkSessionId,
+      playbackQueue,
+      outboundTrack,
+      stampOutboundFrame,
+      advanceOutboundRtpClockForFrame() {},
+      writeOutboundSilenceFrame: async (durationMs = deps.config.outboundAudio.frameMs) => {
+        return await outboundTrack.writeFrame(stampOutboundFrame({
+          sequence: 0,
+          pcm: new Int16Array(),
+          sampleRateHz: deps.config.outboundAudio.sampleRateHz,
+          channels: deps.config.outboundAudio.channels,
+          durationMs
+        }));
+      },
+      isClosed: () => closed
+    });
   const enqueueRandomFiller = async (items: ReadonlyArray<{ reason: string; interruptEpoch: number }>) => {
     if (closed || !items.some((item) => item.reason !== "call_close")) return;
     const asset = selectRandomVoiceCallFillerAsset();
@@ -124,10 +151,7 @@ export async function createCallState(
     bumpInterruptEpoch: () => { interruptEpoch += 1; return interruptEpoch; },
     getInterruptEpoch: () => interruptEpoch,
     bumpPlaybackGeneration: () => { playbackGeneration += 1; return playbackGeneration; },
-    interruptPlayback: (interrupt) => outboundTrack.interrupt?.({
-      reason: interrupt.reason,
-      targetOutputId: interrupt.targetOutputId
-    }),
+    interruptPlayback: interruptPlaybackQueue,
     enqueuePostStableInputFiller: enqueueRandomFiller
   });
   const ttsProducer = createTtsProducer({
@@ -149,11 +173,7 @@ export async function createCallState(
     asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
     deps.emitStatus?.({ state: "asr.stream.restarted", detail: `${asrStreamId}:${reason}` });
   };
-  let activeOutputStream: {
-    outputId: string;
-    text: AsyncTextQueue;
-    playback: Promise<unknown>;
-  } | undefined;
+  const pendingTalkChunks: TalkChunk[] = [];
   const waitForForegroundPlaybackIdle = async () => {
     return await outboundTrack.waitForPlaybackIdle?.() === true;
   };
@@ -186,67 +206,303 @@ export async function createCallState(
     playbackIdleAckWaiters.delete(ackId);
     waiter.resolve(value);
   };
+  const handlePlaybackSettled = async (chunk: TtsReadyChunk, result: PlaybackResult) => {
+    if (result.failureReason) {
+      deps.emitStatus?.({ state: "voice_call.tts_fatal", detail: `${result.outputId ?? chunk.outputId ?? ""} ${result.failureReason}`.trim() });
+      await call.close("tts_failed");
+      return;
+    }
+    if (result.status !== "played") return;
+    try {
+      const idle = await waitForForegroundPlaybackIdle();
+      const frontendAcked = idle && await waitForFrontendPlaybackIdleAck(result.outputId ?? chunk.outputId, chunk.chunkId);
+      if (frontendAcked) await deps.talkRuntime?.markForegroundPlaybackIdle?.({ sessionId: talkSessionId });
+      if (chunk.chunkId) {
+        await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
+        deps.emitStatus?.({ state: "talk_runtime.chunk_played", detail: `${chunk.outputId} chunk=${chunk.chunkId}` });
+      }
+    } catch (error) {
+      deps.emitStatus?.({ state: "talk_runtime.playback_finished_failed", detail: `${chunk.outputId}${chunk.chunkId ? ` chunk=${chunk.chunkId}` : ""}: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+  const enqueueTtsReadyChunk = (chunk: TtsReadyChunk): Promise<PlaybackResult> => {
+    const task = (async (): Promise<PlaybackResult> => {
+      if (chunk.failureReason) {
+        return { status: "interrupted", outputId: chunk.outputId, frameCount: 0, failureReason: chunk.failureReason };
+      }
+      if (!chunk.filePath && !chunk.audio) {
+        return { status: "interrupted", outputId: chunk.outputId, frameCount: 0, failureReason: "no_frames_sent" };
+      }
+      if (chunk.audio) {
+        if (outboundTrack.enqueueAudioFile) {
+          return { status: "interrupted", outputId: chunk.outputId, frameCount: 0, failureReason: "tts_failed" };
+        }
+        const itemId = `playback:${input.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+        enqueueLocalStreamingAudioChunk(itemId, chunk);
+        const settled = await waitForLocalPlaybackItem(itemId);
+        const played = settled.status === "played";
+        if (played) deps.emitStatus?.({ state: "tts.played", detail: chunk.outputId });
+        else deps.emitStatus?.({ state: settled.status === "failed" ? "tts.failed" : "tts.interrupted", detail: chunk.outputId });
+        return {
+          status: played ? "played" : "interrupted",
+          outputId: chunk.outputId,
+          frameCount: settled.framesWritten
+        };
+      }
+      const itemId = `playback:${input.callId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+      const remoteBeforeFirstPlayback = outboundTrack.enqueueAudioFile ? firstOutboundPlaybackBufferPending : false;
+      if (remoteBeforeFirstPlayback) {
+        firstOutboundPlaybackBufferPending = false;
+        await deps.sleep?.(deps.config.outboundAudio.frameMs);
+      }
+      if (chunk.interruptEpoch !== undefined && chunk.interruptEpoch !== interruptEpoch) {
+        return { status: "interrupted", outputId: chunk.outputId, frameCount: 0 };
+      }
+      const enqueued = outboundTrack.enqueueAudioFile
+        ? await outboundTrack.enqueueAudioFile({
+          itemId,
+          outputId: chunk.outputId,
+          chunkId: chunk.chunkId,
+          originalText: chunk.originalText,
+          speakText: chunk.speakText,
+          text: chunk.text,
+          createdAt: chunk.createdAt,
+          assetId: chunk.assetId,
+          filePath: chunk.filePath!,
+          interruptEpoch: chunk.interruptEpoch,
+          beforeFirstPlayback: remoteBeforeFirstPlayback
+        })
+        : enqueueLocalPlaybackItem({
+          itemId,
+          outputId: chunk.outputId,
+          chunkId: chunk.chunkId,
+          originalText: chunk.originalText,
+          speakText: chunk.speakText,
+          text: chunk.text,
+          createdAt: chunk.createdAt,
+          assetId: chunk.assetId,
+          filePath: chunk.filePath!,
+          interruptEpoch: chunk.interruptEpoch,
+          beforeFirstPlayback: true
+        });
+      const settled = outboundTrack.waitForPlaybackItem
+        ? await Promise.resolve(outboundTrack.waitForPlaybackItem(enqueued.itemId))
+        : await waitForLocalPlaybackItem(enqueued.itemId);
+      const status = settled?.status ?? "played";
+      const frameCount = settled?.framesWritten ?? 0;
+      const played = status === "played";
+      if (played) deps.emitStatus?.({ state: "tts.played", detail: chunk.outputId });
+      else deps.emitStatus?.({ state: status === "failed" ? "tts.failed" : "tts.interrupted", detail: chunk.outputId });
+      return {
+        status: played ? "played" : "interrupted",
+        outputId: chunk.outputId,
+        frameCount
+      };
+    })();
+    activePlaybackTasks.add(task);
+    task.then((result) => handlePlaybackSettled(chunk, result)).catch((error) => {
+      deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });
+      void call.close("tts_failed");
+    }).finally(() => activePlaybackTasks.delete(task));
+    return task;
+  };
+  const enqueueLocalPlaybackItem = (item: {
+    itemId: string;
+    outputId?: string;
+    chunkId?: string;
+    originalText?: string;
+    speakText?: string;
+    text: string;
+    createdAt: string;
+    assetId: string;
+    filePath: string;
+    interruptEpoch?: number;
+    beforeFirstPlayback?: boolean;
+  }): { itemId: string } => {
+    const playbackItem: PlaybackItem = {
+      outputId: item.outputId,
+      chunkId: item.chunkId,
+      originalText: item.originalText,
+      speakText: item.speakText,
+      textHash: hashText(item.speakText ?? item.text),
+      assetId: item.assetId,
+      filePath: item.filePath,
+      status: "queued",
+      createdAt: item.createdAt,
+      framesWritten: 0,
+      playedMs: 0,
+      totalMs: 0,
+      interruptEpoch: item.interruptEpoch,
+      ttsAudioTextSpans: [{ text: item.text, audio: new Uint8Array(), startMs: 0, endMs: 1 }],
+      queuedFrames: 0,
+      producerDone: false,
+      pendingPlaybackEvents: 0
+    };
+    if (item.beforeFirstPlayback) playbackItem.beforeFirstPlayback = createBeforeFirstPlaybackDelay();
+    localPlaybackItemsById.set(item.itemId, playbackItem);
+    playbackQueue.push(playbackItem);
+    playback.start();
+    deps.emitStatus?.({ state: "tts.queue.ready", detail: `${item.outputId ?? ""}${item.chunkId ? ` chunk=${item.chunkId}` : ""}`.trim() });
+    return { itemId: item.itemId };
+  };
+  const enqueueLocalStreamingAudioChunk = (itemId: string, chunk: TtsReadyChunk): { itemId: string } => {
+    if (!chunk.audio) throw new Error("streaming audio chunk is required");
+    const playbackItem: PlaybackItem = {
+      outputId: chunk.outputId,
+      chunkId: chunk.chunkId,
+      originalText: chunk.originalText,
+      speakText: chunk.speakText,
+      textHash: hashText(chunk.speakText || chunk.text),
+      assetId: chunk.assetId,
+      filePath: "",
+      status: "queued",
+      createdAt: chunk.createdAt,
+      framesWritten: 0,
+      playedMs: 0,
+      totalMs: 0,
+      interruptEpoch: chunk.interruptEpoch,
+      streamingTts: true,
+      ttsAudioTextSpans: [],
+      queuedFrames: 0,
+      producerDone: false,
+      pendingPlaybackEvents: 0
+    };
+    playbackItem.beforeFirstPlayback = createBeforeFirstPlaybackDelay();
+    localPlaybackItemsById.set(itemId, playbackItem);
+    playbackQueue.push(playbackItem);
+    deps.emitStatus?.({ state: "tts.queue.waiting", detail: chunk.outputId });
+    void (async () => {
+      try {
+        const audioChunks = chunk.audio!.chunks;
+        for (const audio of audioChunks) playback.recordAudioTextSpan(playbackItem, chunk.text, audio, chunk.audio);
+        let encodedMs = 0;
+        const frames = deps.encodePcmL16StreamToFrames
+          ? deps.encodePcmL16StreamToFrames({
+            chunks: iterateUint8Chunks(audioChunks),
+            inputSampleRateHz: chunk.audio!.sampleRateHz,
+            inputChannels: chunk.audio!.channels,
+            sampleRateHz: deps.config.outboundAudio.sampleRateHz,
+            channels: deps.config.outboundAudio.channels,
+            frameMs: deps.config.outboundAudio.frameMs
+          })
+          : iterateServerAudioFrames(await Promise.resolve(deps.encodePcmL16ToFrames?.({
+            pcm: concatUint8Arrays(audioChunks),
+            inputSampleRateHz: chunk.audio!.sampleRateHz,
+            inputChannels: chunk.audio!.channels,
+            sampleRateHz: deps.config.outboundAudio.sampleRateHz,
+            channels: deps.config.outboundAudio.channels,
+            frameMs: deps.config.outboundAudio.frameMs
+          }) ?? Promise.reject(new Error("streaming TTS encoder is not available"))));
+        for await (const frame of frames) {
+          playback.enqueueFrame(playbackItem, frame, encodedMs);
+          encodedMs += frame.durationMs;
+          playback.start();
+        }
+        playbackItem.totalMs = Math.max(playbackItem.totalMs ?? 0, encodedMs);
+        playbackItem.producerDone = true;
+        deps.emitStatus?.({ state: "tts.queue.producer_done", detail: `${chunk.outputId ?? ""}${chunk.chunkId ? ` chunk=${chunk.chunkId}` : ""} encoded=${playbackItem.queuedFrames ?? 0} queued=${playbackItem.queuedFrames ?? 0}`.trim() });
+        if (encodedMs <= 0) playbackItem.status = "failed";
+        playback.start();
+      } catch (error) {
+        playbackItem.status = "failed";
+        playbackItem.producerDone = true;
+        deps.emitStatus?.({ state: "tts.decode.failed", detail: error instanceof Error ? error.message : String(error) });
+        playback.start();
+      }
+    })();
+    deps.emitStatus?.({ state: "tts.queue.ready", detail: `${chunk.outputId ?? ""}${chunk.chunkId ? ` chunk=${chunk.chunkId}` : ""}`.trim() });
+    return { itemId };
+  };
+  const waitForLocalPlaybackItem = async (itemId: string) => {
+    const item = localPlaybackItemsById.get(itemId);
+    if (!item) throw new Error(`unknown playback item: ${itemId}`);
+    while (!closed && playbackQueue.includes(item) && item.status !== "failed" && item.status !== "interrupted" && item.status !== "cancelled") {
+      playback.processTimeline();
+      playback.cleanupFinishedItems();
+      await sleep(5);
+    }
+    playback.processTimeline();
+    playback.cleanupFinishedItems();
+    return {
+      itemId,
+      status: item.status === "played" ? "played" as const : item.status === "failed" ? "failed" as const : item.status === "cancelled" ? "cancelled" as const : "interrupted" as const,
+      framesWritten: item.framesWritten,
+      playedMs: item.playedMs,
+      totalMs: item.totalMs
+    };
+  };
+  function interruptPlaybackQueue(interrupt: { reason: "manual" | "barge_in" | "network" | "unknown" | "asr_failure" | "call_close"; targetOutputId?: string }): Promise<void> | void {
+    if (outboundTrack.interrupt) {
+      return outboundTrack.interrupt({
+        reason: interrupt.reason,
+        targetOutputId: interrupt.targetOutputId
+      });
+    }
+    const targetOutputId = interrupt.targetOutputId ?? playback.consumer.outputId;
+    for (const item of playbackQueue) {
+      item.status = !targetOutputId || item.outputId === targetOutputId ? "interrupted" : "cancelled";
+    }
+    playback.setCurrentPlayingItem(undefined);
+    playback.clearPendingPlayback();
+    playbackQueue.length = 0;
+    playback.consumer.status = "interrupted";
+    deps.emitStatus?.({ state: "tts.interrupted", detail: `${interrupt.reason}:${targetOutputId ?? ""}` });
+  }
+  function createBeforeFirstPlaybackDelay(): (() => Promise<void>) | undefined {
+    if (!firstOutboundPlaybackBufferPending) return undefined;
+    firstOutboundPlaybackBufferPending = false;
+    return async () => {
+      await deps.sleep?.(deps.config.outboundAudio.frameMs);
+    };
+  }
+  const drainTtsReadyChunks = (): Array<Promise<PlaybackResult>> => {
+    const tasks: Array<Promise<PlaybackResult>> = [];
+    while (true) {
+      const ready = ttsProducer.takeReadyChunk();
+      if (!ready) return tasks;
+      tasks.push(enqueueTtsReadyChunk(ready));
+    }
+  };
+  const feedTalkChunkToTts = (chunk: TalkChunk): boolean => {
+    const current = ttsProducer.currentOutput();
+    if (current && current.outputId !== chunk.outputId) {
+      ttsProducer.finishOutput({ outputId: current.outputId });
+      return false;
+    }
+    const hasSpeakableText = chunk.text.trim().length > 0;
+    if (!hasSpeakableText) {
+      if (current && chunk.status === "finished") ttsProducer.finishOutput({ outputId: chunk.outputId });
+      deps.emitStatus?.({ state: "voice_call.output_empty_skipped", detail: chunk.outputId });
+      return true;
+    }
+    if (!current) {
+      ttsProducer.openOutput({
+        outputId: chunk.outputId,
+        chunkId: chunk.chunkId,
+        originalText: ""
+      });
+    }
+    ttsProducer.pushText({ outputId: chunk.outputId, text: chunk.text });
+    if (chunk.status === "finished" || chunk.chunkId) ttsProducer.finishOutput({ outputId: chunk.outputId });
+    return true;
+  };
   const runOutputPump = async () => {
     while (!closed) {
-      const raw = deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
-        ?? deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
-      const chunk = normalizeTalkChunk(raw);
+      drainTtsReadyChunks();
+      let chunk = pendingTalkChunks.shift();
+      if (!chunk) {
+        const raw = deps.talkRuntime?.claimBufferedOutputText?.(talkSessionId)
+          ?? deps.talkRuntime?.claimReadyOutputChunk?.(talkSessionId);
+        chunk = normalizeTalkChunk(raw);
+      }
       if (!chunk) {
         await sleep(25);
         continue;
       }
-      const hasSpeakableText = chunk.text.trim().length > 0;
-      if (activeOutputStream && activeOutputStream.outputId !== chunk.outputId) {
-        activeOutputStream.text.finish();
-        activeOutputStream = undefined;
+      if (!feedTalkChunkToTts(chunk)) {
+        pendingTalkChunks.unshift(chunk);
+        await sleep(5);
       }
-      if (!hasSpeakableText) {
-        if (activeOutputStream && chunk.status === "finished") activeOutputStream.text.finish();
-        deps.emitStatus?.({ state: "voice_call.output_empty_skipped", detail: chunk.outputId });
-        continue;
-      }
-      if (!activeOutputStream) {
-        const text = new AsyncTextQueue();
-        const playback = call.playReplyText(text, chunk.outputId, {
-          chunkId: chunk.chunkId,
-          originalText: chunk.text,
-          beforeFirstPlayback: async () => {
-            if (!firstOutboundPlaybackBufferPending) return;
-            firstOutboundPlaybackBufferPending = false;
-            await deps.sleep?.(deps.config.outboundAudio.frameMs);
-          }
-        });
-        const stream = { outputId: chunk.outputId, text, playback };
-        activeOutputStream = stream;
-        void playback.then(async (result) => {
-          const playbackResult = result as Awaited<ReturnType<WebRtcVoiceCall["playReplyText"]>>;
-          if (playbackResult?.failureReason) {
-            deps.emitStatus?.({ state: "voice_call.tts_fatal", detail: `${playbackResult.outputId ?? chunk.outputId ?? ""} ${playbackResult.failureReason}`.trim() });
-            await call.close("tts_failed");
-            return;
-          }
-          if (playbackResult?.status !== "played") return;
-          try {
-            const idle = await waitForForegroundPlaybackIdle();
-            const frontendAcked = idle && await waitForFrontendPlaybackIdleAck(playbackResult.outputId ?? chunk.outputId, chunk.chunkId);
-            if (frontendAcked) await deps.talkRuntime?.markForegroundPlaybackIdle?.({ sessionId: talkSessionId });
-            if (chunk.chunkId) {
-              await deps.talkRuntime?.markOutputChunkPlayed?.({ sessionId: talkSessionId, chunkId: chunk.chunkId });
-              deps.emitStatus?.({ state: "talk_runtime.chunk_played", detail: `${chunk.outputId} chunk=${chunk.chunkId}` });
-            }
-          } catch (error) {
-            deps.emitStatus?.({ state: "talk_runtime.playback_finished_failed", detail: `${chunk.outputId}${chunk.chunkId ? ` chunk=${chunk.chunkId}` : ""}: ${error instanceof Error ? error.message : String(error)}` });
-          }
-        }).catch((error) => {
-          deps.emitStatus?.({ state: "voice_call.output_pump.playback_failed", detail: error instanceof Error ? error.message : String(error) });
-          void call.close("tts_failed");
-        }).finally(() => {
-          stream.text.abort();
-          if (activeOutputStream === stream) activeOutputStream = undefined;
-        });
-      }
-      activeOutputStream.text.push(chunk.text);
-      if (chunk.status === "finished" || chunk.chunkId) activeOutputStream.text.finish();
     }
   };
 
@@ -349,12 +605,45 @@ export async function createCallState(
       }
     },
     async playReplyText(text, outputId, options) {
-      return ttsProducer.playReplyText(text, outputId, options);
+      const targetOutputId = outputId ?? `manual:${input.callId}:${Date.now()}`;
+      if (ttsProducer.currentOutput()) throw new Error("playReplyText is already active");
+      const chunkId = playbackOptionString(options, "chunkId");
+      const originalText = playbackOptionString(options, "originalText") ?? (typeof text === "string" ? text : "");
+      const settlements: Array<Promise<PlaybackResult>> = [];
+      const generation = playbackGeneration;
+      ttsProducer.openOutput({ outputId: targetOutputId, chunkId, originalText: "" });
+      if (typeof text === "string") {
+        ttsProducer.pushText({ outputId: targetOutputId, text });
+      } else {
+        for await (const delta of text) {
+          ttsProducer.pushText({ outputId: targetOutputId, text: delta });
+          settlements.push(...drainTtsReadyChunks());
+        }
+      }
+      ttsProducer.finishOutput({ outputId: targetOutputId });
+      while (ttsProducer.currentOutput()) {
+        settlements.push(...drainTtsReadyChunks());
+        await sleep(5);
+      }
+      settlements.push(...drainTtsReadyChunks());
+      if (settlements.length === 0 && generation !== playbackGeneration) {
+        return { status: "interrupted", outputId: targetOutputId, frameCount: 0 };
+      }
+      const results = await Promise.all(settlements);
+      const failed = results.find((result) => result.failureReason);
+      if (failed) return failed;
+      const interrupted = results.find((result) => result.status !== "played");
+      return {
+        status: interrupted ? "interrupted" : "played",
+        outputId: targetOutputId,
+        frameCount: results.reduce((sum, result) => sum + result.frameCount, 0)
+      };
     },
     ackPlaybackIdle(ackId) {
       resolveFrontendPlaybackIdleAck(ackId, true);
     },
     async interrupt(reason = "manual", targetOutputId) {
+      ttsProducer.abort(`voice_call_interrupt:${reason}`);
       await interruptController.runInterrupt(reason === "network" || reason === "unknown" ? "manual" : reason, targetOutputId);
     },
     async close(reason = "closed") {
@@ -365,6 +654,7 @@ export async function createCallState(
         waiter.resolve(false);
       }
       deps.emitStatus?.({ state: "voice_call.hangup", detail: reason });
+      ttsProducer.abort(`voice_call_close:${reason}`);
       playback.stopTextCacheStatus();
       await interruptController.runInterrupt("call_close");
       await interruptController.commitStableInputsIfReady();
@@ -406,6 +696,16 @@ type InboundAudioStats = {
   firstStartMs?: number;
   lastEndMs?: number;
   durationMs: number;
+};
+
+type TalkChunk = {
+  sessionId: string;
+  outputId: string;
+  chunkId?: string;
+  text: string;
+  status?: string;
+  startCharIndex: number;
+  endCharIndex: number;
 };
 
 function createInboundAudioStats(): InboundAudioStats {
@@ -576,15 +876,7 @@ function normalizeTalkSessionOpenResult(value: unknown): string | undefined {
   return typeof sessionId === "string" || typeof sessionId === "number" ? String(sessionId) : undefined;
 }
 
-function normalizeTalkChunk(value: unknown): {
-  sessionId: string;
-  outputId: string;
-  chunkId?: string;
-  text: string;
-  status?: string;
-  startCharIndex: number;
-  endCharIndex: number;
-} | undefined {
+function normalizeTalkChunk(value: unknown): TalkChunk | undefined {
   if (!value || typeof value !== "object") return undefined;
   const chunk = value as Record<string, unknown>;
   if (typeof chunk.outputId !== "string" || typeof chunk.text !== "string") return undefined;
@@ -600,43 +892,29 @@ function normalizeTalkChunk(value: unknown): {
   };
 }
 
-class AsyncTextQueue implements AsyncIterable<string> {
-  private chunks: string[] = [];
-  private waiters: Array<() => void> = [];
-  private closed = false;
+function playbackOptionString(options: unknown, key: string): string | undefined {
+  return options && typeof options === "object" && typeof (options as Record<string, unknown>)[key] === "string"
+    ? (options as Record<string, string>)[key]
+    : undefined;
+}
 
-  push(text: string): void {
-    if (this.closed || !text) return;
-    this.chunks.push(text);
-    this.wake();
-  }
+async function* iterateUint8Chunks(chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
+  for (const chunk of chunks) yield chunk;
+}
 
-  finish(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.wake();
-  }
+async function* iterateServerAudioFrames(frames: import("./types.js").ServerAudioFrame[]): AsyncIterable<import("./types.js").ServerAudioFrame> {
+  for (const frame of frames) yield frame;
+}
 
-  abort(): void {
-    this.finish();
+function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const size = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
   }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<string> {
-    while (true) {
-      const chunk = this.chunks.shift();
-      if (chunk !== undefined) {
-        yield chunk;
-        continue;
-      }
-      if (this.closed) return;
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
-    }
-  }
-
-  private wake(): void {
-    const waiters = this.waiters.splice(0, this.waiters.length);
-    for (const waiter of waiters) waiter();
-  }
+  return out;
 }
 
 function selectRandomVoiceCallFillerAsset(): { assetId: string; filePath: string; text: string } | undefined {

@@ -59,6 +59,7 @@ export function createVoicePlaybackConsumer(input: {
   let playbackClockMs = input.deps.now?.().getTime() ?? Date.now();
   let outboundBufferedUntilMs = 0;
   let currentPlayingItem: PlaybackItem | undefined;
+  let underrunActive = false;
 
   const playbackDetail = (item: PlaybackItem | undefined, fallback?: string) => {
     const output = item?.outputId ?? fallback;
@@ -267,6 +268,7 @@ export function createVoicePlaybackConsumer(input: {
       return false;
     }
     input.advanceOutboundRtpClockForFrame(frame);
+    underrunActive = false;
     item.framesWritten += 1;
     item.playedMs = Math.max(item.playedMs ?? 0, item.framesWritten * frame.durationMs);
     item.totalMs = Math.max(item.totalMs ?? 0, item.framesWritten * frame.durationMs);
@@ -314,7 +316,8 @@ export function createVoicePlaybackConsumer(input: {
             detail: `sent=${input.playbackQueue.reduce((sum, item) => sum + item.framesWritten, 0)} queued=${playbackFrameQueue.length}`
           });
         }
-        if (head) {
+        if (head && !underrunActive) {
+          underrunActive = true;
           input.deps.emitStatus?.({
             state: "tts.queue.underrun",
             detail: `sent=${head.framesWritten} queued=${playbackFrameQueue.length}`

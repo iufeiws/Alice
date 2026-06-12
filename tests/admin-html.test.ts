@@ -174,3 +174,17 @@ test("memory page shows selected day chat with undo and redo actions", () => {
   assert.match(html, /\/admin\/api\/memory\/run-progress/);
   assert.match(html, /renderMemoryCalendar/);
 });
+
+test("admin layout has mobile overflow guards", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /@media \(max-width: 900px\) \{/);
+  assert.match(html, /body \{ overflow: auto; \}/);
+  assert.match(html, /\.shell \{ min-height: 100vh; height: auto;[\s\S]*overflow: visible; \}/);
+  assert.match(html, /\.tabbar, \.subtabs \{ max-width: 100%; overflow-x: auto; flex-wrap: nowrap;/);
+  assert.match(html, /\.row, \.tool-preview-grid,[\s\S]*\.behavior-layer-grid \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(html, /\.behavior-table-wrap \{ overflow-x: auto; \}/);
+  assert.match(html, /\.behavior-table \{ min-width: 760px; table-layout: auto; \}/);
+  assert.match(html, /@media \(max-width: 560px\) \{/);
+  assert.match(html, /button \{ width: 100%; margin-right: 0; \}/);
+});

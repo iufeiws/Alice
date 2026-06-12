@@ -230,7 +230,54 @@ export function renderAdminHtmlV2(): string {
       .log-line { border-bottom: 1px solid #243041; padding: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
       .log-info { color: #d1d5db; } .log-warn { color: #fbbf24; } .log-error { color: #fca5a5; }
       @media (max-width: 1200px) { .usage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "aside" "main" "terminal"; } aside { border-right: 0; border-bottom: 1px solid #d7dce3; } .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row, .behavior-layout, .behavior-config-grid { grid-template-columns: 1fr; } .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; } .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-preview-pane { position: static; } .admin-terminal-body { height: 40vh; } }
+      @media (max-width: 900px) {
+        html, body { height: auto; min-height: 100%; }
+        body { overflow: auto; }
+        .shell { min-height: 100vh; height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "aside" "main" "terminal"; overflow: visible; }
+        .shell.collapsed { grid-template-columns: minmax(0, 1fr); }
+        aside { max-height: none; border-right: 0; border-bottom: 1px solid #d7dce3; overflow: visible; }
+        .collapsed aside .panel-body, .collapsed aside .tabbar, .collapsed aside h1 { display: none; }
+        main { padding: 14px 12px; overflow: visible; }
+        section { padding: 12px; }
+        .tabbar, .subtabs { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+        .tabbar { padding-left: 12px; padding-right: 12px; }
+        .main-tabs { padding: 0 0 12px; }
+        .tab { flex: 0 0 auto; white-space: nowrap; }
+        .row, .tool-preview-grid, .usage-model-charts, .prompt-editor-grid, .shell-grid, .memory-day-layout, .plugin-config-grid, .plugin-public-grid, .plugin-preset-row, .behavior-layout, .behavior-config-grid, .behavior-config-row, .behavior-layer-grid { grid-template-columns: minmax(0, 1fr); }
+        .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; }
+        .prompt-preview-pane { position: static; }
+        .prompt-preview-pane .logs, .prompt-preview-pane > pre, .logs { max-height: 55vh; }
+        .prompt-preview-head, .plugin-toolbar, .plugin-config-head, .plugin-section-head, .behavior-toolbar, .behavior-config-head, .shell-head, .shell-option summary, .shell-group summary { align-items: stretch; flex-wrap: wrap; }
+        .plugin-toolbar label, .behavior-toolbar label, .usage-controls label, .memory-controls label { min-width: min(100%, 180px); flex: 1 1 180px; }
+        .plugin-grid { grid-template-columns: minmax(0, 1fr); }
+        .plugin-actions { align-items: flex-start; flex-wrap: wrap; }
+        .behavior-table-wrap { overflow-x: auto; }
+        .behavior-table { min-width: 760px; table-layout: auto; }
+        .behavior-recent-scroll { overflow: auto; }
+        .behavior-recent-table { min-width: 620px; table-layout: auto; }
+        .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .usage-model-head { flex-wrap: wrap; gap: 6px 12px; }
+        .usage-model-charts { overflow-x: visible; }
+        .llm-split { height: auto; grid-template-rows: auto; }
+        .llm-window .logs { max-height: 55vh; }
+        .admin-terminal { position: static; }
+        .admin-terminal-body { height: 40vh; }
+      }
+      @media (max-width: 560px) {
+        button { width: 100%; margin-right: 0; }
+        .side-head button, .tab, .terminal-tab, .terminal-action, .memory-calendar-head button, .shell-group-add, .plugin-switch input, .behavior-table button, .prompt-preview-head button, .plugin-config-head button, .behavior-config-head button, .shell-option summary button, .shell-group summary button { width: auto; }
+        .panel-body { padding: 12px; }
+        .qr-box { width: 100%; min-height: 180px; }
+        .usage-grid { grid-template-columns: minmax(0, 1fr); }
+        .usage-controls, .memory-controls, .prompt-actions, .tool-preview-actions, .behavior-config-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+        .prompt-actions button, .tool-preview-actions button, .behavior-config-actions button { margin: 0; width: 100%; }
+        .plugin-card { min-height: 0; }
+        .plugin-card-head { grid-template-columns: 34px minmax(0, 1fr); }
+        .plugin-icon { width: 34px; height: 34px; }
+        .plugin-switch { width: auto; }
+        .shell-image-preview { max-width: 100%; }
+        .terminal-actions { margin-left: 0; }
+      }
     </style>
   </head>
   <body>

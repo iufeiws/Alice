@@ -192,7 +192,6 @@ export type AgentLoopRuntime = {
   ensureChatSessionContext<TSession = unknown, TMode = unknown>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   prepareSessionContext(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   appendSessionContext<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
-  runFunctionCallLoop(spec: AgentFunctionCallLoopSpec): Promise<AgentFunctionCallLoopResult>;
   requestRun(request: AgentLoopRunRequest): Promise<AgentLoopRunResult>;
   interrupt(reason: string): void;
 };
@@ -292,9 +291,6 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     appendSessionContext(input) {
       return appendAgentLoopSessionContext(input);
-    },
-    runFunctionCallLoop(spec) {
-      return runAgentFunctionCallLoop(spec);
     },
     async requestRun(request) {
       if (running) return { started: false, outputs: [] };

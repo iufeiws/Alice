@@ -341,33 +341,6 @@ test("agent loop runtime executes prepared chat runs through the function-call l
   assert.equal(result.outputs[0]?.id, "out_prepared");
 });
 
-test("agent loop runtime runs function-call specs through the shared tool loop", async () => {
-  const runtime = createAgentLoopRuntime();
-  const result = await runtime.runFunctionCallLoop({
-    initialMessages: [{ role: "user", content: "hello" }],
-    buildRequest({ messages }) {
-      return {
-        agentId: "chat",
-        messages,
-        toolNames: []
-      };
-    },
-    async sendRequest() {
-      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
-    },
-    executeTool() {
-      throw new Error("unexpected tool call");
-    }
-  });
-
-  assert.equal(result.stopReason, "completed");
-  assert.equal(result.finalMessage.content, "done");
-  assert.deepEqual(result.messages, [
-    { role: "user", content: "hello", toolCalls: undefined },
-    { role: "assistant", content: "done", reasoningContent: undefined }
-  ]);
-});
-
 test("standalone agent function-call loop is exported for loop adapters", async () => {
   const { runAgentFunctionCallLoop } = await import("../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js");
   const calls: string[] = [];

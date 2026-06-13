@@ -3,9 +3,9 @@ import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js"
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
-import { formatToolResultForLLM } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
+import { createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
 import {
   prepareAgentLoopSessionContext,
   type AgentFunctionCallLoopSpec,
@@ -259,6 +259,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
     const profile = deps.getTalkPromptProfile();
     const event = buildTalkAgentEvent(sessionId, deps.time);
+    const toolExecutor = createAgentLoopToolExecutor({
+      event,
+      toolPlugins: [...deps.toolPlugins]
+    });
     const context = {
       event,
       time: deps.time,
@@ -269,7 +273,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       wakeBoundary: deps.diaryStore.latestWakeBoundary()
     };
     const variables = promptVariables(profile, context);
-    const runPromptTool = async (_layer: unknown, call: ToolCall) => executeTalkToolCall(context.event, call, variables);
+    const runPromptTool = async (_layer: unknown, call: ToolCall) => toolExecutor.executeToolCall(call);
     const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
       kind: "talk",
       sessionId,
@@ -293,55 +297,9 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       session: preparedSession.session,
       toolNames: deps.visibleToolNames(profile),
       toolVariables: variables,
-      executeToolCall: (call: LLMToolCall) => executeTalkLLMToolCall(event, call)
-        .then((result) => formatToolResultForLLM(result))
+      executeToolCall: (call: LLMToolCall) => toolExecutor.executeLLMToolCall(call)
+        .then(({ result }) => formatAgentLoopToolResultForLLM(result))
     };
-  }
-
-  async function executeTalkLLMToolCall(event: AgentEvent, call: LLMToolCall): Promise<ToolResult> {
-    return executeTalkToolCall(event, {
-      id: call.id,
-      toolName: call.function.name,
-      input: parseToolArguments(call.function.arguments)
-    }, promptVariables(deps.getTalkPromptProfile(), {
-      event,
-      time: deps.time,
-      dailyShell: deps.dailyShellStore.render(deps.time.now().date, deps.time.timeZone),
-      dailyShellRaw: deps.dailyShellStore.get(deps.time.now().date, deps.time.timeZone),
-      appearanceDescription: deps.getAppearanceDescription(),
-      memory: deps.memoryStore.read(),
-      wakeBoundary: deps.diaryStore.latestWakeBoundary()
-    }));
-  }
-
-  async function executeTalkToolCall(
-    _event: AgentEvent,
-    call: ToolCall,
-    _variables: ReturnType<typeof promptVariables>
-  ): Promise<ToolResult> {
-    const plugin = deps.toolPlugins.find((entry) => entry.listTools().some((tool) => tool.name === call.toolName));
-    if (!plugin) {
-      return {
-        callId: call.id,
-        ok: false,
-        error: `Unknown tool: ${call.toolName}`
-      };
-    }
-    try {
-      return await plugin.execute({
-        id: call.id,
-        toolName: call.toolName,
-        input: call.input,
-        requester: _event.source,
-        session: _event.session
-      });
-    } catch (error) {
-      return {
-        callId: call.id,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
   }
 
   return {
@@ -386,15 +344,6 @@ function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider): Agen
       receivedAtUtc: now.date.toISOString()
     }
   } as const;
-}
-
-function parseToolArguments(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
 }
 
 function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {

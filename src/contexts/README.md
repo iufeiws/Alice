@@ -46,9 +46,11 @@
   - 从 message runtime 拆出的独立 heartbeat。
   - 负责 tick agent state、扫描 pending inbound、触发 initiated behavior/sleep events、calling 状态下驱动 talk loop。
 - `agent-loop/src/application/run-chat-loop.ts`
-  - 构建 chat function-call loop 启动参数、tool execution adapter、streaming send adapter 和完成写回 adapter。
+  - 构建 chat function-call loop 启动参数、streaming send adapter 和完成写回 adapter。
 - `agent-loop/src/application/run-talk-loop.ts`
   - 构建 talk function-call loop 启动参数、runtime transcript patch、stream output adapter 和完成写回 adapter。
+- `agent-loop/src/application/agent-loop-tool-executor.ts`
+  - 统一 `toolName -> plugin`、JSON args、`plugin.execute`、error result 和 LLM tool message formatting；chat/talk 只保留各自的 adapter hook。
 
 ### 迁移步骤
 
@@ -62,6 +64,7 @@
 8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
 9. [done] `agent-loop-runtime.requestRun(kind)` 已只接受 `prepareChat/prepareTalk` prepared run，并统一执行 prepared spec；API 生产 chat/talk wiring 和 `conversation-hub` fallback 均不再注册 legacy `runChat/runTalk` runner，message runtime 的 core 依赖也已收紧为 `prepareEventRun(...)`。`AgentCore` 已不再暴露 direct `handleEvent(...)` 执行入口，只构建 prepared run；`run-chat-loop.ts` 已只导出 `buildChatAgentLoop(...)` spec 构建器，`run-talk-loop.ts` 已只导出 talk prepared run 构建入口，不再导出 direct run 方法；talk runtime 的外部入口已改为 `markAgentLoopReady(...)`、`claimReadyAgentLoopSession(...)`、`prepareReadyAgentLoopSession(...)`，只表达 ready/claim/prepare，不再暴露 `startAgentLoop` 命名；旧 `SessionDirtyFlagger` 独立延迟调度残留已删除。prepared run 支持 lazy `prepare()`，chat 的 `ensureActiveLLMSession`、spec 构建已进入 runtime 执行链调用阶段；chat/talk session state holder 已改为 `agent-loop-runtime` 内的单一 `activeMainSessionContext`，不再用 `Map<AgentLoopKind, unknown>` 分槽持有。talk transcript 的 load/create prefix、`{ replaceFrom, messages }` patch append 和 writeback 已通过 `agent-loop-runtime.prepareSessionContext(...)` 执行；talk builder 已删除内部 sleep/backpressure 等待和私有 AbortController，voice output/foreground idle 不 ready 时直接返回 undefined 交还 heartbeat 下次 tick，`agent-loop-runtime.requestRun(...)` 的 AbortSignal 透传到 talk LLM request。chat prompt messages + active session object prepare 已通过 `agent-loop-runtime.prepareChatSessionContext(...)` 执行，chat active session create/set/clear lifecycle 已通过 `agent-loop-runtime.createActiveSessionContext(...)`、`setActiveSessionContext(...)`、`clearActiveSessionContext(...)` 执行，chat append session context 的 append+writeback 已通过 `agent-loop-runtime.appendSessionContext(...)` 执行；chat reset/ensure session 外壳已通过 `agent-loop-runtime.ensureChatSessionContext(...)` 编排，reset 判定本身仍由 `AgentCore` 以回调提供。active LLM session archive/current pointer 暂由 `llm-session` 实现，API chat/talk wiring 与 LLM observability request/response 写回已通过 `agent-loop-runtime` active session 门面访问 ensure/create/load/update/clear/rewrite/note；`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。
 10. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档；`processNow` 的 manual fallback 也已通过 heartbeat forced run task 发起，不再由 message runtime 直接 fallback 启动 loop。
+11. [done] 抽出 `AgentLoopToolExecutor`，chat/talk 普通 LLM tool call、prompt tool call 统一走公共 `toolPlugins` lookup/execute/error/format 路径；chat 的 streaming send 仍作为流式输出 adapter hook 保留。
 
 ### 当前已知风险
 

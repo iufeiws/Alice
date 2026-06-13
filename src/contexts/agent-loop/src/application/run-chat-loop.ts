@@ -1,9 +1,10 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import { formatToolResultForLLM as renderToolResultForLLM, renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
+import { buildAgentLoopToolMap, createAgentLoopToolExecutor, executePreparedAgentLoopToolCall, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
 import {
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
@@ -96,7 +97,10 @@ export type PreparedChatAgentLoop = {
 
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
-  const toolMap = buildToolMap(input.toolPlugins);
+  const toolExecutor = createAgentLoopToolExecutor({
+    event: input.event,
+    toolPlugins: input.toolPlugins
+  });
   const visibleToolNames = input.llmInput.toolNames;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
   const spec: AgentFunctionCallLoopSpec = {
@@ -122,7 +126,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       return { messages: session.messages };
     },
     buildRequest({ round, messages }) {
-      streamingToolSender = createStreamingSendMessageHandler(input.event, toolMap);
+      streamingToolSender = createStreamingSendMessageHandler(input.event, toolExecutor.toolMap);
       return {
         agentId: input.llmInput.agentId ?? "chat",
         client: input.llmInput.client ?? input.llm,
@@ -168,44 +172,16 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
           }
         };
       }
-      const plugin = toolMap.get(call.function.name);
-      let toolResult: ToolResult;
-      if (!plugin) {
-        toolResult = {
-          callId: call.id,
-          ok: false,
-          error: `Unknown tool: ${call.function.name}`
-        };
-      } else {
-        try {
-          const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), session);
-          toolResult = await plugin.execute({
-            id: call.id,
-            toolName: call.function.name,
-            input: toolInput,
-            requester: input.event.source,
-            session: input.event.session
-          });
-        } catch (error) {
-          toolResult = {
-            callId: call.id,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          };
-        }
-      }
+      const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
+        variables: textVariables,
+        transformInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session)
+      });
 
       session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, toolResult) ?? session.lastCheckChatCursorMessageId;
       if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
         session.waitChatStartedAt = input.time.now().epochMs;
       }
       input.setLastCompletedToolName(call.function.name);
-      const toolMessage = {
-        role: "tool" as const,
-        toolCallId: call.id,
-        name: call.function.name,
-        content: formatToolResultForLLM(toolResult, textVariables)
-      };
       const control = {
         sentMessage: isSendChatToolName(call.function.name) && toolResult.ok,
         invalidateSession: toolResult.invalidateLLMSession === true,
@@ -310,23 +286,7 @@ export async function runPromptToolRequest(
       error: "send_chat cannot run from prompt prebuild"
     };
   }
-  const plugin = findToolPlugin(toolPlugins, call.toolName);
-  if (!plugin) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: `Unknown prompt tool: ${call.toolName}`
-    };
-  }
-  try {
-    return await plugin.execute(call);
-  } catch (error) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
+  return executePreparedAgentLoopToolCall(buildAgentLoopToolMap(toolPlugins), call);
 }
 
 export async function buildFixedPrefixAppendMessages(input: {
@@ -469,24 +429,6 @@ export function toolResultText(result: ToolResult): string {
   } catch {
     return String(result.output);
   }
-}
-
-function buildToolMap(toolPlugins: ToolPlugin[]): Map<string, ToolPlugin> {
-  const toolMap = new Map<string, ToolPlugin>();
-  for (const plugin of toolPlugins) {
-    for (const tool of plugin.listTools()) {
-      toolMap.set(tool.name, plugin);
-    }
-    if (plugin.id === "messaging" && toolMap.has(sendChatToolName)) {
-      toolMap.set("check_feishu", plugin);
-      toolMap.set("check_wechat", plugin);
-      toolMap.set("view_messages", plugin);
-      toolMap.set("send_feishu", plugin);
-      toolMap.set("send_wechat", plugin);
-      toolMap.set("send_message", plugin);
-    }
-  }
-  return toolMap;
 }
 
 function createLocalLLMRequestSender(input: ChatAgentLoopInput): LLMRequestSender {
@@ -724,7 +666,7 @@ function reasoningContentForToolRequest(reasoningContent: string | undefined, to
 }
 
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
-  return renderToolResultForLLM(result, variables);
+  return formatAgentLoopToolResultForLLM(result, variables);
 }
 
 function renderLLMTextValue(value: string, variables: LLMTextVariables): string {

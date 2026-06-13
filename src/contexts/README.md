@@ -55,6 +55,8 @@
   - 统一 function-call loop spec 构筑入口和默认 loop limits；chat/talk adapter 只提供各自 request、tool、stream、writeback 回调。
 - `agent-loop/src/application/chat-loop-tool-control.ts`
   - 将 chat tool result 到 loop control / session rebuild mode 的转换从 `run-chat-loop.ts` 移出，降低 chat loop adapter 内部业务分支。
+- `agent-loop/src/application/chat-loop-request-sender.ts`
+  - 将 chat 本地 LLM request sender、tool schema rendering、retry/backoff 和 LLM lifecycle logging 从 `run-chat-loop.ts` 移出。
 - `agent-loop/src/application/talk-loop-session-context.ts`
   - 将 talk prompt context、prompt variables、prompt tool execution 和 active transcript patch preparation 从 `run-talk-loop.ts` 移出。
 - `agent-loop/src/runtime/agent-loop-session-initializer.ts`
@@ -80,6 +82,7 @@
 16. [done] 将 chat 每分钟 LLM request timestamp 窗口维护抽入 `AgentLoopSessionInitializer.claimAgentLoopRequestWindow(...)`，`run-chat-loop` 不再手写 requestTimestamps 过滤和追加。
 17. [done] 抽出 `chat-loop-tool-control.ts`，`run-chat-loop` 不再直接展开 tool result reset/fixed-prefix mode 构筑逻辑，而是执行 tool 后调用 helper 生成 loop control 和待应用 mode state。
 18. [done] 抽出 `talk-loop-session-context.ts`，`run-talk-loop` 不再直接构建 talk prompt context、prompt variables、prompt tool runner 和 active session transcript patch，只消费 prepared session context。
+19. [done] 抽出 `chat-loop-request-sender.ts`，`run-chat-loop` 不再拥有本地 LLM request sender、tool schema rendering、retry/backoff 和 lifecycle logging 实现。
 
 ### 当前已知风险
 

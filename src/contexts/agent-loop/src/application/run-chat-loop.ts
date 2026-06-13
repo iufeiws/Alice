@@ -1,11 +1,12 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
+import { createChatLoopRequestSender } from "./chat-loop-request-sender.js";
 import {
   claimAgentLoopRequestWindow,
   type AgentFunctionCallLoopSpec,
@@ -15,7 +16,6 @@ import {
 
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
-const maxLLMRetryAttempts = 3;
 
 type ChatAgentTokenPressurePreviewBaseline = {
   inputTokens: number;
@@ -149,7 +149,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         }
       };
     },
-    sendRequest: input.llmRequestSender ?? createLocalLLMRequestSender(input),
+    sendRequest: input.llmRequestSender ?? createChatLoopRequestSender({
+      llm: input.llm,
+      toolPlugins: input.toolPlugins,
+      onLLMRequestPrepared: input.onLLMRequestPrepared,
+      onLLMResponseReceived: input.onLLMResponseReceived,
+      onLLMLog: input.onLLMLog
+    }),
     async afterRequest() {
       await streamingToolSender?.finish();
     },
@@ -365,79 +371,6 @@ export function toolResultText(result: ToolResult): string {
   }
 }
 
-function createLocalLLMRequestSender(input: ChatAgentLoopInput): LLMRequestSender {
-  return async (request) => {
-    const client = request.client ?? input.llm;
-    const requestInput: LLMChatInput = {
-      messages: request.messages,
-      model: request.model,
-      temperature: request.temperature,
-      maxTokens: request.maxTokens,
-      extraParams: request.extraParams,
-      tools: buildLocalToolSpecs(input.toolPlugins, request.toolNames, request.toolVariables as LLMTextVariables | undefined)
-    };
-    input.onLLMRequestPrepared?.(requestInput);
-    const useStream = request.stream === true && Boolean(client.chatStream);
-    let lastError: unknown;
-    let result: LLMChatResult | undefined;
-    for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
-      input.onLLMLog?.({ kind: "call_start", round: request.round, stream: useStream, model: requestInput.model, attempt });
-      try {
-        if (useStream && client.chatStream) {
-          input.onLLMLog?.({ kind: "stream_start", round: request.round, stream: true, model: requestInput.model, attempt });
-          try {
-            result = await client.chatStream(requestInput, request.streamHandlers);
-          } finally {
-            input.onLLMLog?.({ kind: "stream_end", round: request.round, stream: true, model: requestInput.model, attempt });
-          }
-        } else {
-          result = await client.chat(requestInput);
-          input.onLLMLog?.({ kind: "response_received", round: request.round, stream: false, model: requestInput.model, attempt });
-        }
-        break;
-      } catch (error) {
-        lastError = error;
-        if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
-        const delayMs = llmRetryDelayMs(attempt);
-        input.onLLMLog?.({
-          kind: "retry",
-          round: request.round,
-          stream: useStream,
-          model: requestInput.model,
-          attempt,
-          error: error instanceof Error ? error.message : String(error),
-          delayMs
-        });
-        await sleep(delayMs);
-      }
-    }
-    if (!result) throw lastError;
-    input.onLLMResponseReceived?.(result);
-    return result;
-  };
-}
-
-function buildLocalToolSpecs(toolPlugins: ToolPlugin[], toolNames: string[], variables?: LLMTextVariables): LLMChatInput["tools"] {
-  const seen = new Set<string>();
-  const specs: LLMChatInput["tools"] = [];
-  for (const name of toolNames) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    const plugin = findToolPlugin(toolPlugins, name);
-    const tool = plugin?.listTools().find((entry) => entry.name === name);
-    if (!tool) throw new Error(`unknown LLM tool: ${name}`);
-    specs.push({
-      type: "function",
-      function: {
-        name: tool.name,
-        description: renderLLMTextValue(tool.description, variables ?? {}),
-        parameters: renderLLMValue(tool.inputSchema, variables ?? {}) as Record<string, unknown>
-      }
-    });
-  }
-  return specs;
-}
-
 function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
   const states = new Map<number, StreamingSendMessageState>();
   const resultsByCallId = new Map<string, ToolResult>();
@@ -596,24 +529,6 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
   return formatAgentLoopToolResultForLLM(result, variables);
-}
-
-function renderLLMTextValue(value: string, variables: LLMTextVariables): string {
-  return String(renderLLMValue(value, variables));
-}
-
-function isRetryableLLMError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\b(429|500|502|503|504)\b/.test(message)
-    || /service[_ ]unavailable|too busy|temporarily|timeout|timed out|fetch failed|ECONNRESET|ETIMEDOUT/i.test(message);
-}
-
-function llmRetryDelayMs(attempt: number): number {
-  return 1_000;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function sendStreamingLine(

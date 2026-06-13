@@ -73,6 +73,7 @@
 13. [done] 抽出 `AgentFunctionCallLoopSpec` 构筑 helper，chat/talk 不再各自直接拼默认 function-call loop limits，统一经公共 builder 生成 `llm-tool-loop` spec。
 14. [done] 删除 prompt tool request 对 `send_chat` 的 loop 层特殊拦截；已配置/暴露的 prompt tool call 统一走 `toolPlugins` 执行，禁用能力由配置层不暴露或不配置处理。
 15. [done] 将 prompt tool request helper 移入 `AgentLoopToolExecutor`，`run-chat-loop` 只保留兼容 re-export 和 adapter 调用，不再拥有 prompt tool 执行实现。
+16. [done] 将 chat 每分钟 LLM request timestamp 窗口维护抽入 `AgentLoopSessionInitializer.claimAgentLoopRequestWindow(...)`，`run-chat-loop` 不再手写 requestTimestamps 过滤和追加。
 
 ### 当前已知风险
 

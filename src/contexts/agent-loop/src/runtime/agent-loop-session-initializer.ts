@@ -48,6 +48,22 @@ export type AgentLoopAppendSessionContextResult<TSession extends AgentLoopMutabl
   appended: boolean;
 };
 
+export type AgentLoopRequestWindowSession = {
+  requestTimestamps: number[];
+};
+
+export type AgentLoopClaimRequestWindowInput<TSession extends AgentLoopRequestWindowSession = AgentLoopRequestWindowSession> = {
+  session: TSession;
+  nowMs: number;
+  windowMs: number;
+  maxRequests: number;
+};
+
+export type AgentLoopClaimRequestWindowResult<TSession extends AgentLoopRequestWindowSession = AgentLoopRequestWindowSession> = {
+  session: TSession;
+  allowed: boolean;
+};
+
 export type AgentLoopSetActiveSessionContextInput<TSession = unknown> = {
   kind: AgentLoopKind;
   session: TSession | undefined;
@@ -143,6 +159,24 @@ export function appendAgentLoopSessionContext<TSession extends AgentLoopMutableS
   return {
     session: input.session,
     appended: true
+  };
+}
+
+export function claimAgentLoopRequestWindow<TSession extends AgentLoopRequestWindowSession>(
+  input: AgentLoopClaimRequestWindowInput<TSession>
+): AgentLoopClaimRequestWindowResult<TSession> {
+  input.session.requestTimestamps = input.session.requestTimestamps
+    .filter((timestamp) => input.nowMs - timestamp < input.windowMs);
+  if (input.session.requestTimestamps.length >= input.maxRequests) {
+    return {
+      session: input.session,
+      allowed: false
+    };
+  }
+  input.session.requestTimestamps.push(input.nowMs);
+  return {
+    session: input.session,
+    allowed: true
   };
 }
 

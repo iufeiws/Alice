@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentHeartbeatRuntime } from "../src/contexts/agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import { createAgentLoopRuntime } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { claimAgentLoopRequestWindow, createAgentLoopRuntime } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
@@ -233,6 +233,32 @@ test("agent loop runtime appends and writes loop session context", () => {
     { role: "system", content: "prefix" },
     { role: "user", content: "new turn" }
   ]);
+});
+
+test("agent loop runtime claims request window slots", () => {
+  const session = { requestTimestamps: [100, 500] };
+
+  assert.deepEqual(claimAgentLoopRequestWindow({
+    session,
+    nowMs: 1_000,
+    windowMs: 1_000,
+    maxRequests: 2
+  }), {
+    session,
+    allowed: false
+  });
+  assert.deepEqual(session.requestTimestamps, [100, 500]);
+
+  assert.deepEqual(claimAgentLoopRequestWindow({
+    session,
+    nowMs: 1_101,
+    windowMs: 1_000,
+    maxRequests: 2
+  }), {
+    session,
+    allowed: true
+  });
+  assert.deepEqual(session.requestTimestamps, [500, 1_101]);
 });
 
 test("agent loop runtime sets and clears active session context", () => {

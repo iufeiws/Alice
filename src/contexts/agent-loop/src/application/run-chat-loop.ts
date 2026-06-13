@@ -6,6 +6,7 @@ import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import {
+  claimAgentLoopRequestWindow,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallToolExecution
@@ -114,13 +115,17 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       if (session.messages.length === 0) return { stop: true, messages: session.messages };
       const requestTime = input.time.now().epochMs;
-      session.requestTimestamps = session.requestTimestamps.filter((timestamp) => requestTime - timestamp < 60_000);
-      if (session.requestTimestamps.length >= maxLLMRequestsPerMinute) {
+      const requestWindow = claimAgentLoopRequestWindow({
+        session,
+        nowMs: requestTime,
+        windowMs: 60_000,
+        maxRequests: maxLLMRequestsPerMinute
+      });
+      if (!requestWindow.allowed) {
         input.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.llmInput.model });
         input.noteSessionUpdated();
         return { stop: true, messages: session.messages };
       }
-      session.requestTimestamps.push(requestTime);
       input.noteSessionUpdated();
       return { messages: session.messages };
     },

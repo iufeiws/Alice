@@ -19,8 +19,6 @@ const codexWorkDir = stringValue(input.codexWorkDir) || workDir;
 const fileName = requireString(input.fileName, "fileName");
 const prompt = requireString(input.prompt, "prompt");
 const referenceImages = requireStringArray(input.referenceImages, "referenceImages");
-const referenceImagePrompt = requireString(input.referenceImagePrompt, "referenceImagePrompt");
-const aspectRatio = requireString(input.aspectRatio, "aspectRatio");
 const codexCommand = stringValue(input.codexCommand) || process.env.SELFIE_CODEX_COMMAND || "codex";
 const timeoutMs = positiveNumber(input.timeoutMs, 60_000);
 const outputPath = path.join(workDir, fileName);
@@ -28,27 +26,14 @@ const skillInstructions = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf
 const codexReferenceImages = copyReferenceImagesToCodexWorkDir(referenceImages, codexWorkDir);
 const imageArgs = codexReferenceImages.map((image) => `--image=${image}`);
 const beforeImages = snapshotGeneratedImages();
+const started = Date.now();
 
 const codexPrompt = [
-  "Apply these skill instructions exactly:",
-  "```markdown",
-  skillInstructions,
-  "```",
-  "",
-  "Task prompt:",
-  "```text",
-  prompt,
-  "```",
-  "",
-  "Task metadata:",
-  `Aspect ratio: ${aspectRatio}`,
-  referenceImagePrompt,
-  "",
-  "The image files are attached with --image in the same order as the task metadata."
-].join("\n");
+  skillInstructions.trim(),
+  prompt
+].join("\n\n");
 
-const started = Date.now();
-const result = await execFile(codexCommand, [
+const codexArgs = [
   "exec",
   "-C",
   codexWorkDir,
@@ -67,15 +52,43 @@ const result = await execFile(codexCommand, [
   "--json",
   ...imageArgs,
   codexPrompt
-], timeoutMs, sanitizedEnv());
+];
 
-const generatedPath = findNewGeneratedImage(beforeImages, started);
-if (!generatedPath) {
-  throw new Error("codex selfie generation did not create a new generated image");
+let result = { stdout: "", stderr: "", code: undefined, signal: undefined, elapsedMs: 0 };
+try {
+  result = await execFile(codexCommand, codexArgs, timeoutMs, sanitizedEnv());
+  assertCodexTurnCompleted(result.stdout);
+  const generatedPath = findNewGeneratedImage(beforeImages, started);
+  if (!generatedPath) {
+    throw new Error("codex selfie generation did not create a new generated image");
+  }
+  writeCodexLogs(result, {
+    status: "completed",
+    command: codexCommand,
+    args: redactPromptArg(codexArgs),
+    codexWorkDir,
+    timeoutMs,
+    started,
+    completed: Date.now()
+  });
+  copyGeneratedImage(generatedPath, outputPath);
+  console.error(`alice-selfie-fast completed in ${Date.now() - started}ms; source=${generatedPath}; file=${fileName}`);
+  if (result.stdout.trim()) process.stdout.write(result.stdout);
+} catch (error) {
+  result = codexOutputFromError(error) || result;
+  writeCodexLogs(result, {
+    status: "failed",
+    command: codexCommand,
+    args: redactPromptArg(codexArgs),
+    codexWorkDir,
+    timeoutMs,
+    started,
+    completed: Date.now(),
+    error: error instanceof Error ? error.message : String(error)
+  });
+  printCodexFailure(error, result);
+  throw error;
 }
-copyGeneratedImage(generatedPath, outputPath);
-console.error(`alice-selfie-fast completed in ${Date.now() - started}ms; source=${generatedPath}; file=${fileName}`);
-if (result.stdout.trim()) process.stdout.write(result.stdout);
 
 function execFile(command, args, timeoutMs, env) {
   return new Promise((resolve, reject) => {
@@ -84,12 +97,11 @@ function execFile(command, args, timeoutMs, env) {
     const stderrChunks = [];
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error([
-        `selfie generation timed out after ${timeoutMs}ms`,
-        Buffer.concat(stderrChunks).toString("utf8").trim(),
-        Buffer.concat(stdoutChunks).toString("utf8").trim()
-      ].filter(Boolean).join("\n")));
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      reject(codexRunError(`selfie generation timed out after ${timeoutMs}ms`, { stdout, stderr, signal: "SIGTERM", elapsedMs: Date.now() - startedAt }));
     }, timeoutMs);
+    const startedAt = Date.now();
     child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
     child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
     child.on("error", (error) => {
@@ -101,12 +113,70 @@ function execFile(command, args, timeoutMs, env) {
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== 0) {
-        reject(new Error([`codex exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`, stderr.trim(), stdout.trim()].filter(Boolean).join("\n")));
+        reject(codexRunError(`codex exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`, { stdout, stderr, code, signal, elapsedMs: Date.now() - startedAt }));
         return;
       }
-      resolve({ stdout, stderr });
+      resolve({ stdout, stderr, code, signal, elapsedMs: Date.now() - startedAt });
     });
   });
+}
+
+function assertCodexTurnCompleted(stdout) {
+  let sawTurnStarted = false;
+  let sawTerminal = false;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type === "turn.started") sawTurnStarted = true;
+    if (event.type === "turn.completed" || event.type === "turn.failed" || event.type === "error") {
+      sawTerminal = true;
+    }
+  }
+  if (sawTurnStarted && !sawTerminal) {
+    throw codexRunError("codex stalled after turn.started; treat as failed run", { stdout, stderr: "" });
+  }
+}
+
+function writeCodexLogs(result, meta) {
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.writeFileSync(path.join(workDir, "codex-stdout.jsonl"), result.stdout || "");
+  fs.writeFileSync(path.join(workDir, "codex-stderr.log"), result.stderr || "");
+  fs.writeFileSync(path.join(workDir, "codex-run-meta.json"), `${JSON.stringify({
+    ...meta,
+    elapsedMs: Date.now() - started,
+    exitCode: result.code ?? null,
+    signal: result.signal ?? null,
+    stdoutBytes: Buffer.byteLength(result.stdout || ""),
+    stderrBytes: Buffer.byteLength(result.stderr || "")
+  }, null, 2)}\n`);
+}
+
+function printCodexFailure(error, result) {
+  console.error(`alice-selfie-fast failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error("=== codex stdout ===");
+  console.error((result.stdout || "").trim() || "(empty)");
+  console.error("=== codex stderr ===");
+  console.error((result.stderr || "").trim() || "(empty)");
+  console.error(`=== codex logs ===\n${path.join(workDir, "codex-stdout.jsonl")}\n${path.join(workDir, "codex-stderr.log")}\n${path.join(workDir, "codex-run-meta.json")}`);
+}
+
+function codexRunError(message, output) {
+  const error = new Error(message);
+  error.codexOutput = output;
+  return error;
+}
+
+function codexOutputFromError(error) {
+  return error && typeof error === "object" && error.codexOutput ? error.codexOutput : undefined;
+}
+
+function redactPromptArg(args) {
+  return args.map((arg, index) => index === args.length - 1 ? `[prompt omitted: ${Buffer.byteLength(arg)} bytes]` : arg);
 }
 
 function copyGeneratedImage(sourcePath, targetPath) {

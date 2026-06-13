@@ -1258,7 +1258,8 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
     configSchema: {
       groups: [
         { key: "general", label: "General" },
-        { key: "api", label: "Image API" },
+        { key: "openai", label: "OpenAI" },
+        { key: "openai_relay", label: "OpenAI Relay" },
         { key: "codex", label: "Codex" },
         { key: "storage", label: "Storage" }
       ],
@@ -1266,24 +1267,43 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the selfie tool route." },
         { key: "selfieMode", label: "Selfie Mode", type: "select", group: "general", options: [
           { value: "api", label: "API" },
+          { value: "openaiRelay", label: "OpenAI Relay" },
           { value: "codex", label: "Codex" }
-        ], description: "API uses the Image API path. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
-        { key: "selfieImageApiKeySet", label: "API Key", type: "readonly", group: "api", description: "Read from SELFIE_IMAGE_API_KEY or OPENAI_API_KEY; not stored in plugin config." },
-        { key: "selfieImageApiBaseURL", label: "API Base URL", type: "text", group: "api" },
-        { key: "selfieImageApiModel", label: "API Model", type: "text", group: "api" },
-        { key: "selfieImageApiSize", label: "API Size", type: "text", group: "api" },
-        { key: "selfieImageApiQuality", label: "API Quality", type: "text", group: "api" },
-        { key: "selfieImageApiModeration", label: "API Moderation", type: "select", group: "api", options: [
+        ], description: "API and OpenAI Relay use the same Image API build settings with different keys/base URLs. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
+        { key: "selfieImageApiKeySet", label: "API Key Set", type: "readonly", group: "openai" },
+        { key: "selfieImageApiKey", label: "API Key", type: "password", group: "openai", description: "Leave blank to keep the current key." },
+        { key: "selfieImageApiBaseURL", label: "Base URL", type: "text", group: "openai" },
+        { key: "selfieImageApiModel", label: "Model", type: "text", group: "openai" },
+        { key: "selfieImageApiSize", label: "Size", type: "text", group: "openai" },
+        { key: "selfieImageApiQuality", label: "Quality", type: "text", group: "openai" },
+        { key: "selfieImageApiModeration", label: "Moderation", type: "select", group: "openai", options: [
           { value: "auto", label: "auto" },
           { value: "low", label: "low" }
         ] },
-        { key: "selfieImageApiOutputFormat", label: "Output Format", type: "select", group: "api", options: [
+        { key: "selfieImageApiOutputFormat", label: "Output Format", type: "select", group: "openai", options: [
           { value: "jpeg", label: "jpeg" },
           { value: "png", label: "png" },
           { value: "webp", label: "webp" }
         ] },
-        { key: "selfieImageApiOutputCompression", label: "Output Compression", type: "number", group: "api", min: 0, max: 100, step: 1 },
-        { key: "selfieImageApiTimeoutMs", label: "API Timeout Ms", type: "number", group: "api", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieImageApiOutputCompression", label: "Output Compression", type: "number", group: "openai", min: 0, max: 100, step: 1 },
+        { key: "selfieImageApiTimeoutMs", label: "Timeout Ms", type: "number", group: "openai", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieImageApiRelayKeySet", label: "API Key Set", type: "readonly", group: "openai_relay" },
+        { key: "selfieImageApiRelayKey", label: "API Key", type: "password", group: "openai_relay", description: "Leave blank to keep the current key." },
+        { key: "selfieImageApiRelayBaseURL", label: "Base URL", type: "text", group: "openai_relay" },
+        { key: "selfieImageApiRelayModel", label: "Model", type: "text", group: "openai_relay" },
+        { key: "selfieImageApiRelaySize", label: "Size", type: "text", group: "openai_relay" },
+        { key: "selfieImageApiRelayQuality", label: "Quality", type: "text", group: "openai_relay" },
+        { key: "selfieImageApiRelayModeration", label: "Moderation", type: "select", group: "openai_relay", options: [
+          { value: "auto", label: "auto" },
+          { value: "low", label: "low" }
+        ] },
+        { key: "selfieImageApiRelayOutputFormat", label: "Output Format", type: "select", group: "openai_relay", options: [
+          { value: "jpeg", label: "jpeg" },
+          { value: "png", label: "png" },
+          { value: "webp", label: "webp" }
+        ] },
+        { key: "selfieImageApiRelayOutputCompression", label: "Output Compression", type: "number", group: "openai_relay", min: 0, max: 100, step: 1 },
+        { key: "selfieImageApiRelayTimeoutMs", label: "Timeout Ms", type: "number", group: "openai_relay", min: 1000, max: 600000, step: 1000 },
         { key: "selfieCodexCommand", label: "Codex Command", type: "text", group: "codex" },
         { key: "selfieCodexTimeoutMs", label: "Codex Timeout Ms", type: "number", group: "codex", min: 1000, max: 600000, step: 1000 },
         { key: "selfieReferenceDir", label: "Reference Folder", type: "text", group: "storage" },
@@ -1552,7 +1572,7 @@ function asrPluginSummary(context: AdminRoutesContext, config = readAsrConfigFor
 }
 
 function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfigForAdmin(context)): AdminPluginSummary {
-  const missingConfig = config.enabled && config.selfieMode === "api" && !config.selfieImageApiKey;
+  const missingConfig = config.enabled && (config.selfieMode === "api" || config.selfieMode === "openaiRelay") && !selectedPhotoImageApiKey(config);
   return {
     id: "photo",
     name: "Photo",
@@ -1568,7 +1588,6 @@ function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfi
 }
 
 function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: PhotoPluginConfig } | { error: string } {
-  if ("selfieImageApiKey" in patch) return { error: "invalid_plugin_config" };
   const current = readPhotoConfigForAdmin(context);
   const next: PhotoPluginConfig = {
     ...current,
@@ -1578,7 +1597,10 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieOutputDir: patch.selfieOutputDir === undefined ? current.selfieOutputDir : requiredString(patch.selfieOutputDir).trim(),
     selfieCodexCommand: patch.selfieCodexCommand === undefined ? current.selfieCodexCommand : requiredString(patch.selfieCodexCommand).trim(),
     selfieCodexTimeoutMs: patch.selfieCodexTimeoutMs === undefined ? current.selfieCodexTimeoutMs : numberFromUnknown(patch.selfieCodexTimeoutMs, current.selfieCodexTimeoutMs),
+    selfieImageApiKey: patch.selfieImageApiKey === undefined ? current.selfieImageApiKey : secretStringFromUnknown(patch.selfieImageApiKey, current.selfieImageApiKey),
     selfieImageApiBaseURL: patch.selfieImageApiBaseURL === undefined ? current.selfieImageApiBaseURL : requiredString(patch.selfieImageApiBaseURL).trim().replace(/\/+$/, ""),
+    selfieImageApiRelayKey: patch.selfieImageApiRelayKey === undefined ? current.selfieImageApiRelayKey : secretStringFromUnknown(patch.selfieImageApiRelayKey, current.selfieImageApiRelayKey),
+    selfieImageApiRelayBaseURL: patch.selfieImageApiRelayBaseURL === undefined ? current.selfieImageApiRelayBaseURL : requiredString(patch.selfieImageApiRelayBaseURL).trim().replace(/\/+$/, ""),
     selfieImageApiModel: patch.selfieImageApiModel === undefined ? current.selfieImageApiModel : requiredString(patch.selfieImageApiModel).trim(),
     selfieImageApiSize: patch.selfieImageApiSize === undefined ? current.selfieImageApiSize : requiredString(patch.selfieImageApiSize).trim(),
     selfieImageApiQuality: patch.selfieImageApiQuality === undefined ? current.selfieImageApiQuality : requiredString(patch.selfieImageApiQuality).trim(),
@@ -1586,6 +1608,13 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiOutputFormat: patch.selfieImageApiOutputFormat === undefined ? current.selfieImageApiOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiOutputFormat, current.selfieImageApiOutputFormat),
     selfieImageApiOutputCompression: patch.selfieImageApiOutputCompression === undefined ? current.selfieImageApiOutputCompression : numberFromUnknown(patch.selfieImageApiOutputCompression, current.selfieImageApiOutputCompression),
     selfieImageApiTimeoutMs: patch.selfieImageApiTimeoutMs === undefined ? current.selfieImageApiTimeoutMs : numberFromUnknown(patch.selfieImageApiTimeoutMs, current.selfieImageApiTimeoutMs),
+    selfieImageApiRelayModel: patch.selfieImageApiRelayModel === undefined ? current.selfieImageApiRelayModel : requiredString(patch.selfieImageApiRelayModel).trim(),
+    selfieImageApiRelaySize: patch.selfieImageApiRelaySize === undefined ? current.selfieImageApiRelaySize : requiredString(patch.selfieImageApiRelaySize).trim(),
+    selfieImageApiRelayQuality: patch.selfieImageApiRelayQuality === undefined ? current.selfieImageApiRelayQuality : requiredString(patch.selfieImageApiRelayQuality).trim(),
+    selfieImageApiRelayModeration: patch.selfieImageApiRelayModeration === undefined ? current.selfieImageApiRelayModeration : photoModerationFromUnknown(patch.selfieImageApiRelayModeration, current.selfieImageApiRelayModeration),
+    selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat, current.selfieImageApiRelayOutputFormat),
+    selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : numberFromUnknown(patch.selfieImageApiRelayOutputCompression, current.selfieImageApiRelayOutputCompression),
+    selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : numberFromUnknown(patch.selfieImageApiRelayTimeoutMs, current.selfieImageApiRelayTimeoutMs),
     selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : numberFromUnknown(patch.selfieMaxBytes, current.selfieMaxBytes)
   };
 
@@ -1596,12 +1625,13 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
 }
 
 function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
-  if (config.selfieMode !== "api" && config.selfieMode !== "codex") return "invalid_selfie_mode";
+  if (config.selfieMode !== "api" && config.selfieMode !== "openaiRelay" && config.selfieMode !== "codex") return "invalid_selfie_mode";
   if (!config.selfieReferenceDir) return "missing_selfie_reference_dir";
   if (!config.selfieOutputDir || !isPathUnderAssets(config.selfieOutputDir)) return "invalid_selfie_output_dir";
   if (!config.selfieCodexCommand) return "missing_selfie_codex_command";
   if (config.selfieCodexTimeoutMs < 1000 || config.selfieCodexTimeoutMs > 600_000) return "invalid_selfie_codex_timeout";
   if (!isValidHttpUrl(config.selfieImageApiBaseURL)) return "invalid_selfie_api_base_url";
+  if (!isValidHttpUrl(config.selfieImageApiRelayBaseURL)) return "invalid_selfie_api_relay_base_url";
   if (!config.selfieImageApiModel) return "missing_selfie_api_model";
   if (!config.selfieImageApiSize) return "missing_selfie_api_size";
   if (!config.selfieImageApiQuality) return "missing_selfie_api_quality";
@@ -1609,6 +1639,13 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (!["jpeg", "png", "webp"].includes(config.selfieImageApiOutputFormat)) return "invalid_selfie_output_format";
   if (config.selfieImageApiOutputCompression < 0 || config.selfieImageApiOutputCompression > 100) return "invalid_selfie_output_compression";
   if (config.selfieImageApiTimeoutMs < 1000 || config.selfieImageApiTimeoutMs > 600_000) return "invalid_selfie_api_timeout";
+  if (!config.selfieImageApiRelayModel) return "missing_selfie_api_relay_model";
+  if (!config.selfieImageApiRelaySize) return "missing_selfie_api_relay_size";
+  if (!config.selfieImageApiRelayQuality) return "missing_selfie_api_relay_quality";
+  if (!["auto", "low"].includes(config.selfieImageApiRelayModeration)) return "invalid_selfie_api_relay_moderation";
+  if (!["jpeg", "png", "webp"].includes(config.selfieImageApiRelayOutputFormat)) return "invalid_selfie_relay_output_format";
+  if (config.selfieImageApiRelayOutputCompression < 0 || config.selfieImageApiRelayOutputCompression > 100) return "invalid_selfie_relay_output_compression";
+  if (config.selfieImageApiRelayTimeoutMs < 1000 || config.selfieImageApiRelayTimeoutMs > 600_000) return "invalid_selfie_api_relay_timeout";
   if (config.selfieMaxBytes < 1024 || config.selfieMaxBytes > 50 * 1024 * 1024) return "invalid_selfie_max_bytes";
   return undefined;
 }
@@ -1620,7 +1657,6 @@ function readPhotoConfigForAdmin(context: AdminRoutesContext): PhotoPluginConfig
 function writePhotoConfig(context: AdminRoutesContext, config: PhotoPluginConfig): void {
   const filePath = photoConfigPath(context);
   const persisted: Partial<PhotoPluginConfig> = { ...config };
-  delete persisted.selfieImageApiKey;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(persisted, null, 2)}\n`);
 }
@@ -1636,6 +1672,8 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieCodexTimeoutMs: photo.selfieCodexTimeoutMs,
     selfieImageApiKey: photo.selfieImageApiKey,
     selfieImageApiBaseURL: photo.selfieImageApiBaseURL,
+    selfieImageApiRelayKey: photo.selfieImageApiRelayKey,
+    selfieImageApiRelayBaseURL: photo.selfieImageApiRelayBaseURL,
     selfieImageApiModel: photo.selfieImageApiModel,
     selfieImageApiSize: photo.selfieImageApiSize,
     selfieImageApiQuality: photo.selfieImageApiQuality,
@@ -1643,6 +1681,13 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiOutputFormat: photo.selfieImageApiOutputFormat,
     selfieImageApiOutputCompression: photo.selfieImageApiOutputCompression,
     selfieImageApiTimeoutMs: photo.selfieImageApiTimeoutMs,
+    selfieImageApiRelayModel: photo.selfieImageApiRelayModel,
+    selfieImageApiRelaySize: photo.selfieImageApiRelaySize,
+    selfieImageApiRelayQuality: photo.selfieImageApiRelayQuality,
+    selfieImageApiRelayModeration: photo.selfieImageApiRelayModeration,
+    selfieImageApiRelayOutputFormat: photo.selfieImageApiRelayOutputFormat,
+    selfieImageApiRelayOutputCompression: photo.selfieImageApiRelayOutputCompression,
+    selfieImageApiRelayTimeoutMs: photo.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: photo.selfieMaxBytes
   };
 }
@@ -1663,7 +1708,7 @@ function photoConfigMtime(context: AdminRoutesContext): string | undefined {
 }
 
 function photoSelfieModeFromUnknown(value: unknown): SelfieGenerationMode {
-  return value === "codex" ? "codex" : "api";
+  return value === "codex" ? "codex" : value === "openaiRelay" ? "openaiRelay" : "api";
 }
 
 function photoOutputFormatFromUnknown(value: unknown, fallback: string): string {
@@ -1677,6 +1722,15 @@ function photoModerationFromUnknown(value: unknown, fallback: string): string {
   const normalized = requiredString(value).trim().toLowerCase();
   if (normalized === "auto" || normalized === "low") return normalized;
   return fallback;
+}
+
+function secretStringFromUnknown(value: unknown, fallback: string | undefined): string | undefined {
+  const text = requiredString(value).trim();
+  return text ? text : fallback;
+}
+
+function selectedPhotoImageApiKey(config: PhotoPluginConfig): string | undefined {
+  return config.selfieMode === "openaiRelay" ? config.selfieImageApiRelayKey : config.selfieImageApiKey;
 }
 
 function isPathUnderAssets(value: string): boolean {

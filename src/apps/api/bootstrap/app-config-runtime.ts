@@ -50,6 +50,8 @@ export type AppConfig = {
     selfieCodexTimeoutMs: number;
     selfieImageApiKey?: string;
     selfieImageApiBaseURL: string;
+    selfieImageApiRelayKey?: string;
+    selfieImageApiRelayBaseURL: string;
     selfieImageApiModel: string;
     selfieImageApiSize: string;
     selfieImageApiQuality: string;
@@ -57,6 +59,13 @@ export type AppConfig = {
     selfieImageApiOutputFormat: string;
     selfieImageApiOutputCompression: number;
     selfieImageApiTimeoutMs: number;
+    selfieImageApiRelayModel: string;
+    selfieImageApiRelaySize: string;
+    selfieImageApiRelayQuality: string;
+    selfieImageApiRelayModeration: string;
+    selfieImageApiRelayOutputFormat: string;
+    selfieImageApiRelayOutputCompression: number;
+    selfieImageApiRelayTimeoutMs: number;
     selfieMaxBytes: number;
   };
   tts: {
@@ -205,6 +214,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieCodexTimeoutMs: envNumber(env.SELFIE_CODEX_TIMEOUT_MS, 300_000),
       selfieImageApiKey: env.SELFIE_IMAGE_API_KEY ?? env.OPENAI_API_KEY,
       selfieImageApiBaseURL: (env.SELFIE_IMAGE_API_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
+      selfieImageApiRelayKey: env.SELFIE_IMAGE_API_RELAY_KEY,
+      selfieImageApiRelayBaseURL: (env.SELFIE_IMAGE_API_RELAY_BASE_URL ?? env.SELFIE_IMAGE_API_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
       selfieImageApiModel: env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2",
       selfieImageApiSize: env.SELFIE_IMAGE_API_SIZE ?? "768x1024",
       selfieImageApiQuality: env.SELFIE_IMAGE_API_QUALITY ?? "low",
@@ -212,6 +223,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieImageApiOutputFormat: env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
       selfieImageApiOutputCompression: envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45),
       selfieImageApiTimeoutMs: envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000),
+      selfieImageApiRelayModel: env.SELFIE_IMAGE_API_RELAY_MODEL ?? env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2",
+      selfieImageApiRelaySize: env.SELFIE_IMAGE_API_RELAY_SIZE ?? env.SELFIE_IMAGE_API_SIZE ?? "768x1024",
+      selfieImageApiRelayQuality: env.SELFIE_IMAGE_API_RELAY_QUALITY ?? env.SELFIE_IMAGE_API_QUALITY ?? "low",
+      selfieImageApiRelayModeration: env.SELFIE_IMAGE_API_RELAY_MODERATION ?? env.SELFIE_IMAGE_API_MODERATION ?? "low",
+      selfieImageApiRelayOutputFormat: env.SELFIE_IMAGE_API_RELAY_OUTPUT_FORMAT ?? env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
+      selfieImageApiRelayOutputCompression: envNumber(env.SELFIE_IMAGE_API_RELAY_OUTPUT_COMPRESSION, envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45)),
+      selfieImageApiRelayTimeoutMs: envNumber(env.SELFIE_IMAGE_API_RELAY_TIMEOUT_MS, envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000)),
       selfieMaxBytes: envNumber(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
     },
     tts: {

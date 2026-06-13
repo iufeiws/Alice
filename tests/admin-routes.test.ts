@@ -435,7 +435,8 @@ test("admin plugin config patch writes photo selfie mode without storing api key
       ...base.config,
       photo: {
         ...photoDefaults(),
-        selfieImageApiKey: "secret-image-key"
+        selfieImageApiKey: "secret-image-key",
+        selfieImageApiRelayKey: "secret-relay-key"
       }
     },
     pluginConfigs: { photo: { configPath } }
@@ -446,21 +447,38 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   await handler(createRequest("GET", "/admin/api/plugins/photo/config", {}), schemaResponse);
   const schemaBody = JSON.parse(schemaResponse.body);
   const modeField = schemaBody.configSchema.fields.find((field: { key: string }) => field.key === "selfieMode");
+  const fieldGroups = new Map(schemaBody.configSchema.fields.map((field: { key: string; group: string }) => [field.key, field.group]));
 
   assert.equal(schemaResponse.statusCode, 200);
-  assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["api", "codex"]);
+  assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["api", "openaiRelay", "codex"]);
+  assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage"]);
+  assert.equal(fieldGroups.get("selfieImageApiKeySet"), "openai");
+  assert.equal(fieldGroups.get("selfieImageApiKey"), "openai");
+  assert.equal(fieldGroups.get("selfieImageApiBaseURL"), "openai");
+  assert.equal(fieldGroups.get("selfieImageApiModel"), "openai");
+  assert.equal(fieldGroups.get("selfieImageApiTimeoutMs"), "openai");
+  assert.equal(fieldGroups.get("selfieImageApiRelayKeySet"), "openai_relay");
+  assert.equal(fieldGroups.get("selfieImageApiRelayKey"), "openai_relay");
+  assert.equal(fieldGroups.get("selfieImageApiRelayBaseURL"), "openai_relay");
+  assert.equal(fieldGroups.get("selfieImageApiRelayModel"), "openai_relay");
+  assert.equal(fieldGroups.get("selfieImageApiRelayTimeoutMs"), "openai_relay");
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
+  assert.equal(schemaBody.configValue.selfieImageApiRelayKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiKey, undefined);
+  assert.equal(schemaBody.configValue.selfieImageApiRelayKey, undefined);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/photo/config", {
     enabled: true,
-    selfieMode: "codex",
+    selfieMode: "openaiRelay",
     selfieCodexCommand: "codex",
     selfieCodexTimeoutMs: 240000,
     selfieOutputDir: "assets/generated/selfies",
     selfieReferenceDir: "assets/selfie/references",
+    selfieImageApiKey: "new-openai-key",
     selfieImageApiBaseURL: "https://api.openai.com/v1",
+    selfieImageApiRelayKey: "new-relay-key",
+    selfieImageApiRelayBaseURL: "https://relay.example.test/v1",
     selfieImageApiModel: "gpt-image-2",
     selfieImageApiSize: "768x1024",
     selfieImageApiQuality: "low",
@@ -468,6 +486,13 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     selfieImageApiOutputFormat: "jpeg",
     selfieImageApiOutputCompression: 45,
     selfieImageApiTimeoutMs: 120000,
+    selfieImageApiRelayModel: "relay-image-model",
+    selfieImageApiRelaySize: "1024x1536",
+    selfieImageApiRelayQuality: "medium",
+    selfieImageApiRelayModeration: "auto",
+    selfieImageApiRelayOutputFormat: "webp",
+    selfieImageApiRelayOutputCompression: 77,
+    selfieImageApiRelayTimeoutMs: 90000,
     selfieMaxBytes: 10 * 1024 * 1024
   }), response);
   const body = JSON.parse(response.body);
@@ -475,13 +500,19 @@ test("admin plugin config patch writes photo selfie mode without storing api key
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
-  assert.equal(body.configValue.selfieMode, "codex");
+  assert.equal(body.configValue.selfieMode, "openaiRelay");
   assert.equal(body.configValue.selfieImageApiKeySet, true);
-  assert.equal(saved.selfieMode, "codex");
+  assert.equal(body.configValue.selfieImageApiRelayKeySet, true);
+  assert.equal(saved.selfieMode, "openaiRelay");
   assert.equal(saved.selfieCodexTimeoutMs, 240000);
+  assert.equal(saved.selfieImageApiKey, "new-openai-key");
+  assert.equal(saved.selfieImageApiRelayKey, "new-relay-key");
+  assert.equal(saved.selfieImageApiRelayBaseURL, "https://relay.example.test/v1");
   assert.equal(saved.selfieImageApiModeration, "low");
-  assert.equal(saved.selfieImageApiKey, undefined);
+  assert.equal(saved.selfieImageApiRelayModel, "relay-image-model");
+  assert.equal(saved.selfieImageApiRelayOutputFormat, "webp");
   assert.equal(saved.selfieImageApiKeySet, undefined);
+  assert.equal(saved.selfieImageApiRelayKeySet, undefined);
 });
 
 test("admin plugin config patch writes tts config with preset reference only", async () => {
@@ -1611,6 +1642,7 @@ function photoDefaults() {
     selfieCodexCommand: "codex",
     selfieCodexTimeoutMs: 180_000,
     selfieImageApiBaseURL: "https://api.openai.com/v1",
+    selfieImageApiRelayBaseURL: "https://api.openai.com/v1",
     selfieImageApiModel: "gpt-image-2",
     selfieImageApiSize: "768x1024",
     selfieImageApiQuality: "low",
@@ -1618,6 +1650,13 @@ function photoDefaults() {
     selfieImageApiOutputFormat: "jpeg",
     selfieImageApiOutputCompression: 45,
     selfieImageApiTimeoutMs: 120_000,
+    selfieImageApiRelayModel: "gpt-image-2",
+    selfieImageApiRelaySize: "768x1024",
+    selfieImageApiRelayQuality: "low",
+    selfieImageApiRelayModeration: "low",
+    selfieImageApiRelayOutputFormat: "jpeg",
+    selfieImageApiRelayOutputCompression: 45,
+    selfieImageApiRelayTimeoutMs: 120_000,
     selfieMaxBytes: 10 * 1024 * 1024
   };
 }

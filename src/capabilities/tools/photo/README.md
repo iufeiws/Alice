@@ -45,11 +45,12 @@ config/plugin/photo/config.json
 `selfieMode` 支持：
 
 - `api`：直接调用 Image API。
+- `openaiRelay`：调用 OpenAI 兼容中转路由，使用独立的 key、base URL 和图像构筑参数。
 - `codex`：启动 ephemeral Codex CLI 会话，使用 `$alice-selfie-fast` 约束新会话立即调用内置 `image_gen`，并由 photo tool 脚本搬运返回的生成图。
 
 `codex` 模式的生图行为、速度约束和图像参数集中定义在 `src/capabilities/skills/external/alice-selfie-fast/SKILL.md`。photo tool 只负责构造任务 prompt、传参考图、启动新会话、解析生成图路径和搬运文件。
 
-API key 仍只从 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY` 读取；admin 配置文件只保存非 secret 设置。
+API key 可以在 Configure 页面填写，保存后不会在 config 响应里回显明文；空值表示保留当前 key。
 
 ## Image API 配置说明
 
@@ -59,10 +60,14 @@ API key 仍只从 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY` 读取；admin 配
 SELFIE_IMAGE_API_MODEL=gpt-image-2
 SELFIE_IMAGE_API_SIZE=768x1024
 SELFIE_IMAGE_API_QUALITY=low
+SELFIE_IMAGE_API_MODERATION=low
 SELFIE_IMAGE_API_OUTPUT_FORMAT=jpeg
 SELFIE_IMAGE_API_OUTPUT_COMPRESSION=45
 SELFIE_IMAGE_API_TIMEOUT_MS=120000
 ```
+
+`api` 使用 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY`，以及 `SELFIE_IMAGE_API_BASE_URL` 或 `OPENAI_BASE_URL`。
+`openaiRelay` 使用 `SELFIE_IMAGE_API_RELAY_KEY`、`SELFIE_IMAGE_API_RELAY_BASE_URL` 和 `SELFIE_IMAGE_API_RELAY_*` 构筑参数。
 
 认证优先使用 `SELFIE_IMAGE_API_KEY`，缺失时回退到 `OPENAI_API_KEY`。
 
@@ -70,6 +75,7 @@ SELFIE_IMAGE_API_TIMEOUT_MS=120000
 
 ```text
 SELFIE_IMAGE_API_BASE_URL=https://api.openai.com/v1
+SELFIE_IMAGE_API_RELAY_BASE_URL=https://relay.example/v1
 ```
 
 如果 `SELFIE_IMAGE_API_BASE_URL` 未配置，会先使用 `OPENAI_BASE_URL`，再回退到 OpenAI 默认 `/v1` base URL。

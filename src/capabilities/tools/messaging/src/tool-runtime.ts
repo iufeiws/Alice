@@ -61,6 +61,8 @@ export function createToolRuntime(input: {
     selfieCodexTimeoutMs: input.config.photo.selfieCodexTimeoutMs,
     selfieImageApiKey: input.config.photo.selfieImageApiKey,
     selfieImageApiBaseURL: input.config.photo.selfieImageApiBaseURL,
+    selfieImageApiRelayKey: input.config.photo.selfieImageApiRelayKey,
+    selfieImageApiRelayBaseURL: input.config.photo.selfieImageApiRelayBaseURL,
     selfieImageApiModel: input.config.photo.selfieImageApiModel,
     selfieImageApiSize: input.config.photo.selfieImageApiSize,
     selfieImageApiQuality: input.config.photo.selfieImageApiQuality,
@@ -68,6 +70,13 @@ export function createToolRuntime(input: {
     selfieImageApiOutputFormat: input.config.photo.selfieImageApiOutputFormat,
     selfieImageApiOutputCompression: input.config.photo.selfieImageApiOutputCompression,
     selfieImageApiTimeoutMs: input.config.photo.selfieImageApiTimeoutMs,
+    selfieImageApiRelayModel: input.config.photo.selfieImageApiRelayModel,
+    selfieImageApiRelaySize: input.config.photo.selfieImageApiRelaySize,
+    selfieImageApiRelayQuality: input.config.photo.selfieImageApiRelayQuality,
+    selfieImageApiRelayModeration: input.config.photo.selfieImageApiRelayModeration,
+    selfieImageApiRelayOutputFormat: input.config.photo.selfieImageApiRelayOutputFormat,
+    selfieImageApiRelayOutputCompression: input.config.photo.selfieImageApiRelayOutputCompression,
+    selfieImageApiRelayTimeoutMs: input.config.photo.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: input.config.photo.selfieMaxBytes,
     getSelfieContext() {
       const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);

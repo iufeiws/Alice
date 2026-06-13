@@ -179,7 +179,7 @@ test("selfie default api executor calls Image API directly", async () => {
     assert.equal(form.get("output_format"), "jpeg");
     assert.equal(form.get("output_compression"), "45");
     assert.equal(form.getAll("image[]").length, 3);
-    assert.match(String(form.get("prompt")), /画幅比例: 3:4/);
+    assert.doesNotMatch(String(form.get("prompt")), /画幅比例|API生成约束|输入图片顺序/);
     return new Response(JSON.stringify({
       data: [{ b64_json: Buffer.from("api-direct-jpg").toString("base64") }]
     }), { status: 200, statusText: "OK" });
@@ -226,6 +226,146 @@ test("selfie default api executor calls Image API directly", async () => {
   }
 });
 
+test("selfie api executor uses openai relay edits route with image field", async () => {
+  const outputRoot = makeAssetTempDir("selfie-api-relay");
+  const referenceRoot = makeTempDir("selfie-ref-api-relay");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-api-relay"), "dress.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-api-relay-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const previousFetch = globalThis.fetch;
+  let apiCalled = false;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+
+  globalThis.fetch = (async (url, init) => {
+    apiCalled = true;
+    assert.equal(String(url), "https://relay.example.test/v1/images/edits");
+    assert.deepEqual(init?.headers, { authorization: "Bearer relay-key" });
+    const form = init?.body as FormData;
+    assert.equal(form.get("model"), "relay-image-model");
+    assert.equal(form.get("n"), "1");
+    assert.equal(form.get("size"), "1024x1536");
+    assert.equal(form.get("quality"), "medium");
+    assert.equal(form.get("moderation"), null);
+    assert.equal(form.get("output_format"), null);
+    assert.equal(form.get("output_compression"), null);
+    assert.equal(form.get("response_format"), null);
+    assert.equal(form.getAll("image").length, 3);
+    assert.equal(form.getAll("image[]").length, 0);
+    assert.deepEqual(form.getAll("image").map((value) => value instanceof File ? value.name : ""), [
+      "alice-character-reference.png",
+      "dress.jpg",
+      "magic-library-reference.png"
+    ]);
+    assert.doesNotMatch(String(form.get("prompt")), /画幅比例|API生成约束|输入图片顺序/);
+    return new Response(JSON.stringify({
+      data: [{ b64_json: Buffer.from("api-relay-jpg").toString("base64") }]
+    }), { status: 200, statusText: "OK" });
+  }) as typeof fetch;
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieMode: "openaiRelay",
+      selfieImageApiKey: "openai-key",
+      selfieImageApiBaseURL: "https://api.openai.com/v1",
+      selfieImageApiRelayKey: "relay-key",
+      selfieImageApiRelayBaseURL: "https://relay.example.test/v1",
+      selfieImageApiRelayModel: "relay-image-model",
+      selfieImageApiRelaySize: "1024x1536",
+      selfieImageApiRelayQuality: "medium",
+      selfieImageApiRelayModeration: "auto",
+      selfieImageApiRelayOutputFormat: "webp",
+      selfieImageApiRelayOutputCompression: 77,
+      selfieImageApiRelayTimeoutMs: 90_000,
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_api_relay",
+      toolName: "selfie",
+      input: { action: "relay route" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(apiCalled, true);
+    assert.equal(sent[1].content.kind, "image");
+  } finally {
+    globalThis.fetch = previousFetch;
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie openai relay fetch failure logs url and cause details", async () => {
+  const outputRoot = makeAssetTempDir("selfie-api-relay-failure");
+  const referenceRoot = makeTempDir("selfie-ref-api-relay-failure");
+  const store = createAliceStore(path.join(makeTempDir("selfie-api-relay-failure-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const logs: string[] = [];
+  const previousFetch = globalThis.fetch;
+  writeReferenceFiles(referenceRoot);
+
+  globalThis.fetch = (async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+      code: "ECONNREFUSED",
+      errno: -111,
+      syscall: "connect",
+      address: "127.0.0.1",
+      port: 3000
+    });
+    throw Object.assign(new Error("fetch failed"), { cause });
+  }) as typeof fetch;
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieMode: "openaiRelay",
+      selfieImageApiRelayKey: "relay-key",
+      selfieImageApiRelayBaseURL: "http://localhost:3000/v1",
+      appendLog: (_level, message) => logs.push(message),
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_api_relay_fetch_failure",
+      toolName: "selfie",
+      input: { action: "relay failure" }
+    });
+
+    const joinedLogs = logs.join("\n");
+    assert.equal(result.ok, false);
+    assert.match(joinedLogs, /Image API relayEdits request failed/);
+    assert.match(joinedLogs, /url=http:\/\/localhost:3000\/v1\/images\/edits/);
+    assert.match(joinedLogs, /code=ECONNREFUSED/);
+    assert.match(joinedLogs, /address=127\.0\.0\.1/);
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "-大失败-");
+  } finally {
+    globalThis.fetch = previousFetch;
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
 test("selfie codex mode calls alice-selfie-fast runner and copies new generated image", async () => {
   const outputRoot = makeAssetTempDir("selfie-codex-mode");
   const referenceRoot = makeTempDir("selfie-ref-codex-mode");
@@ -262,9 +402,9 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     "if (!args.includes('-m') || !args.includes('gpt-5.4-mini')) process.exit(17);",
     "if (!args.includes('-c') || !args.includes('model_reasoning_effort=\"low\"')) process.exit(18);",
     "if (args.includes('--output-last-message')) process.exit(4);",
-    "if (!prompt.includes('Apply these skill instructions exactly:')) process.exit(5);",
-    "if (!prompt.includes('Task prompt:')) process.exit(6);",
-    "if (!prompt.includes('Task metadata:')) process.exit(7);",
+    "if (prompt.includes('Apply these skill instructions exactly:')) process.exit(5);",
+    "if (prompt.includes('Task prompt:')) process.exit(6);",
+    "if (prompt.includes('Task metadata:')) process.exit(7);",
     "if (!prompt.includes('不得分析')) process.exit(8);",
     "if (!prompt.includes('1024x1536')) process.exit(9);",
     "if (process.env.SELFIE_IMAGE_API_KEY === 'test-key') process.exit(10);",
@@ -342,6 +482,83 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
   }
 });
 
+test("selfie codex mode logs codex stdout and stderr when runner fails", async () => {
+  const outputRoot = makeAssetTempDir("selfie-codex-fail-log");
+  const referenceRoot = makeTempDir("selfie-ref-codex-fail-log");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-codex-fail-log"), "dress.jpg");
+  const codexDir = makeTempDir("selfie-codex-fail-command");
+  const codexPath = path.join(codexDir, "fake-codex-fail.mjs");
+  const codexHome = makeTempDir("selfie-codex-fail-home");
+  const configPath = path.join(makeTempDir("selfie-codex-fail-config"), "config.json");
+  const store = createAliceStore(path.join(makeTempDir("selfie-codex-fail-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const logs: string[] = [];
+  const previousCodexHome = process.env.CODEX_HOME;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+  fs.writeFileSync(codexPath, [
+    "#!/usr/bin/env node",
+    "console.log(JSON.stringify({ type: 'thread.started', thread_id: 'test-thread' }));",
+    "console.log(JSON.stringify({ type: 'turn.started' }));",
+    "console.error('codex stderr failure detail');",
+    "process.exit(23);"
+  ].join("\n"));
+  fs.chmodSync(codexPath, 0o755);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "codex",
+    selfieCodexCommand: codexPath,
+    selfieCodexTimeoutMs: 60_000
+  })}\n`);
+  process.env.CODEX_HOME = codexHome;
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieConfigPath: configPath,
+      appendLog: (_level, message) => logs.push(message),
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_codex_fail_log",
+      toolName: "selfie",
+      input: { action: "fail and log codex output" }
+    });
+
+    const joinedLogs = logs.join("\n");
+    assert.equal(result.ok, false);
+    assert.match(joinedLogs, /=== codex stdout ===/);
+    assert.match(joinedLogs, /"type":"turn\.started"/);
+    assert.match(joinedLogs, /=== codex stderr ===/);
+    assert.match(joinedLogs, /codex stderr failure detail/);
+    assert.match(joinedLogs, /codex-stdout\.jsonl/);
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "-大失败-");
+  } finally {
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    fs.rmSync(codexDir, { recursive: true, force: true });
+    fs.rmSync(codexHome, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+});
+
 test("selfie falls back to text outfit when the outfit reference image is missing", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-outfit");
   const referenceRoot = makeTempDir("selfie-ref-missing-outfit");
@@ -380,7 +597,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
     assert.equal(result.ok, true);
     assert.equal(referenceImages.length, 2);
     assert.deepEqual(referenceImages.map((image) => path.basename(image)), ["alice-character-reference.png", "magic-library-reference.png"]);
-    assert.match(referenceImagePrompt, /不提供服装参考图/);
+    assert.equal(referenceImagePrompt, "");
     assert.equal(sent[0].content.kind, "text");
     assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
     assert.equal(sent[1].content.kind, "image");

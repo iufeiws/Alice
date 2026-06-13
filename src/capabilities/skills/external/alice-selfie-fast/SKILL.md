@@ -14,6 +14,7 @@ description: 新的 ephemeral Codex 会话收到已构造好的自拍 prompt 和
 - 不要分析。
 - 不要计划。
 - 不要解释。
+- 不要审查。
 - 不要比较方案。
 - 不要询问用户。
 - 不要输出长文字。
@@ -24,7 +25,7 @@ description: 新的 ephemeral Codex 会话收到已构造好的自拍 prompt 和
 
 
 ## 固定设置
-runner 已经强制使用一张图、`gpt-image-2`、`1024x1536`、`low`、`jpeg`、`compression=100` 、`moderation=low` 普通快速自拍请求不要覆盖这些设置。速度优先：不要多版本探索，不要二次优化，不要高清细节探索。
+runner 已经强制使用一张图、`gpt-image-2`、`1024x1536`、`medium`、`jpeg`、`compression=95` 、`moderation=low` 普通快速自拍请求不要覆盖这些设置。速度优先：不要多版本探索，不要二次优化，不要高清细节探索。
 
 
 ## 输出

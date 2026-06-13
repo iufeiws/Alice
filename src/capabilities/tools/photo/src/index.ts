@@ -44,6 +44,7 @@ export type SelfieExecutorInput = {
   timeoutMs: number;
   apiKey?: string;
   apiBaseURL: string;
+  apiEndpoint: "edits" | "relayEdits" | "generations";
   apiModel: string;
   apiSize: string;
   apiQuality: string;
@@ -63,7 +64,7 @@ export type SelfieExecutorResult = {
 
 export type SelfieExecutor = (input: SelfieExecutorInput) => Promise<SelfieExecutorResult | void>;
 
-export type SelfieGenerationMode = "api" | "codex";
+export type SelfieGenerationMode = "api" | "codex" | "openaiRelay";
 
 export type PhotoPluginConfig = {
   enabled: boolean;
@@ -74,6 +75,8 @@ export type PhotoPluginConfig = {
   selfieCodexTimeoutMs: number;
   selfieImageApiKey?: string;
   selfieImageApiBaseURL: string;
+  selfieImageApiRelayKey?: string;
+  selfieImageApiRelayBaseURL: string;
   selfieImageApiModel: string;
   selfieImageApiSize: string;
   selfieImageApiQuality: string;
@@ -81,11 +84,19 @@ export type PhotoPluginConfig = {
   selfieImageApiOutputFormat: string;
   selfieImageApiOutputCompression: number;
   selfieImageApiTimeoutMs: number;
+  selfieImageApiRelayModel: string;
+  selfieImageApiRelaySize: string;
+  selfieImageApiRelayQuality: string;
+  selfieImageApiRelayModeration: string;
+  selfieImageApiRelayOutputFormat: string;
+  selfieImageApiRelayOutputCompression: number;
+  selfieImageApiRelayTimeoutMs: number;
   selfieMaxBytes: number;
 };
 
-export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey"> & {
+export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey"> & {
   selfieImageApiKeySet: boolean;
+  selfieImageApiRelayKeySet: boolean;
 };
 
 export type PhotoToolsDeps = {
@@ -93,6 +104,7 @@ export type PhotoToolsDeps = {
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
   selfieConfigPath?: string;
+  selfieMode?: SelfieGenerationMode;
   selfieReferenceDir?: string;
   selfieOutputDir?: string;
   selfieAssetRoot?: string;
@@ -100,6 +112,8 @@ export type PhotoToolsDeps = {
   selfieCodexTimeoutMs?: number;
   selfieImageApiKey?: string;
   selfieImageApiBaseURL?: string;
+  selfieImageApiRelayKey?: string;
+  selfieImageApiRelayBaseURL?: string;
   selfieImageApiModel?: string;
   selfieImageApiSize?: string;
   selfieImageApiQuality?: string;
@@ -107,6 +121,13 @@ export type PhotoToolsDeps = {
   selfieImageApiOutputFormat?: string;
   selfieImageApiOutputCompression?: number;
   selfieImageApiTimeoutMs?: number;
+  selfieImageApiRelayModel?: string;
+  selfieImageApiRelaySize?: string;
+  selfieImageApiRelayQuality?: string;
+  selfieImageApiRelayModeration?: string;
+  selfieImageApiRelayOutputFormat?: string;
+  selfieImageApiRelayOutputCompression?: number;
+  selfieImageApiRelayTimeoutMs?: number;
   selfieMaxBytes?: number;
   selfieExecutor?: SelfieExecutor;
   getSelfieContext?(): SelfieContext;
@@ -168,7 +189,8 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     const context = deps.getSelfieContext?.();
     if (!context) return toolError(call, "selfie context is not available");
 
-    const imageApiOutputFormat = normalizeOutputFormat(photoConfig.selfieImageApiOutputFormat);
+    const imageApiSettings = selectedImageApiSettings(photoConfig);
+    const imageApiOutputFormat = normalizeOutputFormat(imageApiSettings.outputFormat);
     const fullOutputDir = path.resolve(photoConfig.selfieOutputDir);
     const assetRoot = path.resolve(deps.selfieAssetRoot ?? "assets");
     const relativeDir = path.relative(assetRoot, fullOutputDir);
@@ -216,15 +238,16 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         referenceImagePrompt: references.prompt,
         aspectRatio,
         timeoutMs: photoConfig.selfieCodexTimeoutMs,
-        apiKey: photoConfig.selfieImageApiKey,
-        apiBaseURL: photoConfig.selfieImageApiBaseURL,
-        apiModel: photoConfig.selfieImageApiModel,
-        apiSize: photoConfig.selfieImageApiSize,
-        apiQuality: photoConfig.selfieImageApiQuality,
-        apiModeration: photoConfig.selfieImageApiModeration,
+        apiKey: imageApiSettings.key,
+        apiBaseURL: imageApiSettings.baseURL,
+        apiEndpoint: imageApiSettings.endpoint,
+        apiModel: imageApiSettings.model,
+        apiSize: imageApiSettings.size,
+        apiQuality: imageApiSettings.quality,
+        apiModeration: imageApiSettings.moderation,
         apiOutputFormat: imageApiOutputFormat,
-        apiOutputCompression: photoConfig.selfieImageApiOutputCompression,
-        apiTimeoutMs: photoConfig.selfieImageApiTimeoutMs,
+        apiOutputCompression: imageApiSettings.outputCompression,
+        apiTimeoutMs: imageApiSettings.timeoutMs,
         proxyUrl
       });
       if (executorResult) codexResult = executorResult;
@@ -252,10 +275,10 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     } catch (error) {
       const reason = [
         error instanceof Error ? error.message : String(error),
-        codexResult?.stdout ? `generator stdout: ${excerpt(codexResult.stdout, 1000)}` : "",
-        codexResult?.stderr ? `generator stderr: ${excerpt(codexResult.stderr, 1000)}` : "",
-        codexResult?.lastMessage ? `generator last message: ${excerpt(codexResult.lastMessage, 1500)}` : "",
-        codexResult?.events ? `generator events: ${excerpt(codexResult.events, 1500)}` : ""
+        codexResult?.stdout ? `generator stdout: ${excerpt(codexResult.stdout, 4000)}` : "",
+        codexResult?.stderr ? `generator stderr: ${excerpt(codexResult.stderr, 4000)}` : "",
+        codexResult?.lastMessage ? `generator last message: ${excerpt(codexResult.lastMessage, 4000)}` : "",
+        codexResult?.events ? `generator events: ${excerpt(codexResult.events, 4000)}` : ""
       ].filter(Boolean).join("\n");
       deps.appendLog?.("warn", `selfie generation failed: ${reason}${tempDir ? ` files=${listDirForLog(tempDir)}` : ""}`);
       await sendSelfieFailureNotice(target);
@@ -313,13 +336,13 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     if (outfitImage) {
       return {
         images: [characterImage, outfitImage, libraryImage],
-        prompt: "输入图片顺序: 图1为角色参考，图2为今日服装参考，图3为图书馆场景参考。",
+        prompt: "",
         missingOutfitImage: false
       };
     }
     return {
       images: [characterImage, libraryImage],
-      prompt: "输入图片顺序: 图1为角色参考，图2为图书馆场景参考。今日服装只使用文字描述，不提供服装参考图。",
+      prompt: "",
       missingOutfitImage: true
     };
   }
@@ -459,10 +482,11 @@ export function readPhotoPluginConfig(configPath?: string, defaults: Partial<Pho
 }
 
 export function publicPhotoPluginConfig(config: PhotoPluginConfig): PhotoPluginPublicConfig {
-  const { selfieImageApiKey, ...publicConfig } = config;
+  const { selfieImageApiKey, selfieImageApiRelayKey, ...publicConfig } = config;
   return {
     ...publicConfig,
-    selfieImageApiKeySet: Boolean(selfieImageApiKey)
+    selfieImageApiKeySet: Boolean(selfieImageApiKey),
+    selfieImageApiRelayKeySet: Boolean(selfieImageApiRelayKey)
   };
 }
 
@@ -476,6 +500,8 @@ function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defaults: P
     selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 300_000),
     selfieImageApiKey: stringConfigValue(parsed.selfieImageApiKey, defaults.selfieImageApiKey),
     selfieImageApiBaseURL: stringConfigValue(parsed.selfieImageApiBaseURL, defaults.selfieImageApiBaseURL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
+    selfieImageApiRelayKey: stringConfigValue(parsed.selfieImageApiRelayKey, defaults.selfieImageApiRelayKey),
+    selfieImageApiRelayBaseURL: stringConfigValue(parsed.selfieImageApiRelayBaseURL, defaults.selfieImageApiRelayBaseURL ?? defaults.selfieImageApiBaseURL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
     selfieImageApiModel: stringConfigValue(parsed.selfieImageApiModel, defaults.selfieImageApiModel ?? "gpt-image-2"),
     selfieImageApiSize: stringConfigValue(parsed.selfieImageApiSize, defaults.selfieImageApiSize ?? "768x1024"),
     selfieImageApiQuality: stringConfigValue(parsed.selfieImageApiQuality, defaults.selfieImageApiQuality ?? "low"),
@@ -483,6 +509,13 @@ function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defaults: P
     selfieImageApiOutputFormat: normalizeOutputFormat(stringConfigValue(parsed.selfieImageApiOutputFormat, defaults.selfieImageApiOutputFormat ?? "jpeg")),
     selfieImageApiOutputCompression: numberValue(parsed.selfieImageApiOutputCompression, defaults.selfieImageApiOutputCompression ?? 45),
     selfieImageApiTimeoutMs: numberValue(parsed.selfieImageApiTimeoutMs, defaults.selfieImageApiTimeoutMs ?? 120_000),
+    selfieImageApiRelayModel: stringConfigValue(parsed.selfieImageApiRelayModel, defaults.selfieImageApiRelayModel ?? defaults.selfieImageApiModel ?? "gpt-image-2"),
+    selfieImageApiRelaySize: stringConfigValue(parsed.selfieImageApiRelaySize, defaults.selfieImageApiRelaySize ?? defaults.selfieImageApiSize ?? "768x1024"),
+    selfieImageApiRelayQuality: stringConfigValue(parsed.selfieImageApiRelayQuality, defaults.selfieImageApiRelayQuality ?? defaults.selfieImageApiQuality ?? "low"),
+    selfieImageApiRelayModeration: stringConfigValue(parsed.selfieImageApiRelayModeration, defaults.selfieImageApiRelayModeration ?? defaults.selfieImageApiModeration ?? "low"),
+    selfieImageApiRelayOutputFormat: normalizeOutputFormat(stringConfigValue(parsed.selfieImageApiRelayOutputFormat, defaults.selfieImageApiRelayOutputFormat ?? defaults.selfieImageApiOutputFormat ?? "jpeg")),
+    selfieImageApiRelayOutputCompression: numberValue(parsed.selfieImageApiRelayOutputCompression, defaults.selfieImageApiRelayOutputCompression ?? defaults.selfieImageApiOutputCompression ?? 45),
+    selfieImageApiRelayTimeoutMs: numberValue(parsed.selfieImageApiRelayTimeoutMs, defaults.selfieImageApiRelayTimeoutMs ?? defaults.selfieImageApiTimeoutMs ?? 120_000),
     selfieMaxBytes: numberValue(parsed.selfieMaxBytes, defaults.selfieMaxBytes ?? 10 * 1024 * 1024)
   };
 }
@@ -490,13 +523,15 @@ function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defaults: P
 function photoConfigDefaultsFromDeps(deps: PhotoToolsDeps): Partial<PhotoPluginConfig> {
   return {
     enabled: true,
-    selfieMode: "api",
+    selfieMode: deps.selfieMode ?? "api",
     selfieReferenceDir: deps.selfieReferenceDir,
     selfieOutputDir: deps.selfieOutputDir,
     selfieCodexCommand: deps.selfieCodexCommand,
     selfieCodexTimeoutMs: deps.selfieCodexTimeoutMs,
     selfieImageApiKey: deps.selfieImageApiKey,
     selfieImageApiBaseURL: deps.selfieImageApiBaseURL,
+    selfieImageApiRelayKey: deps.selfieImageApiRelayKey,
+    selfieImageApiRelayBaseURL: deps.selfieImageApiRelayBaseURL,
     selfieImageApiModel: deps.selfieImageApiModel,
     selfieImageApiSize: deps.selfieImageApiSize,
     selfieImageApiQuality: deps.selfieImageApiQuality,
@@ -504,6 +539,13 @@ function photoConfigDefaultsFromDeps(deps: PhotoToolsDeps): Partial<PhotoPluginC
     selfieImageApiOutputFormat: deps.selfieImageApiOutputFormat,
     selfieImageApiOutputCompression: deps.selfieImageApiOutputCompression,
     selfieImageApiTimeoutMs: deps.selfieImageApiTimeoutMs,
+    selfieImageApiRelayModel: deps.selfieImageApiRelayModel,
+    selfieImageApiRelaySize: deps.selfieImageApiRelaySize,
+    selfieImageApiRelayQuality: deps.selfieImageApiRelayQuality,
+    selfieImageApiRelayModeration: deps.selfieImageApiRelayModeration,
+    selfieImageApiRelayOutputFormat: deps.selfieImageApiRelayOutputFormat,
+    selfieImageApiRelayOutputCompression: deps.selfieImageApiRelayOutputCompression,
+    selfieImageApiRelayTimeoutMs: deps.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: deps.selfieMaxBytes
   };
 }
@@ -512,57 +554,114 @@ function selfieExecutorForMode(mode: SelfieGenerationMode): SelfieExecutor {
   return mode === "codex" ? runAliceSelfieFastSkill : runImageApiSelfie;
 }
 
+function selectedImageApiSettings(config: PhotoPluginConfig): {
+  key?: string;
+  baseURL: string;
+  endpoint: "edits" | "relayEdits" | "generations";
+  model: string;
+  size: string;
+  quality: string;
+  moderation: string;
+  outputFormat: string;
+  outputCompression: number;
+  timeoutMs: number;
+} {
+  if (config.selfieMode === "openaiRelay") {
+    return {
+      key: config.selfieImageApiRelayKey,
+      baseURL: config.selfieImageApiRelayBaseURL,
+      endpoint: "relayEdits",
+      model: config.selfieImageApiRelayModel,
+      size: config.selfieImageApiRelaySize,
+      quality: config.selfieImageApiRelayQuality,
+      moderation: config.selfieImageApiRelayModeration,
+      outputFormat: config.selfieImageApiRelayOutputFormat,
+      outputCompression: config.selfieImageApiRelayOutputCompression,
+      timeoutMs: config.selfieImageApiRelayTimeoutMs
+    };
+  }
+  return {
+    key: config.selfieImageApiKey,
+    baseURL: config.selfieImageApiBaseURL,
+    endpoint: "edits",
+    model: config.selfieImageApiModel,
+    size: config.selfieImageApiSize,
+    quality: config.selfieImageApiQuality,
+    moderation: config.selfieImageApiModeration,
+    outputFormat: config.selfieImageApiOutputFormat,
+    outputCompression: config.selfieImageApiOutputCompression,
+    timeoutMs: config.selfieImageApiTimeoutMs
+  };
+}
+
 async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
   if (!input.apiKey) throw new Error("selfie Image API key is not configured; set OPENAI_API_KEY or SELFIE_IMAGE_API_KEY");
-  const prompt = [
-    input.prompt,
-    "",
-    `画幅比例: ${input.aspectRatio}`,
-    `API生成约束: 生成一张低质量快速草稿，尺寸目标 ${input.apiSize}，不要高清，不要高精细细节，不要多版本探索。`,
-    input.referenceImagePrompt
-  ].join("\n");
+  const prompt = input.prompt;
   const form = new FormData();
   form.append("model", input.apiModel);
   form.append("prompt", prompt);
   form.append("n", "1");
   form.append("size", input.apiSize);
   form.append("quality", input.apiQuality);
-  form.append("moderation", input.apiModeration);
-  form.append("output_format", input.apiOutputFormat);
-  if (input.apiOutputFormat === "jpeg" || input.apiOutputFormat === "webp") {
-    form.append("output_compression", String(input.apiOutputCompression));
-  }
-  for (const image of input.referenceImages) {
-    form.append("image[]", fileBlob(image), path.basename(image));
+  if (input.apiEndpoint === "generations") {
+    form.append("response_format", "b64_json");
+    for (const image of input.referenceImages) {
+      form.append("image", fileBlob(image), path.basename(image));
+    }
+  } else if (input.apiEndpoint === "relayEdits") {
+    for (const image of input.referenceImages) {
+      form.append("image", fileBlob(image), path.basename(image));
+    }
+  } else {
+    form.append("moderation", input.apiModeration);
+    form.append("output_format", input.apiOutputFormat);
+    if (input.apiOutputFormat === "jpeg" || input.apiOutputFormat === "webp") {
+      form.append("output_compression", String(input.apiOutputCompression));
+    }
+    for (const image of input.referenceImages) {
+      form.append("image[]", fileBlob(image), path.basename(image));
+    }
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), input.apiTimeoutMs);
   const started = Date.now();
+  const endpointPath = input.apiEndpoint === "generations" ? "/images/generations" : "/images/edits";
+  const requestUrl = `${input.apiBaseURL}${endpointPath}`;
   try {
-    const response = await fetch(`${input.apiBaseURL}/images/edits`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${input.apiKey}`
-      },
-      body: form,
-      ...dispatcherInit(input.proxyUrl)
-    });
+    const response = input.apiEndpoint === "generations"
+      ? await fetch(requestUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          authorization: `Bearer ${input.apiKey}`
+        },
+        body: form,
+        ...dispatcherInit(input.proxyUrl)
+      })
+      : await fetch(requestUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          authorization: `Bearer ${input.apiKey}`
+        },
+        body: form,
+        ...dispatcherInit(input.proxyUrl)
+      });
     const elapsedMs = Date.now() - started;
     const body = await response.text();
     if (!response.ok) {
-      throw new Error(`Image API failed after ${elapsedMs}ms: HTTP ${response.status} ${response.statusText} ${excerpt(body, 2000)}`);
+      throw new Error(`Image API ${input.apiEndpoint} failed after ${elapsedMs}ms url=${requestUrl}: HTTP ${response.status} ${response.statusText} ${excerpt(body, 4000)}`);
     }
     let payload: unknown;
     try {
       payload = JSON.parse(body) as unknown;
     } catch {
-      throw new Error(`Image API returned non-JSON after ${elapsedMs}ms: ${excerpt(body, 2000)}`);
+      throw new Error(`Image API ${input.apiEndpoint} returned non-JSON after ${elapsedMs}ms url=${requestUrl}: ${excerpt(body, 4000)}`);
     }
     const imageB64 = extractImageB64(payload);
     if (!imageB64) {
-      throw new Error(`Image API returned no image after ${elapsedMs}ms: ${excerpt(JSON.stringify(payload), 2000)}`);
+      throw new Error(`Image API ${input.apiEndpoint} returned no image after ${elapsedMs}ms url=${requestUrl}: ${excerpt(JSON.stringify(payload), 4000)}`);
     }
     fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from(imageB64, "base64"));
     return {
@@ -572,7 +671,10 @@ async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExec
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Image API selfie generation timed out after ${input.apiTimeoutMs}ms`);
+      throw new Error(`Image API ${input.apiEndpoint} request timed out after ${input.apiTimeoutMs}ms url=${requestUrl}`);
+    }
+    if (error instanceof Error && error.message === "fetch failed") {
+      throw new Error(`Image API ${input.apiEndpoint} request failed url=${requestUrl}: ${describeErrorWithCause(error)}`);
     }
     throw error;
   } finally {
@@ -688,6 +790,24 @@ function extractImageB64(payload: unknown): string | undefined {
   return typeof first?.b64_json === "string" ? first.b64_json : undefined;
 }
 
+function describeErrorWithCause(error: Error): string {
+  const details = [error.message];
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    details.push(`cause=${cause.name}: ${cause.message}`);
+    const causeRecord = cause as Error & { code?: unknown; errno?: unknown; syscall?: unknown; address?: unknown; port?: unknown };
+    for (const key of ["code", "errno", "syscall", "address", "port"] as const) {
+      if (causeRecord[key] !== undefined) details.push(`${key}=${String(causeRecord[key])}`);
+    }
+  } else if (cause && typeof cause === "object") {
+    const causeRecord = cause as Record<string, unknown>;
+    details.push(`cause=${JSON.stringify(Object.fromEntries(Object.entries(causeRecord).filter(([, value]) => typeof value !== "function")))}`);
+  } else if (cause !== undefined) {
+    details.push(`cause=${String(cause)}`);
+  }
+  return details.join(" ");
+}
+
 function dispatcherInit(proxyUrl: string | undefined): RequestInit {
   if (!proxyUrl) return {};
   const { ProxyAgent } = loadUndici();
@@ -710,7 +830,7 @@ function normalizeOutputFormat(value: string): string {
 }
 
 function selfieModeValue(value: unknown, fallback: SelfieGenerationMode): SelfieGenerationMode {
-  return value === "codex" ? "codex" : value === "api" ? "api" : fallback;
+  return value === "codex" ? "codex" : value === "openaiRelay" ? "openaiRelay" : value === "api" ? "api" : fallback;
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> {

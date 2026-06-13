@@ -53,6 +53,8 @@
   - 统一 `toolName -> plugin`、JSON args、`plugin.execute`、error result 和 LLM tool message formatting；chat/talk 只保留各自的 adapter hook。
 - `agent-loop/src/application/agent-function-call-loop.ts`
   - 统一 function-call loop spec 构筑入口和默认 loop limits；chat/talk adapter 只提供各自 request、tool、stream、writeback 回调。
+- `agent-loop/src/application/chat-loop-tool-control.ts`
+  - 将 chat tool result 到 loop control / session rebuild mode 的转换从 `run-chat-loop.ts` 移出，降低 chat loop adapter 内部业务分支。
 - `agent-loop/src/runtime/agent-loop-session-initializer.ts`
   - 统一 chat/talk session 初始化、prefix/runtime patch append 和 transcript writeback helper。
 
@@ -74,6 +76,7 @@
 14. [done] 删除 prompt tool request 对 `send_chat` 的 loop 层特殊拦截；已配置/暴露的 prompt tool call 统一走 `toolPlugins` 执行，禁用能力由配置层不暴露或不配置处理。
 15. [done] 将 prompt tool request helper 移入 `AgentLoopToolExecutor`，`run-chat-loop` 只保留兼容 re-export 和 adapter 调用，不再拥有 prompt tool 执行实现。
 16. [done] 将 chat 每分钟 LLM request timestamp 窗口维护抽入 `AgentLoopSessionInitializer.claimAgentLoopRequestWindow(...)`，`run-chat-loop` 不再手写 requestTimestamps 过滤和追加。
+17. [done] 抽出 `chat-loop-tool-control.ts`，`run-chat-loop` 不再直接展开 tool result reset/fixed-prefix mode 构筑逻辑，而是执行 tool 后调用 helper 生成 loop control 和待应用 mode state。
 
 ### 当前已知风险
 

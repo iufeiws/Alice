@@ -5,6 +5,7 @@ import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agen
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
+import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import {
   claimAgentLoopRequestWindow,
   type AgentFunctionCallLoopSpec,
@@ -15,7 +16,6 @@ import {
 const sendChatToolName = "send_chat";
 const maxLLMRequestsPerMinute = 10;
 const maxLLMRetryAttempts = 3;
-const fixedPrefixDefaultTtlMs = 2 * 60 * 60 * 1000;
 
 type ChatAgentTokenPressurePreviewBaseline = {
   inputTokens: number;
@@ -186,69 +186,18 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         session.waitChatStartedAt = input.time.now().epochMs;
       }
       input.setLastCompletedToolName(call.function.name);
-      const control = {
-        sentMessage: isSendChatToolName(call.function.name) && toolResult.ok,
-        invalidateSession: toolResult.invalidateLLMSession === true,
-        yieldReturn: toolResult.meta?.yieldReturn === true,
-        resetSession: false,
-        continueAfterReset: false
-      };
-      if (toolResult.resetLLMSession) {
-        if (toolResult.clearFixedPrefix) {
-          input.applyModeStateToNewSession(defaultChatAgentModeState());
-          return { message: toolMessage, control: { ...control, resetSession: true, continueAfterReset: false, invalidateSession: true } };
-        }
-        const fixedPrefixKind = typeof toolResult.fixedPrefixKind === "string" && toolResult.fixedPrefixKind
-          ? toolResult.fixedPrefixKind
-          : undefined;
-        const mode = fixedPrefixKind ? "fixed_prefix" : toolResult.llmSessionMode || "normal";
-        const modeStaticMessages = mode === "fixed_prefix"
-          ? [
-            ...cloneLLMMessages(session.messages),
-            {
-              role: "assistant" as const,
-              content: result.message.content,
-              reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, 1),
-              toolCalls: [call]
-            },
-            toolMessage
-          ]
-          : mode === "normal"
-            ? []
-            : cloneLLMMessages((toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? [
-              {
-                role: "assistant" as const,
-                content: result.message.content,
-                reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, 1),
-                toolCalls: [call]
-              },
-              toolMessage
-            ]);
-        const modeStartedAt = mode === "normal" ? undefined : input.time.now().epochMs;
-        const ttlMs = Number.isFinite(toolResult.fixedPrefixTtlMs) ? Number(toolResult.fixedPrefixTtlMs) : fixedPrefixDefaultTtlMs;
-        input.applyModeStateToNewSession({
-          mode,
-          modeStaticMessages,
-          modeStaticTokenEstimate: estimateMessagesTokens(modeStaticMessages),
-          tokenPressurePreviewBaselines: {},
-          modeStartedAt,
-          modeExpiresAt: mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined,
-          fixedPrefixKind,
-          fixedPrefixCursorMessageId: mode === "fixed_prefix" ? session.lastCheckChatCursorMessageId : undefined
-        });
-        const shouldContinueAfterReset = mode === "fixed_prefix" || mode !== "normal";
-        if (shouldContinueAfterReset) input.onSessionRebuilt?.();
-        return {
-          message: toolMessage,
-          control: {
-            ...control,
-            resetSession: true,
-            continueAfterReset: shouldContinueAfterReset,
-            invalidateSession: control.invalidateSession || mode === "normal"
-          }
-        };
-      }
-      return { message: toolMessage, control };
+      const execution = resolveChatLoopToolControl({
+        call,
+        toolResult,
+        toolMessage,
+        session,
+        llmResult: result,
+        nowMs: input.time.now().epochMs,
+        lastCheckChatCursorMessageId: session.lastCheckChatCursorMessageId
+      });
+      if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
+      if (execution.sessionRebuilt) input.onSessionRebuilt?.();
+      return execution;
     },
     async onMessagesChanged({ messages }) {
       session.messages = messages;
@@ -643,11 +592,6 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function reasoningContentForToolRequest(reasoningContent: string | undefined, toolCallCount: number): string | undefined {
-  if (reasoningContent) return reasoningContent;
-  return toolCallCount > 0 ? "Need to call the requested tool." : undefined;
 }
 
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {

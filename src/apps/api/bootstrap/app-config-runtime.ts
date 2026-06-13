@@ -53,6 +53,7 @@ export type AppConfig = {
     selfieImageApiModel: string;
     selfieImageApiSize: string;
     selfieImageApiQuality: string;
+    selfieImageApiModeration: string;
     selfieImageApiOutputFormat: string;
     selfieImageApiOutputCompression: number;
     selfieImageApiTimeoutMs: number;
@@ -201,12 +202,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",
       selfieCodexCommand: env.SELFIE_CODEX_COMMAND ?? "codex",
-      selfieCodexTimeoutMs: envNumber(env.SELFIE_CODEX_TIMEOUT_MS, 180_000),
+      selfieCodexTimeoutMs: envNumber(env.SELFIE_CODEX_TIMEOUT_MS, 300_000),
       selfieImageApiKey: env.SELFIE_IMAGE_API_KEY ?? env.OPENAI_API_KEY,
       selfieImageApiBaseURL: (env.SELFIE_IMAGE_API_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
       selfieImageApiModel: env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2",
       selfieImageApiSize: env.SELFIE_IMAGE_API_SIZE ?? "768x1024",
       selfieImageApiQuality: env.SELFIE_IMAGE_API_QUALITY ?? "low",
+      selfieImageApiModeration: env.SELFIE_IMAGE_API_MODERATION ?? "low",
       selfieImageApiOutputFormat: env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
       selfieImageApiOutputCompression: envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45),
       selfieImageApiTimeoutMs: envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000),

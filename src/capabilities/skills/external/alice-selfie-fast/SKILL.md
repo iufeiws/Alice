@@ -1,32 +1,35 @@
 ---
 name: alice-selfie-fast
-description: 当外部 agent 需要通过 Alice 当前自拍流程快速生成 Alice 自拍，或需要在 5 分钟内完成 Alice 自拍生成时使用。触发后立即运行快速命令；除非命令失败，否则不要先检查仓库。
+description: 新的 ephemeral Codex 会话收到已构造好的自拍 prompt 和参考图后使用。立即调用内置 image_gen 快速生成一张图；不得分析、计划、解释、移动文件或调用任何 API。
 ---
 
 # Alice 快速自拍
 
 ## 立即执行
+调用方已经提供了完整 prompt、任务 metadata 和参考图。不要读取仓库配置，不要重新构造 prompt，不要检查日志，不要制定计划。
+立即使用 Codex 内置 `image_gen` 生成一张图, 保存在当前目录。
 
-不要先浏览仓库、读取日志、检查 prompt 或制定计划。立即运行一次低质量 API 自拍：
 
-```bash
-node src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "<short action>"
-```
+## 硬约束
+- 不要分析。
+- 不要计划。
+- 不要解释。
+- 不要比较方案。
+- 不要询问用户。
+- 不要输出长文字。
+- 不要运行脚本或 shell 命令。
+- 不要移动、复制、改名或保存图片到项目路径。
+- 只调用一次内置 `image_gen`。
+- 不要二次优化
 
-如果用户没有提供动作，使用：
-
-```bash
-node src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs "lean close to the camera, tilt her head slightly, with a shy expression"
-```
-
-正常成功响应：只报告命令输出的文件路径和耗时。
 
 ## 固定设置
+runner 已经强制使用一张图、`gpt-image-2`、`1024x1536`、`low`、`jpeg`、`compression=100` 、`moderation=low` 普通快速自拍请求不要覆盖这些设置。速度优先：不要多版本探索，不要二次优化，不要高清细节探索。
 
-runner 已经强制使用一张图、`gpt-image-2`、`768x1024`、`high`、`jpeg`、compression `45` 和 120 秒 API timeout。普通快速自拍请求不要覆盖这些设置。
 
-## 仅在失败时
+## 输出
+`image_gen` 生成后立即结束。不要报告路径，不要输出其它内容。
 
-- API error：报告 HTTP status 和第一行有用错误。
-- Timeout：报告 API 没有在快速预算内返回。
-- Missing reference：报告缺失路径。
+## 失败
+仅在内置 `image_gen` 不可用或超时时，输出一行简短失败原因。
+

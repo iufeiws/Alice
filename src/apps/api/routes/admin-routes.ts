@@ -1267,12 +1267,16 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "selfieMode", label: "Selfie Mode", type: "select", group: "general", options: [
           { value: "api", label: "API" },
           { value: "codex", label: "Codex" }
-        ], description: "API uses the fast Image API runner. Codex uses the Codex CLI image path." },
+        ], description: "API uses the Image API path. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
         { key: "selfieImageApiKeySet", label: "API Key", type: "readonly", group: "api", description: "Read from SELFIE_IMAGE_API_KEY or OPENAI_API_KEY; not stored in plugin config." },
         { key: "selfieImageApiBaseURL", label: "API Base URL", type: "text", group: "api" },
         { key: "selfieImageApiModel", label: "API Model", type: "text", group: "api" },
         { key: "selfieImageApiSize", label: "API Size", type: "text", group: "api" },
         { key: "selfieImageApiQuality", label: "API Quality", type: "text", group: "api" },
+        { key: "selfieImageApiModeration", label: "API Moderation", type: "select", group: "api", options: [
+          { value: "auto", label: "auto" },
+          { value: "low", label: "low" }
+        ] },
         { key: "selfieImageApiOutputFormat", label: "Output Format", type: "select", group: "api", options: [
           { value: "jpeg", label: "jpeg" },
           { value: "png", label: "png" },
@@ -1290,12 +1294,12 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
     routePreview: [
       "selfie tool call",
       "photo plugin config",
-      "Image API fast runner or Codex CLI",
+      "Image API path or ephemeral Codex CLI session",
       "channel.image.send"
     ],
     runtimeAccess: [
       "read selfie prompt template and reference images",
-      "call selected Image API or local Codex CLI",
+      "call selected Image API or ephemeral Codex CLI session",
       "write generated image under assets/generated/selfies",
       "send generated image to the current messaging session"
     ]
@@ -1555,7 +1559,7 @@ function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfi
     kind: "tool",
     status: missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
     health: missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
-    description: "Generate and send selfie images through the Image API runner or Codex CLI.",
+    description: "Generate and send selfie images through the Image API path or an ephemeral Codex CLI session.",
     configurable: true,
     switchable: true,
     configSource: photoConfigPath(context),
@@ -1578,6 +1582,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiModel: patch.selfieImageApiModel === undefined ? current.selfieImageApiModel : requiredString(patch.selfieImageApiModel).trim(),
     selfieImageApiSize: patch.selfieImageApiSize === undefined ? current.selfieImageApiSize : requiredString(patch.selfieImageApiSize).trim(),
     selfieImageApiQuality: patch.selfieImageApiQuality === undefined ? current.selfieImageApiQuality : requiredString(patch.selfieImageApiQuality).trim(),
+    selfieImageApiModeration: patch.selfieImageApiModeration === undefined ? current.selfieImageApiModeration : photoModerationFromUnknown(patch.selfieImageApiModeration, current.selfieImageApiModeration),
     selfieImageApiOutputFormat: patch.selfieImageApiOutputFormat === undefined ? current.selfieImageApiOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiOutputFormat, current.selfieImageApiOutputFormat),
     selfieImageApiOutputCompression: patch.selfieImageApiOutputCompression === undefined ? current.selfieImageApiOutputCompression : numberFromUnknown(patch.selfieImageApiOutputCompression, current.selfieImageApiOutputCompression),
     selfieImageApiTimeoutMs: patch.selfieImageApiTimeoutMs === undefined ? current.selfieImageApiTimeoutMs : numberFromUnknown(patch.selfieImageApiTimeoutMs, current.selfieImageApiTimeoutMs),
@@ -1600,6 +1605,7 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (!config.selfieImageApiModel) return "missing_selfie_api_model";
   if (!config.selfieImageApiSize) return "missing_selfie_api_size";
   if (!config.selfieImageApiQuality) return "missing_selfie_api_quality";
+  if (!["auto", "low"].includes(config.selfieImageApiModeration)) return "invalid_selfie_api_moderation";
   if (!["jpeg", "png", "webp"].includes(config.selfieImageApiOutputFormat)) return "invalid_selfie_output_format";
   if (config.selfieImageApiOutputCompression < 0 || config.selfieImageApiOutputCompression > 100) return "invalid_selfie_output_compression";
   if (config.selfieImageApiTimeoutMs < 1000 || config.selfieImageApiTimeoutMs > 600_000) return "invalid_selfie_api_timeout";
@@ -1633,6 +1639,7 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiModel: photo.selfieImageApiModel,
     selfieImageApiSize: photo.selfieImageApiSize,
     selfieImageApiQuality: photo.selfieImageApiQuality,
+    selfieImageApiModeration: photo.selfieImageApiModeration,
     selfieImageApiOutputFormat: photo.selfieImageApiOutputFormat,
     selfieImageApiOutputCompression: photo.selfieImageApiOutputCompression,
     selfieImageApiTimeoutMs: photo.selfieImageApiTimeoutMs,
@@ -1663,6 +1670,12 @@ function photoOutputFormatFromUnknown(value: unknown, fallback: string): string 
   const normalized = requiredString(value).trim().toLowerCase();
   if (normalized === "jpg") return "jpeg";
   if (normalized === "jpeg" || normalized === "png" || normalized === "webp") return normalized;
+  return fallback;
+}
+
+function photoModerationFromUnknown(value: unknown, fallback: string): string {
+  const normalized = requiredString(value).trim().toLowerCase();
+  if (normalized === "auto" || normalized === "low") return normalized;
   return fallback;
 }
 

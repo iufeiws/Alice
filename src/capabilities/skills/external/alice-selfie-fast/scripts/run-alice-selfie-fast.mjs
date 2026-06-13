@@ -1,150 +1,206 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "../../../..");
+const skillRoot = path.resolve(__dirname, "..");
 
-if (process.argv[2] === "--tool-input") {
-  await runToolMode(process.argv[3]);
-  process.exit(0);
+if (process.argv[2] !== "--tool-input" || !process.argv[3]) {
+  console.error("usage: run-alice-selfie-fast.mjs --tool-input <config.json>");
+  process.exit(64);
 }
 
-const action = process.argv.slice(2).join(" ").trim() || "lean close to the camera, tilt her head slightly, with a shy expression";
-const hardTimeoutMs = numberValue(process.env.ALICE_SELFIE_FAST_HARD_TIMEOUT_MS, 285_000);
+const input = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const workDir = requireString(input.workDir, "workDir");
+const codexWorkDir = stringValue(input.codexWorkDir) || workDir;
+const fileName = requireString(input.fileName, "fileName");
+const prompt = requireString(input.prompt, "prompt");
+const referenceImages = requireStringArray(input.referenceImages, "referenceImages");
+const referenceImagePrompt = requireString(input.referenceImagePrompt, "referenceImagePrompt");
+const aspectRatio = requireString(input.aspectRatio, "aspectRatio");
+const codexCommand = stringValue(input.codexCommand) || process.env.SELFIE_CODEX_COMMAND || "codex";
+const timeoutMs = positiveNumber(input.timeoutMs, 60_000);
+const outputPath = path.join(workDir, fileName);
+const skillInstructions = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+const codexReferenceImages = copyReferenceImagesToCodexWorkDir(referenceImages, codexWorkDir);
+const imageArgs = codexReferenceImages.map((image) => `--image=${image}`);
+const beforeImages = snapshotGeneratedImages();
 
-const child = spawn("node", ["scripts/test-selfie-image-api.mjs", action], {
-  cwd: repoRoot,
-  env: {
-    ...process.env,
-    SELFIE_IMAGE_API_MODEL: process.env.SELFIE_IMAGE_API_MODEL ?? "gpt-image-2",
-    SELFIE_IMAGE_API_SIZE: process.env.SELFIE_IMAGE_API_SIZE ?? "768x1024",
-    SELFIE_IMAGE_API_QUALITY: process.env.SELFIE_IMAGE_API_QUALITY ?? "low",
-    SELFIE_IMAGE_API_OUTPUT_FORMAT: process.env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
-    SELFIE_IMAGE_API_OUTPUT_COMPRESSION: process.env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION ?? "45",
-    SELFIE_IMAGE_API_TIMEOUT_MS: process.env.SELFIE_IMAGE_API_TIMEOUT_MS ?? "120000"
-  },
-  stdio: ["ignore", "inherit", "inherit"]
-});
+const codexPrompt = [
+  "Apply these skill instructions exactly:",
+  "```markdown",
+  skillInstructions,
+  "```",
+  "",
+  "Task prompt:",
+  "```text",
+  prompt,
+  "```",
+  "",
+  "Task metadata:",
+  `Aspect ratio: ${aspectRatio}`,
+  referenceImagePrompt,
+  "",
+  "The image files are attached with --image in the same order as the task metadata."
+].join("\n");
 
 const started = Date.now();
-const timer = setTimeout(() => {
-  child.kill("SIGTERM");
-  setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-}, hardTimeoutMs);
+const result = await execFile(codexCommand, [
+  "exec",
+  "-C",
+  codexWorkDir,
+  "--ephemeral",
+  "--ignore-user-config",
+  "--disable",
+  "plugins",
+  "--disable",
+  "apps",
+  "-m",
+  "gpt-5.4-mini",
+  "-c",
+  "model_reasoning_effort=\"low\"",
+  "--sandbox",
+  "workspace-write",
+  "--json",
+  ...imageArgs,
+  codexPrompt
+], timeoutMs, sanitizedEnv());
 
-child.on("error", (error) => {
-  clearTimeout(timer);
-  console.error(`alice-selfie-fast runner failed to start: ${error.message}`);
-  process.exit(1);
-});
+const generatedPath = findNewGeneratedImage(beforeImages, started);
+if (!generatedPath) {
+  throw new Error("codex selfie generation did not create a new generated image");
+}
+copyGeneratedImage(generatedPath, outputPath);
+console.error(`alice-selfie-fast completed in ${Date.now() - started}ms; source=${generatedPath}; file=${fileName}`);
+if (result.stdout.trim()) process.stdout.write(result.stdout);
 
-child.on("close", (code, signal) => {
-  clearTimeout(timer);
-  const elapsedMs = Date.now() - started;
-  if (signal) {
-    console.error(`alice-selfie-fast hard timeout after ${elapsedMs}ms; signal=${signal}`);
-    process.exit(124);
+function execFile(command, args, timeoutMs, env) {
+  return new Promise((resolve, reject) => {
+    const child = childProcess.spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error([
+        `selfie generation timed out after ${timeoutMs}ms`,
+        Buffer.concat(stderrChunks).toString("utf8").trim(),
+        Buffer.concat(stdoutChunks).toString("utf8").trim()
+      ].filter(Boolean).join("\n")));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        reject(new Error([`codex exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`, stderr.trim(), stdout.trim()].filter(Boolean).join("\n")));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function copyGeneratedImage(sourcePath, targetPath) {
+  if (!path.isAbsolute(sourcePath)) throw new Error(`generated image path is not absolute: ${sourcePath}`);
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) throw new Error(`generated image extension is not allowed: ${sourcePath}`);
+  const stat = fs.statSync(sourcePath);
+  if (!stat.isFile()) throw new Error(`generated image path is not a file: ${sourcePath}`);
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+function copyReferenceImagesToCodexWorkDir(images, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true });
+  return images.map((image, index) => {
+    const ext = path.extname(image).toLowerCase();
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) throw new Error(`reference image extension is not allowed: ${image}`);
+    const sourceStat = fs.statSync(image);
+    if (!sourceStat.isFile()) throw new Error(`reference image path is not a file: ${image}`);
+    const targetPath = path.join(targetDir, `reference-${index + 1}${ext}`);
+    fs.copyFileSync(image, targetPath);
+    return targetPath;
+  });
+}
+
+function findNewGeneratedImage(beforeImages, startedAtMs) {
+  let newest;
+  for (const image of listGeneratedImages()) {
+    const previousMtime = beforeImages.get(image.filePath);
+    if (previousMtime !== undefined && previousMtime === image.mtimeMs) continue;
+    if (image.mtimeMs < startedAtMs - 5_000) continue;
+    if (!newest || image.mtimeMs > newest.mtimeMs) newest = image;
   }
-  console.error(`alice-selfie-fast totalMs=${elapsedMs}`);
-  process.exit(code ?? 1);
-});
+  return newest?.filePath;
+}
 
-function numberValue(value, fallback) {
+function snapshotGeneratedImages() {
+  const snapshot = new Map();
+  for (const image of listGeneratedImages()) snapshot.set(image.filePath, image.mtimeMs);
+  return snapshot;
+}
+
+function listGeneratedImages() {
+  const generatedRoot = path.join(process.env.CODEX_HOME || path.join(process.env.HOME || "", ".codex"), "generated_images");
+  const images = [];
+  if (!fs.existsSync(generatedRoot)) return images;
+  for (const filePath of walkFiles(generatedRoot)) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) continue;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) continue;
+    images.push({ filePath, mtimeMs: stat.mtimeMs });
+  }
+  return images;
+}
+
+function* walkFiles(root) {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const filePath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkFiles(filePath);
+    } else if (entry.isFile()) {
+      yield filePath;
+    }
+  }
+}
+
+function sanitizedEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key === "OPENAI_API_KEY" || key === "OPENAI_BASE_URL" || key.startsWith("SELFIE_IMAGE_API_")) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function requireString(value, name) {
+  const text = stringValue(value);
+  if (!text) throw new Error(`${name} is required`);
+  return text;
+}
+
+function requireStringArray(value, name) {
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new Error(`${name} must be a non-empty string array`);
+  }
+  return value;
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function positiveNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-async function runToolMode(configPath) {
-  if (!configPath) throw new Error("--tool-input requires a config path");
-  const input = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const apiKey = input.apiKey ?? process.env.SELFIE_IMAGE_API_KEY ?? process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("selfie Image API key is not configured; set OPENAI_API_KEY or SELFIE_IMAGE_API_KEY");
-
-  const outputPath = path.join(input.workDir, input.fileName);
-  const prompt = [
-    input.prompt,
-    "",
-    `画幅比例: ${input.aspectRatio}`,
-    `API生成约束: 生成一张低质量快速草稿，尺寸目标 ${input.apiSize}，不要高清，不要高精细细节，不要多版本探索。`,
-    input.referenceImagePrompt ?? "输入图片顺序: 图1为角色参考，图2为今日服装参考，图3为图书馆场景参考。"
-  ].join("\n");
-
-  const form = new FormData();
-  form.append("model", input.apiModel);
-  form.append("prompt", prompt);
-  form.append("n", "1");
-  form.append("size", input.apiSize);
-  form.append("quality", input.apiQuality);
-  form.append("output_format", input.apiOutputFormat);
-  if (input.apiOutputFormat === "jpeg" || input.apiOutputFormat === "webp") {
-    form.append("output_compression", String(input.apiOutputCompression));
-  }
-  for (const image of input.referenceImages) {
-    form.append("image[]", fileBlob(image), path.basename(image));
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), input.apiTimeoutMs);
-  const started = Date.now();
-  try {
-    const response = await fetch(`${input.apiBaseURL}/images/edits`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${apiKey}`
-      },
-      body: form,
-      ...dispatcherInit(input.proxyUrl)
-    });
-    const elapsedMs = Date.now() - started;
-    const body = await response.text();
-    if (!response.ok) {
-      throw new Error(`Image API failed after ${elapsedMs}ms: HTTP ${response.status} ${response.statusText} ${body.slice(0, 2000)}`);
-    }
-    const payload = JSON.parse(body);
-    const b64 = payload?.data?.[0]?.b64_json;
-    if (typeof b64 !== "string" || !b64) {
-      throw new Error(`Image API returned no image after ${elapsedMs}ms: ${JSON.stringify(payload).slice(0, 2000)}`);
-    }
-    fs.writeFileSync(outputPath, Buffer.from(b64, "base64"));
-    console.error(`Image API completed in ${elapsedMs}ms; file=${input.fileName}`);
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Image API selfie generation timed out after ${input.apiTimeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function fileBlob(filePath) {
-  return new Blob([fs.readFileSync(filePath)], { type: contentType(filePath) });
-}
-
-function contentType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".webp") return "image/webp";
-  return "image/png";
-}
-
-function dispatcherInit(proxyUrl) {
-  if (!proxyUrl) return {};
-  const { ProxyAgent } = loadUndici();
-  return { dispatcher: new ProxyAgent(proxyUrl) };
-}
-
-function loadUndici() {
-  try {
-    return require("undici");
-  } catch {
-    return require("/usr/share/nodejs/undici");
-  }
 }

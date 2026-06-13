@@ -175,6 +175,7 @@ test("selfie default api executor calls Image API directly", async () => {
     assert.equal(form.get("n"), "1");
     assert.equal(form.get("size"), "768x1024");
     assert.equal(form.get("quality"), "low");
+    assert.equal(form.get("moderation"), "low");
     assert.equal(form.get("output_format"), "jpeg");
     assert.equal(form.get("output_compression"), "45");
     assert.equal(form.getAll("image[]").length, 3);
@@ -225,36 +226,61 @@ test("selfie default api executor calls Image API directly", async () => {
   }
 });
 
-test("selfie codex mode calls alice-selfie-fast runner", async () => {
+test("selfie codex mode calls alice-selfie-fast runner and copies new generated image", async () => {
   const outputRoot = makeAssetTempDir("selfie-codex-mode");
   const referenceRoot = makeTempDir("selfie-ref-codex-mode");
   const outfitImage = path.join(makeTempDir("selfie-outfit-codex-mode"), "dress.jpg");
-  const runnerDir = makeTempDir("selfie-codex-runner");
-  const runnerPath = path.join(runnerDir, "runner.mjs");
+  const codexDir = makeTempDir("selfie-codex-command");
+  const codexPath = path.join(codexDir, "fake-codex.mjs");
+  const generatedDir = makeTempDir("selfie-codex-generated");
+  const codexHome = makeTempDir("selfie-codex-home");
+  const generatedPath = path.join(codexHome, "generated_images", "run-1", "generated.png");
+  const argsPath = path.join(codexDir, "args.json");
   const configPath = path.join(makeTempDir("selfie-photo-config"), "config.json");
   const store = createAliceStore(path.join(makeTempDir("selfie-codex-mode-db"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
-  const previousRunner = process.env.ALICE_SELFIE_FAST_RUNNER;
+  const previousCodexHome = process.env.CODEX_HOME;
   let nextMessageId = 1;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
-  fs.writeFileSync(runnerPath, [
+  fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
+  fs.writeFileSync(codexPath, [
+    "#!/usr/bin/env node",
     "import fs from 'node:fs';",
     "import path from 'node:path';",
-    "const configPath = process.argv[3];",
-    "const input = JSON.parse(fs.readFileSync(configPath, 'utf8'));",
-    "if (process.argv[2] !== '--tool-input') process.exit(2);",
-    "if ('apiKey' in input) process.exit(3);",
-    "if (process.env.SELFIE_IMAGE_API_KEY !== 'test-key') process.exit(4);",
-    "fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from('codex-runner-jpg'));",
-    "console.error(`alice-selfie-fast completed; file=${input.fileName}`);"
+    `fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+    "const args = process.argv.slice(2);",
+    "const prompt = args.at(-1) || '';",
+    "if (args[0] !== 'exec') process.exit(2);",
+    "if (args[1] !== '-C') process.exit(12);",
+    "if (fs.readdirSync(args[2]).length !== 3) process.exit(13);",
+    "const imageArgs = args.filter((arg) => arg.startsWith('--image='));",
+    "if (imageArgs.some((arg) => path.dirname(arg.slice('--image='.length)) !== args[2])) process.exit(14);",
+    "if (!args.includes('--ephemeral')) process.exit(3);",
+    "if (!args.includes('--ignore-user-config')) process.exit(15);",
+    "if (!args.includes('--disable') || !args.includes('plugins') || !args.includes('apps')) process.exit(16);",
+    "if (!args.includes('-m') || !args.includes('gpt-5.4-mini')) process.exit(17);",
+    "if (!args.includes('-c') || !args.includes('model_reasoning_effort=\"low\"')) process.exit(18);",
+    "if (args.includes('--output-last-message')) process.exit(4);",
+    "if (!prompt.includes('Apply these skill instructions exactly:')) process.exit(5);",
+    "if (!prompt.includes('Task prompt:')) process.exit(6);",
+    "if (!prompt.includes('Task metadata:')) process.exit(7);",
+    "if (!prompt.includes('不得分析')) process.exit(8);",
+    "if (!prompt.includes('1024x1536')) process.exit(9);",
+    "if (process.env.SELFIE_IMAGE_API_KEY === 'test-key') process.exit(10);",
+    "if (process.env.OPENAI_API_KEY) process.exit(11);",
+    `fs.mkdirSync(${JSON.stringify(path.dirname(generatedPath))}, { recursive: true });`,
+    `fs.writeFileSync(${JSON.stringify(generatedPath)}, "codex-generated-image");`,
+    "console.log(JSON.stringify({ type: 'done' }));"
   ].join("\n"));
+  fs.chmodSync(codexPath, 0o755);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
-    selfieMode: "codex"
+    selfieMode: "codex",
+    selfieCodexCommand: codexPath
   })}\n`);
-  process.env.ALICE_SELFIE_FAST_RUNNER = runnerPath;
+  process.env.CODEX_HOME = codexHome;
 
   try {
     const tools = createPhotoTools({
@@ -265,6 +291,7 @@ test("selfie codex mode calls alice-selfie-fast runner", async () => {
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieImageApiKey: "test-key",
+      selfieCodexTimeoutMs: 60_000,
       outputRouter: {
         async send(output) {
           sent.push(output);
@@ -282,18 +309,35 @@ test("selfie codex mode calls alice-selfie-fast runner", async () => {
     });
 
     assert.equal(result.ok, true);
+    const codexArgs = JSON.parse(fs.readFileSync(argsPath, "utf8")) as string[];
+    assert.deepEqual(codexArgs.slice(0, 2), ["exec", "-C"]);
+    assert.equal(codexArgs.includes("--ephemeral"), true);
+    assert.equal(codexArgs.includes("--ignore-user-config"), true);
+    assert.equal(codexArgs.includes("plugins"), true);
+    assert.equal(codexArgs.includes("apps"), true);
+    assert.equal(codexArgs.includes("gpt-5.4-mini"), true);
+    assert.equal(codexArgs.includes('model_reasoning_effort="low"'), true);
+    assert.equal(codexArgs.includes("--output-last-message"), false);
+    const imageArgs = codexArgs.filter((arg) => arg.startsWith("--image="));
+    assert.equal(imageArgs.length, 3);
+    assert.deepEqual(imageArgs.map((arg) => path.basename(arg.slice("--image=".length))), ["reference-1.png", "reference-2.jpg", "reference-3.png"]);
     assert.equal(sent[1].content.kind, "image");
+    const sentAssetId = sent[1].content.kind === "image" ? sent[1].content.assetId : "";
+    const finalPath = path.join(assetRootFromOutputDir(outputRoot), sentAssetId);
+    assert.equal(fs.readFileSync(finalPath, "utf8"), "codex-generated-image");
     assert.equal(result.output, "照片已发送");
   } finally {
-    if (previousRunner === undefined) {
-      delete process.env.ALICE_SELFIE_FAST_RUNNER;
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
     } else {
-      process.env.ALICE_SELFIE_FAST_RUNNER = previousRunner;
+      process.env.CODEX_HOME = previousCodexHome;
     }
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
-    fs.rmSync(runnerDir, { recursive: true, force: true });
+    fs.rmSync(codexDir, { recursive: true, force: true });
+    fs.rmSync(generatedDir, { recursive: true, force: true });
+    fs.rmSync(codexHome, { recursive: true, force: true });
     fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
   }
 });

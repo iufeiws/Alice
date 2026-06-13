@@ -23,13 +23,13 @@ Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
    - 主 prompt profile 中的 Alice 角色特征。
    - 当前日常 shell personality 与 outfit。
    - `assets/selfie/references/selfie-prompt.txt`。
-3. 默认由内置 API executor 直接调用 Image API `/v1/images/edits`，并使用低质量、小尺寸、单张输出配置。`codex` 模式会改用 `alice-selfie-fast` 这个 Codex skill/runner 入口。
+3. 默认由内置 API executor 直接调用 Image API `/v1/images/edits`，并使用低质量、小尺寸、单张输出配置。`codex` 模式会启动一次 ephemeral Codex CLI 会话，让新会话使用 `$alice-selfie-fast` 和内置 `image_gen` 生图。
 4. 按以下顺序传入参考图：
    - `assets/selfie/references/alice-character-reference.png`
    - `memory-files/shell/outfits/*.jpg` 中当前 outfit 对应图片
    - `assets/selfie/references/magic-library-reference.png`
 5. 如果当前 outfit 图片缺失，不直接失败；只传角色和图书馆参考图，并把服装信息作为文字写入 prompt。
-6. 把生成图片写入 `assets/generated/selfies/selfie_{datetime}.jpg`。
+6. `codex` 模式由新会话返回 Codex 生成图路径，再由 photo tool 脚本复制到临时工作目录并写入 `assets/generated/selfies/selfie_{datetime}.jpg`。
 7. 通过当前渠道的 image output 路径发送生成图片。
 
 生成图片目录故意被 git 忽略。参考图和 prompt 模板是源码资产，应提交。
@@ -45,7 +45,9 @@ config/plugin/photo/config.json
 `selfieMode` 支持：
 
 - `api`：直接调用 Image API。
-- `codex`：使用 `alice-selfie-fast` Codex skill/runner 入口。
+- `codex`：启动 ephemeral Codex CLI 会话，使用 `$alice-selfie-fast` 约束新会话立即调用内置 `image_gen`，并由 photo tool 脚本搬运返回的生成图。
+
+`codex` 模式的生图行为、速度约束和图像参数集中定义在 `src/capabilities/skills/external/alice-selfie-fast/SKILL.md`。photo tool 只负责构造任务 prompt、传参考图、启动新会话、解析生成图路径和搬运文件。
 
 API key 仍只从 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY` 读取；admin 配置文件只保存非 secret 设置。
 

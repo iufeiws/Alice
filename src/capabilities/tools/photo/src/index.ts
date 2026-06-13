@@ -35,6 +35,7 @@ export type SelfieContext = {
 export type SelfieExecutorInput = {
   command: string;
   workDir: string;
+  codexWorkDir?: string;
   fileName: string;
   prompt: string;
   referenceImages: string[];
@@ -46,6 +47,7 @@ export type SelfieExecutorInput = {
   apiModel: string;
   apiSize: string;
   apiQuality: string;
+  apiModeration: string;
   apiOutputFormat: string;
   apiOutputCompression: number;
   apiTimeoutMs: number;
@@ -75,6 +77,7 @@ export type PhotoPluginConfig = {
   selfieImageApiModel: string;
   selfieImageApiSize: string;
   selfieImageApiQuality: string;
+  selfieImageApiModeration: string;
   selfieImageApiOutputFormat: string;
   selfieImageApiOutputCompression: number;
   selfieImageApiTimeoutMs: number;
@@ -100,6 +103,7 @@ export type PhotoToolsDeps = {
   selfieImageApiModel?: string;
   selfieImageApiSize?: string;
   selfieImageApiQuality?: string;
+  selfieImageApiModeration?: string;
   selfieImageApiOutputFormat?: string;
   selfieImageApiOutputCompression?: number;
   selfieImageApiTimeoutMs?: number;
@@ -173,11 +177,14 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     }
 
     let tempDir: string | undefined;
+    let codexWorkDir: string | undefined;
     let codexResult: SelfieExecutorResult | undefined;
     try {
       fs.mkdirSync(fullOutputDir, { recursive: true });
       tempDir = path.join(fullOutputDir, `.tmp_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}`);
       fs.mkdirSync(tempDir, { recursive: true });
+      codexWorkDir = path.join(fullOutputDir, `.codex_tmp_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}`);
+      fs.mkdirSync(codexWorkDir, { recursive: true });
 
       const fileName = `selfie_${formatFileDateTime(time.now().iso)}.${extensionForOutputFormat(imageApiOutputFormat)}`;
       const tempFilePath = path.resolve(tempDir, fileName);
@@ -190,6 +197,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
+        `codexWorkDir=${codexWorkDir}`,
         `file=${fileName}`,
         `mode=${photoConfig.selfieMode}`,
         `aspectRatio=${aspectRatio}`,
@@ -201,6 +209,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       const executorResult = await executor({
         command: photoConfig.selfieCodexCommand,
         workDir: tempDir,
+        codexWorkDir,
         fileName,
         prompt,
         referenceImages: references.images,
@@ -212,6 +221,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         apiModel: photoConfig.selfieImageApiModel,
         apiSize: photoConfig.selfieImageApiSize,
         apiQuality: photoConfig.selfieImageApiQuality,
+        apiModeration: photoConfig.selfieImageApiModeration,
         apiOutputFormat: imageApiOutputFormat,
         apiOutputCompression: photoConfig.selfieImageApiOutputCompression,
         apiTimeoutMs: photoConfig.selfieImageApiTimeoutMs,
@@ -252,6 +262,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       return toolError(call, reason);
     } finally {
       if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+      if (codexWorkDir) fs.rmSync(codexWorkDir, { recursive: true, force: true });
     }
   }
 
@@ -462,12 +473,13 @@ function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defaults: P
     selfieReferenceDir: stringConfigValue(parsed.selfieReferenceDir, defaults.selfieReferenceDir ?? "assets/selfie/references"),
     selfieOutputDir: stringConfigValue(parsed.selfieOutputDir, defaults.selfieOutputDir ?? "assets/generated/selfies"),
     selfieCodexCommand: stringConfigValue(parsed.selfieCodexCommand, defaults.selfieCodexCommand ?? "codex"),
-    selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 180_000),
+    selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 300_000),
     selfieImageApiKey: stringConfigValue(parsed.selfieImageApiKey, defaults.selfieImageApiKey),
     selfieImageApiBaseURL: stringConfigValue(parsed.selfieImageApiBaseURL, defaults.selfieImageApiBaseURL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),
     selfieImageApiModel: stringConfigValue(parsed.selfieImageApiModel, defaults.selfieImageApiModel ?? "gpt-image-2"),
     selfieImageApiSize: stringConfigValue(parsed.selfieImageApiSize, defaults.selfieImageApiSize ?? "768x1024"),
     selfieImageApiQuality: stringConfigValue(parsed.selfieImageApiQuality, defaults.selfieImageApiQuality ?? "low"),
+    selfieImageApiModeration: stringConfigValue(parsed.selfieImageApiModeration, defaults.selfieImageApiModeration ?? "low"),
     selfieImageApiOutputFormat: normalizeOutputFormat(stringConfigValue(parsed.selfieImageApiOutputFormat, defaults.selfieImageApiOutputFormat ?? "jpeg")),
     selfieImageApiOutputCompression: numberValue(parsed.selfieImageApiOutputCompression, defaults.selfieImageApiOutputCompression ?? 45),
     selfieImageApiTimeoutMs: numberValue(parsed.selfieImageApiTimeoutMs, defaults.selfieImageApiTimeoutMs ?? 120_000),
@@ -488,6 +500,7 @@ function photoConfigDefaultsFromDeps(deps: PhotoToolsDeps): Partial<PhotoPluginC
     selfieImageApiModel: deps.selfieImageApiModel,
     selfieImageApiSize: deps.selfieImageApiSize,
     selfieImageApiQuality: deps.selfieImageApiQuality,
+    selfieImageApiModeration: deps.selfieImageApiModeration,
     selfieImageApiOutputFormat: deps.selfieImageApiOutputFormat,
     selfieImageApiOutputCompression: deps.selfieImageApiOutputCompression,
     selfieImageApiTimeoutMs: deps.selfieImageApiTimeoutMs,
@@ -514,6 +527,7 @@ async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExec
   form.append("n", "1");
   form.append("size", input.apiSize);
   form.append("quality", input.apiQuality);
+  form.append("moderation", input.apiModeration);
   form.append("output_format", input.apiOutputFormat);
   if (input.apiOutputFormat === "jpeg" || input.apiOutputFormat === "webp") {
     form.append("output_compression", String(input.apiOutputCompression));
@@ -569,63 +583,34 @@ async function runImageApiSelfie(input: SelfieExecutorInput): Promise<SelfieExec
 async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
   const runnerPath = process.env.ALICE_SELFIE_FAST_RUNNER ?? defaultFastSelfieRunner;
   const configPath = path.join(input.workDir, "alice-selfie-fast-input.json");
+  const runnerTimeoutMs = Math.max(1_000, input.timeoutMs - 2_000);
   fs.writeFileSync(configPath, JSON.stringify({
     workDir: input.workDir,
+    codexWorkDir: input.codexWorkDir,
     fileName: input.fileName,
     prompt: input.prompt,
     referenceImages: input.referenceImages,
     referenceImagePrompt: input.referenceImagePrompt,
     aspectRatio: input.aspectRatio,
-    apiBaseURL: input.apiBaseURL,
-    apiModel: input.apiModel,
-    apiSize: input.apiSize,
-    apiQuality: input.apiQuality,
-    apiOutputFormat: input.apiOutputFormat,
-    apiOutputCompression: input.apiOutputCompression,
-    apiTimeoutMs: input.apiTimeoutMs,
-    proxyUrl: input.proxyUrl
+    codexCommand: input.command,
+    timeoutMs: runnerTimeoutMs
   }));
   const result = await execFile("node", [runnerPath, "--tool-input", configPath], input.timeoutMs, {
-    SELFIE_IMAGE_API_KEY: input.apiKey ?? ""
+    OPENAI_API_KEY: "",
+    OPENAI_BASE_URL: "",
+    SELFIE_IMAGE_API_KEY: "",
+    SELFIE_IMAGE_API_BASE_URL: "",
+    SELFIE_IMAGE_API_MODEL: "",
+    SELFIE_IMAGE_API_SIZE: "",
+    SELFIE_IMAGE_API_QUALITY: "",
+    SELFIE_IMAGE_API_OUTPUT_FORMAT: "",
+    SELFIE_IMAGE_API_OUTPUT_COMPRESSION: "",
+    SELFIE_IMAGE_API_TIMEOUT_MS: ""
   });
   return {
     stdout: result.stdout,
     stderr: result.stderr,
-    lastMessage: excerpt(result.stderr || result.stdout, 1000)
-  };
-}
-
-async function runCodexSelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
-  const prompt = [
-    input.prompt,
-    "",
-    `画幅比例: ${input.aspectRatio}`,
-    "速度优先：生成低质量草稿即可，不要高清，不要高精细细节，不要做多版本探索。",
-    input.referenceImagePrompt,
-    "输出尺寸目标: 768x1024 像素附近，保持 3:4 竖图；文件尽量小。",
-    "输出格式: JPEG/JPG。",
-    `请将最终图片保存为当前工作目录下的 ${input.fileName}。`,
-    "只生成这一张图片，不要修改其他文件，不要创建额外文件。"
-  ].join("\n");
-  const imageArgs = input.referenceImages.map((image) => `--image=${image}`);
-  const lastMessagePath = path.join(input.workDir, "codex-last-message.txt");
-
-  const result = await execFile(input.command, [
-    "exec",
-    "-C",
-    input.workDir,
-    "--ephemeral",
-    "--sandbox",
-    "workspace-write",
-    "--json",
-    "--output-last-message",
-    lastMessagePath,
-    ...imageArgs,
-    prompt
-  ], input.timeoutMs);
-  return {
-    ...result,
-    lastMessage: fs.existsSync(lastMessagePath) ? fs.readFileSync(lastMessagePath, "utf8") : undefined,
+    lastMessage: excerpt(result.stderr || result.stdout, 1000),
     events: result.stdout
   };
 }

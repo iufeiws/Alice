@@ -1,4 +1,4 @@
 interface:
   display_name: "Alice Selfie Fast"
-  short_description: "Fast Alice selfies for external agents"
-  default_prompt: "Use $alice-selfie-fast to generate one Alice selfie through Alice's fast external-agent flow."
+  short_description: "Fast Alice selfies through Codex built-in image_gen"
+  default_prompt: "Use $alice-selfie-fast with the already provided prompt and reference images. Immediately call Codex built-in image_gen once. Do not analyze, plan, run scripts, move files, use API keys, call Image API, or report a path."

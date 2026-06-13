@@ -464,6 +464,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     selfieImageApiModel: "gpt-image-2",
     selfieImageApiSize: "768x1024",
     selfieImageApiQuality: "low",
+    selfieImageApiModeration: "low",
     selfieImageApiOutputFormat: "jpeg",
     selfieImageApiOutputCompression: 45,
     selfieImageApiTimeoutMs: 120000,
@@ -478,6 +479,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(body.configValue.selfieImageApiKeySet, true);
   assert.equal(saved.selfieMode, "codex");
   assert.equal(saved.selfieCodexTimeoutMs, 240000);
+  assert.equal(saved.selfieImageApiModeration, "low");
   assert.equal(saved.selfieImageApiKey, undefined);
   assert.equal(saved.selfieImageApiKeySet, undefined);
 });
@@ -1612,6 +1614,7 @@ function photoDefaults() {
     selfieImageApiModel: "gpt-image-2",
     selfieImageApiSize: "768x1024",
     selfieImageApiQuality: "low",
+    selfieImageApiModeration: "low",
     selfieImageApiOutputFormat: "jpeg",
     selfieImageApiOutputCompression: 45,
     selfieImageApiTimeoutMs: 120_000,

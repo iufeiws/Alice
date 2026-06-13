@@ -10,6 +10,7 @@ export type LLMRequestSenderInput = {
   temperature?: number;
   maxTokens?: number;
   extraParams?: Record<string, unknown>;
+  presetName?: string;
   toolNames: string[];
   toolVariables?: Record<string, unknown>;
   round: number;

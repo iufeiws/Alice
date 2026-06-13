@@ -22,6 +22,7 @@ export function createLLMConfigRuntime(input: {
         temperature: undefined,
         extraParams: {},
         followupExtraParams: {},
+        presetName: undefined,
         stream: false
       };
     }
@@ -31,6 +32,7 @@ export function createLLMConfigRuntime(input: {
       temperature: preset.temperature,
       extraParams: preset.extraParams,
       followupExtraParams: preset.followupExtraParams,
+      presetName: preset.name,
       stream: preset.stream
     };
   }

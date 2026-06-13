@@ -1,4 +1,5 @@
 import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../llm-gateway/src/index.js";
+import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { PolicyEngine } from "../ports/policy.js";
 import type { IntentRouter } from "./intent-router.js";
@@ -161,6 +162,7 @@ type CoreLLMRuntimeConfig = {
   temperature?: number;
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
+  presetName?: string;
   stream?: boolean;
 };
 
@@ -180,8 +182,8 @@ export type AgentCoreDeps = {
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
-  onLLMRequestPrepared?(input: LLMChatInput): void;
-  onLLMResponseReceived?(result: LLMChatResult): void;
+  onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
+  onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   llmRequestSender?: LLMRequestSender;
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   setActiveLoopSessionContext?<TSession>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
@@ -579,6 +581,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             temperature: deps.config.llm.temperature,
             extraParams: deps.config.llm.extraParams,
             followupExtraParams: deps.config.llm.followupExtraParams,
+            presetName: undefined,
             stream: deps.config.llm.stream
           };
           llmInput = {
@@ -588,6 +591,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             temperature: llmConfig.temperature,
             extraParams: llmConfig.extraParams,
             followupExtraParams: llmConfig.followupExtraParams,
+            presetName: llmConfig.presetName,
             stream: llmConfig.stream,
             toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
           };

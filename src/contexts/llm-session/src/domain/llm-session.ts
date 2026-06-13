@@ -37,6 +37,7 @@ export type LLMRequestLogEntry = {
   messages: LLMChatInput["messages"];
   tools?: LLMChatInput["tools"];
   extraParams?: Record<string, unknown>;
+  presetName?: string;
   rawRequest?: unknown;
   diffFromPrevious?: LLMRequestDiff;
 };
@@ -117,6 +118,7 @@ export type LLMSessionRoundInfo = {
   temperature?: number;
   tools?: LLMChatInput["tools"];
   extraParams?: Record<string, unknown>;
+  presetName?: string;
 };
 
 export type LLMSessionRequestInfo = {
@@ -127,6 +129,7 @@ export type LLMSessionRequestInfo = {
   temperature?: number;
   tools?: LLMChatInput["tools"];
   extraParams?: Record<string, unknown>;
+  presetName?: string;
   messageCount: number;
 };
 

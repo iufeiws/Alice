@@ -30,6 +30,7 @@ type TalkAgentLoopLLMConfig = {
   temperature?: number;
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
+  presetName?: string;
   stream?: boolean;
 };
 
@@ -139,6 +140,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           model: input.config.model,
           temperature: input.config.temperature,
           extraParams: input.config.extraParams,
+          presetName: input.config.presetName,
           toolNames: input.toolNames,
           toolVariables: input.toolVariables,
           stream: input.config.stream !== false,

@@ -60,6 +60,7 @@ export type LLMChatInput = {
   tools?: LLMToolSpec[];
   maxTokens?: number;
   extraParams?: Record<string, unknown>;
+  presetName?: string;
   signal?: AbortSignal;
 };
 

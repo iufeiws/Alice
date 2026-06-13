@@ -1,5 +1,6 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
+import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
@@ -53,6 +54,7 @@ export type ChatAgentLoopInput = {
     maxTokens?: number;
     extraParams?: Record<string, unknown>;
     followupExtraParams?: Record<string, unknown>;
+    presetName?: string;
     stream?: boolean;
     toolNames: string[];
   };
@@ -71,8 +73,8 @@ export type ChatAgentLoopInput = {
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
   onSessionRebuilt?(): void;
   isLLMRunCancelled?(): boolean;
-  onLLMRequestPrepared?(input: LLMChatInput): void;
-  onLLMResponseReceived?(result: LLMChatResult): void;
+  onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
+  onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   onLLMLog?(event: {
     kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error";
     round: number;
@@ -140,6 +142,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         temperature: input.llmInput.temperature,
         maxTokens: input.llmInput.maxTokens,
         extraParams: round === 0 ? input.llmInput.extraParams : input.llmInput.followupExtraParams,
+        presetName: input.llmInput.presetName,
         toolNames: visibleToolNames,
         toolVariables: input.buildTextVariables(input.event),
         stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream),

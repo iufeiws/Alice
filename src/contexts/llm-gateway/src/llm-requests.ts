@@ -82,6 +82,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       temperature: input.temperature,
       maxTokens: input.maxTokens,
       extraParams: input.extraParams,
+      presetName: input.presetName,
       tools: buildTools(input.toolNames, input.toolVariables),
       signal: requestController.signal
     };

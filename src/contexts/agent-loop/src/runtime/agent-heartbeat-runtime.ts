@@ -111,7 +111,9 @@ export function createAgentHeartbeatRuntime(input: {
     if (timer) return;
     timer = setTimeout(() => {
       timer = undefined;
-      void run();
+      void run().catch((error) => {
+        input.appendLog("error", `agent heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     }, Math.max(0, delayMs));
     (timer as { unref?: () => void }).unref?.();
   }
@@ -139,9 +141,18 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
 
   const talkSessionId = !force && tasks.canRunHeartbeat() ? tasks.claimReadyTalkSession?.() : undefined;
   if (talkSessionId) {
-    const started = await (tasks.runTalkSession?.(talkSessionId) ?? Promise.resolve(false));
-    if (!started) tasks.markTalkSessionReady?.(talkSessionId);
-    if (started) processed += 1;
+    try {
+      const started = await (tasks.runTalkSession?.(talkSessionId) ?? Promise.resolve(false));
+      if (!started) tasks.markTalkSessionReady?.(talkSessionId);
+      if (started) processed += 1;
+    } catch (error) {
+      if (isHeartbeatCancellationError(error)) {
+        tasks.appendLog("info", `agent talk session cancelled: session=${talkSessionId} reason=${error instanceof Error ? error.message : String(error)}`);
+      } else {
+        tasks.appendLog("error", `agent talk session failed: session=${talkSessionId} error=${error instanceof Error ? error.message : String(error)}`);
+        tasks.markTalkSessionReady?.(talkSessionId);
+      }
+    }
   }
 
   const sleepCocoonWakeEvent = !force && tasks.canRunHeartbeat()
@@ -189,4 +200,10 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
   }
 
   return processed;
+}
+
+function isHeartbeatCancellationError(error: unknown): boolean {
+  if (!error) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "llm_request_cancelled" || /abort/i.test(message);
 }

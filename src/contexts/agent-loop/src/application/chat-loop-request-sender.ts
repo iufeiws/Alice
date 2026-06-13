@@ -1,6 +1,7 @@
 import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { ToolPlugin } from "../contracts/agent-contracts.js";
 
 const maxLLMRetryAttempts = 3;
@@ -18,8 +19,8 @@ export type ChatLoopRequestSenderLog = {
 export type ChatLoopRequestSenderInput = {
   llm: LLMClient;
   toolPlugins: ToolPlugin[];
-  onLLMRequestPrepared?(input: LLMChatInput): void;
-  onLLMResponseReceived?(result: LLMChatResult): void;
+  onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
+  onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   onLLMLog?(event: ChatLoopRequestSenderLog): void;
 };
 
@@ -32,9 +33,10 @@ export function createChatLoopRequestSender(input: ChatLoopRequestSenderInput): 
       temperature: request.temperature,
       maxTokens: request.maxTokens,
       extraParams: request.extraParams,
+      presetName: request.presetName,
       tools: buildLocalToolSpecs(input.toolPlugins, request.toolNames, request.toolVariables as LLMTextVariables | undefined)
     };
-    input.onLLMRequestPrepared?.(requestInput);
+    const requestLog = input.onLLMRequestPrepared?.(requestInput);
     const useStream = request.stream === true && Boolean(client.chatStream);
     let lastError: unknown;
     let result: LLMChatResult | undefined;
@@ -70,7 +72,7 @@ export function createChatLoopRequestSender(input: ChatLoopRequestSenderInput): 
       }
     }
     if (!result) throw lastError;
-    input.onLLMResponseReceived?.(result);
+    input.onLLMResponseReceived?.(result, requestLog || undefined);
     return result;
   };
 }

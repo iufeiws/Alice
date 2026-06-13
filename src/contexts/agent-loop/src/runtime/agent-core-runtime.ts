@@ -21,8 +21,8 @@ export function createAgentCoreRuntime(input: {
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
   loadActiveLLMSessionTranscript(): any;
-  appendLLMRequestLog(input: any, agentId?: "chat" | "talk"): void;
-  appendLLMResponseLog(result: any, agentId?: "chat" | "talk"): void;
+  appendLLMRequestLog(input: any, agentId?: "chat" | "talk"): any;
+  appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: any): void;
   setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
   updateActiveLLMSessionTranscript(session: any): void;
@@ -79,8 +79,8 @@ export function createAgentCoreRuntime(input: {
       input.initiatedBehaviorRunStore.record(run);
     },
     loadLLMSession: input.loadActiveLLMSessionTranscript,
-    onLLMRequestPrepared: input.appendLLMRequestLog,
-    onLLMResponseReceived: input.appendLLMResponseLog,
+    onLLMRequestPrepared: (request) => input.appendLLMRequestLog(request, "chat"),
+    onLLMResponseReceived: (result, request) => input.appendLLMResponseLog(result, "chat", request),
     onLLMHeartbeatStarted() {
       input.llmRequests.resetCancel();
       input.setLLMSessionBusy(true);

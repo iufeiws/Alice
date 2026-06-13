@@ -97,6 +97,74 @@ test("agent heartbeat forced run owns manual session fallback", async () => {
   assert.equal(manualProcessed, 1);
 });
 
+test("agent heartbeat treats cancelled talk runs as handled without crashing", async () => {
+  const logs: Array<{ level: string; message: string }> = [];
+  let markedReady = 0;
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: (level, message) => logs.push({ level, message }),
+    tasks: {
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => false,
+      claimReadyTalkSession: () => "talk-1",
+      runTalkSession: async () => {
+        throw new Error("llm_request_cancelled");
+      },
+      markTalkSessionReady: () => {
+        markedReady += 1;
+      },
+      runGeneratedSession: async () => false,
+      getPendingSessionIds: () => [],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 0,
+      shouldProcessPendingSession: () => false,
+      markSessionNotPending: () => {},
+      processPendingSession: async () => {},
+      appendLog: (level, message) => logs.push({ level, message })
+    }
+  });
+
+  assert.equal(await heartbeat.run(), 0);
+  assert.equal(markedReady, 0);
+  assert.equal(logs.some((entry) => entry.level === "info" && entry.message.includes("agent talk session cancelled")), true);
+});
+
+test("agent heartbeat logs failed talk runs and requeues readiness", async () => {
+  const logs: Array<{ level: string; message: string }> = [];
+  let markedReady = 0;
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: (level, message) => logs.push({ level, message }),
+    tasks: {
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => false,
+      claimReadyTalkSession: () => "talk-1",
+      runTalkSession: async () => {
+        throw new Error("provider_failed");
+      },
+      markTalkSessionReady: () => {
+        markedReady += 1;
+      },
+      runGeneratedSession: async () => false,
+      getPendingSessionIds: () => [],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 0,
+      shouldProcessPendingSession: () => false,
+      markSessionNotPending: () => {},
+      processPendingSession: async () => {},
+      appendLog: (level, message) => logs.push({ level, message })
+    }
+  });
+
+  assert.equal(await heartbeat.run(), 0);
+  assert.equal(markedReady, 1);
+  assert.equal(logs.some((entry) => entry.level === "error" && entry.message.includes("agent talk session failed")), true);
+});
+
 test("agent loop runtime exposes active llm session pointer operations", () => {
   const runtime = createAgentLoopRuntime();
   const calls: string[] = [];

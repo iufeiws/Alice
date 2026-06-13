@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
+import { createLLMRequestsRuntime } from "../src/contexts/llm-gateway/src/llm-requests-runtime.js";
+import { createLLMLogRuntime } from "../src/contexts/llm-gateway/src/llm-log-runtime.js";
 import { acquireSingletonLock } from "../src/apps/api/server/singleton-lock.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -801,6 +803,98 @@ test("LLMRequests records memorize token usage through response hook", async () 
   assert.equal(report.byModel[0].model, "memorize-model");
 });
 
+test("LLM log runtime binds responses to the request session instead of current active session", () => {
+  const requestLogs: any[] = [];
+  const responseLogs: any[] = [];
+  let activeSession: { id: number; requestIds: number[] } | undefined;
+  const logRuntime = createLLMLogRuntime({
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    requestLogs,
+    responseLogs,
+    ensureActiveSession(_time, agentId = "chat") {
+      activeSession = { id: agentId === "talk" ? 200 : 100, requestIds: [] };
+      return activeSession;
+    },
+    getActiveSession() {
+      return activeSession;
+    },
+    noteRequest(entry) {
+      activeSession?.requestIds.push(entry.id);
+    },
+    noteResponse() {},
+    appendUsageLog() {},
+    resolveModel: () => "model",
+    recordTokenUsage() {}
+  });
+
+  const request = logRuntime.appendRequestLog({
+    messages: [{ role: "user", content: "hello" }],
+    model: "chat-model",
+    presetName: "chat-flash",
+    extraParams: { tool_choice: { type: "function", function: { name: "send_chat" } } }
+  }, "chat");
+  activeSession = { id: 200, requestIds: [99] };
+
+  const response = logRuntime.appendResponseLog({
+    message: { role: "assistant", content: "done" },
+    finishReason: "stop"
+  }, "chat", request);
+
+  assert.equal(request.sessionId, 100);
+  assert.equal(request.presetName, "chat-flash");
+  assert.equal(response.sessionId, 100);
+  assert.equal(response.requestId, request.id);
+  assert.equal(responseLogs[0].sessionId, 100);
+});
+
+test("LLM requests runtime passes request-scoped log entry to response logging", async () => {
+  const responseRequestIds: Array<number | undefined> = [];
+  const requestPresetNames: Array<string | undefined> = [];
+  let nextRequestId = 10;
+  const client: LLMClient = {
+    async chat() {
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    }
+  };
+  const runtime = createLLMRequestsRuntime({
+    getTool() {
+      return undefined;
+    },
+    appendLLMRequestLog(request) {
+      requestPresetNames.push(request.presetName);
+      return {
+        id: nextRequestId++,
+        agentId: "chat",
+        sessionId: 123,
+        time: "2026-06-14T01:00:00.000",
+        messages: request.messages,
+        presetName: request.presetName
+      };
+    },
+    appendLLMResponseLog(_result, _agentId, request) {
+      responseRequestIds.push(request?.id);
+    },
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent() {},
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "fallback" }),
+    appendLog() {}
+  });
+
+  await runtime.send({
+    agentId: "chat",
+    client,
+    messages: [{ role: "user", content: "hello" }],
+    model: "chat-model",
+    presetName: "chat-flash",
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(requestPresetNames, ["chat-flash"]);
+  assert.deepEqual(responseRequestIds, [10]);
+});
+
 test("LLMRequests does not retry a successful call when response hook fails", async () => {
   let calls = 0;
   const client: LLMClient = {
@@ -1166,6 +1260,30 @@ function namedClient(name: string): LLMClient {
     },
     async listModels() {
       return [{ id: name }];
+    }
+  };
+}
+
+function fixedTime(iso: string) {
+  const date = new Date(iso);
+  return {
+    timeZone: "UTC",
+    now() {
+      return {
+        date,
+        epochMs: date.getTime(),
+        iso: date.toISOString().replace(/Z$/, ""),
+        timeZone: "UTC"
+      };
+    },
+    addMs(value: number) {
+      const next = new Date(date.getTime() + value);
+      return {
+        date: next,
+        epochMs: next.getTime(),
+        iso: next.toISOString().replace(/Z$/, ""),
+        timeZone: "UTC"
+      };
     }
   };
 }

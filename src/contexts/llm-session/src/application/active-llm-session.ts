@@ -92,7 +92,8 @@ export function createActiveLLMSessionRuntime(input: {
       model: entry.model,
       temperature: entry.temperature,
       tools: cloneLLMTools(entry.tools),
-      extraParams: cloneJsonObject(entry.extraParams)
+      extraParams: cloneJsonObject(entry.extraParams),
+      presetName: entry.presetName
     };
     session.latestRequestInfo = {
       time: entry.time,
@@ -102,6 +103,7 @@ export function createActiveLLMSessionRuntime(input: {
       temperature: entry.temperature,
       tools: cloneLLMTools(entry.tools),
       extraParams: cloneJsonObject(entry.extraParams),
+      presetName: entry.presetName,
       messageCount: entry.messages.length
     };
     if (agentId === "talk") {
@@ -113,8 +115,14 @@ export function createActiveLLMSessionRuntime(input: {
   }
 
   function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
-    const activeSession = input.getSession();
+    const activeSession = entry.sessionId === undefined
+      ? input.getSession()
+      : readLatestLLMSessionSnapshot(entry.sessionId, entry.agentId);
     if (!activeSession) return;
+    if (entry.sessionId !== undefined && activeSession.id !== entry.sessionId) {
+      input.appendLog("warn", `llm response skipped: session mismatch response_session=${entry.sessionId} active_session=${activeSession.id}`);
+      return;
+    }
     activeSession.updatedAt = entry.time;
     activeSession.updatedAtUtc = entry.timeUtc;
     activeSession.responseIds.push(entry.id);
@@ -318,10 +326,11 @@ export function createActiveLLMSessionRuntime(input: {
     };
   }
 
-  function readLatestLLMSessionSnapshot(id: number): ActiveLLMSession | undefined {
+  function readLatestLLMSessionSnapshot(id: number, agentId?: "chat" | "talk"): ActiveLLMSession | undefined {
     const activeSession = input.getSession();
-    if (activeSession?.id === id) return activeSession;
-    return input.archive.readAll().find((session: ActiveLLMSession) => session.id === id);
+    if (activeSession?.id === id && (!agentId || (activeSession.agentId ?? "chat") === agentId)) return activeSession;
+    return selectLatestSessionSnapshot(input.archive.readAll()
+      .filter((session: ActiveLLMSession) => session.id === id && (!agentId || (session.agentId ?? "chat") === agentId)));
   }
 
   function restorePersistedActiveLLMSession(): ActiveLLMSession | undefined {
@@ -330,6 +339,21 @@ export function createActiveLLMSessionRuntime(input: {
     input.setSession(session);
     return session;
   }
+}
+
+function selectLatestSessionSnapshot(sessions: ActiveLLMSession[]): ActiveLLMSession | undefined {
+  return sessions
+    .sort((left, right) => sessionSnapshotRank(left) - sessionSnapshotRank(right))
+    .at(-1);
+}
+
+function sessionSnapshotRank(session: ActiveLLMSession): number {
+  const updatedAt = Date.parse(session.updatedAtUtc ?? session.updatedAt);
+  return (Number.isFinite(updatedAt) ? updatedAt : 0)
+    + (session.latestResponseInfo ? 4 : 0)
+    + (session.latestRequestInfo ? 2 : 0)
+    + (session.currentRound ? 1 : 0)
+    + session.messages.length / 1_000_000;
 }
 
 function archiveRequestEntry(entry: LLMRequestLogEntry): LLMRequestLogEntry {

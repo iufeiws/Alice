@@ -1,25 +1,28 @@
 import { createLLMRequests } from "./llm-requests.js";
+import type { LLMRequestLogEntry } from "../../../contexts/llm-session/src/index.js";
 
 export function createLLMRequestsRuntime(input: {
   getTool(name: string): any;
-  appendLLMRequestLog(request: any, agentId?: "chat" | "talk"): void;
-  appendLLMResponseLog(result: any, agentId?: "chat" | "talk"): void;
+  appendLLMRequestLog(request: any, agentId?: "chat" | "talk"): LLMRequestLogEntry | undefined;
+  appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: LLMRequestLogEntry): void;
   appendLLMUsageLog(result: any, model?: string): void;
   recordTokenUsageEvent(event: any): void;
   time: any;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
+  const requestLogEntries = new WeakMap<object, LLMRequestLogEntry>();
   return createLLMRequests({
     getTool: input.getTool,
     onRequestPrepared(requestInput, request) {
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
-        input.appendLLMRequestLog(request, requestInput.agentId);
+        const entry = input.appendLLMRequestLog(request, requestInput.agentId);
+        if (entry) requestLogEntries.set(requestInput, entry);
       }
     },
     onResponseReceived(requestInput, request, result) {
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
-        input.appendLLMResponseLog(result, requestInput.agentId);
+        input.appendLLMResponseLog(result, requestInput.agentId, requestLogEntries.get(requestInput));
         return;
       }
       input.appendLLMUsageLog(result, result.model ?? request.model);

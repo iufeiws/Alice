@@ -52,7 +52,8 @@ export function parseRoundInfo(value: unknown): LLMSessionRoundInfo | undefined 
     model: entry.model,
     temperature: entry.temperature,
     tools: cloneLLMTools(entry.tools),
-    extraParams: cloneJsonObject(entry.extraParams)
+    extraParams: cloneJsonObject(entry.extraParams),
+    presetName: entry.presetName
   };
 }
 
@@ -68,6 +69,7 @@ export function parseRequestInfo(value: unknown): LLMSessionRequestInfo | undefi
     temperature: entry.temperature,
     tools: cloneLLMTools(entry.tools),
     extraParams: cloneJsonObject(entry.extraParams),
+    presetName: entry.presetName,
     messageCount: entry.messageCount
   };
 }

@@ -26,7 +26,7 @@ export function createLLMLogRuntime(input: {
     appendResponseLog
   };
 
-  function appendRequestLog(request: LLMChatInput, agentId: AgentId = "chat"): void {
+  function appendRequestLog(request: LLMChatInput, agentId: AgentId = "chat"): LLMRequestLogEntry {
     const rawRequest = buildRawLLMRequest(request);
     const previous = input.requestLogs[input.requestLogs.length - 1]?.rawRequest;
     const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
@@ -43,33 +43,35 @@ export function createLLMLogRuntime(input: {
       messages: request.messages.map((message) => ({ ...message })),
       tools: request.tools?.map((tool) => ({ ...tool, function: { ...tool.function } })),
       extraParams: request.extraParams,
+      presetName: request.presetName,
       rawRequest,
       diffFromPrevious
-    };
+    } satisfies LLMRequestLogEntry;
     input.requestLogs.push(entry);
     input.noteRequest(entry, agentId);
     nextRequestId += 1;
     if (input.requestLogs.length > 50) {
       input.requestLogs.splice(0, input.requestLogs.length - 50);
     }
+    return entry;
   }
 
-  function appendResponseLog(result: LLMChatResult, agentId: AgentId = "chat"): void {
+  function appendResponseLog(result: LLMChatResult, agentId: AgentId = "chat", request?: LLMRequestLogEntry): LLMResponseLogEntry {
     input.appendUsageLog(result, result.model ?? input.resolveModel(agentId));
     const now = input.time.now();
-    const activeSession = input.getActiveSession();
+    const activeSession = request ? undefined : input.getActiveSession();
     const entry = {
       id: nextResponseId,
       agentId,
-      sessionId: activeSession?.id,
-      requestId: activeSession?.requestIds.at(-1),
+      sessionId: request?.sessionId ?? activeSession?.id,
+      requestId: request?.id ?? activeSession?.requestIds.at(-1),
       time: now.iso,
       timeUtc: now.date.toISOString(),
       message: { ...result.message },
       finishReason: result.finishReason,
       usage: result.usage,
       raw: result.raw
-    };
+    } satisfies LLMResponseLogEntry;
     input.responseLogs.push(entry);
     input.noteResponse(entry);
     input.recordTokenUsage(entry, result, agentId);
@@ -77,5 +79,6 @@ export function createLLMLogRuntime(input: {
     if (input.responseLogs.length > 50) {
       input.responseLogs.splice(0, input.responseLogs.length - 50);
     }
+    return entry;
   }
 }

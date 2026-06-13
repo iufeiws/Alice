@@ -269,7 +269,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
 }
 
 export async function runPromptToolRequest(
-  layer: PromptLayer,
+  _layer: PromptLayer,
   call: {
     id: string;
     toolName: string;
@@ -279,13 +279,6 @@ export async function runPromptToolRequest(
   },
   toolPlugins: ToolPlugin[]
 ): Promise<ToolResult> {
-  if (isSendChatToolName(call.toolName)) {
-    return {
-      callId: call.id,
-      ok: false,
-      error: "send_chat cannot run from prompt prebuild"
-    };
-  }
   return executePreparedAgentLoopToolCall(buildAgentLoopToolMap(toolPlugins), call);
 }
 

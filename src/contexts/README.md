@@ -71,6 +71,7 @@
 11. [done] 抽出 `AgentLoopToolExecutor`，chat/talk 普通 LLM tool call、prompt tool call 统一走公共 `toolPlugins` lookup/execute/error/format 路径；chat 的 streaming send 仍作为流式输出 adapter hook 保留。
 12. [done] 抽出 `AgentLoopSessionInitializer`，`agent-loop-runtime` 通过公共 helper 处理 active session context create/set/clear、chat prompt session prepare/ensure、talk prefix 初始化和 runtime transcript patch append/writeback。
 13. [done] 抽出 `AgentFunctionCallLoopSpec` 构筑 helper，chat/talk 不再各自直接拼默认 function-call loop limits，统一经公共 builder 生成 `llm-tool-loop` spec。
+14. [done] 删除 prompt tool request 对 `send_chat` 的 loop 层特殊拦截；已配置/暴露的 prompt tool call 统一走 `toolPlugins` 执行，禁用能力由配置层不暴露或不配置处理。
 
 ### 当前已知风险
 

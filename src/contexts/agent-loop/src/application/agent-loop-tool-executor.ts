@@ -24,6 +24,14 @@ export type AgentLoopExecutedToolCall = {
   };
 };
 
+export type AgentLoopPromptToolRequest = {
+  id: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  requester?: AgentEvent["source"];
+  session?: AgentEvent["session"];
+};
+
 export function createAgentLoopToolExecutor(input: {
   event: AgentEvent;
   toolPlugins: ToolPlugin[];
@@ -103,6 +111,14 @@ export function buildAgentLoopToolMap(toolPlugins: ToolPlugin[]): Map<string, To
     }
   }
   return toolMap;
+}
+
+export async function runPromptToolRequest(
+  _layer: unknown,
+  call: AgentLoopPromptToolRequest,
+  toolPlugins: ToolPlugin[]
+): Promise<ToolResult> {
+  return executePreparedAgentLoopToolCall(buildAgentLoopToolMap(toolPlugins), call);
 }
 
 export function parseAgentLoopToolArguments(raw: string): Record<string, unknown> {

@@ -3,9 +3,8 @@ import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDe
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
-import type { PromptLayer } from "./prompts.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
-import { buildAgentLoopToolMap, createAgentLoopToolExecutor, executePreparedAgentLoopToolCall, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
+import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import {
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
@@ -268,19 +267,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   };
 }
 
-export async function runPromptToolRequest(
-  _layer: PromptLayer,
-  call: {
-    id: string;
-    toolName: string;
-    input: Record<string, unknown>;
-    requester?: AgentEvent["source"];
-    session?: AgentEvent["session"];
-  },
-  toolPlugins: ToolPlugin[]
-): Promise<ToolResult> {
-  return executePreparedAgentLoopToolCall(buildAgentLoopToolMap(toolPlugins), call);
-}
+export { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 
 export async function buildFixedPrefixAppendMessages(input: {
   mode: Pick<ChatAgentModeState, "fixedPrefixCursorMessageId">;
@@ -294,7 +281,7 @@ export async function buildFixedPrefixAppendMessages(input: {
   if (!plugin) return messages;
   const callId = input.nextToolCallId();
   const publicArguments = {};
-  const result = await runPromptToolRequest(
+  const result = await executePromptToolRequest(
     { id: "fixed_prefix_check_chat", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: JSON.stringify(publicArguments), order: 0 },
     {
       id: callId,
@@ -351,7 +338,7 @@ export async function buildWaitChatResumeMessages(input: {
       };
     } else {
       const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), input.session);
-      result = await runPromptToolRequest(
+      result = await executePromptToolRequest(
         { id: `wait_chat_resume_${call.id}`, title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: call.function.name, toolArguments: call.function.arguments, order: 0 },
         {
           id: call.id,
@@ -559,7 +546,7 @@ async function runWaitChatResumeCheck(
   const checkInput = session.mode === "fixed_prefix"
     ? { scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
     : {};
-  const result = await runPromptToolRequest(
+  const result = await executePromptToolRequest(
     { id: "wait_chat_resume_check_chat", title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 0 },
     {
       id: callId,

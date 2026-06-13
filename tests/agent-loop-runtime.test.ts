@@ -168,20 +168,26 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
   ]);
 });
 
-test("agent loop runtime stores loop session state by kind", () => {
+test("agent loop runtime stores one active main session context", () => {
   const runtime = createAgentLoopRuntime();
   const chatState = { id: "chat-state" };
   const talkState = { id: "talk-state" };
 
   runtime.setLoopSessionState("chat", chatState);
+  assert.equal(runtime.getLoopSessionState("chat"), chatState);
+  assert.equal(runtime.getLoopSessionState("talk"), undefined);
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", state: chatState });
+
   runtime.setLoopSessionState("talk", talkState);
 
-  assert.equal(runtime.getLoopSessionState("chat"), chatState);
-  assert.equal(runtime.getLoopSessionState("talk"), talkState);
-
-  runtime.clearLoopSessionState("chat");
   assert.equal(runtime.getLoopSessionState("chat"), undefined);
   assert.equal(runtime.getLoopSessionState("talk"), talkState);
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "talk", state: talkState });
+
+  runtime.clearLoopSessionState("chat");
+  assert.equal(runtime.getLoopSessionState("talk"), talkState);
+  runtime.clearLoopSessionState("talk");
+  assert.equal(runtime.getActiveMainSessionContext(), undefined);
 });
 
 test("agent loop runtime prepares and writes loop session context", async () => {
@@ -243,6 +249,7 @@ test("agent loop runtime sets and clears active session context", () => {
 
   assert.deepEqual(localSession, { id: "chat-session" });
   assert.deepEqual(runtime.getLoopSessionState("chat"), { id: "chat-session" });
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", state: { id: "chat-session" } });
 
   const cleared = runtime.clearActiveSessionContext({
     kind: "chat",

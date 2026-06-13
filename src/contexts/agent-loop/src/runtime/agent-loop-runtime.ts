@@ -18,6 +18,11 @@ export type ActiveMainLLMSessionState = {
   phase: AgentLoopPhase;
 };
 
+export type ActiveMainSessionContext<TState = unknown> = {
+  kind: AgentLoopKind;
+  state: TState;
+};
+
 export type ActiveLLMSessionRuntimePort = {
   ensureActiveLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
@@ -180,6 +185,7 @@ export type AgentLoopRuntime = {
   rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
   clearActiveLLMSession(reason: unknown): void;
   getActiveLLMSessionSnapshot(): unknown;
+  getActiveMainSessionContext<T = unknown>(): ActiveMainSessionContext<T> | undefined;
   getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
   setLoopSessionState<T = unknown>(kind: AgentLoopKind, state: T | undefined): void;
   clearLoopSessionState(kind: AgentLoopKind): void;
@@ -207,7 +213,7 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
   let activeLLMSessionRuntime: ActiveLLMSessionRuntimePort | undefined;
-  const loopSessionStates = new Map<AgentLoopKind, unknown>();
+  let activeMainSessionContext: ActiveMainSessionContext | undefined;
 
   return {
     getActiveMainLLMSession() {
@@ -249,18 +255,25 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     getActiveLLMSessionSnapshot() {
       return activeLLMSessionRuntime?.getActiveLLMSessionSnapshot?.();
     },
+    getActiveMainSessionContext() {
+      return activeMainSessionContext
+        ? { ...activeMainSessionContext } as never
+        : undefined;
+    },
     getLoopSessionState(kind) {
-      return loopSessionStates.get(kind) as never;
+      return activeMainSessionContext?.kind === kind
+        ? activeMainSessionContext.state as never
+        : undefined;
     },
     setLoopSessionState(kind, state) {
       if (state === undefined) {
-        loopSessionStates.delete(kind);
+        if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;
         return;
       }
-      loopSessionStates.set(kind, state);
+      activeMainSessionContext = { kind, state };
     },
     clearLoopSessionState(kind) {
-      loopSessionStates.delete(kind);
+      if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;
     },
     isRunning() {
       return running;
@@ -272,16 +285,27 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
       };
     },
     setActiveSessionContext(input) {
-      setAgentLoopActiveSessionContext(input, loopSessionStates);
+      setAgentLoopActiveSessionContext(input);
+      this.setLoopSessionState(input.kind, input.session);
     },
     clearActiveSessionContext(input) {
-      return clearAgentLoopActiveSessionContext(input, loopSessionStates);
+      const cleared = clearAgentLoopActiveSessionContext(input);
+      if (cleared) this.clearLoopSessionState(input.kind);
+      return cleared;
     },
     createActiveSessionContext(input) {
-      return createAgentLoopActiveSessionContext(input, loopSessionStates);
+      const session = createAgentLoopActiveSessionContext(input);
+      this.setLoopSessionState(input.kind, session);
+      return session;
     },
     prepareChatSessionContext(input) {
-      return prepareAgentLoopChatSessionContext(input, loopSessionStates);
+      return prepareAgentLoopChatSessionContext({
+        ...input,
+        updateSession: (session) => {
+          input.updateSession?.(session);
+          this.setLoopSessionState("chat", session);
+        }
+      });
     },
     ensureChatSessionContext(input) {
       return ensureAgentLoopChatSessionContext(input);
@@ -427,42 +451,30 @@ export function appendAgentLoopSessionContext<TSession extends AgentLoopMutableS
 }
 
 export function setAgentLoopActiveSessionContext<TSession = unknown>(
-  input: AgentLoopSetActiveSessionContextInput<TSession>,
-  holder?: Map<AgentLoopKind, unknown>
+  input: AgentLoopSetActiveSessionContextInput<TSession>
 ): void {
   input.setLocalSession(input.session);
-  if (!holder) return;
-  if (input.session === undefined) {
-    holder.delete(input.kind);
-    return;
-  }
-  holder.set(input.kind, input.session);
 }
 
 export function clearAgentLoopActiveSessionContext<TSession = unknown>(
-  input: AgentLoopClearActiveSessionContextInput<TSession>,
-  holder?: Map<AgentLoopKind, unknown>
+  input: AgentLoopClearActiveSessionContextInput<TSession>
 ): boolean {
   if (!input.getLocalSession()) return false;
   input.setLocalSession(undefined);
-  holder?.delete(input.kind);
   input.onCleared?.();
   return true;
 }
 
 export function createAgentLoopActiveSessionContext<TSession = unknown>(
-  input: AgentLoopCreateActiveSessionContextInput<TSession>,
-  holder?: Map<AgentLoopKind, unknown>
+  input: AgentLoopCreateActiveSessionContextInput<TSession>
 ): TSession {
   input.setLocalSession(input.session);
-  holder?.set(input.kind, input.session);
   input.updateSession?.(input.session);
   return input.session;
 }
 
 export async function prepareAgentLoopChatSessionContext<TSession = unknown>(
-  input: AgentLoopPrepareChatSessionContextInput<TSession>,
-  holder?: Map<AgentLoopKind, unknown>
+  input: AgentLoopPrepareChatSessionContextInput<TSession>
 ): Promise<AgentLoopPrepareChatSessionContextResult<TSession>> {
   const messages = await Promise.resolve(input.buildMessages());
   const session = input.createSession(messages);
@@ -471,7 +483,7 @@ export async function prepareAgentLoopChatSessionContext<TSession = unknown>(
     session,
     setLocalSession: input.setLocalSession,
     updateSession: input.updateSession
-  }, holder);
+  });
   return {
     session,
     messages

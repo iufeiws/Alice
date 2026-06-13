@@ -2,6 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
@@ -169,9 +170,8 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
     const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
-    const spec: AgentFunctionCallLoopSpec = {
+    const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
       initialMessages: input.session.messages,
-      limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
       buildRequest({ round, messages }) {
         const outputId = `talk:${input.sessionId}:${Date.now()}:${round}`;
         roundOutputs.set(round, { outputId, streamedContent: "" });
@@ -218,7 +218,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           deps.log("info", `talk loop output ready: session=${input.sessionId} output=${outputId}`);
         }
       }
-    };
+    });
     return {
       spec,
       complete(result) {

@@ -4,6 +4,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { renderLLMValue, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptLayer } from "./prompts.js";
+import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, executePreparedAgentLoopToolCall, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
 import {
   type AgentFunctionCallLoopSpec,
@@ -103,9 +104,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   });
   const visibleToolNames = input.llmInput.toolNames;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
-  const spec: AgentFunctionCallLoopSpec = {
+  const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
-    limits: { maxRounds: 20, maxTotalToolCalls: 20, maxRepeatedToolCalls: 3 },
     async beforeRound({ round }) {
       if (input.isLLMRunCancelled?.()) return { stop: true, messages: session.messages };
       const ensuredSession = await input.ensureSession();
@@ -250,7 +250,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       session.messages = messages;
       input.noteSessionUpdated();
     }
-  };
+  });
   return {
     spec,
     complete(loopResult) {

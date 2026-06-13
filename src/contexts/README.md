@@ -51,6 +51,8 @@
   - 构建 talk function-call loop 启动参数、runtime transcript patch、stream output adapter 和完成写回 adapter。
 - `agent-loop/src/application/agent-loop-tool-executor.ts`
   - 统一 `toolName -> plugin`、JSON args、`plugin.execute`、error result 和 LLM tool message formatting；chat/talk 只保留各自的 adapter hook。
+- `agent-loop/src/application/agent-function-call-loop.ts`
+  - 统一 function-call loop spec 构筑入口和默认 loop limits；chat/talk adapter 只提供各自 request、tool、stream、writeback 回调。
 - `agent-loop/src/runtime/agent-loop-session-initializer.ts`
   - 统一 chat/talk session 初始化、prefix/runtime patch append 和 transcript writeback helper。
 
@@ -68,6 +70,7 @@
 10. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档；`processNow` 的 manual fallback 也已通过 heartbeat forced run task 发起，不再由 message runtime 直接 fallback 启动 loop。
 11. [done] 抽出 `AgentLoopToolExecutor`，chat/talk 普通 LLM tool call、prompt tool call 统一走公共 `toolPlugins` lookup/execute/error/format 路径；chat 的 streaming send 仍作为流式输出 adapter hook 保留。
 12. [done] 抽出 `AgentLoopSessionInitializer`，`agent-loop-runtime` 通过公共 helper 处理 active session context create/set/clear、chat prompt session prepare/ensure、talk prefix 初始化和 runtime transcript patch append/writeback。
+13. [done] 抽出 `AgentFunctionCallLoopSpec` 构筑 helper，chat/talk 不再各自直接拼默认 function-call loop limits，统一经公共 builder 生成 `llm-tool-loop` spec。
 
 ### 当前已知风险
 

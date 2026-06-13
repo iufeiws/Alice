@@ -577,12 +577,6 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         }
         messages.push({ role: segment.role, content: segment.contentText });
       }
-      if (messages.length === 0) {
-        messages.push({
-          role: "user" as const,
-          content: "A realtime voice call has just connected. Start with a short, natural voice greeting."
-        });
-      }
       return {
         replaceFrom: loopPrefixMessageCounts.get(sessionId) ?? 0,
         messages

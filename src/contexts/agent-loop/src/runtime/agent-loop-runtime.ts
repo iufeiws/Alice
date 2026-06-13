@@ -41,7 +41,7 @@ export type ActiveMainLLMSessionState = {
 
 export type ActiveMainSessionContext<TState = unknown> = {
   kind: AgentLoopKind;
-  state: TState;
+  session: TState;
 };
 
 export type ActiveLLMSessionRuntimePort = {
@@ -189,7 +189,7 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     getLoopSessionState(kind) {
       return activeMainSessionContext?.kind === kind
-        ? activeMainSessionContext.state as never
+        ? activeMainSessionContext.session as never
         : undefined;
     },
     setLoopSessionState(kind, state) {
@@ -197,7 +197,7 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
         if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;
         return;
       }
-      activeMainSessionContext = { kind, state };
+      activeMainSessionContext = { kind, session: state };
     },
     clearLoopSessionState(kind) {
       if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;

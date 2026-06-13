@@ -26,7 +26,7 @@
 
 ### 设计原则
 
-- `activeMainLLMSession` 是 agent loop 运行态的全局唯一主 LLM session boundary，chat/talk 都通过它暴露当前 loop/session 状态。
+- `activeMainLLMSession` 是 agent loop 运行态的全局唯一主 LLM session boundary，chat/talk 都通过它暴露当前 loop/session 状态；`activeMainSessionContext` 承载单一 `{ kind, session }` 主 session object，`getLoopSessionState(kind)` 只是兼容门面。
 - 当前阶段保留 `ensureActiveLLMSession(agentId)` 遇到不同 `agentId` 时切 session 的行为，因为 chat/talk static prefix 不兼容；因此 llm-session 存储层的 `archive/current` pointer 尚未彻底统一成 chat/talk 混用同一条主 session。
 - `messagingTools` 不再自行推断 LLM session 边界；它应从 `agent-loop-runtime` 暴露的主 session 状态读取当前 loop/session 信息。
 - 所有下一轮发起收敛到 heartbeat。message runtime 和 talk runtime 只记录输入、状态和 ready/dirty 标记，不直接启动 LLM loop。

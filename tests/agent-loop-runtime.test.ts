@@ -176,13 +176,13 @@ test("agent loop runtime stores one active main session context", () => {
   runtime.setLoopSessionState("chat", chatState);
   assert.equal(runtime.getLoopSessionState("chat"), chatState);
   assert.equal(runtime.getLoopSessionState("talk"), undefined);
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", state: chatState });
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", session: chatState });
 
   runtime.setLoopSessionState("talk", talkState);
 
   assert.equal(runtime.getLoopSessionState("chat"), undefined);
   assert.equal(runtime.getLoopSessionState("talk"), talkState);
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "talk", state: talkState });
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "talk", session: talkState });
 
   runtime.clearLoopSessionState("chat");
   assert.equal(runtime.getLoopSessionState("talk"), talkState);
@@ -249,7 +249,7 @@ test("agent loop runtime sets and clears active session context", () => {
 
   assert.deepEqual(localSession, { id: "chat-session" });
   assert.deepEqual(runtime.getLoopSessionState("chat"), { id: "chat-session" });
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", state: { id: "chat-session" } });
+  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", session: { id: "chat-session" } });
 
   const cleared = runtime.clearActiveSessionContext({
     kind: "chat",

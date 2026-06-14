@@ -8,6 +8,7 @@
 
 - `asr/`: speech-to-text provider adapter。
 - `feishu/`: Feishu/Lark channel。
+- `google-streetview/`: Google Static Street View asset channel。
 - `tts/`: outbound voice synthesis channel。
 - `webrtc-voice/`: browser voice-call signaling/playback channel。
 - `wechat/`: WeChat iLink channel。

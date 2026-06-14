@@ -1,4 +1,5 @@
 import { createFeishuPlugin } from "../../../channels/feishu/src/index.js";
+import { createGoogleStreetViewPlugin } from "../../../channels/google-streetview/src/index.js";
 import { createWeChatPlugin } from "../../../channels/wechat/src/index.js";
 
 export function createChannelPluginRuntime(input: {
@@ -32,5 +33,10 @@ export function createChannelPluginRuntime(input: {
     }
   });
 
-  return { feishu, wechat };
+  const googleStreetView = createGoogleStreetViewPlugin({
+    configPath: "config/plugin/google-streetview/config.json",
+    appendLog: input.appendLog
+  });
+
+  return { feishu, wechat, googleStreetView };
 }

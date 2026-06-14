@@ -33,6 +33,7 @@ import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js"
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
+import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
@@ -299,6 +300,9 @@ export type AdminRoutesContext = {
       configPath?: string;
       assetRoot?: string;
       testTranscriber?(input: AsrTranscribeInput, config: AsrPluginConfig): Promise<AsrTranscribeResult | AsrTranscribeError> | AsrTranscribeResult | AsrTranscribeError;
+    };
+    googleStreetView?: {
+      configPath?: string;
     };
   };
   messageRuntime: {
@@ -1055,6 +1059,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
     asrPluginEntry(),
     ttsPluginEntry(),
     photoPluginEntry(),
+    googleStreetViewPluginEntry(),
     feishuPluginEntry(),
     wechatPluginEntry()
   ];
@@ -1699,6 +1704,158 @@ function photoConfigPath(context: AdminRoutesContext): string {
 function photoConfigMtime(context: AdminRoutesContext): string | undefined {
   try {
     const stats = fs.statSync(photoConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
+    if (stats.mtime instanceof Date) return stats.mtime.toISOString();
+    if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return googleStreetViewPluginSummary(context);
+    },
+    config(context) {
+      return publicGoogleStreetViewPluginConfig(readGoogleStreetViewConfigForAdmin(context));
+    },
+    patch(context, patch) {
+      const result = updateGoogleStreetViewConfig(context, patch);
+      return "error" in result ? result : { config: publicGoogleStreetViewPluginConfig(result.config) };
+    },
+    setEnabled(context, enabled) {
+      const result = updateGoogleStreetViewConfig(context, { enabled });
+      return "error" in result ? result : { config: publicGoogleStreetViewPluginConfig(result.config) };
+    },
+    reload(context) {
+      return { config: publicGoogleStreetViewPluginConfig(readGoogleStreetViewConfigForAdmin(context)) };
+    },
+    configSchema: {
+      groups: [
+        { key: "general", label: "General" },
+        { key: "request", label: "Request" },
+        { key: "storage", label: "Storage" },
+        { key: "regions", label: "Regions" }
+      ],
+      fields: [
+        { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the Google Street View channel plugin." },
+        { key: "apiKeySet", label: "API Key Set", type: "readonly", group: "general" },
+        { key: "apiKey", label: "API Key", type: "password", group: "general", description: "Leave blank to keep the current key. GOOGLE_STREETVIEW_API_KEY is used as a default." },
+        { key: "imageSize", label: "Image Size", type: "text", group: "request", description: "Google Static Street View size, for example 640x640." },
+        { key: "heading", label: "Heading", type: "number", group: "request", min: 0, max: 360, step: 1 },
+        { key: "pitch", label: "Pitch", type: "number", group: "request", min: -90, max: 90, step: 1 },
+        { key: "fov", label: "FOV", type: "number", group: "request", min: 10, max: 120, step: 1 },
+        { key: "initialRadiusMeters", label: "Initial Radius Meters", type: "number", group: "request", min: 0, max: 50000, step: 1 },
+        { key: "radiusExpansionFactor", label: "Radius Expansion Factor", type: "number", group: "request", min: 1.01, max: 10, step: 0.1 },
+        { key: "maxRadiusMeters", label: "Max Radius Meters", type: "number", group: "request", min: 1, max: 100000, step: 1 },
+        { key: "randomAttempts", label: "Random Attempts", type: "number", group: "request", min: 1, max: 100, step: 1 },
+        { key: "coordinatePrecision", label: "Coordinate Precision", type: "number", group: "request", min: 0, max: 7, step: 1 },
+        { key: "outputDir", label: "Output Folder", type: "text", group: "storage", description: "Must stay under assets/plugin/google-streetview and must not use assets/generated." },
+        { key: "regions", label: "Regions JSON", type: "textarea", group: "regions", description: "Array of { id, label, bounds: { north, south, east, west } } entries." }
+      ]
+    },
+    routePreview: [
+      "google_streetview.getStreetViewByCoordinates / getRandomStreetView",
+      "metadata preflight and radius expansion",
+      "static street view image download",
+      "plugin-owned asset storage"
+    ],
+    runtimeAccess: [
+      "read plugin config",
+      "call Google Street View Static API metadata and image endpoints",
+      "write images and metadata under assets/plugin/google-streetview",
+      "reuse stored sidecar metadata when requested"
+    ]
+  };
+}
+
+function googleStreetViewPluginSummary(context: AdminRoutesContext, config = readGoogleStreetViewConfigForAdmin(context)): AdminPluginSummary {
+  const validationError = validateGoogleStreetViewPluginConfig(config);
+  const missingConfig = config.enabled && !config.apiKey;
+  return {
+    id: "google_streetview",
+    name: "Google Street View",
+    kind: "channel",
+    status: validationError || missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
+    health: validationError || missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
+    description: "Fetch Google Static Street View images into plugin-owned assets for future check-in selfie flows.",
+    configurable: true,
+    switchable: true,
+    configSource: googleStreetViewConfigPath(context),
+    lastLoadedAt: googleStreetViewConfigMtime(context)
+  };
+}
+
+function updateGoogleStreetViewConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: GoogleStreetViewPluginConfig } | { error: string } {
+  const current = readGoogleStreetViewConfigForAdmin(context);
+  let regions: GoogleStreetViewRegion[];
+  try {
+    regions = patch.regions === undefined ? current.regions : googleStreetViewRegionsFromUnknown(patch.regions, current.regions);
+  } catch {
+    return { error: "invalid_regions" };
+  }
+  const next: GoogleStreetViewPluginConfig = {
+    ...current,
+    enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    apiKey: patch.apiKey === undefined ? current.apiKey : secretStringFromUnknown(patch.apiKey, current.apiKey),
+    imageSize: patch.imageSize === undefined ? current.imageSize : requiredString(patch.imageSize).trim(),
+    heading: patch.heading === undefined ? current.heading : numberFromUnknown(patch.heading, current.heading),
+    pitch: patch.pitch === undefined ? current.pitch : numberFromUnknown(patch.pitch, current.pitch),
+    fov: patch.fov === undefined ? current.fov : numberFromUnknown(patch.fov, current.fov),
+    initialRadiusMeters: patch.initialRadiusMeters === undefined ? current.initialRadiusMeters : numberFromUnknown(patch.initialRadiusMeters, current.initialRadiusMeters),
+    radiusExpansionFactor: patch.radiusExpansionFactor === undefined ? current.radiusExpansionFactor : numberFromUnknown(patch.radiusExpansionFactor, current.radiusExpansionFactor),
+    maxRadiusMeters: patch.maxRadiusMeters === undefined ? current.maxRadiusMeters : numberFromUnknown(patch.maxRadiusMeters, current.maxRadiusMeters),
+    randomAttempts: patch.randomAttempts === undefined ? current.randomAttempts : numberFromUnknown(patch.randomAttempts, current.randomAttempts),
+    coordinatePrecision: patch.coordinatePrecision === undefined ? current.coordinatePrecision : numberFromUnknown(patch.coordinatePrecision, current.coordinatePrecision),
+    outputDir: patch.outputDir === undefined ? current.outputDir : requiredString(patch.outputDir).trim(),
+    regions
+  };
+
+  const validationError = validateGoogleStreetViewPluginConfig(next);
+  if (validationError) return { error: validationError };
+  writeGoogleStreetViewConfig(context, next);
+  return { config: next };
+}
+
+function googleStreetViewRegionsFromUnknown(value: unknown, fallback: GoogleStreetViewRegion[]): GoogleStreetViewRegion[] {
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!Array.isArray(parsed)) return fallback;
+  return parsed.map((entry) => {
+    if (!entry || typeof entry !== "object") throw new Error("invalid_region");
+    const region = entry as { id?: unknown; label?: unknown; bounds?: unknown };
+    if (!region.bounds || typeof region.bounds !== "object") throw new Error("invalid_region");
+    const bounds = region.bounds as Record<string, unknown>;
+    return {
+      id: requiredString(region.id).trim(),
+      label: optionalString(region.label),
+      bounds: {
+        north: numberFromUnknown(bounds.north, Number.NaN),
+        south: numberFromUnknown(bounds.south, Number.NaN),
+        east: numberFromUnknown(bounds.east, Number.NaN),
+        west: numberFromUnknown(bounds.west, Number.NaN)
+      }
+    };
+  });
+}
+
+function readGoogleStreetViewConfigForAdmin(context: AdminRoutesContext): GoogleStreetViewPluginConfig {
+  return readGoogleStreetViewPluginConfig(googleStreetViewConfigPath(context));
+}
+
+function writeGoogleStreetViewConfig(context: AdminRoutesContext, config: GoogleStreetViewPluginConfig): void {
+  const filePath = googleStreetViewConfigPath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function googleStreetViewConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.googleStreetView?.configPath ?? defaultGoogleStreetViewPluginConfigPath;
+}
+
+function googleStreetViewConfigMtime(context: AdminRoutesContext): string | undefined {
+  try {
+    const stats = fs.statSync(googleStreetViewConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
     if (stats.mtime instanceof Date) return stats.mtime.toISOString();
     if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
     return undefined;

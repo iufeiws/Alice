@@ -37,7 +37,7 @@ export function createApiCommunicationRuntime(input: {
     readLLMApiPresets: input.readLLMApiPresets,
     appendLog: input.appendLog
   });
-  const { feishu, wechat } = createChannelPluginRuntime({
+  const { feishu, wechat, googleStreetView } = createChannelPluginRuntime({
     config: input.config,
     appendLog: input.appendLog,
     feishuPairingStore: input.apiContextRuntime.feishuPairingStore,
@@ -70,5 +70,5 @@ export function createApiCommunicationRuntime(input: {
     appendMessageLog: input.appendMessageLog
   });
 
-  return { webRtcVoiceRuntime, feishu, wechat, messageRuntime };
+  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, messageRuntime };
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1361,8 +1361,7 @@ test("tts plugin config migrates legacy remote settings into Genie conversion", 
       enabled: true,
       baseURL: "192.168.0.103"
     },
-    translationEnabled: false,
-    prompt: "Read aloud."
+    translationEnabled: false
   }));
 
   const config = readTtsPluginConfig(configPath);
@@ -1370,7 +1369,43 @@ test("tts plugin config migrates legacy remote settings into Genie conversion", 
   assert.equal(config.conversion?.provider, "genie");
   assert.equal(config.conversion?.genie?.enabled, true);
   assert.equal(config.conversion?.genie?.baseURL, "http://192.168.0.103:8767");
+  assert.equal(config.conversion?.genie?.localFallbackEnabled, true);
   assert.equal(config.remote?.baseURL, "http://192.168.0.103:8767");
+});
+
+test("tts plugin config requires prompt when translation is enabled", () => {
+  const dir = makeTempDir("tts-config-missing-prompt");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    translationEnabled: true
+  }));
+
+  assert.throws(() => readTtsPluginConfig(configPath), /tts translation prompt is required/);
+});
+
+test("tts plugin config can disable local Genie fallback", () => {
+  const dir = makeTempDir("tts-config-local-fallback");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: {
+      provider: "genie",
+      genie: {
+        enabled: true,
+        baseURL: "192.168.0.103",
+        localFallbackEnabled: false
+      }
+    },
+    translationEnabled: false
+  }));
+
+  const config = readTtsPluginConfig(configPath);
+
+  assert.equal(config.conversion?.genie?.enabled, true);
+  assert.equal(config.conversion?.genie?.baseURL, "http://192.168.0.103:8767");
+  assert.equal(config.conversion?.genie?.localFallbackEnabled, false);
+  assert.equal(config.remote?.localFallbackEnabled, false);
 });
 
 test("tts plugin config reads Bailian conversion settings", () => {
@@ -1398,8 +1433,7 @@ test("tts plugin config reads Bailian conversion settings", () => {
         extraParams: { volume: 50 }
       }
     },
-    translationEnabled: false,
-    prompt: "Read aloud."
+    translationEnabled: false
   }));
 
   const config = readTtsPluginConfig(configPath);
@@ -2877,6 +2911,82 @@ test("fallback voice synthesizer uses local synthesis when remote synthesis fail
   assert.deepEqual(calls, ["remote", "local"]);
   assert.equal(result.assetId, "generated/tts/local.opus");
   assert.equal(logs.some((message) => message.includes("falling back to local Genie")), true);
+});
+
+test("remote-aware tts does not prepare local Genie when API provider is selected", async () => {
+  const dir = makeTempDir("tts-remote-aware-api");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: {
+      provider: "openai-api",
+      genie: {
+        enabled: true,
+        baseURL: "192.168.0.103",
+        localFallbackEnabled: false
+      },
+      openaiApi: {
+        baseURL: "https://tts.example.test/v1",
+        model: "voice-model",
+        voice: "voice"
+      }
+    },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+  const calls: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response("", { status: 503 });
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any
+  });
+
+  await synthesize.prepare?.();
+  synthesize.noteActivity?.();
+
+  assert.deepEqual(calls, []);
+});
+
+test("remote-aware tts disabled local fallback does not start local Genie after remote failure", async () => {
+  const dir = makeTempDir("tts-remote-aware-no-local-fallback");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: {
+      provider: "genie",
+      genie: {
+        enabled: true,
+        baseURL: "192.168.0.103",
+        localFallbackEnabled: false
+      }
+    },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response("", { status: 503 });
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any,
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  await assert.rejects(
+    () => synthesize({ text: "また後で", time: createCurrentTimeProvider("UTC") }),
+    /Genie TTS service is not healthy/
+  );
+
+  assert.equal(calls.some((url) => url.includes("192.168.0.103:8767/health")), true);
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), false);
 });
 
 test("fallback voice synthesizer streams from local when remote stream fails before audio", async () => {

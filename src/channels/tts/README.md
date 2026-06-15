@@ -22,7 +22,8 @@ The original outgoing text remains the `send_chat` transcript and persisted mess
   "enabled": true,
   "remote": {
     "enabled": true,
-    "baseURL": "http://192.168.0.103:8767"
+    "baseURL": "http://192.168.0.103:8767",
+    "localFallbackEnabled": false
   },
   "translationPresetName": "default",
   "translationPresets": {
@@ -50,6 +51,7 @@ Translation preset fields:
 
 - `remote.enabled`: whether to try the LAN Genie TTS service before local Genie fallback.
 - `remote.baseURL`: LAN Genie TTS IP or base URL, for example `192.168.0.103` or `http://192.168.0.103:8767`. Bare IP/host values default to port `8767`.
+- `remote.localFallbackEnabled`: whether a non-local Genie route may start local Genie after it fails. Disable this to keep API and remote routes from waking local Genie.
 - `translationPresetName`: active translation preset used at runtime. It is a common setting, not the preset currently being edited in the Translation block.
 - `translationPresets.{name}.translationEnabled`: whether to translate before synthesis.
 - `translationPresets.{name}.apiPresetName`: LLM API preset used for translation.
@@ -120,7 +122,7 @@ The admin payload may include `translationEditPresetName`, `currentTranslation`,
 
 ## Remote Genie Flow
 
-When `remote.enabled` is true, runtime first tries `remote.baseURL`. If the remote service fails before audio is produced, runtime falls back to local Genie.
+When `remote.enabled` is true, runtime first tries `remote.baseURL`. If the remote service fails before audio is produced, runtime falls back to local Genie only when `remote.localFallbackEnabled` is enabled.
 
 Explicit remote Genie requests use the LAN upload protocol documented in `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md`:
 

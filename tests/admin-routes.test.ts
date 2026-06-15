@@ -540,7 +540,8 @@ test("admin plugin config patch writes tts config with preset reference only", a
     enabled: true,
     remote: {
       enabled: false,
-      baseURL: "10.0.0.8"
+      baseURL: "10.0.0.8",
+      localFallbackEnabled: false
     },
     newTranslationPresetName: "main",
     currentTranslation: {
@@ -565,11 +566,12 @@ test("admin plugin config patch writes tts config with preset reference only", a
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configValue.translationPresetName, "default");
-  assert.deepEqual(body.configValue.remote, { enabled: false, baseURL: "http://10.0.0.8:8767" });
+  assert.deepEqual(body.configValue.remote, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
   assert.equal(body.configValue.translationPresets.main.apiPresetName, "voice");
   assert.equal(body.configValue.voice.modelConfigs[modelConfigName].language, "zh");
   assert.equal(saved.enabled, true);
-  assert.deepEqual(saved.remote, { enabled: false, baseURL: "http://10.0.0.8:8767" });
+  assert.deepEqual(saved.remote, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
+  assert.equal(saved.conversion.genie.localFallbackEnabled, false);
   assert.equal(saved.translationPresetName, "default");
   assert.equal(saved.translationPresets.main.translationEnabled, false);
   assert.equal(saved.translationPresets.main.prompt, "New prompt");
@@ -608,6 +610,7 @@ test("admin TTS config schema exposes voice language and language model folder",
   const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.modelDir");
   const providerField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.provider");
   const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.enabled");
+  const localFallbackField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.localFallbackEnabled");
   const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.baseURL");
   const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.openaiApi.apiPresetName");
   const bailianServiceField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.service");
@@ -628,6 +631,8 @@ test("admin TTS config schema exposes voice language and language model folder",
   assert.equal(providerField.group, "general");
   assert.equal(remoteEnabledField.type, "switch");
   assert.equal(remoteEnabledField.group, "model_genie");
+  assert.equal(localFallbackField.type, "switch");
+  assert.equal(localFallbackField.group, "model_genie");
   assert.equal(remoteUrlField.type, "text");
   assert.equal(remoteUrlField.group, "model_genie");
   assert.equal(openAiPresetField.type, "apiPresetSelect");

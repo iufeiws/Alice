@@ -19,6 +19,7 @@ import type {
   TtsTranslationPreset,
   TtsVoiceModelConfig,
   VoiceSynthesisInput,
+  VoiceSynthesisResult,
   VoiceSynthesizer
 } from "./types.js";
 
@@ -139,14 +140,20 @@ export function createTtsRemoteAwareVoiceSynthesizer(
   input: TTSConfig & { ttsConfigPath?: string },
   deps: ConfiguredVoiceSynthesizerDeps = {}
 ): VoiceSynthesizer {
-  const local = createGenieTtsVoiceSynthesizer({
-    ...input,
-    backend: "genie-tts",
-    genieBaseURL: undefined,
-    genieBaseURLExplicit: false,
-    genieUseStreamForSynthesis: true
-  }, deps);
+  let local: VoiceSynthesizer | undefined;
   const remotes = new Map<string, VoiceSynthesizer>();
+
+  const localFor = (): VoiceSynthesizer => {
+    if (local) return local;
+    local = createGenieTtsVoiceSynthesizer({
+      ...input,
+      backend: "genie-tts",
+      genieBaseURL: undefined,
+      genieBaseURLExplicit: false,
+      genieUseStreamForSynthesis: true
+    }, deps);
+    return local;
+  };
 
   const remoteFor = (baseURL: string): VoiceSynthesizer => {
     const normalized = normalizeBaseURL(baseURL);
@@ -164,32 +171,67 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     return remote;
   };
 
-  const selectedRemote = (): VoiceSynthesizer | undefined => {
+  const selectedRoute = (): {
+    provider: "genie" | "openai-api" | "bailian";
+    remote?: VoiceSynthesizer;
+    localPreferred: boolean;
+    localFallbackEnabled: boolean;
+  } => {
     const pluginConfig = readTtsPluginConfig(input.ttsConfigPath);
+    const provider = pluginConfig.conversion?.provider === "openai-api"
+      ? "openai-api"
+      : pluginConfig.conversion?.provider === "bailian"
+        ? "bailian"
+        : "genie";
     const genie = pluginConfig.conversion?.genie ?? pluginConfig.remote;
-    if (!genie?.enabled) return undefined;
+    const localFallbackEnabled = genie?.localFallbackEnabled ?? true;
+    if (provider !== "genie") {
+      return { provider, localPreferred: false, localFallbackEnabled };
+    }
+    if (!genie?.enabled) return { provider, localPreferred: true, localFallbackEnabled };
     const baseURL = normalizeBaseURL(genie.baseURL || "");
-    return baseURL ? remoteFor(baseURL) : undefined;
+    return {
+      provider,
+      remote: baseURL ? remoteFor(baseURL) : undefined,
+      localPreferred: false,
+      localFallbackEnabled
+    };
+  };
+
+  const fallbackToLocal = async (request: VoiceSynthesisInput, message: string): Promise<VoiceSynthesisResult> => {
+    deps.appendLog?.("warn", message);
+    return localFor()(request);
+  };
+
+  const noLocalRouteError = (provider: string): Error => {
+    return new Error(`Local Genie TTS is not selected for provider ${provider}`);
   };
 
   const synthesize = (async (request) => {
-    const remote = selectedRemote();
-    if (!remote) return local(request);
+    const route = selectedRoute();
+    const remote = route.remote;
+    if (!remote) {
+      if (route.localPreferred) return localFor()(request);
+      throw noLocalRouteError(route.provider);
+    }
     try {
       return await remote(request);
     } catch (error) {
       if (isRemoteGenieProtocolError(error)) throw error;
-      deps.appendLog?.("warn", `tts remote Genie failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
-      return local(request);
+      if (!route.localFallbackEnabled) throw error;
+      return fallbackToLocal(request, `tts remote Genie failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
     }
   }) as VoiceSynthesizer;
 
   synthesize.streamAudio = async function* (request) {
-    const remote = selectedRemote();
+    const route = selectedRoute();
+    const remote = route.remote;
     if (!remote?.streamAudio) {
-      deps.appendLog?.("info", "tts remote-aware stream using local Genie: remote unavailable");
-      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      yield* local.streamAudio(request);
+      if (!route.localPreferred) throw noLocalRouteError(route.provider);
+      deps.appendLog?.("info", "tts remote-aware stream using local Genie: local selected");
+      const selectedLocal = localFor();
+      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      yield* selectedLocal.streamAudio(request);
       return;
     }
     let yielded = false;
@@ -203,21 +245,26 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     } catch (error) {
       if (yielded) throw error;
       if (isRemoteGenieProtocolError(error)) throw error;
+      if (!route.localFallbackEnabled) throw error;
       deps.appendLog?.("warn", `tts remote Genie stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
-      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      yield* local.streamAudio(request);
+      const selectedLocal = localFor();
+      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      yield* selectedLocal.streamAudio(request);
     }
   };
   synthesize.streamAudioWithText = async function* (request) {
-    const remote = selectedRemote();
+    const route = selectedRoute();
+    const remote = route.remote;
     if (!remote?.streamAudioWithText) {
-      deps.appendLog?.("info", "tts remote-aware text stream using local Genie: remote unavailable");
-      if (local.streamAudioWithText) {
-        yield* local.streamAudioWithText(request);
+      if (!route.localPreferred) throw noLocalRouteError(route.provider);
+      deps.appendLog?.("info", "tts remote-aware text stream using local Genie: local selected");
+      const selectedLocal = localFor();
+      if (selectedLocal.streamAudioWithText) {
+        yield* selectedLocal.streamAudioWithText(request);
         return;
       }
-      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      for await (const chunk of local.streamAudio(request)) yield { chunk };
+      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      for await (const chunk of selectedLocal.streamAudio(request)) yield { chunk };
       return;
     }
     let yielded = false;
@@ -231,34 +278,39 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     } catch (error) {
       if (yielded) throw error;
       if (isRemoteGenieProtocolError(error)) throw error;
+      if (!route.localFallbackEnabled) throw error;
       deps.appendLog?.("warn", `tts remote Genie text stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
-      if (local.streamAudioWithText) {
-        yield* local.streamAudioWithText(request);
+      const selectedLocal = localFor();
+      if (selectedLocal.streamAudioWithText) {
+        yield* selectedLocal.streamAudioWithText(request);
         return;
       }
-      if (!local.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      for await (const chunk of local.streamAudio(request)) yield { chunk };
+      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+      for await (const chunk of selectedLocal.streamAudio(request)) yield { chunk };
     }
   };
   synthesize.noteActivity = () => {
-    selectedRemote()?.noteActivity?.();
-    local.noteActivity?.();
+    const route = selectedRoute();
+    route.remote?.noteActivity?.();
+    if (route.localPreferred) local?.noteActivity?.();
   };
   synthesize.prepare = async () => {
-    const remote = selectedRemote();
+    const route = selectedRoute();
+    const remote = route.remote;
     if (remote) {
       try {
         await remote.prepare?.();
         return;
       } catch (error) {
+        if (!route.localFallbackEnabled) throw error;
         deps.appendLog?.("warn", `tts remote Genie prepare failed; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    await local.prepare?.();
+    if (route.localPreferred || (remote && route.localFallbackEnabled)) await localFor().prepare?.();
   };
   synthesize.shutdown = async () => {
     await Promise.all([...remotes.values()].map((remote) => remote.shutdown?.()));
-    await local.shutdown?.();
+    await local?.shutdown?.();
   };
   return synthesize;
 }

@@ -97,6 +97,7 @@ export type TtsPluginConfig = {
 export type TtsRemoteConfig = {
   enabled?: boolean;
   baseURL?: string;
+  localFallbackEnabled?: boolean;
 };
 
 export type TtsConversionConfig = {

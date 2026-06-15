@@ -48,14 +48,17 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   const preset = parseJsonObject(parsed.api_preset);
   const remote = parseJsonObject(parsed.remote);
   const conversion = ttsConversionConfigValue(parsed.conversion, remote);
-  const legacyPrompt = stringValue(parsed.prompt) || defaultPrompt();
+  const legacyPrompt = stringValue(parsed.prompt);
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
   const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName, {
     translationEnabled: booleanValue(parsed.translationEnabled, true),
     apiPresetName: stringValue(parsed.apiPresetName) || stringValue(preset.name),
-    prompt: legacyPrompt
+    ...(legacyPrompt ? { prompt: legacyPrompt } : {})
   });
   const selectedTranslation = selectedTtsTranslationPreset({ translationPresetName, translationPresets });
+  const translationEnabled = selectedTranslation.translationEnabled ?? true;
+  const selectedPrompt = selectedTranslation.prompt || legacyPrompt;
+  if (translationEnabled && !selectedPrompt) throw new Error("tts translation prompt is required");
   const voice = parseJsonObject(parsed.voice);
   const modelConfigName = stringValue(voice.modelConfigName) || ttsLanguageValue(voice.language);
   const modelConfigs = ttsModelConfigsValue(voice.modelConfigs, modelConfigName, {
@@ -71,12 +74,13 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
     enabled: booleanValue(parsed.enabled, false),
     remote: {
       enabled: conversion.genie?.enabled ?? true,
-      baseURL: conversion.genie?.baseURL ?? normalizeBaseURL("http://192.168.0.103:8767")
+      baseURL: conversion.genie?.baseURL ?? normalizeBaseURL("http://192.168.0.103:8767"),
+      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? true
     },
     conversion,
     translationPresetName,
     translationPresets,
-    translationEnabled: selectedTranslation.translationEnabled ?? true,
+    translationEnabled,
     apiPresetName: selectedTranslation.apiPresetName,
     api_preset: {
       name: stringValue(preset.name),
@@ -88,7 +92,7 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
       timeoutMs: numberValue(preset.timeoutMs, 60_000),
       extraParams: recordValue(preset.extraParams)
     },
-    prompt: selectedTranslation.prompt || legacyPrompt,
+    prompt: selectedPrompt ?? "",
     voice: {
       modelConfigName,
       modelConfigs
@@ -113,6 +117,7 @@ function resolveTtsConfigReadPath(configPath = defaultConfigPath): string | unde
 }
 
 export function renderTtsPrompt(config: TtsPluginConfig, deps: TtsPluginDeps): string {
+  if (!config.prompt.trim()) throw new Error("tts translation prompt is required");
   const variables = typeof deps.promptVariables === "function" ? deps.promptVariables() : deps.promptVariables;
   return renderLLMText(config.prompt.trim(), variables ?? {});
 }
@@ -148,7 +153,7 @@ export function selectedTtsVoiceModelConfigName(config: TtsPluginConfig): string
 export function selectedTtsTranslationPreset(config: Pick<TtsPluginConfig, "translationPresetName" | "translationPresets">): TtsTranslationPreset {
   const presets = config.translationPresets ?? {};
   const selected = config.translationPresetName ? presets[config.translationPresetName] : undefined;
-  return selected ?? presets[Object.keys(presets)[0] ?? ""] ?? { translationEnabled: true, prompt: defaultPrompt() };
+  return selected ?? presets[Object.keys(presets)[0] ?? ""] ?? { translationEnabled: true };
 }
 
 function ttsPresetModelDir(name: string): string {
@@ -178,16 +183,6 @@ export function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginD
   return config.api_preset;
 }
 
-export function defaultPrompt(): string {
-  return [
-    "Translate the text appended below into natural Japanese for voice reading.",
-    "Preserve meaning, tone, names, numbers, and punctuation intent.",
-    "Return only the translated Japanese text. Do not add explanations.",
-    "",
-    "Text:"
-  ].join("\n");
-}
-
 function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, unknown>): TtsConversionConfig {
   const raw = parseJsonObject(value);
   const genie = parseJsonObject(raw.genie);
@@ -199,7 +194,8 @@ function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, u
   };
   const nextGenie = {
     enabled: genie.enabled === undefined ? legacyGenie.enabled : booleanValue(genie.enabled, legacyGenie.enabled),
-    baseURL: normalizeBaseURL(stringValue(genie.baseURL) || legacyGenie.baseURL)
+    baseURL: normalizeBaseURL(stringValue(genie.baseURL) || legacyGenie.baseURL),
+    localFallbackEnabled: genie.localFallbackEnabled === undefined ? true : booleanValue(genie.localFallbackEnabled, true)
   };
   return {
     provider: raw.provider === "openai-api" ? "openai-api" : raw.provider === "bailian" ? "bailian" : "genie",

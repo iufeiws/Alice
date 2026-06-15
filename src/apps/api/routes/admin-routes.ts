@@ -94,12 +94,14 @@ type TtsAdminConfig = {
   remote?: {
     enabled?: boolean;
     baseURL?: string;
+    localFallbackEnabled?: boolean;
   };
   conversion?: {
     provider?: "genie" | "openai-api" | "bailian";
     genie?: {
       enabled?: boolean;
       baseURL?: string;
+      localFallbackEnabled?: boolean;
     };
     openaiApi?: {
       apiPresetName?: string;
@@ -1476,6 +1478,7 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         ], description: "Backend used after optional translation." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
         { key: "conversion.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
+        { key: "conversion.genie.localFallbackEnabled", label: "Local Genie Fallback", type: "switch", group: "model_genie", description: "Allow local Genie only after a non-local Genie route fails. Disable to keep API and remote routes from starting local Genie." },
         { key: "conversion.genie.baseURL", label: "Remote Genie IP/URL", type: "text", group: "model_genie", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
         { key: "conversion.openaiApi.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "conversion_openai_api", description: "OpenAI-compatible speech API preset. The plugin does not expose API keys in public config." },
         { key: "conversion.openaiApi.model", label: "Model", type: "text", group: "conversion_openai_api", description: "Speech model sent as model in POST /audio/speech." },
@@ -2236,7 +2239,8 @@ function updateTtsConfig(
   const currentRemote = current.conversion?.genie ?? current.remote ?? {};
   const nextRemote = {
     enabled: geniePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(geniePatch.enabled),
-    baseURL: geniePatch.baseURL === undefined ? currentRemote.baseURL ?? "http://192.168.0.103:8767" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? "")
+    baseURL: geniePatch.baseURL === undefined ? currentRemote.baseURL ?? "http://192.168.0.103:8767" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? ""),
+    localFallbackEnabled: geniePatch.localFallbackEnabled === undefined ? currentRemote.localFallbackEnabled ?? true : booleanFromUnknown(geniePatch.localFallbackEnabled)
   };
   const openAiApiPatch = conversionPatch.openaiApi && typeof conversionPatch.openaiApi === "object" && !Array.isArray(conversionPatch.openaiApi)
     ? conversionPatch.openaiApi as Record<string, unknown>
@@ -2688,13 +2692,15 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
     enabled: config.enabled,
     remote: {
       enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
-      baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767"
+      baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767",
+      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? true
     },
     conversion: {
       provider: conversion.provider ?? "genie",
       genie: {
         enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
-        baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767"
+        baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "http://192.168.0.103:8767",
+        localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? true
       },
       openaiApi: {
         apiPresetName: openaiApi.apiPresetName,
@@ -2760,13 +2766,15 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
     enabled: config.enabled,
     remote: {
       enabled: genie?.enabled ?? true,
-      baseURL: genie?.baseURL ?? "http://192.168.0.103:8767"
+      baseURL: genie?.baseURL ?? "http://192.168.0.103:8767",
+      localFallbackEnabled: genie?.localFallbackEnabled ?? true
     },
     conversion: {
       provider: config.conversion?.provider ?? "genie",
       genie: {
         enabled: genie?.enabled ?? true,
-        baseURL: genie?.baseURL ?? "http://192.168.0.103:8767"
+        baseURL: genie?.baseURL ?? "http://192.168.0.103:8767",
+        localFallbackEnabled: genie?.localFallbackEnabled ?? true
       },
       openaiApi: {
         apiPresetName: openaiApi?.apiPresetName,
@@ -2819,14 +2827,22 @@ function ttsConfigSchema(): unknown {
         type: "object",
         properties: {
           enabled: { type: "boolean" },
-          baseURL: { type: "string" }
+          baseURL: { type: "string" },
+          localFallbackEnabled: { type: "boolean" }
         }
       },
       conversion: {
         type: "object",
         properties: {
           provider: { type: "string", enum: ["genie", "openai-api", "bailian"] },
-          genie: { type: "object" },
+          genie: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              baseURL: { type: "string" },
+              localFallbackEnabled: { type: "boolean" }
+            }
+          },
           openaiApi: { type: "object" },
           bailian: { type: "object" }
         }

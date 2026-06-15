@@ -1,4 +1,4 @@
-import type { TTSConfig, TtsApiPreset } from "../../../channels/tts/src/index.js";
+import type { TTSConfig, TtsApiPreset, TtsLlmClient } from "../../../channels/tts/src/index.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { buildLLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
@@ -55,7 +55,7 @@ export function createVoicePluginRuntime(input: {
 function createTtsLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, string | undefined>) {
   const apiKey = preset.apiKey || (preset.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
   if (!preset.baseURL || !apiKey) return undefined;
-  return createOpenAICompatibleClient({
+  const client = createOpenAICompatibleClient({
     baseURL: preset.baseURL,
     apiKey,
     model: preset.model,
@@ -63,4 +63,15 @@ function createTtsLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, 
     timeoutMs: preset.timeoutMs,
     extraParams: preset.extraParams
   });
+  return {
+    async chat(input) {
+      const result = await client.chat(input);
+      return {
+        message: {
+          role: result.message.role,
+          content: typeof result.message.content === "string" ? result.message.content : ""
+        }
+      };
+    }
+  } satisfies TtsLlmClient;
 }

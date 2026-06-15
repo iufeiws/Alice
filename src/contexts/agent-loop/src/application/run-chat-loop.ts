@@ -9,6 +9,7 @@ import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopTool
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { createChatLoopRequestSender } from "./chat-loop-request-sender.js";
 import { checkChatCursorFromResult, fixedPrefixToolInput } from "./chat-loop-session-context.js";
+import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
 import {
   claimAgentLoopRequestWindow,
   type AgentFunctionCallLoopSpec,
@@ -56,6 +57,8 @@ export type ChatAgentLoopInput = {
     followupExtraParams?: Record<string, unknown>;
     presetName?: string;
     stream?: boolean;
+    supportsImage?: boolean;
+    supportsAudio?: boolean;
     toolNames: string[];
   };
   event: AgentEvent;
@@ -101,9 +104,15 @@ export type PreparedChatAgentLoop = {
 
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
+  const llmCapabilities: LLMCapabilityFlags = {
+    supportsImage: input.llmInput.supportsImage,
+    supportsAudio: input.llmInput.supportsAudio
+  };
   const toolExecutor = createAgentLoopToolExecutor({
     event: input.event,
-    toolPlugins: input.toolPlugins
+    toolPlugins: input.toolPlugins,
+    getLastCompletedToolName: input.getLastCompletedToolName,
+    setLastCompletedToolName: input.setLastCompletedToolName
   });
   const visibleToolNames = input.llmInput.toolNames;
   let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
@@ -188,8 +197,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
         variables: textVariables,
+        llmCapabilities,
         transformInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session)
       });
+      const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
+      if (followup.toolNotices.length > 0) {
+        toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");
+      }
 
       session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, toolResult) ?? session.lastCheckChatCursorMessageId;
       if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
@@ -207,7 +221,9 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       });
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       if (execution.sessionRebuilt) input.onSessionRebuilt?.();
-      return execution;
+      return followup.messages.length > 0
+        ? { ...execution, messages: followup.messages }
+        : execution;
     },
     async onMessagesChanged({ messages }) {
       session.messages = messages;

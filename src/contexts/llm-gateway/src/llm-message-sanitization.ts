@@ -54,7 +54,7 @@ export function sanitizeLLMResponseMessage(
   }
   return {
     ...cloneLLMMessage(message),
-    content: stripParenthesizedContent(message.content)
+    content: typeof message.content === "string" ? stripParenthesizedContent(message.content) : message.content
   };
 }
 
@@ -111,6 +111,7 @@ function mergeConsecutiveAssistantContent(messages: LLMMessage[]): LLMMessage[] 
 
 function canMergeAssistantContent(message: LLMMessage): boolean {
   return message.role === "assistant"
+    && typeof message.content === "string"
     && !hasAssistantFunctionCall(message)
     && message.reasoningContent === undefined
     && message.name === undefined

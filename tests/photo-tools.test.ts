@@ -9,6 +9,12 @@ import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent
 const fs = await import("node:fs");
 const path = await import("node:path");
 
+const fakeJpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const png1x1Bytes = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64"
+);
+
 test("selfie schema exposes action with 3:4 default", () => {
   const store = createAliceStore(path.join(makeTempDir("selfie-schema-db"), "alice.sqlite"));
   const tools = createPhotoTools({
@@ -45,7 +51,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async (input) => {
         executorInputs.push(input);
-        fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from("fake-jpg"));
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
         return { stdout: "ok", stderr: "", lastMessage: "saved target file" };
       },
       outputRouter: {
@@ -63,7 +69,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
       id: "call_selfie",
       toolName: "selfie",
       input: { action: "踮脚靠近镜头，比一个很小的剪刀手" }
-    });
+    }, { llmCapabilities: { supportsImage: true } });
 
     assert.equal(result.ok, true);
     assert.equal(executorInputs[0].aspectRatio, "3:4");
@@ -84,12 +90,62 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     assert.equal(sent[1].content.kind, "image");
     assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal(result.output, "照片已发送");
+    assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
+    assert.match(result.llmFollowupAttachments?.[0]?.path ?? "", /selfie_20260526_120000\.jpg$/);
+    assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
     assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
     assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie converts generated non-JPEG bytes to JPEG before sending", async () => {
+  const outputRoot = makeAssetTempDir("selfie-png-conversion");
+  const referenceRoot = makeTempDir("selfie-ref-png-conversion");
+  const store = createAliceStore(path.join(makeTempDir("selfie-png-conversion-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  writeReferenceFiles(referenceRoot);
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieExecutor: async (input) => {
+        fs.writeFileSync(path.join(input.workDir, input.fileName), png1x1Bytes);
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_png_conversion",
+      toolName: "selfie",
+      input: { action: "拍一张 PNG 结果的测试自拍" }
+    }, { llmCapabilities: { supportsImage: true } });
+
+    assert.equal(result.ok, true);
+    assert.equal(sent[1].content.kind, "image");
+    assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
+    assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
+    const finalPath = result.llmFollowupAttachments?.[0]?.path ?? "";
+    const finalBytes = fs.readFileSync(finalPath);
+    assert.equal(finalBytes[0], 0xff);
+    assert.equal(finalBytes[1], 0xd8);
+    assert.equal(finalBytes[2], 0xff);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
   }
 });
 
@@ -116,7 +172,7 @@ test("selfie uses default output target for voice call requester", async () => {
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async (input) => {
-        fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from("fake-jpg"));
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
       },
       outputRouter: {
         async send(output) {
@@ -152,6 +208,43 @@ test("selfie uses default output target for voice call requester", async () => {
   }
 });
 
+test("selfie rejects consecutive calls through tool execution context", async () => {
+  const outputRoot = makeAssetTempDir("selfie-consecutive");
+  const referenceRoot = makeTempDir("selfie-ref-consecutive");
+  const store = createAliceStore(path.join(makeTempDir("selfie-consecutive-db"), "alice.sqlite"));
+  let executorCalled = false;
+  writeReferenceFiles(referenceRoot);
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieExecutor: async () => {
+        executorCalled = true;
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_consecutive",
+      toolName: "selfie",
+      input: { action: "再次自拍" }
+    }, { lastCompletedToolName: "selfie" });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "selfie cannot be called consecutively");
+    assert.equal(executorCalled, false);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
 test("selfie default api executor calls Image API directly", async () => {
   const outputRoot = makeAssetTempDir("selfie-api-direct");
   const referenceRoot = makeTempDir("selfie-ref-api-direct");
@@ -181,7 +274,7 @@ test("selfie default api executor calls Image API directly", async () => {
     assert.equal(form.getAll("image[]").length, 3);
     assert.doesNotMatch(String(form.get("prompt")), /画幅比例|API生成约束|输入图片顺序/);
     return new Response(JSON.stringify({
-      data: [{ b64_json: Buffer.from("api-direct-jpg").toString("base64") }]
+      data: [{ b64_json: fakeJpegBytes.toString("base64") }]
     }), { status: 200, statusText: "OK" });
   }) as typeof fetch;
 
@@ -259,7 +352,7 @@ test("selfie api executor uses openai relay edits route with image field", async
     ]);
     assert.doesNotMatch(String(form.get("prompt")), /画幅比例|API生成约束|输入图片顺序/);
     return new Response(JSON.stringify({
-      data: [{ b64_json: Buffer.from("api-relay-jpg").toString("base64") }]
+      data: [{ b64_json: fakeJpegBytes.toString("base64") }]
     }), { status: 200, statusText: "OK" });
   }) as typeof fetch;
 
@@ -410,7 +503,7 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     "if (process.env.SELFIE_IMAGE_API_KEY === 'test-key') process.exit(10);",
     "if (process.env.OPENAI_API_KEY) process.exit(11);",
     `fs.mkdirSync(${JSON.stringify(path.dirname(generatedPath))}, { recursive: true });`,
-    `fs.writeFileSync(${JSON.stringify(generatedPath)}, "codex-generated-image");`,
+    `fs.writeFileSync(${JSON.stringify(generatedPath)}, Buffer.from(${JSON.stringify(png1x1Bytes.toString("base64"))}, "base64"));`,
     "console.log(JSON.stringify({ type: 'done' }));"
   ].join("\n"));
   fs.chmodSync(codexPath, 0o755);
@@ -464,7 +557,10 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     assert.equal(sent[1].content.kind, "image");
     const sentAssetId = sent[1].content.kind === "image" ? sent[1].content.assetId : "";
     const finalPath = path.join(assetRootFromOutputDir(outputRoot), sentAssetId);
-    assert.equal(fs.readFileSync(finalPath, "utf8"), "codex-generated-image");
+    const finalBytes = fs.readFileSync(finalPath);
+    assert.equal(finalBytes[0], 0xff);
+    assert.equal(finalBytes[1], 0xd8);
+    assert.equal(finalBytes[2], 0xff);
     assert.equal(result.output, "照片已发送");
   } finally {
     if (previousCodexHome === undefined) {
@@ -577,7 +673,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
       selfieExecutor: async (input) => {
         referenceImages = input.referenceImages;
         referenceImagePrompt = input.referenceImagePrompt;
-        fs.writeFileSync(path.join(input.workDir, input.fileName), "generated-image");
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
       },
       outputRouter: {
         async send(output) {

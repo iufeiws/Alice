@@ -12,6 +12,8 @@ export type LLMApiPreset = {
   temperature: number;
   timeoutMs: number;
   stream: boolean;
+  supportsImage: boolean;
+  supportsAudio: boolean;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
 };
@@ -98,6 +100,8 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
+    supportsImage: value.supportsImage === true,
+    supportsAudio: value.supportsAudio === true,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
     followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
   };

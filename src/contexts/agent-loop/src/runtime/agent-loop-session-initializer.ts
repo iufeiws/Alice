@@ -10,6 +10,7 @@ export type AgentLoopTranscriptSession = {
   lastInputTokens?: number;
   lastUsageModel?: string;
   mode?: string;
+  lastCompletedToolName?: string;
 };
 
 export type AgentLoopMessagePatch = {

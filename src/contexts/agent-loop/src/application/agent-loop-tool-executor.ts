@@ -1,6 +1,6 @@
 import type { LLMToolCall } from "../../../llm-gateway/src/index.js";
 import { formatToolResultForLLM as renderToolResultForLLM, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 
 export type AgentLoopToolExecutor = {
   toolMap: Map<string, ToolPlugin>;
@@ -11,6 +11,7 @@ export type AgentLoopToolExecutor = {
 
 export type AgentLoopToolExecutionOptions = {
   variables?: LLMTextVariables;
+  llmCapabilities?: ToolExecutionContext["llmCapabilities"];
   transformInput?(toolName: string, input: Record<string, unknown>): Record<string, unknown>;
 };
 
@@ -35,21 +36,33 @@ export type AgentLoopPromptToolRequest = {
 export function createAgentLoopToolExecutor(input: {
   event: AgentEvent;
   toolPlugins: ToolPlugin[];
+  getLastCompletedToolName?(): string | undefined;
+  setLastCompletedToolName?(name: string): void;
 }): AgentLoopToolExecutor {
   const toolMap = buildAgentLoopToolMap(input.toolPlugins);
 
   async function executePreparedToolCall(call: ToolCall): Promise<ToolResult> {
-    return executePreparedAgentLoopToolCall(toolMap, call);
+    const result = await executePreparedAgentLoopToolCall(toolMap, call, {
+      lastCompletedToolName: input.getLastCompletedToolName?.()
+    });
+    input.setLastCompletedToolName?.(call.toolName);
+    return result;
   }
 
   async function executeToolCall(call: ToolCall, options: AgentLoopToolExecutionOptions = {}): Promise<ToolResult> {
-    return executePreparedToolCall({
+    const preparedCall = {
       id: call.id,
       toolName: call.toolName,
       input: options.transformInput?.(call.toolName, call.input) ?? call.input,
       requester: input.event.source,
       session: input.event.session
+    };
+    const result = await executePreparedAgentLoopToolCall(toolMap, preparedCall, {
+      lastCompletedToolName: input.getLastCompletedToolName?.(),
+      llmCapabilities: options.llmCapabilities
     });
+    input.setLastCompletedToolName?.(call.toolName);
+    return result;
   }
 
   async function executeLLMToolCall(call: LLMToolCall, options: AgentLoopToolExecutionOptions = {}): Promise<AgentLoopExecutedToolCall> {
@@ -74,7 +87,8 @@ export function createAgentLoopToolExecutor(input: {
 
 export async function executePreparedAgentLoopToolCall(
   toolMap: Map<string, ToolPlugin>,
-  call: ToolCall
+  call: ToolCall,
+  context: ToolExecutionContext = {}
 ): Promise<ToolResult> {
   const plugin = toolMap.get(call.toolName);
   if (!plugin) {
@@ -85,7 +99,7 @@ export async function executePreparedAgentLoopToolCall(
     };
   }
   try {
-    return await plugin.execute(call);
+    return await plugin.execute(call, context);
   } catch (error) {
     return {
       callId: call.id,

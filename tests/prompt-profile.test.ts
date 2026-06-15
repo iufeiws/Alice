@@ -10,6 +10,7 @@ import {
 } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../src/contexts/agent-profile/src/domain/shell.js";
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
+import type { LLMMessageContent } from "../src/contexts/llm-gateway/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -116,10 +117,10 @@ test("prompt messages render variables and preserve unknown placeholders", () =>
   });
 
   assert.equal(messages[0].role, "system");
-  assert.match(messages[0].content, /小王/);
-  assert.match(messages[0].content, /Asia\/Shanghai/);
-  assert.match(messages[0].content, /session-1/);
-  assert.match(messages[0].content, /\{\{missing\}\}/);
+  assert.match(messageContentText(messages[0].content), /小王/);
+  assert.match(messageContentText(messages[0].content), /Asia\/Shanghai/);
+  assert.match(messageContentText(messages[0].content), /session-1/);
+  assert.match(messageContentText(messages[0].content), /\{\{missing\}\}/);
 });
 
 test("prompt messages render memory variables", () => {
@@ -139,9 +140,9 @@ test("prompt messages render memory variables", () => {
     }
   });
 
-  assert.match(messages[0].content, /long fact/);
-  assert.match(messages[0].content, /likes short replies/);
-  assert.match(messages[0].content, /yesterday was busy/);
+  assert.match(messageContentText(messages[0].content), /long fact/);
+  assert.match(messageContentText(messages[0].content), /likes short replies/);
+  assert.match(messageContentText(messages[0].content), /yesterday was busy/);
 });
 
 test("prompt messages pair tool request layers with actual tool results", async () => {
@@ -186,7 +187,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.equal(messages[1].role, "tool");
   assert.equal(messages[1].toolCallId, "call_prompt_1");
   assert.equal(messages[1].name, "check_chat");
-  assert.match(messages[1].content, /小王:hello/);
+  assert.match(messageContentText(messages[1].content), /小王:hello/);
 });
 
 test("append prompt messages pair tool request layers with actual tool results", async () => {
@@ -513,4 +514,9 @@ function makeTempDir(name: string): string {
   const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function messageContentText(content: LLMMessageContent): string {
+  if (typeof content === "string") return content;
+  return content.map((part) => part.type === "text" ? part.text : "[image]").join("\n");
 }

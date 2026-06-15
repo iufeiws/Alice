@@ -375,10 +375,10 @@ test("workspace induction uses relative Read/Edit tools and commits all files at
     const fakeReadIndexes = input.messages
       .map((entry, index) => entry.toolCalls?.[0]?.function.name === "Read" ? index : -1)
       .filter((index) => index >= 0);
-    return input.messages[fakeReadIndexes.at(-1)! + 1].content;
+    return messageContentText(input.messages[fakeReadIndexes.at(-1)! + 1].content);
   };
   assert.match(readResult(targetRequests[0]), /old persistent/);
-  const userPreferencesPrompt = targetRequests[0].messages.map((entry) => entry.content ?? "").join("\n");
+  const userPreferencesPrompt = targetRequests[0].messages.map((entry) => messageContentText(entry.content)).join("\n");
   const diaryPrompt = userPreferencesPrompt;
   assert.match(userPreferencesPrompt, /用户记忆：稳定偏好/);
   assert.match(diaryPrompt, /日记：只基于本次聊天记录/);
@@ -1054,4 +1054,9 @@ function findSessionFiles(dir: string): string[] {
     else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(fullPath);
   }
   return files.sort();
+}
+
+function messageContentText(content: LLMChatInput["messages"][number]["content"]): string {
+  if (typeof content === "string") return content;
+  return content.map((part) => part.type === "text" ? part.text : "[image]").join("\n");
 }

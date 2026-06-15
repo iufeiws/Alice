@@ -1,6 +1,6 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js";
-import type { AgentEvent, ToolCall, ToolPlugin } from "../contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolPlugin, ToolResult, ToolExecutionContext } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
 import { createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
 import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
@@ -32,6 +32,7 @@ export type TalkLoopSessionContextDeps = {
     lastInputTokens?: number;
     lastUsageModel?: string;
     mode?: string;
+    lastCompletedToolName?: string;
   } | undefined;
   updateActiveTalkLLMSessionTranscript(session: {
     messages: LLMMessage[];
@@ -42,6 +43,7 @@ export type TalkLoopSessionContextDeps = {
     lastInputTokens?: number;
     lastUsageModel?: string;
     mode?: string;
+    lastCompletedToolName?: string;
   }): void;
   prepareSessionContext?(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   visibleToolNames(profile: PromptProfile): string[];
@@ -53,7 +55,12 @@ export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
-  executeToolCall(call: LLMToolCall): Promise<string>;
+  executeToolCall(call: LLMToolCall, capabilities?: ToolExecutionContext["llmCapabilities"]): Promise<TalkLoopExecutedToolCall>;
+};
+
+export type TalkLoopExecutedToolCall = {
+  result: ToolResult;
+  content: string;
 };
 
 export async function prepareTalkLoopSessionContext(input: {
@@ -64,9 +71,16 @@ export async function prepareTalkLoopSessionContext(input: {
   const { deps, sessionId, state } = input;
   const profile = deps.getTalkPromptProfile();
   const event = buildTalkAgentEvent(sessionId, deps.time);
+  let session: AgentLoopTranscriptSession | undefined;
   const toolExecutor = createAgentLoopToolExecutor({
     event,
-    toolPlugins: [...deps.toolPlugins]
+    toolPlugins: [...deps.toolPlugins],
+    getLastCompletedToolName: () => session?.lastCompletedToolName,
+    setLastCompletedToolName(name) {
+      if (!session) return;
+      session.lastCompletedToolName = name;
+      deps.updateActiveTalkLLMSessionTranscript(session);
+    }
   });
   const context = {
     event,
@@ -98,12 +112,13 @@ export async function prepareTalkLoopSessionContext(input: {
       deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
     }
   });
+  session = preparedSession.session;
   return {
     session: preparedSession.session,
     toolNames: deps.visibleToolNames(profile),
     toolVariables: variables,
-    executeToolCall: (call: LLMToolCall) => toolExecutor.executeLLMToolCall(call)
-      .then(({ result }) => formatAgentLoopToolResultForLLM(result))
+    executeToolCall: (call: LLMToolCall, capabilities?: ToolExecutionContext["llmCapabilities"]) => toolExecutor.executeLLMToolCall(call, { llmCapabilities: capabilities })
+      .then(({ result }) => ({ result, content: formatAgentLoopToolResultForLLM(result) }))
   };
 }
 

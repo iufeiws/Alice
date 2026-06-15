@@ -23,7 +23,9 @@ export function createLLMConfigRuntime(input: {
         extraParams: {},
         followupExtraParams: {},
         presetName: undefined,
-        stream: false
+        stream: false,
+        supportsImage: false,
+        supportsAudio: false
       };
     }
     return {
@@ -33,7 +35,9 @@ export function createLLMConfigRuntime(input: {
       extraParams: preset.extraParams,
       followupExtraParams: preset.followupExtraParams,
       presetName: preset.name,
-      stream: preset.stream
+      stream: preset.stream,
+      supportsImage: preset.supportsImage,
+      supportsAudio: preset.supportsAudio
     };
   }
 }

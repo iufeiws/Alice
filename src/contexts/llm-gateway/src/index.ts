@@ -16,9 +16,15 @@ export * from "./llm-request-preview-runtime.js";
 export * from "./llm-request-shape.js";
 export * from "./token-usage-runtime.js";
 
+export type LLMContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export type LLMMessageContent = string | LLMContentPart[];
+
 export type LLMMessage = {
   role: LLMRole;
-  content: string;
+  content: LLMMessageContent;
   reasoningContent?: string;
   name?: string;
   toolCallId?: string;
@@ -511,7 +517,7 @@ export function createStubLLMClient(): LLMClient {
         message: {
           role: "assistant",
           content: lastUserMessage?.content
-            ? `Stub LLM response: ${lastUserMessage.content}`
+            ? `Stub LLM response: ${stringifyMessageContent(lastUserMessage.content)}`
             : "Stub LLM response."
         },
         finishReason: "stop"
@@ -521,4 +527,9 @@ export function createStubLLMClient(): LLMClient {
       return [{ id: "stub" }];
     }
   };
+}
+
+function stringifyMessageContent(content: LLMMessageContent): string {
+  if (typeof content === "string") return content;
+  return content.map((part) => part.type === "text" ? part.text : "[image]").join("\n");
 }

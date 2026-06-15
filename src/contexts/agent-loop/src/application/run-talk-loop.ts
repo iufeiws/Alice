@@ -13,9 +13,11 @@ import {
 import {
   prepareTalkLoopSessionContext,
   restoreTalkLoopRuntimeState,
+  type TalkLoopExecutedToolCall,
   type TalkLoopSessionContextDeps,
   type TalkLoopRuntimeState
 } from "./talk-loop-session-context.js";
+import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
 
 export type TalkAgentLoopSession = ChatAgentLoopSession;
 export type TalkAgentLoopInput = Omit<ChatAgentLoopInput, "llmInput"> & {
@@ -32,12 +34,14 @@ type TalkAgentLoopLLMConfig = {
   followupExtraParams?: Record<string, unknown>;
   presetName?: string;
   stream?: boolean;
+  supportsImage?: boolean;
+  supportsAudio?: boolean;
 };
 
 type TalkAgentLoopState = {
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
-  executeToolCall(call: LLMToolCall): Promise<string>;
+  executeToolCall(call: LLMToolCall, capabilities?: LLMCapabilityFlags): Promise<TalkLoopExecutedToolCall>;
 };
 
 type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
@@ -123,7 +127,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     session: AgentLoopTranscriptSession;
     toolNames: string[];
     toolVariables: Record<string, unknown> | undefined;
-    executeToolCall(call: LLMToolCall): Promise<string>;
+    executeToolCall(call: LLMToolCall, capabilities?: LLMCapabilityFlags): Promise<TalkLoopExecutedToolCall>;
     config: TalkAgentLoopLLMConfig;
     signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
@@ -156,20 +160,30 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       },
       sendRequest: deps.sendRequest,
       async executeTool(call): Promise<AgentFunctionCallToolExecution> {
+        const capabilities: LLMCapabilityFlags = {
+          supportsImage: input.config.supportsImage,
+          supportsAudio: input.config.supportsAudio
+        };
+        const executed = await input.executeToolCall(call, capabilities);
+        const followup = buildToolFollowupLLMMessages(executed.result, capabilities);
+        const content = followup.toolNotices.length > 0
+          ? [executed.content, ...followup.toolNotices].filter(Boolean).join("\n")
+          : executed.content;
         return {
           message: {
             role: "tool" as const,
             toolCallId: call.id,
             name: call.function.name,
-            content: await input.executeToolCall(call)
-          }
+            content
+          },
+          messages: followup.messages
         };
       },
       afterRequest({ round, result }) {
         const output = roundOutputs.get(round);
         if (!output) return;
         const { outputId, streamedContent } = output;
-        if (!streamedContent && result.message.content) {
+        if (!streamedContent && typeof result.message.content === "string" && result.message.content) {
           deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta: result.message.content });
         }
         if (streamedContent || result.message.content) {

@@ -317,6 +317,8 @@ export function renderAdminHtmlV2(): string {
               <label for="timeoutMs">Timeout Ms</label>
               <input id="timeoutMs" name="timeoutMs" inputmode="numeric" />
               <label><input id="streamEnabled" name="stream" type="checkbox" /> Streaming</label>
+              <label><input id="supportsImage" name="supportsImage" type="checkbox" /> Supports Images</label>
+              <label><input id="supportsAudio" name="supportsAudio" type="checkbox" /> Supports Audio</label>
               <label for="extraParams">Extra Params JSON</label>
               <textarea id="extraParams" name="extraParams" rows="6" spellcheck="false">{}</textarea>
               <label for="followupExtraParams">Follow-up Extra Params JSON</label>
@@ -2519,6 +2521,8 @@ Timing:
           temperature: $("temperature").value,
           timeoutMs: $("timeoutMs").value,
           stream: $("streamEnabled").checked,
+          supportsImage: $("supportsImage").checked,
+          supportsAudio: $("supportsAudio").checked,
           extraParams: $("extraParams").value,
           followupExtraParams: $("followupExtraParams").value
         };
@@ -2531,6 +2535,8 @@ Timing:
           $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
         });
         $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+        $("supportsImage")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+        $("supportsAudio")?.addEventListener("change", () => markLLMApiPreset("dirty"));
       }
 
       function markLLMApiPreset(state) {
@@ -2545,6 +2551,8 @@ Timing:
         $("temperature").value = String(preset.temperature ?? "");
         $("timeoutMs").value = String(preset.timeoutMs ?? "");
         $("streamEnabled").checked = preset.stream !== false;
+        $("supportsImage").checked = preset.supportsImage === true;
+        $("supportsAudio").checked = preset.supportsAudio === true;
         $("extraParams").value = JSON.stringify(preset.extraParams || {}, null, 2);
         $("followupExtraParams").value = JSON.stringify(preset.followupExtraParams || {}, null, 2);
         $("llmPresetName").value = preset.name || "";
@@ -2558,6 +2566,8 @@ Timing:
         $("temperature").value = "0.2";
         $("timeoutMs").value = "60000";
         $("streamEnabled").checked = true;
+        $("supportsImage").checked = false;
+        $("supportsAudio").checked = false;
         $("extraParams").value = "{}";
         $("followupExtraParams").value = "{}";
         $("llmPresetName").value = "";

@@ -39,6 +39,7 @@ export type LLMToolLoopControl = {
 
 export type LLMToolLoopExecution = {
   message?: LLMMessage;
+  messages?: LLMMessage[];
   control?: LLMToolLoopControl;
 };
 
@@ -185,7 +186,10 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         callIndex,
         reachedToolCallLimit
       });
-      if (execution.message && execution.control?.yieldReturn !== true) toolMessages.push(execution.message);
+      if (execution.control?.yieldReturn !== true) {
+        if (execution.message) toolMessages.push(execution.message);
+        if (execution.messages) toolMessages.push(...cloneLLMMessages(execution.messages));
+      }
       sentMessage = sentMessage || execution.control?.sentMessage === true;
       invalidateSession = invalidateSession || execution.control?.invalidateSession === true;
       resetSession = resetSession || execution.control?.resetSession === true;

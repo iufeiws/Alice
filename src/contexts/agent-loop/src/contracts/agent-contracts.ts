@@ -190,6 +190,7 @@ export type ToolResult = {
   ok: boolean;
   output?: unknown;
   error?: string;
+  llmFollowupAttachments?: ToolResultLLMAttachment[];
   meta?: {
     yieldReturn?: boolean;
   };
@@ -201,6 +202,15 @@ export type ToolResult = {
   fixedPrefixTtlMs?: number;
   clearFixedPrefix?: boolean;
   messageCursorId?: number;
+};
+
+export type ToolResultLLMAttachment = {
+  kind: "image";
+  path?: string;
+  assetId?: string;
+  mime?: string;
+  toolNotice?: string;
+  followupText?: string;
 };
 
 export type ToolResultLLMMessage = {
@@ -219,10 +229,18 @@ export type ToolResultLLMMessage = {
   }>;
 };
 
+export type ToolExecutionContext = {
+  lastCompletedToolName?: string;
+  llmCapabilities?: {
+    supportsImage?: boolean;
+    supportsAudio?: boolean;
+  };
+};
+
 export interface ToolPlugin {
   id: string;
   listTools(): ToolDefinition[];
-  execute(call: ToolCall): Promise<ToolResult>;
+  execute(call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult>;
 }
 
 export type AgentContext = {
@@ -234,4 +252,3 @@ export type AgentContext = {
 export type AgentResponse = {
   outputs: AgentOutput[];
 };
-

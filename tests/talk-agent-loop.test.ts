@@ -486,6 +486,92 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });
 
+test("talk consecutive exposed selfie calls fail through the common tool plugin path", async () => {
+  let sendCalls = 0;
+  let activeSession: any;
+  const executedActions: string[] = [];
+  const observedLastTools: Array<string | undefined> = [];
+  const sentMessages: unknown[][] = [];
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getActiveTalkLLMSessionId: () => "session-selfie-tool",
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    dailyShellStore: {
+      render: () => "",
+      get: () => undefined
+    },
+    getAppearanceDescription: () => undefined,
+    memoryStore: { read: () => undefined },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "take selfies" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    visibleToolNames: () => ["selfie"],
+    toolPlugins: [{
+      id: "photo",
+      listTools: () => [{
+        name: "selfie",
+        description: "selfie",
+        inputSchema: { type: "object", properties: {} }
+      }],
+      async execute(call, context) {
+        executedActions.push(String(call.input.action));
+        observedLastTools.push(context?.lastCompletedToolName);
+        if (context?.lastCompletedToolName === "selfie") {
+          return { callId: call.id, ok: false, error: "selfie cannot be called consecutively" };
+        }
+        return { callId: call.id, ok: true, output: "sent" };
+      }
+    }],
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
+      sendCalls += 1;
+      if (sendCalls === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "call-selfie-1",
+              type: "function",
+              function: { name: "selfie", arguments: "{\"action\":\"first\"}" }
+            }, {
+              id: "call-selfie-2",
+              type: "function",
+              function: { name: "selfie", arguments: "{\"action\":\"second\"}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await runPreparedTalkAgentLoop(controller, "session-selfie-tool");
+
+  assert.equal(sendCalls, 2);
+  assert.deepEqual(executedActions, ["first", "second"]);
+  assert.deepEqual(observedLastTools, [undefined, "selfie"]);
+  assert.equal((sentMessages[1]?.at(-2) as { content?: string }).content, "sent");
+  assert.match(String((sentMessages[1]?.at(-1) as { content?: string }).content), /selfie cannot be called consecutively/);
+  assert.equal(activeSession.lastCompletedToolName, "selfie");
+});
+
 test("talk loop reuses active session prefix and replaces runtime transcript tail", async () => {
   let promptBuildCalls = 0;
   let prefixCount: number | undefined;

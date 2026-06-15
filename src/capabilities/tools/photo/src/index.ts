@@ -2,7 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore, InsertOutboundMessageInput } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
@@ -167,13 +167,15 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     listTools() {
       return [selfieTool];
     },
-    async execute(call) {
-      if (call.toolName === "selfie") return selfie(call);
+    async execute(call, executionContext) {
+      if (call.toolName === "selfie") return selfie(call, executionContext);
       return { callId: call.id, ok: false, error: `Unknown photo tool: ${call.toolName}` };
     }
   };
 
-  async function selfie(call: ToolCall): Promise<ToolResult> {
+  async function selfie(call: ToolCall, executionContext?: ToolExecutionContext): Promise<ToolResult> {
+    if (executionContext?.lastCompletedToolName === "selfie") return toolError(call, "selfie cannot be called consecutively");
+
     const photoConfig = runtimePhotoConfig();
     if (!photoConfig.enabled) return toolError(call, "photo selfie is disabled");
 
@@ -208,10 +210,10 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       codexWorkDir = path.join(fullOutputDir, `.codex_tmp_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}`);
       fs.mkdirSync(codexWorkDir, { recursive: true });
 
-      const fileName = `selfie_${formatFileDateTime(time.now().iso)}.${extensionForOutputFormat(imageApiOutputFormat)}`;
-      const tempFilePath = path.resolve(tempDir, fileName);
-      const finalFilePath = path.resolve(fullOutputDir, fileName);
-      const assetId = path.join(relativeDir, fileName);
+      let fileName = `selfie_${formatFileDateTime(time.now().iso)}.${extensionForOutputFormat(imageApiOutputFormat)}`;
+      let tempFilePath = path.resolve(tempDir, fileName);
+      let finalFilePath = path.resolve(fullOutputDir, fileName);
+      let assetId = path.join(relativeDir, fileName);
 
       await sendText(target, "-少女拍照中-", "system");
       const prompt = buildSelfiePrompt(action, context);
@@ -262,15 +264,37 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
       ].join(" "));
 
       validateGeneratedImage(tempFilePath, tempDir, photoConfig.selfieMaxBytes);
+      const normalizedImage = await normalizeGeneratedSelfieJpeg({
+        tempFilePath,
+        fileName,
+        tempDir,
+        maxBytes: photoConfig.selfieMaxBytes,
+        timeoutMs: imageApiSettings.timeoutMs
+      });
+      fileName = normalizedImage.fileName;
+      tempFilePath = normalizedImage.tempFilePath;
+      finalFilePath = path.resolve(fullOutputDir, fileName);
+      assetId = path.join(relativeDir, fileName);
       fs.renameSync(tempFilePath, finalFilePath);
       validateGeneratedImage(finalFilePath, fullOutputDir, photoConfig.selfieMaxBytes);
+      const finalImageMime = detectImageMime(fs.readFileSync(finalFilePath));
+      if (finalImageMime !== "image/jpeg") throw new Error("generated selfie final file is not JPEG");
 
       const sent = await sendImage(target, assetId);
       deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
       return {
         callId: call.id,
         ok: true,
-        output: "照片已发送"
+        output: "照片已发送",
+        llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage
+          ? [{
+            kind: "image",
+            path: finalFilePath,
+            assetId,
+            mime: finalImageMime,
+            followupText: "这是上一步工具返回的图像"
+          }]
+          : undefined
       };
     } catch (error) {
       const reason = [
@@ -772,6 +796,82 @@ function validateGeneratedImage(filePath: string, outputDir: string, maxBytes: n
   if (stat.size > maxBytes) throw new Error("generated selfie file is too large");
 }
 
+async function normalizeGeneratedSelfieJpeg(input: {
+  tempFilePath: string;
+  fileName: string;
+  tempDir: string;
+  maxBytes: number;
+  timeoutMs: number;
+}): Promise<{ tempFilePath: string; fileName: string }> {
+  const actualMime = detectImageMime(fs.readFileSync(input.tempFilePath));
+  if (!actualMime) return { tempFilePath: input.tempFilePath, fileName: input.fileName };
+
+  const jpegFileName = replaceImageExtension(input.fileName, "jpg");
+  if (actualMime === "image/jpeg") {
+    if (input.fileName === jpegFileName) return { tempFilePath: input.tempFilePath, fileName: input.fileName };
+    const jpegTempFilePath = path.resolve(input.tempDir, jpegFileName);
+    fs.renameSync(input.tempFilePath, jpegTempFilePath);
+    return { tempFilePath: jpegTempFilePath, fileName: jpegFileName };
+  }
+
+  const outputFileName = input.fileName === jpegFileName
+    ? `${path.basename(input.fileName, path.extname(input.fileName))}.converted.jpg`
+    : jpegFileName;
+  const outputFilePath = path.resolve(input.tempDir, outputFileName);
+  await convertImageToJpeg(input.tempFilePath, outputFilePath, input.timeoutMs);
+  validateGeneratedImage(outputFilePath, input.tempDir, input.maxBytes);
+  const convertedMime = detectImageMime(fs.readFileSync(outputFilePath));
+  if (convertedMime !== "image/jpeg") throw new Error("generated selfie JPEG conversion did not produce JPEG bytes");
+  fs.rmSync(input.tempFilePath, { force: true });
+  return { tempFilePath: outputFilePath, fileName: jpegFileName };
+}
+
+async function convertImageToJpeg(inputPath: string, outputPath: string, timeoutMs: number): Promise<void> {
+  const ffmpegPath = String(require("ffmpeg-static") || "ffmpeg");
+  await execFile(ffmpegPath, [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    inputPath,
+    "-frames:v",
+    "1",
+    "-q:v",
+    "2",
+    outputPath
+  ], timeoutMs);
+}
+
+function detectImageMime(bytes: Buffer): string | undefined {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (
+    bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a
+  ) return "image/png";
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) return "image/webp";
+  if (bytes.length >= 6) {
+    const header = bytes.subarray(0, 6).toString("ascii");
+    if (header === "GIF87a" || header === "GIF89a") return "image/gif";
+  }
+  return undefined;
+}
+
+function replaceImageExtension(fileName: string, extension: string): string {
+  return `${path.basename(fileName, path.extname(fileName))}.${extension}`;
+}
+
 function fileBlob(filePath: string): Blob {
   return new Blob([fs.readFileSync(filePath)], { type: contentType(filePath) });
 }
@@ -862,6 +962,12 @@ function booleanValue(value: unknown, fallback: boolean): boolean {
 
 function extensionForOutputFormat(value: string): string {
   return value === "jpeg" ? "jpg" : value;
+}
+
+function mimeForOutputFormat(value: string): string {
+  if (value === "png") return "image/png";
+  if (value === "webp") return "image/webp";
+  return "image/jpeg";
 }
 
 function resolveOutfitImage(context: SelfieContext): string {

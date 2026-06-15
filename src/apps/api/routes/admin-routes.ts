@@ -31,7 +31,7 @@ import { renderAdminHtmlV2 } from "./admin-html.js";
 import { handleVoiceCallRoute } from "./voice-call-routes.js";
 import { createWeChatILinkClient } from "../../../channels/wechat/src/client.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
-import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
@@ -57,6 +57,8 @@ type LLMApiPreset = {
   temperature: number;
   timeoutMs: number;
   stream: boolean;
+  supportsImage?: boolean;
+  supportsAudio?: boolean;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
 };
@@ -2139,14 +2141,14 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
         throw new Error("not used");
       },
       llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
-      llm: createOpenAICompatibleClient({
+      llm: createTextOnlyTtsLlmClient(createOpenAICompatibleClient({
         baseURL: preset.baseURL,
         apiKey: preset.apiKey,
         model: preset.model,
         temperature: preset.temperature,
         timeoutMs: preset.timeoutMs,
         extraParams: preset.extraParams
-      }),
+      })),
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
@@ -3745,6 +3747,8 @@ function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string,
   const temperature = numberFromUnknown(body.temperature, existing?.temperature ?? 0.2);
   const timeoutMs = numberFromUnknown(body.timeoutMs, existing?.timeoutMs ?? 60_000);
   const stream = body.stream === undefined ? existing?.stream ?? true : booleanFromUnknown(body.stream);
+  const supportsImage = body.supportsImage === undefined ? existing?.supportsImage ?? false : booleanFromUnknown(body.supportsImage);
+  const supportsAudio = body.supportsAudio === undefined ? existing?.supportsAudio ?? false : booleanFromUnknown(body.supportsAudio);
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
   const followupExtraParamsResult = parseJsonObject(optionalString(body.followupExtraParams) ?? "{}");
   if (baseURL && !isValidHttpUrl(baseURL)) return { error: "invalid_base_url" };
@@ -3753,7 +3757,7 @@ function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string,
   if (timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
   if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
   if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
-  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
+  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
 }
 
 function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
@@ -3784,6 +3788,8 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
+    supportsImage: value.supportsImage === true,
+    supportsAudio: value.supportsAudio === true,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
     followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
   };
@@ -3804,6 +3810,20 @@ function publicLLMApiPresets(presets: LLMApiPreset[]): LLMApiPresetView[] {
 function publicLLMApiPreset(preset: LLMApiPreset): LLMApiPresetView {
   const { apiKey, ...rest } = preset;
   return { ...rest, apiKeySet: Boolean(apiKey) };
+}
+
+function createTextOnlyTtsLlmClient(client: LLMClient): TtsLlmClient {
+  return {
+    async chat(input) {
+      const result = await client.chat(input);
+      return {
+        message: {
+          role: result.message.role,
+          content: typeof result.message.content === "string" ? result.message.content : ""
+        }
+      };
+    }
+  };
 }
 
 function readPromptApiProfile(context: AdminRoutesContext): PromptApiProfile {
@@ -3857,6 +3877,8 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
     temperature: config.temperature,
     timeoutMs: config.timeoutMs,
     stream: config.stream,
+    supportsImage: false,
+    supportsAudio: false,
     extraParams: config.extraParams,
     followupExtraParams: config.followupExtraParams
   };

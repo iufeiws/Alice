@@ -922,7 +922,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
     ],
     error: undefined
   }]);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("对YY说晚安")), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("对YY说晚安")), true);
   const sleepToolRequestIndex = requests[0].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "sleep_cocoon");
   assert.ok(sleepToolRequestIndex >= 0);
   assert.equal(requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"in\"}");
@@ -1032,8 +1032,8 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
   await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("早安")), true);
-  assert.equal(requests[0].messages.some((message) => message.content.includes("sleep_cocoon")), false);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("早安")), true);
+  assert.equal(requests[0].messages.some((message) => messageContentText(message.content).includes("sleep_cocoon")), false);
 });
 
 test("agent core appends force wake instruction from heartbeat event", async () => {
@@ -1078,8 +1078,8 @@ test("agent core appends force wake instruction from heartbeat event", async () 
   await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("强制唤醒")), true);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && message.content.includes("早安")), false);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("强制唤醒")), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("早安")), false);
 });
 
 test("agent core keeps fixed prefix static messages when token pressure rebuilds the session", async () => {
@@ -1353,7 +1353,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
-test("agent core executes consecutive exposed selfie tool calls", async () => {
+test("agent core executes exposed consecutive selfie tool calls through plugin failure", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
   const llm: LLMClient = {
@@ -1394,8 +1394,11 @@ test("agent core executes consecutive exposed selfie tool calls", async () => {
       listTools() {
         return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
       },
-      async execute(call) {
+      async execute(call, context) {
         executed.push(String(call.input.action));
+        if (context?.lastCompletedToolName === "selfie") {
+          return { callId: call.id, ok: false, error: "selfie cannot be called consecutively" };
+        }
         return { callId: call.id, ok: true, output: "sent" };
       }
     }]
@@ -1405,7 +1408,7 @@ test("agent core executes consecutive exposed selfie tool calls", async () => {
 
   assert.deepEqual(executed, ["first", "second"]);
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
-  assert.equal(requests[1].messages.at(-1)?.content, "sent");
+  assert.match(String(requests[1].messages.at(-1)?.content), /selfie cannot be called consecutively/);
 });
 
 test("agent core adds fallback reasoning content for tool requests when missing", async () => {
@@ -3456,4 +3459,9 @@ function memoryStore(initial?: string): AgentStateStore & { content?: string } {
       this.content = content;
     }
   };
+}
+
+function messageContentText(content: LLMChatInput["messages"][number]["content"]): string {
+  if (typeof content === "string") return content;
+  return content.map((part) => part.type === "text" ? part.text : "[image]").join("\n");
 }

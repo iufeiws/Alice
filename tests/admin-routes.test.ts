@@ -89,6 +89,8 @@ test("llm api preset save stores extra params as part of the preset", async () =
     temperature: 0.4,
     timeoutMs: 90_000,
     stream: true,
+    supportsImage: false,
+    supportsAudio: false,
     extraParams: { top_p: 0.7, stream_options: { include_usage: true } },
     followupExtraParams: { top_p: 0.2 }
   });

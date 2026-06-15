@@ -164,6 +164,8 @@ type CoreLLMRuntimeConfig = {
   followupExtraParams?: Record<string, unknown>;
   presetName?: string;
   stream?: boolean;
+  supportsImage?: boolean;
+  supportsAudio?: boolean;
 };
 
 export type AgentCoreDeps = {
@@ -582,7 +584,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             extraParams: deps.config.llm.extraParams,
             followupExtraParams: deps.config.llm.followupExtraParams,
             presetName: undefined,
-            stream: deps.config.llm.stream
+            stream: deps.config.llm.stream,
+            supportsImage: false,
+            supportsAudio: false
           };
           llmInput = {
             messages: activeLLMSession.messages,
@@ -593,6 +597,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             followupExtraParams: llmConfig.followupExtraParams,
             presetName: llmConfig.presetName,
             stream: llmConfig.stream,
+            supportsImage: llmConfig.supportsImage,
+            supportsAudio: llmConfig.supportsAudio,
             toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
           };
           preparedLoop = buildChatAgentLoop({

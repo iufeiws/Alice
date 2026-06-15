@@ -10,6 +10,7 @@ import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/
 import { createTokenUsageStore } from "../src/platform/storage/src/token-usage-store.js";
 import * as sqlite from "../src/platform/storage/src/sqlite-compat.js";
 import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../src/contexts/llm-session/src/adapters/jsonl-llm-session-log.js";
+import { buildToolFollowupLLMMessages } from "../src/contexts/agent-loop/src/application/tool-followup-messages.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -23,6 +24,58 @@ test("mutable LLM client delegates to the latest configured client", async () =>
   client.setClient(second);
   assert.equal((await client.chat({ messages: [] })).message.content, "second");
   assert.deepEqual(await client.listModels?.(), [{ id: "second" }]);
+});
+
+test("tool followup helper builds OpenAI-compatible image messages when preset supports images", () => {
+  const root = makeTempDir("tool-followup-image");
+  const filePath = path.join(root, "dress.jpg");
+  fs.writeFileSync(filePath, Buffer.from("fake-image"));
+  const pngPath = path.join(root, "actual-png.jpg");
+  const pngBytes = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x00
+  ]);
+  fs.writeFileSync(pngPath, pngBytes);
+
+  const result = buildToolFollowupLLMMessages({
+    callId: "call_1",
+    ok: true,
+    output: "ok",
+    llmFollowupAttachments: [{ kind: "image", path: filePath }]
+  }, { supportsImage: true });
+
+  assert.equal(result.messages.length, 1);
+  assert.equal(result.messages[0].role, "user");
+  assert.deepEqual(result.messages[0].content, [
+    {
+      type: "image_url",
+      image_url: { url: `data:image/jpeg;base64,${Buffer.from("fake-image").toString("base64")}` }
+    },
+    {
+      type: "text",
+      text: "这是上一步工具返回的图像"
+    }
+  ]);
+  assert.deepEqual(buildToolFollowupLLMMessages({
+    callId: "call_1",
+    ok: true,
+    output: "ok",
+    llmFollowupAttachments: [{ kind: "image", path: filePath }]
+  }, { supportsImage: false }).messages, []);
+
+  const pngResult = buildToolFollowupLLMMessages({
+    callId: "call_2",
+    ok: true,
+    output: "ok",
+    llmFollowupAttachments: [{ kind: "image", path: pngPath, mime: "image/jpeg" }]
+  }, { supportsImage: true });
+  const pngContent = pngResult.messages[0].content;
+  assert.equal(Array.isArray(pngContent), true);
+  assert.equal(Array.isArray(pngContent) ? pngContent[0]?.type : "", "image_url");
+  assert.equal(
+    Array.isArray(pngContent) && pngContent[0]?.type === "image_url" ? pngContent[0].image_url.url : "",
+    `data:image/png;base64,${pngBytes.toString("base64")}`
+  );
 });
 
 test("singleton lock rejects another running process in the same memory root", () => {

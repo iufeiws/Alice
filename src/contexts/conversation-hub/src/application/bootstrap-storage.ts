@@ -15,9 +15,8 @@ export function createApiStorageRuntime(input: {
   time: CurrentTimeProvider;
   apiLogRuntime: ApiLogRuntime;
 }) {
-  const store = createAliceStore("data/alice.sqlite", {
+  const store = createAliceStore(path.join(input.config.memoryFiles.root, "alice.sqlite"), {
     time: input.time,
-    messageDbPath: path.join(input.config.memoryFiles.root, "message", "messages.sqlite"),
     messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
   });
   const tokenUsageStore = createTokenUsageStore(path.join("logs", "token_usage", "token-usage.sqlite"), { time: input.time });

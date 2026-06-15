@@ -50,15 +50,14 @@ createAliceStore(dbPath): AliceStore
 
 Schema migration 会在可行时把旧消息事件日志回填到 `messages`。普通消息行会变为会话消息；旧的 read/recall/reaction 事件会作为状态更新应用到匹配的 message id。
 
-当前 API 进程会把 conversation-hub消息和追加式事件日志拆到两个 SQLite 文件；`data/alice.sqlite` 是旧的根路径兼容入口：
+当前 API 进程会把 conversation-hub消息和追加式事件日志拆到两个 SQLite 文件；Core 侧消息历史和长期记忆共用统一记忆库：
 
 ```text
-data/alice.sqlite
-memory-files/message/messages.sqlite
+memory-files/alice.sqlite
 logs/message/message-logs.sqlite
 ```
 
-`logs/message/message-logs.sqlite` 属于 `logs/` 下的系统/运行日志。清理聊天历史时只处理 `memory-files/message/messages.sqlite`，不要修改 `logs/`，除非明确是在清系统日志。
+`logs/message/message-logs.sqlite` 属于 `logs/` 下的系统/运行日志。清理聊天历史时只处理 `memory-files/alice.sqlite` 中的消息表，不要修改 `logs/`，除非明确是在清系统日志。
 
 ## File Log Store 说明
 

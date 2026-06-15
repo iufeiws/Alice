@@ -49,7 +49,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 
 - `.env` 保存本地凭据和运行时配置，不要提交密钥。
 - 管理后台改动的设置必须持久化到 `.env` 或其他已记录的持久存储；可行时，当前进程应立即应用这些设置。
-- `memory-files/message/messages.sqlite` 保存 Core 侧消息历史。
+- `memory-files/alice.sqlite` 保存长期记忆、日记和 Core 侧消息历史。
 - `logs/message/message-logs.sqlite` 保存追加式消息事件/调试日志。
 - `memory-files/llm-sessions/` 保存 LLM 会话 transcript delta 事件。
 - `logs/system/` 保存调试日志，保留期由每日调度器管理。

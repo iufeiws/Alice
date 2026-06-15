@@ -80,7 +80,7 @@ export function createTalkRuntimeRuntime(input: {
   });
 
   talkRuntime = createTalkRuntime({
-    store: createTalkStore(path.join("data", "talk.sqlite")),
+    store: createTalkStore(path.join("logs", "talk", "talk.sqlite")),
     time: input.time,
     createLLMSession(sessionInput) {
       return input.createLLMSession(sessionInput.occurredAt);

@@ -95,8 +95,8 @@ Admin UI
 .env
   运行时配置与密钥，不提交。
 
-data/alice.sqlite
-  旧的根目录 SQLite 路径，不提交。
+memory-files/alice.sqlite
+  统一记忆库；保存长期记忆、日记、睡眠/醒来边界、Core 侧消息历史与消息 FTS 索引，不提交。
 
 logs/system/YYYY-MM-DD.log.jsonl
   调试/系统日志，不提交，保留 7 天。
@@ -104,8 +104,8 @@ logs/system/YYYY-MM-DD.log.jsonl
 logs/message/message-logs.sqlite
   追加式消息事件/调试日志，不提交。
 
-memory-files/message/messages.sqlite
-  Core 侧会话历史与消息 FTS 索引，不提交。
+logs/talk/talk.sqlite
+  实时语音通话运行记录，不提交。
 
 memory-files/llm-sessions/*.sessions.jsonl
   活跃和已清理 LLM 会话的 delta 事件归档，不提交。

@@ -14,9 +14,8 @@ const currentTime = createMutableCurrentTimeProvider(config.core.timezone);
 const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const promptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
 const stateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));
-const store = createAliceStore("data/alice.sqlite", {
+const store = createAliceStore(path.join(config.memoryFiles.root, "alice.sqlite"), {
   time: currentTime,
-  messageDbPath: path.join(config.memoryFiles.root, "message", "messages.sqlite"),
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
 });
 const llm = config.memorySummary.enabled && config.memorySummary.apiKey

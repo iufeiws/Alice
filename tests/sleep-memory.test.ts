@@ -23,7 +23,7 @@ test("memory store bootstraps files and enforces line and byte limits", () => {
   const store = createMarkdownMemoryStore(root);
   store.ensure();
 
-  assert.equal(fs.existsSync(path.join(root, "long-term-memory", "long-term-memory.sqlite")), true);
+  assert.equal(fs.existsSync(path.join(root, "alice.sqlite")), true);
   assert.equal(fs.existsSync(path.join(root, "tmp", "memory-workspaces")), true);
 
   const limited = enforceMemoryLimits({
@@ -45,7 +45,7 @@ test("memory SQL store uses separate tables for memory, user memory, and diary",
   store.writeTarget("persistent", "memory\n");
   store.writeTarget("userPreferences", "pref\n");
   store.writeTarget("yesterdaySummary", "diary\n", { localDate: "2026-06-04", now: "2026-06-04T08:00:00.000Z" });
-  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+  const db = new sqlite.DatabaseSync(path.join(root, "alice.sqlite"), { readOnly: true });
 
   assert.equal(db.prepare("SELECT content FROM persistent_memory_entries ORDER BY id DESC LIMIT 1").get().content, "memory\n");
   assert.equal(db.prepare("SELECT content FROM user_preferences_entries ORDER BY id DESC LIMIT 1").get().content, "pref\n");
@@ -77,7 +77,7 @@ test("memory SQL store keeps sleep boundaries in separate tables", () => {
     now: "2026-06-04T07:00:00.000",
     nowUtc: "2026-06-03T23:00:00.000Z"
   });
-  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+  const db = new sqlite.DatabaseSync(path.join(root, "alice.sqlite"), { readOnly: true });
 
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM diary_entries").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sleep_boundaries").get().count, 1);
@@ -111,7 +111,7 @@ test("memory SQL store does not import current diary sqlite entries", () => {
 
   createMarkdownMemoryStore(root).ensure();
   const migratedStore = createMemoryDiaryStore(root);
-  const db = new sqlite.DatabaseSync(path.join(root, "long-term-memory", "long-term-memory.sqlite"), { readOnly: true });
+  const db = new sqlite.DatabaseSync(path.join(root, "alice.sqlite"), { readOnly: true });
 
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM diary_entries").get().count, 0);
   assert.deepEqual(migratedStore.listSleepBoundaries().map((entry) => entry.occurredAt), []);

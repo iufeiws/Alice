@@ -76,7 +76,7 @@ MEMORY_SUMMARY_TIMEOUT_MS=120000
 MEMORY_SUMMARY_EXTRA_PARAMS={"thinking":{"type":"enabled"},"reasoning_effort":"high"}
 ```
 
-也可以只设置 `DEEPSEEK_API_KEY`，或复用 `LLM_BASE_URL` / `LLM_API_KEY` 作为 API 授权与端点；Memorize 不复用 Core 的模型和温度，默认仍是 `deepseek-v4-pro` / `0.8`。长期记忆保存在 `memory-files/long-term-memory/`，该目录是 git 仓库；agent 日记保存在 `memory-files/diary/diary.sqlite`。一次性历史回填命令：
+也可以只设置 `DEEPSEEK_API_KEY`，或复用 `LLM_BASE_URL` / `LLM_API_KEY` 作为 API 授权与端点；Memorize 不复用 Core 的模型和温度，默认仍是 `deepseek-v4-pro` / `0.8`。长期记忆、agent 日记和 Core 侧消息历史保存在 `memory-files/alice.sqlite`。一次性历史回填命令：
 
 ```bash
 npm run build
@@ -114,10 +114,10 @@ memory-files/indexes/wechat-ilink-state.json
 
 ```text
 .env
-data/alice.sqlite
+memory-files/alice.sqlite
 logs/system/*.log.jsonl
 logs/message/message-logs.sqlite
-memory-files/message/messages.sqlite
+logs/talk/talk.sqlite
 memory-files/llm-sessions/core/YYYY-MM-DD/*.jsonl
 memory-files/llm-sessions/memorize/YYYY-MM-DD/*.jsonl
 memory-files/indexes/feishu-paired-contacts.json
@@ -129,6 +129,6 @@ src/core/prompt/shell-prompt-template.txt
 memory-files/shell/
 ```
 
-所有 `logs/` 下的文件都按系统/运行日志处理；清理聊天历史时只清 `memory-files/message/messages.sqlite`，不要清 `logs/message/message-logs.sqlite`，除非明确是在清系统日志。
+所有 `logs/` 下的文件都按系统/运行日志处理；清理聊天历史时只清 `memory-files/alice.sqlite` 中的消息表，不要清 `logs/message/message-logs.sqlite` 或 `logs/talk/talk.sqlite`，除非明确是在清系统日志。
 
 `src/core/prompt/` 中的 prompt 文件会随 Git 版本化；`data/`、`logs/`、部分运行时 `memory-files/` 目录、`.env`、`dist/` 和 `node_modules/` 已被 git 忽略。

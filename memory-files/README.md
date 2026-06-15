@@ -1,20 +1,20 @@
 # Memory Files 说明
 
-`memory-files` 预留给人类可读的文件化上下文与索引。
+`memory-files` 预留给统一记忆库、人类可读的文件化上下文与索引。
 
 ## 当前用途
 
-Memorize 使用长期记忆 git 仓库和日记 SQLite：
+Memorize 使用统一 SQLite 记忆库；长期记忆 markdown 文件仍作为人类可读的工作文件：
 
 ```text
+memory-files/alice.sqlite
 memory-files/long-term-memory/persistent-memory.md
 memory-files/long-term-memory/user-preferences.md
-memory-files/diary/diary.sqlite
 ```
 
 - `long-term-memory/persistent-memory.md`：长期事实、关系连续性和稳定背景，最多 100 行且不超过 10 KiB（10240 字节）。
 - `long-term-memory/user-preferences.md`：用户稳定偏好、互动风格和约束，最多 80 行且不超过 8 KiB（8192 字节）。
-- `diary/diary.sqlite`：agent 每日日记；最新日记会作为 `{{memory/yesterdaySummary/content}}` 注入 prompt，单条最多 20 行且不超过 2 KiB（2048 字节）。
+- `alice.sqlite`：保存长期记忆、用户偏好、agent 每日日记、睡眠/醒来边界和 Core 侧消息历史；最新日记会作为 `{{memory/yesterdaySummary/content}}` 注入 prompt，单条最多 20 行且不超过 2 KiB（2048 字节）。
 
 `long-term-memory/` 是独立 git 仓库。每次 Memorize 写入持久记忆或用户偏好后，会直接提交一次 git 历史；这些修订历史不进入 SQLite。
 
@@ -61,10 +61,10 @@ memory-files/indexes/wechat-ilink-state.json
 
 这条记录用于复用扫码登录后的 `bot_token`、账号专属 `baseurl` 和发送消息需要的上下文 token。
 
-Core 侧会话消息保存在 SQLite：
+Core 侧会话消息保存在统一 SQLite 记忆库：
 
 ```text
-memory-files/message/messages.sqlite
+memory-files/alice.sqlite
 ```
 
 Prompt profile 保存到：

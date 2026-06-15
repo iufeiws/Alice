@@ -2010,20 +2010,6 @@ function migrateLegacyLongTermMarkdown(root: string, db: any): void {
     const tableName = longTermTableName(target);
     const existing = db.prepare(`SELECT id FROM ${tableName} LIMIT 1`).get();
     if (existing) continue;
-    const legacyEntry = readLegacyLongTermSqlEntry(db, target);
-    if (legacyEntry) {
-      db.prepare(`
-        INSERT INTO ${tableName}(content, created_at, window_start_at, window_end_at, run_id)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        enforceTargetLimit(target, legacyEntry.content),
-        legacyEntry.createdAt,
-        legacyEntry.windowStartAt,
-        legacyEntry.windowEndAt,
-        legacyEntry.runId
-      );
-      continue;
-    }
     const legacyPath = path.join(root, "long-term-memory", targetFiles[target]);
     if (!fs.existsSync(legacyPath)) continue;
     const content = readFile(legacyPath);
@@ -2036,34 +2022,12 @@ function migrateLegacyLongTermMarkdown(root: string, db: any): void {
 }
 
 export function memoryDatabasePath(root: string): string {
-  return path.join(root, "long-term-memory", "long-term-memory.sqlite");
+  return path.join(root, "alice.sqlite");
 }
 
 export function createMemoryDiaryStore(root: string): DiaryStore {
   createMarkdownMemoryStore(root).ensure();
   return createDiaryStore(memoryDatabasePath(root));
-}
-
-function readLegacyLongTermSqlEntry(db: any, target: "persistent" | "userPreferences"): { content: string; createdAt: string; windowStartAt?: string; windowEndAt?: string; runId?: string } | undefined {
-  try {
-    const row = db.prepare(`
-      SELECT content, created_at AS createdAt, window_start_at AS windowStartAt, window_end_at AS windowEndAt, run_id AS runId
-      FROM long_term_memory_entries
-      WHERE target = ?
-      ORDER BY id DESC
-      LIMIT 1
-    `).get(target) as { content?: string; createdAt?: string; windowStartAt?: string; windowEndAt?: string; runId?: string } | undefined;
-    if (!row?.content) return undefined;
-    return {
-      content: row.content,
-      createdAt: row.createdAt ?? new Date().toISOString(),
-      windowStartAt: row.windowStartAt || undefined,
-      windowEndAt: row.windowEndAt || undefined,
-      runId: row.runId || "legacy-long-term-table-import"
-    };
-  } catch {
-    return undefined;
-  }
 }
 
 function sanitizeRunId(value: string): string {

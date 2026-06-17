@@ -449,12 +449,22 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(configResponse.statusCode, 200);
   assert.equal(configBody.configValue.enabled, false);
   assert.deepEqual(configBody.configValue.initialLocation, { lat: 41.0086, lng: 28.9802 });
+  assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "maxPanosPerIdle"));
+  assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "selectionTemperature"));
+  assert.equal(configBody.configSchema.fields.some((field: { key: string }) => field.key === "headingJitterDegrees"), false);
 
   const patchResponse = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/world_wanderer/config", {
     enabled: true,
     speedMetersPerSecond: 1.2,
-    headingJitterDegrees: 25,
+    recentHistoryLimit: 50,
+    maxPanosPerIdle: 6,
+    noveltyWeight: 7,
+    forwardWeight: 3,
+    roadContinuityWeight: 2,
+    uturnPenalty: 5,
+    loopPenalty: 11,
+    selectionTemperature: 0.8,
     initialLocation: JSON.stringify({ lat: 41.01, lng: 28.99 }),
     initialHeading: 120
   }), patchResponse);
@@ -463,7 +473,85 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
   assert.equal(saved.enabled, true);
   assert.equal(saved.speedMetersPerSecond, 1.2);
+  assert.equal(saved.recentHistoryLimit, 50);
+  assert.equal(saved.maxPanosPerIdle, 6);
+  assert.equal(saved.noveltyWeight, 7);
+  assert.equal(saved.forwardWeight, 3);
+  assert.equal(saved.roadContinuityWeight, 2);
+  assert.equal(saved.uturnPenalty, 5);
+  assert.equal(saved.loopPenalty, 11);
+  assert.equal(saved.selectionTemperature, 0.8);
   assert.deepEqual(saved.initialLocation, { lat: 41.01, lng: 28.99 });
+  assert.equal("headingJitterDegrees" in saved, false);
+});
+
+test("admin plugin config patch stores Google Street View api key", async () => {
+  const root = makeTempDir("admin-google-streetview-plugin-config");
+  const configPath = path.join(root, "config", "plugin", "google-streetview", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    apiKey: "",
+    imageSize: "640x640",
+    heading: 0,
+    pitch: 0,
+    fov: 90,
+    initialRadiusMeters: 50,
+    radiusExpansionFactor: 2,
+    maxRadiusMeters: 1000,
+    randomAttempts: 8,
+    coordinatePrecision: 5,
+    outputDir: "assets/plugin/google-streetview",
+    regions: []
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { googleStreetView: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/google_streetview/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+  const radiusField = configBody.configSchema.fields.find((field: { key: string }) => field.key === "radiusExpansionFactor");
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(radiusField.step, 0.01);
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/google_streetview/config", {
+    enabled: true,
+    apiKey: "google-secret",
+    imageSize: "640x640",
+    heading: 0,
+    pitch: 0,
+    fov: 90,
+    initialRadiusMeters: 50,
+    radiusExpansionFactor: 2,
+    maxRadiusMeters: 1000,
+    randomAttempts: 8,
+    coordinatePrecision: 5,
+    outputDir: "assets/plugin/google-streetview",
+    regions: "[]"
+  }), response);
+
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(body.ok, true);
+  assert.equal(body.configValue.apiKeySet, true);
+  assert.equal(body.configValue.apiKey, undefined);
+  assert.equal(saved.apiKey, "google-secret");
+
+  const preserveResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/google_streetview/config", {
+    apiKey: ""
+  }), preserveResponse);
+
+  assert.equal(preserveResponse.statusCode, 200);
+  const preserved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(preserved.apiKey, "google-secret");
 });
 
 test("admin plugin config patch writes photo selfie mode without storing api key", async () => {

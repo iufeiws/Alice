@@ -84,6 +84,110 @@ test("google streetview metadata lookup does not download image", async () => {
   assert.equal(requests[0]!.includes("/metadata"), true);
 });
 
+test("google streetview pano graph creates and reuses map tiles session", async () => {
+  const root = tempOutputRoot();
+  let nowMs = Date.parse("2026-06-17T00:00:00.000Z");
+  let sessionCalls = 0;
+  const metadataRequests: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    now: () => new Date(nowMs),
+    fetch: async (url, init) => {
+      const text = String(url);
+      if (text.includes("/createSession")) {
+        sessionCalls += 1;
+        assert.equal(init?.method, "POST");
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          mapType: "streetview",
+          language: "en-US",
+          region: "US"
+        });
+        return jsonResponse({
+          session: `session-${sessionCalls}`,
+          expiry: String((nowMs + 120_000) / 1000)
+        });
+      }
+      metadataRequests.push(text);
+      return jsonResponse({
+        panoId: text.includes("panoId=pano-2") ? "pano-2" : "pano-1",
+        lat: 35.1,
+        lng: 139.1,
+        heading: 94.5,
+        links: [{ panoId: "pano-2", heading: 90, text: "Main St" }]
+      });
+    }
+  });
+
+  const byCoordinates = await plugin.getPanoGraphByCoordinates({ lat: 35, lng: 139 });
+  nowMs += 30_000;
+  const byPanoId = await plugin.getPanoGraphByPanoId({ panoId: "pano-2" });
+
+  assert.equal(sessionCalls, 1);
+  assert.equal(byCoordinates.panoId, "pano-1");
+  assert.equal(byCoordinates.location.lat, 35.1);
+  assert.equal(byCoordinates.heading, 94.5);
+  assert.deepEqual(byCoordinates.links, [{ panoId: "pano-2", heading: 90, text: "Main St" }]);
+  assert.equal(byPanoId.panoId, "pano-2");
+  assert.equal(new URL(metadataRequests[0]!).searchParams.get("session"), "session-1");
+  assert.equal(new URL(metadataRequests[0]!).searchParams.get("lat"), "35");
+  assert.equal(new URL(metadataRequests[0]!).searchParams.get("lng"), "139");
+  assert.equal(new URL(metadataRequests[0]!).searchParams.get("radius"), "50");
+  assert.equal(new URL(metadataRequests[1]!).searchParams.get("panoId"), "pano-2");
+});
+
+test("google streetview pano graph refreshes expired map tiles session", async () => {
+  const root = tempOutputRoot();
+  let nowMs = Date.parse("2026-06-17T00:00:00.000Z");
+  let sessionCalls = 0;
+  const metadataSessions: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    now: () => new Date(nowMs),
+    fetch: async (url) => {
+      const text = String(url);
+      if (text.includes("/createSession")) {
+        sessionCalls += 1;
+        return jsonResponse({
+          session: `session-${sessionCalls}`,
+          expiry: String((nowMs + 120_000) / 1000)
+        });
+      }
+      metadataSessions.push(new URL(text).searchParams.get("session") ?? "");
+      return jsonResponse({ panoId: `pano-${metadataSessions.length}`, lat: 35, lng: 139, heading: 0, links: [] });
+    }
+  });
+
+  await plugin.getPanoGraphByCoordinates({ lat: 35, lng: 139 });
+  nowMs += 30_000;
+  await plugin.getPanoGraphByPanoId({ panoId: "pano-1" });
+  nowMs += 91_000;
+  await plugin.getPanoGraphByPanoId({ panoId: "pano-2" });
+
+  assert.equal(sessionCalls, 2);
+  assert.deepEqual(metadataSessions, ["session-1", "session-1", "session-2"]);
+});
+
+test("google streetview pano graph surfaces map tiles API errors", async () => {
+  const root = tempOutputRoot();
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    fetch: async (url) => {
+      const text = String(url);
+      if (text.includes("/createSession")) return jsonResponse({ session: "session-1", expiry: "1780000000" });
+      return new Response(JSON.stringify({ error: { message: "bad session" } }), {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "content-type": "application/json" }
+      });
+    }
+  });
+
+  await assert.rejects(
+    () => plugin.getPanoGraphByCoordinates({ lat: 35, lng: 139 }),
+    /map tiles metadata request failed: HTTP 400 Bad Request/
+  );
+});
+
 test("reuseStoredForLocation returns a stored result without calling Google", async () => {
   const root = tempOutputRoot();
   const bucket = bucketForLocation({ lat: 35, lng: 139 }, 5);

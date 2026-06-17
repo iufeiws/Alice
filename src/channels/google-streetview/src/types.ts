@@ -58,6 +58,16 @@ export type GoogleStreetViewMetadataByCoordinatesInput = {
   lng: number;
 };
 
+export type GoogleStreetViewPanoGraphByCoordinatesInput = {
+  lat: number;
+  lng: number;
+  radiusMeters?: number;
+};
+
+export type GoogleStreetViewPanoGraphByPanoIdInput = {
+  panoId: string;
+};
+
 export type GoogleStreetViewLocation = {
   lat: number;
   lng: number;
@@ -87,6 +97,8 @@ export type GoogleStreetViewPlugin = {
   id: "google_streetview";
   config: GoogleStreetViewPluginConfig;
   getMetadataByCoordinates(input: GoogleStreetViewMetadataByCoordinatesInput): Promise<GoogleStreetViewMetadataResult>;
+  getPanoGraphByCoordinates(input: GoogleStreetViewPanoGraphByCoordinatesInput): Promise<GoogleStreetViewPanoGraphResult>;
+  getPanoGraphByPanoId(input: GoogleStreetViewPanoGraphByPanoIdInput): Promise<GoogleStreetViewPanoGraphResult>;
   getStreetViewByCoordinates(input: GoogleStreetViewByCoordinatesInput): Promise<GoogleStreetViewResult>;
   getRandomStreetView(input?: GoogleStreetViewRandomInput): Promise<GoogleStreetViewResult>;
 };
@@ -107,6 +119,34 @@ export type GoogleStreetViewMetadataResponse = {
     lat?: number;
     lng?: number;
   };
+  [key: string]: unknown;
+};
+
+export type GoogleStreetViewPanoGraphLink = {
+  panoId: string;
+  heading: number;
+  text?: string;
+};
+
+export type GoogleStreetViewPanoGraphResult = {
+  panoId: string;
+  location: GoogleStreetViewLocation;
+  heading: number;
+  links: GoogleStreetViewPanoGraphLink[];
+  metadata: GoogleStreetViewPanoGraphMetadataResponse;
+};
+
+export type GoogleStreetViewPanoGraphMetadataResponse = {
+  panoId?: string;
+  lat?: number;
+  lng?: number;
+  heading?: number;
+  links?: Array<{
+    panoId?: string;
+    heading?: number;
+    text?: string;
+    [key: string]: unknown;
+  }>;
   [key: string]: unknown;
 };
 

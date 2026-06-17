@@ -16,13 +16,21 @@ import {
   normalizeLocation,
   randomLocationInRegion
 } from "./geo.js";
-import { findAvailableMetadata } from "./client.js";
+import {
+  createStreetViewMapTilesSession,
+  findAvailableMetadata,
+  getPanoGraphByCoordinates,
+  getPanoGraphByPanoId,
+  type GoogleStreetViewMapTilesSession
+} from "./client.js";
 import { errorMessage } from "./internal.js";
 import { fetchAndStoreStreetView, pickStoredResult } from "./storage.js";
 
 export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = {}): GoogleStreetViewPlugin {
   const fetchImpl = deps.fetch ?? fetch;
   const random = deps.random ?? Math.random;
+  const now = deps.now ?? (() => new Date());
+  let mapTilesSession: GoogleStreetViewMapTilesSession | undefined;
 
   return {
     id: "google_streetview",
@@ -45,6 +53,32 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
         panoId: typeof metadata.pano_id === "string" ? metadata.pano_id : undefined,
         metadata
       };
+    },
+    async getPanoGraphByCoordinates(input) {
+      const config = runtimeConfig();
+      assertEnabled(config);
+      const requestedLocation = normalizeLocation(input);
+      const session = await streetViewMapTilesSession(config);
+      return getPanoGraphByCoordinates({
+        config,
+        sessionToken: session.token,
+        requestedLocation,
+        radiusMeters: input.radiusMeters,
+        fetchImpl
+      });
+    },
+    async getPanoGraphByPanoId(input) {
+      const config = runtimeConfig();
+      assertEnabled(config);
+      const panoId = typeof input.panoId === "string" && input.panoId.trim() ? input.panoId.trim() : undefined;
+      if (!panoId) throw new Error("panoId is required");
+      const session = await streetViewMapTilesSession(config);
+      return getPanoGraphByPanoId({
+        config,
+        sessionToken: session.token,
+        panoId,
+        fetchImpl
+      });
     },
     async getStreetViewByCoordinates(input) {
       const config = runtimeConfig();
@@ -111,6 +145,13 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
     return deps.configPath
       ? readGoogleStreetViewPluginConfig(deps.configPath, defaults, deps.env)
       : defaults;
+  }
+
+  async function streetViewMapTilesSession(config: GoogleStreetViewPluginConfig): Promise<GoogleStreetViewMapTilesSession> {
+    const refreshAt = (mapTilesSession?.expiryMs ?? 0) - 60_000;
+    if (mapTilesSession && mapTilesSession.apiKey === config.apiKey && now().getTime() < refreshAt) return mapTilesSession;
+    mapTilesSession = await createStreetViewMapTilesSession({ config, fetchImpl });
+    return mapTilesSession;
   }
 }
 

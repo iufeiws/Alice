@@ -1751,7 +1751,7 @@ function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the Google Street View channel plugin." },
         { key: "apiKeySet", label: "API Key Set", type: "readonly", group: "general" },
-        { key: "apiKey", label: "API Key", type: "password", group: "general", description: "Leave blank to keep the current key. GOOGLE_STREETVIEW_API_KEY is used as a default." },
+        { key: "apiKey", label: "API Key", type: "password", group: "general", description: "Leave blank to keep the current key. The key must allow Street View Static API and Map Tiles API." },
         { key: "imageSize", label: "Image Size", type: "text", group: "request", description: "Google Static Street View size, for example 640x640." },
         { key: "heading", label: "Heading", type: "number", group: "request", min: 0, max: 360, step: 1 },
         { key: "pitch", label: "Pitch", type: "number", group: "request", min: -90, max: 90, step: 1 },
@@ -1767,13 +1767,15 @@ function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {
     },
     routePreview: [
       "google_streetview.getStreetViewByCoordinates / getRandomStreetView",
+      "google_streetview.getPanoGraphByCoordinates / getPanoGraphByPanoId",
       "metadata preflight and radius expansion",
+      "Map Tiles Street View metadata links",
       "static street view image download",
       "plugin-owned asset storage"
     ],
     runtimeAccess: [
       "read plugin config",
-      "call Google Street View Static API metadata and image endpoints",
+      "call Google Street View Static API and Map Tiles API metadata endpoints",
       "write images and metadata under assets/plugin/google-streetview",
       "reuse stored sidecar metadata when requested"
     ]
@@ -1789,7 +1791,7 @@ function googleStreetViewPluginSummary(context: AdminRoutesContext, config = rea
     kind: "channel",
     status: validationError || missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
     health: validationError || missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
-    description: "Fetch Google Static Street View images into plugin-owned assets for future check-in selfie flows.",
+    description: "Fetch Google Static Street View images and Map Tiles pano graph metadata into plugin-owned flows.",
     configurable: true,
     switchable: true,
     configSource: googleStreetViewConfigPath(context),
@@ -1896,25 +1898,33 @@ function worldWandererPluginEntry(): AdminPluginRegistryEntry {
     configSchema: {
       groups: [
         { key: "general", label: "General" },
-        { key: "movement", label: "Movement" },
+        { key: "movement", label: "Graph Movement" },
+        { key: "policy", label: "Policy" },
         { key: "initial", label: "Initial Position" }
       ],
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Move world-wanderer state on idle timer transitions." },
         { key: "speedMetersPerSecond", label: "Speed Meters Per Second", type: "number", group: "movement", min: 0, max: 10, step: 0.1 },
-        { key: "headingJitterDegrees", label: "Heading Jitter Degrees", type: "number", group: "movement", min: 0, max: 180, step: 1 },
+        { key: "recentHistoryLimit", label: "Recent History Limit", type: "number", group: "movement", min: 1, max: 1000, step: 1 },
+        { key: "maxPanosPerIdle", label: "Max Panos Per Idle", type: "number", group: "movement", min: 1, max: 100, step: 1 },
+        { key: "noveltyWeight", label: "Novelty Weight", type: "number", group: "policy", min: 0, max: 100, step: 0.1 },
+        { key: "forwardWeight", label: "Forward Weight", type: "number", group: "policy", min: 0, max: 100, step: 0.1 },
+        { key: "roadContinuityWeight", label: "Road Continuity Weight", type: "number", group: "policy", min: 0, max: 100, step: 0.1 },
+        { key: "uturnPenalty", label: "U-turn Penalty", type: "number", group: "policy", min: 0, max: 100, step: 0.1 },
+        { key: "loopPenalty", label: "Loop Penalty", type: "number", group: "policy", min: 0, max: 100, step: 0.1 },
+        { key: "selectionTemperature", label: "Selection Temperature", type: "number", group: "policy", min: 0.01, max: 100, step: 0.01 },
         { key: "initialLocation", label: "Initial Location JSON", type: "textarea", group: "initial", description: "Object with lat and lng. Defaults near Hagia Sophia." },
         { key: "initialHeading", label: "Initial Heading", type: "number", group: "initial", min: 0, max: 359, step: 1 }
       ]
     },
     routePreview: [
-      "idle timer transition movement",
-      "google_streetview.getMetadataByCoordinates"
+      "idle timer pano graph movement",
+      "google_streetview.getPanoGraphByCoordinates / getPanoGraphByPanoId"
     ],
     runtimeAccess: [
       "read plugin config",
       "write world wanderer state under memory state",
-      "call Google Street View metadata through google_streetview"
+      "call Google Street View pano graph metadata through google_streetview"
     ]
   };
 }
@@ -1927,7 +1937,7 @@ function worldWandererPluginSummary(context: AdminRoutesContext, config = readWo
     kind: "context",
     status: validationError ? "missing_config" : config.enabled ? "enabled" : "disabled",
     health: validationError ? "degraded" : config.enabled ? "healthy" : "unknown",
-    description: "Persistently moves a coordinate during idle timer transitions and refreshes Google Street View metadata.",
+    description: "Persistently moves across Google Street View pano graph links during idle timer transitions.",
     configurable: true,
     switchable: true,
     configSource: worldWandererConfigPath(context),
@@ -1947,9 +1957,16 @@ function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<st
     ...current,
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     speedMetersPerSecond: patch.speedMetersPerSecond === undefined ? current.speedMetersPerSecond : numberFromUnknown(patch.speedMetersPerSecond, current.speedMetersPerSecond),
-    headingJitterDegrees: patch.headingJitterDegrees === undefined ? current.headingJitterDegrees : numberFromUnknown(patch.headingJitterDegrees, current.headingJitterDegrees),
     initialLocation,
-    initialHeading: patch.initialHeading === undefined ? current.initialHeading : numberFromUnknown(patch.initialHeading, current.initialHeading)
+    initialHeading: patch.initialHeading === undefined ? current.initialHeading : numberFromUnknown(patch.initialHeading, current.initialHeading),
+    recentHistoryLimit: patch.recentHistoryLimit === undefined ? current.recentHistoryLimit : numberFromUnknown(patch.recentHistoryLimit, current.recentHistoryLimit),
+    maxPanosPerIdle: patch.maxPanosPerIdle === undefined ? current.maxPanosPerIdle : numberFromUnknown(patch.maxPanosPerIdle, current.maxPanosPerIdle),
+    noveltyWeight: patch.noveltyWeight === undefined ? current.noveltyWeight : numberFromUnknown(patch.noveltyWeight, current.noveltyWeight),
+    forwardWeight: patch.forwardWeight === undefined ? current.forwardWeight : numberFromUnknown(patch.forwardWeight, current.forwardWeight),
+    roadContinuityWeight: patch.roadContinuityWeight === undefined ? current.roadContinuityWeight : numberFromUnknown(patch.roadContinuityWeight, current.roadContinuityWeight),
+    uturnPenalty: patch.uturnPenalty === undefined ? current.uturnPenalty : numberFromUnknown(patch.uturnPenalty, current.uturnPenalty),
+    loopPenalty: patch.loopPenalty === undefined ? current.loopPenalty : numberFromUnknown(patch.loopPenalty, current.loopPenalty),
+    selectionTemperature: patch.selectionTemperature === undefined ? current.selectionTemperature : numberFromUnknown(patch.selectionTemperature, current.selectionTemperature)
   };
 
   const validationError = validateWorldWandererConfig(next);

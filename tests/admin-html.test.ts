@@ -94,6 +94,16 @@ test("plugin config fields can be split by schema-driven group selector", () => 
   assert.match(html, /pluginConfigGroup"\)\.addEventListener\("change", applyPluginConfigGroupFilter/);
 });
 
+test("plugin config save bypasses native hidden-field validation and reports failures", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /<form id="pluginConfigForm" class="plugin-config-grid"[^>]*novalidate>/);
+  assert.match(html, /\$\("plugin-status"\)\.textContent = "Saving plugin config\.\.\."/);
+  assert.match(html, /catch \(error\) \{/);
+  assert.match(html, /\$\("plugin-status"\)\.textContent = "Save failed: " \+ message;/);
+  assert.match(html, /await openPluginConfig\(pluginId\);\s+\$\("plugin-status"\)\.textContent = pluginId \+ " config saved\."/);
+});
+
 test("chat prompt editor keeps variables in preview side pane", () => {
   const html = renderAdminHtmlV2();
 

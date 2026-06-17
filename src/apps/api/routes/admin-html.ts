@@ -1338,7 +1338,7 @@ export function renderAdminHtmlV2(): string {
         const groups = (payload.configSchema && payload.configSchema.groups) || [];
         $("pluginConfigBody").innerHTML = \`
           \${renderPluginConfigGroupSelector(groups)}
-          <form id="pluginConfigForm" class="plugin-config-grid" data-plugin-id="\${escapeAttr(payload.plugin.id)}">
+          <form id="pluginConfigForm" class="plugin-config-grid" data-plugin-id="\${escapeAttr(payload.plugin.id)}" novalidate>
             <div>\${fields.filter((_, index) => index % 2 === 0).map((field) => renderPluginFieldContainer(field, config, payload.apiPresets || [])).join("")}</div>
             <div>\${fields.filter((_, index) => index % 2 === 1).map((field) => renderPluginFieldContainer(field, config, payload.apiPresets || [])).join("")}
               <div class="prompt-actions">
@@ -1640,14 +1640,24 @@ export function renderAdminHtmlV2(): string {
           return;
         }
         const pluginId = form.dataset.pluginId;
-        const body = pluginConfigBodyFrom(form);
-        const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body)
-        }).then((res) => res.json());
-        $("plugin-status").textContent = result.ok ? pluginId + " config saved." : "Save failed: " + (result.error || "unknown error");
-        if (result.ok) await openPluginConfig(pluginId);
+        $("plugin-status").textContent = "Saving plugin config...";
+        try {
+          const body = pluginConfigBodyFrom(form);
+          const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body)
+          }).then((res) => res.json());
+          if (result.ok) {
+            await openPluginConfig(pluginId);
+            $("plugin-status").textContent = pluginId + " config saved.";
+            return;
+          }
+          $("plugin-status").textContent = "Save failed: " + (result.error || "unknown error");
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          $("plugin-status").textContent = "Save failed: " + message;
+        }
       }
 
       async function savePluginConfigSection(event) {

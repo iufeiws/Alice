@@ -103,6 +103,7 @@ export type TalkRuntimeDeps = {
 };
 
 export const defaultTalkOutputReadyChars = 20;
+const noSpeechUserMessage = " (没有说话)";
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
@@ -577,6 +578,9 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         }
         messages.push({ role: segment.role, content: segment.contentText });
       }
+      if (shouldAppendNoSpeechUserMessage(sessionId, latestInterrupt, messages)) {
+        messages.push({ role: "user", content: noSpeechUserMessage });
+      }
       return {
         replaceFrom: loopPrefixMessageCounts.get(sessionId) ?? 0,
         messages
@@ -593,6 +597,13 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
 
   function isAgentLoopOutputReady(sessionId: string): boolean {
     return deps.store.isSessionOutputIdle(sessionId) && !foregroundPlaybackPendingSessions.has(sessionId);
+  }
+
+  function shouldAppendNoSpeechUserMessage(sessionId: string, latestInterrupt: TalkOutputInterrupt | undefined, messages: LLMMessage[]): boolean {
+    if (latestInterrupt) return false;
+    if (agentLoopInterruptedSessions.has(sessionId)) return false;
+    const lastMessage = messages[messages.length - 1];
+    return lastMessage?.role === "assistant";
   }
 }
 

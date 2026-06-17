@@ -316,6 +316,61 @@ test("talk runtime builds next loop messages with default break marker, not lite
   assert.doesNotMatch(messages.map((message) => message.content).join("\n"), /\[断点\]/);
 });
 
+test("talk runtime appends temporary no-speech user message only after assistant output", () => {
+  const runtime = createTestRuntime("no-speech-placeholder");
+
+  runtime.openSession(sessionInput("session-no-speech"));
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-no-speech").messages, []);
+
+  runtime.appendAssistantDelta({
+    sessionId: "session-no-speech",
+    outputId: "output-no-speech",
+    delta: "我说完了。"
+  });
+  runtime.finishAssistantOutput({ sessionId: "session-no-speech", outputId: "output-no-speech" });
+
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-no-speech").messages, [
+    { role: "assistant", content: "我说完了。" },
+    { role: "user", content: " (没有说话)" }
+  ]);
+  assert.equal(runtime.store.listSegments("session-no-speech").some((segment) => segment.contentText === " (没有说话)"), false);
+
+  runtime.ingestInput({
+    kind: "text.final",
+    sessionId: "session-no-speech",
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-1", userId: "browser-1" },
+    sequence: 2,
+    occurredAt: "2026-06-07T00:00:02.000",
+    occurredAtUtc: "2026-06-06T15:00:02.000Z",
+    payload: { kind: "text", text: "真实输入" }
+  });
+
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-no-speech").messages, [
+    { role: "assistant", content: "我说完了。" },
+    { role: "user", content: "真实输入" }
+  ]);
+});
+
+test("talk runtime suppresses no-speech user message while waiting for interrupt input", () => {
+  const runtime = createTestRuntime("no-speech-interrupt-wait");
+
+  runtime.openSession(sessionInput("session-no-speech-interrupt-wait"));
+  runtime.appendAssistantDelta({
+    sessionId: "session-no-speech-interrupt-wait",
+    outputId: "output-no-speech-interrupt-wait",
+    delta: "正在等你。"
+  });
+  runtime.finishAssistantOutput({
+    sessionId: "session-no-speech-interrupt-wait",
+    outputId: "output-no-speech-interrupt-wait"
+  });
+  runtime.interruptAgentLoop("session-no-speech-interrupt-wait", { reason: "barge_in", interruptEpoch: 1 });
+
+  assert.deepEqual(runtime.buildNextLoopMessagePatch("session-no-speech-interrupt-wait").messages, [
+    { role: "assistant", content: "正在等你。" }
+  ]);
+});
+
 test("talk runtime starts the next agent loop when foreground playback becomes idle", () => {
   const loops: string[] = [];
   let current = new Date("2026-06-06T15:00:00.000Z");

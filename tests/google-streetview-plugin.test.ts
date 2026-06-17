@@ -61,6 +61,29 @@ test("google streetview fetches metadata, saves image, and writes sidecar", asyn
   assert.equal(new URL(requests[0]!).searchParams.get("radius"), "50");
 });
 
+test("google streetview metadata lookup does not download image", async () => {
+  const root = tempOutputRoot();
+  const requests: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    fetch: async (url) => {
+      requests.push(String(url));
+      return jsonResponse({
+        status: "OK",
+        pano_id: "pano-meta",
+        location: { lat: 41.01, lng: 28.98 }
+      });
+    }
+  });
+
+  const result = await plugin.getMetadataByCoordinates({ lat: 41, lng: 29 });
+
+  assert.equal(result.panoId, "pano-meta");
+  assert.equal(result.location.lat, 41.01);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.includes("/metadata"), true);
+});
+
 test("reuseStoredForLocation returns a stored result without calling Google", async () => {
   const root = tempOutputRoot();
   const bucket = bucketForLocation({ lat: 35, lng: 139 }, 5);

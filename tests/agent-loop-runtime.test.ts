@@ -97,6 +97,43 @@ test("agent heartbeat forced run owns manual session fallback", async () => {
   assert.equal(manualProcessed, 1);
 });
 
+test("agent heartbeat runs idle timer transition hook before randomized initiated behavior", async () => {
+  const calls: string[] = [];
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      isIdleTransitionDue: () => true,
+      getIdleTransitionDelayMs: () => 123_000,
+      onIdleTimerTransition: async ({ delayMs }) => {
+        calls.push(`idle:${delayMs}`);
+      },
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => false,
+      buildRandomizedInitiatedBehaviorEvent: () => ({ type: "system.heartbeat" }),
+      runGeneratedSession: async () => {
+        calls.push("generated");
+        return true;
+      },
+      setAgentWaiting: (reason) => {
+        calls.push(`waiting:${reason}`);
+      },
+      getPendingSessionIds: () => [],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 0,
+      shouldProcessPendingSession: () => false,
+      markSessionNotPending: () => {},
+      processPendingSession: async () => {},
+      appendLog: () => {}
+    }
+  });
+
+  assert.equal(await heartbeat.run(), 1);
+  assert.deepEqual(calls, ["idle:123000", "generated", "waiting:randomized_initiated_behavior"]);
+});
+
 test("agent heartbeat treats cancelled talk runs as handled without crashing", async () => {
   const logs: Array<{ level: string; message: string }> = [];
   let markedReady = 0;

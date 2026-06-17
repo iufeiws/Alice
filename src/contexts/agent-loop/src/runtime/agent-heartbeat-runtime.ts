@@ -16,6 +16,8 @@ export type AgentHeartbeatRunOptions = {
 
 export type AgentHeartbeatRunTaskDeps = {
   isIdleTransitionDue?(): boolean;
+  getIdleTransitionDelayMs?(): number | undefined;
+  onIdleTimerTransition?(input: { delayMs: number }): Promise<void> | void;
   canRunHeartbeat(): boolean;
   tickAgentState?(): void;
   onHeartbeatTick?(): void;
@@ -122,8 +124,15 @@ export function createAgentHeartbeatRuntime(input: {
 async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: AgentHeartbeatRunOptions = {}): Promise<number> {
   const force = options.force ?? false;
   let processed = 0;
-  const randomizedInitiatedEvent = !force
-    && tasks.isIdleTransitionDue?.()
+  const idleTransitionDue = !force && tasks.isIdleTransitionDue?.() === true;
+  if (idleTransitionDue && tasks.canRunHeartbeat()) {
+    try {
+      await tasks.onIdleTimerTransition?.({ delayMs: tasks.getIdleTransitionDelayMs?.() ?? 0 });
+    } catch (error) {
+      tasks.appendLog("warn", `idle timer transition hook failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const randomizedInitiatedEvent = idleTransitionDue
     && tasks.canRunHeartbeat()
     && !tasks.hasPendingUserMessages()
     ? tasks.buildRandomizedInitiatedBehaviorEvent?.()

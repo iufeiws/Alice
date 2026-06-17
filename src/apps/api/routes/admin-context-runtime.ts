@@ -148,7 +148,8 @@ export function createAdminRequestHandlerRuntime(input: {
       photo: { configPath: input.photoConfigPath },
       tts: { configPath: input.ttsConfigPath },
       asr: { configPath: "config/plugin/asr/config.json" },
-      googleStreetView: { configPath: "config/plugin/google-streetview/config.json" }
+      googleStreetView: { configPath: "config/plugin/google-streetview/config.json" },
+      worldWanderer: { configPath: "config/plugin/world-wanderer/config.json" }
     },
     llmRequestSender: input.llmRequests.send,
     messageRuntime: input.messageRuntime,

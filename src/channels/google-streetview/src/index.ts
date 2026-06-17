@@ -3,6 +3,8 @@ export type {
   GoogleStreetViewByCoordinatesInput,
   GoogleStreetViewLocation,
   GoogleStreetViewMetadataResponse,
+  GoogleStreetViewMetadataByCoordinatesInput,
+  GoogleStreetViewMetadataResult,
   GoogleStreetViewPlugin,
   GoogleStreetViewPluginConfig,
   GoogleStreetViewPluginDeps,

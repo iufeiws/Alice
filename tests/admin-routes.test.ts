@@ -420,6 +420,52 @@ test("admin plugin list exposes photo selfie config card state", async () => {
   assert.equal(photo.configSource, configPath);
 });
 
+test("admin plugin config exposes and writes world wanderer config", async () => {
+  const root = makeTempDir("admin-world-wanderer-plugin");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const listResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), listResponse);
+  const listBody = JSON.parse(listResponse.body);
+  const plugin = listBody.plugins.find((entry: { id: string }) => entry.id === "world_wanderer");
+
+  assert.equal(listResponse.statusCode, 200);
+  assert.equal(plugin.status, "disabled");
+  assert.equal(plugin.kind, "context");
+  assert.equal(plugin.configurable, true);
+  assert.equal(plugin.switchable, true);
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/world_wanderer/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(configBody.configValue.enabled, false);
+  assert.deepEqual(configBody.configValue.initialLocation, { lat: 41.0086, lng: 28.9802 });
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/world_wanderer/config", {
+    enabled: true,
+    speedMetersPerSecond: 1.2,
+    headingJitterDegrees: 25,
+    initialLocation: JSON.stringify({ lat: 41.01, lng: 28.99 }),
+    initialHeading: 120
+  }), patchResponse);
+
+  assert.equal(patchResponse.statusCode, 200);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.speedMetersPerSecond, 1.2);
+  assert.deepEqual(saved.initialLocation, { lat: 41.01, lng: 28.99 });
+});
+
 test("admin plugin config patch writes photo selfie mode without storing api key", async () => {
   const root = makeTempDir("admin-photo-plugin-config");
   const configPath = path.join(root, "config", "plugin", "photo", "config.json");

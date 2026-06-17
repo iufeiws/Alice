@@ -34,6 +34,7 @@ import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/s
 import { createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, ttsGenieOverrides, readTtsPluginConfig, translateTtsText, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeInput, type AsrTranscribeResult, type AsrTranscribeError } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
+import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { renderWebRtcVoiceCallPage } from "../../../channels/webrtc-voice/src/index.js";
 import QRCode from "qrcode";
@@ -73,7 +74,7 @@ type PromptApiProfile = {
 
 type LLMApiPresetView = Omit<LLMApiPreset, "apiKey"> & { apiKeySet: boolean };
 
-type AdminPluginKind = "channel" | "tool" | "voice" | "asr" | "presentation";
+type AdminPluginKind = "channel" | "tool" | "voice" | "asr" | "presentation" | "context";
 type AdminPluginStatus = "enabled" | "disabled" | "planned" | "external_config" | "missing_config" | "error";
 type AdminPluginHealth = "healthy" | "degraded" | "failing" | "unknown";
 
@@ -306,6 +307,9 @@ export type AdminRoutesContext = {
       testTranscriber?(input: AsrTranscribeInput, config: AsrPluginConfig): Promise<AsrTranscribeResult | AsrTranscribeError> | AsrTranscribeResult | AsrTranscribeError;
     };
     googleStreetView?: {
+      configPath?: string;
+    };
+    worldWanderer?: {
       configPath?: string;
     };
   };
@@ -1064,6 +1068,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
     ttsPluginEntry(),
     photoPluginEntry(),
     googleStreetViewPluginEntry(),
+    worldWandererPluginEntry(),
     feishuPluginEntry(),
     wechatPluginEntry()
   ];
@@ -1752,7 +1757,7 @@ function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {
         { key: "pitch", label: "Pitch", type: "number", group: "request", min: -90, max: 90, step: 1 },
         { key: "fov", label: "FOV", type: "number", group: "request", min: 10, max: 120, step: 1 },
         { key: "initialRadiusMeters", label: "Initial Radius Meters", type: "number", group: "request", min: 0, max: 50000, step: 1 },
-        { key: "radiusExpansionFactor", label: "Radius Expansion Factor", type: "number", group: "request", min: 1.01, max: 10, step: 0.1 },
+        { key: "radiusExpansionFactor", label: "Radius Expansion Factor", type: "number", group: "request", min: 1.01, max: 10, step: 0.01 },
         { key: "maxRadiusMeters", label: "Max Radius Meters", type: "number", group: "request", min: 1, max: 100000, step: 1 },
         { key: "randomAttempts", label: "Random Attempts", type: "number", group: "request", min: 1, max: 100, step: 1 },
         { key: "coordinatePrecision", label: "Coordinate Precision", type: "number", group: "request", min: 0, max: 7, step: 1 },
@@ -1861,6 +1866,119 @@ function googleStreetViewConfigPath(context: AdminRoutesContext): string {
 function googleStreetViewConfigMtime(context: AdminRoutesContext): string | undefined {
   try {
     const stats = fs.statSync(googleStreetViewConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
+    if (stats.mtime instanceof Date) return stats.mtime.toISOString();
+    if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function worldWandererPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return worldWandererPluginSummary(context);
+    },
+    config(context) {
+      return publicWorldWandererConfig(readWorldWandererConfigForAdmin(context));
+    },
+    patch(context, patch) {
+      const result = updateWorldWandererConfig(context, patch);
+      return "error" in result ? result : { config: publicWorldWandererConfig(result.config) };
+    },
+    setEnabled(context, enabled) {
+      const result = updateWorldWandererConfig(context, { enabled });
+      return "error" in result ? result : { config: publicWorldWandererConfig(result.config) };
+    },
+    reload(context) {
+      return { config: publicWorldWandererConfig(readWorldWandererConfigForAdmin(context)) };
+    },
+    configSchema: {
+      groups: [
+        { key: "general", label: "General" },
+        { key: "movement", label: "Movement" },
+        { key: "initial", label: "Initial Position" }
+      ],
+      fields: [
+        { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Move world-wanderer state on idle timer transitions." },
+        { key: "speedMetersPerSecond", label: "Speed Meters Per Second", type: "number", group: "movement", min: 0, max: 10, step: 0.1 },
+        { key: "headingJitterDegrees", label: "Heading Jitter Degrees", type: "number", group: "movement", min: 0, max: 180, step: 1 },
+        { key: "initialLocation", label: "Initial Location JSON", type: "textarea", group: "initial", description: "Object with lat and lng. Defaults near Hagia Sophia." },
+        { key: "initialHeading", label: "Initial Heading", type: "number", group: "initial", min: 0, max: 359, step: 1 }
+      ]
+    },
+    routePreview: [
+      "idle timer transition movement",
+      "google_streetview.getMetadataByCoordinates"
+    ],
+    runtimeAccess: [
+      "read plugin config",
+      "write world wanderer state under memory state",
+      "call Google Street View metadata through google_streetview"
+    ]
+  };
+}
+
+function worldWandererPluginSummary(context: AdminRoutesContext, config = readWorldWandererConfigForAdmin(context)): AdminPluginSummary {
+  const validationError = validateWorldWandererConfig(config);
+  return {
+    id: "world_wanderer",
+    name: "World Wanderer",
+    kind: "context",
+    status: validationError ? "missing_config" : config.enabled ? "enabled" : "disabled",
+    health: validationError ? "degraded" : config.enabled ? "healthy" : "unknown",
+    description: "Persistently moves a coordinate during idle timer transitions and refreshes Google Street View metadata.",
+    configurable: true,
+    switchable: true,
+    configSource: worldWandererConfigPath(context),
+    lastLoadedAt: worldWandererConfigMtime(context)
+  };
+}
+
+function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: WorldWandererConfig } | { error: string } {
+  const current = readWorldWandererConfigForAdmin(context);
+  let initialLocation = current.initialLocation;
+  try {
+    initialLocation = patch.initialLocation === undefined ? current.initialLocation : worldWandererLocationFromUnknown(patch.initialLocation, current.initialLocation);
+  } catch {
+    return { error: "invalid_initial_location" };
+  }
+  const next: WorldWandererConfig = {
+    ...current,
+    enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    speedMetersPerSecond: patch.speedMetersPerSecond === undefined ? current.speedMetersPerSecond : numberFromUnknown(patch.speedMetersPerSecond, current.speedMetersPerSecond),
+    headingJitterDegrees: patch.headingJitterDegrees === undefined ? current.headingJitterDegrees : numberFromUnknown(patch.headingJitterDegrees, current.headingJitterDegrees),
+    initialLocation,
+    initialHeading: patch.initialHeading === undefined ? current.initialHeading : numberFromUnknown(patch.initialHeading, current.initialHeading)
+  };
+
+  const validationError = validateWorldWandererConfig(next);
+  if (validationError) return { error: validationError };
+  writeWorldWandererConfig(worldWandererConfigPath(context), next);
+  return { config: next };
+}
+
+function worldWandererLocationFromUnknown(value: unknown, fallback: { lat: number; lng: number }): { lat: number; lng: number } {
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!parsed || typeof parsed !== "object") return fallback;
+  const object = parsed as Record<string, unknown>;
+  return {
+    lat: numberFromUnknown(object.lat, Number.NaN),
+    lng: numberFromUnknown(object.lng, Number.NaN)
+  };
+}
+
+function readWorldWandererConfigForAdmin(context: AdminRoutesContext): WorldWandererConfig {
+  return readWorldWandererConfig(worldWandererConfigPath(context));
+}
+
+function worldWandererConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.worldWanderer?.configPath ?? defaultWorldWandererPluginConfigPath;
+}
+
+function worldWandererConfigMtime(context: AdminRoutesContext): string | undefined {
+  try {
+    const stats = fs.statSync(worldWandererConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
     if (stats.mtime instanceof Date) return stats.mtime.toISOString();
     if (typeof stats.mtimeMs === "number") return new Date(stats.mtimeMs).toISOString();
     return undefined;

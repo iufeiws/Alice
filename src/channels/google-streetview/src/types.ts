@@ -53,6 +53,11 @@ export type GoogleStreetViewRandomInput = {
   reuseStoredForLocation?: boolean;
 };
 
+export type GoogleStreetViewMetadataByCoordinatesInput = {
+  lat: number;
+  lng: number;
+};
+
 export type GoogleStreetViewLocation = {
   lat: number;
   lng: number;
@@ -81,8 +86,16 @@ export type GoogleStreetViewResult = {
 export type GoogleStreetViewPlugin = {
   id: "google_streetview";
   config: GoogleStreetViewPluginConfig;
+  getMetadataByCoordinates(input: GoogleStreetViewMetadataByCoordinatesInput): Promise<GoogleStreetViewMetadataResult>;
   getStreetViewByCoordinates(input: GoogleStreetViewByCoordinatesInput): Promise<GoogleStreetViewResult>;
   getRandomStreetView(input?: GoogleStreetViewRandomInput): Promise<GoogleStreetViewResult>;
+};
+
+export type GoogleStreetViewMetadataResult = {
+  requestedLocation: GoogleStreetViewLocation;
+  location: GoogleStreetViewLocation;
+  panoId?: string;
+  metadata: GoogleStreetViewMetadataResponse;
 };
 
 export type GoogleStreetViewMetadataResponse = {

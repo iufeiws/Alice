@@ -1,7 +1,10 @@
 import { createWebRtcVoiceRuntime } from "./web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
+import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+
+const path = await import("node:path");
 
 export function createApiCommunicationRuntime(input: {
   config: any;
@@ -46,6 +49,14 @@ export function createApiCommunicationRuntime(input: {
     asrPlugin: input.asrPlugin,
     getMessageRuntime: () => messageRuntime
   });
+  const worldWandererRuntime = createWorldWandererRuntime({
+    configPath: defaultWorldWandererPluginConfigPath,
+    statePath: path.join(input.config.memoryFiles.root, "state", "world-wanderer.json"),
+    googleStreetView,
+    now: () => input.time.now().date,
+    random: Math.random,
+    appendLog: input.appendLog
+  });
 
   messageRuntime = createMessageRuntimeRuntime({
     config: input.config,
@@ -65,10 +76,11 @@ export function createApiCommunicationRuntime(input: {
     getDefaultMessagingTarget: input.getDefaultMessagingTarget,
     getSleepCocoonGoodnightEvent: input.getSleepCocoonGoodnightEvent,
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
+    worldWandererRuntime,
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
 
-  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, messageRuntime };
+  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime };
 }

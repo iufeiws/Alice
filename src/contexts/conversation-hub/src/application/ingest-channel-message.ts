@@ -24,6 +24,7 @@ export type MessageRuntimeDeps = {
   getHeartbeatIntervalMs?: () => number;
   startHeartbeatPaused?: boolean;
   onHeartbeatTick?: () => void;
+  onIdleTimerTransition?: (input: { delayMs: number }) => Promise<void> | void;
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
   getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
@@ -151,6 +152,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     startPaused: deps.startHeartbeatPaused,
     tasks: {
       isIdleTransitionDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
+      getIdleTransitionDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
+      onIdleTimerTransition: deps.onIdleTimerTransition,
       canRunHeartbeat,
       tickAgentState: () => {
         deps.agentState?.tick();
@@ -499,6 +502,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   function isIdleTransitionDue(snapshot: AgentStateSnapshot | undefined): boolean {
     if (snapshot?.state !== "idle" || !snapshot.nextTransitionAt) return false;
     return parseZonedIso(snapshot.nextTransitionAt, time.timeZone).getTime() <= now().getTime();
+  }
+
+  function idleTransitionDelayMs(snapshot: AgentStateSnapshot | undefined, timeZone: string): number | undefined {
+    if (snapshot?.state !== "idle" || !snapshot.updatedAt || !snapshot.nextTransitionAt) return undefined;
+    return Math.max(0, parseZonedIso(snapshot.nextTransitionAt, timeZone).getTime() - parseZonedIso(snapshot.updatedAt, timeZone).getTime());
   }
 
   function buildRandomizedInitiatedBehaviorEvent(): AgentEvent | undefined {

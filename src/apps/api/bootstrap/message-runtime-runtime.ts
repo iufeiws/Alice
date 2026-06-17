@@ -20,6 +20,7 @@ export function createMessageRuntimeRuntime(input: {
   getDefaultMessagingTarget(): any;
   getSleepCocoonGoodnightEvent(): any;
   getSleepCocoonWakeEvent(): any;
+  worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
@@ -65,6 +66,9 @@ export function createMessageRuntimeRuntime(input: {
     onHeartbeatTick() {
       input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
       input.initiatedBehaviorRunStore.finalizeExpiredResponses(input.time.now().date);
+    },
+    async onIdleTimerTransition(transitionInput) {
+      await input.worldWandererRuntime?.runIdleTransition(transitionInput);
     },
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     getRandomInitiatedBehaviorTarget() {

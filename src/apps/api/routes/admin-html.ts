@@ -1605,7 +1605,8 @@ export function renderAdminHtmlV2(): string {
           return \`<label class="plugin-switch"><input type="checkbox" name="\${inputName}" data-plugin-field="\${inputName}" \${value ? "checked" : ""} /><span class="plugin-switch-visual" aria-hidden="true"></span> \${escapeHtml(field.label)}</label>\${description}\`;
         }
         if (field.type === "textarea") {
-          return \`<label>\${escapeHtml(field.label)}<textarea rows="7" spellcheck="false" name="\${inputName}" data-plugin-field="\${inputName}">\${escapeHtml(value || "")}</textarea></label>\${description}\`;
+          const textValue = typeof value === "string" ? value : value === undefined ? "" : JSON.stringify(value, null, 2);
+          return \`<label>\${escapeHtml(field.label)}<textarea rows="7" spellcheck="false" name="\${inputName}" data-plugin-field="\${inputName}">\${escapeHtml(textValue)}</textarea></label>\${description}\`;
         }
         if (field.type === "number") {
           return \`<label>\${escapeHtml(field.label)}<input type="number" min="\${escapeAttr(field.min ?? "0.5")}" max="\${escapeAttr(field.max ?? "2")}" step="\${escapeAttr(field.step ?? "0.05")}" name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value ?? "")}" /></label>\${description}\`;

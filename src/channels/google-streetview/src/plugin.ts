@@ -12,9 +12,11 @@ import {
 import {
   bucketForLocation,
   findRegion,
+  normalizeMetadataLocation,
   normalizeLocation,
   randomLocationInRegion
 } from "./geo.js";
+import { findAvailableMetadata } from "./client.js";
 import { errorMessage } from "./internal.js";
 import { fetchAndStoreStreetView, pickStoredResult } from "./storage.js";
 
@@ -26,6 +28,23 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
     id: "google_streetview",
     get config() {
       return runtimeConfig();
+    },
+    async getMetadataByCoordinates(input) {
+      const config = runtimeConfig();
+      assertEnabled(config);
+      const requestedLocation = normalizeLocation(input);
+      const metadata = await findAvailableMetadata({
+        config,
+        requestedLocation,
+        fetchImpl
+      });
+      const location = normalizeMetadataLocation(metadata, requestedLocation);
+      return {
+        requestedLocation,
+        location,
+        panoId: typeof metadata.pano_id === "string" ? metadata.pano_id : undefined,
+        metadata
+      };
     },
     async getStreetViewByCoordinates(input) {
       const config = runtimeConfig();

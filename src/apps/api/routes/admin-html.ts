@@ -406,6 +406,8 @@ export function renderAdminHtmlV2(): string {
             <form id="core-profile-form">
               <label for="appearanceDescription">Appearance Description</label>
               <textarea id="appearanceDescription" name="appearanceDescription" rows="12" spellcheck="false"></textarea>
+              <label for="librarySetting">Library Setting</label>
+              <textarea id="librarySetting" name="librarySetting" rows="8" spellcheck="false"></textarea>
               <button type="submit">Save Core Profile</button>
               <p class="muted" id="core-profile-status"></p>
             </form>
@@ -1192,8 +1194,10 @@ export function renderAdminHtmlV2(): string {
         $("timezone").value = config.core.timezone || "Asia/Singapore";
         $("defaultTargetPlugin").value = config.core.defaultTargetPlugin || "auto";
         $("appearanceDescription").value = (config.coreProfile && config.coreProfile.appearanceDescription) || "";
-        $("coreProfilePreview").textContent = JSON.stringify({
-          appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || ""
+        $("librarySetting").value = (config.coreProfile && config.coreProfile.librarySetting) || "";
+        $("coreProfilePreview").textContent = JSON.stringify(config.coreVariables || {
+          appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || "",
+          library: { content: (config.coreProfile && config.coreProfile.librarySetting) || "" }
         }, null, 2);
         const tts = config.tts || {};
         $("tts-reference-status").textContent = "Backend: " + (tts.backend || "genie-tts")
@@ -1612,7 +1616,9 @@ export function renderAdminHtmlV2(): string {
           return \`<label>\${escapeHtml(field.label)}<input type="number" min="\${escapeAttr(field.min ?? "0.5")}" max="\${escapeAttr(field.max ?? "2")}" step="\${escapeAttr(field.step ?? "0.05")}" name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value ?? "")}" /></label>\${description}\`;
         }
         if (field.type === "password") {
-          return \`<label>\${escapeHtml(field.label)}<input type="password" name="\${inputName}" data-plugin-field="\${inputName}" value="" placeholder="Leave blank to keep unchanged" autocomplete="new-password" /></label>\${description}\`;
+          const configured = Boolean(valueAtPath(config, field.key + "Set"));
+          const placeholder = configured ? "Configured; leave blank to keep unchanged" : "Leave blank to keep unchanged";
+          return \`<label>\${escapeHtml(field.label)}<input type="password" name="\${inputName}" data-plugin-field="\${inputName}" value="" placeholder="\${escapeAttr(placeholder)}" autocomplete="new-password" /></label>\${description}\`;
         }
         if (field.type === "select") {
           const options = field.options || [];
@@ -1627,7 +1633,8 @@ export function renderAdminHtmlV2(): string {
           return \`<label>\${escapeHtml(field.label)}<input type="file" data-plugin-upload="\${escapeAttr(field.assetKey || field.key)}" data-plugin-field="\${inputName}" accept="\${escapeAttr(field.accept || "")}" \${directoryAttrs} /></label><p class="muted">Current: \${escapeHtml(value || "(none)")}</p>\${description}\`;
         }
         if (field.type === "readonly") {
-          return \`<label>\${escapeHtml(field.label)}<input value="\${escapeAttr(value ?? field.description ?? "")}" readonly /></label>\`;
+          const displayValue = typeof value === "boolean" ? (value ? "Yes" : "No") : value ?? field.description ?? "";
+          return \`<label>\${escapeHtml(field.label)}<input value="\${escapeAttr(displayValue)}" readonly /></label>\`;
         }
         return \`<label>\${escapeHtml(field.label)}<input name="\${inputName}" data-plugin-field="\${inputName}" value="\${escapeAttr(value || "")}" /></label>\${description}\`;
       }
@@ -1680,6 +1687,8 @@ export function renderAdminHtmlV2(): string {
         const body = {};
         root.querySelectorAll("[data-plugin-field]").forEach((input) => {
           if (input.type === "file") return;
+          if (input.readOnly) return;
+          if (input.type === "password" && input.value === "") return;
           const value = input.type === "checkbox" ? input.checked : input.type === "number" && input.value !== "" ? Number(input.value) : input.value;
           setValueAtPath(body, input.dataset.pluginField, value);
         });
@@ -2891,7 +2900,7 @@ Timing:
         }
         const progress = await fetchMemoryRunProgress(runId);
         const rounds = memoryRunRoundsText(result.body.result, result.body.ok ? "ok" : "failed", progress);
-        $("memory-status").textContent = result.body.ok ? "Memorize complete." + rounds : "Memorize failed: " + (result.body.error || result.body.result?.results?.find((entry) => !entry.ok)?.error || "see Last Run / System Log") + rounds;
+        $("memory-status").textContent = result.body.ok ? "Memorize complete." + rounds : "Memorize failed: " + memoryRunErrorText(result.body) + rounds;
         $("memoryRunResult").textContent = JSON.stringify(result.body.result || result.body, null, 2);
         await refreshMemory();
         await refreshLogs();
@@ -2913,10 +2922,16 @@ Timing:
         }
         const progress = await fetchMemoryRunProgress(runId);
         const rounds = memoryRunRoundsText(result.body.result, result.body.ok ? "ok" : "failed", progress);
-        $("memory-status").textContent = result.body.ok ? "Memorize " + target + " complete." + rounds : "Memorize " + target + " failed: " + (result.body.error || result.body.result?.results?.find((entry) => !entry.ok)?.error || "see Last Run / System Log") + rounds;
+        $("memory-status").textContent = result.body.ok ? "Memorize " + target + " complete." + rounds : "Memorize " + target + " failed: " + memoryRunErrorText(result.body) + rounds;
         $("memoryRunResult").textContent = JSON.stringify(result.body.result || result.body, null, 2);
         await refreshMemory();
         await refreshLogs();
+      }
+
+      function memoryRunErrorText(body) {
+        const error = body?.error || body?.result?.results?.find((entry) => !entry.ok)?.error;
+        if (error === "memory_manual_run_requires_paused_or_sleeping") return "pause heartbeat or enter sleeping state first";
+        return error || "see Last Run / System Log";
       }
 
       function createMemoryRunId() {
@@ -3835,7 +3850,7 @@ Timing:
       $("core-profile-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { appearanceDescription: form.get("appearanceDescription") };
+        const body = { appearanceDescription: form.get("appearanceDescription"), librarySetting: form.get("librarySetting") };
         const result = await fetch("/admin/api/core-profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("core-profile-status").textContent = result.ok ? "Core profile saved." : "Failed to save core profile.";
         await refresh();

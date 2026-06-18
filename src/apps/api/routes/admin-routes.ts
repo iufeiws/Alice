@@ -1904,6 +1904,7 @@ function worldWandererPluginEntry(): AdminPluginRegistryEntry {
       ],
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Move world-wanderer state on idle timer transitions." },
+        { key: "libraryPrompt", label: "Library Prompt", type: "textarea", group: "general", description: "Used as library.content while World Wanderer is enabled. Empty stays empty." },
         { key: "speedMetersPerSecond", label: "Speed Meters Per Second", type: "number", group: "movement", min: 0, max: 10, step: 0.1 },
         { key: "recentHistoryLimit", label: "Recent History Limit", type: "number", group: "movement", min: 1, max: 1000, step: 1 },
         { key: "maxPanosPerIdle", label: "Max Panos Per Idle", type: "number", group: "movement", min: 1, max: 100, step: 1 },
@@ -1956,6 +1957,7 @@ function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<st
   const next: WorldWandererConfig = {
     ...current,
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
+    libraryPrompt: patch.libraryPrompt === undefined ? current.libraryPrompt : requiredString(patch.libraryPrompt),
     speedMetersPerSecond: patch.speedMetersPerSecond === undefined ? current.speedMetersPerSecond : numberFromUnknown(patch.speedMetersPerSecond, current.speedMetersPerSecond),
     initialLocation,
     initialHeading: patch.initialHeading === undefined ? current.initialHeading : numberFromUnknown(patch.initialHeading, current.initialHeading),
@@ -1987,6 +1989,11 @@ function worldWandererLocationFromUnknown(value: unknown, fallback: { lat: numbe
 
 function readWorldWandererConfigForAdmin(context: AdminRoutesContext): WorldWandererConfig {
   return readWorldWandererConfig(worldWandererConfigPath(context));
+}
+
+function resolveLibrarySetting(context: AdminRoutesContext): string {
+  const worldWanderer = readWorldWandererConfigForAdmin(context);
+  return worldWanderer.enabled ? worldWanderer.libraryPrompt : context.coreProfileStore.get().librarySetting;
 }
 
 function worldWandererConfigPath(context: AdminRoutesContext): string {
@@ -2289,7 +2296,8 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
       },
       promptVariables: () => buildLLMTextVariables({
         userName: context.promptProfileStore.get().userName,
-        time: context.time
+        time: context.time,
+        librarySetting: resolveLibrarySetting(context)
       }),
       appendLog: context.appendLog
     });
@@ -2698,7 +2706,11 @@ async function uploadGenericPluginAsset(
   const config = readTtsConfigForAdmin(context);
   const fileName = safePluginAssetFileName(decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? ""));
   const relativeDir = decodeHeaderFileName(optionalString(request.headers?.["x-relative-dir"]) ?? "");
-  const maxBytes = assetKey === "model" ? maxPluginModelAssetUploadBytes : maxPluginAssetUploadBytes;
+  const maxBytes = assetKey === "model"
+    ? maxPluginModelAssetUploadBytes
+    : pluginId === "tts" && assetKey === "reference-audio"
+      ? maxTtsReferenceUploadBytes
+      : maxPluginAssetUploadBytes;
   const body = await readRawBody(request, { maxBytes });
   if (body.length === 0) return { error: "empty_upload" };
 
@@ -2706,8 +2718,13 @@ async function uploadGenericPluginAsset(
   const assetPath = pluginId === "tts"
     ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName, context.pluginConfigs?.tts?.assetRoot)
     : resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
-  fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
-  fs.writeFileSync(assetPath.fullPath, body);
+  if (pluginId === "tts" && assetKey === "reference-audio") {
+    const result = await writeTtsPresetReferenceAudioUpload(context, assetPath.fullPath, fileName, body);
+    if (result) return result;
+  } else {
+    fs.mkdirSync(path.dirname(assetPath.fullPath), { recursive: true });
+    fs.writeFileSync(assetPath.fullPath, body);
+  }
 
   const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
   const modelConfigs = config.voice?.modelConfigs ?? {};
@@ -2737,7 +2754,7 @@ function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: st
   const outputName = assetKey === "reference-text"
     ? "reference.txt"
     : assetKey === "reference-audio"
-      ? `reference${path.extname(effectiveFileName) || ".wav"}`
+      ? "reference.wav"
       : effectiveFileName;
   const fullPath = path.resolve(root, baseRelativeDir, outputName);
   const relative = path.relative(root, fullPath);
@@ -2775,6 +2792,40 @@ function defaultPluginAssetFileName(assetKey: string): string {
 function safePluginAssetFileName(fileName: string): string {
   const base = path.basename(fileName).replace(/[^\w.\- ]+/g, "_").trim();
   return base || "";
+}
+
+async function writeTtsPresetReferenceAudioUpload(context: AdminRoutesContext, outputPath: string, fileName: string, body: Buffer): Promise<{ error: string; statusCode?: number } | undefined> {
+  const extension = path.extname(fileName).toLowerCase();
+  if (extension && ![".wav", ".mp3", ".m4a", ".ogg", ".opus"].includes(extension)) {
+    return { error: "unsupported_reference_audio_type" };
+  }
+  const tempDir = path.join(path.dirname(outputPath), `.alice-tts-preset-reference-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const inputPath = path.join(tempDir, `source${extension || ".wav"}`);
+  const convertedPath = path.join(tempDir, "reference.wav");
+  try {
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.writeFileSync(inputPath, body);
+    await convertReferenceAudio(inputPath, convertedPath, ttsReferenceFfmpegCommand(context), ttsReferenceCodecConfig(context));
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.renameSync(convertedPath, outputPath);
+    return undefined;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function ttsReferenceFfmpegCommand(context: AdminRoutesContext): string {
+  return context.config.tts?.mossFfmpegCommand ?? "ffmpeg-static";
+}
+
+function ttsReferenceCodecConfig(context: AdminRoutesContext): { sampleRate: number; channels: number } {
+  try {
+    return readMossCodecConfig(context);
+  } catch {
+    return { sampleRate: 48_000, channels: 2 };
+  }
 }
 
 function sanitizePluginAssetRelativePath(value: string): string {
@@ -3082,6 +3133,7 @@ function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<typeof c
     memoryInductionPromptStore: context.memoryInductionPromptStore,
     promptProfileStore: context.promptProfileStore,
     agentState: context.agentState,
+    isHeartbeatPaused: () => Boolean((context.messageRuntime.getStatus() as { heartbeatPaused?: unknown })?.heartbeatPaused),
     time: context.time,
     llmRequests: { send: async (input) => context.llmRequestSender ? context.llmRequestSender(input) : context.getLLM().chat(input) },
     llmSessionRoot: () => context.llmSessionRoot?.() ?? path.join(context.config.memoryFiles.root, "llm-sessions"),
@@ -3105,6 +3157,7 @@ function getPromptVariablePreview(context: AdminRoutesContext, store: PromptProf
     dailyShell: context.getDailyShell(),
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,
+    librarySetting: resolveLibrarySetting(context),
     memory: context.memoryStore.read(),
     event: {
       id: "preview",
@@ -3263,7 +3316,8 @@ function getShellConfig(context: AdminRoutesContext): unknown {
     userName: context.promptProfileStore.get().userName,
     time: context.time,
     dailyShellRaw: config.daily,
-    appearanceDescription: context.coreProfileStore.get().appearanceDescription
+    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
+    librarySetting: resolveLibrarySetting(context)
   });
   return {
     ...config,
@@ -3742,6 +3796,7 @@ function getAdminTextVariables(
     dailyShell: context.getDailyShell(),
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,
+    librarySetting: resolveLibrarySetting(context),
     event: {
       id: "admin_tool_preview",
       source: {
@@ -4103,8 +4158,9 @@ async function saveAgentConfig(context: AdminRoutesContext, request: any, respon
 async function saveCoreProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const appearanceDescription = typeof body.appearanceDescription === "string" ? body.appearanceDescription : "";
-  const profile = context.coreProfileStore.save({ appearanceDescription });
-  context.appendLog("info", `core profile saved: appearanceChars=${profile.appearanceDescription.length}`);
+  const librarySetting = typeof body.librarySetting === "string" ? body.librarySetting : "";
+  const profile = context.coreProfileStore.save({ appearanceDescription, librarySetting });
+  context.appendLog("info", `core profile saved: appearanceChars=${profile.appearanceDescription.length} libraryChars=${profile.librarySetting.length}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
@@ -4250,6 +4306,12 @@ function getAdminConfig(context: AdminRoutesContext): unknown {
   return {
     core: context.config.core,
     coreProfile: context.coreProfileStore.get(),
+    coreVariables: {
+      appearance: context.coreProfileStore.get().appearanceDescription,
+      library: {
+        content: resolveLibrarySetting(context)
+      }
+    },
     api: context.config.api,
     llm: {
       provider: "api-preset",

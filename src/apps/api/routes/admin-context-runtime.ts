@@ -92,6 +92,7 @@ export function createAdminRequestHandlerRuntime(input: {
     memoryInductionPromptStore: input.memoryInductionPromptStore,
     promptProfileStore: input.promptProfileStore,
     agentState: input.agentState,
+    isHeartbeatPaused: () => Boolean(input.messageRuntime.getStatus?.()?.heartbeatPaused),
     time: input.time,
     llmRequests: input.llmRequests,
     llmSessionRoot: input.llmSessionRoot,

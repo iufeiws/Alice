@@ -2,6 +2,7 @@ import { createToolRuntime } from "../../../capabilities/tools/messaging/src/too
 import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
+import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
 
 export function createApiCapabilitiesRuntime(input: {
   config: any;
@@ -16,6 +17,7 @@ export function createApiCapabilitiesRuntime(input: {
   agentState: any;
   getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
+  getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
   llmLogRuntime: any;
@@ -59,6 +61,7 @@ export function createApiCapabilitiesRuntime(input: {
     agentState: input.agentState,
     getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget: input.getDefaultTarget,
+    getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
@@ -67,6 +70,10 @@ export function createApiCapabilitiesRuntime(input: {
     time: input.time,
     dailyShellStore: input.dailyShellStore,
     coreProfileStore: input.coreProfileStore,
+    getLibrarySetting: () => {
+      const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
+      return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
+    },
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     toolPlugins: toolRuntime.toolPlugins,

@@ -51,6 +51,7 @@ function normalizeWorldWandererConfig(parsed: Record<string, unknown>): WorldWan
   const initialLocation = locationValue(parsed.initialLocation, defaultWorldWandererInitialLocation);
   return {
     enabled: booleanValue(parsed.enabled, false),
+    libraryPrompt: typeof parsed.libraryPrompt === "string" ? parsed.libraryPrompt : "",
     speedMetersPerSecond: numberValue(parsed.speedMetersPerSecond, 1.4),
     initialLocation,
     initialHeading: normalizeHeading(numberValue(parsed.initialHeading, 90)),

@@ -1,4 +1,5 @@
 import { createApiAgentRuntime } from "./api-agent-runtime.js";
+import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
 
 export function createApiAgentStackRuntime(input: {
   config: any;
@@ -29,6 +30,10 @@ export function createApiAgentStackRuntime(input: {
     dailyShellStore: input.apiContextRuntime.dailyShellStore,
     time: input.time,
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
+    getLibrarySetting: () => {
+      const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
+      return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.apiContextRuntime.coreProfileStore.get().librarySetting;
+    },
     memoryStore: input.apiContextRuntime.memoryStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     agentState: input.agentState,

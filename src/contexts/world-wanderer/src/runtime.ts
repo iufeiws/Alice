@@ -21,6 +21,9 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
   const now = deps.now ?? (() => new Date());
 
   return {
+    isEnabled() {
+      return readWorldWandererConfig(deps.configPath).enabled;
+    },
     async runIdleTransition(input) {
       const config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return undefined;

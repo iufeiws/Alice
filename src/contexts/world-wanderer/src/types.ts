@@ -6,6 +6,7 @@ import type {
 
 export type WorldWandererConfig = {
   enabled: boolean;
+  libraryPrompt: string;
   speedMetersPerSecond: number;
   initialLocation: GoogleStreetViewLocation;
   initialHeading: number;
@@ -42,6 +43,7 @@ export type WorldWandererState = {
 };
 
 export type WorldWandererRuntime = {
+  isEnabled(): boolean;
   runIdleTransition(input: { delayMs: number }): Promise<WorldWandererState | undefined>;
   getState(): WorldWandererState;
 };

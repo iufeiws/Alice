@@ -180,6 +180,7 @@ export type AgentCoreDeps = {
   getDailyShell?: () => string;
   getDailyShellRaw?: () => DailyShell;
   getAppearanceDescription?: () => string;
+  getLibrarySetting?: () => string;
   getMemorySnapshot?: () => MemorySnapshot;
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   state?: AgentStateController;
@@ -362,6 +363,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         dailyShell: deps.getDailyShell?.(),
         dailyShellRaw: deps.getDailyShellRaw?.(),
         appearanceDescription: deps.getAppearanceDescription?.(),
+        librarySetting: deps.getLibrarySetting?.(),
         memory: deps.getMemorySnapshot?.(),
         wakeBoundary: deps.getWakeBoundary?.()
       });
@@ -715,6 +717,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       dailyShell: deps.getDailyShell?.(),
       dailyShellRaw: deps.getDailyShellRaw?.(),
       appearanceDescription: deps.getAppearanceDescription?.(),
+      librarySetting: deps.getLibrarySetting?.(),
       memory: deps.getMemorySnapshot?.(),
       wakeBoundary: deps.getWakeBoundary?.()
     });

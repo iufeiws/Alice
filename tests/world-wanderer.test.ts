@@ -26,6 +26,7 @@ test("world wanderer config defaults disabled near Hagia Sophia with pano graph 
   const config = readWorldWandererConfig(path.join(tempRoot(), "missing.json"));
 
   assert.equal(config.enabled, false);
+  assert.equal(config.libraryPrompt, "");
   assert.equal(config.speedMetersPerSecond, 1.4);
   assert.deepEqual(config.initialLocation, defaultWorldWandererInitialLocation);
   assert.equal(config.recentHistoryLimit, 100);
@@ -37,6 +38,22 @@ test("world wanderer config defaults disabled near Hagia Sophia with pano graph 
   assert.equal(config.loopPenalty, 10);
   assert.equal(config.selectionTemperature, 1);
   assert.equal("headingJitterDegrees" in config, false);
+});
+
+test("world wanderer runtime reports enabled state from config", () => {
+  const root = tempRoot();
+  const configPath = path.join(root, "config.json");
+  const statePath = path.join(root, "state.json");
+  writeWorldWandererConfig(configPath, config({ enabled: false }));
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    statePath,
+    googleStreetView: graphGoogleStreetView(new Map())
+  });
+
+  assert.equal(runtime.isEnabled(), false);
+  writeWorldWandererConfig(configPath, config({ enabled: true }));
+  assert.equal(runtime.isEnabled(), true);
 });
 
 test("world wanderer resolves initial coordinates and moves at least one pano", async () => {
@@ -275,6 +292,7 @@ test("world wanderer records pano graph failure while preserving previous metada
 function config(patch: Partial<WorldWandererConfig> = {}): WorldWandererConfig {
   return {
     enabled: true,
+    libraryPrompt: "",
     speedMetersPerSecond: 1.4,
     initialLocation: { lat: 41.0086, lng: 28.9802 },
     initialHeading: 90,

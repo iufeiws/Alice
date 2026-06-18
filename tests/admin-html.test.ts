@@ -104,6 +104,13 @@ test("plugin config save bypasses native hidden-field validation and reports fai
   assert.match(html, /await openPluginConfig\(pluginId\);\s+\$\("plugin-status"\)\.textContent = pluginId \+ " config saved\."/);
 });
 
+test("plugin config save skips readonly and empty password fields", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /if \(input\.readOnly\) return;/);
+  assert.match(html, /if \(input\.type === "password" && input\.value === ""\) return;/);
+});
+
 test("chat prompt editor keeps variables in preview side pane", () => {
   const html = renderAdminHtmlV2();
 

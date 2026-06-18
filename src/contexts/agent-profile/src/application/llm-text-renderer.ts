@@ -36,6 +36,7 @@ export type LLMTextContextInput = {
   dailyShell?: string;
   dailyShellRaw?: LLMTextDailyShell;
   appearanceDescription?: string;
+  librarySetting?: string;
   memory?: {
     persistent?: string;
     userPreferences?: string;
@@ -98,6 +99,9 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
       occurredAtUtc: "",
       date: "",
       weekday: ""
+    },
+    library: {
+      content: ""
     }
   };
   if (input.time) {
@@ -115,6 +119,7 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   }
   variables.user = input.userName?.trim() || "user";
   variables.appearance = input.appearanceDescription?.trim() || "";
+  variables.library = { content: input.librarySetting ?? "" };
   variables.memory = {
     persistent: memoryNode(input.memory?.persistent),
     userPreferences: memoryNode(input.memory?.userPreferences),

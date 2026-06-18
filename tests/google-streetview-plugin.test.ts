@@ -53,12 +53,44 @@ test("google streetview fetches metadata, saves image, and writes sidecar", asyn
   assert.equal(result.reused, false);
   assert.equal(result.source, "google_streetview_static");
   assert.match(result.assetId, /^plugin\/google-streetview\/test-[^/]+\/2026-06\//);
+  assert.equal(path.basename(result.filePath), "pano-1.jpg");
+  assert.equal(path.basename(result.sidecarPath), "pano-1.json");
   assert.equal(fs.existsSync(result.filePath), true);
   assert.equal(fs.existsSync(result.sidecarPath), true);
   assert.equal(result.panoId, "pano-1");
   assert.equal(result.location.lat, 35.1);
   assert.equal(requests.length, 2);
   assert.equal(new URL(requests[0]!).searchParams.get("radius"), "50");
+});
+
+test("google streetview repeated pano downloads image only once", async () => {
+  const root = tempOutputRoot();
+  const requests: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    now: () => new Date("2026-06-14T01:02:03.000Z"),
+    fetch: async (url) => {
+      requests.push(String(url));
+      if (String(url).includes("/metadata")) {
+        return jsonResponse({
+          status: "OK",
+          pano_id: "pano-repeat",
+          location: { lat: 35.1, lng: 139.1 }
+        });
+      }
+      return bytesResponse(new Uint8Array([5]));
+    }
+  });
+
+  const first = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
+  const second = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
+
+  assert.equal(first.reused, false);
+  assert.equal(second.reused, true);
+  assert.equal(second.filePath, first.filePath);
+  assert.equal(path.basename(first.filePath), "pano-repeat.jpg");
+  assert.equal(requests.filter((url) => url.includes("/metadata")).length, 2);
+  assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
 });
 
 test("google streetview metadata lookup does not download image", async () => {
@@ -188,45 +220,58 @@ test("google streetview pano graph surfaces map tiles API errors", async () => {
   );
 });
 
-test("reuseStoredForLocation returns a stored result without calling Google", async () => {
+test("google streetview reuses stored pano after metadata without downloading image", async () => {
   const root = tempOutputRoot();
   const bucket = bucketForLocation({ lat: 35, lng: 139 }, 5);
-  const stored = writeStoredResult(root, bucket, "stored-a.jpg");
+  const stored = writeStoredResult(root, bucket, "pano-stored.jpg", "pano-stored");
+  const requests: string[] = [];
   const plugin = createGoogleStreetViewPlugin({
     config: configWithOutput(root),
     random: () => 0,
-    fetch: async () => {
-      throw new Error("fetch should not be called");
+    fetch: async (url) => {
+      requests.push(String(url));
+      if (String(url).includes("/metadata")) {
+        return jsonResponse({
+          status: "OK",
+          pano_id: "pano-stored",
+          location: { lat: 35, lng: 139 }
+        });
+      }
+      throw new Error("image fetch should not be called");
     }
   });
 
-  const result = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139, reuseStoredForLocation: true });
+  const result = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
 
   assert.equal(result.reused, true);
   assert.equal(result.source, "stored");
   assert.equal(result.assetId, stored.assetId);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.includes("/metadata"), true);
 });
 
-test("stored reuse is isolated by coordinate bucket", async () => {
+test("google streetview pano cache is not isolated by coordinate bucket", async () => {
   const root = tempOutputRoot();
-  writeStoredResult(root, bucketForLocation({ lat: 35, lng: 139 }, 5), "stored-a.jpg");
-  let metadataCalls = 0;
+  const stored = writeStoredResult(root, bucketForLocation({ lat: 35, lng: 139 }, 5), "pano-shared.jpg", "pano-shared");
   const plugin = createGoogleStreetViewPlugin({
     config: configWithOutput(root),
     now: () => new Date("2026-06-14T01:02:03.000Z"),
     fetch: async (url) => {
       if (String(url).includes("/metadata")) {
-        metadataCalls += 1;
-        return jsonResponse({ status: "OK", location: { lat: 36, lng: 140 } });
+        return jsonResponse({
+          status: "OK",
+          pano_id: "pano-shared",
+          location: { lat: 36, lng: 140 }
+        });
       }
-      return bytesResponse(new Uint8Array([9]));
+      throw new Error("image fetch should not be called");
     }
   });
 
   const result = await plugin.getStreetViewByCoordinates({ lat: 36, lng: 140, reuseStoredForLocation: true });
 
-  assert.equal(result.reused, false);
-  assert.equal(metadataCalls, 1);
+  assert.equal(result.reused, true);
+  assert.equal(result.assetId, stored.assetId);
 });
 
 test("metadata lookup expands radius until max radius", async () => {
@@ -277,7 +322,7 @@ test("random streetview samples configured region and retries failed candidates"
         assert.ok(lng! >= 139 && lng! <= 140);
         return jsonResponse(metadataCalls === 1
           ? { status: "ZERO_RESULTS" }
-          : { status: "OK", location: { lat, lng } });
+          : { status: "OK", pano_id: "random-pano", location: { lat, lng } });
       }
       return bytesResponse(new Uint8Array([7]));
     }
@@ -314,7 +359,7 @@ function configWithOutput(outputDir: string): GoogleStreetViewPluginConfig {
   };
 }
 
-function writeStoredResult(root: string, coordinateBucket: string, name: string): { assetId: string } {
+function writeStoredResult(root: string, coordinateBucket: string, name: string, panoId: string): { assetId: string } {
   const dir = path.join(root, "2026-06");
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, name);
@@ -326,10 +371,11 @@ function writeStoredResult(root: string, coordinateBucket: string, name: string)
     coordinateBucket,
     requestedLocation: { lat: 35, lng: 139 },
     location: { lat: 35, lng: 139 },
+    panoId,
     heading: 0,
     pitch: 0,
     fov: 90,
-    metadata: { status: "OK" },
+    metadata: { status: "OK", pano_id: panoId },
     createdAt: "2026-06-14T01:02:03.000Z"
   })}\n`);
   return { assetId };

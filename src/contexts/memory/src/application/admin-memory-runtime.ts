@@ -55,6 +55,7 @@ type MemoryAdminRuntimeInput = {
   memoryInductionPromptStore: MemoryInductionPromptStore;
   promptProfileStore: { get(): { userName?: string } };
   agentState: { getSnapshot(): { state: string } };
+  isHeartbeatPaused?: () => boolean;
   time: { timeZone: string; now(): { iso: string; date: Date } };
   llmRequests: { send(input: any): Promise<any> };
   llmSessionRoot(): string;
@@ -208,9 +209,10 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
     const messages = input.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
     const apiPreset = resolvedApiPreset ?? input.resolveMemorizeApiPreset();
     if (!apiPreset) return { status: 400, body: { ok: false, error: "memorize_preset_required" } };
-    if (input.config.memorySummary.manualRunRequiresSleeping !== false && input.agentState.getSnapshot().state !== "sleeping") {
+    const manualRunGate = memoryManualRunGate();
+    if (input.config.memorySummary.manualRunRequiresSleeping !== false && !manualRunGate.allowed) {
       updateMemoryRunProgress(runId, date, target, "rejected");
-      return { status: 409, body: { ok: false, error: "memory_manual_run_requires_sleeping" } };
+      return { status: 409, body: { ok: false, error: "memory_manual_run_requires_paused_or_sleeping", gate: manualRunGate } };
     }
     if (memoryAdminRunActive) {
       updateMemoryRunProgress(runId, date, target, "rejected");
@@ -348,6 +350,12 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
         return { iso: now.iso, utcIso: now.date.toISOString() };
       }
     });
+  }
+
+  function memoryManualRunGate() {
+    const agentState = input.agentState.getSnapshot().state;
+    const heartbeatPaused = input.isHeartbeatPaused?.() === true;
+    return { allowed: agentState === "sleeping" || heartbeatPaused, agentState, heartbeatPaused };
   }
 }
 

@@ -63,6 +63,11 @@ test("buildLLMTextVariables exposes memory limit placeholders", () => {
   assert.equal(renderLLMText("{{memory/yesterdaySummary/content}} {{memory/yesterdaySummary/limit/lines}}/{{memory/yesterdaySummary/limit/bytes}}/{{memory/yesterdaySummary/limit/kib}}", variables), "y 0/0/0");
 });
 
+test("buildLLMTextVariables exposes library content", () => {
+  const variables = buildLLMTextVariables({ librarySetting: "当前图书馆" });
+  assert.equal(renderLLMText("{{library/content}}", variables), "当前图书馆");
+});
+
 test("formatToolResultForLLM renders placeholders in string tool output", () => {
   assert.equal(formatToolResultForLLM({
     ok: true,

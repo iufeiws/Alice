@@ -449,6 +449,8 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(configResponse.statusCode, 200);
   assert.equal(configBody.configValue.enabled, false);
   assert.deepEqual(configBody.configValue.initialLocation, { lat: 41.0086, lng: 28.9802 });
+  assert.equal(configBody.configValue.libraryPrompt, "");
+  assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "libraryPrompt"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "maxPanosPerIdle"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "selectionTemperature"));
   assert.equal(configBody.configSchema.fields.some((field: { key: string }) => field.key === "headingJitterDegrees"), false);
@@ -465,6 +467,7 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
     uturnPenalty: 5,
     loopPenalty: 11,
     selectionTemperature: 0.8,
+    libraryPrompt: "街景图书馆",
     initialLocation: JSON.stringify({ lat: 41.01, lng: 28.99 }),
     initialHeading: 120
   }), patchResponse);
@@ -481,8 +484,33 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(saved.uturnPenalty, 5);
   assert.equal(saved.loopPenalty, 11);
   assert.equal(saved.selectionTemperature, 0.8);
+  assert.equal(saved.libraryPrompt, "街景图书馆");
   assert.deepEqual(saved.initialLocation, { lat: 41.01, lng: 28.99 });
   assert.equal("headingJitterDegrees" in saved, false);
+});
+
+test("prompt variables use empty world wanderer library prompt without fallback", async () => {
+  const root = makeTempDir("admin-world-wanderer-library-variable");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "core library" }) },
+    pluginConfigs: { worldWanderer: { configPath } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  let response = createResponse();
+  await handler(createRequest("GET", "/admin/api/prompt-profile", {}), response);
+  assert.equal(JSON.parse(response.body).variables.library.content, "core library");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, libraryPrompt: "" }, null, 2)}\n`);
+
+  response = createResponse();
+  await handler(createRequest("GET", "/admin/api/prompt-profile", {}), response);
+  assert.equal(JSON.parse(response.body).variables.library.content, "");
 });
 
 test("admin plugin config patch stores Google Street View api key", async () => {
@@ -1103,6 +1131,35 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "jp", "model", "uploaded-folder", "nested", fileName)), false);
 });
 
+test("admin plugin TTS reference audio upload converts to preset wav", async () => {
+  const root = makeTempDir("admin-plugin-reference-audio");
+  const assetRoot = path.join(root, "assets");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, translationEnabled: false, apiPresetName: "voice" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath, assetRoot } }
+  };
+  const handler = createApiRequestHandler(context);
+
+  const response = createResponse();
+  await handler(createRawRequest("POST", "/admin/api/plugins/tts/assets/reference-audio", makeTinyWavBuffer(), {
+    "x-file-name": encodeURIComponent("voice-sample.mp3"),
+    "x-preset-name": encodeURIComponent("jp")
+  }), response);
+  const body = JSON.parse(response.body);
+  const referenceWavPath = path.join(assetRoot, "tts", "preset", "jp", "reference.wav");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.assetPath, "assets/tts/preset/jp/reference.wav");
+  assert.equal(fs.existsSync(referenceWavPath), true);
+  assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "jp", "reference.mp3")), false);
+  assert.equal(fs.readFileSync(referenceWavPath).subarray(0, 4).toString("ascii"), "RIFF");
+});
+
 test("admin plugin ASR test audio upload stores plugin asset path", async () => {
   const root = makeTempDir("admin-asr-plugin-asset");
   const assetRoot = path.join(root, "assets");
@@ -1483,8 +1540,8 @@ test("memory admin rejects concurrent run requests", async () => {
   assert.equal(firstResponse.statusCode, 200);
 });
 
-test("memory admin manual run requires sleeping state by default", async () => {
-  const root = makeTempDir("admin-memory-run-sleep-only");
+test("memory admin manual run requires paused heartbeat or sleeping state by default", async () => {
+  const root = makeTempDir("admin-memory-run-paused-or-sleep");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let calls = 0;
@@ -1509,8 +1566,41 @@ test("memory admin manual run requires sleeping state by default", async () => {
   await handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24", runId: "idle" }), response);
 
   assert.equal(response.statusCode, 409);
-  assert.equal(JSON.parse(response.body).error, "memory_manual_run_requires_sleeping");
+  const body = JSON.parse(response.body);
+  assert.equal(body.error, "memory_manual_run_requires_paused_or_sleeping");
+  assert.deepEqual(body.gate, { allowed: false, agentState: "idle", heartbeatPaused: false });
   assert.equal(calls, 0);
+});
+
+test("memory admin manual run is allowed when heartbeat is paused", async () => {
+  const root = makeTempDir("admin-memory-run-heartbeat-paused");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  let calls = 0;
+  const handler = createApiRequestHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
+    messageRuntime: { pauseHeartbeat() {}, resumeHeartbeat() {}, async processNow() {}, getStatus: () => ({ heartbeatPaused: true }) },
+    store: {
+      listMessagesByCreatedAtRange() {
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string | undefined, windowEndAt: string) {
+      calls += 1;
+      return { ok: true, startedAt: "2026-05-24T06:00:00.000Z", windowStartAt, windowEndAt, messageCount: messages.length, results: [] };
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24", runId: "paused" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).ok, true);
+  assert.equal(calls, 1);
 });
 
 test("memory clear-session clears the console memorize session", async () => {
@@ -1711,7 +1801,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     clearMemoryInductionSession() {},
     outputRouter: { listChannels: () => [] },
     feishuPairingStore: { list: () => [] },
-    coreProfileStore: { get: () => ({ appearanceDescription: "" }) },
+    coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
     promptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
     talkPromptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
     memoryStore,
@@ -1818,6 +1908,34 @@ function createRawRequest(method: string, url: string, body: Buffer, headers: Re
   request.socket = { remoteAddress: "127.0.0.1" };
   request.headers = headers;
   return request;
+}
+
+function makeTinyWavBuffer(): Buffer {
+  const sampleRate = 8_000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const samples = 400;
+  const bytesPerSample = bitsPerSample / 8;
+  const dataSize = samples * channels * bytesPerSample;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0, "ascii");
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8, "ascii");
+  buffer.write("fmt ", 12, "ascii");
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(channels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * channels * bytesPerSample, 28);
+  buffer.writeUInt16LE(channels * bytesPerSample, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  buffer.write("data", 36, "ascii");
+  buffer.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < samples; i += 1) {
+    const value = Math.round(Math.sin((i / sampleRate) * Math.PI * 2 * 440) * 1_000);
+    buffer.writeInt16LE(value, 44 + (i * bytesPerSample));
+  }
+  return buffer;
 }
 
 function writePreset(root: string, name: string) {

@@ -130,6 +130,7 @@ export type PhotoToolsDeps = {
   selfieImageApiRelayTimeoutMs?: number;
   selfieMaxBytes?: number;
   selfieExecutor?: SelfieExecutor;
+  getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   getSelfieContext?(): SelfieContext;
   getUserName?: () => string;
   getAppearanceDescription?: () => string;
@@ -217,7 +218,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
 
       await sendText(target, "-少女拍照中-", "system");
       const prompt = buildSelfiePrompt(action, context);
-      const references = resolveReferenceImages(context);
+      const references = await resolveReferenceImages(context);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -227,7 +228,8 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         `aspectRatio=${aspectRatio}`,
         `promptLength=${prompt.length}`,
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
-        references.missingOutfitImage ? "missingOutfitImage=true" : ""
+        references.missingOutfitImage ? "missingOutfitImage=true" : "",
+        references.worldWandererStreetViewImage ? `worldWandererStreetView=${path.basename(references.worldWandererStreetViewImage)}` : ""
       ].join(" "));
       const executor = deps.selfieExecutor ?? selfieExecutorForMode(photoConfig.selfieMode);
       const executorResult = await executor({
@@ -352,23 +354,30 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     });
   }
 
-  function resolveReferenceImages(context: SelfieContext): { images: string[]; prompt: string; missingOutfitImage: boolean } {
+  async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; worldWandererStreetViewImage?: string }> {
     const referenceDir = runtimePhotoConfig().selfieReferenceDir;
     const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), "selfie character reference image was not found");
-    const libraryImage = requireFile(path.resolve(referenceDir, libraryReferenceFileName), "selfie library reference image was not found");
     const outfitImage = optionalFile(resolveOutfitImage(context));
-    if (outfitImage) {
-      return {
-        images: [characterImage, outfitImage, libraryImage],
-        prompt: "",
-        missingOutfitImage: false
-      };
+    const worldWandererStreetViewImage = await resolveWorldWandererStreetViewReferenceImage();
+    const images = [characterImage];
+    if (outfitImage) images.push(outfitImage);
+    if (worldWandererStreetViewImage) {
+      images.push(worldWandererStreetViewImage);
+    } else {
+      images.push(requireFile(path.resolve(referenceDir, libraryReferenceFileName), "selfie library reference image was not found"));
     }
     return {
-      images: [characterImage, libraryImage],
+      images,
       prompt: "",
-      missingOutfitImage: true
+      missingOutfitImage: !outfitImage,
+      worldWandererStreetViewImage
     };
+  }
+
+  async function resolveWorldWandererStreetViewReferenceImage(): Promise<string | undefined> {
+    const referenceImage = await deps.getWorldWandererStreetViewReferenceImage?.();
+    if (!referenceImage) return undefined;
+    return requireFile(path.resolve(referenceImage), "world wanderer streetview reference image was not found");
   }
 
   async function sendText(target: PhotoToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {

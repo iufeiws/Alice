@@ -15,6 +15,7 @@ export function createAgentCoreRuntime(input: {
   dailyShellStore: any;
   time: any;
   coreProfileStore: any;
+  getLibrarySetting?(): string;
   memoryStore: any;
   diaryStore: any;
   agentState: any;
@@ -70,6 +71,7 @@ export function createAgentCoreRuntime(input: {
     getDailyShell: () => input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
     getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
+    getLibrarySetting: input.getLibrarySetting,
     getMemorySnapshot: () => input.memoryStore.read(),
     getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
     state: input.agentState,

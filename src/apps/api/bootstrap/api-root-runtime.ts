@@ -43,6 +43,16 @@ export function createApiRootRuntime() {
     outputRouter: apiControlRuntime.outputRouter,
     agentState: apiControlRuntime.agentState,
     getDefaultTarget: () => apiControlRuntime.apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,
+    async getWorldWandererStreetViewReferenceImage() {
+      const communicationRuntime = apiServerStackRuntime.apiCommunicationRuntime;
+      if (!communicationRuntime.worldWandererRuntime.isEnabled()) return undefined;
+      const state = communicationRuntime.worldWandererRuntime.getState();
+      const streetView = await communicationRuntime.googleStreetView.getStreetViewByCoordinates({
+        lat: state.location.lat,
+        lng: state.location.lng
+      });
+      return streetView.filePath;
+    },
     sendMemoryFailureNotice: () => apiControlRuntime.outboundNoticeRuntime.sendMemoryFailureNoticeToFeishu(),
     appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,

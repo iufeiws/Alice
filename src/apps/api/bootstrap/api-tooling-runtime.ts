@@ -14,6 +14,7 @@ export function createApiToolingRuntime(input: {
   readLLMApiPresets(): any;
   resolvePromptApiPreset(kind: any): any;
   getDefaultTarget(): any;
+  getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   sendMemoryFailureNotice(): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
@@ -31,6 +32,7 @@ export function createApiToolingRuntime(input: {
     agentState: input.agentState,
     getActiveMainLLMSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
     getDefaultTarget: input.getDefaultTarget,
+    getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
     llmLogRuntime: input.apiLLMRuntime.llmLogRuntime,

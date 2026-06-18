@@ -24,7 +24,7 @@ import {
   type GoogleStreetViewMapTilesSession
 } from "./client.js";
 import { errorMessage } from "./internal.js";
-import { fetchAndStoreStreetView, pickStoredResult } from "./storage.js";
+import { fetchAndStoreStreetView } from "./storage.js";
 
 export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = {}): GoogleStreetViewPlugin {
   const fetchImpl = deps.fetch ?? fetch;
@@ -85,13 +85,6 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
       assertEnabled(config);
       const requestedLocation = normalizeLocation(input);
       const coordinateBucket = bucketForLocation(requestedLocation, config.coordinatePrecision);
-      if (input.reuseStoredForLocation) {
-        const stored = pickStoredResult(config, coordinateBucket, random);
-        if (stored) {
-          deps.appendLog?.("info", `google streetview reuse hit: bucket=${coordinateBucket} asset=${stored.assetId}`);
-          return stored;
-        }
-      }
       return fetchAndStoreStreetView({
         config,
         requestedLocation,
@@ -114,13 +107,6 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
         const region = regions[Math.floor(random() * regions.length)]!;
         const requestedLocation = randomLocationInRegion(region, random);
         const coordinateBucket = bucketForLocation(requestedLocation, config.coordinatePrecision);
-        if (input.reuseStoredForLocation) {
-          const stored = pickStoredResult(config, coordinateBucket, random);
-          if (stored) {
-            deps.appendLog?.("info", `google streetview random reuse hit: region=${region.id} bucket=${coordinateBucket} asset=${stored.assetId}`);
-            return stored;
-          }
-        }
         try {
           return await fetchAndStoreStreetView({
             config,

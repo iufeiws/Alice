@@ -39,6 +39,7 @@ export type PromptRenderContext = {
   dailyShell?: string;
   dailyShellRaw?: DailyShell;
   appearanceDescription?: string;
+  librarySetting?: string;
   memory?: MemorySnapshot;
   wakeBoundary?: LLMTextWakeBoundary;
 };
@@ -274,6 +275,7 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     dailyShell: context.dailyShell ?? "",
     dailyShellRaw: context.dailyShellRaw,
     appearanceDescription: context.appearanceDescription,
+    librarySetting: context.librarySetting,
     memory: context.memory,
     wakeBoundary: context.wakeBoundary
   });

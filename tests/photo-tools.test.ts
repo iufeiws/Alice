@@ -703,6 +703,151 @@ test("selfie falls back to text outfit when the outfit reference image is missin
   }
 });
 
+test("selfie uses world wanderer streetview as reference image 3 when outfit is available", async () => {
+  const outputRoot = makeAssetTempDir("selfie-world-wanderer");
+  const referenceRoot = makeTempDir("selfie-ref-world-wanderer");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-world-wanderer"), "dress.jpg");
+  const streetViewImage = path.join(makeTempDir("selfie-streetview-world-wanderer"), "street.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-world-wanderer-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let referenceImages: string[] = [];
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+  fs.writeFileSync(streetViewImage, fakeJpegBytes);
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      getWorldWandererStreetViewReferenceImage: () => streetViewImage,
+      selfieExecutor: async (input) => {
+        referenceImages = input.referenceImages;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_world_wanderer",
+      toolName: "selfie",
+      input: { action: "在当前位置自拍" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(referenceImages.map((image) => path.basename(image)), [
+      "alice-character-reference.png",
+      "dress.jpg",
+      "street.jpg"
+    ]);
+    assert.equal(sent[1].content.kind, "image");
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    fs.rmSync(path.dirname(streetViewImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie does not keep streetview as image 3 when outfit reference is missing", async () => {
+  const outputRoot = makeAssetTempDir("selfie-world-wanderer-missing-outfit");
+  const referenceRoot = makeTempDir("selfie-ref-world-wanderer-missing-outfit");
+  const streetViewImage = path.join(makeTempDir("selfie-streetview-missing-outfit"), "street.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-world-wanderer-missing-outfit-db"), "alice.sqlite"));
+  let referenceImages: string[] = [];
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(streetViewImage, fakeJpegBytes);
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      getWorldWandererStreetViewReferenceImage: () => streetViewImage,
+      selfieExecutor: async (input) => {
+        referenceImages = input.referenceImages;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: path.join(referenceRoot, "missing.jpg") }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_world_wanderer_missing_outfit",
+      toolName: "selfie",
+      input: { action: "服装图缺失时自拍" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(referenceImages.map((image) => path.basename(image)), [
+      "alice-character-reference.png",
+      "street.jpg"
+    ]);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(streetViewImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie fails when world wanderer streetview lookup fails", async () => {
+  const outputRoot = makeAssetTempDir("selfie-world-wanderer-fail");
+  const referenceRoot = makeTempDir("selfie-ref-world-wanderer-fail");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-world-wanderer-fail"), "dress.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-world-wanderer-fail-db"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  let executorCalled = false;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "dress-image");
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      getWorldWandererStreetViewReferenceImage: () => {
+        throw new Error("streetview unavailable");
+      },
+      selfieExecutor: async () => {
+        executorCalled = true;
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+        }
+      },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_world_wanderer_fail",
+      toolName: "selfie",
+      input: { action: "街景失败时自拍" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /streetview unavailable/);
+    assert.equal(executorCalled, false);
+    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
+    assert.equal(sent[1].content.kind === "text" ? sent[1].content.text : "", "-大失败-");
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+  }
+});
+
 test("selfie sends start notice before required reference failures", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-character");
   const referenceRoot = makeTempDir("selfie-ref-missing-character");

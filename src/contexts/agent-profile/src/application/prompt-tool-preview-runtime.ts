@@ -12,6 +12,7 @@ export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
   dailyShellStore: any;
   coreProfileStore: any;
+  getLibrarySetting?(): string;
   memoryStore: any;
   diaryStore: any;
   toolPlugins: any[];
@@ -32,6 +33,7 @@ export function createPromptToolPreviewRuntime(input: {
       dailyShell: input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
       dailyShellRaw: input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
       appearanceDescription: input.coreProfileStore.get().appearanceDescription,
+      librarySetting: input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
       memory: input.memoryStore.read()
     });
     return input.llmRequests.buildTools(visibleToolNames(profile), variables);
@@ -67,6 +69,7 @@ export function createPromptToolPreviewRuntime(input: {
       dailyShell: input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
       dailyShellRaw: input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
       appearanceDescription: input.coreProfileStore.get().appearanceDescription,
+      librarySetting: input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
       memory: input.memoryStore.read(),
       wakeBoundary: input.diaryStore.latestWakeBoundary()
     };

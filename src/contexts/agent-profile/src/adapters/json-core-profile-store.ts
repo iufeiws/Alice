@@ -3,6 +3,7 @@ const path = await import("node:path");
 
 export type CoreProfile = {
   appearanceDescription: string;
+  librarySetting: string;
 };
 
 export type CoreProfileStore = {
@@ -12,7 +13,8 @@ export type CoreProfileStore = {
 
 export function defaultCoreProfile(): CoreProfile {
   return {
-    appearanceDescription: ""
+    appearanceDescription: "",
+    librarySetting: ""
   };
 }
 
@@ -48,6 +50,7 @@ function writeCoreProfile(filePath: string, profile: CoreProfile): void {
 
 function normalizeCoreProfile(profile: Partial<CoreProfile>): CoreProfile {
   return {
-    appearanceDescription: typeof profile.appearanceDescription === "string" ? profile.appearanceDescription : ""
+    appearanceDescription: typeof profile.appearanceDescription === "string" ? profile.appearanceDescription : "",
+    librarySetting: typeof profile.librarySetting === "string" ? profile.librarySetting : ""
   };
 }

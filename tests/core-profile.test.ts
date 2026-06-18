@@ -11,7 +11,7 @@ test("core profile stores appearance description", () => {
   const filePath = path.join(dir, "core-profile.json");
   const store = createCoreProfileStore(filePath);
 
-  assert.deepEqual(store.get(), { appearanceDescription: "" });
-  assert.deepEqual(store.save({ appearanceDescription: "浅金色头发" }), { appearanceDescription: "浅金色头发" });
-  assert.deepEqual(createCoreProfileStore(filePath).get(), { appearanceDescription: "浅金色头发" });
+  assert.deepEqual(store.get(), { appearanceDescription: "", librarySetting: "" });
+  assert.deepEqual(store.save({ appearanceDescription: "浅金色头发", librarySetting: "图书馆设定" }), { appearanceDescription: "浅金色头发", librarySetting: "图书馆设定" });
+  assert.deepEqual(createCoreProfileStore(filePath).get(), { appearanceDescription: "浅金色头发", librarySetting: "图书馆设定" });
 });

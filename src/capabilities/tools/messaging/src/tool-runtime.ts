@@ -22,6 +22,7 @@ export function createToolRuntime(input: {
   agentState: any;
   getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
+  getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
 }) {
@@ -78,6 +79,7 @@ export function createToolRuntime(input: {
     selfieImageApiRelayOutputCompression: input.config.photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: input.config.photo.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: input.config.photo.selfieMaxBytes,
+    getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     getSelfieContext() {
       const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
       const profile = input.promptProfileStore.get();

@@ -24,12 +24,20 @@ export async function fetchAndStoreStreetView(input: {
 }): Promise<GoogleStreetViewResult> {
   if (!input.config.apiKey) throw new Error("google streetview API key is not configured");
   const metadata = await findAvailableMetadata(input);
+  const panoId = panoIdFromMetadata(metadata);
+  if (!panoId) throw new Error("google streetview metadata returned no pano_id");
+  const stored = pickStoredResultByPanoId(input.config, panoId);
+  if (stored) {
+    input.appendLog?.("info", `google streetview pano reuse hit: pano=${panoId} asset=${stored.assetId}`);
+    return stored;
+  }
+
   const actualLocation = normalizeMetadataLocation(metadata, input.requestedLocation);
   const now = input.now();
   const month = now.toISOString().slice(0, 7);
   const outputDir = path.resolve(input.config.outputDir, month);
   fs.mkdirSync(outputDir, { recursive: true });
-  const fileBase = `${safeFilePart(input.coordinateBucket)}_${formatFileDateTime(now.toISOString())}`;
+  const fileBase = safeFilePart(panoId) || `${safeFilePart(input.coordinateBucket)}_${formatFileDateTime(now.toISOString())}`;
   const filePath = path.join(outputDir, `${fileBase}.jpg`);
   const sidecarPath = path.join(outputDir, `${fileBase}.json`);
   const imageUrl = staticStreetViewUrl(input.config, actualLocation);
@@ -50,7 +58,7 @@ export async function fetchAndStoreStreetView(input: {
     requestedLocation: input.requestedLocation,
     location: actualLocation,
     regionId: input.regionId,
-    panoId: typeof metadata.pano_id === "string" ? metadata.pano_id : undefined,
+    panoId,
     heading: input.config.heading,
     pitch: input.config.pitch,
     fov: input.config.fov,
@@ -69,6 +77,12 @@ export function pickStoredResult(config: GoogleStreetViewPluginConfig, coordinat
   return sidecarToResult(sidecars[Math.floor(random() * sidecars.length)]!, true);
 }
 
+function pickStoredResultByPanoId(config: GoogleStreetViewPluginConfig, panoId: string): GoogleStreetViewResult | undefined {
+  const stored = listStoredSidecars(config.outputDir)
+    .find((entry) => entry.panoId === panoId && fs.existsSync(entry.filePath));
+  return stored ? sidecarToResult(stored, true) : undefined;
+}
+
 function listStoredSidecars(outputDir: string): GoogleStreetViewSidecar[] {
   const root = path.resolve(outputDir);
   if (!fs.existsSync(root)) return [];
@@ -78,6 +92,7 @@ function listStoredSidecars(outputDir: string): GoogleStreetViewSidecar[] {
     try {
       const parsed = parseJsonObject(fs.readFileSync(filePath, "utf8")) as Partial<GoogleStreetViewSidecar>;
       if (typeof parsed.assetId !== "string" || typeof parsed.filePath !== "string" || typeof parsed.coordinateBucket !== "string") continue;
+      const metadata = parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata as GoogleStreetViewMetadataResponse : {};
       entries.push({
         assetId: parsed.assetId,
         filePath: parsed.filePath,
@@ -86,11 +101,11 @@ function listStoredSidecars(outputDir: string): GoogleStreetViewSidecar[] {
         requestedLocation: normalizeLocation(parsed.requestedLocation),
         location: normalizeLocation(parsed.location),
         regionId: typeof parsed.regionId === "string" ? parsed.regionId : undefined,
-        panoId: typeof parsed.panoId === "string" ? parsed.panoId : undefined,
+        panoId: typeof parsed.panoId === "string" ? parsed.panoId : panoIdFromMetadata(metadata),
         heading: numberValue(parsed.heading, 0),
         pitch: numberValue(parsed.pitch, 0),
         fov: numberValue(parsed.fov, 90),
-        metadata: parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata as GoogleStreetViewMetadataResponse : {},
+        metadata,
         createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : ""
       });
     } catch {
@@ -98,6 +113,10 @@ function listStoredSidecars(outputDir: string): GoogleStreetViewSidecar[] {
     }
   }
   return entries;
+}
+
+function panoIdFromMetadata(metadata: GoogleStreetViewMetadataResponse): string | undefined {
+  return typeof metadata.pano_id === "string" && metadata.pano_id.trim() ? metadata.pano_id.trim() : undefined;
 }
 
 function sidecarToResult(sidecar: GoogleStreetViewSidecar, reused: boolean): GoogleStreetViewResult {

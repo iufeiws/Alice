@@ -52,7 +52,7 @@ test("google streetview fetches metadata, saves image, and writes sidecar", asyn
 
   assert.equal(result.reused, false);
   assert.equal(result.source, "google_streetview_static");
-  assert.match(result.assetId, /^plugin\/google-streetview\/test-[^/]+\/2026-06\//);
+  assert.match(result.assetId, /^plugin\/google-streetview\/test-[^/]+\/pano-1\.jpg$/);
   assert.equal(path.basename(result.filePath), "pano-1.jpg");
   assert.equal(path.basename(result.sidecarPath), "pano-1.json");
   assert.equal(fs.existsSync(result.filePath), true);
@@ -90,6 +90,33 @@ test("google streetview repeated pano downloads image only once", async () => {
   assert.equal(second.filePath, first.filePath);
   assert.equal(path.basename(first.filePath), "pano-repeat.jpg");
   assert.equal(requests.filter((url) => url.includes("/metadata")).length, 2);
+  assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
+});
+
+test("google streetview does not reuse legacy subdirectory cache", async () => {
+  const root = tempOutputRoot();
+  writeStoredResult(path.join(root, "2026-06"), bucketForLocation({ lat: 35, lng: 139 }, 5), "legacy-pano.jpg", "legacy-pano");
+  const requests: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    now: () => new Date("2026-06-14T01:02:03.000Z"),
+    fetch: async (url) => {
+      requests.push(String(url));
+      if (String(url).includes("/metadata")) {
+        return jsonResponse({
+          status: "OK",
+          pano_id: "legacy-pano",
+          location: { lat: 35.1, lng: 139.1 }
+        });
+      }
+      return bytesResponse(new Uint8Array([6]));
+    }
+  });
+
+  const result = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
+
+  assert.equal(result.reused, false);
+  assert.equal(result.filePath, path.join(root, "legacy-pano.jpg"));
   assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
 });
 
@@ -360,7 +387,7 @@ function configWithOutput(outputDir: string): GoogleStreetViewPluginConfig {
 }
 
 function writeStoredResult(root: string, coordinateBucket: string, name: string, panoId: string): { assetId: string } {
-  const dir = path.join(root, "2026-06");
+  const dir = root;
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, name);
   fs.writeFileSync(filePath, Buffer.from([1]));

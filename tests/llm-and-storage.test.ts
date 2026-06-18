@@ -232,7 +232,7 @@ test("openai stream client aborts requests at timeout", async () => {
   }
 });
 
-test("openai-compatible client adds fallback reasoning content for tool request messages", async () => {
+test("openai-compatible client sends empty reasoning content for tool request messages", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody: any;
   globalThis.fetch = async (_url, init) => {
@@ -276,7 +276,7 @@ test("openai-compatible client adds fallback reasoning content for tool request 
         }
       ]
     });
-    assert.equal(requestBody.messages[0].reasoning_content, "Need to call the requested tool.");
+    assert.equal(requestBody.messages[0].reasoning_content, "");
     assert.equal(requestBody.messages[1].reasoning_content, "original thinking");
   } finally {
     globalThis.fetch = originalFetch;

@@ -1411,7 +1411,7 @@ test("agent core executes exposed consecutive selfie tool calls through plugin f
   assert.match(String(requests[1].messages.at(-1)?.content), /selfie cannot be called consecutively/);
 });
 
-test("agent core adds fallback reasoning content for tool requests when missing", async () => {
+test("agent core uses empty reasoning content for tool requests when missing", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1456,7 +1456,7 @@ test("agent core adds fallback reasoning content for tool requests when missing"
   await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "Need to call the requested tool.");
+  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "");
 });
 
 test("agent core filters messaging tools when feishu visibility is disabled", async () => {

@@ -205,7 +205,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         {
           role: "assistant",
           content: result.message.content,
-          reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, executedCalls.length),
+          reasoningContent: result.message.reasoningContent ?? "",
           toolCalls: executedCalls
         },
         ...toolMessages
@@ -284,11 +284,6 @@ export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
   }));
-}
-
-function reasoningContentForToolRequest(reasoningContent: string | undefined, toolCallCount: number): string | undefined {
-  if (reasoningContent) return reasoningContent;
-  return toolCallCount > 0 ? "Need to call the requested tool." : undefined;
 }
 
 function toolCallSignature(call: LLMToolCall): string {

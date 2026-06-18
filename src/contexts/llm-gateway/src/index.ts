@@ -430,9 +430,10 @@ function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {
   };
   if (message.name) result.name = message.name;
   if (message.toolCallId) result.tool_call_id = message.toolCallId;
-  if (message.reasoningContent) result.reasoning_content = message.reasoningContent;
+  if (message.reasoningContent !== undefined || (message.toolCalls?.length ?? 0) > 0) {
+    result.reasoning_content = message.reasoningContent ?? "";
+  }
   if (message.toolCalls) {
-    if (!result.reasoning_content) result.reasoning_content = "Need to call the requested tool.";
     result.tool_calls = message.toolCalls.map((call) => ({
       id: call.id,
       type: call.type,

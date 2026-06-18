@@ -112,7 +112,7 @@ function toolRequestMessage(result: LLMChatResult, call: LLMToolCall): LLMChatIn
   return {
     role: "assistant",
     content: result.message.content,
-    reasoningContent: reasoningContentForToolRequest(result.message.reasoningContent, 1),
+    reasoningContent: result.message.reasoningContent,
     toolCalls: [call]
   };
 }
@@ -145,11 +145,6 @@ function estimateTextTokens(text: string): number {
     tokens += /[\u4e00-\u9fff]/.test(char) ? 0.6 : 0.3;
   }
   return Math.round(tokens);
-}
-
-function reasoningContentForToolRequest(reasoningContent: string | undefined, toolCallCount: number): string | undefined {
-  if (reasoningContent) return reasoningContent;
-  return toolCallCount > 0 ? "Need to call the requested tool." : undefined;
 }
 
 function isSendChatToolName(toolName: string): boolean {

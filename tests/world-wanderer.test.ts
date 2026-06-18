@@ -89,6 +89,57 @@ test("world wanderer resolves initial coordinates and moves at least one pano", 
   assert.deepEqual(readWorldWandererState(statePath, readWorldWandererConfig(configPath)).metadata, graph.get("b")!.metadata);
 });
 
+test("world wanderer probes nearby when current pano has no links", async () => {
+  const root = tempRoot();
+  const configPath = path.join(root, "config.json");
+  const statePath = path.join(root, "state.json");
+  writeWorldWandererConfig(configPath, config({ speedMetersPerSecond: 0 }));
+
+  const next = pano("next", 41.0089, 28.9804, []);
+  next.metadata.addressComponents = [
+    { longName: "Ayasofya Meydani", types: ["route"] },
+    { longName: "Turkiye", types: ["country", "political"] }
+  ];
+  next.metadata.formattedAddress = "Ayasofya Meydani, Istanbul, Turkiye";
+
+  const graph = new Map([
+    ["isolated", pano("isolated", 41.0086, 28.9802, [])],
+    ["linked", pano("linked", 41.0088, 28.9802, [{ panoId: "next", heading: 90, text: "Ayasofya Meydani" }])],
+    ["next", next]
+  ]);
+  const coordinateCalls: Array<{ lat: number; lng: number }> = [];
+  const panoCalls: string[] = [];
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    statePath,
+    now: () => new Date("2026-06-17T00:00:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates(input) {
+        coordinateCalls.push(input);
+        return coordinateCalls.length === 1 ? graph.get("isolated")! : graph.get("linked")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        panoCalls.push(input.panoId);
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 0 });
+
+  assert.ok(state);
+  assert.equal(state.panoId, "next");
+  assert.equal(coordinateCalls.length, 2);
+  assert.ok(coordinateCalls[1]!.lat > coordinateCalls[0]!.lat);
+  assert.deepEqual(panoCalls, ["next"]);
+  assert.deepEqual(state.recentPanoIds, ["linked", "next"]);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["linked"]);
+  assert.deepEqual(state.metadata, next.metadata);
+});
+
 test("world wanderer accumulates actual pano distance before stopping", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");

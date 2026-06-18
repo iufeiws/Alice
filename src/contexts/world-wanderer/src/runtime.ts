@@ -1,6 +1,9 @@
-import type { GoogleStreetViewPanoGraphResult } from "../../../channels/google-streetview/src/index.js";
+import type {
+  GoogleStreetViewLocation,
+  GoogleStreetViewPanoGraphResult
+} from "../../../channels/google-streetview/src/index.js";
 import { readWorldWandererConfig } from "./config.js";
-import { distanceMeters, normalizeHeading } from "./geo.js";
+import { distanceMeters, moveLocation, normalizeHeading } from "./geo.js";
 import { chooseNextLink } from "./policy.js";
 import {
   appendRecentPanoId,
@@ -33,8 +36,16 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
 
       try {
         let currentPano = await resolveCurrentPano(previous, config);
-        let recentPanoIds = appendRecentPanoId(previous.recentPanoIds, currentPano.panoId, config.recentHistoryLimit);
         let pathStack = previous.pathStack;
+        if (!hasMovableLinks(currentPano)) {
+          const nearbyPano = await findNearbyLinkedPano(currentPano.location);
+          if (nearbyPano) {
+            deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
+            currentPano = nearbyPano;
+            pathStack = [];
+          }
+        }
+        let recentPanoIds = appendRecentPanoId(previous.recentPanoIds, currentPano.panoId, config.recentHistoryLimit);
         let lastHeading = previous.lastHeading;
         let lastRoadText = previous.lastRoadText;
         let accumulatedMeters = 0;
@@ -76,10 +87,14 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           updatedAt
         });
         writeWorldWandererState(deps.statePath, next);
-        deps.appendLog?.(
-          "info",
-          `world wanderer moved: pano=${next.panoId ?? "unknown"} steps=${movedPanos} distance=${accumulatedMeters.toFixed(1)}m heading=${lastHeading.toFixed(1)}`
-        );
+        if (movedPanos > 0) {
+          deps.appendLog?.(
+            "info",
+            `world wanderer moved: pano=${next.panoId ?? "unknown"} steps=${movedPanos} distance=${accumulatedMeters.toFixed(1)}m heading=${lastHeading.toFixed(1)}`
+          );
+        } else {
+          deps.appendLog?.("warn", `world wanderer stuck: pano=${next.panoId ?? "unknown"} has no linked nearby pano`);
+        }
         return next;
       } catch (error) {
         const lastFailure = {
@@ -111,4 +126,18 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
     }
     return deps.googleStreetView.getPanoGraphByCoordinates(config.initialLocation);
   }
+
+  async function findNearbyLinkedPano(location: GoogleStreetViewLocation): Promise<GoogleStreetViewPanoGraphResult | undefined> {
+    for (const distance of [30, 60]) {
+      for (const heading of [0, 90, 180, 270]) {
+        const candidate = await deps.googleStreetView.getPanoGraphByCoordinates(moveLocation(location, heading, distance));
+        if (hasMovableLinks(candidate)) return candidate;
+      }
+    }
+    return undefined;
+  }
+}
+
+function hasMovableLinks(pano: GoogleStreetViewPanoGraphResult): boolean {
+  return pano.links.some((link) => link.panoId !== pano.panoId);
 }

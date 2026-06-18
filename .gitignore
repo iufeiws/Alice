@@ -9,7 +9,7 @@ __pycache__/
 open-source-tools/*
 !open-source-tools/AGENTS.md
 data/
-config/
+config/*
 logs/
 assets/**
 !assets/**/
@@ -24,6 +24,7 @@ memory-files/shell/
 memory-files/diary/*.sqlite*
 memory-files/diary/tmp/
 memory-files/long-term-memory/
+memory-files/*
 prompt/*
 .env
 .DS_Store

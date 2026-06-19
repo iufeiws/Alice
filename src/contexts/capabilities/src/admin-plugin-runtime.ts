@@ -909,7 +909,7 @@ function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {
       "read plugin config",
       "call Google Street View Static API and Map Tiles API metadata endpoints",
       "write images and metadata under assets/plugin/google-streetview",
-      "reuse stored sidecar metadata when requested"
+      "reuse stored metadata when requested"
     ]
   };
 }

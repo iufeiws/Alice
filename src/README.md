@@ -53,13 +53,13 @@
 - `bootstrap/voice-plugin-runtime.ts`: TTS channel 与 llm-gateway 的 app 层适配。
 - `bootstrap/web-rtc-voice-runtime.ts`: WebRTC voice 与 TalkRuntime/ASR/TTS 的 app 层适配。
 - `routes/admin-routes.ts`: 管理后台 route 分派。只解析 HTTP request、调用 context/capability/channel service、写 response。
-- `routes/admin-context-runtime.ts`: 将 API runtime dependencies 组装为 admin route context。
-- `routes/api-admin-runtime.ts`: 管理后台 request handler wiring。
-- `routes/admin-html.ts`: 管理后台前端 HTML/CSS/JS。
+- `apps/api/bootstrap/admin-context-runtime.ts`: 将 API runtime dependencies 组装为 admin route context。
+- `apps/api/bootstrap/api-admin-runtime.ts`: 管理后台 request handler wiring。
+- `apps/api/admin-ui/admin-html.ts`: 管理后台前端 HTML/CSS/JS。
 - `routes/voice-call-routes.ts`: voice-call HTTP/WebSocket route glue。
 - `routes/voice-call-contract.ts`: voice-call API DTO。
 - `routes/voice-call-html.ts`: voice-call 浏览器页面。
-- `routes/asset-utils.ts`: admin asset path 校验。
+- `platform/storage/src/admin-asset-utils.ts`: admin asset path 校验。
 - `middleware/http-utils.ts`: HTTP body、JSON、loopback 管理请求校验。
 - `server/api-server-runtime.ts`: HTTP server 创建和请求分派。
 - `server/api-server-stack-runtime.ts`: server stack wiring。

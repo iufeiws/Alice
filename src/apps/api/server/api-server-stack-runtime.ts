@@ -1,5 +1,5 @@
 import { createApiLifecycleRuntime } from "./api-lifecycle-runtime.js";
-import { createApiAdminRuntime } from "../routes/api-admin-runtime.js";
+import { createApiAdminRuntime } from "../bootstrap/api-admin-runtime.js";
 import { createApiCommunicationRuntime } from "../bootstrap/api-communication-runtime.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 

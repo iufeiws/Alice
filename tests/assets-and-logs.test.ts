@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveAdminAssetPath } from "../src/apps/api/routes/asset-utils.js";
+import { resolveAdminAssetPath } from "../src/platform/storage/src/admin-asset-utils.js";
 import { createApiLogRuntime } from "../src/apps/api/bootstrap/api-log-runtime.js";
 import { createFileLogStore } from "../src/contexts/conversation-hub/src/adapters/file-log-store.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";

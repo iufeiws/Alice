@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { createApiRequestHandler } from "../src/apps/api/routes/admin-routes.js";
+import { createAdminRouteServices } from "../src/apps/api/bootstrap/admin-api-service.js";
 import {
   createMarkdownMemoryStore,
   createMemoryInductionPromptStore,
@@ -17,11 +18,22 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 const childProcess = await import("node:child_process");
 
+function createAdminHandler(context: any) {
+  return createApiRequestHandler({ services: createAdminRouteServices(context) });
+}
+
+async function assertPatchError(handler: ReturnType<typeof createAdminHandler>, url: string, body: Record<string, unknown>, error: string) {
+  const response = createResponse();
+  await handler(createRequest("PATCH", url, body), response);
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, error);
+}
+
 test("voice call app page renders outside the plugin page", async () => {
   const root = makeTempDir("voice-call-page");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
   await handler(createRequest("GET", "/voice-call", {}), response);
@@ -33,10 +45,10 @@ test("voice call app page renders outside the plugin page", async () => {
   assert.match(response.body, /\/voice-call\/api\/signaling/);
   assert.match(response.body, /\/voice-call\/assets\/alice-default-portrait\.png/);
   assert.match(response.body, /addTransceiver\("audio", \{ direction: "recvonly" \}\)/);
-  assert.match(response.body, /text\.length <= 3/);
+  assert.match(response.body, /text\.length <= 1/);
   assert.match(response.body, /sendSignal\(\{ type: "interrupt", reason: "manual" \}\)/);
   assert.doesNotMatch(response.body, /realtime_voice/);
-  assert.doesNotMatch(response.body, /getUserMedia/);
+  assert.match(response.body, /navigator\.mediaDevices\.getUserMedia/);
   assert.doesNotMatch(response.body, /addTrack\(track/);
   assert.doesNotMatch(response.body, /startSpeechStateLoop/);
 });
@@ -45,7 +57,7 @@ test("voice call app config defines frontend and signaling routes", async () => 
   const root = makeTempDir("voice-call-config");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
   await handler(createRequest("GET", "/voice-call/api/config", {}), response);
@@ -63,7 +75,7 @@ test("llm api preset save stores extra params as part of the preset", async () =
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = baseContext(root, memoryStore, promptStore);
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
@@ -100,7 +112,7 @@ test("llm api preset save accepts long timeout values", async () => {
   const root = makeTempDir("admin-llm-preset-timeout");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
@@ -158,7 +170,7 @@ test("prompt api profile saves chat binding and migrates legacy core binding", a
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/prompt-api-profile", {
@@ -185,7 +197,7 @@ test("talk prompt profile saves independently from chat prompt profile", async (
   const context = baseContext(root, memoryStore, promptStore);
   context.promptProfileStore = createPromptProfileStore(path.join(root, "chat-prompt-profile.json"));
   context.talkPromptProfileStore = createPromptProfileStore(path.join(root, "talk-prompt-profile.json"));
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/talk-prompt-profile", {
@@ -205,7 +217,7 @@ test("agent state admin route exposes and accepts calling state", async () => {
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let currentState = "calling";
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     agentState: {
       getSnapshot: () => ({ state: currentState, intimacy: 50 }),
@@ -237,6 +249,45 @@ test("agent state admin route exposes and accepts calling state", async () => {
   assert.ok(putBody.states.includes("calling"));
 });
 
+test("admin messaging runtime rejects missing Feishu target", async () => {
+  const root = makeTempDir("admin-messaging-missing-target");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/tools/messaging/view", {}), response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "missing_feishu_target");
+});
+
+test("admin shell runtime exposes shell config", async () => {
+  const root = makeTempDir("admin-shell-config");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/shell", {}), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.ok("todayVariables" in JSON.parse(response.body));
+});
+
+test("admin tts runtime rejects missing preview text", async () => {
+  const root = makeTempDir("admin-tts-preview-missing-text");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/tts/generate", {}), response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "text_required");
+});
+
 test("initiated behavior config patch preserves tool request prompt layers", async () => {
   const root = makeTempDir("admin-initiated-behavior-tool-layer");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -253,7 +304,7 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
       steps: []
     };
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
@@ -300,7 +351,7 @@ test("initiated behavior config patch rejects system prompt layers", async () =>
   context.setAgentInitiatedBehaviorConfig = () => {
     throw new Error("system layer should not reach setter");
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
@@ -336,7 +387,7 @@ test("admin plugin list exposes tts config card state", async () => {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins", {}), response);
@@ -370,7 +421,7 @@ test("admin plugin list exposes ASR config card state", async () => {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins", {}), response);
@@ -404,7 +455,7 @@ test("admin plugin list exposes photo selfie config card state", async () => {
     },
     pluginConfigs: { photo: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins", {}), response);
@@ -429,7 +480,7 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const listResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins", {}), listResponse);
@@ -499,7 +550,7 @@ test("prompt variables use empty world wanderer library prompt without fallback"
     coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "core library" }) },
     pluginConfigs: { worldWanderer: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   let response = createResponse();
   await handler(createRequest("GET", "/admin/api/prompt-profile", {}), response);
@@ -538,7 +589,7 @@ test("admin plugin config patch stores Google Street View api key", async () => 
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { googleStreetView: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const configResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/google_streetview/config", {}), configResponse);
@@ -605,7 +656,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     },
     pluginConfigs: { photo: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const schemaResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/photo/config", {}), schemaResponse);
@@ -696,7 +747,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
   const modelConfigName = `zh-${path.basename(root)}`;
 
   const response = createResponse();
@@ -764,7 +815,7 @@ test("admin TTS config schema exposes voice language and language model folder",
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/tts/config", {}), response);
@@ -834,7 +885,7 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const first = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
@@ -891,7 +942,7 @@ test("admin TTS config patch switches Bailian service default endpoint", async (
     ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
     pluginConfigs: { tts: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
@@ -946,7 +997,7 @@ test("admin plugin test can run tts with translation disabled", async () => {
       return { message: { role: "assistant", content: "また後で" } };
     }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/tts/test", { text: "晚点见" }), response);
@@ -977,7 +1028,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/asr/config", {
@@ -1014,6 +1065,52 @@ test("admin plugin config patch writes ASR config with preset references only", 
   assert.equal(saved.providers.tencent.engineModelType, "16k_zh");
 });
 
+test("admin plugin config patch rejects invalid submitted values instead of falling back", async () => {
+  const root = makeTempDir("admin-plugin-invalid-inputs");
+  const photoConfigPath = path.join(root, "config", "plugin", "photo", "config.json");
+  const asrConfigPath = path.join(root, "config", "plugin", "asr", "config.json");
+  const worldConfigPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const ttsConfigPath = path.join(root, "config", "plugin", "tts", "config.json");
+  fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
+  fs.mkdirSync(path.dirname(asrConfigPath), { recursive: true });
+  fs.mkdirSync(path.dirname(worldConfigPath), { recursive: true });
+  fs.mkdirSync(path.dirname(ttsConfigPath), { recursive: true });
+  fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
+  fs.writeFileSync(asrConfigPath, `${JSON.stringify({ enabled: true, defaultProvider: "openai_compatible", providers: { openaiCompatible: {} } })}\n`);
+  fs.writeFileSync(worldConfigPath, `${JSON.stringify({ enabled: true })}\n`);
+  fs.writeFileSync(ttsConfigPath, `${JSON.stringify({
+    enabled: true,
+    translationEnabled: false,
+    conversion: {
+      provider: "bailian",
+      bailian: {
+        service: "qwen",
+        endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        model: "qwen3-tts-vc-2026-01-22",
+        voice: "Cherry"
+      }
+    }
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const handler = createAdminHandler({
+    ...base,
+    config: { ...base.config, photo: photoDefaults() },
+    pluginConfigs: {
+      photo: { configPath: photoConfigPath },
+      asr: { configPath: asrConfigPath },
+      worldWanderer: { configPath: worldConfigPath },
+      tts: { configPath: ttsConfigPath }
+    }
+  });
+
+  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieMode: "bad" }, "invalid_selfie_mode");
+  await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
+  await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
+  await assertPatchError(handler, "/admin/api/plugins/tts/config", { conversion: { bailian: { service: "bad" } } }, "invalid_bailian_service");
+});
+
 test("admin ASR plugin config schema groups general and provider settings", async () => {
   const root = makeTempDir("admin-asr-plugin-schema-groups");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
@@ -1025,7 +1122,7 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
   });
@@ -1058,7 +1155,7 @@ test("admin plugin enable and disable update tts config", async () => {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const enableResponse = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/tts/enable", {}), enableResponse);
@@ -1086,7 +1183,7 @@ test("admin plugin enable and disable update ASR config", async () => {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const enableResponse = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/asr/enable", {}), enableResponse);
@@ -1112,7 +1209,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   const fileName = `model-${path.basename(root)}.onnx`;
@@ -1143,7 +1240,7 @@ test("admin plugin TTS reference audio upload converts to preset wav", async () 
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRawRequest("POST", "/admin/api/plugins/tts/assets/reference-audio", makeTinyWavBuffer(), {
@@ -1176,7 +1273,7 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath, assetRoot } }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   const fileName = `asr-${path.basename(root)}.wav`;
@@ -1248,7 +1345,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
       return { message: { role: "assistant", content: "また後で" } };
     }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/tts/test", { text: "晚点见" }), response);
@@ -1309,7 +1406,7 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
       }
     }
   };
-  const handler = createApiRequestHandler(context);
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/asr/test", {}), response);
@@ -1364,7 +1461,7 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
 
   const seen: LLMChatInput[] = [];
   let capturedPreset: any;
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
       listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
@@ -1434,7 +1531,7 @@ test("memory run-target still processes all memory files in one workspace run", 
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let capturedTarget = "";
   let capturedMessages: StoredConversationMessage[] = [];
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
       listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
@@ -1489,7 +1586,7 @@ test("memory admin rejects concurrent run requests", async () => {
   const firstRunStarted = new Promise<void>((resolve) => {
     resolveFirstStarted = resolve;
   });
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
       listMessagesByCreatedAtRange() {
@@ -1545,7 +1642,7 @@ test("memory admin manual run requires paused heartbeat or sleeping state by def
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let calls = 0;
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
     store: {
@@ -1577,7 +1674,7 @@ test("memory admin manual run is allowed when heartbeat is paused", async () => 
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let calls = 0;
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     agentState: { getSnapshot: () => ({ state: "idle" }), setState() {} },
     messageRuntime: { pauseHeartbeat() {}, resumeHeartbeat() {}, async processNow() {}, getStatus: () => ({ heartbeatPaused: true }) },
@@ -1608,7 +1705,7 @@ test("memory clear-session clears the console memorize session", async () => {
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let cleared = false;
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     clearMemoryInductionSession() {
       cleared = true;
@@ -1632,7 +1729,7 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
   const boundaries = [
     { occurredAt: "2026-05-31T03:46:02.806", source: "inferred_gap" }
   ];
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
       listMessagesByCreatedAtRange() {
@@ -1672,7 +1769,7 @@ test("memory git undo and redo are unavailable for SQL-backed memory", async () 
   const root = makeTempDir("admin-memory-git-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler(baseContext(root, memoryStore, promptStore));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
   memoryStore.writeTarget("persistent", "persistent v1\n");
 
   let response = createResponse();
@@ -1691,7 +1788,7 @@ test("memory delete-latest-sql removes the latest entry for each SQL memory tabl
   const root = makeTempDir("admin-memory-delete-latest-sql");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore)
   });
 
@@ -1734,7 +1831,7 @@ test("memory delete-latest-sql reports when no diary entry exists", async () => 
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
-  const handler = createApiRequestHandler({
+  const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     diaryStore
   });

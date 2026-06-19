@@ -352,18 +352,13 @@ export function renderAdminHtmlV2(): string {
               </form>
               <h2>Send Test</h2>
             <label for="testMarkdown">Markdown</label>
-            <textarea id="testMarkdown" rows="5">**Alice markdown test**
-
-- item one
-- item two
-
-\`code\`</textarea>
+            <textarea id="testMarkdown" rows="5"></textarea>
               <button type="button" id="send-test-markdown">Send Markdown</button>
               <label for="testImagePath">Image Local Path</label>
-              <input id="testImagePath" autocomplete="off" value="/home/wyf98/Alice/assets/test.png" />
+              <input id="testImagePath" autocomplete="off" />
               <button type="button" id="send-test-image">Send Image</button>
               <label for="testAudioPath">Audio Local Path</label>
-              <input id="testAudioPath" autocomplete="off" value="/home/wyf98/Alice/assets/test.opus" />
+              <input id="testAudioPath" autocomplete="off" />
               <button type="button" id="send-test-audio">Send Audio</button>
               <p class="muted" id="send-test-status"></p>
             </div>
@@ -419,7 +414,7 @@ export function renderAdminHtmlV2(): string {
             <textarea id="ttsReferenceText" rows="3" placeholder="输入参考音频对应的原文"></textarea>
             <button type="button" id="tts-upload-reference">Upload Voice Sample</button>
             <label for="ttsPreviewText">Preview Text</label>
-            <textarea id="ttsPreviewText" rows="3">你好，我是 Alice。今天也想听你多说一点。</textarea>
+            <textarea id="ttsPreviewText" rows="3"></textarea>
             <button type="button" id="tts-generate-preview">Generate Preview</button>
             <audio id="ttsPreviewAudio" controls></audio>
             <p class="muted" id="tts-preview-status"></p>
@@ -1206,12 +1201,12 @@ export function renderAdminHtmlV2(): string {
           + " · Text: " + (tts.genieReferenceText || "assets/tts/references/alice/reference.txt") + (tts.genieReferenceTextAvailable ? " (found)" : " (missing)");
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
-        $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "websocket";
+        $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "";
         $("feishuAppId").value = config.plugins.feishu.appId || "";
         $("feishuRequireMention").checked = Boolean(config.plugins.feishu.requireMention);
         $("feishu-status").textContent = config.plugins.feishu.runtimeStarted ? "Feishu runtime started." : "Feishu runtime stopped.";
         $("wechatEnabled").checked = Boolean(config.plugins.wechat && config.plugins.wechat.enabled);
-        $("wechatBaseURL").value = (config.plugins.wechat && config.plugins.wechat.baseURL) || "https://ilinkai.weixin.qq.com";
+        $("wechatBaseURL").value = (config.plugins.wechat && config.plugins.wechat.baseURL) || "";
         $("wechatPollTimeoutMs").value = String((config.plugins.wechat && config.plugins.wechat.pollTimeoutMs) || 35000);
         $("wechat-status").textContent = config.plugins.wechat && config.plugins.wechat.runtimeStarted
           ? "WeChat runtime started."
@@ -1587,10 +1582,10 @@ export function renderAdminHtmlV2(): string {
       }
 
       function renderPluginTestBox(payload) {
-        const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Test translation and voice", defaultValue: "晚点见。" };
+        const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Test translation and voice" };
         const input = schema.input === "audio"
           ? \`<label>\${escapeHtml(schema.label || "Audio")}<input id="pluginTestAudio" value="\${escapeAttr((payload.configValue && payload.configValue.testAudioPath) || schema.defaultValue || "")}" placeholder="assets/plugin/asr/test-audio/example.wav" /></label>\`
-          : \`<label>\${escapeHtml(schema.label || "Input")}<textarea id="pluginTestText" rows="4" spellcheck="false">\${escapeHtml(schema.defaultValue || "晚点见。")}</textarea></label>\`;
+          : \`<label>\${escapeHtml(schema.label || "Input")}<textarea id="pluginTestText" rows="4" spellcheck="false">\${escapeHtml(schema.defaultValue || "")}</textarea></label>\`;
         return \`
           <h2>Test</h2>
           <div class="plugin-test-box" data-plugin-test-input="\${escapeAttr(schema.input || "text")}">
@@ -3822,7 +3817,7 @@ Timing:
       $("feishu-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { enabled: $("feishuEnabled").checked, connectionMode: form.get("connectionMode") || "websocket", appId: form.get("appId"), requireMention: $("feishuRequireMention").checked };
+        const body = { enabled: $("feishuEnabled").checked, connectionMode: form.get("connectionMode"), appId: form.get("appId"), requireMention: $("feishuRequireMention").checked };
         const appSecret = form.get("appSecret");
         if (appSecret) body.appSecret = appSecret;
         const result = await fetch("/admin/api/config/feishu", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());

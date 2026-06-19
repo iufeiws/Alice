@@ -1,9 +1,11 @@
-import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
+import type { AppConfig } from "./app-config-runtime.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
-import { createApiRequestHandler } from "./admin-routes.js";
+import { createAdminRouteServices } from "./admin-api-service.js";
+import type { AdminRuntimeContext } from "./admin-route-context.js";
+import { createApiRequestHandler } from "../routes/admin-routes.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
@@ -100,7 +102,7 @@ export function createAdminRequestHandlerRuntime(input: {
     resolveMemorizeApiPreset: () => undefined,
     appendLog: input.appendLog
   });
-  return createApiRequestHandler({
+  const runtimeContext: AdminRuntimeContext = {
     config: input.config,
     logs: input.logs,
     messageLogs: input.messageLogs,
@@ -159,5 +161,7 @@ export function createAdminRequestHandlerRuntime(input: {
     setTimeZone: input.setTimeZone,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
-  });
+  };
+
+  return createApiRequestHandler({ services: createAdminRouteServices(runtimeContext) });
 }

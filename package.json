@@ -15,7 +15,7 @@
     "tts:genie:start": ".conda-moss/bin/python scripts/genie_tts/service.py",
     "test:selfie-api": "node scripts/test-selfie-image-api.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

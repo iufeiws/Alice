@@ -30,7 +30,7 @@ export type TalkLoopSessionContextDeps = {
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
-    currentRound?: number;
+    agentLoopRunSeq?: number;
     lastTotalTokens?: number;
     lastInputTokens?: number;
     lastUsageModel?: string;
@@ -43,7 +43,7 @@ export type TalkLoopSessionContextDeps = {
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
-    currentRound?: number;
+    agentLoopRunSeq?: number;
     lastTotalTokens?: number;
     lastInputTokens?: number;
     lastUsageModel?: string;
@@ -61,7 +61,7 @@ export type TalkLoopPreparedSessionContext = {
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
   executeToolCall(call: LLMToolCall, input: {
-    currentRound: number;
+    agentLoopRunSeq?: number;
     capabilities?: ToolExecutionContext["llmCapabilities"];
   }): Promise<TalkLoopExecutedToolCall>;
 };
@@ -127,8 +127,8 @@ export async function prepareTalkLoopSessionContext(input: {
     session: preparedSession.session,
     toolNames: deps.visibleToolNames(profile),
     toolVariables: variables,
-    executeToolCall: (call: LLMToolCall, toolInput: { currentRound: number; capabilities?: ToolExecutionContext["llmCapabilities"] }) => toolExecutor.executeLLMToolCall(call, {
-      currentRound: toolInput.currentRound,
+    executeToolCall: (call: LLMToolCall, toolInput: { agentLoopRunSeq?: number; capabilities?: ToolExecutionContext["llmCapabilities"] }) => toolExecutor.executeLLMToolCall(call, {
+      agentLoopRunSeq: toolInput.agentLoopRunSeq,
       llmSessionId: session?.id ?? sessionId,
       llmCapabilities: toolInput.capabilities
     })

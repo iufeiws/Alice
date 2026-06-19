@@ -91,6 +91,7 @@ export function createLLMSessionBrowserRuntime(input: {
           typeof (metadata.latestResponse as any)?.round === "number" ? (metadata.latestResponse as any).round + 1 : 0
         ),
         messageCount: parsed.messages.length,
+        agentLoopRunSeq: typeof metadata.agentLoopRunSeq === "number" && Number.isFinite(metadata.agentLoopRunSeq) ? metadata.agentLoopRunSeq : undefined,
         currentRound: parseRoundInfo(metadata.currentRound),
         latestRequest: parseRequestInfo(metadata.latestRequest),
         latestResponse: parseResponseInfo(metadata.latestResponse),

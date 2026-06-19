@@ -205,6 +205,7 @@ export function createActiveLLMSessionRuntime(input: {
       || session.lastInputTokens !== sessionInput.lastInputTokens
       || session.lastUsageModel !== sessionInput.lastUsageModel
       || stableStringify(session.tokenPressurePreviewBaselines ?? {}) !== stableStringify(nextTokenPressurePreviewBaselines);
+    const agentLoopRunSeqChanged = session.agentLoopRunSeq !== sessionInput.agentLoopRunSeq;
     const modeChanged = session.mode !== nextMode
       || session.modeStaticTokenEstimate !== nextModeStaticTokenEstimate
       || session.modeStartedAt !== nextModeStartedAt
@@ -227,6 +228,7 @@ export function createActiveLLMSessionRuntime(input: {
     session.staticPromptFingerprint = sessionInput.staticPromptFingerprint;
     session.staticPromptMessageCount = sessionInput.staticPromptMessageCount;
     session.requestTimestamps = sessionInput.requestTimestamps;
+    session.agentLoopRunSeq = sessionInput.agentLoopRunSeq;
     session.lastTotalTokens = sessionInput.lastTotalTokens;
     session.lastInputTokens = sessionInput.lastInputTokens;
     session.lastUsageModel = sessionInput.lastUsageModel;
@@ -240,7 +242,7 @@ export function createActiveLLMSessionRuntime(input: {
     session.fixedPrefixCursorMessageId = nextFixedPrefixCursorMessageId;
     session.waitChatStartedAt = nextWaitChatStartedAt;
     if (delta.length > 0) input.archive.appendMessages(session, delta);
-    if (delta.length > 0 || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
+    if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
   }
 
   function updateActiveTalkLLMSessionTranscript(sessionInput: LLMSessionSnapshot): void {
@@ -255,6 +257,7 @@ export function createActiveLLMSessionRuntime(input: {
     session.staticPromptFingerprint = sessionInput.staticPromptFingerprint;
     session.staticPromptMessageCount = sessionInput.staticPromptMessageCount;
     session.requestTimestamps = sessionInput.requestTimestamps ?? session.requestTimestamps ?? [];
+    session.agentLoopRunSeq = sessionInput.agentLoopRunSeq;
     session.lastTotalTokens = sessionInput.lastTotalTokens;
     session.lastInputTokens = sessionInput.lastInputTokens;
     session.lastUsageModel = sessionInput.lastUsageModel;
@@ -312,6 +315,7 @@ export function createActiveLLMSessionRuntime(input: {
       staticPromptFingerprint: latest.staticPromptFingerprint,
       staticPromptMessageCount: latest.staticPromptMessageCount,
       requestTimestamps: latest.requestTimestamps,
+      agentLoopRunSeq: latest.agentLoopRunSeq,
       currentRound: latest.currentRound?.round,
       lastTotalTokens: latest.lastTotalTokens,
       lastInputTokens: latest.lastInputTokens,

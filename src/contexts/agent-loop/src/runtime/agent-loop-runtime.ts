@@ -35,7 +35,7 @@ export type AgentLoopPhase = "idle" | "running" | "cancelled";
 export type ActiveMainLLMSessionState = {
   id: number | string;
   agentId: AgentLoopKind;
-  generation: number;
+  agentLoopRunSeq: number;
   phase: AgentLoopPhase;
 };
 
@@ -87,8 +87,8 @@ export type PreparedAgentLoopRun = {
 };
 
 export type AgentLoopRunners = {
-  prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
-  prepareTalk(input: { sessionId: string; reason: string; signal: AbortSignal }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
+  prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
+  prepareTalk(input: { sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
 };
 
 export type AgentLoopRunSpec = {
@@ -136,7 +136,7 @@ export type AgentFunctionCallToolExecution = LLMToolLoopExecution;
 export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): AgentLoopRuntime {
   let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
   let running = false;
-  let generation = 0;
+  let agentLoopRunSeq = 0;
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
   let activeLLMSessionRuntime: ActiveLLMSessionRuntimePort | undefined;
@@ -245,23 +245,23 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     async requestRun(request) {
       if (running) return { started: false, outputs: [] };
-      generation += 1;
-      const runGeneration = generation;
+      agentLoopRunSeq += 1;
+      const runSeq = agentLoopRunSeq;
       running = true;
       abortController = new AbortController();
       activeMainLLMSession = {
         id: request.sessionId,
         agentId: request.kind,
-        generation: runGeneration,
+        agentLoopRunSeq: runSeq,
         phase: "running"
       };
       try {
-        const outputs = await executeRequest(request, abortController.signal);
+        const outputs = await executeRequest(request, abortController.signal, runSeq);
         return { started: true, outputs };
       } finally {
         running = false;
         abortController = undefined;
-        if (activeMainLLMSession?.generation === runGeneration) {
+        if (activeMainLLMSession?.agentLoopRunSeq === runSeq) {
           activeMainLLMSession = {
             ...activeMainLLMSession,
             phase: "idle"
@@ -280,21 +280,23 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     }
   };
 
-  async function executeRequest(request: AgentLoopRunRequest, signal: AbortSignal): Promise<AgentOutput[]> {
+  async function executeRequest(request: AgentLoopRunRequest, signal: AbortSignal, agentLoopRunSeq: number): Promise<AgentOutput[]> {
     if (request.kind === "chat") {
       if (!runners.prepareChat) throw new Error("agent_loop_chat_runner_unavailable");
       return await executePreparedOrOutputs(await runners.prepareChat({
         event: request.event,
         sessionId: request.sessionId,
         reason: request.reason,
-        signal
+        signal,
+        agentLoopRunSeq
       }));
     }
     if (!runners.prepareTalk) throw new Error("agent_loop_talk_runner_unavailable");
     const prepared = await runners.prepareTalk({
       sessionId: request.sessionId,
       reason: request.reason,
-      signal
+      signal,
+      agentLoopRunSeq
     });
     if (!prepared) return [];
     return await executePreparedOrOutputs(prepared);

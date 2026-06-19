@@ -6,14 +6,14 @@ import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
   const runtime = createAgentLoopRuntime();
-  const observedGenerations: number[] = [];
+  const observedRunSeqs: number[] = [];
   runtime.setRunners({
     prepareChat({ sessionId }) {
       const active = runtime.getActiveMainLLMSession();
       assert.equal(active?.id, sessionId);
       assert.equal(active?.agentId, "chat");
       assert.equal(active?.phase, "running");
-      observedGenerations.push(active.generation);
+      observedRunSeqs.push(active.agentLoopRunSeq);
       return [{
         id: "out_1",
         target: { plugin: "test", sessionId },
@@ -32,7 +32,7 @@ test("agent loop runtime runs chat requests through configured runner and expose
 
   assert.equal(result.started, true);
   assert.equal(result.outputs.length, 1);
-  assert.deepEqual(observedGenerations, [1]);
+  assert.deepEqual(observedRunSeqs, [1]);
   assert.equal(runtime.getActiveMainLLMSession()?.phase, "idle");
 });
 

@@ -178,7 +178,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   async function selfie(call: ToolCall, executionContext?: ToolExecutionContext): Promise<ToolResult> {
     const marker = selfieMarker(executionContext);
     if (marker !== undefined && failedSelfieMarker === marker) {
-      return toolError(call, "selfie is blocked in this round after a previous failure");
+      return toolError(call, "selfie is blocked in this agent loop run after a previous failure");
     }
 
     const photoConfig = runtimePhotoConfig();
@@ -322,10 +322,10 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
 
   function selfieMarker(context?: ToolExecutionContext): number | undefined {
     const llmSessionId = context?.llmSessionId;
-    const currentRound = context?.currentRound;
+    const agentLoopRunSeq = context?.agentLoopRunSeq;
     if (typeof llmSessionId !== "number" || !Number.isInteger(llmSessionId)) return undefined;
-    if (typeof currentRound !== "number" || !Number.isInteger(currentRound)) return undefined;
-    return llmSessionId * 1000 + currentRound;
+    if (typeof agentLoopRunSeq !== "number" || !Number.isInteger(agentLoopRunSeq)) return undefined;
+    return llmSessionId * 1000 + agentLoopRunSeq;
   }
 
   function buildSelfiePrompt(action: string, context: SelfieContext): string {

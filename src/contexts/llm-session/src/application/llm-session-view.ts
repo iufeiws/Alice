@@ -23,6 +23,7 @@ export function summarizeLLMSession(session: ActiveLLMSession): unknown {
     responseCount: session.responses?.length ?? session.responseIds.length,
     roundCount,
     messageCount: session.messages.length,
+    agentLoopRunSeq: session.agentLoopRunSeq,
     currentRound: session.currentRound,
     latestRequest: session.latestRequestInfo,
     latestResponse: session.latestResponseInfo,

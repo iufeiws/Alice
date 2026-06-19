@@ -14,7 +14,7 @@ export type TalkRuntime = {
   closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
   markAgentLoopReady(sessionId: string): void;
   claimReadyAgentLoopSession(): string | undefined;
-  prepareReadyAgentLoopSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<unknown> | unknown;
+  prepareReadyAgentLoopSession(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
   appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
@@ -96,7 +96,7 @@ export type TalkRuntimeDeps = {
     source: TalkSource;
     metadata?: unknown;
   }): string | number;
-  prepareAgentLoop?(sessionId: string, options?: { signal?: AbortSignal }): Promise<unknown> | unknown;
+  prepareAgentLoop?(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
   interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
   onSessionOpened?(sessionId: string): void;
   onSessionClosed?(sessionId: string): void;

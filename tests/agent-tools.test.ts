@@ -1353,10 +1353,10 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
-test("agent core passes llm session round context to exposed selfie tool calls", async () => {
+test("agent core passes agent loop run context to exposed selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
-  const contexts: Array<{ currentRound?: number; llmSessionId?: number }> = [];
+  const contexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -1403,7 +1403,7 @@ test("agent core passes llm session round context to exposed selfie tool calls",
       },
       async execute(call, context) {
         executed.push(String(call.input.action));
-        contexts.push({ currentRound: context?.currentRound, llmSessionId: context?.llmSessionId });
+        contexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }
     }]
@@ -1415,8 +1415,8 @@ test("agent core passes llm session round context to exposed selfie tool calls",
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
   assert.equal(requests[1].messages.at(-1)?.content, "sent");
   assert.deepEqual(contexts, [
-    { currentRound: 0, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") },
-    { currentRound: 0, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") }
+    { agentLoopRunSeq: 1, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") },
+    { agentLoopRunSeq: 1, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") }
   ]);
 });
 

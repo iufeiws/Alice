@@ -208,7 +208,7 @@ test("selfie uses default output target for voice call requester", async () => {
   }
 });
 
-test("selfie blocks retries in the same llm session round after generation failure", async () => {
+test("selfie blocks retries in the same agent loop run after generation failure", async () => {
   const outputRoot = makeAssetTempDir("selfie-round-failure");
   const referenceRoot = makeTempDir("selfie-ref-round-failure");
   const store = createAliceStore(path.join(makeTempDir("selfie-round-failure-db"), "alice.sqlite"));
@@ -235,24 +235,24 @@ test("selfie blocks retries in the same llm session round after generation failu
       id: "call_selfie_fail_1",
       toolName: "selfie",
       input: { action: "失败自拍" }
-    }, { llmSessionId: 123, currentRound: 4 });
+    }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const sameRoundRetry = await tools.execute({
       id: "call_selfie_fail_2",
       toolName: "selfie",
       input: { action: "同轮重试" }
-    }, { llmSessionId: 123, currentRound: 4 });
+    }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const nextRoundRetry = await tools.execute({
       id: "call_selfie_fail_3",
       toolName: "selfie",
       input: { action: "下一轮重试" }
-    }, { llmSessionId: 123, currentRound: 5 });
+    }, { llmSessionId: 123, agentLoopRunSeq: 5 });
 
     assert.equal(first.ok, false);
     assert.match(first.error ?? "", /image api failed/);
     assert.equal(sameRoundRetry.ok, false);
-    assert.equal(sameRoundRetry.error, "selfie is blocked in this round after a previous failure");
+    assert.equal(sameRoundRetry.error, "selfie is blocked in this agent loop run after a previous failure");
     assert.equal(nextRoundRetry.ok, false);
     assert.match(nextRoundRetry.error ?? "", /image api failed/);
     assert.equal(executorCalls, 2);

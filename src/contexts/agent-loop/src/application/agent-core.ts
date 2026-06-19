@@ -69,7 +69,7 @@ export type LLMSessionSnapshot = {
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
-  currentRound?: number;
+  agentLoopRunSeq?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;
@@ -215,7 +215,7 @@ export type AgentCoreDeps = {
 export interface AgentCore {
   start(): Promise<void>;
   stop(): Promise<void>;
-  prepareEventRun(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]>;
+  prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
   clearLLMSession(reason: LLMSessionClearReason): void;
@@ -317,7 +317,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     clearLLMSession(reason) {
       clearActiveLLMSession(() => deps.onLLMSessionCleared?.(reason));
     },
-    async prepareEventRun(event) {
+    async prepareEventRun(event, options = {}) {
       const decision = await deps.policy.check(event);
       if (!decision.allowed) {
         return [
@@ -582,6 +582,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
           deps.onLLMHeartbeatStarted?.();
           sessionRunStarted = true;
+          activeLLMSession.agentLoopRunSeq = options.agentLoopRunSeq ?? activeLLMSession.agentLoopRunSeq ?? 1;
+          noteLLMSessionUpdated();
           await appendSessionContext(activeLLMSession);
           const llmConfig = deps.getLLMConfig?.() ?? {
             client: deps.llm,
@@ -629,6 +631,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             },
             onSessionRebuilt: deps.onLLMSessionRebuilt,
             isLLMRunCancelled: deps.isLLMRunCancelled,
+            agentLoopRunSeq: activeLLMSession.agentLoopRunSeq,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,
             onLLMLog: deps.onLLMLog
@@ -814,7 +817,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       requestTimestamps: (snapshot.requestTimestamps ?? [])
         .map((timestamp) => Date.parse(timestamp))
         .filter((timestamp) => Number.isFinite(timestamp)),
-      currentRound: Number.isInteger(snapshot.currentRound) ? snapshot.currentRound : undefined,
+      agentLoopRunSeq: Number.isInteger(snapshot.agentLoopRunSeq) ? snapshot.agentLoopRunSeq : undefined,
       lastTotalTokens: Number.isFinite(snapshot.lastTotalTokens) ? snapshot.lastTotalTokens : undefined,
       lastInputTokens: Number.isFinite(snapshot.lastInputTokens) ? snapshot.lastInputTokens : undefined,
       lastUsageModel: typeof snapshot.lastUsageModel === "string" ? snapshot.lastUsageModel : undefined,
@@ -885,7 +888,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       staticPromptFingerprint: activeLLMSession.staticPromptFingerprint,
       staticPromptMessageCount: activeLLMSession.staticPromptMessageCount,
       requestTimestamps: activeLLMSession.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
-      currentRound: activeLLMSession.currentRound,
+      agentLoopRunSeq: activeLLMSession.agentLoopRunSeq,
       lastTotalTokens: activeLLMSession.lastTotalTokens,
       lastInputTokens: activeLLMSession.lastInputTokens,
       lastUsageModel: activeLLMSession.lastUsageModel,

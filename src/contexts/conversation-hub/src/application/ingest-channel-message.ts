@@ -44,7 +44,7 @@ export type MessageRuntimeDeps = {
   talkRuntime?: {
     markAgentLoopReady?(sessionId: string): void;
     claimReadyAgentLoopSession?(): string | undefined;
-    prepareReadyAgentLoopSession?(sessionId: string, options?: { signal?: AbortSignal }): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
+    prepareReadyAgentLoopSession?(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
   };
   setTypingIndicator?(input: {
     plugin: string;
@@ -80,7 +80,7 @@ export type MessageRuntimeDeps = {
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
   core: {
-    prepareEventRun(event: AgentEvent): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
+    prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   };
   agentState?: Pick<
     AgentStateController,
@@ -144,8 +144,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
-    prepareChat: ({ event }) => deps.core.prepareEventRun(event),
-    prepareTalk: ({ sessionId, signal }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal })
+    prepareChat: ({ event, agentLoopRunSeq }) => deps.core.prepareEventRun(event, { agentLoopRunSeq }),
+    prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
   });
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,

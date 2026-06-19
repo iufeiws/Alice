@@ -7,7 +7,7 @@ export type AgentLoopTranscriptSession = {
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
-  currentRound?: number;
+  agentLoopRunSeq?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;

@@ -486,11 +486,11 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });
 
-test("talk exposed selfie tool calls receive llm session round context", async () => {
+test("talk exposed selfie tool calls receive agent loop run context", async () => {
   let sendCalls = 0;
   let activeSession: any;
   const executedActions: string[] = [];
-  const observedContexts: Array<{ currentRound?: number; llmSessionId?: number }> = [];
+  const observedContexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
@@ -523,7 +523,7 @@ test("talk exposed selfie tool calls receive llm session round context", async (
       }],
       async execute(call, context) {
         executedActions.push(String(call.input.action));
-        observedContexts.push({ currentRound: context?.currentRound, llmSessionId: context?.llmSessionId });
+        observedContexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }
     }],
@@ -564,8 +564,8 @@ test("talk exposed selfie tool calls receive llm session round context", async (
   assert.equal(sendCalls, 2);
   assert.deepEqual(executedActions, ["first", "second"]);
   assert.deepEqual(observedContexts, [
-    { currentRound: 0, llmSessionId: 108 },
-    { currentRound: 0, llmSessionId: 108 }
+    { agentLoopRunSeq: 1, llmSessionId: 108 },
+    { agentLoopRunSeq: 1, llmSessionId: 108 }
   ]);
   assert.equal((sentMessages[1]?.at(-2) as { content?: string }).content, "sent");
   assert.equal((sentMessages[1]?.at(-1) as { content?: string }).content, "sent");

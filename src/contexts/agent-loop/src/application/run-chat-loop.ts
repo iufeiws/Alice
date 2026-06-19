@@ -40,7 +40,7 @@ export type ChatAgentLoopSession = {
   id?: number;
   messages: LLMChatInput["messages"];
   requestTimestamps: number[];
-  currentRound?: number;
+  agentLoopRunSeq?: number;
   mode: string;
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: number;
@@ -78,6 +78,7 @@ export type ChatAgentLoopInput = {
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
   onSessionRebuilt?(): void;
   isLLMRunCancelled?(): boolean;
+  agentLoopRunSeq?: number;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   onLLMLog?(event: {
@@ -140,7 +141,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         input.noteSessionUpdated();
         return { stop: true, messages: session.messages };
       }
-      session.currentRound = (session.currentRound ?? -1) + 1;
       input.noteSessionUpdated();
       return { messages: session.messages };
     },
@@ -200,7 +200,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
         variables: textVariables,
-        currentRound: session.currentRound,
+        agentLoopRunSeq: input.agentLoopRunSeq,
         llmSessionId: session.id,
         llmCapabilities,
         transformInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session)

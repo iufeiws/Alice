@@ -8,6 +8,7 @@ export type LLMSessionSnapshot = {
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
+  agentLoopRunSeq?: number;
   currentRound?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
@@ -87,6 +88,7 @@ export type ActiveLLMSession = {
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps: string[];
+  agentLoopRunSeq?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;

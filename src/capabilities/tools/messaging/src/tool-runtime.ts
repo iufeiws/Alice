@@ -4,13 +4,18 @@ import { createPhotoTools } from "../../photo/src/index.js";
 import { createShellTools } from "../../shell/src/index.js";
 import { createBookcaseTools } from "../../bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
+import { createLocationTools } from "../../location/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
+import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
+import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
+
+const path = await import("node:path");
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: { photo: any; tts?: any };
+  config: { photo: any; tts?: any; memoryFiles?: { root?: string } };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;
@@ -22,6 +27,7 @@ export function createToolRuntime(input: {
   agentState: any;
   getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
+  getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
@@ -137,6 +143,12 @@ export function createToolRuntime(input: {
     resolveOutputTarget,
     appendLog: input.appendLog
   });
+  const locationTools = createLocationTools({
+    configPath: defaultWorldWandererPluginConfigPath,
+    dbPath: path.join(input.config.memoryFiles?.root ?? "memory-files", "alice.sqlite"),
+    getGoogleStreetView: input.getGoogleStreetView,
+    now: () => input.time.now().date
+  });
 
   return {
     messagingTools,
@@ -145,6 +157,7 @@ export function createToolRuntime(input: {
     shellTools,
     bookcaseTools,
     sleepCocoonTools,
-    toolPlugins: [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools]
+    locationTools,
+    toolPlugins: [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, locationTools]
   };
 }

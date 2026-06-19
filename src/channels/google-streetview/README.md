@@ -63,7 +63,7 @@ await plugin.getRandomStreetView({
 });
 ```
 
-When `reuseStoredForLocation` is enabled, the plugin checks existing sidecar metadata for the rounded coordinate bucket. If one or more stored assets match, it randomly returns one local result with `reused: true` and `source: "stored"` without calling Google.
+When `reuseStoredForLocation` is enabled, the plugin checks existing metadata for the rounded coordinate bucket. If one or more stored assets match, it randomly returns one local result with `reused: true` and `source: "stored"` without calling Google.
 
 ## Storage
 
@@ -73,4 +73,4 @@ Images are stored under:
 assets/plugin/google-streetview/<yyyy-mm>/
 ```
 
-Each image has a sidecar JSON file with request and Street View metadata. The configured output directory must stay under `assets/plugin/google-streetview`; `assets/generated` is rejected because these are plugin-owned assets, not generated selfie outputs.
+Each pano has one JSON metadata file. Images use the same basename with `.jpg`. The configured output directory must stay under `assets/plugin/google-streetview`; `assets/generated` is rejected because these are plugin-owned assets, not generated selfie outputs.

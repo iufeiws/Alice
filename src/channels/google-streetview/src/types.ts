@@ -79,7 +79,7 @@ export type GoogleStreetViewRemoteSource = "google_streetview_static";
 export type GoogleStreetViewResult = {
   assetId: string;
   filePath: string;
-  sidecarPath: string;
+  metadataPath: string;
   location: GoogleStreetViewLocation;
   requestedLocation: GoogleStreetViewLocation;
   coordinateBucket: string;
@@ -90,7 +90,7 @@ export type GoogleStreetViewResult = {
   fov: number;
   source: GoogleStreetViewStoredSource | GoogleStreetViewRemoteSource;
   reused: boolean;
-  metadata: GoogleStreetViewMetadataResponse;
+  metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse;
 };
 
 export type GoogleStreetViewPlugin = {
@@ -148,20 +148,4 @@ export type GoogleStreetViewPanoGraphMetadataResponse = {
     [key: string]: unknown;
   }>;
   [key: string]: unknown;
-};
-
-export type GoogleStreetViewSidecar = {
-  assetId: string;
-  filePath: string;
-  sidecarPath?: string;
-  coordinateBucket: string;
-  requestedLocation: GoogleStreetViewLocation;
-  location: GoogleStreetViewLocation;
-  regionId?: string;
-  panoId?: string;
-  heading: number;
-  pitch: number;
-  fov: number;
-  metadata: GoogleStreetViewMetadataResponse;
-  createdAt: string;
 };

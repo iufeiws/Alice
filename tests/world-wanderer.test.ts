@@ -43,11 +43,11 @@ test("world wanderer config defaults disabled near Hagia Sophia with pano graph 
 test("world wanderer runtime reports enabled state from config", () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ enabled: false }));
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     googleStreetView: graphGoogleStreetView(new Map())
   });
 
@@ -59,7 +59,7 @@ test("world wanderer runtime reports enabled state from config", () => {
 test("world wanderer resolves initial coordinates and moves at least one pano", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ speedMetersPerSecond: 0 }));
 
   const graph = new Map([
@@ -70,7 +70,7 @@ test("world wanderer resolves initial coordinates and moves at least one pano", 
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph, coordinateCalls, panoCalls)
@@ -83,16 +83,14 @@ test("world wanderer resolves initial coordinates and moves at least one pano", 
   assert.deepEqual(panoCalls, ["b"]);
   assert.equal(state.panoId, "b");
   assert.equal(state.lastHeading, 90);
-  assert.equal(state.lastRoadText, "Road");
-  assert.deepEqual(state.recentPanoIds, ["a", "b"]);
-  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["a"]);
-  assert.deepEqual(readWorldWandererState(statePath, readWorldWandererConfig(configPath)).metadata, graph.get("b")!.metadata);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["a", "b"]);
+  assert.equal(readWorldWandererState(dbPath, readWorldWandererConfig(configPath)).panoId, "b");
 });
 
 test("world wanderer probes nearby when current pano has no links", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ speedMetersPerSecond: 0 }));
 
   const next = pano("next", 41.0089, 28.9804, []);
@@ -111,7 +109,7 @@ test("world wanderer probes nearby when current pano has no links", async () => 
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: {
@@ -135,15 +133,14 @@ test("world wanderer probes nearby when current pano has no links", async () => 
   assert.equal(coordinateCalls.length, 2);
   assert.ok(coordinateCalls[1]!.lat > coordinateCalls[0]!.lat);
   assert.deepEqual(panoCalls, ["next"]);
-  assert.deepEqual(state.recentPanoIds, ["linked", "next"]);
-  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["linked"]);
-  assert.deepEqual(state.metadata, next.metadata);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["linked", "next"]);
+  assert.equal(state.location.lat, next.location.lat);
 });
 
 test("world wanderer accumulates actual pano distance before stopping", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ speedMetersPerSecond: 1, maxPanosPerIdle: 10 }));
 
   const graph = new Map([
@@ -154,7 +151,7 @@ test("world wanderer accumulates actual pano distance before stopping", async ()
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph, [], panoCalls)
@@ -172,14 +169,14 @@ test("world wanderer accumulates actual pano distance before stopping", async ()
 test("world wanderer respects max panos per idle", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ maxPanosPerIdle: 3, speedMetersPerSecond: 10 }));
 
   const graph = chainGraph(8);
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph, [], panoCalls)
@@ -195,13 +192,13 @@ test("world wanderer respects max panos per idle", async () => {
 test("world wanderer truncates recent pano history", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({ recentHistoryLimit: 3, maxPanosPerIdle: 4, speedMetersPerSecond: 10 }));
 
   const graph = chainGraph(5);
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph)
@@ -211,13 +208,13 @@ test("world wanderer truncates recent pano history", async () => {
 
   assert.ok(state);
   assert.equal(state.panoId, "p4");
-  assert.deepEqual(state.recentPanoIds, ["p2", "p3", "p4"]);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["p2", "p3", "p4"]);
 });
 
 test("world wanderer softmax policy avoids recent loops when a novel link exists", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config({
     noveltyWeight: 6,
     forwardWeight: 0,
@@ -235,20 +232,19 @@ test("world wanderer softmax policy avoids recent loops when a novel link exists
     ["b", pano("b", 41, 29.001, [])],
     ["c", pano("c", 41, 28.999, [])]
   ]);
-  writeWorldWandererState(statePath, {
+  writeWorldWandererState(dbPath, {
     location: graph.get("a")!.location,
     lastHeading: 90,
-    metadata: graph.get("a")!.metadata,
-    metadataLocation: graph.get("a")!.location,
     panoId: "a",
-    recentPanoIds: ["b"],
-    pathStack: [],
-    updatedAt: "2026-06-17T00:00:00.000Z"
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "b", lat: graph.get("b")!.location.lat, lng: graph.get("b")!.location.lng, lastHeading: 90 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "a", lat: graph.get("a")!.location.lat, lng: graph.get("a")!.location.lng, lastHeading: 90 }
+    ]
   });
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:01:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph, [], panoCalls)
@@ -264,28 +260,26 @@ test("world wanderer softmax policy avoids recent loops when a novel link exists
 test("world wanderer backtracks through visible reverse link at recent dead end", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config());
 
   const graph = new Map([
     ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Road" }])],
     ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Road" }])]
   ]);
-  writeWorldWandererState(statePath, {
+  writeWorldWandererState(dbPath, {
     location: graph.get("b")!.location,
     lastHeading: 90,
-    lastRoadText: "Road",
-    metadata: graph.get("b")!.metadata,
-    metadataLocation: graph.get("b")!.location,
     panoId: "b",
-    recentPanoIds: ["a", "b"],
-    pathStack: [{ panoId: "a", location: graph.get("a")!.location, heading: 0 }],
-    updatedAt: "2026-06-17T00:00:00.000Z"
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "a", lat: graph.get("a")!.location.lat, lng: graph.get("a")!.location.lng, lastHeading: 0 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "b", lat: graph.get("b")!.location.lat, lng: graph.get("b")!.location.lng, lastHeading: 90 }
+    ]
   });
   const panoCalls: string[] = [];
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date("2026-06-17T00:01:00.000Z"),
     random: () => 0,
     googleStreetView: graphGoogleStreetView(graph, [], panoCalls)
@@ -295,14 +289,14 @@ test("world wanderer backtracks through visible reverse link at recent dead end"
 
   assert.ok(state);
   assert.equal(state.panoId, "a");
-  assert.deepEqual(state.pathStack, []);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["a", "b", "a"]);
   assert.deepEqual(panoCalls, ["b", "a"]);
 });
 
-test("world wanderer records pano graph failure while preserving previous metadata", async () => {
+test("world wanderer records pano graph failure while preserving previous position", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
-  const statePath = path.join(root, "state.json");
+  const dbPath = path.join(root, "alice.sqlite");
   writeWorldWandererConfig(configPath, config());
 
   const graph = new Map([
@@ -312,7 +306,7 @@ test("world wanderer records pano graph failure while preserving previous metada
   let fail = false;
   const runtime = createWorldWandererRuntime({
     configPath,
-    statePath,
+    dbPath,
     now: () => new Date(fail ? "2026-06-17T00:01:00.000Z" : "2026-06-17T00:00:00.000Z"),
     random: () => 0,
     googleStreetView: {
@@ -335,9 +329,8 @@ test("world wanderer records pano graph failure while preserving previous metada
 
   assert.ok(first);
   assert.ok(second);
-  assert.deepEqual(second.metadata, first.metadata);
+  assert.equal(second.panoId, first.panoId);
   assert.equal(second.location.lng, first.location.lng);
-  assert.equal(second.lastFailure?.message, "no imagery");
 });
 
 function config(patch: Partial<WorldWandererConfig> = {}): WorldWandererConfig {

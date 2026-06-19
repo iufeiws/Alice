@@ -29,7 +29,7 @@ test("google streetview config reads env API key and hides it in public config",
   assert.equal("apiKey" in publicConfig, false);
 });
 
-test("google streetview fetches metadata, saves image, and writes sidecar", async () => {
+test("google streetview fetches metadata, saves image, and writes metadata cache", async () => {
   const root = tempOutputRoot();
   const requests: string[] = [];
   const plugin = createGoogleStreetViewPlugin({
@@ -54,9 +54,9 @@ test("google streetview fetches metadata, saves image, and writes sidecar", asyn
   assert.equal(result.source, "google_streetview_static");
   assert.match(result.assetId, /^plugin\/google-streetview\/test-[^/]+\/pano-1\.jpg$/);
   assert.equal(path.basename(result.filePath), "pano-1.jpg");
-  assert.equal(path.basename(result.sidecarPath), "pano-1.json");
+  assert.equal(path.basename(result.metadataPath), "pano-1.json");
   assert.equal(fs.existsSync(result.filePath), true);
-  assert.equal(fs.existsSync(result.sidecarPath), true);
+  assert.equal(fs.existsSync(result.metadataPath), true);
   assert.equal(result.panoId, "pano-1");
   assert.equal(result.location.lat, 35.1);
   assert.equal(requests.length, 2);
@@ -141,6 +141,11 @@ test("google streetview metadata lookup does not download image", async () => {
   assert.equal(result.location.lat, 41.01);
   assert.equal(requests.length, 1);
   assert.equal(requests[0]!.includes("/metadata"), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "pano-meta.json"), "utf8")), {
+    status: "OK",
+    pano_id: "pano-meta",
+    location: { lat: 41.01, lng: 28.98 }
+  });
 });
 
 test("google streetview pano graph creates and reuses map tiles session", async () => {
@@ -180,6 +185,7 @@ test("google streetview pano graph creates and reuses map tiles session", async 
   const byCoordinates = await plugin.getPanoGraphByCoordinates({ lat: 35, lng: 139 });
   nowMs += 30_000;
   const byPanoId = await plugin.getPanoGraphByPanoId({ panoId: "pano-2" });
+  const byPanoIdCached = await plugin.getPanoGraphByPanoId({ panoId: "pano-2" });
 
   assert.equal(sessionCalls, 1);
   assert.equal(byCoordinates.panoId, "pano-1");
@@ -187,6 +193,9 @@ test("google streetview pano graph creates and reuses map tiles session", async 
   assert.equal(byCoordinates.heading, 94.5);
   assert.deepEqual(byCoordinates.links, [{ panoId: "pano-2", heading: 90, text: "Main St" }]);
   assert.equal(byPanoId.panoId, "pano-2");
+  assert.equal(byPanoIdCached.panoId, "pano-2");
+  assert.equal(metadataRequests.length, 2);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "pano-2.json"), "utf8")).links, [{ panoId: "pano-2", heading: 90, text: "Main St" }]);
   assert.equal(new URL(metadataRequests[0]!).searchParams.get("session"), "session-1");
   assert.equal(new URL(metadataRequests[0]!).searchParams.get("lat"), "35");
   assert.equal(new URL(metadataRequests[0]!).searchParams.get("lng"), "139");
@@ -223,7 +232,7 @@ test("google streetview pano graph refreshes expired map tiles session", async (
   await plugin.getPanoGraphByPanoId({ panoId: "pano-2" });
 
   assert.equal(sessionCalls, 2);
-  assert.deepEqual(metadataSessions, ["session-1", "session-1", "session-2"]);
+  assert.deepEqual(metadataSessions, ["session-1", "session-2"]);
 });
 
 test("google streetview pano graph surfaces map tiles API errors", async () => {
@@ -392,19 +401,7 @@ function writeStoredResult(root: string, coordinateBucket: string, name: string,
   const filePath = path.join(dir, name);
   fs.writeFileSync(filePath, Buffer.from([1]));
   const assetId = path.relative(path.resolve("assets"), path.resolve(filePath)).split(path.sep).join("/");
-  fs.writeFileSync(filePath.replace(/\.jpg$/, ".json"), `${JSON.stringify({
-    assetId,
-    filePath,
-    coordinateBucket,
-    requestedLocation: { lat: 35, lng: 139 },
-    location: { lat: 35, lng: 139 },
-    panoId,
-    heading: 0,
-    pitch: 0,
-    fov: 90,
-    metadata: { status: "OK", pano_id: panoId },
-    createdAt: "2026-06-14T01:02:03.000Z"
-  })}\n`);
+  fs.writeFileSync(filePath.replace(/\.jpg$/, ".json"), `${JSON.stringify({ status: "OK", pano_id: panoId, location: { lat: 35, lng: 139 } })}\n`);
   return { assetId };
 }
 

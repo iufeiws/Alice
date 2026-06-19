@@ -1,6 +1,5 @@
 import type {
   GoogleStreetViewLocation,
-  GoogleStreetViewPanoGraphMetadataResponse,
   GoogleStreetViewPlugin
 } from "../../../channels/google-streetview/src/index.js";
 
@@ -21,25 +20,18 @@ export type WorldWandererConfig = {
 };
 
 export type WorldWandererPathEntry = {
+  time: string;
   panoId: string;
-  location: GoogleStreetViewLocation;
-  heading: number;
+  lat: number;
+  lng: number;
+  lastHeading: number;
 };
 
 export type WorldWandererState = {
   location: GoogleStreetViewLocation;
   lastHeading: number;
-  lastRoadText?: string;
-  metadata?: GoogleStreetViewPanoGraphMetadataResponse;
-  metadataLocation?: GoogleStreetViewLocation;
   panoId?: string;
-  recentPanoIds: string[];
   pathStack: WorldWandererPathEntry[];
-  lastFailure?: {
-    message: string;
-    at: string;
-  };
-  updatedAt: string;
 };
 
 export type WorldWandererRuntime = {
@@ -50,7 +42,7 @@ export type WorldWandererRuntime = {
 
 export type WorldWandererDeps = {
   configPath?: string;
-  statePath: string;
+  dbPath: string;
   googleStreetView: Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
   now?(): Date;
   random?(): number;

@@ -4,14 +4,14 @@ const path = await import("node:path");
 import type {
   GoogleStreetViewLocation,
   GoogleStreetViewMetadataResponse,
+  GoogleStreetViewPanoGraphMetadataResponse,
   GoogleStreetViewPluginConfig,
   GoogleStreetViewPluginDeps,
-  GoogleStreetViewResult,
-  GoogleStreetViewSidecar
+  GoogleStreetViewResult
 } from "./types.js";
 import { findAvailableMetadata, staticStreetViewUrl } from "./client.js";
 import { normalizeLocation, normalizeMetadataLocation } from "./geo.js";
-import { numberValue, parseJsonObject, safeFilePart } from "./internal.js";
+import { parseJsonObject, safeFilePart } from "./internal.js";
 
 export async function fetchAndStoreStreetView(input: {
   config: GoogleStreetViewPluginConfig;
@@ -24,6 +24,8 @@ export async function fetchAndStoreStreetView(input: {
 }): Promise<GoogleStreetViewResult> {
   if (!input.config.apiKey) throw new Error("google streetview API key is not configured");
   const metadata = await findAvailableMetadata(input);
+  const actualLocation = normalizeMetadataLocation(metadata, input.requestedLocation);
+  storeStreetViewMetadata(input.config, metadata);
   const panoId = panoIdFromMetadata(metadata);
   if (!panoId) throw new Error("google streetview metadata returned no pano_id");
   const stored = pickStoredResultByPanoId(input.config, panoId);
@@ -32,13 +34,10 @@ export async function fetchAndStoreStreetView(input: {
     return stored;
   }
 
-  const actualLocation = normalizeMetadataLocation(metadata, input.requestedLocation);
-  const now = input.now();
   const outputDir = path.resolve(input.config.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
   const fileBase = fileBaseForPanoId(panoId);
   const filePath = path.join(outputDir, `${fileBase}.jpg`);
-  const sidecarPath = path.join(outputDir, `${fileBase}.json`);
   const imageUrl = staticStreetViewUrl(input.config, actualLocation);
   const imageResponse = await input.fetchImpl(imageUrl);
   if (!imageResponse.ok) {
@@ -48,60 +47,74 @@ export async function fetchAndStoreStreetView(input: {
   if (!bytes.length) throw new Error("google streetview image request returned empty body");
   fs.writeFileSync(filePath, bytes);
 
-  const assetId = assetIdForPath(filePath);
-  const sidecar: GoogleStreetViewSidecar = {
-    assetId,
+  input.appendLog?.("info", `google streetview saved: asset=${assetIdForPath(filePath)} bucket=${input.coordinateBucket}`);
+  return metadataToResult({
+    config: input.config,
     filePath,
-    sidecarPath,
-    coordinateBucket: input.coordinateBucket,
+    metadataPath: metadataPathForPanoId(input.config, panoId),
+    metadata,
     requestedLocation: input.requestedLocation,
     location: actualLocation,
+    coordinateBucket: input.coordinateBucket,
     regionId: input.regionId,
-    panoId,
-    heading: input.config.heading,
-    pitch: input.config.pitch,
-    fov: input.config.fov,
-    metadata,
-    createdAt: now.toISOString()
-  };
-  fs.writeFileSync(sidecarPath, `${JSON.stringify(sidecar, null, 2)}\n`);
-  input.appendLog?.("info", `google streetview saved: asset=${assetId} bucket=${input.coordinateBucket}`);
-  return sidecarToResult(sidecar, false);
+    reused: false
+  });
+}
+
+export function storeStreetViewMetadata(config: GoogleStreetViewPluginConfig, metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse): void {
+  const panoId = metadataPanoId(metadata);
+  if (!panoId) throw new Error("google streetview metadata returned no panoId");
+  const metadataPath = metadataPathForPanoId(config, panoId);
+  if (fs.existsSync(metadataPath) && typeof (metadata as GoogleStreetViewMetadataResponse).pano_id === "string") {
+    const existing = parseJsonObject(fs.readFileSync(metadataPath, "utf8"));
+    if (existing.panoId === panoId) return;
+  }
+  fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
+export function readPanoGraphMetadataCache(config: GoogleStreetViewPluginConfig, panoId: string): GoogleStreetViewPanoGraphMetadataResponse | undefined {
+  const metadataPath = metadataPathForPanoId(config, panoId);
+  if (!fs.existsSync(metadataPath)) return undefined;
+  const metadata = parseJsonObject(fs.readFileSync(metadataPath, "utf8"));
+  return metadata.panoId === panoId
+    ? metadata as GoogleStreetViewPanoGraphMetadataResponse
+    : undefined;
 }
 
 function pickStoredResultByPanoId(config: GoogleStreetViewPluginConfig, panoId: string): GoogleStreetViewResult | undefined {
   const root = path.resolve(config.outputDir);
   const fileBase = fileBaseForPanoId(panoId);
   const filePath = path.join(root, `${fileBase}.jpg`);
-  const sidecarPath = path.join(root, `${fileBase}.json`);
-  if (!fs.existsSync(filePath) || !fs.existsSync(sidecarPath)) return undefined;
-  try {
-    const parsed = parseJsonObject(fs.readFileSync(sidecarPath, "utf8")) as Partial<GoogleStreetViewSidecar>;
-    const metadata = parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata as GoogleStreetViewMetadataResponse : {};
-    const storedPanoId = typeof parsed.panoId === "string" ? parsed.panoId : panoIdFromMetadata(metadata) ?? panoId;
-    if (storedPanoId !== panoId) return undefined;
-    return sidecarToResult({
-      assetId: typeof parsed.assetId === "string" ? parsed.assetId : assetIdForPath(filePath),
-      filePath,
-      sidecarPath,
-      coordinateBucket: typeof parsed.coordinateBucket === "string" ? parsed.coordinateBucket : "",
-      requestedLocation: normalizeLocation(parsed.requestedLocation),
-      location: normalizeLocation(parsed.location),
-      regionId: typeof parsed.regionId === "string" ? parsed.regionId : undefined,
-      panoId: storedPanoId,
-      heading: numberValue(parsed.heading, 0),
-      pitch: numberValue(parsed.pitch, 0),
-      fov: numberValue(parsed.fov, 90),
-      metadata,
-      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : ""
-    }, true);
-  } catch {
-    return undefined;
-  }
+  const metadataPath = metadataPathForPanoId(config, panoId);
+  if (!fs.existsSync(filePath) || !fs.existsSync(metadataPath)) return undefined;
+  const metadata = parseJsonObject(fs.readFileSync(metadataPath, "utf8")) as GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse;
+  if (metadataPanoId(metadata) !== panoId) return undefined;
+  const location = locationFromMetadata(metadata, { lat: 0, lng: 0 });
+  return metadataToResult({
+    config,
+    filePath,
+    metadataPath,
+    metadata,
+    requestedLocation: location,
+    location,
+    coordinateBucket: "",
+    reused: true
+  });
 }
 
 function panoIdFromMetadata(metadata: GoogleStreetViewMetadataResponse): string | undefined {
   return typeof metadata.pano_id === "string" && metadata.pano_id.trim() ? metadata.pano_id.trim() : undefined;
+}
+
+function metadataPanoId(metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse): string | undefined {
+  return typeof metadata.panoId === "string" && metadata.panoId.trim()
+    ? metadata.panoId.trim()
+    : panoIdFromMetadata(metadata as GoogleStreetViewMetadataResponse);
+}
+
+function metadataPathForPanoId(config: GoogleStreetViewPluginConfig, panoId: string): string {
+  return path.join(path.resolve(config.outputDir), `${fileBaseForPanoId(panoId)}.json`);
 }
 
 function fileBaseForPanoId(panoId: string): string {
@@ -110,22 +123,39 @@ function fileBaseForPanoId(panoId: string): string {
   return fileBase;
 }
 
-function sidecarToResult(sidecar: GoogleStreetViewSidecar, reused: boolean): GoogleStreetViewResult {
+function locationFromMetadata(metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse, fallback: GoogleStreetViewLocation): GoogleStreetViewLocation {
+  if (typeof metadata.lat === "number" && typeof metadata.lng === "number") return normalizeLocation({ lat: metadata.lat, lng: metadata.lng });
+  return normalizeMetadataLocation(metadata as GoogleStreetViewMetadataResponse, fallback);
+}
+
+function metadataToResult(input: {
+  config: GoogleStreetViewPluginConfig;
+  filePath: string;
+  metadataPath: string;
+  metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse;
+  requestedLocation: GoogleStreetViewLocation;
+  location: GoogleStreetViewLocation;
+  coordinateBucket: string;
+  regionId?: string;
+  reused: boolean;
+}): GoogleStreetViewResult {
+  const panoId = metadataPanoId(input.metadata);
+  if (!panoId) throw new Error("google streetview metadata returned no panoId");
   return {
-    assetId: sidecar.assetId,
-    filePath: sidecar.filePath,
-    sidecarPath: sidecar.sidecarPath ?? sidecar.filePath.replace(/\.[^.]+$/, ".json"),
-    location: sidecar.location,
-    requestedLocation: sidecar.requestedLocation,
-    coordinateBucket: sidecar.coordinateBucket,
-    regionId: sidecar.regionId,
-    panoId: sidecar.panoId,
-    heading: sidecar.heading,
-    pitch: sidecar.pitch,
-    fov: sidecar.fov,
-    source: reused ? "stored" : "google_streetview_static",
-    reused,
-    metadata: sidecar.metadata
+    assetId: assetIdForPath(input.filePath),
+    filePath: input.filePath,
+    metadataPath: input.metadataPath,
+    location: input.location,
+    requestedLocation: input.requestedLocation,
+    coordinateBucket: input.coordinateBucket,
+    regionId: input.regionId,
+    panoId,
+    heading: input.config.heading,
+    pitch: input.config.pitch,
+    fov: input.config.fov,
+    source: input.reused ? "stored" : "google_streetview_static",
+    reused: input.reused,
+    metadata: input.metadata
   };
 }
 

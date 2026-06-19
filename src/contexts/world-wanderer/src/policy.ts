@@ -11,19 +11,20 @@ import { headingDelta } from "./geo.js";
 
 export function chooseNextLink(input: {
   currentPano: GoogleStreetViewPanoGraphResult;
-  state: Pick<WorldWandererState, "lastHeading" | "lastRoadText" | "recentPanoIds" | "pathStack">;
+  state: Pick<WorldWandererState, "lastHeading" | "pathStack">;
   config: WorldWandererConfig;
   random: () => number;
 }): { link: GoogleStreetViewPanoGraphLink; backtrack: boolean } | undefined {
   const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId);
   if (!links.length) return undefined;
-  const recentSet = new Set(input.state.recentPanoIds.slice(-input.config.recentHistoryLimit));
+  const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
   const reverseLink = visibleReverseLink(links, input.state.pathStack);
+  const previousRoadText = reverseLink?.text;
   if (reverseLink && links.every((link) => recentSet.has(link.panoId))) return { link: reverseLink, backtrack: true };
 
   const scored = links.map((link) => ({
     link,
-    score: scoreLink(link, input.state, recentSet, input.config)
+    score: scoreLink(link, input.state, recentSet, input.config, previousRoadText)
   }));
   const selected = softmaxSelect(scored, input.config.selectionTemperature, input.random);
   if (!selected) return undefined;
@@ -35,14 +36,15 @@ export function chooseNextLink(input: {
 
 function scoreLink(
   link: GoogleStreetViewPanoGraphLink,
-  state: Pick<WorldWandererState, "lastHeading" | "lastRoadText">,
+  state: Pick<WorldWandererState, "lastHeading">,
   recentSet: Set<string>,
-  config: WorldWandererConfig
+  config: WorldWandererConfig,
+  previousRoadText?: string
 ): number {
   const delta = headingDelta(link.heading, state.lastHeading);
   let score = recentSet.has(link.panoId) ? -config.loopPenalty : config.noveltyWeight;
   score += config.forwardWeight * (1 - delta / 180);
-  if (state.lastRoadText && link.text && state.lastRoadText === link.text) score += config.roadContinuityWeight;
+  if (previousRoadText && link.text && previousRoadText === link.text) score += config.roadContinuityWeight;
   if (delta >= 135) score -= config.uturnPenalty;
   return score;
 }
@@ -62,6 +64,6 @@ function softmaxSelect<T extends { score: number }>(items: T[], temperature: num
 }
 
 function visibleReverseLink(links: GoogleStreetViewPanoGraphLink[], pathStack: WorldWandererPathEntry[]): GoogleStreetViewPanoGraphLink | undefined {
-  const previous = pathStack[pathStack.length - 1];
+  const previous = pathStack[pathStack.length - 2];
   return previous ? links.find((link) => link.panoId === previous.panoId) : undefined;
 }

@@ -43,6 +43,7 @@ export function createApiRootRuntime() {
     outputRouter: apiControlRuntime.outputRouter,
     agentState: apiControlRuntime.agentState,
     getDefaultTarget: () => apiControlRuntime.apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,
+    getGoogleStreetView: () => apiServerStackRuntime.apiCommunicationRuntime.googleStreetView,
     async getWorldWandererStreetViewReferenceImage() {
       const communicationRuntime = apiServerStackRuntime.apiCommunicationRuntime;
       if (!communicationRuntime.worldWandererRuntime.isEnabled()) return undefined;

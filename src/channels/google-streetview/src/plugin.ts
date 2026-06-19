@@ -21,10 +21,11 @@ import {
   findAvailableMetadata,
   getPanoGraphByCoordinates,
   getPanoGraphByPanoId,
+  normalizePanoGraphMetadata,
   type GoogleStreetViewMapTilesSession
 } from "./client.js";
 import { errorMessage } from "./internal.js";
-import { fetchAndStoreStreetView } from "./storage.js";
+import { fetchAndStoreStreetView, readPanoGraphMetadataCache, storeStreetViewMetadata } from "./storage.js";
 
 export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = {}): GoogleStreetViewPlugin {
   const fetchImpl = deps.fetch ?? fetch;
@@ -47,6 +48,7 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
         fetchImpl
       });
       const location = normalizeMetadataLocation(metadata, requestedLocation);
+      storeStreetViewMetadata(config, metadata);
       return {
         requestedLocation,
         location,
@@ -59,26 +61,32 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
       assertEnabled(config);
       const requestedLocation = normalizeLocation(input);
       const session = await streetViewMapTilesSession(config);
-      return getPanoGraphByCoordinates({
+      const result = await getPanoGraphByCoordinates({
         config,
         sessionToken: session.token,
         requestedLocation,
         radiusMeters: input.radiusMeters,
         fetchImpl
       });
+      storeStreetViewMetadata(config, result.metadata);
+      return result;
     },
     async getPanoGraphByPanoId(input) {
       const config = runtimeConfig();
       assertEnabled(config);
       const panoId = typeof input.panoId === "string" && input.panoId.trim() ? input.panoId.trim() : undefined;
       if (!panoId) throw new Error("panoId is required");
+      const cached = readPanoGraphMetadataCache(config, panoId);
+      if (cached) return normalizePanoGraphMetadata(cached);
       const session = await streetViewMapTilesSession(config);
-      return getPanoGraphByPanoId({
+      const result = await getPanoGraphByPanoId({
         config,
         sessionToken: session.token,
         panoId,
         fetchImpl
       });
+      storeStreetViewMetadata(config, result.metadata);
+      return result;
     },
     async getStreetViewByCoordinates(input) {
       const config = runtimeConfig();

@@ -1,8 +1,8 @@
-const fs = await import("node:fs");
+import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
+
 const path = await import("node:path");
 
 import type {
-  GoogleStreetViewPanoGraphMetadataResponse,
   GoogleStreetViewPanoGraphResult
 } from "../../../channels/google-streetview/src/index.js";
 import type {
@@ -11,99 +11,109 @@ import type {
   WorldWandererState
 } from "./types.js";
 import { normalizeHeading } from "./geo.js";
-import {
-  locationValue,
-  numberValue,
-  objectValue,
-  parseJsonObject,
-  stringValue
-} from "./values.js";
+import { numberValue, stringValue } from "./values.js";
 
-export function readWorldWandererState(statePath: string, config: WorldWandererConfig, now: () => Date = () => new Date()): WorldWandererState {
-  const resolved = path.resolve(statePath);
-  const parsed = fs.existsSync(resolved) ? parseJsonObject(fs.readFileSync(resolved, "utf8")) : {};
-  return normalizeWorldWandererState(parsed, config, now);
+const fs = await import("node:fs");
+
+type DatabaseSync = any;
+
+export function readWorldWandererState(dbPath: string, config: WorldWandererConfig): WorldWandererState {
+  const db = openWorldWandererDb(dbPath);
+  const pathStack = db.prepare(`
+    SELECT time, panoId, lat, lng, lastHeading
+    FROM world_wanderer_path
+    ORDER BY rowid ASC
+  `).all().map((row: unknown) => pathEntryValue(row)).filter((entry: WorldWandererPathEntry | undefined): entry is WorldWandererPathEntry => Boolean(entry));
+  db.close();
+  return stateFromPath(pathStack, config);
 }
 
-export function writeWorldWandererState(statePath: string, state: WorldWandererState): void {
-  fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+export function writeWorldWandererState(dbPath: string, state: WorldWandererState, limit = state.pathStack.length): void {
+  const db = openWorldWandererDb(dbPath);
+  db.exec("DELETE FROM world_wanderer_path");
+  for (const entry of state.pathStack.slice(-limit)) {
+    insertPathEntry(db, entry);
+  }
+  db.close();
 }
 
-export function stateFromPano(input: {
+export function appendWorldWandererPathEntries(dbPath: string, entries: WorldWandererPathEntry[], limit: number): void {
+  if (!entries.length) return;
+  const db = openWorldWandererDb(dbPath);
+  for (const entry of entries) insertPathEntry(db, entry);
+  db.prepare(`
+    DELETE FROM world_wanderer_path
+    WHERE rowid NOT IN (
+      SELECT rowid FROM world_wanderer_path ORDER BY rowid DESC LIMIT ?
+    )
+  `).run(limit);
+  db.close();
+}
+
+export function pathEntryFromPano(input: {
   pano: GoogleStreetViewPanoGraphResult;
   lastHeading: number;
-  lastRoadText?: string;
-  recentPanoIds: string[];
-  pathStack: WorldWandererPathEntry[];
-  updatedAt: string;
-}): WorldWandererState {
+  time: string;
+}): WorldWandererPathEntry {
   return {
-    location: input.pano.location,
-    lastHeading: normalizeHeading(input.lastHeading),
-    lastRoadText: input.lastRoadText,
-    metadata: input.pano.metadata,
-    metadataLocation: input.pano.location,
+    time: input.time,
     panoId: input.pano.panoId,
-    recentPanoIds: input.recentPanoIds,
-    pathStack: input.pathStack,
-    updatedAt: input.updatedAt
+    lat: input.pano.location.lat,
+    lng: input.pano.location.lng,
+    lastHeading: normalizeHeading(input.lastHeading)
   };
 }
 
-export function appendRecentPanoId(values: string[], panoId: string | undefined, limit: number): string[] {
-  if (!panoId) return values.slice(-limit);
-  return [...values, panoId].slice(-limit);
-}
-
-export function pushPathStack(values: WorldWandererPathEntry[], pano: GoogleStreetViewPanoGraphResult, limit: number): WorldWandererPathEntry[] {
-  return [...values, {
-    panoId: pano.panoId,
-    location: pano.location,
-    heading: pano.heading
-  }].slice(-limit);
-}
-
-function normalizeWorldWandererState(raw: Record<string, unknown>, config: WorldWandererConfig, now: () => Date): WorldWandererState {
-  const location = locationValue(raw.location, config.initialLocation);
+export function stateFromPath(pathStack: WorldWandererPathEntry[], config: WorldWandererConfig): WorldWandererState {
+  const current = pathStack.at(-1);
   return {
-    location,
-    lastHeading: normalizeHeading(numberValue(raw.lastHeading, config.initialHeading)),
-    lastRoadText: stringValue(raw.lastRoadText),
-    metadata: objectValue(raw.metadata) as GoogleStreetViewPanoGraphMetadataResponse | undefined,
-    metadataLocation: locationValue(raw.metadataLocation, undefined),
-    panoId: stringValue(raw.panoId),
-    recentPanoIds: stringArrayValue(raw.recentPanoIds, config.recentHistoryLimit),
-    pathStack: pathStackValue(raw.pathStack, config.recentHistoryLimit),
-    lastFailure: failureValue(raw.lastFailure),
-    updatedAt: stringValue(raw.updatedAt) ?? now().toISOString()
+    location: current ? { lat: current.lat, lng: current.lng } : config.initialLocation,
+    lastHeading: current ? normalizeHeading(current.lastHeading) : config.initialHeading,
+    panoId: current?.panoId,
+    pathStack
   };
 }
 
-function stringArrayValue(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())).slice(-limit);
+export function prunePathStack(values: WorldWandererPathEntry[], limit: number): WorldWandererPathEntry[] {
+  return values.slice(-limit);
 }
 
-function pathStackValue(value: unknown, limit: number): WorldWandererPathEntry[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((entry) => {
-    if (!entry || typeof entry !== "object") return undefined;
-    const object = entry as Record<string, unknown>;
-    const panoId = stringValue(object.panoId);
-    const location = locationValue(object.location, undefined);
-    if (!panoId || !location) return undefined;
-    return {
-      panoId,
-      location,
-      heading: normalizeHeading(numberValue(object.heading, 0))
-    };
-  }).filter((entry): entry is WorldWandererPathEntry => Boolean(entry)).slice(-limit);
+function openWorldWandererDb(dbPath: string): DatabaseSync {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db: DatabaseSync = new sqlite.DatabaseSync(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS world_wanderer_path (
+      time TEXT NOT NULL,
+      panoId TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      lastHeading REAL NOT NULL
+    );
+  `);
+  return db;
 }
 
-function failureValue(value: unknown): WorldWandererState["lastFailure"] {
-  const object = objectValue(value);
-  const message = object ? stringValue(object.message) : undefined;
-  const at = object ? stringValue(object.at) : undefined;
-  return message && at ? { message, at } : undefined;
+function insertPathEntry(db: DatabaseSync, entry: WorldWandererPathEntry): void {
+  db.prepare(`
+    INSERT INTO world_wanderer_path(time, panoId, lat, lng, lastHeading)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(entry.time, entry.panoId, entry.lat, entry.lng, normalizeHeading(entry.lastHeading));
+}
+
+function pathEntryValue(row: unknown): WorldWandererPathEntry | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const value = row as Record<string, unknown>;
+  const time = stringValue(value.time);
+  const panoId = stringValue(value.panoId);
+  const lat = numberValue(value.lat, Number.NaN);
+  const lng = numberValue(value.lng, Number.NaN);
+  if (!time || !panoId || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  return {
+    time,
+    panoId,
+    lat,
+    lng,
+    lastHeading: normalizeHeading(numberValue(value.lastHeading, 0))
+  };
 }

@@ -51,7 +51,7 @@ export function createApiCommunicationRuntime(input: {
   });
   const worldWandererRuntime = createWorldWandererRuntime({
     configPath: defaultWorldWandererPluginConfigPath,
-    statePath: path.join(input.config.memoryFiles.root, "state", "world-wanderer.json"),
+    dbPath: path.join(input.config.memoryFiles.root, "alice.sqlite"),
     googleStreetView,
     now: () => input.time.now().date,
     random: Math.random,

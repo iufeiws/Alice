@@ -17,6 +17,7 @@ export {
 } from "./config.js";
 export {
   readWorldWandererState,
+  pathEntryFromPano,
   writeWorldWandererState
 } from "./state.js";
 export {

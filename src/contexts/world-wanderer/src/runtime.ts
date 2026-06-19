@@ -6,10 +6,11 @@ import { readWorldWandererConfig } from "./config.js";
 import { distanceMeters, moveLocation, normalizeHeading } from "./geo.js";
 import { chooseNextLink } from "./policy.js";
 import {
-  appendRecentPanoId,
-  pushPathStack,
+  appendWorldWandererPathEntries,
+  pathEntryFromPano,
+  prunePathStack,
   readWorldWandererState,
-  stateFromPano,
+  stateFromPath,
   writeWorldWandererState
 } from "./state.js";
 import type {
@@ -31,23 +32,31 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
       const config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return undefined;
 
-      const previous = readWorldWandererState(deps.statePath, config, now);
+      const previous = readWorldWandererState(deps.dbPath, config);
       const updatedAt = now().toISOString();
 
       try {
         let currentPano = await resolveCurrentPano(previous, config);
+        let newPathEntries: ReturnType<typeof pathEntryFromPano>[] = [];
+        let replacePath = false;
         let pathStack = previous.pathStack;
+        if (!pathStack.length) {
+          const entry = pathEntryFromPano({ pano: currentPano, lastHeading: previous.lastHeading, time: updatedAt });
+          pathStack = [entry];
+          newPathEntries = [entry];
+        }
         if (!hasMovableLinks(currentPano)) {
           const nearbyPano = await findNearbyLinkedPano(currentPano.location);
           if (nearbyPano) {
             deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
             currentPano = nearbyPano;
-            pathStack = [];
+            const entry = pathEntryFromPano({ pano: currentPano, lastHeading: previous.lastHeading, time: updatedAt });
+            pathStack = [entry];
+            newPathEntries = [entry];
+            replacePath = true;
           }
         }
-        let recentPanoIds = appendRecentPanoId(previous.recentPanoIds, currentPano.panoId, config.recentHistoryLimit);
         let lastHeading = previous.lastHeading;
-        let lastRoadText = previous.lastRoadText;
         let accumulatedMeters = 0;
         let movedPanos = 0;
         const targetMeters = Math.max(0, input.delayMs) / 1000 * config.speedMetersPerSecond;
@@ -57,8 +66,6 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
             currentPano,
             state: {
               lastHeading,
-              lastRoadText,
-              recentPanoIds,
               pathStack
             },
             config,
@@ -69,24 +76,19 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           const nextPano = await deps.googleStreetView.getPanoGraphByPanoId({ panoId: decision.link.panoId });
           accumulatedMeters += distanceMeters(currentPano.location, nextPano.location);
           movedPanos += 1;
-          recentPanoIds = appendRecentPanoId(recentPanoIds, nextPano.panoId, config.recentHistoryLimit);
-          pathStack = decision.backtrack
-            ? pathStack.slice(0, -1)
-            : pushPathStack(pathStack, currentPano, config.recentHistoryLimit);
           lastHeading = normalizeHeading(decision.link.heading);
-          lastRoadText = decision.link.text;
           currentPano = nextPano;
+          const entry = pathEntryFromPano({ pano: currentPano, lastHeading, time: updatedAt });
+          pathStack = prunePathStack([...pathStack, entry], config.recentHistoryLimit);
+          newPathEntries.push(entry);
         }
 
-        const next = stateFromPano({
-          pano: currentPano,
-          lastHeading,
-          lastRoadText,
-          recentPanoIds,
-          pathStack,
-          updatedAt
-        });
-        writeWorldWandererState(deps.statePath, next);
+        const next = stateFromPath(pathStack, config);
+        if (replacePath) {
+          writeWorldWandererState(deps.dbPath, next, config.recentHistoryLimit);
+        } else {
+          appendWorldWandererPathEntries(deps.dbPath, newPathEntries, config.recentHistoryLimit);
+        }
         if (movedPanos > 0) {
           deps.appendLog?.(
             "info",
@@ -102,27 +104,20 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           at: updatedAt
         };
         const next = {
-          ...previous,
-          lastFailure,
-          updatedAt
+          ...previous
         };
-        writeWorldWandererState(deps.statePath, next);
         deps.appendLog?.("warn", `world wanderer pano graph failed: ${lastFailure.message}`);
         return next;
       }
     },
     getState() {
-      return readWorldWandererState(deps.statePath, readWorldWandererConfig(deps.configPath), now);
+      return readWorldWandererState(deps.dbPath, readWorldWandererConfig(deps.configPath));
     }
   };
 
   async function resolveCurrentPano(state: WorldWandererState, config: WorldWandererConfig): Promise<GoogleStreetViewPanoGraphResult> {
     if (state.panoId) {
-      try {
-        return await deps.googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId });
-      } catch {
-        return deps.googleStreetView.getPanoGraphByCoordinates(state.location);
-      }
+      return deps.googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId });
     }
     return deps.googleStreetView.getPanoGraphByCoordinates(config.initialLocation);
   }

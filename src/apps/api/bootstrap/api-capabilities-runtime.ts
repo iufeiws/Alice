@@ -17,6 +17,7 @@ export function createApiCapabilitiesRuntime(input: {
   agentState: any;
   getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
+  getGoogleStreetView(): any;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
@@ -61,6 +62,7 @@ export function createApiCapabilitiesRuntime(input: {
     agentState: input.agentState,
     getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget: input.getDefaultTarget,
+    getGoogleStreetView: input.getGoogleStreetView,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog

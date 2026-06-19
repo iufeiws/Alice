@@ -131,7 +131,7 @@ async function getMapTilesPanoMetadata(input: {
   return metadata;
 }
 
-function normalizePanoGraphMetadata(
+export function normalizePanoGraphMetadata(
   metadata: GoogleStreetViewPanoGraphMetadataResponse,
   fallbackLocation?: GoogleStreetViewLocation
 ): GoogleStreetViewPanoGraphResult {

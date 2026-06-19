@@ -743,7 +743,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieReferenceDir: patch.selfieReferenceDir === undefined ? current.selfieReferenceDir : requiredString(patch.selfieReferenceDir).trim(),
     selfieOutputDir: patch.selfieOutputDir === undefined ? current.selfieOutputDir : requiredString(patch.selfieOutputDir).trim(),
     selfieCodexCommand: patch.selfieCodexCommand === undefined ? current.selfieCodexCommand : requiredString(patch.selfieCodexCommand).trim(),
-    selfieCodexTimeoutMs: patch.selfieCodexTimeoutMs === undefined ? current.selfieCodexTimeoutMs : numberFromUnknown(patch.selfieCodexTimeoutMs, current.selfieCodexTimeoutMs),
+    selfieCodexTimeoutMs: patch.selfieCodexTimeoutMs === undefined ? current.selfieCodexTimeoutMs : photoNumberFromUnknown(patch.selfieCodexTimeoutMs),
     selfieImageApiKey: patch.selfieImageApiKey === undefined ? current.selfieImageApiKey : secretStringFromUnknown(patch.selfieImageApiKey, current.selfieImageApiKey),
     selfieImageApiBaseURL: patch.selfieImageApiBaseURL === undefined ? current.selfieImageApiBaseURL : requiredString(patch.selfieImageApiBaseURL).trim().replace(/\/+$/, ""),
     selfieImageApiRelayKey: patch.selfieImageApiRelayKey === undefined ? current.selfieImageApiRelayKey : secretStringFromUnknown(patch.selfieImageApiRelayKey, current.selfieImageApiRelayKey),
@@ -751,18 +751,18 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiModel: patch.selfieImageApiModel === undefined ? current.selfieImageApiModel : requiredString(patch.selfieImageApiModel).trim(),
     selfieImageApiSize: patch.selfieImageApiSize === undefined ? current.selfieImageApiSize : requiredString(patch.selfieImageApiSize).trim(),
     selfieImageApiQuality: patch.selfieImageApiQuality === undefined ? current.selfieImageApiQuality : requiredString(patch.selfieImageApiQuality).trim(),
-    selfieImageApiModeration: patch.selfieImageApiModeration === undefined ? current.selfieImageApiModeration : photoModerationFromUnknown(patch.selfieImageApiModeration, current.selfieImageApiModeration),
-    selfieImageApiOutputFormat: patch.selfieImageApiOutputFormat === undefined ? current.selfieImageApiOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiOutputFormat, current.selfieImageApiOutputFormat),
-    selfieImageApiOutputCompression: patch.selfieImageApiOutputCompression === undefined ? current.selfieImageApiOutputCompression : numberFromUnknown(patch.selfieImageApiOutputCompression, current.selfieImageApiOutputCompression),
-    selfieImageApiTimeoutMs: patch.selfieImageApiTimeoutMs === undefined ? current.selfieImageApiTimeoutMs : numberFromUnknown(patch.selfieImageApiTimeoutMs, current.selfieImageApiTimeoutMs),
+    selfieImageApiModeration: patch.selfieImageApiModeration === undefined ? current.selfieImageApiModeration : photoModerationFromUnknown(patch.selfieImageApiModeration),
+    selfieImageApiOutputFormat: patch.selfieImageApiOutputFormat === undefined ? current.selfieImageApiOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiOutputFormat),
+    selfieImageApiOutputCompression: patch.selfieImageApiOutputCompression === undefined ? current.selfieImageApiOutputCompression : photoNumberFromUnknown(patch.selfieImageApiOutputCompression),
+    selfieImageApiTimeoutMs: patch.selfieImageApiTimeoutMs === undefined ? current.selfieImageApiTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiTimeoutMs),
     selfieImageApiRelayModel: patch.selfieImageApiRelayModel === undefined ? current.selfieImageApiRelayModel : requiredString(patch.selfieImageApiRelayModel).trim(),
     selfieImageApiRelaySize: patch.selfieImageApiRelaySize === undefined ? current.selfieImageApiRelaySize : requiredString(patch.selfieImageApiRelaySize).trim(),
     selfieImageApiRelayQuality: patch.selfieImageApiRelayQuality === undefined ? current.selfieImageApiRelayQuality : requiredString(patch.selfieImageApiRelayQuality).trim(),
-    selfieImageApiRelayModeration: patch.selfieImageApiRelayModeration === undefined ? current.selfieImageApiRelayModeration : photoModerationFromUnknown(patch.selfieImageApiRelayModeration, current.selfieImageApiRelayModeration),
-    selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat, current.selfieImageApiRelayOutputFormat),
-    selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : numberFromUnknown(patch.selfieImageApiRelayOutputCompression, current.selfieImageApiRelayOutputCompression),
-    selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : numberFromUnknown(patch.selfieImageApiRelayTimeoutMs, current.selfieImageApiRelayTimeoutMs),
-    selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : numberFromUnknown(patch.selfieMaxBytes, current.selfieMaxBytes)
+    selfieImageApiRelayModeration: patch.selfieImageApiRelayModeration === undefined ? current.selfieImageApiRelayModeration : photoModerationFromUnknown(patch.selfieImageApiRelayModeration),
+    selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat),
+    selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : photoNumberFromUnknown(patch.selfieImageApiRelayOutputCompression),
+    selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiRelayTimeoutMs),
+    selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : photoNumberFromUnknown(patch.selfieMaxBytes)
   };
 
   const validationError = validatePhotoConfig(next);
@@ -1166,17 +1166,23 @@ function photoSelfieModeFromUnknown(value: unknown): SelfieGenerationMode {
   return requiredString(value).trim() as SelfieGenerationMode;
 }
 
-function photoOutputFormatFromUnknown(value: unknown, fallback: string): string {
+function photoOutputFormatFromUnknown(value: unknown): string {
   const normalized = requiredString(value).trim().toLowerCase();
   if (normalized === "jpg") return "jpeg";
   if (normalized === "jpeg" || normalized === "png" || normalized === "webp") return normalized;
   return normalized;
 }
 
-function photoModerationFromUnknown(value: unknown, fallback: string): string {
+function photoModerationFromUnknown(value: unknown): string {
   const normalized = requiredString(value).trim().toLowerCase();
   if (normalized === "auto" || normalized === "low") return normalized;
   return normalized;
+}
+
+function photoNumberFromUnknown(value: unknown): number {
+  if (typeof value === "string" && value.trim() === "") return Number.NaN;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 function secretStringFromUnknown(value: unknown, fallback: string | undefined): string | undefined {

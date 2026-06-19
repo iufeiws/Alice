@@ -1106,6 +1106,7 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   });
 
   await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieMode: "bad" }, "invalid_selfie_mode");
+  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieCodexTimeoutMs: "abc" }, "invalid_selfie_codex_timeout");
   await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
   await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
   await assertPatchError(handler, "/admin/api/plugins/tts/config", { conversion: { bailian: { service: "bad" } } }, "invalid_bailian_service");

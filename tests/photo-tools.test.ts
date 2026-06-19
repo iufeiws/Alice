@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPhotoTools, type SelfieExecutorInput } from "../src/capabilities/tools/photo/src/index.js";
+import { createPhotoTools, readPhotoPluginConfig, type SelfieExecutorInput } from "../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createToolOutputTargetResolver } from "../src/contexts/capabilities/src/tool-output-target.js";
@@ -29,6 +29,44 @@ test("selfie schema exposes action with 3:4 default", () => {
   assert.deepEqual((selfie.inputSchema.properties as Record<string, unknown>).description, undefined);
   assert.deepEqual((selfie.inputSchema.properties as Record<string, { default?: string }>).aspectRatio.default, "3:4");
   assert.deepEqual(selfie.inputSchema.required, ["action"]);
+});
+
+test("photo config rejects invalid persisted values", () => {
+  const configPath = path.join(makeTempDir("selfie-invalid-config"), "config.json");
+
+  fs.writeFileSync(configPath, JSON.stringify({ selfieMode: "api" }));
+  assert.throws(() => readPhotoPluginConfig(configPath), /invalid selfieMode: api/);
+
+  fs.writeFileSync(configPath, JSON.stringify({ selfieImageApiOutputFormat: "gif" }));
+  assert.throws(() => readPhotoPluginConfig(configPath), /invalid selfieImageApiOutputFormat: gif/);
+
+  fs.writeFileSync(configPath, JSON.stringify({ selfieCodexTimeoutMs: "abc" }));
+  assert.throws(() => readPhotoPluginConfig(configPath), /invalid selfieCodexTimeoutMs: abc/);
+
+  fs.writeFileSync(configPath, "{bad");
+  assert.throws(() => readPhotoPluginConfig(configPath), /invalid photo plugin config JSON/);
+});
+
+test("photo tool entry returns config errors to the agent", async () => {
+  const configPath = path.join(makeTempDir("selfie-tool-invalid-config"), "config.json");
+  const store = createAliceStore(path.join(makeTempDir("selfie-tool-invalid-config-db"), "alice.sqlite"));
+  fs.writeFileSync(configPath, JSON.stringify({ selfieMode: "api" }));
+  const tools = createPhotoTools({
+    store,
+    outputRouter: { async send() {} },
+    selfieConfigPath: configPath,
+    getSelfieContext: selfieContext,
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_selfie_bad_config",
+    toolName: "selfie",
+    input: { action: "测试坏配置" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? "", /invalid selfieMode: api/);
 });
 
 test("selfie builds prompt and sends reference images in 1/2/3 order", async () => {

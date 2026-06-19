@@ -305,8 +305,14 @@
 
 关键模块：
 
-- `src/index.ts`: public export 薄壳。
-- `src/photo-tools.ts`: photo tool、config、admin public config、selfie executor。
+- `src/index.ts`: photo tool plugin 壳和 tool name 分发。
+- `src/selfie-tool.ts`: `selfieTool` 定义、selfie 执行流程、目标解析、prompt 模板渲染、引用图收集。
+- `src/config.ts`: photo config、admin public config、模式到 Image API 设置的选择。
+- `src/send-output.ts`: outbound 存储、发送、消息日志。
+- `src/openai-api-selfie.ts`: `openai` / `openaiRelay` executor。
+- `src/codex-selfie.ts`: `codex` executor。
+- `src/image-files.ts`: 生成图校验、JPEG 归一化、mime 检测。
+- `src/process-exec.ts`: 子进程执行 helper，供 codex executor 和图像转换复用。
 
 ## `capabilities/tools/shell/`
 

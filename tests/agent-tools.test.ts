@@ -1353,9 +1353,10 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
-test("agent core executes exposed consecutive selfie tool calls through plugin failure", async () => {
+test("agent core passes llm session round context to exposed selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
+  const contexts: Array<{ currentRound?: number; llmSessionId?: number }> = [];
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);
@@ -1384,11 +1385,17 @@ test("agent core executes exposed consecutive selfie tool calls through plugin f
   };
   const core = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: false, photo: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }]
+    }),
     tools: [{
       id: "photo",
       listTools() {
@@ -1396,9 +1403,7 @@ test("agent core executes exposed consecutive selfie tool calls through plugin f
       },
       async execute(call, context) {
         executed.push(String(call.input.action));
-        if (context?.lastCompletedToolName === "selfie") {
-          return { callId: call.id, ok: false, error: "selfie cannot be called consecutively" };
-        }
+        contexts.push({ currentRound: context?.currentRound, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }
     }]
@@ -1408,7 +1413,11 @@ test("agent core executes exposed consecutive selfie tool calls through plugin f
 
   assert.deepEqual(executed, ["first", "second"]);
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
-  assert.match(String(requests[1].messages.at(-1)?.content), /selfie cannot be called consecutively/);
+  assert.equal(requests[1].messages.at(-1)?.content, "sent");
+  assert.deepEqual(contexts, [
+    { currentRound: 0, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") },
+    { currentRound: 0, llmSessionId: Date.parse("2026-06-08T00:00:00.000Z") }
+  ]);
 });
 
 test("agent core uses empty reasoning content for tool requests when missing", async () => {

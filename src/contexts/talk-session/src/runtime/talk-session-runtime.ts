@@ -7,7 +7,7 @@ import { createTalkRuntime } from "../application/talk-session-runtime.js";
 const path = await import("node:path");
 
 export function createTalkRuntimeRuntime(input: {
-  isActiveTalkLLMSession(sessionId: string): boolean;
+  isActiveTalkLLMSession(sessionId: number): boolean;
   getActiveTalkLLMSessionId(): number | undefined;
   getTalkPromptProfile(): any;
   time: any;
@@ -34,13 +34,13 @@ export function createTalkRuntimeRuntime(input: {
     isActiveTalkLLMSession: input.isActiveTalkLLMSession,
     getActiveTalkLLMSessionId: input.getActiveTalkLLMSessionId,
     isTalkSessionOpen(sessionId) {
-      return talkRuntime.store.getSession(sessionId)?.status === "open";
+      return talkRuntime.store.getSession(String(sessionId))?.status === "open";
     },
     pendingVoiceOutputCharCount(sessionId) {
-      return talkRuntime.store.pendingVoiceOutputCharCount(sessionId);
+      return talkRuntime.store.pendingVoiceOutputCharCount(String(sessionId));
     },
     isForegroundPlaybackIdle(sessionId) {
-      return talkRuntime.isForegroundPlaybackIdle(sessionId);
+      return talkRuntime.isForegroundPlaybackIdle(String(sessionId));
     },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,
@@ -50,10 +50,10 @@ export function createTalkRuntimeRuntime(input: {
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     setLoopPrefixMessageCount(sessionId, count) {
-      talkRuntime.setLoopPrefixMessageCount(sessionId, count);
+      talkRuntime.setLoopPrefixMessageCount(String(sessionId), count);
     },
     buildNextLoopMessagePatch(sessionId) {
-      return talkRuntime.buildNextLoopMessagePatch(sessionId);
+      return talkRuntime.buildNextLoopMessagePatch(String(sessionId));
     },
     loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,
@@ -87,11 +87,11 @@ export function createTalkRuntimeRuntime(input: {
     createLLMSession(sessionInput) {
       return input.createLLMSession(sessionInput.occurredAt);
     },
-    prepareAgentLoop: talkAgentLoop.prepareTalkAgentLoopForSession,
+    prepareAgentLoop: (sessionId, options) => talkAgentLoop.prepareTalkAgentLoopForSession(Number(sessionId), options),
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
       input.agentLoopRuntime?.interrupt?.("talk_interrupt");
-      talkAgentLoop.interruptTalkAgentLoop(sessionId);
+      talkAgentLoop.interruptTalkAgentLoop(Number(sessionId));
     },
     onSessionOpened() {
       input.agentState?.setState("calling", { reason: "talk_session_opened" });

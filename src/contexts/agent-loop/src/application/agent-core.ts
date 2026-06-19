@@ -64,10 +64,12 @@ import {
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
 export type LLMSessionSnapshot = {
+  id?: number;
   messages: LLMChatInput["messages"];
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
+  currentRound?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;
@@ -224,6 +226,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   let lastCompletedToolName: string | undefined;
   type ActiveLLMSession = ChatAgentLoopSession & {
+    id: number;
     messages: LLMChatInput["messages"];
     staticPromptFingerprint: string;
     staticPromptMessageCount: number;
@@ -464,6 +467,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               },
               createSession(promptMessages): ActiveLLMSession {
                 return {
+                  id: time.now().epochMs,
                   messages: promptMessages,
                   staticPromptFingerprint: fingerprint,
                   staticPromptMessageCount: promptMessages.length,
@@ -801,6 +805,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     const parsedModeStartedAt = typeof snapshot.modeStartedAt === "string" ? Date.parse(snapshot.modeStartedAt) : NaN;
     const parsedModeExpiresAt = typeof snapshot.modeExpiresAt === "string" ? Date.parse(snapshot.modeExpiresAt) : NaN;
     return {
+      id: Number.isFinite(snapshot.id) ? Number(snapshot.id) : time.now().epochMs,
       messages: cloneLLMMessages(snapshot.messages),
       staticPromptFingerprint: snapshot.staticPromptFingerprint ?? "",
       staticPromptMessageCount: typeof snapshot.staticPromptMessageCount === "number" && Number.isFinite(snapshot.staticPromptMessageCount)
@@ -809,6 +814,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       requestTimestamps: (snapshot.requestTimestamps ?? [])
         .map((timestamp) => Date.parse(timestamp))
         .filter((timestamp) => Number.isFinite(timestamp)),
+      currentRound: Number.isInteger(snapshot.currentRound) ? snapshot.currentRound : undefined,
       lastTotalTokens: Number.isFinite(snapshot.lastTotalTokens) ? snapshot.lastTotalTokens : undefined,
       lastInputTokens: Number.isFinite(snapshot.lastInputTokens) ? snapshot.lastInputTokens : undefined,
       lastUsageModel: typeof snapshot.lastUsageModel === "string" ? snapshot.lastUsageModel : undefined,
@@ -874,10 +880,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   function noteLLMSessionUpdated(): void {
     if (!activeLLMSession) return;
     deps.onLLMSessionUpdated?.({
+      id: activeLLMSession.id,
       messages: cloneLLMMessages(activeLLMSession.messages),
       staticPromptFingerprint: activeLLMSession.staticPromptFingerprint,
       staticPromptMessageCount: activeLLMSession.staticPromptMessageCount,
       requestTimestamps: activeLLMSession.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
+      currentRound: activeLLMSession.currentRound,
       lastTotalTokens: activeLLMSession.lastTotalTokens,
       lastInputTokens: activeLLMSession.lastInputTokens,
       lastUsageModel: activeLLMSession.lastUsageModel,

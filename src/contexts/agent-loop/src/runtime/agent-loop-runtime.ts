@@ -49,7 +49,7 @@ export type ActiveLLMSessionRuntimePort = {
   createTalkLLMSession(time: string): { id: number | string };
   noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
   noteActiveLLMResponse(entry: unknown): void;
-  isActiveTalkLLMSession(sessionId: string): boolean;
+  isActiveTalkLLMSession(sessionId: number): boolean;
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;
@@ -105,7 +105,7 @@ export type AgentLoopRuntime = {
   createTalkLLMSession(time: string): { id: number | string };
   noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
   noteActiveLLMResponse(entry: unknown): void;
-  isActiveTalkLLMSession(sessionId: string): boolean;
+  isActiveTalkLLMSession(sessionId: number): boolean;
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;

@@ -41,15 +41,18 @@ type TalkAgentLoopLLMConfig = {
 type TalkAgentLoopState = {
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
-  executeToolCall(call: LLMToolCall, capabilities?: LLMCapabilityFlags): Promise<TalkLoopExecutedToolCall>;
+  executeToolCall(call: LLMToolCall, input: {
+    currentRound: number;
+    capabilities?: LLMCapabilityFlags;
+  }): Promise<TalkLoopExecutedToolCall>;
 };
 
 type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
-  isActiveTalkLLMSession(sessionId: string): boolean;
-  getActiveTalkLLMSessionId(): string | number | undefined;
-  isTalkSessionOpen(sessionId: string): boolean;
-  pendingVoiceOutputCharCount(sessionId: string): number;
-  isForegroundPlaybackIdle(sessionId: string): boolean;
+  isActiveTalkLLMSession(sessionId: number): boolean;
+  getActiveTalkLLMSessionId(): number | undefined;
+  isTalkSessionOpen(sessionId: number): boolean;
+  pendingVoiceOutputCharCount(sessionId: number): number;
+  isForegroundPlaybackIdle(sessionId: number): boolean;
   maxPendingVoiceOutputChars?: number;
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
@@ -60,9 +63,9 @@ type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
 };
 
 export type TalkAgentLoopController = {
-  prepareTalkAgentLoopForSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<PreparedAgentLoopRun | undefined>;
-  interruptTalkAgentLoop(sessionId: string): void;
-  getConversationStartIndex(sessionId: string): number | undefined;
+  prepareTalkAgentLoopForSession(sessionId: number, options?: { signal?: AbortSignal }): Promise<PreparedAgentLoopRun | undefined>;
+  interruptTalkAgentLoop(sessionId: number): void;
+  getConversationStartIndex(sessionId: number): number | undefined;
 };
 
 export type PreparedTalkAgentLoop = {
@@ -75,7 +78,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   deps.setLoopSessionState?.(state);
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
-  async function prepareTalkAgentLoopForSession(sessionId: string, options: { signal?: AbortSignal } = {}): Promise<PreparedAgentLoopRun | undefined> {
+  async function prepareTalkAgentLoopForSession(sessionId: number, options: { signal?: AbortSignal } = {}): Promise<PreparedAgentLoopRun | undefined> {
     if (!deps.isActiveTalkLLMSession(sessionId)) {
       deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
       return;
@@ -123,18 +126,24 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   }
 
   function buildTalkAgentLoopSpec(input: {
-    sessionId: string;
+    sessionId: number;
     session: AgentLoopTranscriptSession;
     toolNames: string[];
     toolVariables: Record<string, unknown> | undefined;
-    executeToolCall(call: LLMToolCall, capabilities?: LLMCapabilityFlags): Promise<TalkLoopExecutedToolCall>;
+    executeToolCall(call: LLMToolCall, input: {
+      currentRound: number;
+      capabilities?: LLMCapabilityFlags;
+    }): Promise<TalkLoopExecutedToolCall>;
     config: TalkAgentLoopLLMConfig;
     signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
     const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
+    const sessionRounds = new Map<number, number>();
     const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
       initialMessages: input.session.messages,
       buildRequest({ round, messages }) {
+        input.session.currentRound = (input.session.currentRound ?? -1) + 1;
+        sessionRounds.set(round, input.session.currentRound);
         const outputId = `talk:${input.sessionId}:${Date.now()}:${round}`;
         roundOutputs.set(round, { outputId, streamedContent: "" });
         return {
@@ -153,18 +162,21 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
             onContentDelta(delta) {
               const output = roundOutputs.get(round);
               if (output) output.streamedContent += delta;
-              deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta });
+              deps.appendAssistantDelta({ sessionId: String(input.sessionId), outputId, delta });
             }
           }
         };
       },
       sendRequest: deps.sendRequest,
-      async executeTool(call): Promise<AgentFunctionCallToolExecution> {
+      async executeTool(call, { round }): Promise<AgentFunctionCallToolExecution> {
         const capabilities: LLMCapabilityFlags = {
           supportsImage: input.config.supportsImage,
           supportsAudio: input.config.supportsAudio
         };
-        const executed = await input.executeToolCall(call, capabilities);
+        const executed = await input.executeToolCall(call, {
+          currentRound: sessionRounds.get(round) ?? round,
+          capabilities
+        });
         const followup = buildToolFollowupLLMMessages(executed.result, capabilities);
         const content = followup.toolNotices.length > 0
           ? [executed.content, ...followup.toolNotices].filter(Boolean).join("\n")
@@ -184,10 +196,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         if (!output) return;
         const { outputId, streamedContent } = output;
         if (!streamedContent && typeof result.message.content === "string" && result.message.content) {
-          deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta: result.message.content });
+          deps.appendAssistantDelta({ sessionId: String(input.sessionId), outputId, delta: result.message.content });
         }
         if (streamedContent || result.message.content) {
-          deps.finishAssistantOutput({ sessionId: input.sessionId, outputId });
+          deps.finishAssistantOutput({ sessionId: String(input.sessionId), outputId });
           deps.log("info", `talk loop output ready: session=${input.sessionId} output=${outputId}`);
         }
       }
@@ -201,15 +213,15 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     };
   }
 
-  function interruptTalkAgentLoop(sessionId: string): void {
+  function interruptTalkAgentLoop(sessionId: number): void {
     deps.log("info", `talk loop interrupt requested: session=${sessionId}`);
   }
 
-  function getConversationStartIndex(sessionId: string): number | undefined {
+  function getConversationStartIndex(sessionId: number): number | undefined {
     return state.conversationStartIndexes.get(sessionId);
   }
 
-  function canStartTalkLoop(sessionId: string, signal?: AbortSignal): boolean {
+  function canStartTalkLoop(sessionId: number, signal?: AbortSignal): boolean {
     if (signal?.aborted) {
       deps.log("info", `talk loop cancelled before request: session=${sessionId}`);
       return false;
@@ -229,7 +241,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     return false;
   }
 
-  async function buildTalkAgentLoopState(sessionId: string): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
+  async function buildTalkAgentLoopState(sessionId: number): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
     return prepareTalkLoopSessionContext({
       sessionId,
       state,

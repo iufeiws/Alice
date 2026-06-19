@@ -208,11 +208,11 @@ test("selfie uses default output target for voice call requester", async () => {
   }
 });
 
-test("selfie rejects consecutive calls through tool execution context", async () => {
-  const outputRoot = makeAssetTempDir("selfie-consecutive");
-  const referenceRoot = makeTempDir("selfie-ref-consecutive");
-  const store = createAliceStore(path.join(makeTempDir("selfie-consecutive-db"), "alice.sqlite"));
-  let executorCalled = false;
+test("selfie blocks retries in the same llm session round after generation failure", async () => {
+  const outputRoot = makeAssetTempDir("selfie-round-failure");
+  const referenceRoot = makeTempDir("selfie-ref-round-failure");
+  const store = createAliceStore(path.join(makeTempDir("selfie-round-failure-db"), "alice.sqlite"));
+  let executorCalls = 0;
   writeReferenceFiles(referenceRoot);
 
   try {
@@ -223,22 +223,39 @@ test("selfie rejects consecutive calls through tool execution context", async ()
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieExecutor: async () => {
-        executorCalled = true;
+        executorCalls += 1;
+        throw new Error("image api failed");
       },
       outputRouter: { async send() {} },
       getSelfieContext: selfieContext,
       getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
     });
 
-    const result = await tools.execute({
-      id: "call_selfie_consecutive",
+    const first = await tools.execute({
+      id: "call_selfie_fail_1",
       toolName: "selfie",
-      input: { action: "再次自拍" }
-    }, { lastCompletedToolName: "selfie" });
+      input: { action: "失败自拍" }
+    }, { llmSessionId: 123, currentRound: 4 });
 
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "selfie cannot be called consecutively");
-    assert.equal(executorCalled, false);
+    const sameRoundRetry = await tools.execute({
+      id: "call_selfie_fail_2",
+      toolName: "selfie",
+      input: { action: "同轮重试" }
+    }, { llmSessionId: 123, currentRound: 4 });
+
+    const nextRoundRetry = await tools.execute({
+      id: "call_selfie_fail_3",
+      toolName: "selfie",
+      input: { action: "下一轮重试" }
+    }, { llmSessionId: 123, currentRound: 5 });
+
+    assert.equal(first.ok, false);
+    assert.match(first.error ?? "", /image api failed/);
+    assert.equal(sameRoundRetry.ok, false);
+    assert.equal(sameRoundRetry.error, "selfie is blocked in this round after a previous failure");
+    assert.equal(nextRoundRetry.ok, false);
+    assert.match(nextRoundRetry.error ?? "", /image api failed/);
+    assert.equal(executorCalls, 2);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

@@ -3,10 +3,12 @@ import type { LLMRequestDiff } from "../../../llm-gateway/src/llm-request-diff.j
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
 export type LLMSessionSnapshot = {
+  id?: number;
   messages: LLMChatInput["messages"];
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
+  currentRound?: number;
   lastTotalTokens?: number;
   lastInputTokens?: number;
   lastUsageModel?: string;

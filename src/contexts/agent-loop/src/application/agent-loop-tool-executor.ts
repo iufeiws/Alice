@@ -11,6 +11,8 @@ export type AgentLoopToolExecutor = {
 
 export type AgentLoopToolExecutionOptions = {
   variables?: LLMTextVariables;
+  currentRound?: number;
+  llmSessionId?: number;
   llmCapabilities?: ToolExecutionContext["llmCapabilities"];
   transformInput?(toolName: string, input: Record<string, unknown>): Record<string, unknown>;
 };
@@ -59,6 +61,8 @@ export function createAgentLoopToolExecutor(input: {
     };
     const result = await executePreparedAgentLoopToolCall(toolMap, preparedCall, {
       lastCompletedToolName: input.getLastCompletedToolName?.(),
+      currentRound: options.currentRound,
+      llmSessionId: options.llmSessionId,
       llmCapabilities: options.llmCapabilities
     });
     input.setLastCompletedToolName?.(call.toolName);

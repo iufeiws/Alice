@@ -231,6 +231,8 @@ export type ToolResultLLMMessage = {
 
 export type ToolExecutionContext = {
   lastCompletedToolName?: string;
+  currentRound?: number;
+  llmSessionId?: number;
   llmCapabilities?: {
     supportsImage?: boolean;
     supportsAudio?: boolean;

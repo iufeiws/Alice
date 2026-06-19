@@ -7,7 +7,7 @@ import { defaultPromptProfile } from "../src/contexts/agent-profile/src/applicat
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 
-async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalkAgentLoopForSession>, sessionId: string): Promise<void> {
+async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalkAgentLoopForSession>, sessionId: number): Promise<void> {
   const prepared = await controller.prepareTalkAgentLoopForSession(sessionId);
   if (!prepared) return;
   try {
@@ -30,7 +30,7 @@ test("talk loop returns no prepared run while voice output backpressure is activ
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-backpressure",
+    getActiveTalkLLMSessionId: () => 101,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => pendingChars,
     isForegroundPlaybackIdle: () => true,
@@ -69,7 +69,7 @@ test("talk loop returns no prepared run while voice output backpressure is activ
     }
   });
 
-  let prepared = await controller.prepareTalkAgentLoopForSession("session-backpressure");
+  let prepared = await controller.prepareTalkAgentLoopForSession(101);
   assert.equal(prepared, undefined);
   assert.equal(sendCalls, 0);
   assert.equal(finishedOutputs.length, 0);
@@ -77,7 +77,7 @@ test("talk loop returns no prepared run while voice output backpressure is activ
   assert.equal(logs.some((entry) => entry.message.includes("talk loop not ready: voice output")), true);
 
   pendingChars = 0;
-  prepared = await controller.prepareTalkAgentLoopForSession("session-backpressure");
+  prepared = await controller.prepareTalkAgentLoopForSession(101);
   assert.ok(prepared);
   const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
   assert.ok(spec && !Array.isArray(spec));
@@ -93,7 +93,7 @@ test("talk loop prepares spec for external function-call runtime execution", asy
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-runtime",
+    getActiveTalkLLMSessionId: () => 102,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -127,7 +127,7 @@ test("talk loop prepares spec for external function-call runtime execution", asy
   });
 
   const abortController = new AbortController();
-  const prepared = await controller.prepareTalkAgentLoopForSession("session-runtime", { signal: abortController.signal });
+  const prepared = await controller.prepareTalkAgentLoopForSession(102, { signal: abortController.signal });
   assert.ok(prepared);
   const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
   assert.ok(spec && !Array.isArray(spec));
@@ -155,7 +155,7 @@ test("talk loop stores runtime state in injected loop session holder", async () 
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-holder",
+    getActiveTalkLLMSessionId: () => 103,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -192,9 +192,9 @@ test("talk loop stores runtime state in injected loop session holder", async () 
     log: () => {}
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-holder");
+  await runPreparedTalkAgentLoop(controller, 103);
 
-  assert.equal(controller.getConversationStartIndex("session-holder"), 0);
+  assert.equal(controller.getConversationStartIndex(103), 0);
   assert.equal(runtimeState && typeof runtimeState === "object", true);
 });
 
@@ -203,7 +203,7 @@ test("talk loop delegates transcript preparation to injected session context run
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-context-runtime",
+    getActiveTalkLLMSessionId: () => 104,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -229,7 +229,7 @@ test("talk loop delegates transcript preparation to injected session context run
     async prepareSessionContext(input) {
       prepareCalls += 1;
       assert.equal(input.kind, "talk");
-      assert.equal(input.sessionId, "session-context-runtime");
+      assert.equal(input.sessionId, "104");
       activeSession = {
         messages: [{ role: "user", content: "delegated hello" }],
         staticPromptFingerprint: "talk",
@@ -257,7 +257,7 @@ test("talk loop delegates transcript preparation to injected session context run
     log: () => {}
   });
 
-  const prepared = await controller.prepareTalkAgentLoopForSession("session-context-runtime");
+  const prepared = await controller.prepareTalkAgentLoopForSession(104);
   assert.ok(prepared);
   const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
   assert.ok(spec && !Array.isArray(spec));
@@ -285,7 +285,7 @@ test("talk loop returns no prepared run until foreground playback is idle", asyn
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-foreground-idle",
+    getActiveTalkLLMSessionId: () => 105,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => foregroundIdle,
@@ -321,13 +321,13 @@ test("talk loop returns no prepared run until foreground playback is idle", asyn
     }
   });
 
-  let prepared = await controller.prepareTalkAgentLoopForSession("session-foreground-idle");
+  let prepared = await controller.prepareTalkAgentLoopForSession(105);
   assert.equal(prepared, undefined);
   assert.equal(sendCalls, 0);
   assert.equal(logs.some((entry) => entry.message.includes("foreground_idle=false")), true);
 
   foregroundIdle = true;
-  prepared = await controller.prepareTalkAgentLoopForSession("session-foreground-idle");
+  prepared = await controller.prepareTalkAgentLoopForSession(105);
   assert.ok(prepared);
   const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
   assert.ok(spec && !Array.isArray(spec));
@@ -343,7 +343,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-tool-followup",
+    getActiveTalkLLMSessionId: () => 106,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -402,7 +402,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
     log: () => {}
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-tool-followup");
+  await runPreparedTalkAgentLoop(controller, 106);
   assert.equal(sendCalls, 2);
   assert.equal((sentMessages[1]?.at(-2) as { role?: string }).role, "assistant");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string }).role, "tool");
@@ -415,7 +415,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-send-chat-tool",
+    getActiveTalkLLMSessionId: () => 107,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -475,26 +475,26 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
     log: () => {}
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-send-chat-tool");
+  await runPreparedTalkAgentLoop(controller, 107);
 
   assert.equal(sendCalls, 2);
   assert.equal(executedCalls.length, 1);
   assert.equal((executedCalls[0] as { toolName?: string }).toolName, "send_chat");
   assert.equal((executedCalls[0] as { requester?: { plugin?: string } }).requester?.plugin, "webrtc_voice");
-  assert.equal((executedCalls[0] as { session?: { sessionId?: string } }).session?.sessionId, "session-send-chat-tool");
+  assert.equal((executedCalls[0] as { session?: { sessionId?: string } }).session?.sessionId, "107");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).role, "tool");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });
 
-test("talk consecutive exposed selfie calls fail through the common tool plugin path", async () => {
+test("talk exposed selfie tool calls receive llm session round context", async () => {
   let sendCalls = 0;
   let activeSession: any;
   const executedActions: string[] = [];
-  const observedLastTools: Array<string | undefined> = [];
+  const observedContexts: Array<{ currentRound?: number; llmSessionId?: number }> = [];
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-selfie-tool",
+    getActiveTalkLLMSessionId: () => 108,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -523,10 +523,7 @@ test("talk consecutive exposed selfie calls fail through the common tool plugin 
       }],
       async execute(call, context) {
         executedActions.push(String(call.input.action));
-        observedLastTools.push(context?.lastCompletedToolName);
-        if (context?.lastCompletedToolName === "selfie") {
-          return { callId: call.id, ok: false, error: "selfie cannot be called consecutively" };
-        }
+        observedContexts.push({ currentRound: context?.currentRound, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }
     }],
@@ -562,13 +559,16 @@ test("talk consecutive exposed selfie calls fail through the common tool plugin 
     log: () => {}
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-selfie-tool");
+  await runPreparedTalkAgentLoop(controller, 108);
 
   assert.equal(sendCalls, 2);
   assert.deepEqual(executedActions, ["first", "second"]);
-  assert.deepEqual(observedLastTools, [undefined, "selfie"]);
+  assert.deepEqual(observedContexts, [
+    { currentRound: 0, llmSessionId: 108 },
+    { currentRound: 0, llmSessionId: 108 }
+  ]);
   assert.equal((sentMessages[1]?.at(-2) as { content?: string }).content, "sent");
-  assert.match(String((sentMessages[1]?.at(-1) as { content?: string }).content), /selfie cannot be called consecutively/);
+  assert.equal((sentMessages[1]?.at(-1) as { content?: string }).content, "sent");
   assert.equal(activeSession.lastCompletedToolName, "selfie");
 });
 
@@ -588,7 +588,7 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-patch",
+    getActiveTalkLLMSessionId: () => 109,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -630,7 +630,7 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
     log: () => {}
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-patch");
+  await runPreparedTalkAgentLoop(controller, 109);
 
   assert.equal(promptBuildCalls, 1);
   assert.equal(prefixCount, 1);
@@ -650,7 +650,7 @@ test("talk loop logs llm cancellation without error severity", async () => {
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => "session-cancel",
+    getActiveTalkLLMSessionId: () => 110,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -685,7 +685,7 @@ test("talk loop logs llm cancellation without error severity", async () => {
     }
   });
 
-  await runPreparedTalkAgentLoop(controller, "session-cancel");
+  await runPreparedTalkAgentLoop(controller, 110);
 
   assert.equal(logs.some((entry) => entry.level === "error"), false);
   assert.equal(logs.some((entry) => entry.level === "info" && entry.message.includes("talk loop cancelled")), true);

@@ -37,8 +37,10 @@ export type ChatAgentModeState = {
 };
 
 export type ChatAgentLoopSession = {
+  id?: number;
   messages: LLMChatInput["messages"];
   requestTimestamps: number[];
+  currentRound?: number;
   mode: string;
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: number;
@@ -138,6 +140,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         input.noteSessionUpdated();
         return { stop: true, messages: session.messages };
       }
+      session.currentRound = (session.currentRound ?? -1) + 1;
       input.noteSessionUpdated();
       return { messages: session.messages };
     },
@@ -175,7 +178,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
-    async executeTool(call, { result }): Promise<AgentFunctionCallToolExecution> {
+    async executeTool(call, { round, result }): Promise<AgentFunctionCallToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
       const streamedResult = streamingToolSender?.resultFor(call.id);
       if (streamedResult) {
@@ -197,6 +200,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
         variables: textVariables,
+        currentRound: session.currentRound,
+        llmSessionId: session.id,
         llmCapabilities,
         transformInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session)
       });

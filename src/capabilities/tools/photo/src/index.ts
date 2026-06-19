@@ -162,6 +162,7 @@ export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
 export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
+  let failedSelfieMarker: number | undefined;
 
   return {
     id: "photo",
@@ -175,7 +176,10 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   };
 
   async function selfie(call: ToolCall, executionContext?: ToolExecutionContext): Promise<ToolResult> {
-    if (executionContext?.lastCompletedToolName === "selfie") return toolError(call, "selfie cannot be called consecutively");
+    const marker = selfieMarker(executionContext);
+    if (marker !== undefined && failedSelfieMarker === marker) {
+      return toolError(call, "selfie is blocked in this round after a previous failure");
+    }
 
     const photoConfig = runtimePhotoConfig();
     if (!photoConfig.enabled) return toolError(call, "photo selfie is disabled");
@@ -307,12 +311,21 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
         codexResult?.events ? `generator events: ${excerpt(codexResult.events, 4000)}` : ""
       ].filter(Boolean).join("\n");
       deps.appendLog?.("warn", `selfie generation failed: ${reason}${tempDir ? ` files=${listDirForLog(tempDir)}` : ""}`);
+      if (marker !== undefined) failedSelfieMarker = marker;
       await sendSelfieFailureNotice(target);
       return toolError(call, reason);
     } finally {
       if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
       if (codexWorkDir) fs.rmSync(codexWorkDir, { recursive: true, force: true });
     }
+  }
+
+  function selfieMarker(context?: ToolExecutionContext): number | undefined {
+    const llmSessionId = context?.llmSessionId;
+    const currentRound = context?.currentRound;
+    if (typeof llmSessionId !== "number" || !Number.isInteger(llmSessionId)) return undefined;
+    if (typeof currentRound !== "number" || !Number.isInteger(currentRound)) return undefined;
+    return llmSessionId * 1000 + currentRound;
   }
 
   function buildSelfiePrompt(action: string, context: SelfieContext): string {

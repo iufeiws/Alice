@@ -177,9 +177,9 @@ export function createActiveLLMSessionRuntime(input: {
     input.archive.writeMetadata(session);
   }
 
-  function isActiveTalkLLMSession(sessionId: string): boolean {
+  function isActiveTalkLLMSession(sessionId: number): boolean {
     const session = input.getSession();
-    return session?.agentId === "talk" && String(session.id) === sessionId;
+    return session?.agentId === "talk" && session.id === sessionId;
   }
 
   function updateActiveLLMSessionTranscript(sessionInput: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {
@@ -307,10 +307,12 @@ export function createActiveLLMSessionRuntime(input: {
     const latest = readLatestLLMSessionSnapshot(activeSession.id);
     if (!latest || latest.clearedAt) return undefined;
     return {
+      id: latest.id,
       messages: latest.messages ?? [],
       staticPromptFingerprint: latest.staticPromptFingerprint,
       staticPromptMessageCount: latest.staticPromptMessageCount,
       requestTimestamps: latest.requestTimestamps,
+      currentRound: latest.currentRound?.round,
       lastTotalTokens: latest.lastTotalTokens,
       lastInputTokens: latest.lastInputTokens,
       lastUsageModel: latest.lastUsageModel,

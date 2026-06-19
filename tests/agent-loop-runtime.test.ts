@@ -213,7 +213,7 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
     },
     createTalkLLMSession(time) {
       calls.push(`create:${time}`);
-      return { id: "talk-session" };
+      return { id: 2002 };
     },
     noteActiveLLMRequest(_entry, agentId) {
       calls.push(`note-request:${agentId ?? "chat"}`);
@@ -223,7 +223,7 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
     },
     isActiveTalkLLMSession(sessionId) {
       calls.push(`is-talk:${sessionId}`);
-      return sessionId === "talk-session";
+      return sessionId === 2002;
     },
     loadActiveLLMSessionTranscript() {
       calls.push("load");
@@ -248,10 +248,10 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
   });
 
   assert.deepEqual(runtime.ensureActiveLLMSession("2026-06-12T00:00:00.000", "chat").id, "chat-session");
-  assert.deepEqual(runtime.createTalkLLMSession("2026-06-12T00:00:00.000").id, "talk-session");
+  assert.deepEqual(runtime.createTalkLLMSession("2026-06-12T00:00:00.000").id, 2002);
   runtime.noteActiveLLMRequest({ id: "request" }, "talk");
   runtime.noteActiveLLMResponse({ id: "response" });
-  assert.equal(runtime.isActiveTalkLLMSession("talk-session"), true);
+  assert.equal(runtime.isActiveTalkLLMSession(2002), true);
   assert.equal(runtime.loadActiveLLMSessionTranscript(), transcript);
   runtime.updateActiveLLMSessionTranscript({ id: "chat-session" });
   runtime.updateActiveTalkLLMSessionTranscript({ id: "talk-session" });

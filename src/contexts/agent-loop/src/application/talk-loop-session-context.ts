@@ -8,7 +8,7 @@ import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile
 export type TalkLoopMessagePatch = AgentLoopMessagePatch;
 
 export type TalkLoopRuntimeState = {
-  conversationStartIndexes: Map<string, number>;
+  conversationStartIndexes: Map<number, number>;
 };
 
 export type TalkLoopSessionContextDeps = {
@@ -22,13 +22,15 @@ export type TalkLoopSessionContextDeps = {
   getLibrarySetting?(): string | undefined;
   memoryStore: { read(): PromptRenderContext["memory"] };
   diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
-  setLoopPrefixMessageCount(sessionId: string, count: number): void;
-  buildNextLoopMessagePatch(sessionId: string): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
+  setLoopPrefixMessageCount(sessionId: number, count: number): void;
+  buildNextLoopMessagePatch(sessionId: number): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
+    id?: number;
     messages: LLMMessage[];
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
+    currentRound?: number;
     lastTotalTokens?: number;
     lastInputTokens?: number;
     lastUsageModel?: string;
@@ -36,10 +38,12 @@ export type TalkLoopSessionContextDeps = {
     lastCompletedToolName?: string;
   } | undefined;
   updateActiveTalkLLMSessionTranscript(session: {
+    id?: number;
     messages: LLMMessage[];
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
+    currentRound?: number;
     lastTotalTokens?: number;
     lastInputTokens?: number;
     lastUsageModel?: string;
@@ -56,7 +60,10 @@ export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
   toolNames: string[];
   toolVariables: Record<string, unknown> | undefined;
-  executeToolCall(call: LLMToolCall, capabilities?: ToolExecutionContext["llmCapabilities"]): Promise<TalkLoopExecutedToolCall>;
+  executeToolCall(call: LLMToolCall, input: {
+    currentRound: number;
+    capabilities?: ToolExecutionContext["llmCapabilities"];
+  }): Promise<TalkLoopExecutedToolCall>;
 };
 
 export type TalkLoopExecutedToolCall = {
@@ -65,11 +72,12 @@ export type TalkLoopExecutedToolCall = {
 };
 
 export async function prepareTalkLoopSessionContext(input: {
-  sessionId: string;
+  sessionId: number;
   state: TalkLoopRuntimeState;
   deps: TalkLoopSessionContextDeps;
 }): Promise<TalkLoopPreparedSessionContext> {
   const { deps, sessionId, state } = input;
+  const textSessionId = String(sessionId);
   const profile = deps.getTalkPromptProfile();
   const event = buildTalkAgentEvent(sessionId, deps.time);
   let session: AgentLoopTranscriptSession | undefined;
@@ -97,7 +105,7 @@ export async function prepareTalkLoopSessionContext(input: {
   const runPromptTool = async (_layer: unknown, call: ToolCall) => toolExecutor.executeToolCall(call);
   const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
     kind: "talk",
-    sessionId,
+    sessionId: textSessionId,
     loadTranscript: deps.loadActiveTalkLLMSessionTranscript,
     buildInitialMessages: () => buildPromptMessagesWithToolResults(
       profile,
@@ -119,23 +127,28 @@ export async function prepareTalkLoopSessionContext(input: {
     session: preparedSession.session,
     toolNames: deps.visibleToolNames(profile),
     toolVariables: variables,
-    executeToolCall: (call: LLMToolCall, capabilities?: ToolExecutionContext["llmCapabilities"]) => toolExecutor.executeLLMToolCall(call, { llmCapabilities: capabilities })
+    executeToolCall: (call: LLMToolCall, toolInput: { currentRound: number; capabilities?: ToolExecutionContext["llmCapabilities"] }) => toolExecutor.executeLLMToolCall(call, {
+      currentRound: toolInput.currentRound,
+      llmSessionId: session?.id ?? sessionId,
+      llmCapabilities: toolInput.capabilities
+    })
       .then(({ result }) => ({ result, content: formatAgentLoopToolResultForLLM(result) }))
   };
 }
 
-export function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider): AgentEvent {
+export function buildTalkAgentEvent(sessionId: number, time: CurrentTimeProvider): AgentEvent {
   const now = time.now();
+  const textSessionId = String(sessionId);
   return {
-    id: `talk_${sessionId}_${now.epochMs}`,
+    id: `talk_${textSessionId}_${now.epochMs}`,
     source: {
       plugin: "webrtc_voice",
-      channelId: sessionId,
-      userId: sessionId
+      channelId: textSessionId,
+      userId: textSessionId
     },
     session: {
       scope: "dm",
-      sessionId
+      sessionId: textSessionId
     },
     type: "message.text",
     payload: {
@@ -152,7 +165,7 @@ export function buildTalkAgentEvent(sessionId: string, time: CurrentTimeProvider
 export function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {
   if (isTalkLoopRuntimeState(value)) return value;
   return {
-    conversationStartIndexes: new Map<string, number>()
+    conversationStartIndexes: new Map<number, number>()
   };
 }
 

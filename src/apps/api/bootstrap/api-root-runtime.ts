@@ -18,7 +18,7 @@ export function createApiRootRuntime() {
     apiRuntimeState,
     agentLoopRuntime,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
-    getConversationStartIndex: (sessionId) => apiAgentStackRuntime.talkAgentLoop.getConversationStartIndex(sessionId),
+    getConversationStartIndex: (sessionId) => apiAgentStackRuntime.talkAgentLoop.getConversationStartIndex(Number(sessionId)),
     buildTalkRuntimeMessages: (sessionId) => apiAgentStackRuntime.talkRuntime.buildNextLoopMessagePatch(sessionId).messages,
     appendLog: foundation.appendLog
   });

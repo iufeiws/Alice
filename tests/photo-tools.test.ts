@@ -262,11 +262,11 @@ test("selfie blocks retries in the same agent loop run after generation failure"
   }
 });
 
-test("selfie default api executor calls Image API directly", async () => {
-  const outputRoot = makeAssetTempDir("selfie-api-direct");
-  const referenceRoot = makeTempDir("selfie-ref-api-direct");
-  const outfitImage = path.join(makeTempDir("selfie-outfit-api-direct"), "dress.jpg");
-  const store = createAliceStore(path.join(makeTempDir("selfie-api-direct-db"), "alice.sqlite"));
+test("selfie default openai executor calls Image API directly", async () => {
+  const outputRoot = makeAssetTempDir("selfie-openai-direct");
+  const referenceRoot = makeTempDir("selfie-ref-openai-direct");
+  const outfitImage = path.join(makeTempDir("selfie-outfit-openai-direct"), "dress.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-openai-direct-db"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const previousFetch = globalThis.fetch;
   const previousRunner = process.env.ALICE_SELFIE_FAST_RUNNER;
@@ -274,7 +274,7 @@ test("selfie default api executor calls Image API directly", async () => {
   let apiCalled = false;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
-  process.env.ALICE_SELFIE_FAST_RUNNER = "missing-runner-that-api-mode-must-not-use.mjs";
+  process.env.ALICE_SELFIE_FAST_RUNNER = "missing-runner-that-openai-mode-must-not-use.mjs";
   globalThis.fetch = (async (url, init) => {
     apiCalled = true;
     assert.equal(String(url), "https://api.openai.com/v1/images/edits");
@@ -314,7 +314,7 @@ test("selfie default api executor calls Image API directly", async () => {
     });
 
     const result = await tools.execute({
-      id: "call_selfie_api_direct",
+      id: "call_selfie_openai_direct",
       toolName: "selfie",
       input: { action: "靠近镜头" }
     });
@@ -336,7 +336,7 @@ test("selfie default api executor calls Image API directly", async () => {
   }
 });
 
-test("selfie api executor uses openai relay edits route with image field", async () => {
+test("selfie openai executor uses openai relay edits route with image field", async () => {
   const outputRoot = makeAssetTempDir("selfie-api-relay");
   const referenceRoot = makeTempDir("selfie-ref-api-relay");
   const outfitImage = path.join(makeTempDir("selfie-outfit-api-relay"), "dress.jpg");

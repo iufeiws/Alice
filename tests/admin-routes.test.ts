@@ -639,7 +639,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
-    selfieMode: "api"
+    selfieMode: "openai"
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
@@ -665,7 +665,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   const fieldGroups = new Map(schemaBody.configSchema.fields.map((field: { key: string; group: string }) => [field.key, field.group]));
 
   assert.equal(schemaResponse.statusCode, 200);
-  assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["api", "openaiRelay", "codex"]);
+  assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["openai", "openaiRelay", "codex"]);
   assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage"]);
   assert.equal(fieldGroups.get("selfieImageApiKeySet"), "openai");
   assert.equal(fieldGroups.get("selfieImageApiKey"), "openai");

@@ -429,10 +429,10 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the selfie tool route." },
         { key: "selfieMode", label: "Selfie Mode", type: "select", group: "general", options: [
-          { value: "api", label: "API" },
+          { value: "openai", label: "OpenAI" },
           { value: "openaiRelay", label: "OpenAI Relay" },
           { value: "codex", label: "Codex" }
-        ], description: "API and OpenAI Relay use the same Image API build settings with different keys/base URLs. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
+        ], description: "OpenAI and OpenAI Relay use the same Image API build settings with different keys/base URLs. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
         { key: "selfieImageApiKeySet", label: "API Key Set", type: "readonly", group: "openai" },
         { key: "selfieImageApiKey", label: "API Key", type: "password", group: "openai", description: "Leave blank to keep the current key." },
         { key: "selfieImageApiBaseURL", label: "Base URL", type: "text", group: "openai" },
@@ -719,7 +719,7 @@ function asrPluginSummary(context: AdminRoutesContext, config = readAsrConfigFor
 }
 
 function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfigForAdmin(context)): AdminPluginSummary {
-  const missingConfig = config.enabled && (config.selfieMode === "api" || config.selfieMode === "openaiRelay") && !selectedPhotoImageApiKey(config);
+  const missingConfig = config.enabled && (config.selfieMode === "openai" || config.selfieMode === "openaiRelay") && !selectedPhotoImageApiKey(config);
   return {
     id: "photo",
     name: "Photo",
@@ -772,7 +772,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
 }
 
 function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
-  if (config.selfieMode !== "api" && config.selfieMode !== "openaiRelay" && config.selfieMode !== "codex") return "invalid_selfie_mode";
+  if (config.selfieMode !== "openai" && config.selfieMode !== "openaiRelay" && config.selfieMode !== "codex") return "invalid_selfie_mode";
   if (!config.selfieReferenceDir) return "missing_selfie_reference_dir";
   if (!config.selfieOutputDir || !isPathUnderAssets(config.selfieOutputDir)) return "invalid_selfie_output_dir";
   if (!config.selfieCodexCommand) return "missing_selfie_codex_command";
@@ -812,7 +812,7 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
   const photo = ((context.config as Partial<AppConfig>).photo ?? {}) as Partial<PhotoPluginConfig>;
   return {
     enabled: true,
-    selfieMode: "api",
+    selfieMode: "openai",
     selfieReferenceDir: photo.selfieReferenceDir,
     selfieOutputDir: photo.selfieOutputDir,
     selfieCodexCommand: photo.selfieCodexCommand,

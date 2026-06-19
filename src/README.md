@@ -305,7 +305,8 @@
 
 关键模块：
 
-- `src/index.ts`: photo tool、config、admin public config、selfie executor。
+- `src/index.ts`: public export 薄壳。
+- `src/photo-tools.ts`: photo tool、config、admin public config、selfie executor。
 
 ## `capabilities/tools/shell/`
 

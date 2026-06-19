@@ -44,7 +44,7 @@ config/plugin/photo/config.json
 
 `selfieMode` 支持：
 
-- `api`：直接调用 Image API。
+- `openai`：直接调用 OpenAI Image API。
 - `openaiRelay`：调用 OpenAI 兼容中转路由，使用独立的 key、base URL 和图像构筑参数。
 - `codex`：启动 ephemeral Codex CLI 会话，使用 `$alice-selfie-fast` 约束新会话立即调用内置 `image_gen`，并由 photo tool 脚本搬运返回的生成图。
 
@@ -66,7 +66,7 @@ SELFIE_IMAGE_API_OUTPUT_COMPRESSION=45
 SELFIE_IMAGE_API_TIMEOUT_MS=120000
 ```
 
-`api` 使用 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY`，以及 `SELFIE_IMAGE_API_BASE_URL` 或 `OPENAI_BASE_URL`。
+`openai` 使用 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY`，以及 `SELFIE_IMAGE_API_BASE_URL` 或 `OPENAI_BASE_URL`。
 `openaiRelay` 使用 `SELFIE_IMAGE_API_RELAY_KEY`、`SELFIE_IMAGE_API_RELAY_BASE_URL` 和 `SELFIE_IMAGE_API_RELAY_*` 构筑参数。
 
 认证优先使用 `SELFIE_IMAGE_API_KEY`，缺失时回退到 `OPENAI_API_KEY`。

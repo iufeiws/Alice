@@ -135,8 +135,8 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
     variables.outfit = optionVariable(input.dailyShellRaw.outfit);
   }
   if (input.event) {
-    variables.session = input.event.session.sessionId;
-    variables.channel = input.event.source.channelId ?? input.event.source.userId ?? input.event.session.sessionId;
+    variables.session = input.event.externalSession.sessionId;
+    variables.channel = input.event.source.channelId ?? input.event.source.userId ?? input.event.externalSession.sessionId;
   }
   if (input.wakeBoundary) {
     variables.wakeBoundary = wakeBoundaryVariable(input.wakeBoundary, input.time?.timeZone ?? "UTC");

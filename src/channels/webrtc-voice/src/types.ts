@@ -128,7 +128,7 @@ export type WebRtcVoiceStatusEvent = {
 
 export type WebRtcVoiceTtsArchiveInput = {
   callId: string;
-  talkSessionId: string;
+  talkSessionId: number;
   outputId?: string;
   chunkId?: string;
   originalText?: string;
@@ -150,11 +150,11 @@ export type WebRtcVoiceTtsArchiveInput = {
 };
 
 export type WebRtcVoiceTalkRuntime = {
-  openSession?(input: unknown): void | { sessionId?: string | number } | Promise<void | { sessionId?: string | number }>;
+  openSession?(input: unknown): void | { sessionId?: number } | Promise<void | { sessionId?: number }>;
   closeSession?(input: unknown): void | Promise<void>;
   ingestInput?(event: { kind: string; [key: string]: unknown }): void | Promise<void>;
   commitStableInputBatch?(batch: {
-    sessionId: string;
+    sessionId: number;
     batchId: string;
     interruptEpoch: number;
     inputs: Array<{
@@ -169,15 +169,15 @@ export type WebRtcVoiceTalkRuntime = {
       targetChunkId?: string;
     }>;
   }): void | Promise<void>;
-  markAgentLoopReady?(sessionId: string): void | Promise<void>;
-  claimBufferedOutputText?(sessionId: string): unknown;
-  claimReadyOutputChunk?(sessionId: string): unknown;
-  isSessionOutputIdle?(sessionId: string): unknown;
-  markForegroundPlaybackIdle?(input: { sessionId: string }): void | Promise<void>;
-  markOutputChunkPlayed?(input: { sessionId: string; chunkId: string }): void | Promise<void>;
-  interruptOutput?(input: { sessionId: string; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
-  interruptLatestOutput?(input: { sessionId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
-  interruptAgentLoop?(sessionId: string, input?: { reason?: string; interruptEpoch?: number }): void | Promise<void>;
+  markAgentLoopReady?(sessionId: number): void | Promise<void>;
+  claimBufferedOutputText?(sessionId: number): unknown;
+  claimReadyOutputChunk?(sessionId: number): unknown;
+  isSessionOutputIdle?(sessionId: number): unknown;
+  markForegroundPlaybackIdle?(input: { sessionId: number }): void | Promise<void>;
+  markOutputChunkPlayed?(input: { sessionId: number; chunkId: string }): void | Promise<void>;
+  interruptOutput?(input: { sessionId: number; outputId: string; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
+  interruptLatestOutput?(input: { sessionId: number; reason: "manual" | "barge_in" | "network" | "unknown"; elapsedMs?: number; totalMs?: number; breakpointContext?: { beforeText?: string; afterText?: string }; omitAssistantMessage?: boolean }): unknown;
+  interruptAgentLoop?(sessionId: number, input?: { reason?: string; interruptEpoch?: number }): void | Promise<void>;
 };
 
 export type WebRtcVoiceDeps = {
@@ -328,7 +328,7 @@ export type WebRtcVoiceCall = {
   callId: string;
   userId: string;
   answerSdp: string;
-  talkSessionId: string;
+  talkSessionId: number;
   asrStreamId: string;
   talkRuntimeIngressStatus: "todo" | "connected";
   acceptIceCandidate(candidate: unknown): Promise<void>;

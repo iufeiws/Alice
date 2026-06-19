@@ -15,8 +15,8 @@ export function createActiveLLMSessionRuntime(input: {
   archive: any;
   getSession(): ActiveLLMSession | undefined;
   setSession(session: ActiveLLMSession | undefined): void;
-  getConversationStartIndex(sessionId: string): number | undefined;
-  buildTalkRuntimeMessages(sessionId: string): LLMChatInput["messages"];
+  getConversationStartIndex(sessionId: number): number | undefined;
+  buildTalkRuntimeMessages(sessionId: number): LLMChatInput["messages"];
   appendLog: AppendLog;
 }) {
   let nextSessionId = 1;
@@ -150,9 +150,9 @@ export function createActiveLLMSessionRuntime(input: {
     input.archive.writeMetadata(activeSession);
   }
 
-  function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: string): void {
+  function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: number): void {
     const session = input.getSession();
-    if (!session || session.agentId !== "talk" || String(session.id) !== talkSessionId) return;
+    if (!session || session.agentId !== "talk" || session.id !== talkSessionId) return;
     const conversationStartIndex = input.getConversationStartIndex(talkSessionId);
     if (conversationStartIndex === undefined) return;
     const preservedPrefix = session.messages.slice(0, conversationStartIndex);

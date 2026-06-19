@@ -36,7 +36,7 @@ export async function textMessageEventToAgentEvent(
       userId,
       rawMessageId: message.message_id
     },
-    session: {
+    externalSession: {
       scope,
       sessionId,
       threadId: message.thread_id

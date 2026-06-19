@@ -116,7 +116,7 @@ export function createWeChatPlugin(config: WeChatConfig, deps: WeChatPluginDeps)
         userId: message.fromUserId,
         rawMessageId: message.id
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: `wechat:dm:${message.fromUserId}`
       },

@@ -8,12 +8,12 @@ export interface SessionResolver {
 export function createSessionResolver(): SessionResolver {
   return {
     async resolve(event) {
-      if (event.session.sessionId) return event.session.sessionId;
+      if (event.externalSession.sessionId) return event.externalSession.sessionId;
 
       const plugin = event.source.plugin;
-      const scope = event.session.scope;
+      const scope = event.externalSession.scope;
       const externalId =
-        event.session.threadId ??
+        event.externalSession.threadId ??
         event.source.channelId ??
         event.source.userId ??
         event.source.rawMessageId ??

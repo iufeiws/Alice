@@ -148,7 +148,7 @@ function createMediaPlaybackConsumer(cfg: WebRtcVoiceConfig, track: ServerOutbou
       emitStatus,
       sleep
     },
-    talkSessionId: `webrtc_voice:${callId}`,
+    talkSessionId: Date.now(),
     playbackQueue,
     outboundTrack: track,
     stampOutboundFrame,

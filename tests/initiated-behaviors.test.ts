@@ -250,7 +250,7 @@ function textEvent(): AgentEvent {
     id: "evt",
     type: "message.text",
     source: { plugin: "test", userId: "user" },
-    session: { scope: "dm", sessionId: "session" },
+    externalSession: { scope: "dm", sessionId: "session" },
     payload: { kind: "text", text: "hi" },
     meta: { receivedAt: "2026-06-06T00:00:00.000Z" }
   };

@@ -57,8 +57,8 @@ type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
   getLoopSessionState?(): unknown;
-  appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
-  finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
+  appendAssistantDelta(input: { sessionId: number; outputId: string; delta: string }): void;
+  finishAssistantOutput(input: { sessionId: number; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
 };
 
@@ -161,7 +161,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
             onContentDelta(delta) {
               const output = roundOutputs.get(round);
               if (output) output.streamedContent += delta;
-              deps.appendAssistantDelta({ sessionId: String(input.sessionId), outputId, delta });
+              deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta });
             }
           }
         };
@@ -195,10 +195,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         if (!output) return;
         const { outputId, streamedContent } = output;
         if (!streamedContent && typeof result.message.content === "string" && result.message.content) {
-          deps.appendAssistantDelta({ sessionId: String(input.sessionId), outputId, delta: result.message.content });
+          deps.appendAssistantDelta({ sessionId: input.sessionId, outputId, delta: result.message.content });
         }
         if (streamedContent || result.message.content) {
-          deps.finishAssistantOutput({ sessionId: String(input.sessionId), outputId });
+          deps.finishAssistantOutput({ sessionId: input.sessionId, outputId });
           deps.log("info", `talk loop output ready: session=${input.sessionId} output=${outputId}`);
         }
       }

@@ -115,8 +115,8 @@ test("feishu plugin prepares inbound audio with transcript for message runtime",
   assert.equal(event.payload.transcript, "今晚十点提醒我睡觉");
   assert.equal(event.source.plugin, "feishu");
   assert.equal(event.source.rawMessageId, "om_audio");
-  assert.equal(event.session.scope, "dm");
-  assert.equal(event.session.sessionId, "feishu:dm:oc_chat");
+  assert.equal(event.externalSession.scope, "dm");
+  assert.equal(event.externalSession.sessionId, "feishu:dm:oc_chat");
   assert.equal(event.meta.replyTo, "om_audio");
   assert.equal(event.meta.receivedAtUtc, "2026-02-02T02:40:00.000Z");
 });

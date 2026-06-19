@@ -22,7 +22,7 @@ export type AgentLoopMessagePatch = {
 
 export type AgentLoopSessionContextInput = {
   kind: AgentLoopKind;
-  sessionId: string;
+  sessionId: string | number;
   loadTranscript(): AgentLoopTranscriptSession | undefined;
   buildInitialMessages(): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
   buildMessagePatch(): Promise<AgentLoopMessagePatch> | AgentLoopMessagePatch;

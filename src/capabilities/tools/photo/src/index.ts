@@ -479,13 +479,13 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   function resolveTarget(call: ToolCall): PhotoToolTarget | undefined {
     const resolved = deps.resolveOutputTarget?.(call);
     if (resolved) return normalizeTarget(resolved);
-    if (call.requester?.plugin && call.session?.sessionId) {
+    if (call.requester?.plugin && call.externalSession?.sessionId) {
       return normalizeTarget({
         plugin: call.requester.plugin,
         accountId: call.requester.accountId,
         channelId: call.requester.channelId,
         userId: call.requester.userId,
-        sessionId: call.session.sessionId
+        sessionId: call.externalSession.sessionId
       });
     }
     const target = deps.getDefaultTarget?.();
@@ -502,7 +502,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
 
 const selfieTool: ToolDefinition = {
   name: "selfie",
-  description: "自拍。根据 action 动作描述，结合爱丽丝角色特征、今日外壳和参考图生成一张自拍/照片并自动发送到当前聊天；默认 aspectRatio 为 3:4。调用后不要再用 send_chat 发送同一张图。",
+  description: "根据 action 动作描述自拍。 除非<user>特殊要求,确保只描述拍照时的动作。成功后会自动发送。",
   inputSchema: {
     type: "object",
     properties: {

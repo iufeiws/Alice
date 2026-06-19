@@ -5,7 +5,7 @@ export function checkFeishuEventPolicy(config: FeishuConfig, event: AgentEvent):
   const userId = event.source.userId;
   const channelId = event.source.channelId;
 
-  if (event.session.scope === "dm") {
+  if (event.externalSession.scope === "dm") {
     if (config.dmPolicy === "disabled") return { allowed: false, reason: "DM disabled" };
     if (config.dmPolicy === "open") return { allowed: true };
     if (config.dmPolicy === "allowlist") {
@@ -16,7 +16,7 @@ export function checkFeishuEventPolicy(config: FeishuConfig, event: AgentEvent):
     return { allowed: true };
   }
 
-  if (event.session.scope === "group") {
+  if (event.externalSession.scope === "group") {
     if (config.groupPolicy === "disabled") return { allowed: false, reason: "Group disabled" };
     if (config.requireMention && !event.meta.mentionsBot) {
       return { allowed: false, reason: "Bot mention is required" };

@@ -26,9 +26,9 @@ export type AgentHeartbeatRunTaskDeps = {
   runGeneratedSession(event: unknown, label: string): Promise<boolean>;
   runManualSession?(): Promise<boolean>;
   setAgentWaiting?(reason: string): void;
-  claimReadyTalkSession?(): string | undefined;
-  runTalkSession?(sessionId: string): Promise<boolean>;
-  markTalkSessionReady?(sessionId: string): void;
+  claimReadyTalkSession?(): number | undefined;
+  runTalkSession?(sessionId: number): Promise<boolean>;
+  markTalkSessionReady?(sessionId: number): void;
   getPendingSessionIds(): string[];
   isProcessingSession(sessionId: string): boolean;
   beginProcessingSession(sessionId: string): void;

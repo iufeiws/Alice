@@ -151,7 +151,7 @@ test("WebRTC voice caches TalkRuntime returned session id for runtime submission
     decodeAudioFileToFrames: async () => [],
     talkRuntime: {
       openSession() {
-        return { sessionId: "1780830000000" };
+        return { sessionId: 1780830000000 };
       },
       ingestInput(event) {
         ingested.push(event);
@@ -166,10 +166,10 @@ test("WebRTC voice caches TalkRuntime returned session id for runtime submission
   await call.endInboundAudio();
   await call.close("manual");
 
-  assert.equal(call.talkSessionId, "1780830000000");
-  assert.equal((asrMetadata[0] as { talkSessionId?: string }).talkSessionId, "1780830000000");
-  assert.equal((ingested[0] as { sessionId?: string }).sessionId, "1780830000000");
-  assert.equal((closed[0] as { sessionId?: string }).sessionId, "1780830000000");
+  assert.equal(call.talkSessionId, 1780830000000);
+  assert.equal((asrMetadata[0] as { talkSessionId?: number }).talkSessionId, 1780830000000);
+  assert.equal((ingested[0] as { sessionId?: number }).sessionId, 1780830000000);
+  assert.equal((closed[0] as { sessionId?: number }).sessionId, 1780830000000);
 });
 
 test("WebRTC voice call requires a server outbound audio track", async () => {
@@ -409,7 +409,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
   const statuses: Array<{ state: string; detail?: string }> = [];
   const sleeps: number[] = [];
   const synthesizedTexts: string[] = [];
-  const startedLoops: string[] = [];
+  const startedLoops: number[] = [];
   const playedChunks: string[] = [];
   let claimed = false;
   const plugin = createWebRtcVoicePlugin({
@@ -439,11 +439,11 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
       openSession() {},
       ingestInput() {},
       closeSession() {},
-      markAgentLoopReady(sessionId: string) {
+      markAgentLoopReady(sessionId: number) {
         startedLoops.push(sessionId);
       },
-      claimReadyOutputChunk(sessionId: string) {
-        if (sessionId !== "webrtc_voice:call-runtime-output" || claimed) return undefined;
+      claimReadyOutputChunk(sessionId: number) {
+        if (claimed) return undefined;
         claimed = true;
         return {
           sessionId,
@@ -453,7 +453,7 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
           outputTextLength: 5
         };
       },
-      markOutputChunkPlayed(input: { sessionId: string; chunkId: string }) {
+      markOutputChunkPlayed(input: { sessionId: number; chunkId: string }) {
         playedChunks.push(`${input.sessionId}:${input.chunkId}`);
       }
     },
@@ -465,12 +465,12 @@ test("WebRTC voice waits for TalkRuntime output, reports connected after first T
 
   const call = await plugin.createCall({ callId: "call-runtime-output", userId: "browser-runtime-output", offerSdp: "offer" });
 
-  assert.equal(statuses.some((entry) => entry.state === "voice_call.waiting" && entry.detail === "webrtc_voice:call-runtime-output"), true);
+  assert.equal(statuses.some((entry) => entry.state === "voice_call.waiting" && entry.detail === String(call.talkSessionId)), true);
   await waitFor(() => synthesizedTexts.length === 1);
   assert.deepEqual(synthesizedTexts, ["接通测试。"]);
-  assert.deepEqual(startedLoops, ["webrtc_voice:call-runtime-output"]);
+  assert.deepEqual(startedLoops, [call.talkSessionId]);
   assert.deepEqual(playedChunks, []);
-  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === "webrtc_voice:call-runtime-output"));
+  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === String(call.talkSessionId)));
   assert.equal(sleeps.includes(20), true);
   assert.equal(sleeps.includes(1000), false);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[7]]);
@@ -487,8 +487,8 @@ test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finish
     releasePlaybackSleep = resolve;
   });
   const chunks = [
-    { sessionId: "webrtc_voice:call-overlap", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: "webrtc_voice:call-overlap", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -520,11 +520,11 @@ test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finish
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || sessionId !== chunk.sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       }
     },
     sleep: async (ms) => {
@@ -551,8 +551,8 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
   const statuses: Array<{ state: string; detail?: string }> = [];
   const interrupts: Array<{ outputId: string; elapsedMs?: number; totalMs?: number; beforeText?: string; afterText?: string }> = [];
   const chunks = [
-    { sessionId: "webrtc_voice:call-consumer-target", outputId: "output-1", chunkId: "chunk-1", text: "啊——！老板！电话通了通了！" },
-    { sessionId: "webrtc_voice:call-consumer-target", outputId: "output-2", chunkId: "chunk-2", text: "第二段还在翻译后等待音频。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "啊——！老板！电话通了通了！" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段还在翻译后等待音频。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -589,11 +589,11 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || sessionId !== chunk.sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       },
       interruptOutput(input) {
         interrupts.push({
@@ -629,8 +629,8 @@ test("WebRTC voice does not synthesize later TalkRuntime chunks after current TT
   const synthesizedTexts: string[] = [];
   const statuses: Array<{ state: string; detail?: string }> = [];
   const chunks = [
-    { sessionId: "webrtc_voice:call-stream-failure", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: "webrtc_voice:call-stream-failure", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -662,11 +662,11 @@ test("WebRTC voice does not synthesize later TalkRuntime chunks after current TT
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || sessionId !== chunk.sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       }
     },
     emitStatus: (event) => statuses.push(event)
@@ -689,10 +689,10 @@ test("WebRTC voice feeds buffered TalkRuntime output into one TTS plugin stream"
   const streamedText: string[] = [];
   let streamCalls = 0;
   const outputs = [
-    { sessionId: "webrtc_voice:call-buffered-stream", outputId: "output-buffered", text: "碎块一", status: "streaming" },
-    { sessionId: "webrtc_voice:call-buffered-stream", outputId: "output-buffered", text: "二三", status: "streaming" },
-    { sessionId: "webrtc_voice:call-buffered-stream", outputId: "output-buffered", text: "四五六", status: "streaming" },
-    { sessionId: "webrtc_voice:call-buffered-stream", outputId: "output-buffered", text: "七八\n", status: "finished" }
+    { sessionId: 0, outputId: "output-buffered", text: "碎块一", status: "streaming" },
+    { sessionId: 0, outputId: "output-buffered", text: "二三", status: "streaming" },
+    { sessionId: 0, outputId: "output-buffered", text: "四五六", status: "streaming" },
+    { sessionId: 0, outputId: "output-buffered", text: "七八\n", status: "finished" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -721,9 +721,9 @@ test("WebRTC voice feeds buffered TalkRuntime output into one TTS plugin stream"
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimBufferedOutputText(sessionId: string) {
+      claimBufferedOutputText(sessionId: number) {
         const output = outputs.shift();
-        return output && output.sessionId === sessionId ? output : undefined;
+        return output ? { ...output, sessionId } : undefined;
       }
     },
     emitStatus: (event) => statuses.push(event)
@@ -745,8 +745,8 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
   const streamedText: string[] = [];
   let streamCalls = 0;
   const outputs = [
-    { sessionId: "webrtc_voice:call-blank-finish", outputId: "output-blank-finish", text: "第一段。", status: "streaming" },
-    { sessionId: "webrtc_voice:call-blank-finish", outputId: "output-blank-finish", text: "\n", status: "finished" }
+    { sessionId: 0, outputId: "output-blank-finish", text: "第一段。", status: "streaming" },
+    { sessionId: 0, outputId: "output-blank-finish", text: "\n", status: "finished" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -775,9 +775,9 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimBufferedOutputText(sessionId: string) {
+      claimBufferedOutputText(sessionId: number) {
         const output = outputs.shift();
-        return output && output.sessionId === sessionId ? output : undefined;
+        return output ? { ...output, sessionId } : undefined;
       }
     },
     emitStatus: (event) => statuses.push(event)
@@ -799,7 +799,7 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
 test("WebRTC voice waits for remote worker playback idle and frontend ACK before marking TalkRuntime idle", async () => {
   const track = new ControlledQueueTrack();
   const statuses: Array<{ state: string; detail?: string }> = [];
-  const foregroundIdle: string[] = [];
+  const foregroundIdle: number[] = [];
   let claimed = false;
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -830,12 +830,12 @@ test("WebRTC voice waits for remote worker playback idle and frontend ACK before
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
-        if (claimed || sessionId !== "webrtc_voice:call-remote-idle") return undefined;
+      claimReadyOutputChunk(sessionId: number) {
+        if (claimed) return undefined;
         claimed = true;
         return { sessionId, outputId: "output-remote-idle", chunkId: "chunk-remote-idle", text: "第一段。" };
       },
-      markForegroundPlaybackIdle(input: { sessionId: string }) {
+      markForegroundPlaybackIdle(input: { sessionId: number }) {
         foregroundIdle.push(input.sessionId);
       }
     },
@@ -857,7 +857,7 @@ test("WebRTC voice waits for remote worker playback idle and frontend ACK before
   assert.equal(typeof ackId, "string");
   call.ackPlaybackIdle?.(ackId);
   await waitFor(() => foregroundIdle.length === 1);
-  assert.deepEqual(foregroundIdle, ["webrtc_voice:call-remote-idle"]);
+  assert.deepEqual(foregroundIdle, [call.talkSessionId]);
   await call.close("test_done");
 });
 
@@ -903,7 +903,7 @@ test("WebRTC voice ASR final is marked as TalkRuntime TODO and not ingested yet"
   assert.deepEqual(statuses, [
     { state: "tts.prepare.started", detail: "connecting" },
     { state: "tts.prepare.ready", detail: "connected" },
-    { state: "talk_runtime.open.todo", detail: "webrtc_voice:call-3", callId: "call-3" },
+    { state: "talk_runtime.open.todo", detail: String(call.talkSessionId), callId: "call-3" },
     { state: "asr.stream.started", detail: "asr-call-3-0", callId: "call-3" },
     { state: "asr.partial", detail: "もし", callId: "call-3" },
     { state: "talk_runtime.ingress.todo", detail: "audio.transcript.final: もしもし", callId: "call-3" },
@@ -940,7 +940,7 @@ test("WebRTC voice uses injected TalkRuntime for session open, final transcript,
 
   const call = await plugin.createCall({ callId: "call-talk-runtime", userId: "browser-talk-runtime", offerSdp: "offer" });
   assert.equal(call.talkRuntimeIngressStatus, "connected");
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open" && entry.detail === "webrtc_voice:call-talk-runtime"), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open" && entry.detail === String(call.talkSessionId)), true);
 
   await call.endInboundAudio();
   assert.deepEqual(talkRuntime.buildNextLoopMessagePatch(call.talkSessionId).messages, [
@@ -1153,7 +1153,7 @@ test("WebRTC voice manual interrupt asks TalkRuntime to interrupt latest output 
   const call = await plugin.createCall({ callId: "call-interrupt-latest", userId: "browser-interrupt-latest", offerSdp: "offer" });
   await call.interrupt("manual");
 
-  assert.deepEqual(latestInterrupts, ["webrtc_voice:call-interrupt-latest:manual"]);
+  assert.deepEqual(latestInterrupts, [`${call.talkSessionId}:manual`]);
   assert.deepEqual(ingestedKinds, []);
 });
 
@@ -1371,8 +1371,8 @@ test("WebRTC voice continues claiming TalkRuntime output during interrupt handli
   });
   let interruptStarted = false;
   const chunks = [
-    { sessionId: "webrtc_voice:call-pause-pump", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: "webrtc_voice:call-pause-pump", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -1390,11 +1390,11 @@ test("WebRTC voice continues claiming TalkRuntime output during interrupt handli
       ingestInput() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || chunk.sessionId !== sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       },
       async interruptOutput() {
         interruptStarted = true;
@@ -1510,7 +1510,7 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
   assert.deepEqual((archives[0] as any).audio.chunks.map((chunk: Uint8Array) => Array.from(chunk)), [[1, 2, 3, 4]]);
   assert.equal((archives[0] as any).audio.sampleRateHz, 32_000);
   assert.equal((archives[0] as any).callId, "call-stream");
-  assert.equal((archives[0] as any).talkSessionId, "webrtc_voice:call-stream");
+  assert.equal((archives[0] as any).talkSessionId, call.talkSessionId);
   assert.equal((archives[0] as any).outputId, "stream-output");
   assert.equal((archives[0] as any).originalText, "元の返事。");
   assert.equal((archives[0] as any).text, "ストリーム");
@@ -1562,8 +1562,8 @@ test("WebRTC voice fails a chunk after repeated outbound write failures and cont
   const playedChunks: string[] = [];
   const statuses: Array<{ state: string; detail?: string }> = [];
   const chunks = [
-    { sessionId: "webrtc_voice:call-write-failure", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: "webrtc_voice:call-write-failure", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -1587,11 +1587,11 @@ test("WebRTC voice fails a chunk after repeated outbound write failures and cont
       openSession() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || chunk.sessionId !== sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       },
       markOutputChunkPlayed(input) {
         playedChunks.push(input.chunkId);
@@ -1616,8 +1616,8 @@ test("WebRTC voice closes the call and stops output pump when TTS cannot produce
   const claimedChunks: string[] = [];
   const statuses: Array<{ state: string; detail?: string }> = [];
   const chunks = [
-    { sessionId: "webrtc_voice:call-tts-fatal", outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: "webrtc_voice:call-tts-fatal", outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
   ];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -1642,11 +1642,11 @@ test("WebRTC voice closes the call and stops output pump when TTS cannot produce
       openSession() {},
       closeSession() {},
       markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: string) {
+      claimReadyOutputChunk(sessionId: number) {
         const chunk = chunks.shift();
-        if (!chunk || chunk.sessionId !== sessionId) return undefined;
+        if (!chunk) return undefined;
         claimedChunks.push(chunk.chunkId);
-        return chunk;
+        return { ...chunk, sessionId };
       }
     },
     emitStatus: (event) => statuses.push(event)

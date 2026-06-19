@@ -68,7 +68,7 @@ export async function executeMessagingTool(
       channelId: target.channelId,
       userId: target.userId
     } : undefined,
-    session: target ? {
+    externalSession: target ? {
       scope: "dm",
       sessionId: target.sessionId
     } : undefined

@@ -7,8 +7,8 @@ export function createApiSessionRuntime(input: {
   time: any;
   getSession(): ActiveLLMSession | undefined;
   setSession(session: ActiveLLMSession | undefined): void;
-  getConversationStartIndex(sessionId: string): number | undefined;
-  buildTalkRuntimeMessages(sessionId: string): any;
+  getConversationStartIndex(sessionId: number): number | undefined;
+  buildTalkRuntimeMessages(sessionId: number): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const llmSessionArchive = createLLMSessionArchive({

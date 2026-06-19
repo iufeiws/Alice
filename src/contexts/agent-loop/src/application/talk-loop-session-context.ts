@@ -146,7 +146,7 @@ export function buildTalkAgentEvent(sessionId: number, time: CurrentTimeProvider
       channelId: textSessionId,
       userId: textSessionId
     },
-    session: {
+    externalSession: {
       scope: "dm",
       sessionId: textSessionId
     },

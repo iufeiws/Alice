@@ -17,13 +17,13 @@ export function createToolOutputTargetResolver(input: {
   const nonMessageRequesterPlugins = new Set(input.nonMessageRequesterPlugins ?? ["webrtc_voice"]);
 
   return (call) => {
-    if (call.requester?.plugin && call.session?.sessionId && !nonMessageRequesterPlugins.has(call.requester.plugin)) {
+    if (call.requester?.plugin && call.externalSession?.sessionId && !nonMessageRequesterPlugins.has(call.requester.plugin)) {
       return normalizeToolOutputTarget({
         plugin: call.requester.plugin,
         accountId: call.requester.accountId,
         channelId: call.requester.channelId,
         userId: call.requester.userId,
-        sessionId: call.session.sessionId
+        sessionId: call.externalSession.sessionId
       });
     }
     const target = input.getDefaultTarget?.();

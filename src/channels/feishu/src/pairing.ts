@@ -41,7 +41,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
     },
     isPaired(event) {
       return contacts.slice(0, 1).some((contact) => {
-        if (event.session.scope === "dm") {
+        if (event.externalSession.scope === "dm") {
           return contact.scope === "dm" && contact.userId === event.source.userId;
         }
 
@@ -50,9 +50,9 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
     },
     pairFromEvent(event) {
       const now = time.now().iso;
-      const id = event.session.scope === "dm"
-        ? `feishu:dm:${event.source.userId ?? event.source.channelId ?? event.session.sessionId}`
-        : `feishu:group:${event.source.channelId ?? event.session.sessionId}`;
+      const id = event.externalSession.scope === "dm"
+        ? `feishu:dm:${event.source.userId ?? event.source.channelId ?? event.externalSession.sessionId}`
+        : `feishu:group:${event.source.channelId ?? event.externalSession.sessionId}`;
       const existing = contacts.find((contact) => contact.id === id);
       const boundContact = contacts[0];
 
@@ -64,7 +64,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
         existing.lastSeenAt = now;
         existing.channelId = event.source.channelId ?? existing.channelId;
         existing.userId = event.source.userId ?? existing.userId;
-        existing.sessionId = event.session.sessionId;
+        existing.sessionId = event.externalSession.sessionId;
         save();
         return { ok: true, contact: existing };
       }
@@ -75,8 +75,8 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
         accountId: event.source.accountId,
         userId: event.source.userId,
         channelId: event.source.channelId,
-        sessionId: event.session.sessionId,
-        scope: event.session.scope === "dm" ? "dm" : "group",
+        sessionId: event.externalSession.sessionId,
+        scope: event.externalSession.scope === "dm" ? "dm" : "group",
         pairedAt: now,
         lastSeenAt: now,
         canInitiate: true

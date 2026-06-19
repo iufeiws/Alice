@@ -338,7 +338,7 @@ async function sendStreamingLine(
       toolName: sendChatToolName,
       input: { type, content: line },
       requester: event.source,
-      session: event.session
+      externalSession: event.externalSession
     });
     const output = formatToolResultForLLM(result);
     resultsByCallId.set(callId, {

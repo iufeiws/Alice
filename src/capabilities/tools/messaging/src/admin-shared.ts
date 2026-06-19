@@ -23,7 +23,7 @@ export function getAdminTextVariables(
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target.sessionId
       },

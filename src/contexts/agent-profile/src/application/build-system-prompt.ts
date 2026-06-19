@@ -254,7 +254,7 @@ export async function buildLayerMessagesWithToolResults(
       toolName: toolCall.function.name,
       input: parsePromptToolArguments(toolCall.function.arguments),
       requester: context.event.source,
-      session: context.event.session
+      externalSession: context.event.externalSession
     });
     messages.push({
       role: "tool",

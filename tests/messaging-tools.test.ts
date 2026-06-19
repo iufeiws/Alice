@@ -103,7 +103,7 @@ test("check_chat range scope filters with from and to", async () => {
   assert.doesNotMatch(String(result.output), /before range|after range/);
 });
 
-test("check_chat defaults to recent outside llm sessions", async () => {
+test("check_chat defaults to unread new messages", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view"), "alice.sqlite"));
   const baseTime = Date.now();
   store.upsertInboundMessage({
@@ -182,14 +182,13 @@ test("check_chat defaults to recent outside llm sessions", async () => {
 
   const recentAgain = await tools.execute({ id: "call_2", toolName: "check_chat", input: {} });
   assert.equal(recentAgain.ok, true);
-  assert.match(String(recentAgain.output), /hello today/);
+  assert.doesNotMatch(String(recentAgain.output), /hello today/);
   assert.match(String(recentAgain.output), /after today check/);
 });
 
-test("check_chat default scope resets when active main llm session generation changes", async () => {
+test("check_chat default scope ignores active main llm session generation", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-main-session-generation"), "alice.sqlite"));
   const baseTime = Date.parse("2026-06-11T00:00:00.000Z");
-  let generation = 1;
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -204,7 +203,6 @@ test("check_chat default scope resets when active main llm session generation ch
     outputRouter: { async send() {} },
     time: createCurrentTimeProvider("UTC", () => new Date(baseTime + 60_000)),
     getSleepCocoonEnteredAt: () => new Date(baseTime - 1_000).toISOString(),
-    getActiveMainLLMSession: () => ({ generation, phase: "running" }),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -215,9 +213,9 @@ test("check_chat default scope resets when active main llm session generation ch
   assert.doesNotMatch(String(second.output), /first generation history/);
   assert.match(String(second.output), /nothing new/);
 
-  generation = 2;
   const afterSwitch = await tools.execute({ id: "call_generation_2_first", toolName: "check_chat", input: {} });
-  assert.match(String(afterSwitch.output), /first generation history/);
+  assert.doesNotMatch(String(afterSwitch.output), /first generation history/);
+  assert.match(String(afterSwitch.output), /nothing new/);
 });
 
 test("check_chat returns current time from configured timezone provider", async () => {
@@ -365,9 +363,8 @@ test("check_chat from_prefix reads messages after injected cursor", async () => 
   assert.match(String(result.output), /after fixed prefix/);
 });
 
-test("check_chat defaults to new after first recent call in the same llm session", async () => {
+test("check_chat defaults to new across repeated calls", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-llm-session"), "alice.sqlite"));
-  let generation = 1;
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -383,7 +380,6 @@ test("check_chat defaults to new after first recent call in the same llm session
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
     outputRouter: { async send() {} },
     getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getActiveMainLLMSession: () => ({ generation, phase: "running" }),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -420,10 +416,10 @@ test("check_chat defaults to new after first recent call in the same llm session
   assert.equal(third.ok, true);
   assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
 
-  generation = 2;
   const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "check_chat", input: {} });
   assert.equal(nextSessionFirst.ok, true);
-  assert.match(String(nextSessionFirst.output), /initial today/);
+  assert.doesNotMatch(String(nextSessionFirst.output), /initial today/);
+  assert.match(String(nextSessionFirst.output), /nothing new/);
 });
 
 test("check_chat renders system prompts as system messages", async () => {
@@ -452,7 +448,7 @@ test("check_chat renders system prompts as system messages", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_system_prompt", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_system_prompt", toolName: "check_chat", input: { scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /\n-少女拍照中-\n/);
   assert.doesNotMatch(String(result.output), /-少女拍照中-\[发送中\]/);
@@ -498,7 +494,7 @@ test("check_chat simplifies outbound media records", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_media_records", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_media_records", toolName: "check_chat", input: { scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /Alice发送了一张图片/);
   assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
@@ -573,7 +569,7 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: { scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:00\]\n-已接通-/);
   assert.match(String(result.output), /\{\{user\}\}:\n喂，爱丽丝，能听到吗？\n我刚到车站，想确认一下今晚的安排。\nAlice:\n听得到。\n今晚先去吃饭，然后回去把明天要用的东西收好。/);
@@ -614,7 +610,6 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
 
 test("check_chat preview does not mark messages read or advance cursor", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-preview"), "alice.sqlite"));
-  let generation: number | undefined;
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -630,7 +625,6 @@ test("check_chat preview does not mark messages read or advance cursor", async (
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:02:00.000Z")),
     outputRouter: { async send() {} },
     getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getActiveMainLLMSession: () => generation === undefined ? undefined : { generation, phase: "running" },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -648,7 +642,6 @@ test("check_chat preview does not mark messages read or advance cursor", async (
   assert.equal(stored.coreProcessedAt ?? undefined, undefined);
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "session-1");
 
-  generation = 1;
   await tools.execute({ id: "call_first", toolName: "check_chat", input: {} });
   const recentPreview = await tools.execute({
     id: "call_recent_preview",
@@ -764,7 +757,6 @@ test("check_chat merges shell switch logs into chat context", async () => {
 
 test("check_chat new scope does not return shell logs without unread messages", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch-no-new"), "alice.sqlite"));
-  let generation = 1;
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -780,7 +772,6 @@ test("check_chat new scope does not return shell logs without unread messages", 
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
     outputRouter: { async send() {} },
     getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getActiveMainLLMSession: () => ({ generation, phase: "running" }),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
     getShellSwitchLogs: () => [
       {
@@ -830,7 +821,6 @@ test("search_messages uses persisted message FTS with default limits and context
 
 test("send_chat defaults to message and splits newline text into multiple sends", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send"), "alice.sqlite"));
-  let generation = 1;
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "old_1",
@@ -852,7 +842,6 @@ test("send_chat defaults to message and splits newline text into multiple sends"
       }
     },
     getSleepCocoonEnteredAt: () => "2026-05-25T00:00:00.000",
-    getActiveMainLLMSession: () => ({ generation, phase: "running" }),
     getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
   });
 

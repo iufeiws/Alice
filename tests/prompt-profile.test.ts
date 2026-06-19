@@ -486,7 +486,7 @@ function textEvent(): AgentEvent {
       userId: "user-1",
       rawMessageId: "om_1"
     },
-    session: {
+    externalSession: {
       scope: "dm",
       sessionId: "session-1"
     },

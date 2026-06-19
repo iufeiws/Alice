@@ -83,7 +83,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.deepEqual(outputs, []);
   assert.equal(requests[0].tools?.[0].function.name, "check_chat");
   assert.equal(toolCalls[0].toolName, "check_chat");
-  assert.equal(toolCalls[0].session?.sessionId, "session-1");
+  assert.equal(toolCalls[0].externalSession?.sessionId, "session-1");
   assert.equal(requests[1].messages.at(-1)?.role, "tool");
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
@@ -494,7 +494,7 @@ test("agent core resumes pending wait_chat with check_chat result on heartbeat",
   await runPreparedCoreEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
 
   assert.equal(requests.length, 2);
-  assert.deepEqual(checkInputs, [{}, {}]);
+  assert.deepEqual(checkInputs, [{}]);
   const secondMessages = requests[1].messages;
   const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "wait_chat");
   assert.equal(waitToolMessages.length, 1);
@@ -2419,7 +2419,7 @@ test("agent core uses first-call and follow-up extra params", async () => {
   ]);
 });
 
-test("agent core fake append tool requests do not consume first llm round", async () => {
+test("agent core skips fake append tool requests on first llm round", async () => {
   const senderInputs: LLMRequestSenderInput[] = [];
   const core = createAgentCore({
     config: loadConfig({
@@ -2487,7 +2487,7 @@ test("agent core fake append tool requests do not consume first llm round", asyn
   assert.equal(senderInputs.length, 2);
   assert.equal(senderInputs[0].round, 0);
   assert.deepEqual(senderInputs[0].extraParams, { tool_choice: { type: "function", function: { name: "send_chat" } } });
-  assert.equal(senderInputs[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), true);
+  assert.equal(senderInputs[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), false);
   assert.equal(senderInputs[1].round, 1);
   assert.deepEqual(senderInputs[1].extraParams, { tool_choice: "auto" });
   assert.equal(senderInputs[1].messages.at(-1)?.content, "outfit");
@@ -2599,12 +2599,12 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
   await runPreparedCoreEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
-  assert.equal(requests[0].messages.at(-2)?.reasoningContent, "fake reason");
-  assert.equal(requests[0].messages.at(-1)?.content, "recent");
+  assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), false);
   assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
-  assert.equal(requests[1].messages.at(-1)?.content, "new");
-  assert.equal(appendContextCalls, 2);
+  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
+  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "fake reason");
+  assert.equal(requests[1].messages.at(-1)?.content, "recent");
+  assert.equal(appendContextCalls, 1);
 });
 
 test("agent core clears session before the next request when cached input cost exceeds check chat miss cost", async () => {
@@ -3410,7 +3410,7 @@ function textEvent(): AgentEvent {
       userId: "user-1",
       rawMessageId: "om_1"
     },
-    session: {
+    externalSession: {
       scope: "dm",
       sessionId: "session-1"
     },

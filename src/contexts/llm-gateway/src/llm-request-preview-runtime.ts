@@ -57,7 +57,7 @@ export function createLLMRequestPreviewRuntime(input: {
         channelId: target?.channelId ?? target?.userId ?? "preview",
         userId: target?.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target?.sessionId ?? "preview"
       },
@@ -99,7 +99,7 @@ export function createLLMRequestPreviewRuntime(input: {
         userId: latestInbound.senderId,
         rawMessageId: latestInbound.externalMessageId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: latestInbound.conversationId
       },

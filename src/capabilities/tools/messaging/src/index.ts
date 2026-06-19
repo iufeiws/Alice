@@ -54,7 +54,6 @@ export type MessagingToolsDeps = {
     relationshipName: string;
   }>;
   getSleepCocoonEnteredAt?(): string | undefined;
-  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   appendMessageLog?(input: {
     direction: "inbound" | "outbound";
     plugin: string;
@@ -111,8 +110,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   const voiceSynthesizer = deps.voiceSynthesizer ?? missingVoiceSynthesizer();
   const shouldPrepareVoiceSynthesizer = Boolean(deps.voiceSynthesizer);
   let lastMessageTimestampMs: number | undefined;
-  let observedMainLLMSessionGeneration: number | undefined;
-  let checkChatCallsInObservedMainLLMSession = 0;
   let retryQueue = Promise.resolve();
 
   return {
@@ -225,16 +222,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (scopeHint === "new") return "new";
     if (scopeHint === "from_prefix") return "from_prefix";
     if (scopeHint === "range") return "range";
-    const mainSession = deps.getActiveMainLLMSession?.();
-    if (mainSession?.phase === "running") {
-      if (observedMainLLMSessionGeneration !== mainSession.generation) {
-        observedMainLLMSessionGeneration = mainSession.generation;
-        checkChatCallsInObservedMainLLMSession = 0;
-      }
-      checkChatCallsInObservedMainLLMSession += 1;
-      return checkChatCallsInObservedMainLLMSession === 1 ? "today" : "new";
-    }
-    return "today";
+    return "new";
   }
 
   function markViewedUserMessages(messages: StoredConversationMessage[]): void {
@@ -527,13 +515,13 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   function resolveTarget(call: ToolCall): MessagingToolTarget | undefined {
     const resolved = deps.resolveOutputTarget?.(call);
     if (resolved) return normalizeTarget(resolved);
-    if (call.requester?.plugin && call.session?.sessionId) {
+    if (call.requester?.plugin && call.externalSession?.sessionId) {
       return normalizeTarget({
         plugin: call.requester.plugin,
         accountId: call.requester.accountId,
         channelId: call.requester.channelId,
         userId: call.requester.userId,
-        sessionId: call.session.sessionId
+        sessionId: call.externalSession.sessionId
       });
     }
     const target = deps.getDefaultTarget?.();
@@ -592,7 +580,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 const checkChatTool: ToolDefinition = {
   name: "check_chat",
-  description: "查看聊天记录。首次调用默认返回从最近一次睡眠附近开始的消息；后续调用只返回新增消息。",
+  description: "查看聊天记录。默认返回新增消息。",
   inputSchema: {
     type: "object",
     properties: {},

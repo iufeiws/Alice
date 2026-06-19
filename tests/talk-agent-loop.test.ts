@@ -481,7 +481,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   assert.equal(executedCalls.length, 1);
   assert.equal((executedCalls[0] as { toolName?: string }).toolName, "send_chat");
   assert.equal((executedCalls[0] as { requester?: { plugin?: string } }).requester?.plugin, "webrtc_voice");
-  assert.equal((executedCalls[0] as { session?: { sessionId?: string } }).session?.sessionId, "107");
+  assert.equal((executedCalls[0] as { externalSession?: { sessionId?: string } }).externalSession?.sessionId, "107");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).role, "tool");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
 });

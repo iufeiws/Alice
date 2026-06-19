@@ -70,7 +70,7 @@ export function createWeChatStateStore(filePath: string): WeChatStateStore {
       if (!userId) return undefined;
       const contact = {
         userId,
-        sessionId: event.session.sessionId,
+        sessionId: event.externalSession.sessionId,
         contextToken,
         lastMessageId: event.source.rawMessageId,
         lastSeenAt: event.meta.receivedAt

@@ -15,7 +15,6 @@ export function createApiCapabilitiesRuntime(input: {
   diaryStore: any;
   coreProfileStore: any;
   agentState: any;
-  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
   getGoogleStreetView(): any;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
@@ -60,7 +59,6 @@ export function createApiCapabilitiesRuntime(input: {
     diaryStore: input.diaryStore,
     coreProfileStore: input.coreProfileStore,
     agentState: input.agentState,
-    getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,

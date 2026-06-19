@@ -49,9 +49,9 @@ test("agent loop runtime rejects overlapping runs", async () => {
     }
   });
 
-  const first = runtime.requestRun({ kind: "talk", sessionId: "talk-1", reason: "first" });
+  const first = runtime.requestRun({ kind: "talk", sessionId: 1780830000101, reason: "first" });
   assert.equal(runtime.isRunning(), true);
-  const second = await runtime.requestRun({ kind: "talk", sessionId: "talk-1", reason: "second" });
+  const second = await runtime.requestRun({ kind: "talk", sessionId: 1780830000101, reason: "second" });
   assert.deepEqual(second, { started: false, outputs: [] });
   releaseRun?.();
   assert.deepEqual(await first, { started: true, outputs: [] });
@@ -143,7 +143,7 @@ test("agent heartbeat treats cancelled talk runs as handled without crashing", a
     tasks: {
       canRunHeartbeat: () => true,
       hasPendingUserMessages: () => false,
-      claimReadyTalkSession: () => "talk-1",
+      claimReadyTalkSession: () => 1780830000201,
       runTalkSession: async () => {
         throw new Error("llm_request_cancelled");
       },
@@ -177,7 +177,7 @@ test("agent heartbeat logs failed talk runs and requeues readiness", async () =>
     tasks: {
       canRunHeartbeat: () => true,
       hasPendingUserMessages: () => false,
-      claimReadyTalkSession: () => "talk-1",
+      claimReadyTalkSession: () => 1780830000202,
       runTalkSession: async () => {
         throw new Error("provider_failed");
       },
@@ -255,7 +255,7 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
   assert.equal(runtime.loadActiveLLMSessionTranscript(), transcript);
   runtime.updateActiveLLMSessionTranscript({ id: "chat-session" });
   runtime.updateActiveTalkLLMSessionTranscript({ id: "talk-session" });
-  runtime.rewriteActiveTalkLLMSessionFromRuntime("talk-session");
+  runtime.rewriteActiveTalkLLMSessionFromRuntime(2002);
   runtime.clearActiveLLMSession("admin_clear");
   assert.deepEqual(runtime.getActiveLLMSessionSnapshot(), { id: "active" });
   assert.deepEqual(calls, [
@@ -263,11 +263,11 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
     "create:2026-06-12T00:00:00.000",
     "note-request:talk",
     "note-response",
-    "is-talk:talk-session",
+    "is-talk:2002",
     "load",
     "update-chat:chat-session",
     "update-talk:talk-session",
-    "rewrite-talk:talk-session",
+    "rewrite-talk:2002",
     "clear:admin_clear",
     "snapshot"
   ]);
@@ -300,7 +300,7 @@ test("agent loop runtime prepares and writes loop session context", async () => 
   let transcript: any;
   const prepared = await runtime.prepareSessionContext({
     kind: "talk",
-    sessionId: "talk-context",
+    sessionId: 1780830000102,
     loadTranscript: () => transcript,
     buildInitialMessages: () => [{ role: "system", content: "prefix" }],
     buildMessagePatch: () => ({ replaceFrom: 1, messages: [{ role: "user", content: "voice turn" }] }),
@@ -572,7 +572,7 @@ function textEvent(sessionId: string): AgentEvent {
     id: "evt_1",
     type: "message.text",
     source: { plugin: "test", userId: "user-1" },
-    session: { scope: "dm", sessionId },
+    externalSession: { scope: "dm", sessionId },
     payload: { kind: "text", text: "hello" },
     meta: { receivedAt: "2026-06-12T00:00:00.000Z" }
   };

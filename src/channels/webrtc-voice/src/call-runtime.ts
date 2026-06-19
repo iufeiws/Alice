@@ -33,7 +33,14 @@ export async function createCallState(
   outboundTrack: ServerOutboundAudioTrack,
   deps: WebRtcVoiceDeps
 ): Promise<WebRtcVoiceCall> {
-  let talkSessionId = `webrtc_voice:${input.callId}`;
+  const synthesisTime = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
+  const nowStamp = () => {
+    const current = synthesisTime.now();
+    return { occurredAt: current.iso, occurredAtUtc: current.date.toISOString() };
+  };
+  const openedAt = nowStamp();
+  let talkSessionId = Date.parse(openedAt.occurredAtUtc);
+  if (!Number.isFinite(talkSessionId)) throw new Error(`invalid talk session time: ${openedAt.occurredAtUtc}`);
   let asrStreamIndex = 0;
   let asrStreamId = `asr-${input.callId}-${asrStreamIndex}`;
   let inboundSequence = 0;
@@ -47,11 +54,6 @@ export async function createCallState(
   const activePlaybackTasks = new Set<Promise<unknown>>();
   const playbackIdleAckWaiters = new Map<string, { resolve(value: boolean): void; timer: ReturnType<typeof setTimeout> }>();
   let firstOutboundPlaybackBufferPending = true;
-  const synthesisTime = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
-  const nowStamp = () => {
-    const current = synthesisTime.now();
-    return { occurredAt: current.iso, occurredAtUtc: current.date.toISOString() };
-  };
   const source = {
     plugin: "webrtc_voice",
     accountId: deps.config.accountId,
@@ -59,19 +61,18 @@ export async function createCallState(
     userId: input.userId
   } as const;
   if (deps.talkRuntime?.openSession) {
-    const stamp = nowStamp();
     const opened = await deps.talkRuntime.openSession({
       sessionId: talkSessionId,
       source,
-      occurredAt: stamp.occurredAt,
-      occurredAtUtc: stamp.occurredAtUtc,
+      occurredAt: openedAt.occurredAt,
+      occurredAtUtc: openedAt.occurredAtUtc,
       metadata: { language: deps.config.language, callId: input.callId }
     });
     const openedSessionId = normalizeTalkSessionOpenResult(opened);
     if (openedSessionId) talkSessionId = openedSessionId;
-    deps.emitStatus?.({ state: "talk_runtime.open", detail: talkSessionId });
+    deps.emitStatus?.({ state: "talk_runtime.open", detail: String(talkSessionId) });
   } else {
-    deps.emitStatus?.({ state: "talk_runtime.open.todo", detail: talkSessionId });
+    deps.emitStatus?.({ state: "talk_runtime.open.todo", detail: String(talkSessionId) });
   }
   let asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
   let outboundFrameSequence = 0;
@@ -664,7 +665,7 @@ export async function createCallState(
   void deps.talkRuntime?.markAgentLoopReady?.(talkSessionId);
   playback.startTextCacheStatus();
   if (deps.talkRuntime?.claimBufferedOutputText || deps.talkRuntime?.claimReadyOutputChunk) {
-    deps.emitStatus?.({ state: "voice_call.waiting", detail: talkSessionId });
+    deps.emitStatus?.({ state: "voice_call.waiting", detail: String(talkSessionId) });
     const pumpTask = runOutputPump();
     activePlaybackTasks.add(pumpTask);
     pumpTask.finally(() => activePlaybackTasks.delete(pumpTask));
@@ -681,7 +682,7 @@ type InboundAudioStats = {
 };
 
 type TalkChunk = {
-  sessionId: string;
+  sessionId: number;
   outputId: string;
   chunkId?: string;
   text: string;
@@ -812,7 +813,7 @@ function summarizeAudioSdp(sdp: string): string {
 
 function createCallAsrSession(
   input: CreateWebRtcVoiceCallInput,
-  talkSessionId: string,
+  talkSessionId: number,
   asrStreamId: string,
   deps: WebRtcVoiceDeps
 ): AsrInboundStreamSession {
@@ -852,19 +853,19 @@ function handleAsrResult(result: AsrInboundStreamAcceptResult, deps: WebRtcVoice
   }
 }
 
-function normalizeTalkSessionOpenResult(value: unknown): string | undefined {
+function normalizeTalkSessionOpenResult(value: unknown): number | undefined {
   if (!value || typeof value !== "object") return undefined;
   const sessionId = (value as { sessionId?: unknown }).sessionId;
-  return typeof sessionId === "string" || typeof sessionId === "number" ? String(sessionId) : undefined;
+  return typeof sessionId === "number" && Number.isFinite(sessionId) ? sessionId : undefined;
 }
 
 function normalizeTalkChunk(value: unknown): TalkChunk | undefined {
   if (!value || typeof value !== "object") return undefined;
   const chunk = value as Record<string, unknown>;
-  if (typeof chunk.outputId !== "string" || typeof chunk.text !== "string") return undefined;
+  if (typeof chunk.outputId !== "string" || typeof chunk.text !== "string" || typeof chunk.sessionId !== "number") return undefined;
   const status = chunk.status === "streaming" || chunk.status === "finished" ? chunk.status : undefined;
   return {
-    sessionId: typeof chunk.sessionId === "string" ? chunk.sessionId : "",
+    sessionId: chunk.sessionId,
     outputId: chunk.outputId,
     chunkId: typeof chunk.chunkId === "string" ? chunk.chunkId : undefined,
     text: chunk.text,

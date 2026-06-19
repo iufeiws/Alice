@@ -25,7 +25,6 @@ export function createToolRuntime(input: {
   diaryStore: any;
   coreProfileStore: any;
   agentState: any;
-  getActiveMainLLMSession?(): { generation: number; phase: "idle" | "running" | "cancelled" } | undefined;
   getDefaultTarget(): any;
   getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
@@ -47,7 +46,6 @@ export function createToolRuntime(input: {
     getUserName: () => input.promptProfileStore.get().userName,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
-    getActiveMainLLMSession: input.getActiveMainLLMSession,
     getDefaultTarget() {
       return input.getDefaultTarget();
     },

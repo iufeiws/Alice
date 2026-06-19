@@ -93,7 +93,7 @@ export function getPromptVariablePreview(context: AdminRoutesContext, store: Pro
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target.sessionId
       },
@@ -196,7 +196,7 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target.sessionId
       }

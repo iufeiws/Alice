@@ -529,7 +529,7 @@ test("message runtime processNow starts a manual LLM session without pending mes
   await runtime.processNow();
 
   assert.equal(coreInputs.length, 1);
-  assert.equal(coreInputs[0].session.sessionId, "session-1");
+  assert.equal(coreInputs[0].externalSession.sessionId, "session-1");
   assert.equal(coreInputs[0].source.plugin, "feishu");
   assert.deepEqual(runtime.getStatus().pendingSessions, []);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
@@ -608,7 +608,7 @@ test("message runtime recovers wechat user id from persisted conversation id", a
   assert.equal(coreInputs[0].source.plugin, "wechat");
   assert.equal(coreInputs[0].source.channelId, "wx-user");
   assert.equal(coreInputs[0].source.userId, "wx-user");
-  assert.equal(coreInputs[0].session.sessionId, "wechat:dm:wx-user");
+  assert.equal(coreInputs[0].externalSession.sessionId, "wechat:dm:wx-user");
 });
 
 test("message runtime records lifecycle events as message state updates without core handling", async () => {
@@ -1447,7 +1447,7 @@ function textEventAt(sessionId: string, rawMessageId: string, text: string, rece
       userId: "user",
       rawMessageId
     },
-    session: {
+    externalSession: {
       scope: "dm",
       sessionId
     },
@@ -1470,7 +1470,7 @@ function audioEvent(sessionId: string, rawMessageId: string, assetId: string, tr
       userId: "user",
       rawMessageId
     },
-    session: {
+    externalSession: {
       scope: "dm",
       sessionId
     },

@@ -22,7 +22,7 @@ export type TalkSource = {
 
 export type TalkSession = {
   id: number;
-  sessionId: string;
+  sessionId: number;
   plugin: string;
   accountId?: string;
   channelId?: string;
@@ -36,7 +36,7 @@ export type TalkSession = {
 
 export type TalkEvent = {
   kind: TalkEventKind;
-  sessionId: string;
+  sessionId: number;
   source: TalkSource;
   sequence: number;
   occurredAt: string;
@@ -47,7 +47,7 @@ export type TalkEvent = {
 
 export type TalkSegment = {
   id: number;
-  sessionId: string;
+  sessionId: number;
   segmentId?: string;
   role: "assistant" | "user";
   kind: string;
@@ -59,7 +59,7 @@ export type TalkSegment = {
 
 export type TalkTranscriptEntry = {
   id: number;
-  sessionId: string;
+  sessionId: number;
   entryId: string;
   role: "system" | "assistant" | "user";
   contentText: string;
@@ -71,7 +71,7 @@ export type TalkTranscriptEntry = {
 
 export type TalkOutput = {
   outputId: string;
-  sessionId: string;
+  sessionId: number;
   segmentId?: string;
   status: "streaming" | "finished" | "interrupted" | "cancelled";
   fullText: string;
@@ -87,7 +87,7 @@ export type TalkOutput = {
 export type TalkOutputChunk = {
   chunkId: string;
   outputId: string;
-  sessionId: string;
+  sessionId: number;
   sequence: number;
   text: string;
   startCharIndex: number;
@@ -97,14 +97,14 @@ export type TalkOutputChunk = {
 
 export type TalkBufferedOutputText = {
   outputId: string;
-  sessionId: string;
+  sessionId: number;
   text: string;
   status: Extract<TalkOutput["status"], "streaming" | "finished">;
 };
 
 export type TalkOutputDiscard = {
   discardId: string;
-  sessionId: string;
+  sessionId: number;
   outputId: string;
   interruptId: string;
   discardedText: string;
@@ -113,7 +113,7 @@ export type TalkOutputDiscard = {
 
 export type TalkOutputInterrupt = {
   interruptId: string;
-  sessionId: string;
+  sessionId: number;
   outputId: string;
   reason: string;
   playedMs?: number;
@@ -128,17 +128,17 @@ export type TalkOutputInterrupt = {
 export type TalkStore = {
   transaction?<T>(fn: () => T): T;
   openSession(input: {
-    sessionId: string;
+    sessionId: number;
     source: TalkSource;
     occurredAt: string;
     occurredAtUtc?: string;
     metadata?: unknown;
   }): void;
-  closeSession(input: { sessionId: string; occurredAt: string; occurredAtUtc?: string }): void;
-  getSession(sessionId: string): TalkSession | undefined;
+  closeSession(input: { sessionId: number; occurredAt: string; occurredAtUtc?: string }): void;
+  getSession(sessionId: number): TalkSession | undefined;
   insertEvent(event: TalkEvent): { id: number; inserted: boolean };
   insertSegment(input: {
-    sessionId: string;
+    sessionId: number;
     eventId?: number;
     segmentId: string;
     role: TalkSegment["role"];
@@ -148,9 +148,9 @@ export type TalkStore = {
     endedAt: string;
     endedAtUtc?: string;
   }): TalkSegment;
-  listSegments(sessionId: string): TalkSegment[];
+  listSegments(sessionId: number): TalkSegment[];
   upsertTranscriptEntry(input: {
-    sessionId: string;
+    sessionId: number;
     entryId: string;
     role: TalkTranscriptEntry["role"];
     contentText: string;
@@ -159,13 +159,13 @@ export type TalkStore = {
     sourceKind?: string;
     sourceId?: string;
   }): TalkTranscriptEntry;
-  listTranscriptEntries(sessionId: string): TalkTranscriptEntry[];
+  listTranscriptEntries(sessionId: number): TalkTranscriptEntry[];
   getOutput(outputId: string): TalkOutput | undefined;
-  latestOutput(sessionId: string): TalkOutput | undefined;
-  ensureOutput(input: { sessionId: string; outputId: string; now: string; nowUtc?: string }): TalkOutput;
+  latestOutput(sessionId: number): TalkOutput | undefined;
+  ensureOutput(input: { sessionId: number; outputId: string; now: string; nowUtc?: string }): TalkOutput;
   updateOutput(input: Partial<TalkOutput> & { outputId: string }): TalkOutput;
   insertReadyChunk(input: {
-    sessionId: string;
+    sessionId: number;
     outputId: string;
     sequence: number;
     text: string;
@@ -174,17 +174,17 @@ export type TalkStore = {
     now: string;
     nowUtc?: string;
   }): TalkOutputChunk;
-  claimBufferedOutputText(sessionId: string): TalkBufferedOutputText | undefined;
-  claimReadyOutputChunk(sessionId: string, now: string, nowUtc?: string): TalkOutputChunk | undefined;
-  markChunkPlayed(input: { sessionId: string; chunkId: string; now: string; nowUtc?: string }): void;
+  claimBufferedOutputText(sessionId: number): TalkBufferedOutputText | undefined;
+  claimReadyOutputChunk(sessionId: number, now: string, nowUtc?: string): TalkOutputChunk | undefined;
+  markChunkPlayed(input: { sessionId: number; chunkId: string; now: string; nowUtc?: string }): void;
   listChunks(outputId: string): TalkOutputChunk[];
   cancelChunks(outputId: string, now: string, nowUtc?: string): void;
-  cancelOtherSessionOutputs(sessionId: string, keepOutputId: string, now: string, nowUtc?: string): void;
-  isSessionOutputIdle(sessionId: string): boolean;
-  pendingVoiceOutputCharCount(sessionId: string): number;
+  cancelOtherSessionOutputs(sessionId: number, keepOutputId: string, now: string, nowUtc?: string): void;
+  isSessionOutputIdle(sessionId: number): boolean;
+  pendingVoiceOutputCharCount(sessionId: number): number;
   insertDiscard(input: {
     discardId: string;
-    sessionId: string;
+    sessionId: number;
     outputId: string;
     interruptId: string;
     discardedText: string;
@@ -196,7 +196,7 @@ export type TalkStore = {
   getDiscard(discardId: string): TalkOutputDiscard | undefined;
   insertInterrupt(input: {
     interruptId: string;
-    sessionId: string;
+    sessionId: number;
     outputId: string;
     eventId?: number;
     segmentId?: string;
@@ -211,8 +211,8 @@ export type TalkStore = {
     nowUtc?: string;
     metadata?: unknown;
   }): TalkOutputInterrupt;
-  latestUnresolvedInterrupt(sessionId: string): TalkOutputInterrupt | undefined;
-  resolveLatestInterrupt(input: { sessionId: string; finalUserSegmentId: string; now: string; nowUtc?: string }): void;
+  latestUnresolvedInterrupt(sessionId: number): TalkOutputInterrupt | undefined;
+  resolveLatestInterrupt(input: { sessionId: number; finalUserSegmentId: string; now: string; nowUtc?: string }): void;
   resolveInterrupt(input: { interruptId: string; finalUserSegmentId: string; now: string; nowUtc?: string }): void;
 };
 
@@ -673,7 +673,7 @@ function initialize(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS talk_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL UNIQUE,
+      session_id INTEGER NOT NULL UNIQUE,
       plugin TEXT NOT NULL,
       account_id TEXT,
       channel_id TEXT,
@@ -693,7 +693,7 @@ function initialize(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS talk_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       sequence INTEGER NOT NULL,
       kind TEXT NOT NULL,
       occurred_at TEXT NOT NULL,
@@ -711,7 +711,7 @@ function initialize(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS talk_segments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       event_id INTEGER,
       segment_id TEXT,
       role TEXT NOT NULL,
@@ -731,7 +731,7 @@ function initialize(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS talk_transcript_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       entry_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content_text TEXT NOT NULL,
@@ -746,7 +746,7 @@ function initialize(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS talk_outputs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       output_id TEXT NOT NULL UNIQUE,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       segment_id TEXT,
       status TEXT NOT NULL,
       full_text TEXT NOT NULL DEFAULT '',
@@ -769,7 +769,7 @@ function initialize(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chunk_id TEXT NOT NULL UNIQUE,
       output_id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       sequence INTEGER NOT NULL,
       text TEXT NOT NULL,
       start_char_index INTEGER NOT NULL,
@@ -793,7 +793,7 @@ function initialize(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS talk_output_discards (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       discard_id TEXT NOT NULL UNIQUE,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       output_id TEXT NOT NULL,
       interrupt_id TEXT NOT NULL,
       discarded_text TEXT NOT NULL,
@@ -807,7 +807,7 @@ function initialize(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS talk_output_interrupts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       interrupt_id TEXT NOT NULL UNIQUE,
-      session_id TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
       output_id TEXT NOT NULL,
       event_id INTEGER,
       segment_id TEXT,
@@ -928,8 +928,8 @@ function normalizeChunk(row: unknown): TalkOutputChunk | undefined {
 
 function normalizeBufferedOutputText(row: unknown): TalkBufferedOutputText | undefined {
   if (!row || typeof row !== "object") return undefined;
-  const value = row as Record<string, unknown>;
-  if (typeof value.outputId !== "string" || typeof value.sessionId !== "string" || typeof value.text !== "string") return undefined;
+  const value = row as TalkBufferedOutputText;
+  if (typeof value.outputId !== "string" || typeof value.text !== "string") return undefined;
   return {
     outputId: value.outputId,
     sessionId: value.sessionId,
@@ -996,7 +996,7 @@ function migrateTalkBreakpointIndexColumns(db: DatabaseSync): void {
       CREATE TABLE talk_output_discards (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         discard_id TEXT NOT NULL UNIQUE,
-        session_id TEXT NOT NULL,
+        session_id INTEGER NOT NULL,
         output_id TEXT NOT NULL,
         interrupt_id TEXT NOT NULL,
         discarded_text TEXT NOT NULL,
@@ -1018,7 +1018,7 @@ function migrateTalkBreakpointIndexColumns(db: DatabaseSync): void {
       CREATE TABLE talk_output_interrupts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         interrupt_id TEXT NOT NULL UNIQUE,
-        session_id TEXT NOT NULL,
+        session_id INTEGER NOT NULL,
         output_id TEXT NOT NULL,
         event_id INTEGER,
         segment_id TEXT,

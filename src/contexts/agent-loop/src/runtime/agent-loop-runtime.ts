@@ -53,7 +53,7 @@ export type ActiveLLMSessionRuntimePort = {
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;
-  rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
+  rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
   clearActiveLLMSession(reason: unknown): void;
   getActiveLLMSessionSnapshot?(): unknown;
 };
@@ -67,7 +67,7 @@ export type AgentLoopChatRunRequest = {
 
 export type AgentLoopTalkRunRequest = {
   kind: "talk";
-  sessionId: string;
+  sessionId: number;
   reason: string;
 };
 
@@ -88,13 +88,13 @@ export type PreparedAgentLoopRun = {
 
 export type AgentLoopRunners = {
   prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
-  prepareTalk(input: { sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
+  prepareTalk(input: { sessionId: number; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
 };
 
 export type AgentLoopRunSpec = {
   kind: AgentLoopKind;
   agentId: AgentLoopKind;
-  sessionId: string;
+  sessionId: string | number;
   messages: LLMChatInput["messages"];
 };
 
@@ -109,7 +109,7 @@ export type AgentLoopRuntime = {
   loadActiveLLMSessionTranscript(): unknown;
   updateActiveLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;
-  rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
+  rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
   clearActiveLLMSession(reason: unknown): void;
   getActiveLLMSessionSnapshot(): unknown;
   getActiveMainSessionContext<T = unknown>(): ActiveMainSessionContext<T> | undefined;

@@ -108,7 +108,7 @@ test("sleep_cocoon in sends non-persisted sleep notice to current chat", async (
     toolName: "sleep_cocoon",
     input: { action: "in" },
     requester: { plugin: "feishu", accountId: "account-1", channelId: "chat-1", userId: "user-1" },
-    session: { scope: "dm", sessionId: "session-1" }
+    externalSession: { scope: "dm", sessionId: "session-1" }
   });
 
   assert.equal(result.ok, true);
@@ -184,7 +184,7 @@ test("sleep_cocoon out sends non-persisted wake notice to current chat", async (
     toolName: "sleep_cocoon",
     input: { action: "out" },
     requester: { plugin: "wechat", channelId: "room-1", userId: "user-1" },
-    session: { scope: "group", sessionId: "session-2" }
+    externalSession: { scope: "group", sessionId: "session-2" }
   });
 
   assert.equal(result.ok, true);

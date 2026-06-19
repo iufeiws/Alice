@@ -31,7 +31,6 @@ export function createApiToolingRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
     agentState: input.agentState,
-    getActiveMainLLMSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,

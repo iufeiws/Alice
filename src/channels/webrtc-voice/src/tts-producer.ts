@@ -33,7 +33,7 @@ type TtsOutputState = {
 
 export function createTtsProducer(ctx: {
   callId: string;
-  talkSessionId: string;
+  talkSessionId: number;
   deps: WebRtcVoiceDeps;
   outboundTrack: ServerOutboundAudioTrack;
   activeTtsTasks: Set<TtsTask>;

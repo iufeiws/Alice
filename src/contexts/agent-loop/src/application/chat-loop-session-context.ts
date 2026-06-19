@@ -24,7 +24,7 @@ export async function buildFixedPrefixAppendMessages(input: {
       toolName: "check_chat",
       input: { scope: "from_prefix", __fromPrefixAfterMessageId: input.mode.fixedPrefixCursorMessageId ?? 0 },
       requester: input.event.source,
-      session: input.event.session
+      externalSession: input.event.externalSession
     },
     input.toolPlugins
   );
@@ -81,7 +81,7 @@ export async function buildWaitChatResumeMessages(input: {
           toolName: call.function.name,
           input: toolInput,
           requester: input.event.source,
-          session: input.event.session
+          externalSession: input.event.externalSession
         },
         input.toolPlugins
       );
@@ -195,7 +195,7 @@ async function runWaitChatResumeCheck(
       toolName: "check_chat",
       input: checkInput,
       requester: event.source,
-      session: event.session
+      externalSession: event.externalSession
     },
     toolPlugins
   );

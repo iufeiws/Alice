@@ -73,7 +73,7 @@ export function createSleepCocoonEventRuntime(input: {
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm" as const,
         sessionId: target.sessionId
       },

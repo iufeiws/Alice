@@ -28,7 +28,7 @@ export type AgentEvent = {
     userId?: string;
     rawMessageId?: string;
   };
-  session: {
+  externalSession: {
     scope: "dm" | "group" | "topic" | "admin" | "desktop";
     sessionId: string;
     threadId?: string;
@@ -182,7 +182,7 @@ export type ToolCall = {
   toolName: string;
   input: Record<string, unknown>;
   requester?: AgentEvent["source"];
-  session?: AgentEvent["session"];
+  externalSession?: AgentEvent["externalSession"];
 };
 
 export type ToolResult = {

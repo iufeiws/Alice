@@ -94,7 +94,7 @@ test("bookcase tool sends system notices without persisting them as messages", a
   });
   const baseCall = {
     requester: { plugin: "feishu", channelId: "chat-1" },
-    session: { scope: "dm" as const, sessionId: "session-1" }
+    externalSession: { scope: "dm" as const, sessionId: "session-1" }
   };
 
   await tools.execute({
@@ -144,7 +144,7 @@ test("bookcase notice failures do not block draw or return transitions", async (
   });
   const baseCall = {
     requester: { plugin: "feishu", channelId: "chat-1" },
-    session: { scope: "dm" as const, sessionId: "session-1" }
+    externalSession: { scope: "dm" as const, sessionId: "session-1" }
   };
 
   const draw = await tools.execute({

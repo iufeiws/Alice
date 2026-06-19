@@ -24,7 +24,7 @@ export function createTalkRuntimeRuntime(input: {
   createLLMSession(occurredAt: string): number;
   loadActiveTalkLLMSessionTranscript(): any;
   updateActiveTalkLLMSessionTranscript(session: any): void;
-  rewriteActiveTalkLLMSessionFromRuntime(sessionId: string): void;
+  rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
   conversationStore: Pick<AliceStore, "upsertInboundMessage">;
   agentState?: { setState(state: "calling" | "waiting", options?: { reason?: string }): unknown };
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -34,13 +34,13 @@ export function createTalkRuntimeRuntime(input: {
     isActiveTalkLLMSession: input.isActiveTalkLLMSession,
     getActiveTalkLLMSessionId: input.getActiveTalkLLMSessionId,
     isTalkSessionOpen(sessionId) {
-      return talkRuntime.store.getSession(String(sessionId))?.status === "open";
+      return talkRuntime.store.getSession(sessionId)?.status === "open";
     },
     pendingVoiceOutputCharCount(sessionId) {
-      return talkRuntime.store.pendingVoiceOutputCharCount(String(sessionId));
+      return talkRuntime.store.pendingVoiceOutputCharCount(sessionId);
     },
     isForegroundPlaybackIdle(sessionId) {
-      return talkRuntime.isForegroundPlaybackIdle(String(sessionId));
+      return talkRuntime.isForegroundPlaybackIdle(sessionId);
     },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,
@@ -50,10 +50,10 @@ export function createTalkRuntimeRuntime(input: {
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     setLoopPrefixMessageCount(sessionId, count) {
-      talkRuntime.setLoopPrefixMessageCount(String(sessionId), count);
+      talkRuntime.setLoopPrefixMessageCount(sessionId, count);
     },
     buildNextLoopMessagePatch(sessionId) {
-      return talkRuntime.buildNextLoopMessagePatch(String(sessionId));
+      return talkRuntime.buildNextLoopMessagePatch(sessionId);
     },
     loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,
@@ -87,11 +87,11 @@ export function createTalkRuntimeRuntime(input: {
     createLLMSession(sessionInput) {
       return input.createLLMSession(sessionInput.occurredAt);
     },
-    prepareAgentLoop: (sessionId, options) => talkAgentLoop.prepareTalkAgentLoopForSession(Number(sessionId), options),
+    prepareAgentLoop: (sessionId, options) => talkAgentLoop.prepareTalkAgentLoopForSession(sessionId, options),
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
       input.agentLoopRuntime?.interrupt?.("talk_interrupt");
-      talkAgentLoop.interruptTalkAgentLoop(Number(sessionId));
+      talkAgentLoop.interruptTalkAgentLoop(sessionId);
     },
     onSessionOpened() {
       input.agentState?.setState("calling", { reason: "talk_session_opened" });
@@ -106,7 +106,7 @@ export function createTalkRuntimeRuntime(input: {
 }
 
 export function projectClosedTalkSessionToConversationHub(
-  sessionId: string,
+  sessionId: number,
   talkStore: ReturnType<typeof createTalkStore>,
   conversationStore: Pick<AliceStore, "upsertInboundMessage">,
   time: { now(): { iso: string } }
@@ -118,7 +118,7 @@ export function projectClosedTalkSessionToConversationHub(
     conversationStore.upsertInboundMessage({
       plugin: session.plugin || "webrtc_voice",
       externalMessageId: `voicecalltranscript:${session.sessionId}:${entry.entryId}`,
-      conversationId: session.channelId || session.sessionId,
+      conversationId: session.channelId || String(session.sessionId),
       senderId: session.userId,
       senderRole: "system",
       contentType: "voicecalltranscript",

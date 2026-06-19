@@ -32,7 +32,7 @@ export type AgentLoopPromptToolRequest = {
   toolName: string;
   input: Record<string, unknown>;
   requester?: AgentEvent["source"];
-  session?: AgentEvent["session"];
+  externalSession?: AgentEvent["externalSession"];
 };
 
 export function createAgentLoopToolExecutor(input: {
@@ -57,7 +57,7 @@ export function createAgentLoopToolExecutor(input: {
       toolName: call.toolName,
       input: options.transformInput?.(call.toolName, call.input) ?? call.input,
       requester: input.event.source,
-      session: input.event.session
+      externalSession: input.event.externalSession
     };
     const result = await executePreparedAgentLoopToolCall(toolMap, preparedCall, {
       lastCompletedToolName: input.getLastCompletedToolName?.(),

@@ -190,13 +190,13 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
   function resolveTarget(call: ToolCall): ShellToolTarget | undefined {
     const resolved = deps.resolveOutputTarget?.(call);
     if (resolved) return resolved;
-    if (call.requester?.plugin && call.session?.sessionId) {
+    if (call.requester?.plugin && call.externalSession?.sessionId) {
       return {
         plugin: call.requester.plugin,
         accountId: call.requester.accountId,
         channelId: call.requester.channelId,
         userId: call.requester.userId,
-        sessionId: call.session.sessionId
+        sessionId: call.externalSession.sessionId
       };
     }
     return deps.getDefaultTarget?.();

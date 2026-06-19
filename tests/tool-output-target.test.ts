@@ -12,7 +12,7 @@ test("tool output target resolver keeps chat requester target", () => {
     toolName: "send_chat",
     input: {},
     requester: { plugin: "feishu", accountId: "account-1", channelId: "chat-1", userId: "user-1" },
-    session: { scope: "dm", sessionId: "session-1" }
+    externalSession: { scope: "dm", sessionId: "session-1" }
   });
 
   assert.deepEqual(target, {
@@ -34,7 +34,7 @@ test("tool output target resolver maps non-message requester to default target",
     toolName: "selfie",
     input: {},
     requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
-    session: { scope: "dm", sessionId: "talk-session-1" }
+    externalSession: { scope: "dm", sessionId: "talk-session-1" }
   });
 
   assert.deepEqual(target, {

@@ -160,7 +160,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         deps.log?.("warn", `[feishu] duplicate message ignored: ${dedupeKey}`);
         return;
       }
-      noteInboundMessage(event.session.sessionId, event.source.rawMessageId);
+      noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId);
       queueTextMessage(event);
     } catch (error) {
       deps.log?.("error", `[feishu] failed to receive message: ${error instanceof Error ? error.message : String(error)}`);
@@ -209,7 +209,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
               accountId: event.source.accountId,
               channelId: event.source.channelId,
               userId: event.source.userId,
-              sessionId: event.session.sessionId,
+              sessionId: event.externalSession.sessionId,
               replyTo: event.meta.replyTo
             },
             content: {
@@ -234,7 +234,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
             accountId: event.source.accountId,
             channelId: event.source.channelId,
             userId: event.source.userId,
-            sessionId: event.session.sessionId,
+            sessionId: event.externalSession.sessionId,
             replyTo: event.meta.replyTo
           },
           content: {
@@ -251,7 +251,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       }
 
       const decision = checkFeishuEventPolicy(config, event);
-      if (decision.allowed && config.dmPolicy === "pairing" && event.session.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
+      if (decision.allowed && config.dmPolicy === "pairing" && event.externalSession.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
         deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
         return;
       }
@@ -306,9 +306,9 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     }
 
     const event = await audioMessageEventToAgentEvent(raw, stored.assetId, transcript, bindings, time);
-    noteInboundMessage(event.session.sessionId, event.source.rawMessageId);
+    noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId);
     const decision = checkFeishuEventPolicy(config, event);
-    if (decision.allowed && config.dmPolicy === "pairing" && event.session.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
+    if (decision.allowed && config.dmPolicy === "pairing" && event.externalSession.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
       deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
       return;
     }
@@ -448,7 +448,7 @@ async function audioMessageEventToAgentEvent(
       userId,
       rawMessageId: message.message_id
     },
-    session: {
+    externalSession: {
       scope,
       sessionId,
       threadId: message.thread_id

@@ -5,7 +5,7 @@ const interruptStableInputTimeoutMs = 30_000;
 
 export function createInterruptController(ctx: {
   callId: string;
-  talkSessionId: string;
+  talkSessionId: number;
   deps: WebRtcVoiceDeps;
   source: {
     plugin: "webrtc_voice";

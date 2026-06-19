@@ -11,22 +11,22 @@ import type {
 export type TalkRuntime = {
   store: TalkStore;
   openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
-  closeSession(input: { sessionId: string; occurredAt?: string; occurredAtUtc?: string }): void;
-  markAgentLoopReady(sessionId: string): void;
-  claimReadyAgentLoopSession(): string | undefined;
-  prepareReadyAgentLoopSession(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
+  closeSession(input: { sessionId: number; occurredAt?: string; occurredAtUtc?: string }): void;
+  markAgentLoopReady(sessionId: number): void;
+  claimReadyAgentLoopSession(): number | undefined;
+  prepareReadyAgentLoopSession(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
   ingestInput(event: TalkEvent): void;
   commitStableInputBatch(batch: StableInputBatch): void;
-  appendAssistantDelta(input: { sessionId: string; outputId: string; delta: string }): void;
-  finishAssistantOutput(input: { sessionId: string; outputId: string }): void;
-  claimBufferedOutputText(sessionId: string): { outputId: string; sessionId: string; text: string; status: "streaming" | "finished" } | undefined;
-  claimReadyOutputChunk(sessionId: string): TalkOutputChunk | undefined;
-  isSessionOutputIdle(sessionId: string): boolean;
-  isForegroundPlaybackIdle(sessionId: string): boolean;
-  markForegroundPlaybackIdle(input: { sessionId: string }): void;
-  markOutputChunkPlayed(input: { sessionId: string; chunkId: string }): void;
+  appendAssistantDelta(input: { sessionId: number; outputId: string; delta: string }): void;
+  finishAssistantOutput(input: { sessionId: number; outputId: string }): void;
+  claimBufferedOutputText(sessionId: number): { outputId: string; sessionId: number; text: string; status: "streaming" | "finished" } | undefined;
+  claimReadyOutputChunk(sessionId: number): TalkOutputChunk | undefined;
+  isSessionOutputIdle(sessionId: number): boolean;
+  isForegroundPlaybackIdle(sessionId: number): boolean;
+  markForegroundPlaybackIdle(input: { sessionId: number }): void;
+  markOutputChunkPlayed(input: { sessionId: number; chunkId: string }): void;
   interruptOutput(input: {
-    sessionId: string;
+    sessionId: number;
     outputId: string;
     reason: "barge_in" | "manual" | "network" | "unknown";
     elapsedMs?: number;
@@ -36,7 +36,7 @@ export type TalkRuntime = {
     breakMarker?: string;
   }): TalkOutputInterrupt;
   interruptLatestOutput(input: {
-    sessionId: string;
+    sessionId: number;
     reason: "barge_in" | "manual" | "network" | "unknown";
     elapsedMs?: number;
     totalMs?: number;
@@ -44,9 +44,9 @@ export type TalkRuntime = {
     omitAssistantMessage?: boolean;
     breakMarker?: string;
   }): TalkOutputInterrupt | undefined;
-  interruptAgentLoop(sessionId: string, input?: { reason?: string; interruptEpoch?: number }): void;
-  setLoopPrefixMessageCount(sessionId: string, count: number): void;
-  buildNextLoopMessagePatch(sessionId: string): TalkLoopMessagePatch;
+  interruptAgentLoop(sessionId: number, input?: { reason?: string; interruptEpoch?: number }): void;
+  setLoopPrefixMessageCount(sessionId: number, count: number): void;
+  buildNextLoopMessagePatch(sessionId: number): TalkLoopMessagePatch;
 };
 
 export type TalkLoopMessagePatch = {
@@ -55,7 +55,7 @@ export type TalkLoopMessagePatch = {
 };
 
 export type TalkSessionOpenInput = {
-  sessionId?: string;
+  sessionId?: number;
   source: TalkSource;
   occurredAt?: string;
   occurredAtUtc?: string;
@@ -63,11 +63,11 @@ export type TalkSessionOpenInput = {
 };
 
 export type TalkSessionOpenResult = {
-  sessionId: string;
+  sessionId: number;
 };
 
 export type StableInputBatch = {
-  sessionId: string;
+  sessionId: number;
   batchId: string;
   interruptEpoch: number;
   inputs: StableInputItem[];
@@ -95,11 +95,11 @@ export type TalkRuntimeDeps = {
     occurredAtUtc?: string;
     source: TalkSource;
     metadata?: unknown;
-  }): string | number;
-  prepareAgentLoop?(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
-  interruptAgentLoop?(sessionId: string, outputId: string): Promise<void> | void;
-  onSessionOpened?(sessionId: string): void;
-  onSessionClosed?(sessionId: string): void;
+  }): number;
+  prepareAgentLoop?(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
+  interruptAgentLoop?(sessionId: number, outputId: string): Promise<void> | void;
+  onSessionOpened?(sessionId: number): void;
+  onSessionClosed?(sessionId: number): void;
 };
 
 export const defaultTalkOutputReadyChars = 20;
@@ -107,10 +107,10 @@ const noSpeechUserMessage = " (没有说话)";
 
 export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   const breakMarker = deps.breakMarker ?? "...";
-  const readyAgentLoopSessions = new Map<string, number>();
-  const foregroundPlaybackPendingSessions = new Set<string>();
-  const agentLoopInterruptedSessions = new Map<string, number>();
-  const loopPrefixMessageCounts = new Map<string, number>();
+  const readyAgentLoopSessions = new Map<number, number>();
+  const foregroundPlaybackPendingSessions = new Set<number>();
+  const agentLoopInterruptedSessions = new Map<number, number>();
+  const loopPrefixMessageCounts = new Map<number, number>();
 
   const runtime: TalkRuntime = {
     store: deps.store,
@@ -118,12 +118,13 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       const now = current(deps.time);
       const occurredAt = input.occurredAt ?? now.occurredAt;
       const occurredAtUtc = input.occurredAtUtc ?? now.occurredAtUtc;
-      const sessionId = String(deps.createLLMSession?.({
+      const sessionId = deps.createLLMSession?.({
         occurredAt,
         occurredAtUtc,
         source: input.source,
         metadata: input.metadata
-      }) ?? input.sessionId ?? `talk:${Date.now()}:${Math.random().toString(16).slice(2)}`);
+      }) ?? input.sessionId ?? utcTimestamp(occurredAtUtc);
+      assertNumericSessionId(sessionId);
       deps.store.openSession({
         sessionId,
         source: input.source,
@@ -590,16 +591,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
 
   return runtime;
 
-  function markAgentLoopReady(sessionId: string, delayMs = 0): void {
+  function markAgentLoopReady(sessionId: number, delayMs = 0): void {
     if (agentLoopInterruptedSessions.has(sessionId)) return;
     readyAgentLoopSessions.set(sessionId, deps.time.now().epochMs + delayMs);
   }
 
-  function isAgentLoopOutputReady(sessionId: string): boolean {
+  function isAgentLoopOutputReady(sessionId: number): boolean {
     return deps.store.isSessionOutputIdle(sessionId) && !foregroundPlaybackPendingSessions.has(sessionId);
   }
 
-  function shouldAppendNoSpeechUserMessage(sessionId: string, latestInterrupt: TalkOutputInterrupt | undefined, messages: LLMMessage[]): boolean {
+  function shouldAppendNoSpeechUserMessage(sessionId: number, latestInterrupt: TalkOutputInterrupt | undefined, messages: LLMMessage[]): boolean {
     if (latestInterrupt) return false;
     if (agentLoopInterruptedSessions.has(sessionId)) return false;
     const lastMessage = messages[messages.length - 1];
@@ -622,17 +623,27 @@ function current(time: CurrentTimeProvider): { occurredAt: string; occurredAtUtc
   };
 }
 
-function assertSessionExists(store: TalkStore, sessionId: string): void {
+function utcTimestamp(timeUtc: string): number {
+  const timestamp = Date.parse(timeUtc);
+  if (!Number.isFinite(timestamp)) throw new Error(`invalid talk session time: ${timeUtc}`);
+  return timestamp;
+}
+
+function assertNumericSessionId(sessionId: unknown): asserts sessionId is number {
+  if (typeof sessionId !== "number" || !Number.isFinite(sessionId)) throw new Error(`invalid talk session id: ${sessionId}`);
+}
+
+function assertSessionExists(store: TalkStore, sessionId: number): void {
   if (!store.getSession(sessionId)) throw new Error(`talk session not found: ${sessionId}`);
 }
 
-function assertOpenSession(store: TalkStore, sessionId: string): void {
+function assertOpenSession(store: TalkStore, sessionId: number): void {
   const session = store.getSession(sessionId);
   if (!session) throw new Error(`talk session not found: ${sessionId}`);
   if (session.status !== "open") throw new Error(`talk session is not open: ${sessionId}`);
 }
 
-function assertOutputSession(outputSessionId: string, expectedSessionId: string, outputId: string): void {
+function assertOutputSession(outputSessionId: number, expectedSessionId: number, outputId: string): void {
   if (outputSessionId !== expectedSessionId) {
     throw new Error(`talk output session mismatch: output=${outputId} session=${outputSessionId} expected=${expectedSessionId}`);
   }
@@ -655,7 +666,7 @@ function segmentId(kind: string, eventId: number): string {
 }
 
 function recordTranscriptEntry(store: TalkStore, input: {
-  sessionId: string;
+  sessionId: number;
   entryId: string;
   role: "system" | "assistant" | "user";
   contentText: string;
@@ -668,7 +679,7 @@ function recordTranscriptEntry(store: TalkStore, input: {
 }
 
 function recordTranscriptEnd(store: TalkStore, input: {
-  sessionId: string;
+  sessionId: number;
   occurredAt: string;
   occurredAtUtc?: string;
   sourceKind: string;

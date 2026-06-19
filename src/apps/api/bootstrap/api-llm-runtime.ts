@@ -8,8 +8,8 @@ export function createApiLLMRuntime(input: {
   apiRuntimeState: any;
   agentLoopRuntime: any;
   resolvePromptApiPreset(kind: any): any;
-  getConversationStartIndex(sessionId: string): number | undefined;
-  buildTalkRuntimeMessages(sessionId: string): any;
+  getConversationStartIndex(sessionId: number): number | undefined;
+  buildTalkRuntimeMessages(sessionId: number): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const apiSessionRuntime = createApiSessionRuntime({

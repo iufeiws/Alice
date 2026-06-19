@@ -331,7 +331,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const sessionId = await deps.sessionResolver.resolve(event);
       const routed = deps.intentRouter.route({
         ...event,
-        session: { ...event.session, sessionId }
+        externalSession: { ...event.externalSession, sessionId }
       });
 
       if (routed.kind === "unsupported") {
@@ -425,6 +425,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       if (initiatedBehaviorRunPlan && !initiatedBehavior && (!initiatedBehaviorExecution || initiatedBehaviorExecution.result !== "completed")) {
         return [];
       }
+      let createdSessionThisRun = false;
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
@@ -489,6 +490,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               }
             });
             initiatedBehavior = undefined;
+            createdSessionThisRun = true;
             return preparedSession.session;
           }
         });
@@ -539,6 +541,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           });
           return;
         }
+        if (createdSessionThisRun) return;
         const appendProfile = {
           ...promptProfile,
           appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
@@ -745,7 +748,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         toolName: "check_chat",
         input: previewInput,
         requester: event.source,
-        session: event.session
+        externalSession: event.externalSession
       });
       if (!preview.ok) return false;
       const currentPreviewTokens = estimateTextTokens(toolResultText(preview));
@@ -950,7 +953,7 @@ async function executeAgentInitiatedBehaviorBackendSteps(
         toolName: "sleep_cocoon",
         input: step.arguments,
         requester: event.source,
-        session: { ...event.session, sessionId }
+        externalSession: { ...event.externalSession, sessionId }
       });
       if (!result.ok) {
         const error = result.error ?? "sleep_cocoon_backend_effect_failed";
@@ -1053,7 +1056,7 @@ function buildReply(
       accountId: event.source.accountId,
       channelId: event.source.channelId,
       userId: event.source.userId,
-      sessionId: event.session.sessionId,
+      sessionId: event.externalSession.sessionId,
       replyTo: event.meta.replyTo ?? event.source.rawMessageId
     },
     content,

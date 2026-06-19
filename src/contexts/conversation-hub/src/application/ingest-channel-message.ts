@@ -42,9 +42,9 @@ export type MessageRuntimeDeps = {
   isLLMSessionActive?: () => boolean;
   agentLoopRuntime?: AgentLoopRuntime;
   talkRuntime?: {
-    markAgentLoopReady?(sessionId: string): void;
-    claimReadyAgentLoopSession?(): string | undefined;
-    prepareReadyAgentLoopSession?(sessionId: string, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
+    markAgentLoopReady?(sessionId: number): void;
+    claimReadyAgentLoopSession?(): number | undefined;
+    prepareReadyAgentLoopSession?(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | undefined> | PreparedAgentLoopRun | undefined;
   };
   setTypingIndicator?(input: {
     plugin: string;
@@ -216,7 +216,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         plugin: event.source.plugin,
         kind: event.payload.kind,
         target: event.source.channelId ?? event.source.userId,
-        sessionId: event.session.sessionId,
+        sessionId: event.externalSession.sessionId,
         rawMessageId: event.source.rawMessageId,
         externalEventId: event.id,
         status: "received",
@@ -227,7 +227,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
         deps.clearLLMSession?.("force_wake");
         deps.onForceWake?.();
-        deps.appendLog("info", `force wake command handled: ${event.session.sessionId}`);
+        deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
         return;
       }
       const receivedAt = event.meta.receivedAt;
@@ -235,7 +235,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.store.upsertInboundMessage({
         plugin: event.source.plugin,
         externalMessageId: event.source.rawMessageId ?? event.id,
-        conversationId: event.session.sessionId,
+        conversationId: event.externalSession.sessionId,
         senderId: event.source.userId,
         senderRole: "user",
         contentType: event.payload.kind,
@@ -248,12 +248,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
       });
       deps.onInboundUserMessage?.({
-        sessionId: event.session.sessionId,
+        sessionId: event.externalSession.sessionId,
         receivedAt,
         receivedAtUtc
       });
-      latestSessionEvents.set(event.session.sessionId, event);
-      markPending(event.session.sessionId);
+      latestSessionEvents.set(event.externalSession.sessionId, event);
+      markPending(event.externalSession.sessionId);
     },
     ingestLifecycle(event) {
       deps.appendMessageLog({
@@ -408,11 +408,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   async function runGeneratedSession(event: AgentEvent, label: string): Promise<boolean> {
-    if (processingSessions.has(event.session.sessionId)) return false;
-    processingSessions.add(event.session.sessionId);
+    if (processingSessions.has(event.externalSession.sessionId)) return false;
+    processingSessions.add(event.externalSession.sessionId);
     try {
-      await setTypingIndicator({ ...event.source, sessionId: event.session.sessionId, typing: true });
-      deps.appendLog("info", `${label} session started: ${event.session.sessionId}`);
+      await setTypingIndicator({ ...event.source, sessionId: event.externalSession.sessionId, typing: true });
+      deps.appendLog("info", `${label} session started: ${event.externalSession.sessionId}`);
       const outputs = await runChatEvent(event, label);
       const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
         plugin: output.target.plugin,
@@ -458,8 +458,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.appendLog("error", `${label} session failed: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
-      await setTypingIndicator({ ...event.source, sessionId: event.session.sessionId, typing: false });
-      processingSessions.delete(event.session.sessionId);
+      await setTypingIndicator({ ...event.source, sessionId: event.externalSession.sessionId, typing: false });
+      processingSessions.delete(event.externalSession.sessionId);
     }
   }
 
@@ -469,7 +469,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     return deps.agentState?.canRunHeartbeat() ?? true;
   }
 
-  async function runTalkSession(sessionId: string): Promise<boolean> {
+  async function runTalkSession(sessionId: number): Promise<boolean> {
     const result = await agentLoopRuntime.requestRun({
       kind: "talk",
       sessionId,
@@ -481,7 +481,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   async function runChatEvent(event: AgentEvent, reason: string): Promise<AgentOutput[]> {
     const result = await agentLoopRuntime.requestRun({
       kind: "chat",
-      sessionId: event.session.sessionId,
+      sessionId: event.externalSession.sessionId,
       reason,
       event
     });
@@ -533,7 +533,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target.sessionId
       },
@@ -804,7 +804,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         userId: userIdFromRecoveredMessage(latestLog),
         rawMessageId: latestLog.externalMessageId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId
       },
@@ -834,7 +834,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         channelId: target.channelId,
         userId: target.userId
       },
-      session: {
+      externalSession: {
         scope: "dm",
         sessionId: target.sessionId
       },

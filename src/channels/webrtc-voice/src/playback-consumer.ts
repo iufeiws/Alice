@@ -13,7 +13,7 @@ export type VoicePlaybackConsumer = ReturnType<typeof createVoicePlaybackConsume
 
 export function createVoicePlaybackConsumer(input: {
   deps: WebRtcVoiceDeps;
-  talkSessionId: string;
+  talkSessionId: number;
   playbackQueue: PlaybackItem[];
   outboundTrack: ServerOutboundAudioTrack;
   stampOutboundFrame(frame: ServerAudioFrame): ServerAudioFrame;
@@ -248,7 +248,7 @@ export function createVoicePlaybackConsumer(input: {
     if (!item.firstPlaybackStarted) {
       updateConsumer(item, frameText, Math.max(textTotalMs ?? 0, item.totalMs ?? 0));
       await item.beforeFirstPlayback?.();
-      input.deps.emitStatus?.({ state: "voice_call.connected", detail: input.talkSessionId });
+      input.deps.emitStatus?.({ state: "voice_call.connected", detail: String(input.talkSessionId) });
       item.firstPlaybackStarted = true;
     }
     item.status = "playing";

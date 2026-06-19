@@ -192,7 +192,7 @@ test("selfie uses default output target for voice call requester", async () => {
       toolName: "selfie",
       input: { action: "对镜头挥手" },
       requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
-      session: { scope: "dm", sessionId: "talk-session-1" }
+      externalSession: { scope: "dm", sessionId: "talk-session-1" }
     });
 
     assert.equal(result.ok, true);

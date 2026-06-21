@@ -4,6 +4,7 @@ import type { AliceStore, InsertOutboundMessageInput } from "../../../../context
 import type { AgentOutput } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { PhotoToolTarget } from "./selfie-tool.js";
+import { photoToolText } from "../profile.js";
 
 export type PhotoSendDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
@@ -65,7 +66,7 @@ export async function sendImage(deps: PhotoSendDeps, time: CurrentTimeProvider, 
 
 export async function sendSelfieFailureNotice(deps: PhotoSendDeps, time: CurrentTimeProvider, target: PhotoToolTarget): Promise<void> {
   try {
-    await sendText(deps, time, target, "-大失败-", "system");
+    await sendText(deps, time, target, photoToolText.failureNotice, "system");
   } catch (error) {
     deps.appendLog?.("warn", `selfie failure notice failed: ${error instanceof Error ? error.message : String(error)}`);
   }

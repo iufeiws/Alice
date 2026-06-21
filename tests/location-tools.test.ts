@@ -34,7 +34,8 @@ test("check_location is exposed only while world wanderer is enabled", async () 
             formattedAddress: "Ayasofya Meydani, Istanbul, Turkiye",
             panoId: "hidden-pano",
             lat: 41.0089,
-            lng: 28.9804
+            lng: 28.9804,
+            date: "2020-08"
           }
         };
       }
@@ -58,7 +59,7 @@ test("check_location is exposed only while world wanderer is enabled", async () 
   const result = await tools.execute({ id: "call_location", toolName: "check_location", input: {} });
 
   assert.equal(result.ok, true);
-  assert.equal(result.output, "Ayasofya Meydani, Istanbul, Turkiye");
+  assert.equal(result.output, "Ayasofya Meydani, Istanbul, Turkiye\nRecord date: 2020-08");
   assert.doesNotMatch(String(result.output), /hidden-pano|41\.0089|28\.9804/);
 });
 
@@ -72,8 +73,9 @@ test("readableWorldWandererLocationText falls back to address component names", 
       ],
       panoId: "hidden-pano",
       lat: 41.0089,
+      date: "2020-08",
       lng: 28.9804
     }),
-    "Ayasofya Meydani, TR"
+    "Ayasofya Meydani, TR\nRecord date: 2020-08"
   );
 });

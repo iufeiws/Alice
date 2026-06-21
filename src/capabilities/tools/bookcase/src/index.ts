@@ -1,11 +1,12 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import * as sqlite from "../../../../platform/storage/src/sqlite-compat.js";
+import { bookcaseInstructionBlockLines, bookcaseTool, bookcaseToolText } from "../profile.js";
 
 const path = await import("node:path");
 
@@ -55,28 +56,6 @@ type SelectedBook = {
 
 const defaultDbPath = path.resolve("assets/tools/bookcase/booksummaries.sqlite");
 
-const bookcaseTool: ToolDefinition = {
-  name: "bookcase",
-  description: [
-    "里面装着用于讲故事的书",
-    "action=draw 从书橱抽取一本书来讲故事",
-    "action=return 讲完之后必须把书还回去。"
-  ].join(""),
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: { type: "string", enum: ["draw", "return"], default: "draw", description: "draw 抽取一本书；return 归还书本并请求重开会话。" },
-      title: { type: "string", description: "可选，按书名模糊匹配。" },
-      author: { type: "string", description: "可选，按作者模糊匹配。" },
-      genre: { type: "string", description: "可选，按类型模糊匹配，如 Fantasy、Satire、Crime Fiction。" },
-      minSummaryChars: { type: "number", default: 1200, description: "母版剧情简介的最小字符数。" },
-      seed: { type: "number", description: "可选，提供后随机抽取可复现。" }
-    },
-    required: ["action"],
-    additionalProperties: false
-  }
-};
-
 export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
   const dbPath = deps.dbPath ?? defaultDbPath;
   const getUserName = deps.getUserName ?? (() => "user");
@@ -88,7 +67,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
     },
     async execute(call) {
       if (call.toolName === "bookcase") return bookcase(call);
-      return { callId: call.id, ok: false, error: `Unknown bookcase tool: ${call.toolName}` };
+      return { callId: call.id, ok: false, error: bookcaseToolText.unknownTool(call.toolName) };
     }
   };
 
@@ -96,7 +75,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
     const action = stringValue(call.input.action) || "draw";
     if (action === "draw") return drawBookcaseBook(call);
     if (action === "return") return returnBookcaseBook(call);
-    return toolError(call, "unsupported action");
+    return toolError(call, bookcaseToolText.unsupportedAction);
   }
 
   async function drawBookcaseBook(call: ToolCall): Promise<ToolResult> {
@@ -104,7 +83,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
     try {
       db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
       const ids = candidateIds(db, call.input);
-      if (ids.length === 0) return toolError(call, "no matching book summaries found");
+      if (ids.length === 0) return toolError(call, bookcaseToolText.noMatchingSummaries);
 
       const selectedId = chooseId(ids, call.input);
       const book = fetchBook(db, selectedId);
@@ -117,7 +96,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
         fixedPrefixTtlMs: 2 * 60 * 60 * 1000,
         output
       };
-      await sendBookcaseNotice(call, "-少女已取书-");
+      await sendBookcaseNotice(call, bookcaseToolText.drawNotice);
       return result;
     } catch (error) {
       return toolError(call, error instanceof Error ? error.message : String(error));
@@ -133,9 +112,9 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       resetLLMSession: true,
       clearFixedPrefix: true,
       invalidateLLMSession: true,
-      output: formatReturnAsXml("书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。")
+      output: formatReturnAsXml(bookcaseToolText.returnMessage)
     };
-    await sendBookcaseNotice(call, "-少女已还书-");
+    await sendBookcaseNotice(call, bookcaseToolText.returnNotice);
     return result;
   }
 
@@ -269,7 +248,7 @@ function chooseId(ids: number[], input: Record<string, unknown>): number {
 
 function fetchBook(db: DatabaseSync, id: number): SelectedBook {
   const row = db.prepare("SELECT * FROM books WHERE id = ?").get(id);
-  if (!row) throw new Error(`book id not found: ${id}`);
+  if (!row) throw new Error(bookcaseToolText.bookIdNotFound(id));
   const genres = db.prepare("SELECT genre FROM book_genres WHERE book_id = ? ORDER BY rowid")
     .all(id)
     .map((genreRow: { genre: string }) => genreRow.genre);
@@ -315,12 +294,7 @@ function formatBookAsXml(book: SelectedBook, userName: string, timeText: string)
     "  <summary>",
     escapeXml(book.summary),
     "  </summary>",
-    "  <instructions>",
-    "    - 用第一人称视角为{{user}}讲述这个故事；从梗概中选择一个主角作为爱丽丝，另一个与主角有紧密关系的角色作为{{user}}, 保持外壳设定的称呼。",
-    "    - 语言使用中文。",
-    "    - 在故事的最后说出故事的引用来源",
-    "    - 讲完故事必须使用toolcall action = return 归还书籍, 如果弄丢了{{user}}会生气 ",
-    "  </instructions>",
+    ...bookcaseInstructionBlockLines,
     "</book>",
     `<time>${escapeXml(timeText)}<\\time>`
   ].join("\n");

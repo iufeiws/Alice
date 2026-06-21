@@ -3,7 +3,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import { todayMessagingAnchor } from "../../../../platform/time/src/index.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sanitizeMessageText, summarizeAudioText } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -13,6 +13,7 @@ import type {
   InsertOutboundMessageInput,
   StoredConversationMessage
 } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
+import { checkChatTool, messagingSystemPromptMessages, messagingToolText, sendChatTool, waitChatTool } from "../profile.js";
 
 const fsp = await import("node:fs/promises");
 const path = await import("node:path");
@@ -100,7 +101,7 @@ export function formatCheckChatMessages(
 ): string {
   return messages.length > 0 || (options.shellEvents?.length ?? 0) > 0
     ? formatTimelineBlocks(messages, options.shellEvents ?? [], options.timeZone, options.userName)
-    : "nothing new";
+    : messagingToolText.nothingNew;
 }
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
@@ -133,13 +134,13 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat" || call.toolName === "send_message") return sendMessage(call);
       if (call.toolName === "wait_chat") return waitChat(call);
       if (call.toolName === "search_messages") return searchMessages(call);
-      return { callId: call.id, ok: false, error: `Unknown messaging tool: ${call.toolName}` };
+      return { callId: call.id, ok: false, error: messagingToolText.unknownTool(call.toolName) };
     }
   };
 
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return toolError(call, "No current messaging session is available");
+    if (!target) return toolError(call, messagingToolText.noCurrentSession);
     return viewMessagesForScope(call.id, target, resolveViewScope(call.input.scope ?? call.input.__scope), {
       readonly: call.input.__preview === true,
       fromPrefixAfterMessageId: integerValue(call.input.__fromPrefixAfterMessageId),
@@ -235,9 +236,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   async function searchMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return toolError(call, "No current messaging session is available");
+    if (!target) return toolError(call, messagingToolText.noCurrentSession);
     const content = stringValue(call.input.content).trim();
-    if (!content) return toolError(call, "content is required");
+    if (!content) return toolError(call, messagingToolText.contentRequired);
     const direction = normalizeDirection(call.input.direction);
     const limit = clampInt(call.input.limit, 3, 1, 20);
     const contextCount = clampInt(call.input.contextCount, 10, 1, 50);
@@ -268,7 +269,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
           `#${index + 1} hit=${block.hitMessageId} time=${block.hitTime}`,
           block.messages
         ].join("\n")).join("\n\n")
-        : "nothing found"
+        : messagingToolText.nothingFound
     };
   }
 
@@ -282,18 +283,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   async function sendMessage(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return toolError(call, "No current messaging session is available");
+    if (!target) return toolError(call, messagingToolText.noCurrentSession);
     const type = normalizeSendType(call.input.type);
-    if (!type) return toolError(call, "unsupported message type");
+    if (!type) return toolError(call, messagingToolText.unsupportedMessageType);
     const rawContent = stringValue(call.input.content);
     const content = type === "message" || type === "voice"
       ? filterParentheticalSendContent(rawContent)
       : rawContent;
-    if (!content.trim()) return toolError(call, "content is required");
+    if (!content.trim()) return toolError(call, messagingToolText.contentRequired);
     const parts = type === "message" || type === "voice"
       ? splitSendContentParts(content)
       : [content];
-    if (parts.length === 0) return toolError(call, "content is required");
+    if (parts.length === 0) return toolError(call, messagingToolText.contentRequired);
 
     const results = [];
     for (const part of parts) {
@@ -318,7 +319,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       : [];
     const fallback = results
       .filter((result) => !result.storedId)
-      .map((result) => `Alice:${result.content}${result.ok ? "" : "[发送失败]"}`);
+      .map((result) => messagingToolText.fallbackSentLine(result.content, result.ok));
     const output = [
       messages.length > 0 ? formatTimelineBlocks(messages, [], time.timeZone, userName()) : "",
       ...fallback
@@ -326,7 +327,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return {
       callId,
       ok: true,
-      output: appendCurrentTime(output || "nothing new", time.now().iso)
+      output: appendCurrentTime(output || messagingToolText.nothingNew, time.now().iso)
     };
   }
 
@@ -578,60 +579,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 }
 
-const checkChatTool: ToolDefinition = {
-  name: "check_chat",
-  description: "查看聊天记录。默认返回新增消息。",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false
-  }
-};
-
-const sendChatTool: ToolDefinition = {
-  name: "send_chat",
-  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 和 type=voice 会把 content 中的换行拆成多条消息并间隔发送；type=voice 会把每段文本合成为语音并发送。",
-  inputSchema: {
-    type: "object",
-    properties: {
-      type: { type: "string", enum: ["message", "markdown", "image", "voice"] },
-      content: { type: "string" }
-    },
-    required: ["type", "content"],
-    additionalProperties: false
-  }
-};
-
-const waitChatTool: ToolDefinition = {
-  name: "wait_chat",
-  description: "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false
-  }
-};
-
-const searchMessagesTool: ToolDefinition = {
-  name: "search_messages",
-  description: "Search persisted messages in the current conversation and return contextual message blocks.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      content: { type: "string" },
-      direction: {
-        type: "string",
-        enum: ["backward", "forward", "从后到前", "从前到后"],
-        default: "backward"
-      },
-      limit: { type: "integer", minimum: 1, maximum: 20, default: 3 },
-      contextCount: { type: "integer", minimum: 1, maximum: 50, default: 10 }
-    },
-    required: ["content"],
-    additionalProperties: false
-  }
-};
-
 type ShellSwitchContextEntry = {
   kind: "shell";
   time: Date;
@@ -741,13 +688,13 @@ function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, us
 
 function formatContextEntryLine(entry: ChatContextEntry, userName: string): string {
   if (entry.kind === "shell") {
-    return `-壳切换:切换为${entry.personalityName}的${entry.relationshipName}爱丽丝-`;
+    return messagingToolText.shellSwitch(entry.personalityName, entry.relationshipName);
   }
   return formatMessageContentLine(entry.message, userName);
 }
 
 function appendCurrentTime(output: string, currentTime: string): string {
-  return `<chat-log>\n${output}\n</chat-log>\n<time>${currentTime}<\\time>`;
+  return messagingToolText.appendCurrentTime(output, currentTime);
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
@@ -755,14 +702,14 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
   const speaker = message.direction === "outbound" || message.senderRole === "assistant"
       ? "Alice"
       : userName;
-  const recalled = message.isRecalled ? "[已撤回]" : "";
+  const recalled = message.isRecalled ? messagingToolText.recalledTag : "";
   const sendStatus = !isSystem && message.direction === "outbound" && message.status === "send_failed"
-    ? "[发送失败]"
+    ? messagingToolText.sendFailedTag
     : !isSystem && message.direction === "outbound" && message.status === "sending"
-      ? "[发送中]"
+      ? messagingToolText.sendingTag
       : "";
   const reactions = summarizeReactions(message.reactionsJson);
-  const content = `${message.isRecalled ? "(message recalled)" : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
+  const content = `${message.isRecalled ? messagingToolText.recalledMessage : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
   if (isSystem) return content;
   return isMediaActionMessage(message) ? `${speaker}${content}` : `${speaker}:${content}`;
 }
@@ -770,14 +717,14 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
 function formatMessageContent(message: StoredConversationMessage): string {
   const content = parseContentJson(message.contentJson);
   if (isVoiceCallTranscriptMessage(message)) return message.contentText;
-  if (message.contentType === "image" || content?.kind === "image") return "发送了一张图片";
+  if (message.contentType === "image" || content?.kind === "image") return messagingToolText.imageMessage;
   if (message.contentType === "audio" || content?.kind === "audio") {
     const transcript = optionalStringValue(content?.transcript) || message.contentText;
     return summarizeAudioText(transcript, message.contentText);
   }
   if (message.contentType === "file" || content?.kind === "file") {
     const filePath = optionalStringValue(content?.filename) || optionalStringValue(content?.assetId) || message.contentText;
-    return `发送了文件[${filePath}]`;
+    return messagingToolText.fileMessage(filePath);
   }
   return message.contentText;
 }
@@ -814,8 +761,8 @@ function appendVoiceCallTranscriptRow(
   if (row.role === "system") {
     const text = row.contentText.trim();
     activeCall.currentSpeaker = undefined;
-    if (text === "开始") activeCall.lines.push("-已接通-");
-    else if (text === "结束") activeCall.lines.push("-已挂断-");
+    if (text === "开始") activeCall.lines.push(messagingToolText.voiceCallStarted);
+    else if (text === "结束") activeCall.lines.push(messagingToolText.voiceCallEnded);
     else if (text) activeCall.lines.push(text);
     return;
   }
@@ -876,13 +823,7 @@ function optionalStringValue(value: unknown): string | undefined {
 
 function isSystemPromptMessage(message: StoredConversationMessage): boolean {
   if (message.senderRole === "system") return true;
-  return [
-    "-少女拍照中-",
-    "-大失败-",
-    "-星界信号丢失-",
-    "(少女拍照中...)",
-    "(大失败...)"
-  ].includes(message.contentText);
+  return messagingSystemPromptMessages.includes(message.contentText);
 }
 
 function summarizeReactions(raw: string): string {

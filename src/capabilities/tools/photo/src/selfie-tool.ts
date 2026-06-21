@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { ToolCall, ToolDefinition, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 import { extensionForOutputFormat, normalizePhotoPluginConfig, readPhotoPluginConfig, selectedImageApiSettings, type PhotoPluginConfig, type SelfieGenerationMode } from "./config.js";
@@ -7,6 +7,9 @@ import { runAliceSelfieFastSkill } from "./codex-selfie.js";
 import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "./image-files.js";
 import { runOpenAIAPISelfie } from "./openai-api-selfie.js";
 import { extractSentMessageId, sendImage, sendSelfieFailureNotice, sendText, type PhotoSendDeps } from "./send-output.js";
+import { photoToolText, selfieTool } from "../profile.js";
+
+export { selfieTool };
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -89,30 +92,30 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
   async function selfie(call: ToolCall, executionContext?: ToolExecutionContext): Promise<ToolResult> {
     const marker = selfieMarker(executionContext);
     if (marker !== undefined && failedSelfieMarker === marker) {
-      return toolError(call, "selfie is blocked in this agent loop run after a previous failure");
+      return toolError(call, photoToolText.previousFailureBlocked);
     }
 
     const photoConfig = runtimePhotoConfig();
-    if (!photoConfig.enabled) return toolError(call, "photo selfie is disabled");
+    if (!photoConfig.enabled) return toolError(call, photoToolText.selfieDisabled);
 
     const target = resolveTarget(call);
-    if (!target) return toolError(call, "No current messaging session is available");
+    if (!target) return toolError(call, photoToolText.noCurrentSession);
 
     const action = stringValue(call.input.action).trim();
-    if (!action) return toolError(call, "action is required");
+    if (!action) return toolError(call, photoToolText.actionRequired);
 
     const aspectRatio = normalizeAspectRatio(call.input.aspectRatio);
-    if (!aspectRatio) return toolError(call, "unsupported aspectRatio");
+    if (!aspectRatio) return toolError(call, photoToolText.unsupportedAspectRatio);
 
     const context = deps.getSelfieContext?.();
-    if (!context) return toolError(call, "selfie context is not available");
+    if (!context) return toolError(call, photoToolText.contextUnavailable);
 
     const imageApiSettings = selectedImageApiSettings(photoConfig);
     const fullOutputDir = path.resolve(photoConfig.selfieOutputDir);
     const assetRoot = path.resolve(deps.selfieAssetRoot ?? "assets");
     const relativeDir = path.relative(assetRoot, fullOutputDir);
     if (relativeDir.startsWith("..") || path.isAbsolute(relativeDir)) {
-      return toolError(call, "selfie output directory must be inside assets");
+      return toolError(call, photoToolText.outputDirOutsideAssets);
     }
 
     let tempDir: string | undefined;
@@ -130,7 +133,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       let finalFilePath = path.resolve(fullOutputDir, fileName);
       let assetId = path.join(relativeDir, fileName);
 
-      await sendText(deps, time, target, "-少女拍照中-", "system");
+      await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const prompt = buildSelfiePrompt(action, context);
       const references = await resolveReferenceImages(context);
       deps.appendLog?.("info", [
@@ -194,21 +197,21 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       fs.renameSync(tempFilePath, finalFilePath);
       validateGeneratedImage(finalFilePath, fullOutputDir, photoConfig.selfieMaxBytes);
       const finalImageMime = detectImageMime(fs.readFileSync(finalFilePath));
-      if (finalImageMime !== "image/jpeg") throw new Error("generated selfie final file is not JPEG");
+      if (finalImageMime !== "image/jpeg") throw new Error(photoToolText.finalFileNotJpeg);
 
       const sent = await sendImage(deps, time, target, assetId);
       deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
       return {
         callId: call.id,
         ok: true,
-        output: "照片已发送",
+        output: photoToolText.sent,
         llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage
           ? [{
             kind: "image",
             path: finalFilePath,
             assetId,
             mime: finalImageMime,
-            followupText: "这是上一步工具返回的图像"
+            followupText: photoToolText.followupImageText
           }]
           : undefined
       };
@@ -233,7 +236,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
   function buildSelfiePrompt(action: string, context: SelfieContext): string {
     const referenceDir = runtimePhotoConfig().selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
-    if (!fs.existsSync(templatePath)) throw new Error("selfie prompt template was not found");
+    if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
     const template = fs.readFileSync(templatePath, "utf8");
     const now = time.now();
     return renderLLMText(template, {
@@ -271,7 +274,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
   async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; worldWandererStreetViewImage?: string }> {
     const referenceDir = runtimePhotoConfig().selfieReferenceDir;
-    const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), "selfie character reference image was not found");
+    const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), photoToolText.characterReferenceNotFound);
     const outfitImage = optionalFile(resolveOutfitImage(context));
     const worldWandererStreetViewImage = await resolveWorldWandererStreetViewReferenceImage();
     const images = [characterImage];
@@ -279,7 +282,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     if (worldWandererStreetViewImage) {
       images.push(worldWandererStreetViewImage);
     } else {
-      images.push(requireFile(path.resolve(referenceDir, libraryReferenceFileName), "selfie library reference image was not found"));
+      images.push(requireFile(path.resolve(referenceDir, libraryReferenceFileName), photoToolText.libraryReferenceNotFound));
     }
     return {
       images,
@@ -292,7 +295,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
   async function resolveWorldWandererStreetViewReferenceImage(): Promise<string | undefined> {
     const referenceImage = await deps.getWorldWandererStreetViewReferenceImage?.();
     if (!referenceImage) return undefined;
-    return requireFile(path.resolve(referenceImage), "world wanderer streetview reference image was not found");
+    return requireFile(path.resolve(referenceImage), photoToolText.streetviewReferenceNotFound);
   }
 
   function resolveTarget(call: ToolCall): PhotoToolTarget | undefined {
@@ -306,24 +309,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       : normalizePhotoPluginConfig({}, deps);
   }
 }
-
-export const selfieTool: ToolDefinition = {
-  name: "selfie",
-  description: "根据 action 动作描述自拍。 除非<user>特殊要求,确保只描述拍照时的动作。成功后会自动发送。",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: { type: "string" },
-      aspectRatio: {
-        type: "string",
-        enum: ["1:1", "4:3", "3:4", "16:9", "9:16"],
-        default: "3:4"
-      }
-    },
-    required: ["action"],
-    additionalProperties: false
-  }
-};
 
 function selfieExecutorForMode(mode: SelfieGenerationMode): SelfieExecutor {
   return mode === "codex" ? runAliceSelfieFastSkill : runOpenAIAPISelfie;

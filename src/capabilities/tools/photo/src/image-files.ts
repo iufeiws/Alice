@@ -1,4 +1,5 @@
 import { execFile } from "./process-exec.js";
+import { photoToolText } from "../profile.js";
 
 const fs = await import("node:fs");
 const moduleApi = await import("node:module");
@@ -10,19 +11,19 @@ const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 export function validateGeneratedImage(filePath: string, outputDir: string, maxBytes: number): void {
   const relative = path.relative(outputDir, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("generated selfie path is outside output directory");
+    throw new Error(photoToolText.generatedPathOutsideOutput);
   }
   if (!allowedExtensions.has(path.extname(filePath).toLowerCase())) {
-    throw new Error("generated selfie extension is not allowed");
+    throw new Error(photoToolText.generatedExtensionNotAllowed);
   }
   let stat: { isFile(): boolean; size: number };
   try {
     stat = fs.statSync(filePath);
   } catch {
-    throw new Error(`generated selfie file was not found at expected name ${path.basename(filePath)}; workdir files: ${listDirForLog(outputDir)}`);
+    throw new Error(photoToolText.generatedFileNotFound(path.basename(filePath), listDirForLog(outputDir)));
   }
-  if (!stat.isFile()) throw new Error("generated selfie path is not a file");
-  if (stat.size > maxBytes) throw new Error("generated selfie file is too large");
+  if (!stat.isFile()) throw new Error(photoToolText.generatedPathNotFile);
+  if (stat.size > maxBytes) throw new Error(photoToolText.generatedFileTooLarge);
 }
 
 export async function normalizeGeneratedSelfieJpeg(input: {
@@ -50,7 +51,7 @@ export async function normalizeGeneratedSelfieJpeg(input: {
   await convertImageToJpeg(input.tempFilePath, outputFilePath, input.timeoutMs);
   validateGeneratedImage(outputFilePath, input.tempDir, input.maxBytes);
   const convertedMime = detectImageMime(fs.readFileSync(outputFilePath));
-  if (convertedMime !== "image/jpeg") throw new Error("generated selfie JPEG conversion did not produce JPEG bytes");
+  if (convertedMime !== "image/jpeg") throw new Error(photoToolText.jpegConversionFailed);
   fs.rmSync(input.tempFilePath, { force: true });
   return { tempFilePath: outputFilePath, fileName: jpegFileName };
 }
@@ -83,9 +84,9 @@ export function detectImageMime(bytes: Buffer): string | undefined {
 export function listDirForLog(dirPath: string): string {
   try {
     const files = fs.readdirSync(dirPath);
-    return files.length > 0 ? files.slice(0, 20).join(",") : "(empty)";
+    return files.length > 0 ? files.slice(0, 20).join(",") : photoToolText.emptyDirectory;
   } catch {
-    return "(unreadable)";
+    return photoToolText.unreadableDirectory;
   }
 }
 

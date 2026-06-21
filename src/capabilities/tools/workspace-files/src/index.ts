@@ -1,4 +1,5 @@
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { editTool, globTool, grepTool, readTool, workspaceFilesToolText } from "../profile.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -25,83 +26,6 @@ export type WorkspaceFilesToolPlugin = ToolPlugin & {
 const defaultReadLimit = 2000;
 const maxGlobResults = 100;
 
-const readTool: ToolDefinition = {
-  name: "Read",
-  description: [
-    "Reads a file from the local workspace.",
-    "The file_path parameter must be a workspace-relative path.",
-    "Returns content with cat -n style line numbers. Use offset and limit to page through large files."
-  ].join("\n"),
-  inputSchema: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", description: "Workspace-relative path to the file to read." },
-      offset: { type: "number", description: "Optional 1-based line number to start reading from." },
-      limit: { type: "number", description: "Optional maximum number of lines to read." }
-    },
-    required: ["file_path"],
-    additionalProperties: false
-  }
-};
-
-const editTool: ToolDefinition = {
-  name: "Edit",
-  description: [
-    "Performs exact string replacements in a workspace file.",
-    "The file must have been read with Read in this session before editing.",
-    "old_string must match exactly. By default it must match exactly once; use replace_all only when every match should be replaced."
-  ].join("\n"),
-  inputSchema: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", description: "Workspace-relative path to the file to modify." },
-      old_string: { type: "string", description: "Exact text to replace." },
-      new_string: { type: "string", description: "Replacement text." },
-      replace_all: { type: "boolean", description: "Replace all occurrences of old_string." }
-    },
-    required: ["file_path", "old_string", "new_string"],
-    additionalProperties: false
-  }
-};
-
-const globTool: ToolDefinition = {
-  name: "Glob",
-  description: [
-    "Finds workspace files by glob pattern.",
-    "Supports ** for recursive matching. Results are sorted by modification time descending."
-  ].join("\n"),
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "Glob pattern such as **/*.ts." },
-      path: { type: "string", description: "Optional workspace-relative directory path to search from." }
-    },
-    required: ["pattern"],
-    additionalProperties: false
-  }
-};
-
-const grepTool: ToolDefinition = {
-  name: "Grep",
-  description: [
-    "Searches file contents in the workspace using ripgrep.",
-    "Defaults to files_with_matches. Use output_mode=content for matching lines or output_mode=count for per-file counts."
-  ].join("\n"),
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "Regular expression pattern to search for." },
-      path: { type: "string", description: "Optional workspace-relative file or directory path to search." },
-      glob: { type: "string", description: "Optional glob filter passed to ripgrep." },
-      type: { type: "string", description: "Optional ripgrep file type filter, such as ts or js." },
-      output_mode: { type: "string", enum: ["files_with_matches", "content", "count"], default: "files_with_matches" },
-      multiline: { type: "boolean", description: "Enable ripgrep multiline mode." }
-    },
-    required: ["pattern"],
-    additionalProperties: false
-  }
-};
-
 export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): WorkspaceFilesToolPlugin {
   const root = path.resolve(deps.root ?? process.cwd());
   const virtualFiles = deps.virtualFiles ?? new Map<string, WorkspaceVirtualFile>();
@@ -118,7 +42,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
         if (call.toolName === "Edit") return await editWorkspaceFile(call);
         if (call.toolName === "Glob") return await globWorkspaceFiles(call);
         if (call.toolName === "Grep") return grepWorkspaceFiles(call);
-        return toolError(call, `Unknown workspace file tool: ${call.toolName}`);
+        return toolError(call, workspaceFilesToolText.unknownTool(call.toolName));
       } catch (error) {
         return toolError(call, error instanceof Error ? error.message : String(error));
       }
@@ -159,14 +83,14 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
     const current = await readWorkspaceContent(resolved);
     const fingerprint = contentFingerprint(resolved, current);
     const previous = readSnapshots.get(resolved);
-    if (!previous) return toolError(call, "File must be read with Read before Edit");
-    if (previous !== fingerprint) return toolError(call, "File has changed since it was last read");
-    if (oldString.length === 0 && current.length > 0) return toolError(call, "old_string can be empty only when editing an empty file");
+    if (!previous) return toolError(call, workspaceFilesToolText.readBeforeEdit);
+    if (previous !== fingerprint) return toolError(call, workspaceFilesToolText.changedSinceRead);
+    if (oldString.length === 0 && current.length > 0) return toolError(call, workspaceFilesToolText.emptyOldString);
 
     const matches = oldString.length === 0 ? (current.length === 0 ? 1 : 0) : countOccurrences(current, oldString);
     if (matches === 0) return toolError(call, editNotFoundError(current, oldString));
     if (!replaceAll && matches > 1) {
-      return toolError(call, `old_string appears ${matches} times; include more surrounding context to identify one occurrence or use replace_all to replace every occurrence`);
+      return toolError(call, workspaceFilesToolText.ambiguousOldString(matches));
     }
 
     const next = oldString.length === 0
@@ -179,7 +103,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
     return {
       callId: call.id,
       ok: true,
-      output: `The file ${displayPath(resolved, root)} has been updated.`
+      output: workspaceFilesToolText.updated(displayPath(resolved, root))
     };
   }
 
@@ -189,7 +113,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
       ? root
       : resolveWorkspacePath(requiredString(call.input.path, "path"), root);
     const stat = await fsp.stat(base).catch(() => undefined);
-    if (!stat?.isDirectory()) return toolError(call, "path must be a directory inside the workspace");
+    if (!stat?.isDirectory()) return toolError(call, workspaceFilesToolText.pathMustBeDirectory);
 
     const matchers = expandBraces(pattern).map(globToRegExp);
     const files = await collectFiles(base);
@@ -209,7 +133,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
     return {
       callId: call.id,
       ok: true,
-      output: visible.length > 0 ? `${visible.join("\n")}${suffix}` : "No files found"
+      output: visible.length > 0 ? `${visible.join("\n")}${suffix}` : workspaceFilesToolText.noFilesFound
     };
   }
 
@@ -219,7 +143,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
       ? root
       : resolveWorkspacePath(requiredString(call.input.path, "path"), root);
     const outputMode = stringValue(call.input.output_mode) || "files_with_matches";
-    if (!["files_with_matches", "content", "count"].includes(outputMode)) return toolError(call, "unsupported output_mode");
+    if (!["files_with_matches", "content", "count"].includes(outputMode)) return toolError(call, workspaceFilesToolText.unsupportedOutputMode);
     const searchIsFile = isFilePath(searchPath);
     const args = ["--color", "never"];
     if (outputMode === "files_with_matches") args.push("--files-with-matches");
@@ -243,18 +167,18 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
     args.push(pattern, searchArg);
 
     const result = childProcess.spawnSync("rg", args, { cwd: root, encoding: "utf8" });
-    if (result.error) return toolError(call, `rg failed: ${result.error.message}`);
-    if (result.status === 1) return { callId: call.id, ok: true, output: "No matches found" };
-    if (result.status !== 0) return toolError(call, result.stderr?.trim() || `rg exited with status ${result.status}`);
-    return { callId: call.id, ok: true, output: formatGrepOutput(result.stdout.trimEnd()) || "No matches found" };
+    if (result.error) return toolError(call, workspaceFilesToolText.rgFailed(result.error.message));
+    if (result.status === 1) return { callId: call.id, ok: true, output: workspaceFilesToolText.noMatchesFound };
+    if (result.status !== 0) return toolError(call, result.stderr?.trim() || workspaceFilesToolText.rgExited(result.status));
+    return { callId: call.id, ok: true, output: formatGrepOutput(result.stdout.trimEnd()) || workspaceFilesToolText.noMatchesFound };
   }
 
   async function readWorkspaceContent(resolved: string): Promise<string> {
     const virtual = virtualFiles.get(resolved);
     if (virtual) return virtual.read();
     const stat = await fsp.stat(resolved).catch(() => undefined);
-    if (!stat) throw new Error("file not found");
-    if (!stat.isFile()) throw new Error("path must point to a file");
+    if (!stat) throw new Error(workspaceFilesToolText.fileNotFound);
+    if (!stat.isFile()) throw new Error(workspaceFilesToolText.pathMustPointToFile);
     return await fsp.readFile(resolved, "utf8");
   }
 
@@ -275,30 +199,30 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
 }
 
 export function formatReadOutput(content: string, options: { offset?: number; limit?: number } = {}): string {
-  if (content.length === 0) return "File is empty.";
+  if (content.length === 0) return workspaceFilesToolText.fileIsEmpty;
   const lines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
   const offset = Math.max(1, Math.floor(options.offset ?? 1));
   const limit = Math.max(1, Math.floor(options.limit ?? defaultReadLimit));
   const startIndex = offset - 1;
   const selected = lines.slice(startIndex, startIndex + limit);
-  if (selected.length === 0) return `No lines found at offset ${offset}. File has ${lines.length} line(s).`;
+  if (selected.length === 0) return workspaceFilesToolText.noLinesFound(offset, lines.length);
   const width = String(startIndex + selected.length).length;
   const body = selected
     .map((line, index) => `${String(startIndex + index + 1).padStart(Math.max(6, width), " ")}\t${line}`)
     .join("\n");
   const nextLine = startIndex + selected.length + 1;
-  const suffix = nextLine <= lines.length ? `\n\n[Showing lines ${offset}-${nextLine - 1} of ${lines.length}. Use offset=${nextLine} to continue.]` : "";
+  const suffix = nextLine <= lines.length ? `\n\n${workspaceFilesToolText.showingLines(offset, nextLine - 1, lines.length, nextLine)}` : "";
   return `${body}${suffix}`;
 }
 
 function resolveWorkspacePath(filePath: string, root: string): string {
-  if (path.isAbsolute(filePath)) throw new Error("path must be workspace-relative");
+  if (path.isAbsolute(filePath)) throw new Error(workspaceFilesToolText.pathWorkspaceRelative);
   if (filePath.startsWith(`.${path.sep}`) || filePath.startsWith(`./`) || filePath.startsWith(`.\\`)) {
-    throw new Error("path is outside the workspace");
+    throw new Error(workspaceFilesToolText.pathOutsideWorkspace);
   }
   const resolved = path.resolve(root, filePath);
   const relative = path.relative(root, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("path is outside the workspace");
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(workspaceFilesToolText.pathOutsideWorkspace);
   return resolved;
 }
 
@@ -365,24 +289,24 @@ function expandBraces(pattern: string): string[] {
 }
 
 function editNotFoundError(content: string, oldString: string): string {
-  const diagnostics: string[] = ["old_string not found in file"];
+  const diagnostics: string[] = [workspaceFilesToolText.oldStringNotFound];
   if (oldString.includes("\n") || oldString.includes("\r")) {
     const normalizedOld = normalizeLineEndings(oldString);
-    if (normalizeLineEndings(content).includes(normalizedOld)) diagnostics.push("possible line ending mismatch: old_string differs only after CRLF/LF normalization");
+    if (normalizeLineEndings(content).includes(normalizedOld)) diagnostics.push(workspaceFilesToolText.lineEndingMismatch);
   }
   const trimmedOld = trimLineEndWhitespace(oldString);
   if (trimLineEndWhitespace(content).includes(trimmedOld) || content.includes(oldString.trim())) {
-    diagnostics.push("possible whitespace mismatch: check leading, trailing, or line-end spaces in old_string");
+    diagnostics.push(workspaceFilesToolText.whitespaceMismatch);
   }
   const compactOld = normalizeWhitespace(oldString);
   if (normalizeWhitespace(content).includes(compactOld)) {
-    diagnostics.push("possible whitespace-normalized match: spacing or indentation differs from the file");
+    diagnostics.push(workspaceFilesToolText.whitespaceNormalizedMatch);
   }
   const unicodeOld = oldString.normalize("NFC");
   if (content.normalize("NFC").includes(unicodeOld) && content.includes(oldString) === false) {
-    diagnostics.push("possible Unicode normalization mismatch: old_string matches after NFC normalization");
+    diagnostics.push(workspaceFilesToolText.unicodeNormalizationMismatch);
   }
-  diagnostics.push("No edit was applied. Re-read the file and provide an exact old_string with enough surrounding context.");
+  diagnostics.push(workspaceFilesToolText.noEditApplied);
   return diagnostics.join("\n");
 }
 
@@ -439,7 +363,7 @@ function countOccurrences(text: string, needle: string): number {
 }
 
 function requiredString(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`${name} is required`);
+  if (typeof value !== "string") throw new Error(workspaceFilesToolText.required(name));
   return value;
 }
 

@@ -3,9 +3,10 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { DailyShellStore, ShellOption } from "../../../../contexts/agent-profile/src/ports/shell-store.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
+import { shellToolText, wardrobeTool } from "../profile.js";
 
 export type ShellToolTarget = {
   plugin: string;
@@ -44,7 +45,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     },
     async execute(call) {
       if (call.toolName === "wardrobe") return wardrobe(call);
-      return { callId: call.id, ok: false, error: `Unknown shell tool: ${call.toolName}` };
+      return { callId: call.id, ok: false, error: shellToolText.unknownTool(call.toolName) };
     }
   };
 
@@ -53,7 +54,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     if (action === "list") return listWardrobe(call);
     if (action === "mirror") return mirrorWardrobe(call);
     if (action === "switch") return switchOutfit(call);
-    return toolError(call, "unsupported action");
+    return toolError(call, shellToolText.unsupportedAction);
   }
 
   function listWardrobe(call: ToolCall): ToolResult {
@@ -77,24 +78,24 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     return {
       callId: call.id,
       ok: true,
-      output: `你看到镜子中的自己穿着: \n 服装：${outfit.name}\n${outfit.content}`
+      output: shellToolText.mirror(outfit.name, outfit.content)
     };
   }
 
   async function switchOutfit(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return toolError(call, "No current messaging session is available");
+    if (!target) return toolError(call, shellToolText.noCurrentSession);
     const name = stringValue(call.input.name).trim();
-    if (!name) return toolError(call, "name is required");
+    if (!name) return toolError(call, shellToolText.nameRequired);
 
     const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
     const match = resolveOutfitByName(config.outfits, name);
-    if (match.kind === "none") return toolError(call, "unknown outfit name");
+    if (match.kind === "none") return toolError(call, shellToolText.unknownOutfitName);
     if (match.kind === "ambiguous") {
       return {
         callId: call.id,
         ok: false,
-        error: `ambiguous outfit name: ${name}`,
+        error: shellToolText.ambiguousOutfitName(name),
         output: JSON.stringify({
           candidates: match.outfits.map((outfit) => toOutfitOutput(outfit, outfit.id === config.daily.outfit.id))
         })
@@ -105,7 +106,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     try {
       shell = deps.dailyShellStore.switchOutfit(time.now().date, time.timeZone, match.outfit.id);
     } catch (error) {
-      if (error instanceof Error && error.message === "unknown_outfit") return toolError(call, "unknown outfit name");
+      if (error instanceof Error && error.message === "unknown_outfit") return toolError(call, shellToolText.unknownOutfitName);
       throw error;
     }
 
@@ -117,13 +118,13 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       ok: true,
       output: JSON.stringify({
         current: toOutfitOutput(shell.outfit, true),
-        message: `服装已切换为${shell.outfit.name}`
+        message: shellToolText.switched(shell.outfit.name)
       })
     };
   }
 
   async function sendChangingNotice(callId: string, target: ShellToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
-    const text = "-少女已更衣-";
+    const text = shellToolText.changingNotice;
     const now = time.now();
     const output: AgentOutput = {
       id: createId("tool_out"),
@@ -202,20 +203,6 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     return deps.getDefaultTarget?.();
   }
 }
-
-const wardrobeTool: ToolDefinition = {
-  name: "wardrobe",
-  description: "查看或切换爱丽丝的服装。action=list 返回可用衣橱，可用 name 按服装 name/id/group/content 模糊过滤；action=mirror 照镜子,看看爱丽丝当前穿的是什么服装；action=switch 根据服装 name 切换服装。",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: { type: "string", enum: ["list", "mirror", "switch"] },
-      name: { type: "string" }
-    },
-    required: ["action"],
-    additionalProperties: false
-  }
-};
 
 function toOutfitOutput(outfit: ShellOption, current: boolean): Record<string, unknown> {
   return {

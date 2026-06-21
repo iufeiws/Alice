@@ -1,8 +1,9 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentOutput, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
+import { sleepCocoonTool, sleepCocoonToolText } from "../profile.js";
 
 type SleepCocoonAgentState = {
   getSnapshot(): { state: string; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; sleepCocoonAutoCheckedAt?: string };
@@ -33,24 +34,6 @@ export type SleepCocoonToolsDeps = {
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
 
-const sleepCocoonTool: ToolDefinition = {
-  name: "sleep_cocoon",
-  description: "睡眠茧。action=in 表示钻进睡眠茧准备入睡；action=out 表示在睡着前出来并撤销入睡倒计时。",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: { type: "string", enum: ["in", "out"] },
-      hours: {
-        type: "integer",
-        minimum: 1,
-        description: "可选睡眠小时数；实际睡眠会加入前后十五分钟随机浮动。"
-      }
-    },
-    required: ["action"],
-    additionalProperties: false
-  }
-};
-
 export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
   const random = deps.random ?? Math.random;
 
@@ -60,11 +43,11 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       return [sleepCocoonTool];
     },
     async execute(call) {
-      if (call.toolName !== "sleep_cocoon") return toolError(call, `Unknown sleep_cocoon tool: ${call.toolName}`);
+      if (call.toolName !== "sleep_cocoon") return toolError(call, sleepCocoonToolText.unknownTool(call.toolName));
       const action = stringValue(call.input.action).trim();
       if (action === "in") return enterSleepCocoon(call);
       if (action === "out") return exitSleepCocoon(call);
-      return toolError(call, "unsupported action");
+      return toolError(call, sleepCocoonToolText.unsupportedAction);
     }
   };
 
@@ -78,31 +61,31 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       sleepDurationMs,
       resetSleepCocoonAuto: true
     });
-    await sendSuccessNotice(call, "-少女就寝中-");
+    await sendSuccessNotice(call, sleepCocoonToolText.enterNotice);
     return {
       callId: call.id,
       ok: true,
       resetLLMSession: true,
       fixedPrefixKind: "sleep_cocoon",
       fixedPrefixTtlMs: 2 * HOUR,
-      output: "success"
+      output: sleepCocoonToolText.success
     };
   }
 
   async function exitSleepCocoon(call: ToolCall): Promise<ToolResult> {
     const current = deps.agentState.getSnapshot();
     if (current.state !== "going_to_sleep") {
-      return toolError(call, current.state === "sleeping" ? "already sleeping" : "no sleep cocoon countdown to cancel");
+      return toolError(call, current.state === "sleeping" ? sleepCocoonToolText.alreadySleeping : sleepCocoonToolText.noCountdownToCancel);
     }
     deps.agentState.setState("waiting", { reason: "sleep_cocoon_out", clearSleepCocoon: true });
-    await sendSuccessNotice(call, "-少女起床-");
+    await sendSuccessNotice(call, sleepCocoonToolText.exitNotice);
     return {
       callId: call.id,
       ok: true,
       resetLLMSession: true,
       clearFixedPrefix: true,
       invalidateLLMSession: true,
-      output: "success"
+      output: sleepCocoonToolText.success
     };
   }
 

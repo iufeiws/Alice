@@ -868,8 +868,43 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
 });
 
+test("send_chat blocks when the user has not replied recently", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-wait-user"), "alice.sqlite"));
+  for (let index = 0; index < 10; index += 1) {
+    store.insertOutboundMessage({
+      plugin: "wechat",
+      conversationId: "wechat:dm:wx-user",
+      contentType: "text",
+      contentText: `sent ${index + 1}`,
+      createdAt: new Date(Date.parse("2026-05-26T00:00:00.000Z") + index).toISOString()
+    });
+  }
+  let sendCalls = 0;
+  const tools = createMessagingTools({
+    store,
+    outputRouter: {
+      async send() {
+        sendCalls += 1;
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_wait_user",
+    toolName: "send_chat",
+    input: { type: "message", content: "should wait" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "send_chat blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。");
+  assert.equal(sendCalls, 0);
+  assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 20).filter((message) => message.direction === "outbound").length, 10);
+});
+
 test("send_chat filters parenthetical text before sending and storing", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-filter-parentheses"), "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
     store,
@@ -904,6 +939,7 @@ test("send_chat filters parenthetical text before sending and storing", async ()
 
 test("send_chat filters DSML markup lines before sending and storing", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-filter-dsml"), "alice.sqlite"));
+  seedUserInbound(store, "feishu:dm:ou-user", "feishu");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
     store,
@@ -952,6 +988,7 @@ test("messaging tools prepare voice synthesizer when llm request starts", async 
 test("send_chat voice synthesizes text, sends audio, and removes generated file", async () => {
   const dir = makeTempDir("messaging-send-voice");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "custom:dm:user-1", "custom");
   const sent: AgentOutput[] = [];
   let generatedPath = "";
   const trainingDir = path.join(dir, "tts-training", "voice-massage");
@@ -1006,6 +1043,7 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
 
 test("send_chat voice falls back to text for wechat without calling tts", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-wechat-voice-text"), "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   let ttsCalls = 0;
   const tools = createMessagingTools({
@@ -1045,6 +1083,7 @@ test("send_chat voice falls back to text for wechat without calling tts", async 
 test("send_chat voice can keep audio synthesis for wechat when compatibility fallback is disabled", async () => {
   const dir = makeTempDir("messaging-send-wechat-voice-audio");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   let ttsCalls = 0;
   const tools = createMessagingTools({
@@ -1080,6 +1119,7 @@ test("send_chat voice can keep audio synthesis for wechat when compatibility fal
 test("tts plugin translates before tts while preserving original send_chat voice transcript", async () => {
   const dir = makeTempDir("messaging-tts");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   const synthesizedTexts: string[] = [];
   const llmMessages: Array<{ role: string; content: string }> = [];
@@ -2142,6 +2182,7 @@ test("tts passes configured voice language to Genie overrides", () => {
 test("send_chat voice sends bracketed transcript text on feishu", async () => {
   const dir = makeTempDir("messaging-send-voice-feishu-transcript");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "feishu:dm:oc_1", "feishu");
   const sent: AgentOutput[] = [];
   const logs: Array<{ status?: string; summary: string }> = [];
   let generatedPath = "";
@@ -2188,6 +2229,7 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
 test("send_chat voice retries feishu transcript without storing it", async () => {
   const dir = makeTempDir("messaging-send-voice-feishu-transcript-retry");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "feishu:dm:oc_1", "feishu");
   const sent: AgentOutput[] = [];
   const logs: Array<{ status?: string; summary: string }> = [];
   const warnings: string[] = [];
@@ -3170,6 +3212,7 @@ test("configured voice synthesizer falls back to moss when explicit genie servic
 test("send_chat voice splits newline and escaped newline text into multiple audio messages", async () => {
   const dir = makeTempDir("messaging-send-voice-newline");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   const logs: Array<{ status?: string; summary: string }> = [];
   const synthesizedTexts: string[] = [];
@@ -3214,6 +3257,7 @@ test("send_chat voice splits newline and escaped newline text into multiple audi
 
 test("send_chat voice returns tts failure without sending fallback text", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-voice-tts-failed"), "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   let sendCalls = 0;
   const tools = createMessagingTools({
@@ -3252,6 +3296,7 @@ test("send_chat voice returns tts failure without sending fallback text", async 
 test("send_chat voice send failure marks failed and removes generated file without retry", async () => {
   const dir = makeTempDir("messaging-send-voice-send-failed");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   let attempts = 0;
   let generatedPath = "";
@@ -3305,6 +3350,7 @@ test("send_chat voice send failure marks failed and removes generated file witho
 
 test("send_chat normalizes prefixed feishu chat ids before sending", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-feishu-id"), "alice.sqlite"));
+  seedUserInbound(store, "feishu:dm:oc_018825f465c5e6a00e32739f76f47271", "feishu");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
     store,
@@ -3336,6 +3382,7 @@ test("send_chat normalizes prefixed feishu chat ids before sending", async () =>
 
 test("send_chat returns failed outbound messages as chat records", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-failed"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   const tools = createMessagingTools({
     store,
@@ -3381,6 +3428,7 @@ test("send_chat returns failed outbound messages as chat records", async () => {
 
 test("send_message waits from llm start using content length based delay", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-delay"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const sleeps: number[] = [];
   const sentAt: number[] = [];
@@ -3417,6 +3465,7 @@ test("send_message waits from llm start using content length based delay", async
 
 test("send_message updates delay timestamp before send attempt completes", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-attempt-delay"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const sleeps: number[] = [];
   const sentAt: number[] = [];
@@ -3453,6 +3502,7 @@ test("send_message updates delay timestamp before send attempt completes", async
 
 test("send_message failed attempt occupies delay window and retries queued send", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-retry"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const sleeps: number[] = [];
   const attemptsAt: number[] = [];
@@ -3500,6 +3550,7 @@ test("send_message failed attempt occupies delay window and retries queued send"
 
 test("send_message sends immediately when llm work already exceeded the content delay", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-delay-elapsed"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const sleeps: number[] = [];
   const tools = createMessagingTools({
@@ -3543,6 +3594,22 @@ function makeTempDir(name: string): string {
   const dir = path.join(process.cwd(), ".tmp-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+let seedInboundCounter = 0;
+
+function seedUserInbound(store: ReturnType<typeof createAliceStore>, conversationId: string, plugin: string): void {
+  seedInboundCounter += 1;
+  store.upsertInboundMessage({
+    plugin,
+    externalMessageId: `seed_user_inbound_${seedInboundCounter}`,
+    conversationId,
+    senderId: "user-1",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "user reply",
+    createdAt: new Date(Date.parse("2026-05-25T00:00:00.000Z") + seedInboundCounter).toISOString()
+  });
 }
 
 function makeTtsAssetFixture(prefix: string): { root: string; assetRoot: string; modelDir: string; referenceAudio: string; cleanup(): void } {

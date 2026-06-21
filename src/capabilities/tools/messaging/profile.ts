@@ -58,6 +58,7 @@ export const messagingToolText = {
   unknownTool: (toolName: string) => `Unknown messaging tool: ${toolName}`,
   noCurrentSession: "No current messaging session is available",
   contentRequired: "content is required",
+  waitForUserReplyBeforeSending: "send_chat blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。",
   unsupportedMessageType: "unsupported message type",
   nothingNew: "nothing new",
   nothingFound: "nothing found",

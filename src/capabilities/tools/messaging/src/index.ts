@@ -79,6 +79,7 @@ const maxMessageDelayMs = 8_000;
 const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
+const recentUserReplyWindow = 10;
 const todaySleepContextMessageCount = 10;
 const maxRangeEndTime = "9999-12-31T23:59:59.999Z";
 const userSpeakerPlaceholder = "{{user}}";
@@ -295,6 +296,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       ? splitSendContentParts(content)
       : [content];
     if (parts.length === 0) return toolError(call, messagingToolText.contentRequired);
+    if (!recentMessagesAllowSend(target)) return toolError(call, messagingToolText.waitForUserReplyBeforeSending);
 
     const results = [];
     for (const part of parts) {
@@ -308,6 +310,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const failed = results.find((result) => !result.ok);
     const view = viewSentMessageResults(call.id, target, results);
     return failed ? { ...view, ok: false, error: failed.error } : view;
+  }
+
+  function recentMessagesAllowSend(target: MessagingToolTarget): boolean {
+    return deps.store.listMessagesForConversation(target.sessionId, recentUserReplyWindow)
+      .some((message) => message.direction === "inbound" && message.senderRole === "user");
   }
 
   function viewSentMessageResults(callId: string, target: MessagingToolTarget, results: SendPartResult[]): ToolResult {

@@ -606,6 +606,16 @@ test("send_chat messaging tool routes outbound text to wechat channel", async ()
   const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "wechat",
+    externalMessageId: "seed-user-reply",
+    conversationId: "wechat:dm:wx-user",
+    senderId: "wx-user",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "user reply",
+    createdAt: "2026-05-26T00:00:00.000Z"
+  });
   const sent: Array<{ plugin: string; text: string }> = [];
   const tools = createMessagingTools({
     store,
@@ -638,7 +648,7 @@ test("send_chat messaging tool routes outbound text to wechat channel", async ()
       content: "hello outbound"
     }
   });
-  const messages = store.listMessages(10);
+  const messages = store.listMessages(10).filter((message) => message.direction === "outbound");
 
   assert.equal(result.ok, true);
   assert.deepEqual(sent, [{ plugin: "wechat", text: "hello outbound" }]);

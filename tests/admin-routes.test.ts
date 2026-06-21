@@ -501,7 +501,11 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(configBody.configValue.enabled, false);
   assert.deepEqual(configBody.configValue.initialLocation, { lat: 41.0086, lng: 28.9802 });
   assert.equal(configBody.configValue.libraryPrompt, "");
+  assert.equal(configBody.configValue.mapsJavaScriptApiKey, "");
+  assert.deepEqual(configBody.runtimeState.pathStack, []);
+  assert.equal(fs.existsSync(path.join(root, "alice.sqlite")), false);
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "libraryPrompt"));
+  assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "mapsJavaScriptApiKey"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "maxPanosPerIdle"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "selectionTemperature"));
   assert.equal(configBody.configSchema.fields.some((field: { key: string }) => field.key === "headingJitterDegrees"), false);
@@ -519,6 +523,7 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
     loopPenalty: 11,
     selectionTemperature: 0.8,
     libraryPrompt: "街景图书馆",
+    mapsJavaScriptApiKey: "browser-map-key",
     initialLocation: JSON.stringify({ lat: 41.01, lng: 28.99 }),
     initialHeading: 120
   }), patchResponse);
@@ -536,6 +541,7 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(saved.loopPenalty, 11);
   assert.equal(saved.selectionTemperature, 0.8);
   assert.equal(saved.libraryPrompt, "街景图书馆");
+  assert.equal(saved.mapsJavaScriptApiKey, "browser-map-key");
   assert.deepEqual(saved.initialLocation, { lat: 41.01, lng: 28.99 });
   assert.equal("headingJitterDegrees" in saved, false);
 });

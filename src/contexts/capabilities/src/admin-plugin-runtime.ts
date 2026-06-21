@@ -4,7 +4,7 @@ import { buildLLMTextVariables } from "../../agent-profile/src/application/llm-t
 import { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
-import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
+import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
 import { HttpJsonError, readJsonBody, readRawBody } from "../../../apps/api/middleware/http-utils.js";
 import { publicLLMApiPresets, readLLMApiPresets, resolvePromptApiPreset } from "../../llm-gateway/src/admin-presets.js";
@@ -134,6 +134,7 @@ type AdminPluginRegistryEntry = {
   patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown } | { error: string };
   setEnabled?(context: AdminRoutesContext, enabled: boolean): { config: unknown } | { error: string };
   reload?(context: AdminRoutesContext): { config: unknown } | { error: string };
+  runtimeState?(context: AdminRoutesContext): unknown;
   test?(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> | { ok: true; result?: unknown } | { error: string };
   uploadAsset?(context: AdminRoutesContext, assetKey: string, request: any): Promise<{ config: unknown; assetPath: string } | { error: string; statusCode?: number }>;
   configSchema?: {
@@ -371,6 +372,7 @@ function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPlugi
     },
     configSchema,
     configValue,
+    runtimeState: entry.runtimeState?.(context),
     apiPresets: publicLLMApiPresets(readLLMApiPresets(context)),
     routePreview: entry.routePreview ?? [],
     runtimeAccess: entry.runtimeAccess ?? [],
@@ -1038,6 +1040,10 @@ function worldWandererPluginEntry(): AdminPluginRegistryEntry {
     reload(context) {
       return { config: publicWorldWandererConfig(readWorldWandererConfigForAdmin(context)) };
     },
+    runtimeState(context) {
+      const config = readWorldWandererConfigForAdmin(context);
+      return readWorldWandererAdminState(context, config);
+    },
     configSchema: {
       groups: [
         { key: "general", label: "General" },
@@ -1048,6 +1054,7 @@ function worldWandererPluginEntry(): AdminPluginRegistryEntry {
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Move world-wanderer state on idle timer transitions." },
         { key: "libraryPrompt", label: "Library Prompt", type: "textarea", group: "general", description: "Used as library.content while World Wanderer is enabled. Empty stays empty." },
+        { key: "mapsJavaScriptApiKey", label: "Maps JavaScript API Key", type: "text", group: "general", description: "Browser-visible key for the admin map." },
         { key: "speedMetersPerSecond", label: "Speed Meters Per Second", type: "number", group: "movement", min: 0, max: 10, step: 0.1 },
         { key: "recentHistoryLimit", label: "Recent History Limit", type: "number", group: "movement", min: 1, max: 1000, step: 1 },
         { key: "maxPanosPerIdle", label: "Max Panos Per Idle", type: "number", group: "movement", min: 1, max: 100, step: 1 },
@@ -1101,6 +1108,7 @@ function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<st
     ...current,
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     libraryPrompt: patch.libraryPrompt === undefined ? current.libraryPrompt : requiredString(patch.libraryPrompt),
+    mapsJavaScriptApiKey: patch.mapsJavaScriptApiKey === undefined ? current.mapsJavaScriptApiKey : requiredString(patch.mapsJavaScriptApiKey).trim(),
     speedMetersPerSecond: patch.speedMetersPerSecond === undefined ? current.speedMetersPerSecond : numberFromUnknown(patch.speedMetersPerSecond, current.speedMetersPerSecond),
     initialLocation,
     initialHeading: patch.initialHeading === undefined ? current.initialHeading : numberFromUnknown(patch.initialHeading, current.initialHeading),
@@ -1149,6 +1157,17 @@ function readWorldWandererConfigForAdmin(context: AdminRoutesContext): WorldWand
 
 function worldWandererConfigPath(context: AdminRoutesContext): string {
   return context.pluginConfigs?.worldWanderer?.configPath ?? defaultWorldWandererPluginConfigPath;
+}
+
+function worldWandererDbPath(context: AdminRoutesContext): string {
+  return path.join(context.config.memoryFiles.root, "alice.sqlite");
+}
+
+function readWorldWandererAdminState(context: AdminRoutesContext, config: WorldWandererConfig): unknown {
+  const dbPath = worldWandererDbPath(context);
+  return fs.existsSync(dbPath)
+    ? readWorldWandererState(dbPath, config)
+    : { location: config.initialLocation, lastHeading: config.initialHeading, pathStack: [] };
 }
 
 function worldWandererConfigMtime(context: AdminRoutesContext): string | undefined {

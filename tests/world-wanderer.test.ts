@@ -337,6 +337,7 @@ function config(patch: Partial<WorldWandererConfig> = {}): WorldWandererConfig {
   return {
     enabled: true,
     libraryPrompt: "",
+    mapsJavaScriptApiKey: "",
     speedMetersPerSecond: 1.4,
     initialLocation: { lat: 41.0086, lng: 28.9802 },
     initialHeading: 90,

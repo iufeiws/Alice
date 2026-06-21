@@ -6,6 +6,7 @@ import type {
 export type WorldWandererConfig = {
   enabled: boolean;
   libraryPrompt: string;
+  mapsJavaScriptApiKey: string;
   speedMetersPerSecond: number;
   initialLocation: GoogleStreetViewLocation;
   initialHeading: number;

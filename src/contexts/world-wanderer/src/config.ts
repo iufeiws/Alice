@@ -26,6 +26,7 @@ export function publicWorldWandererConfig(config: WorldWandererConfig): WorldWan
 }
 
 export function validateWorldWandererConfig(config: WorldWandererConfig): string | undefined {
+  if (typeof config.mapsJavaScriptApiKey !== "string") return "invalid_maps_javascript_api_key";
   if (!Number.isFinite(config.speedMetersPerSecond) || config.speedMetersPerSecond < 0 || config.speedMetersPerSecond > 10) return "invalid_speed";
   if (!validLocation(config.initialLocation)) return "invalid_initial_location";
   if (!Number.isFinite(config.initialHeading) || config.initialHeading < 0 || config.initialHeading >= 360) return "invalid_initial_heading";
@@ -52,6 +53,7 @@ function normalizeWorldWandererConfig(parsed: Record<string, unknown>): WorldWan
   return {
     enabled: booleanValue(parsed.enabled, false),
     libraryPrompt: typeof parsed.libraryPrompt === "string" ? parsed.libraryPrompt : "",
+    mapsJavaScriptApiKey: typeof parsed.mapsJavaScriptApiKey === "string" ? parsed.mapsJavaScriptApiKey : "",
     speedMetersPerSecond: numberValue(parsed.speedMetersPerSecond, 1.4),
     initialLocation,
     initialHeading: normalizeHeading(numberValue(parsed.initialHeading, 90)),

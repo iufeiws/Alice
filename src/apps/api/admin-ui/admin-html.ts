@@ -151,6 +151,8 @@ export function renderAdminHtmlV2(): string {
       .plugin-config-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
       .plugin-config-sections { display: grid; gap: 16px; }
       .plugin-config-section { border-top: 1px solid #e4e7eb; padding-top: 12px; }
+      .world-wanderer-map { width: 100%; height: 360px; border: 1px solid #d7dce3; border-radius: 8px; background: #eef1f5; }
+      .world-wanderer-path-meta { margin: 8px 0 0; color: #667085; font-size: 12px; }
       .plugin-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
       .plugin-section-head h2 { margin: 0; }
       .plugin-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px; align-items: end; }
@@ -1351,12 +1353,62 @@ export function renderAdminHtmlV2(): string {
           <pre>\${escapeHtml((payload.routePreview || []).join("\\n"))}</pre>
           <h2>Runtime Access</h2>
           <pre>\${escapeHtml((payload.runtimeAccess || []).join("\\n"))}</pre>
+          \${payload.plugin && payload.plugin.id === "world_wanderer" ? renderWorldWandererMapBox(payload) : ""}
           \${payload.testSchema ? renderPluginTestBox(payload) : ""}
           <h2>Recent Events</h2>
           <div id="pluginEvents" class="logs plugin-events">No events loaded.</div>
         \`;
         bindPluginConfigForm();
+        if (payload.plugin && payload.plugin.id === "world_wanderer") initWorldWandererMap(payload);
       }
+
+      function renderWorldWandererMapBox(payload) {
+        const path = (payload.runtimeState && payload.runtimeState.pathStack) || [];
+        return \`
+          <h2>Recent Path</h2>
+          <div id="worldWandererMap" class="world-wanderer-map"></div>
+          <p id="worldWandererPathMeta" class="world-wanderer-path-meta">\${escapeHtml(worldWandererPathMeta(path, payload.configValue || {}))}</p>
+        \`;
+      }
+
+      function worldWandererPathMeta(path, config) {
+        if (!config.mapsJavaScriptApiKey) return "Set Maps JavaScript API Key to load the map.";
+        if (!path.length) return "No path entries yet.";
+        const last = path[path.length - 1];
+        return path.length + " points, latest " + (last.time || "") + " @ " + Number(last.lat).toFixed(5) + ", " + Number(last.lng).toFixed(5);
+      }
+
+      function initWorldWandererMap(payload) {
+        const key = payload.configValue && payload.configValue.mapsJavaScriptApiKey;
+        const path = ((payload.runtimeState && payload.runtimeState.pathStack) || []).filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lng)));
+        if (!key || !path.length) return;
+        window.__worldWandererMapPayload = { path };
+        if (window.google && window.google.maps) {
+          drawWorldWandererMap();
+          return;
+        }
+        if (document.getElementById("googleMapsJs")) return;
+        const script = document.createElement("script");
+        script.id = "googleMapsJs";
+        script.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) + "&callback=drawWorldWandererMap";
+        script.async = true;
+        document.head.appendChild(script);
+      }
+
+      function drawWorldWandererMap() {
+        const target = $("worldWandererMap");
+        const path = (window.__worldWandererMapPayload && window.__worldWandererMapPayload.path) || [];
+        if (!target || !path.length || !(window.google && window.google.maps)) return;
+        const coords = path.map((point) => ({ lat: Number(point.lat), lng: Number(point.lng) }));
+        const map = new google.maps.Map(target, { center: coords[coords.length - 1], zoom: 16, mapTypeId: "roadmap" });
+        const bounds = new google.maps.LatLngBounds();
+        coords.forEach((coord) => bounds.extend(coord));
+        new google.maps.Polyline({ path: coords, map, strokeColor: "#2563eb", strokeOpacity: 0.9, strokeWeight: 4 });
+        new google.maps.Marker({ position: coords[0], map, label: "S" });
+        new google.maps.Marker({ position: coords[coords.length - 1], map, label: "E" });
+        if (coords.length > 1) map.fitBounds(bounds);
+      }
+      window.drawWorldWandererMap = drawWorldWandererMap;
 
       function renderTtsPluginConfig(payload) {
         const config = payload.configValue || {};

@@ -204,6 +204,45 @@ test("wechat iLink client parses quoted text messages", async () => {
   });
 });
 
+test("wechat iLink client parses item ref_msg quotes", async () => {
+  const client = createWeChatILinkClient({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test/ilink/bot",
+    pollTimeoutMs: 35_000
+  }, {
+    fetch: async () => new Response(JSON.stringify({
+      ret: 0,
+      get_updates_buf: "cursor-2",
+      messages: [{
+        message_id: "msg-2",
+        from_user_id: "wx-user",
+        context_token: "ctx-2",
+        item_list: [{
+          type: 1,
+          msg_id: "v1:item",
+          ref_msg: {
+            message_item: {
+              type: 1,
+              text_item: { text: "- 雾蓝刺绣汉服——浅蓝纱质，清淡" }
+            }
+          },
+          text_item: { text: "就这个" }
+        }]
+      }]
+    }), { status: 200 })
+  });
+
+  const updates = await client.getUpdates("cursor-1");
+
+  assert.equal(updates.messages[0].text, "就这个");
+  assert.deepEqual(updates.messages[0].quotedMessage, {
+    id: undefined,
+    fromUserId: undefined,
+    text: "- 雾蓝刺绣汉服——浅蓝纱质，清淡"
+  });
+});
+
 test("wechat plugin forwards quoted message metadata", async () => {
   const dir = path.join(process.cwd(), ".tmp-tests", `alice-wechat-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });

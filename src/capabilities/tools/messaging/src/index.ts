@@ -177,7 +177,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
           : time.now().date;
     } else if (scope === "new") {
       const all = deps.store.listMessages(checkChatMessageLimit);
-      const firstUnread = all.find((message) => message.direction === "inbound" && message.senderRole === "user" && !message.isRead);
+      const firstUnread = all.find((message) => !message.isRead);
       sinceDate = firstUnread ? parseMessageTime(firstUnread.createdAt, time.timeZone) : new Date(0);
       messages = firstUnread ? all.filter((message) => message.id >= firstUnread.id) : [];
     } else if (scope === "today") {
@@ -203,7 +203,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
-    if (!options.readonly) markViewedUserMessages(messages);
+    if (!options.readonly) markViewedMessages(messages);
     const body = formatCheckChatMessages(messages, { shellEvents, timeZone: time.timeZone, userName: userSpeakerPlaceholder });
     return {
       callId,
@@ -227,9 +227,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return "new";
   }
 
-  function markViewedUserMessages(messages: StoredConversationMessage[]): void {
+  function markViewedMessages(messages: StoredConversationMessage[]): void {
     const ids = messages
-      .filter((message) => message.direction === "inbound" && message.senderRole === "user")
+      .filter((message) => !message.isRead)
       .map((message) => message.id);
     if (ids.length === 0) return;
     deps.store.markMessagesReadAndCoreProcessed(ids, time.now().iso, createId("check_read"));

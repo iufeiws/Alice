@@ -475,8 +475,8 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
           read_at = COALESCE(read_at, ?),
           last_event_at = CASE WHEN is_read = 0 THEN ? ELSE last_event_at END,
           last_event_at_utc = CASE WHEN is_read = 0 THEN ? ELSE last_event_at_utc END,
-          core_processed_at = COALESCE(core_processed_at, ?),
-          core_batch_id = COALESCE(core_batch_id, ?)
+          core_processed_at = CASE WHEN direction = 'inbound' AND sender_role = 'user' THEN COALESCE(core_processed_at, ?) ELSE core_processed_at END,
+          core_batch_id = CASE WHEN direction = 'inbound' AND sender_role = 'user' THEN COALESCE(core_batch_id, ?) ELSE core_batch_id END
         WHERE id IN (${placeholders})
       `).run(readAt, readAt, readAtUtc, readAt, batchId, ...ids);
     },

@@ -478,7 +478,7 @@ function extractQuotedMessage(raw: Record<string, unknown>): WeChatTextMessage["
     "refer"
   ]);
   const fromContent = parsedContentRecord(raw);
-  const nested = direct ?? fromJsonField ?? (fromContent ? extractQuotedMessageRecord(fromContent) : undefined);
+  const nested = direct ?? fromJsonField ?? extractItemListQuotedMessageRecord(raw) ?? (fromContent ? extractQuotedMessageRecord(fromContent) : undefined);
   if (!nested) return undefined;
   const id = firstString(nested, [
     "message_id",
@@ -496,9 +496,21 @@ function extractQuotedMessage(raw: Record<string, unknown>): WeChatTextMessage["
     "quotedMsgId"
   ]);
   const fromUserId = firstString(nested, ["from_user_id", "fromUserId", "from_user", "sender_id", "senderId", "sender", "user_id", "userId", "openid", "open_id"]);
-  const text = extractText(nested);
+  const text = extractText(nested) ?? firstNestedString(nested, [["text_item", "text"], ["textItem", "text"]]);
   if (!id && !fromUserId && !text) return undefined;
   return { id, fromUserId, text };
+}
+
+function extractItemListQuotedMessageRecord(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  const itemList = Array.isArray(raw.item_list) ? raw.item_list : Array.isArray(raw.itemList) ? raw.itemList : undefined;
+  if (!itemList) return undefined;
+  for (const item of itemList) {
+    if (!isRecord(item)) continue;
+    const ref = firstRecord(item, ["ref_msg", "refMsg", "refer_msg", "referMsg"]);
+    if (!ref) continue;
+    return firstRecord(ref, ["message_item", "messageItem"]) ?? ref;
+  }
+  return undefined;
 }
 
 function extractQuotedMessageRecord(raw: Record<string, unknown>): Record<string, unknown> | undefined {

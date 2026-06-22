@@ -218,6 +218,51 @@ test("check_chat default scope ignores active main llm session generation", asyn
   assert.match(String(afterSwitch.output), /nothing new/);
 });
 
+test("check_chat new starts at any unread message and marks outbound read", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-new-unread-any"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "already seen",
+    createdAt: "2026-05-26T00:00:00.000Z"
+  });
+  store.markMessagesReadAndCoreProcessed([1], "2026-05-26T00:00:10.000Z", "seen");
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    contentType: "text",
+    contentText: "assistant sent",
+    createdAt: "2026-05-26T00:01:00.000Z"
+  });
+  const inbound = store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_2",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "user during send",
+    createdAt: "2026-05-26T00:02:00.000Z"
+  });
+  const tools = createMessagingTools({
+    store,
+    outputRouter: { async send() {} },
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({ id: "call_new_unread_any", toolName: "check_chat", input: {} });
+
+  assert.match(String(result.output), /Alice:assistant sent/);
+  assert.match(String(result.output), /\{\{user\}\}:user during send/);
+  const messages = store.listMessagesForConversation("session-1", 10);
+  assert.equal(Boolean(messages.find((message) => message.id === outbound.id)?.isRead), true);
+  assert.equal(messages.find((message) => message.id === outbound.id)?.coreProcessedAt ?? undefined, undefined);
+  assert.equal(Boolean(messages.find((message) => message.id === inbound.id)?.isRead), true);
+  assert.ok(messages.find((message) => message.id === inbound.id)?.coreProcessedAt);
+});
+
 test("check_chat returns current time from configured timezone provider", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-current-time"), "alice.sqlite"));
   const tools = createMessagingTools({
@@ -865,7 +910,8 @@ test("send_chat defaults to message and splits newline text into multiple sends"
 
   const noNew = await tools.execute({ id: "call_check_new", toolName: "check_chat", input: {} });
   assert.equal(noNew.ok, true);
-  assert.match(String(noNew.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}<\\time>$/);
+  assert.match(String(noNew.output), /Alice:one/);
+  assert.match(String(noNew.output), /Alice:two/);
 });
 
 test("send_chat blocks when the user has not replied recently", async () => {

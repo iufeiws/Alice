@@ -60,6 +60,7 @@ export function createAdminRequestHandlerRuntime(input: {
   initiatedBehaviorRunStore: any;
   memoryStore: any;
   diaryStore: any;
+  calendarStore: any;
   memoryInductionPromptStore: any;
   sleepMemoryInductionRuntime: { isActive(): boolean };
   ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): any;
@@ -74,6 +75,7 @@ export function createAdminRequestHandlerRuntime(input: {
   shellTools: any;
   bookcaseTools: any;
   sleepCocoonTools: any;
+  calendarTools?: any;
   feishu: any;
   wechat: any;
   wechatStateStore: any;
@@ -133,6 +135,7 @@ export function createAdminRequestHandlerRuntime(input: {
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
+    calendarStore: input.calendarStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
     memoryAdminRuntime,
     getDailyShell: input.getDailyShell,
@@ -143,6 +146,7 @@ export function createAdminRequestHandlerRuntime(input: {
     shellTools: input.shellTools,
     bookcaseTools: input.bookcaseTools,
     sleepCocoonTools: input.sleepCocoonTools,
+    calendarTools: input.calendarTools,
     feishu: input.feishu,
     wechat: input.wechat,
     wechatStateStore: input.wechatStateStore,

@@ -1,10 +1,12 @@
 import { createAgentStateRuntime } from "../../../agent-loop/src/runtime/agent-state-runtime.js";
 import { createSleepCocoonEventRuntime } from "../../../../capabilities/tools/sleep-cocoon/src/sleep-cocoon-event-runtime.js";
+import { createCalendarEventRuntime } from "../../../../capabilities/tools/calendar/src/calendar-event-runtime.js";
 
 export function createApiBehaviorRuntime(input: {
   config: any;
   time: any;
   getDiaryStore(): any;
+  getCalendarStore(): any;
   getDailyShellStore(): any;
   clearLLMSession(): void;
   sendSleepNotice(): Promise<void>;
@@ -29,6 +31,11 @@ export function createApiBehaviorRuntime(input: {
     time: input.time,
     getDefaultTarget: input.getDefaultTarget
   });
+  const calendarEventRuntime = createCalendarEventRuntime({
+    calendarStore: input.getCalendarStore(),
+    time: input.time,
+    getDefaultTarget: input.getDefaultTarget
+  });
 
-  return { agentState, sleepCocoonEventRuntime };
+  return { agentState, sleepCocoonEventRuntime, calendarEventRuntime };
 }

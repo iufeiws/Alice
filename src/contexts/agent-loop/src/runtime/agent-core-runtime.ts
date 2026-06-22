@@ -2,6 +2,7 @@ import { createAgentCore } from "../application/agent-core.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
+import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 
 export function createAgentCoreRuntime(input: {
   config: any;
@@ -18,6 +19,7 @@ export function createAgentCoreRuntime(input: {
   getLibrarySetting?(): string;
   memoryStore: any;
   diaryStore: any;
+  calendarStore?: any;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
@@ -74,6 +76,13 @@ export function createAgentCoreRuntime(input: {
     getLibrarySetting: input.getLibrarySetting,
     getMemorySnapshot: () => input.memoryStore.read(),
     getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
+    getCalendarContext: input.calendarStore
+      ? () => buildCalendarContext({
+        calendarStore: input.calendarStore,
+        time: input.time,
+        userName: input.promptProfileStore.get().userName
+      })
+      : undefined,
     state: input.agentState,
     time: input.time,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,

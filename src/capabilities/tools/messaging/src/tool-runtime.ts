@@ -5,6 +5,7 @@ import { createShellTools } from "../../shell/src/index.js";
 import { createBookcaseTools } from "../../bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
 import { createLocationTools } from "../../location/src/index.js";
+import { createCalendarTools } from "../../calendar/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
@@ -23,6 +24,7 @@ export function createToolRuntime(input: {
   promptProfileStore: any;
   dailyShellStore: any;
   diaryStore: any;
+  calendarStore: any;
   coreProfileStore: any;
   agentState: any;
   getDefaultTarget(): any;
@@ -141,6 +143,10 @@ export function createToolRuntime(input: {
     resolveOutputTarget,
     appendLog: input.appendLog
   });
+  const calendarTools = createCalendarTools({
+    calendarStore: input.calendarStore,
+    time: input.time
+  });
   const locationTools = createLocationTools({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles?.root ?? "memory-files", "alice.sqlite"),
@@ -155,7 +161,8 @@ export function createToolRuntime(input: {
     shellTools,
     bookcaseTools,
     sleepCocoonTools,
+    calendarTools,
     locationTools,
-    toolPlugins: [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, locationTools]
+    toolPlugins: [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, locationTools]
   };
 }

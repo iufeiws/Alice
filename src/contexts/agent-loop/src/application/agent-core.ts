@@ -185,6 +185,7 @@ export type AgentCoreDeps = {
   getLibrarySetting?: () => string;
   getMemorySnapshot?: () => MemorySnapshot;
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
+  getCalendarContext?: () => string | undefined;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
@@ -368,7 +369,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         appearanceDescription: deps.getAppearanceDescription?.(),
         librarySetting: deps.getLibrarySetting?.(),
         memory: deps.getMemorySnapshot?.(),
-        wakeBoundary: deps.getWakeBoundary?.()
+        wakeBoundary: deps.getWakeBoundary?.(),
+        calendarContext: deps.getCalendarContext?.()
       });
       const initiatedBehaviorRunPlan = initiatedBehavior;
       let initiatedBehaviorExecution: Awaited<ReturnType<typeof executeAgentInitiatedBehaviorBackendSteps>> | undefined;
@@ -426,6 +428,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         return [];
       }
       let createdSessionThisRun = false;
+      let initiatedBehaviorMessageCount = 0;
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
         const promptContext = makePromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
@@ -451,18 +454,20 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             const preparedSession = await prepareChatLoopSessionContext({
               buildMessages: async () => {
                 if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
+                const initiatedMessages = await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
+                  const result = await runPromptToolRequest(layer, call, toolPlugins);
+                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
+                  initiatedBehaviorPromptToolResult = result;
+                  return result;
+                });
+                initiatedBehaviorMessageCount = initiatedMessages.length;
                 return [
                   ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
                     const result = await runPromptToolRequest(layer, call, toolPlugins);
                     promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                     return result;
                   }),
-                  ...await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
-                    const result = await runPromptToolRequest(layer, call, toolPlugins);
-                    promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                    initiatedBehaviorPromptToolResult = result;
-                    return result;
-                  }),
+                  ...initiatedMessages,
                   ...mode.modeStaticMessages
                 ];
               },
@@ -570,6 +575,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       return {
         async prepare() {
           await ensureActiveLLMSession();
+          if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed" && initiatedBehaviorRunPlan.steps.some((step) => step.kind === "llm_instruction") && initiatedBehaviorMessageCount === 0) {
+            recordInitiatedBehaviorRun({
+              result: "skipped",
+              steps: [
+                ...initiatedBehaviorExecution.steps,
+                ...initiatedBehaviorLlmSteps("skipped", "llm_messages_empty")
+              ],
+              error: "llm_messages_empty"
+            });
+            return [];
+          }
           if (!activeLLMSession || activeLLMSession.messages.length === 0) {
             if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
               recordInitiatedBehaviorRun({
@@ -729,7 +745,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       appearanceDescription: deps.getAppearanceDescription?.(),
       librarySetting: deps.getLibrarySetting?.(),
       memory: deps.getMemorySnapshot?.(),
-      wakeBoundary: deps.getWakeBoundary?.()
+      wakeBoundary: deps.getWakeBoundary?.(),
+      calendarContext: deps.getCalendarContext?.()
     });
   }
 

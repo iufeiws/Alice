@@ -26,6 +26,7 @@ export function createApiCommunicationRuntime(input: {
   getDefaultMessagingTarget(): any;
   getSleepCocoonGoodnightEvent(): any;
   getSleepCocoonWakeEvent(): any;
+  getCalendarReminderEvent(): any;
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
@@ -76,6 +77,7 @@ export function createApiCommunicationRuntime(input: {
     getDefaultMessagingTarget: input.getDefaultMessagingTarget,
     getSleepCocoonGoodnightEvent: input.getSleepCocoonGoodnightEvent,
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
+    getCalendarReminderEvent: input.getCalendarReminderEvent,
     worldWandererRuntime,
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,

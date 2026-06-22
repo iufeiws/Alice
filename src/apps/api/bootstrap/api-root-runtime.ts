@@ -98,6 +98,7 @@ export function createApiRootRuntime() {
     talkRuntime: apiAgentStackRuntime.talkRuntime,
     agentState: apiControlRuntime.agentState,
     sleepCocoonEventRuntime: apiControlRuntime.sleepCocoonEventRuntime,
+    calendarEventRuntime: apiControlRuntime.calendarEventRuntime,
     llmConfigRuntime: foundation.llmConfigRuntime,
     activeLLM: foundation.activeLLM,
     appendLog: foundation.appendLog,

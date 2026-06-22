@@ -20,6 +20,7 @@ export function createMessageRuntimeRuntime(input: {
   getDefaultMessagingTarget(): any;
   getSleepCocoonGoodnightEvent(): any;
   getSleepCocoonWakeEvent(): any;
+  getCalendarReminderEvent(): any;
   worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -76,6 +77,7 @@ export function createMessageRuntimeRuntime(input: {
     },
     getSleepCocoonGoodnightEvent: input.getSleepCocoonGoodnightEvent,
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
+    getCalendarReminderEvent: input.getCalendarReminderEvent,
     onInboundUserMessage(messageInput) {
       const count = input.initiatedBehaviorRunStore.markRespondedWithin15m({
         sessionId: messageInput.sessionId,

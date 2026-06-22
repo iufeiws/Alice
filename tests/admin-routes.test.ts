@@ -12,6 +12,7 @@ import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/js
 import { createPromptProfileStore } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
+import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
 import type { StoredConversationMessage } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const fs = await import("node:fs");
@@ -129,6 +130,32 @@ test("llm api preset save accepts long timeout values", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(saved.presets[0].timeoutMs, 600_000);
+});
+
+test("admin birthday save writes a birthday calendar entry", async () => {
+  const root = makeTempDir("admin-birthday");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    calendarStore: createCalendarStore(path.join(root, "alice.sqlite"))
+  };
+  const handler = createAdminHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/calendar/birthday", {
+    calendarSystem: "lunar",
+    month: 6,
+    day: 1,
+    year: 2025,
+    isLeapMonth: true
+  }), response);
+
+  assert.equal(response.statusCode, 200);
+  const birthday = context.calendarStore.latestBirthday();
+  assert.equal(birthday?.kind, "birthday");
+  assert.equal(birthday?.calendarSystem, "lunar");
+  assert.equal(birthday?.isLeapMonth, true);
 });
 
 test("prompt api profile saves chat binding and migrates legacy core binding", async () => {
@@ -1916,6 +1943,13 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
       ],
       recordSleepBoundary() {}
     },
+    calendarStore: {
+      latestBirthday: () => undefined,
+      listEntries: () => [],
+      replaceBirthday() {
+        throw new Error("calendar_store_unavailable");
+      }
+    },
     memoryInductionPromptStore: promptStore,
     runMemoryInductionForMessages: async () => ({ ok: false, startedAt: "", windowEndAt: "", messageCount: 0, results: [] }),
     getDailyShell: () => "",
@@ -1938,6 +1972,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     shellTools: emptyPlugin("shell"),
     bookcaseTools: emptyPlugin("bookcase"),
     sleepCocoonTools: emptyPlugin("sleep-cocoon"),
+    calendarTools: emptyPlugin("calendar"),
     feishu: { async start() {}, async stop() {}, async send() {} },
     wechat: { async start() {}, async stop() {}, async send() {} },
     wechatStateStore: {

@@ -127,6 +127,13 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     promptProfilePath: "src/contexts/initiative/behaviors/sleep_force_wake.json",
     steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/sleep_force_wake.json" }]
   },
+  {
+    id: "calendar_reminder",
+    kind: "event",
+    enabled: true,
+    promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json",
+    steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json" }]
+  },
   ...proactiveInitiationTypes.map((entry) => randomizedPlan(entry.id, entry.weight, entry.enabled))
 ];
 

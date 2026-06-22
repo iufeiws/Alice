@@ -43,6 +43,7 @@ export type LLMTextContextInput = {
     yesterdaySummary?: string;
   };
   wakeBoundary?: LLMTextWakeBoundary;
+  calendarContext?: string;
   extra?: LLMTextVariables;
 };
 
@@ -100,6 +101,9 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
       date: "",
       weekday: ""
     },
+    calendar: {
+      context: ""
+    },
     library: {
       content: ""
     }
@@ -141,6 +145,7 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
   if (input.wakeBoundary) {
     variables.wakeBoundary = wakeBoundaryVariable(input.wakeBoundary, input.time?.timeZone ?? "UTC");
   }
+  variables.calendar = { context: input.calendarContext ?? "" };
   return {
     ...variables,
     ...(input.extra ?? {})
@@ -208,10 +213,11 @@ function wakeBoundaryVariable(boundary: LLMTextWakeBoundary, timeZone: string): 
   const instant = boundary.occurredAtUtc ? new Date(boundary.occurredAtUtc) : undefined;
   const canFormatInstant = !!instant && Number.isFinite(instant.getTime());
   const fallbackDate = boundary.occurredAt.slice(0, 10);
+  const date = canFormatInstant ? formatLocalDate(instant, timeZone) : fallbackDate;
   return {
     occurredAt: boundary.occurredAt,
     occurredAtUtc: boundary.occurredAtUtc ?? "",
-    date: canFormatInstant ? formatLocalDate(instant, timeZone) : fallbackDate,
+    date,
     weekday: canFormatInstant ? formatWeekday(instant, timeZone) : weekdayForLocalDate(fallbackDate)
   };
 }

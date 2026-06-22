@@ -22,6 +22,7 @@ export function createApiServerStackRuntime(input: {
   talkRuntime: any;
   agentState: any;
   sleepCocoonEventRuntime: any;
+  calendarEventRuntime: any;
   llmConfigRuntime: any;
   activeLLM: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -47,6 +48,7 @@ export function createApiServerStackRuntime(input: {
     getDefaultMessagingTarget: () => input.apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,
     getSleepCocoonGoodnightEvent: () => input.sleepCocoonEventRuntime.maybeBuildGoodnightEvent(),
     getSleepCocoonWakeEvent: () => input.sleepCocoonEventRuntime.consumeMorningEvent(),
+    getCalendarReminderEvent: () => input.calendarEventRuntime.consumeDueReminderEvent(),
     queueForceWakeEvent: () => input.sleepCocoonEventRuntime.queueForceWakeEvent({ sleepCocoonForceWake: true }),
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog

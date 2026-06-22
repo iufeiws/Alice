@@ -9,6 +9,7 @@ import { normalizePromptApiProfile, readLLMApiPresets, resolveMemorizeApiPreset,
 import { formatToolResultForLLM, getAdminTextVariables, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
 import { optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
 import { resolveLibrarySetting } from "../../../world-wanderer/src/admin-library-setting.js";
+import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
 const path = await import("node:path");
@@ -85,6 +86,11 @@ export function getPromptVariablePreview(context: AdminRoutesContext, store: Pro
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,
     librarySetting: resolveLibrarySetting(context),
     memory: context.memoryStore.read(),
+    calendarContext: buildCalendarContext({
+      calendarStore: context.calendarStore,
+      time: context.time,
+      userName: store.get().userName
+    }),
     event: {
       id: "preview",
       source: {
@@ -135,7 +141,7 @@ export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugi
 
 export function getVisiblePromptTools(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): Array<{ name: string; description?: string }> {
   const profile = store.get();
-  const plugins = [context.messagingTools, context.photoTools, context.shellTools, context.sleepCocoonTools];
+  const plugins = [context.messagingTools, context.photoTools, context.shellTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
   return plugins.flatMap((plugin) => plugin.listTools().filter((tool) => isToolVisibleInPromptProfile(profile, tool.name)).map((tool) => ({
     name: tool.name,
     description: tool.description
@@ -224,7 +230,7 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
 }
 
 export function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
-  return [context.messagingTools, context.photoTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools];
+  return [context.messagingTools, context.photoTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
 }
 
 function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {

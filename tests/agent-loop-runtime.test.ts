@@ -134,6 +134,35 @@ test("agent heartbeat runs idle timer transition hook before randomized initiate
   assert.deepEqual(calls, ["idle:123000", "generated", "waiting:randomized_initiated_behavior"]);
 });
 
+test("agent heartbeat runs calendar reminder generated event", async () => {
+  const calls: string[] = [];
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => false,
+      getCalendarReminderEvent: () => ({ type: "system.heartbeat" }),
+      runGeneratedSession: async () => {
+        calls.push("calendar");
+        return true;
+      },
+      getPendingSessionIds: () => [],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 0,
+      shouldProcessPendingSession: () => false,
+      markSessionNotPending: () => {},
+      processPendingSession: async () => {},
+      appendLog: () => {}
+    }
+  });
+
+  assert.equal(await heartbeat.run(), 1);
+  assert.deepEqual(calls, ["calendar"]);
+});
+
 test("agent heartbeat treats cancelled talk runs as handled without crashing", async () => {
   const logs: Array<{ level: string; message: string }> = [];
   let markedReady = 0;

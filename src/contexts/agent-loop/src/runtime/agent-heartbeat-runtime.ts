@@ -39,6 +39,7 @@ export type AgentHeartbeatRunTaskDeps = {
   processPendingSession(sessionId: string): Promise<void>;
   getSleepCocoonWakeEvent?(): unknown;
   getSleepCocoonGoodnightEvent?(): unknown;
+  getCalendarReminderEvent?(): unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 };
 
@@ -177,6 +178,14 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     : undefined;
   if (sleepCocoonGoodnightEvent) {
     const handled = await tasks.runGeneratedSession(sleepCocoonGoodnightEvent, "sleep cocoon goodnight");
+    if (handled) processed += 1;
+  }
+
+  const calendarReminderEvent = !force && tasks.canRunHeartbeat() && !tasks.hasPendingUserMessages()
+    ? tasks.getCalendarReminderEvent?.()
+    : undefined;
+  if (calendarReminderEvent) {
+    const handled = await tasks.runGeneratedSession(calendarReminderEvent, "calendar reminder");
     if (handled) processed += 1;
   }
 

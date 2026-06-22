@@ -1,4 +1,5 @@
 import { createAgentInitiatedBehaviorRunStore } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
+import { createCalendarStore } from "../../../platform/storage/src/calendar-store.js";
 import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createChannelStateRuntime } from "./channel-state-runtime.js";
 import { createDefaultTargetResolver } from "./default-target-runtime.js";
@@ -37,6 +38,7 @@ export function createApiContextRuntime(input: {
   const initiatedBehaviorRunStore = createAgentInitiatedBehaviorRunStore({
     dbPath: path.join(input.config.memoryFiles.root, "state", "initiated-behavior-runs.sqlite")
   });
+  const calendarStore = createCalendarStore(path.join(input.config.memoryFiles.root, "alice.sqlite"));
 
   return {
     feishuPairingStore,
@@ -47,6 +49,7 @@ export function createApiContextRuntime(input: {
     coreProfileStore: profileMemoryRuntime.coreProfileStore,
     memoryStore: profileMemoryRuntime.memoryStore,
     diaryStore: profileMemoryRuntime.diaryStore,
+    calendarStore,
     memoryInductionPromptStore: profileMemoryRuntime.memoryInductionPromptStore,
     sleepMemoryStateStore: profileMemoryRuntime.sleepMemoryStateStore,
     dailyShellStore: profileMemoryRuntime.dailyShellStore,

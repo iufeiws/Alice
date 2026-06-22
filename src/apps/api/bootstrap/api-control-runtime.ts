@@ -27,6 +27,7 @@ export function createApiControlRuntime(input: {
     config: input.config,
     time: input.time,
     getDiaryStore: () => apiContextRuntime.diaryStore,
+    getCalendarStore: () => apiContextRuntime.calendarStore,
     getDailyShellStore: () => apiContextRuntime.dailyShellStore,
     clearLLMSession: () => input.getCore().clearLLMSession("mode_transition"),
     sendSleepNotice: () => apiNoticeRuntime.outboundNoticeRuntime.sendSystemNoticeToDefaultTarget("-少女已入眠-"),
@@ -42,6 +43,7 @@ export function createApiControlRuntime(input: {
     outputRouter: apiNoticeRuntime.outputRouter,
     outboundNoticeRuntime: apiNoticeRuntime.outboundNoticeRuntime,
     agentState: apiBehaviorRuntime.agentState,
-    sleepCocoonEventRuntime: apiBehaviorRuntime.sleepCocoonEventRuntime
+    sleepCocoonEventRuntime: apiBehaviorRuntime.sleepCocoonEventRuntime,
+    calendarEventRuntime: apiBehaviorRuntime.calendarEventRuntime
   };
 }

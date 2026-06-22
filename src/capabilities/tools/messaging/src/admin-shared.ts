@@ -1,6 +1,7 @@
 import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { optionalString } from "../../../../shared/admin-input/src/index.js";
 import { resolveLibrarySetting } from "../../../../contexts/world-wanderer/src/admin-library-setting.js";
+import { buildCalendarContext } from "../../calendar/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
 export function getAdminTextVariables(
@@ -15,6 +16,11 @@ export function getAdminTextVariables(
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,
     librarySetting: resolveLibrarySetting(context),
+    calendarContext: buildCalendarContext({
+      calendarStore: context.calendarStore,
+      time: context.time,
+      userName: context.promptProfileStore.get().userName
+    }),
     event: {
       id: "admin_tool_preview",
       source: {

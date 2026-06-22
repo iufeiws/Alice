@@ -13,6 +13,7 @@ export function createApiCapabilitiesRuntime(input: {
   outputRouter: any;
   dailyShellStore: any;
   diaryStore: any;
+  calendarStore: any;
   coreProfileStore: any;
   agentState: any;
   getDefaultTarget(): any;
@@ -57,6 +58,7 @@ export function createApiCapabilitiesRuntime(input: {
     promptProfileStore: input.promptProfileStore,
     dailyShellStore: input.dailyShellStore,
     diaryStore: input.diaryStore,
+    calendarStore: input.calendarStore,
     coreProfileStore: input.coreProfileStore,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
@@ -92,6 +94,7 @@ export function createApiCapabilitiesRuntime(input: {
     shellTools: toolRuntime.shellTools,
     bookcaseTools: toolRuntime.bookcaseTools,
     sleepCocoonTools: toolRuntime.sleepCocoonTools,
+    calendarTools: toolRuntime.calendarTools,
     toolPlugins: toolRuntime.toolPlugins,
     llmRequests,
     visibleToolSpecs: promptToolPreviewRuntime.visibleToolSpecs,

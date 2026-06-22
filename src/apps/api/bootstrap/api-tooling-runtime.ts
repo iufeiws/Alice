@@ -29,6 +29,7 @@ export function createApiToolingRuntime(input: {
     outputRouter: input.outputRouter,
     dailyShellStore: input.apiContextRuntime.dailyShellStore,
     diaryStore: input.apiContextRuntime.diaryStore,
+    calendarStore: input.apiContextRuntime.calendarStore,
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,

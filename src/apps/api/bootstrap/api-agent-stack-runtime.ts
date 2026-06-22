@@ -36,6 +36,7 @@ export function createApiAgentStackRuntime(input: {
     },
     memoryStore: input.apiContextRuntime.memoryStore,
     diaryStore: input.apiContextRuntime.diaryStore,
+    calendarStore: input.apiContextRuntime.calendarStore,
     agentState: input.agentState,
     getAgentInitiatedBehaviorPlans: input.apiContextRuntime.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.apiContextRuntime.initiatedBehaviorRunStore,

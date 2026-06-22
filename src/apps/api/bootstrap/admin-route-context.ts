@@ -5,6 +5,7 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { ToolPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-store.js";
 import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
+import type { CalendarStore } from "../../../platform/storage/src/calendar-store.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentBehaviorState, AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapters/json-core-profile-store.js";
@@ -85,6 +86,7 @@ export type AdminRuntimeContext = {
   initiatedBehaviorRunStore?: AgentInitiatedBehaviorRunStore;
   memoryStore: MemoryStore;
   diaryStore: DiaryStore;
+  calendarStore: CalendarStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
   memoryAdminRuntime?: ReturnType<typeof createAdminMemoryRuntime>;
   runMemoryInductionForMessages?(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
@@ -98,6 +100,7 @@ export type AdminRuntimeContext = {
   shellTools: ToolPlugin;
   bookcaseTools: ToolPlugin;
   sleepCocoonTools: ToolPlugin;
+  calendarTools?: ToolPlugin;
   feishu: {
     start(): Promise<void>;
     stop(): Promise<void>;

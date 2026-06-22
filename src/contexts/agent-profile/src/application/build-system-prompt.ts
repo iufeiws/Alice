@@ -42,6 +42,7 @@ export type PromptRenderContext = {
   librarySetting?: string;
   memory?: MemorySnapshot;
   wakeBoundary?: LLMTextWakeBoundary;
+  calendarContext?: string;
 };
 
 export type PromptProfileStore = {
@@ -183,7 +184,8 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     appearanceDescription: context.appearanceDescription,
     librarySetting: context.librarySetting,
     memory: context.memory,
-    wakeBoundary: context.wakeBoundary
+    wakeBoundary: context.wakeBoundary,
+    calendarContext: context.calendarContext
   });
 }
 

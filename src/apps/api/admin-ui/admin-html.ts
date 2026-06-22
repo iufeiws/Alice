@@ -2224,6 +2224,7 @@ Timing:
 
       let promptProfile = null;
       let talkPromptProfile = null;
+      let calendarBirthday = null;
       let promptVariables = {};
       let talkPromptVariables = {};
       let promptTools = [];
@@ -2240,6 +2241,7 @@ Timing:
       async function refreshPromptProfile() {
         const payload = await fetch("/admin/api/prompt-profile").then((res) => res.json());
         promptProfile = payload.profile;
+        calendarBirthday = payload.birthday || null;
         promptVariables = payload.variables || {};
         promptTools = payload.tools || [];
         const talkPayload = await fetch("/admin/api/talk-prompt-profile").then((res) => res.json());
@@ -2278,6 +2280,7 @@ Timing:
               <h2>\${isTalk ? "Talk Prompt Profile" : "Prompt Profile"}</h2>
               <label for="promptUserName">User Name</label>
               <input id="promptUserName" autocomplete="off" value="\${escapeAttr(activeProfile.userName || "user")}" />
+              \${isTalk ? "" : renderBirthdayEditor()}
               <h2>Visible Tools</h2>
               <label><input id="toolFeishuVisible" type="checkbox" \${activeProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
               <label><input id="toolPhotoVisible" type="checkbox" \${activeProfile.visibleTools?.photo === false || activeProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
@@ -2301,6 +2304,7 @@ Timing:
         bindPromptSideToggle(isTalk ? "talk" : "chat");
         bindPromptApiPresetPicker(isTalk ? "talk" : "chat");
         $("promptUserName").addEventListener("input", () => { activeProfile.userName = $("promptUserName").value; });
+        if (!isTalk) bindBirthdayEditor();
         $("toolFeishuVisible").addEventListener("change", () => { activeProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
         $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
@@ -2317,6 +2321,42 @@ Timing:
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);
+      }
+
+      function renderBirthdayEditor() {
+        return \`
+          <h2>Birthday</h2>
+          <div class="row">
+            <div>
+              <label for="birthdayCalendarSystem">Calendar</label>
+              <select id="birthdayCalendarSystem">
+                \${["gregorian", "lunar"].map((item) => \`<option value="\${item}" \${(calendarBirthday?.calendarSystem || "gregorian") === item ? "selected" : ""}>\${item}</option>\`).join("")}
+              </select>
+            </div>
+            <div>
+              <label for="birthdayMonth">Month</label>
+              <input id="birthdayMonth" type="number" min="1" max="12" value="\${escapeAttr(calendarBirthday?.month || "")}" />
+            </div>
+            <div>
+              <label for="birthdayDay">Day</label>
+              <input id="birthdayDay" type="number" min="1" max="31" value="\${escapeAttr(calendarBirthday?.day || "")}" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="birthdayYear">Year</label>
+              <input id="birthdayYear" type="number" min="1" max="9999" value="\${escapeAttr(calendarBirthday?.year || "")}" />
+            </div>
+            <label><input id="birthdayLeapMonth" type="checkbox" \${calendarBirthday?.isLeapMonth ? "checked" : ""} /> Lunar leap month</label>
+            <div>
+              <button type="button" id="birthday-save">Save Birthday</button>
+            </div>
+          </div>
+        \`;
+      }
+
+      function bindBirthdayEditor() {
+        $("birthday-save")?.addEventListener("click", saveBirthday);
       }
 
       function renderPromptSidePane(mode, previewTitle, placeholder) {
@@ -3269,6 +3309,25 @@ Timing:
           await refreshChatPromptPreview(isTalk ? "talk" : "chat");
         }
         await refreshLLMRequests();
+      }
+
+      async function saveBirthday() {
+        const result = await fetch("/admin/api/calendar/birthday", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            calendarSystem: $("birthdayCalendarSystem").value,
+            month: $("birthdayMonth").value,
+            day: $("birthdayDay").value,
+            year: $("birthdayYear").value,
+            isLeapMonth: $("birthdayLeapMonth").checked
+          })
+        }).then((res) => res.json());
+        $("prompt-status").textContent = result.ok ? "Birthday saved." : "Birthday save failed.";
+        if (result.birthday) {
+          calendarBirthday = result.birthday;
+          renderPromptProfile();
+        }
       }
 
       async function refreshChatPromptPreview(mode = "chat") {

@@ -67,6 +67,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
   if (request.method === "GET" && request.url === "/admin/api/prompt-profile") {
     writeJson(response, 200, {
       profile: context.promptProfileStore.get(),
+      birthday: context.calendarStore?.latestBirthday?.(),
       variables: getPromptVariablePreview(context),
       tools: getVisiblePromptTools(context)
     });
@@ -215,6 +216,30 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
 
   if (request.method === "PUT" && request.url === "/admin/api/prompt-profile") {
     await savePromptProfile(context, request, response);
+    return;
+  }
+
+  if (request.method === "PUT" && request.url === "/admin/api/calendar/birthday") {
+    const body = await readJsonBody(request);
+    const calendarSystem = body.calendarSystem === "lunar" ? "lunar" : body.calendarSystem === "gregorian" ? "gregorian" : "";
+    const month = Number(body.month);
+    const day = Number(body.day);
+    const year = body.year === undefined || body.year === "" ? undefined : Number(body.year);
+    if (!calendarSystem) return writeJson(response, 400, { ok: false, error: "invalid_calendar_system" });
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) return writeJson(response, 400, { ok: false, error: "invalid_date" });
+    if (year !== undefined && (!Number.isInteger(year) || year < 1 || year > 9999)) return writeJson(response, 400, { ok: false, error: "invalid_year" });
+    const now = context.time.now();
+    const birthday = context.calendarStore.replaceBirthday({
+      title: "birthday",
+      calendarSystem,
+      year,
+      month,
+      day,
+      isLeapMonth: body.isLeapMonth === true,
+      now: now.iso,
+      nowUtc: now.date.toISOString()
+    });
+    writeJson(response, 200, { ok: true, birthday });
     return;
   }
 

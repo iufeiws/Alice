@@ -67,6 +67,15 @@ test("llm api preset form tracks dirty and saved states like shell editor", () =
   assert.match(html, /bindLLMApiPresetFormDirtyTracking\(\)/);
 });
 
+test("prompt profile editor exposes birthday calendar settings", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /Birthday/);
+  assert.match(html, /birthdayCalendarSystem/);
+  assert.match(html, /birthdayLeapMonth/);
+  assert.match(html, /\/admin\/api\/calendar\/birthday/);
+});
+
 test("plugin config test box is schema-driven for voice and ASR plugins", () => {
   const html = renderAdminHtmlV2();
 

@@ -17,6 +17,7 @@ export function createApiAgentRuntime(input: {
   getLibrarySetting?(): string;
   memoryStore: any;
   diaryStore: any;
+  calendarStore?: any;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
@@ -69,6 +70,7 @@ export function createApiAgentRuntime(input: {
     getLibrarySetting: input.getLibrarySetting,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
+    calendarStore: input.calendarStore,
     agentState: input.agentState,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,

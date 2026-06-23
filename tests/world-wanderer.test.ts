@@ -257,7 +257,7 @@ test("world wanderer softmax policy avoids recent loops when a novel link exists
   assert.deepEqual(panoCalls, ["a", "c"]);
 });
 
-test("world wanderer backtracks through visible reverse link at recent dead end", async () => {
+test("world wanderer probes nearby instead of backtracking at recent dead end", async () => {
   const root = tempRoot();
   const configPath = path.join(root, "config.json");
   const dbPath = path.join(root, "alice.sqlite");
@@ -265,7 +265,9 @@ test("world wanderer backtracks through visible reverse link at recent dead end"
 
   const graph = new Map([
     ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Road" }])],
-    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Road" }])]
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Road" }])],
+    ["escape", pano("escape", 41.001, 29.001, [{ panoId: "c", heading: 90, text: "Road" }])],
+    ["c", pano("c", 41.001, 29.002, [])]
   ]);
   writeWorldWandererState(dbPath, {
     location: graph.get("b")!.location,
@@ -277,20 +279,33 @@ test("world wanderer backtracks through visible reverse link at recent dead end"
     ]
   });
   const panoCalls: string[] = [];
+  const coordinateCalls: Array<{ lat: number; lng: number }> = [];
   const runtime = createWorldWandererRuntime({
     configPath,
     dbPath,
     now: () => new Date("2026-06-17T00:01:00.000Z"),
     random: () => 0,
-    googleStreetView: graphGoogleStreetView(graph, [], panoCalls)
+    googleStreetView: {
+      async getPanoGraphByCoordinates(input) {
+        coordinateCalls.push(input);
+        return graph.get("escape")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        panoCalls.push(input.panoId);
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
   });
 
   const state = await runtime.runIdleTransition({ delayMs: 1 });
 
   assert.ok(state);
-  assert.equal(state.panoId, "a");
-  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["a", "b", "a"]);
-  assert.deepEqual(panoCalls, ["b", "a"]);
+  assert.equal(state.panoId, "c");
+  assert.equal(coordinateCalls.length, 1);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["escape", "c"]);
+  assert.deepEqual(panoCalls, ["b", "c"]);
 });
 
 test("world wanderer records pano graph failure while preserving previous position", async () => {

@@ -71,7 +71,17 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
             config,
             random
           });
-          if (!decision) break;
+          if (!decision) {
+            const nearbyPano = await findNearbyLinkedPano(currentPano.location, new Set(pathStack.map((entry) => entry.panoId)));
+            if (!nearbyPano) break;
+            deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
+            currentPano = nearbyPano;
+            const entry = pathEntryFromPano({ pano: currentPano, lastHeading, time: updatedAt });
+            pathStack = [entry];
+            newPathEntries = [entry];
+            replacePath = true;
+            continue;
+          }
 
           const nextPano = await deps.googleStreetView.getPanoGraphByPanoId({ panoId: decision.link.panoId });
           accumulatedMeters += distanceMeters(currentPano.location, nextPano.location);
@@ -122,11 +132,11 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
     return deps.googleStreetView.getPanoGraphByCoordinates(config.initialLocation);
   }
 
-  async function findNearbyLinkedPano(location: GoogleStreetViewLocation): Promise<GoogleStreetViewPanoGraphResult | undefined> {
+  async function findNearbyLinkedPano(location: GoogleStreetViewLocation, avoidPanoIds = new Set<string>()): Promise<GoogleStreetViewPanoGraphResult | undefined> {
     for (const distance of [30, 60]) {
       for (const heading of [0, 90, 180, 270]) {
         const candidate = await deps.googleStreetView.getPanoGraphByCoordinates(moveLocation(location, heading, distance));
-        if (hasMovableLinks(candidate)) return candidate;
+        if (!avoidPanoIds.has(candidate.panoId) && hasMovableLinks(candidate)) return candidate;
       }
     }
     return undefined;

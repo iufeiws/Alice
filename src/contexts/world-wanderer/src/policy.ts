@@ -20,7 +20,7 @@ export function chooseNextLink(input: {
   const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
   const reverseLink = visibleReverseLink(links, input.state.pathStack);
   const previousRoadText = reverseLink?.text;
-  if (reverseLink && links.every((link) => recentSet.has(link.panoId))) return { link: reverseLink, backtrack: true };
+  if (links.every((link) => recentSet.has(link.panoId))) return undefined;
 
   const scored = links.map((link) => ({
     link,

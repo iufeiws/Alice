@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
+import { createFinishAndWaitTools } from "../src/capabilities/tools/finish-and-wait/src/index.js";
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -22,7 +23,7 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
-test("messaging tools expose merged check_chat, send_chat, and wait_chat tools", async () => {
+test("messaging tools expose merged check_chat and send_chat tools", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-tools"), "alice.sqlite"));
   const tools = createMessagingTools({
     store,
@@ -37,17 +38,21 @@ test("messaging tools expose merged check_chat, send_chat, and wait_chat tools",
   assert.ok(names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
-  assert.ok(names.includes("wait_chat"));
+  assert.ok(!names.includes("finish_and_wait"));
   assert.ok(!names.includes("search_messages"));
   const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
   const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
   assert.deepEqual(properties, {});
   assert.equal(checkChat?.inputSchema.additionalProperties, false);
-  const waitChat = tools.listTools().find((tool) => tool.name === "wait_chat");
-  assert.equal(waitChat?.description, "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。");
-  assert.deepEqual(waitChat?.inputSchema.properties, {});
-  assert.equal(waitChat?.inputSchema.additionalProperties, false);
-  const result = await tools.execute({ id: "call_wait", toolName: "wait_chat", input: {} });
+});
+
+test("finish_and_wait is exposed by its own tool plugin", async () => {
+  const tools = createFinishAndWaitTools();
+  const waitTool = tools.listTools().find((tool) => tool.name === "finish_and_wait");
+  assert.equal(waitTool?.description, "结束当前回复并等待聊天记录更新。当有新消息时会收到提醒并返回新消息。");
+  assert.deepEqual(waitTool?.inputSchema.properties, {});
+  assert.equal(waitTool?.inputSchema.additionalProperties, false);
+  const result = await tools.execute({ id: "call_wait", toolName: "finish_and_wait", input: {} });
   assert.equal(result.ok, true);
   assert.equal(result.meta?.yieldReturn, true);
   assert.equal(result.output, undefined);

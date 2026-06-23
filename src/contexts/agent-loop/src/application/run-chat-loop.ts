@@ -82,7 +82,7 @@ export type ChatAgentLoopInput = {
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   onLLMLog?(event: {
-    kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error";
+    kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error";
     round: number;
     stream: boolean;
     model?: string;
@@ -363,7 +363,7 @@ function isSendChatToolName(toolName: string | undefined): boolean {
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {
-  return toolName === "wait_chat";
+  return toolName === "finish_and_wait";
 }
 
 function mergeToolOutputs(previousOutput: string, nextOutput: string): string {

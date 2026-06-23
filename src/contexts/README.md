@@ -58,7 +58,7 @@
 - `agent-loop/src/application/chat-loop-request-sender.ts`
   - 将 chat 本地 LLM request sender、tool schema rendering、retry/backoff 和 LLM lifecycle logging 从 `run-chat-loop.ts` 移出。
 - `agent-loop/src/application/chat-loop-session-context.ts`
-  - 将 chat fixed-prefix append、wait_chat resume、check_chat cursor、token estimate 和 session-context helpers 从 `run-chat-loop.ts` 移出。
+  - 将 chat fixed-prefix append、finish_and_wait resume、check_chat cursor、token estimate 和 session-context helpers 从 `run-chat-loop.ts` 移出。
 - `agent-loop/src/application/talk-loop-session-context.ts`
   - 将 talk prompt context、prompt variables、prompt tool execution 和 active transcript patch preparation 从 `run-talk-loop.ts` 移出。
 - `agent-loop/src/runtime/agent-loop-session-initializer.ts`
@@ -70,7 +70,7 @@
 2. [done] 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，维护全局 `activeMainLLMSession`、running 状态和 interrupt，并通过注册的 chat/talk runner 统一发起 loop run。
 3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；`messagingTools` 默认 `check_chat` scope 已从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
 4. [done] 将 message runtime 中 heartbeat timer/pause/resume、tick、pending 扫描和 generated/talk 触发编排迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending set 和具体任务回调。
-5. [done] 普通 inbound、manual process、wait_chat resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
+5. [done] 普通 inbound、manual process、finish_and_wait resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
 7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec；生产 chat runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。
 8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
@@ -85,11 +85,11 @@
 17. [done] 抽出 `chat-loop-tool-control.ts`，`run-chat-loop` 不再直接展开 tool result reset/fixed-prefix mode 构筑逻辑，而是执行 tool 后调用 helper 生成 loop control 和待应用 mode state。
 18. [done] 抽出 `talk-loop-session-context.ts`，`run-talk-loop` 不再直接构建 talk prompt context、prompt variables、prompt tool runner 和 active session transcript patch，只消费 prepared session context。
 19. [done] 抽出 `chat-loop-request-sender.ts`，`run-chat-loop` 不再拥有本地 LLM request sender、tool schema rendering、retry/backoff 和 lifecycle logging 实现。
-20. [done] 抽出 `chat-loop-session-context.ts`，`run-chat-loop` 不再拥有 fixed-prefix append、wait_chat resume、check_chat cursor、token estimate 和 session-context helper 实现，仅保留兼容 re-export。
+20. [done] 抽出 `chat-loop-session-context.ts`，`run-chat-loop` 不再拥有 fixed-prefix append、finish_and_wait resume、check_chat cursor、token estimate 和 session-context helper 实现，仅保留兼容 re-export。
 
 ### 当前已知风险
 
-- `wait_chat` resume 依赖主 session 中未完成 tool call，后续迁移 llm-session 存储层 pointer 时必须保留 pending tool result 拼接语义。
+- `finish_and_wait` resume 依赖主 session 中未完成 tool call，后续迁移 llm-session 存储层 pointer 时必须保留 pending tool result 拼接语义。
 - talk 对延迟敏感；calling 状态下 heartbeat 可能需要短 tick 或事件唤醒，而非固定 1 秒。
 - `messagingTools` 的默认 `check_chat` scope 必须由主 loop/session 状态明确决定，不能再由工具私有计数跨 agent 边界推断。
 - `activeMainLLMSession` 当前只证明 loop 运行态唯一；llm-session 的 archive/current pointer 仍由 `activeLLMSessionRuntime` 维护，并保留 chat/talk agentId 切换行为。

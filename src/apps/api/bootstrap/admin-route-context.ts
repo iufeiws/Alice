@@ -96,6 +96,7 @@ export type AdminRuntimeContext = {
   dailyShellStore: DailyShellStore;
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
+  finishAndWaitTools: ToolPlugin;
   photoTools: ToolPlugin;
   shellTools: ToolPlugin;
   bookcaseTools: ToolPlugin;

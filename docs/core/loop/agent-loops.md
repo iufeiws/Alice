@@ -7,8 +7,8 @@ AgentCore has separate loop modules for LLM session policy. Runtime ingress stay
 `core/agent/src/chat-loop.ts` owns the delayed chat LLM loop:
 
 - uses `agentId: "chat"` when sending LLM requests
-- keeps chat session state, rate limits, fixed-prefix append layers, and `wait_chat` resume behavior
-- filters tool calls so `send_chat` and `wait_chat` keep their existing control semantics
+- keeps chat session state, rate limits, fixed-prefix append layers, and `finish_and_wait` resume behavior
+- filters tool calls so `send_chat` and `finish_and_wait` keep their existing control semantics
 - streams partial `send_chat` tool arguments when the model and tool sender support it
 
 The chat prompt profile is stored in `src/core/prompt/prompt-profile.json` and is editable from the admin Prompt page under `Chat`.

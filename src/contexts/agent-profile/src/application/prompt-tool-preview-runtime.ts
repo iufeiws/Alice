@@ -38,6 +38,7 @@ export function createPromptToolPreviewRuntime(input: {
     return input.toolPlugins
       .filter((plugin) => {
         if (plugin.id === "messaging") return profile.visibleTools.feishu !== false;
+        if (plugin.id === "finish-and-wait") return profile.visibleTools.feishu !== false;
         if (plugin.id === "photo") return profile.visibleTools.photo !== false && profile.visibleTools.media !== false;
         if (plugin.id === "shell") return profile.visibleTools.shell !== false;
         return true;
@@ -67,8 +68,16 @@ export function createPromptToolPreviewRuntime(input: {
           error: "send_chat cannot run from request preview"
         };
       }
+      const plugin = input.toolPlugins.find((candidate) => candidate.listTools().some((tool: ToolDefinition) => tool.name === call.toolName));
+      if (!plugin) {
+        return {
+          callId: call.id,
+          ok: false,
+          error: `unknown tool: ${call.toolName}`
+        };
+      }
       try {
-        return await input.messagingTools.execute(call);
+        return await plugin.execute(call);
       } catch (error) {
         return {
           callId: call.id,

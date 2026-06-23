@@ -71,6 +71,7 @@ export function createAdminRequestHandlerRuntime(input: {
   dailyShellStore: any;
   agentState: any;
   messagingTools: any;
+  finishAndWaitTools: any;
   photoTools: any;
   shellTools: any;
   bookcaseTools: any;
@@ -142,6 +143,7 @@ export function createAdminRequestHandlerRuntime(input: {
     dailyShellStore: input.dailyShellStore,
     agentState: input.agentState,
     messagingTools: input.messagingTools,
+    finishAndWaitTools: input.finishAndWaitTools,
     photoTools: input.photoTools,
     shellTools: input.shellTools,
     bookcaseTools: input.bookcaseTools,

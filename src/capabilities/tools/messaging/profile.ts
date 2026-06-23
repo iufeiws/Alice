@@ -24,16 +24,6 @@ export const sendChatTool: ToolDefinition = {
   }
 };
 
-export const waitChatTool: ToolDefinition = {
-  name: "wait_chat",
-  description: "等待聊天记录更新。当有新消息时会收到提醒并返回新消息。",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false
-  }
-};
-
 export const searchMessagesTool: ToolDefinition = {
   name: "search_messages",
   description: "Search persisted messages in the current conversation and return contextual message blocks.",

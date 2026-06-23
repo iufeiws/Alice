@@ -117,7 +117,7 @@ export function createAgentCoreRuntime(input: {
         input.appendLog("info", `llm call start: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
       }
       if (event.kind === "rate_limited") input.appendLog("warn", `llm call skipped: active session reached 10 requests in 60s model=${event.model ?? fallbackModel ?? "(no preset)"}`);
-      if (event.kind === "wait_chat_resume_error") input.appendLog("error", `wait_chat resume failed: ${event.error ?? "unknown error"}`);
+      if (event.kind === "finish_and_wait_resume_error") input.appendLog("error", `finish_and_wait resume failed: ${event.error ?? "unknown error"}`);
       if (event.kind === "stream_start") input.appendLog("info", `llm stream start: round=${event.round} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
       if (event.kind === "stream_end") input.appendLog("info", `llm stream end: round=${event.round} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
       if (event.kind === "response_received") input.appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);

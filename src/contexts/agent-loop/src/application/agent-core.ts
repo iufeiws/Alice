@@ -201,7 +201,7 @@ export type AgentCoreDeps = {
   setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
-  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
+  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
   onLLMSessionCleared?(reason: LLMSessionClearReason): void;

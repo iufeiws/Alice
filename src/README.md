@@ -82,7 +82,7 @@
 关键模块：
 
 - `application/agent-core.ts`: AgentCore facade。接收 AgentEvent，解析 intent，运行 chat loop，处理 LLM session、固定前缀、token pressure、主动行为事件。
-- `application/run-chat-loop.ts`: Chat loop 的核心执行器。负责 prompt 构建、tool-call round、wait_chat yield、streaming send_chat 处理、tool result 追加。
+- `application/run-chat-loop.ts`: Chat loop 的核心执行器。负责 prompt 构建、tool-call round、finish_and_wait yield、streaming send_chat 处理、tool result 追加。
 - `application/run-talk-loop.ts`: Talk loop 执行器。面向实时对话 session，和 chat loop 分离 agent id 与消息构造。
 - `application/intent-router.ts`: 默认 intent router。把文本事件分成 chat、codex 或 unsupported。
 - `application/session-resolver.ts`: 默认 session id 解析。根据 plugin、scope、thread/channel/user/raw message 生成 session key。
@@ -291,7 +291,7 @@
 
 ## `capabilities/tools/messaging/`
 
-职责：LLM chat 工具能力。提供 check_chat、send_chat、wait_chat/search 等 messaging tools。
+职责：LLM chat 工具能力。提供 check_chat、send_chat/search 等 messaging tools。`wait_chat` 待删除；等待能力已独立为 `finish_and_wait` control tool。
 
 关键模块：
 

@@ -13,7 +13,7 @@ import type {
   InsertOutboundMessageInput,
   StoredConversationMessage
 } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import { checkChatTool, messagingSystemPromptMessages, messagingToolText, sendChatTool, waitChatTool } from "../profile.js";
+import { checkChatTool, messagingSystemPromptMessages, messagingToolText, sendChatTool } from "../profile.js";
 
 const fsp = await import("node:fs/promises");
 const path = await import("node:path");
@@ -128,12 +128,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     noteLLMSessionCompleted() {
     },
     listTools() {
-      return [checkChatTool, sendChatTool, waitChatTool];
+      return [checkChatTool, sendChatTool];
     },
     async execute(call) {
       if (call.toolName === "check_chat" || call.toolName === "check_feishu" || call.toolName === "check_wechat" || call.toolName === "view_messages") return viewMessages(call);
       if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat" || call.toolName === "send_message") return sendMessage(call);
-      if (call.toolName === "wait_chat") return waitChat(call);
       if (call.toolName === "search_messages") return searchMessages(call);
       return { callId: call.id, ok: false, error: messagingToolText.unknownTool(call.toolName) };
     }
@@ -271,14 +270,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
           block.messages
         ].join("\n")).join("\n\n")
         : messagingToolText.nothingFound
-    };
-  }
-
-  function waitChat(call: ToolCall): ToolResult {
-    return {
-      callId: call.id,
-      ok: true,
-      meta: { yieldReturn: true }
     };
   }
 

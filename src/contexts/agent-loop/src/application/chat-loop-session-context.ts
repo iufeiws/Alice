@@ -75,7 +75,7 @@ export async function buildWaitChatResumeMessages(input: {
     } else {
       const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), input.session);
       result = await executePromptToolRequest(
-        { id: `wait_chat_resume_${call.id}`, title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: call.function.name, toolArguments: call.function.arguments, order: 0 },
+        { id: `finish_and_wait_resume_${call.id}`, title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolName: call.function.name, toolArguments: call.function.arguments, order: 0 },
         {
           id: call.id,
           toolName: call.function.name,
@@ -189,7 +189,7 @@ async function runWaitChatResumeCheck(
     ? { scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
     : {};
   const result = await executePromptToolRequest(
-    { id: "wait_chat_resume_check_chat", title: "wait_chat resume", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 0 },
+    { id: "finish_and_wait_resume_check_chat", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 0 },
     {
       id: callId,
       toolName: "check_chat",
@@ -212,10 +212,10 @@ function formatWaitChatResumeOutput(
   if (typeof result.output !== "string") return result.output;
   if (typeof waitChatStartedAt !== "number" || !Number.isFinite(waitChatStartedAt)) {
     onLLMLog?.({
-      kind: "wait_chat_resume_error",
+      kind: "finish_and_wait_resume_error",
       round: 0,
       stream: false,
-      error: "wait_chat resume missing start time"
+      error: "finish_and_wait resume missing start time"
     });
     return result.output;
   }
@@ -255,5 +255,5 @@ function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables 
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {
-  return toolName === "wait_chat";
+  return toolName === "finish_and_wait";
 }

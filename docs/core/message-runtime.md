@@ -6,7 +6,7 @@
 
 - 平台插件：负责平台私有接收和发送实现，但必须把入站消息转换为统一的 `AgentEvent`，把消息生命周期转换为统一的 lifecycle event，并实现统一的 `ChannelPlugin.send(output)`。
 - 消息运行时：`apps/api/src/message-runtime.ts` 是 Core 侧聊天消息入口，负责写入 `messages` / `message_logs`、去抖、恢复 pending 会话、调用 `AgentCore`、落库 outbound 并驱动发送。
-- Chat LLM 工具入口：`tools/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`、`wait_chat`。TTS 实现已经抽离到 `plugins/tts`，messaging 只调用注入的 `VoiceSynthesizer`。
+- Chat LLM 工具入口：`tools/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`；`finish_and_wait` 由独立 control tool plugin 暴露。TTS 实现已经抽离到 `plugins/tts`，messaging 只调用注入的 `VoiceSynthesizer`。
 - 持久化入口：`packages/storage/src/sqlite-store.ts` 的 `messages` 表保存当前聊天状态，`message_logs` 保存追加式事件和调试记录。
 
 ## 当前通用接口

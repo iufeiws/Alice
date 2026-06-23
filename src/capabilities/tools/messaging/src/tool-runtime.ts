@@ -6,6 +6,7 @@ import { createBookcaseTools } from "../../bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
 import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
+import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
@@ -147,6 +148,7 @@ export function createToolRuntime(input: {
     calendarStore: input.calendarStore,
     time: input.time
   });
+  const finishAndWaitTools = createFinishAndWaitTools();
   const locationTools = createLocationTools({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles?.root ?? "memory-files", "alice.sqlite"),
@@ -162,7 +164,8 @@ export function createToolRuntime(input: {
     bookcaseTools,
     sleepCocoonTools,
     calendarTools,
+    finishAndWaitTools,
     locationTools,
-    toolPlugins: [messagingTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, locationTools]
+    toolPlugins: [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, locationTools]
   };
 }

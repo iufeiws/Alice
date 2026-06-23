@@ -387,7 +387,7 @@ test("agent core stops before another llm request when a tool invalidates the se
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
 });
 
-test("agent core exits the current loop after wait_chat", async () => {
+test("agent core exits the current loop after finish_and_wait", async () => {
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
   const llm: LLMClient = {
@@ -401,7 +401,7 @@ test("agent core exits the current loop after wait_chat", async () => {
           toolCalls: [{
             id: "tool_wait",
             type: "function",
-            function: { name: "wait_chat", arguments: "{}" }
+            function: { name: "finish_and_wait", arguments: "{}" }
           }]
         },
         finishReason: "tool_calls"
@@ -433,11 +433,11 @@ test("agent core exits the current loop after wait_chat", async () => {
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, "2026-05-26T00:00:00.000Z");
   assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.role, "assistant");
-  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "wait_chat");
-  assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "wait_chat"), false);
+  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "finish_and_wait");
+  assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "finish_and_wait"), false);
 });
 
-test("agent core resumes pending wait_chat with check_chat result on heartbeat", async () => {
+test("agent core resumes pending finish_and_wait with check_chat result on heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   const checkInputs: Record<string, unknown>[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -454,7 +454,7 @@ test("agent core resumes pending wait_chat with check_chat result on heartbeat",
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "wait_chat", arguments: "{}" }
+              function: { name: "finish_and_wait", arguments: "{}" }
             }]
           },
           finishReason: "tool_calls"
@@ -496,16 +496,16 @@ test("agent core resumes pending wait_chat with check_chat result on heartbeat",
   assert.equal(requests.length, 2);
   assert.deepEqual(checkInputs, [{}]);
   const secondMessages = requests[1].messages;
-  const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "wait_chat");
+  const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "finish_and_wait");
   assert.equal(waitToolMessages.length, 1);
   assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<time>2026-05-26T00:05:00.000<\\time>");
-  const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "wait_chat");
+  const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "finish_and_wait");
   const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
   assert.equal(checkChatAfterWait, undefined);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
 
-test("agent core executes same-round tools when wait_chat appears and resumes wait result later", async () => {
+test("agent core executes same-round tools when finish_and_wait appears and resumes wait result later", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -528,7 +528,7 @@ test("agent core executes same-round tools when wait_chat appears and resumes wa
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "wait_chat", arguments: "{}" }
+              function: { name: "finish_and_wait", arguments: "{}" }
             },
             {
               id: "tool_later",
@@ -567,10 +567,10 @@ test("agent core executes same-round tools when wait_chat appears and resumes wa
 
   await runPreparedCoreEvent(core, textEvent());
 
-  assert.deepEqual(calls, ["check_chat", "wait_chat", "later_tool"]);
+  assert.deepEqual(calls, ["check_chat", "finish_and_wait", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
-  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "wait_chat"));
-  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["check_chat", "wait_chat", "later_tool"]);
+  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "finish_and_wait"));
+  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["check_chat", "finish_and_wait", "later_tool"]);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
@@ -3429,13 +3429,13 @@ function chatTestTools(onCall?: (call: ToolCall) => void) {
     listTools() {
       return [
         { name: "check_chat", description: "view", inputSchema: { type: "object" } },
-        { name: "wait_chat", description: "wait", inputSchema: { type: "object" } },
+        { name: "finish_and_wait", description: "wait", inputSchema: { type: "object" } },
         { name: "later_tool", description: "later", inputSchema: { type: "object" } }
       ];
     },
     async execute(call: ToolCall) {
       onCall?.(call);
-      if (call.toolName === "wait_chat") {
+      if (call.toolName === "finish_and_wait") {
         return {
           callId: call.id,
           ok: true,

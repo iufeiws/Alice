@@ -65,6 +65,7 @@ export function createApiToolingRuntime(input: {
     ttsPlugin: apiCapabilitiesRuntime.ttsPlugin,
     asrPlugin: apiCapabilitiesRuntime.asrPlugin,
     messagingTools: apiCapabilitiesRuntime.messagingTools,
+    finishAndWaitTools: apiCapabilitiesRuntime.finishAndWaitTools,
     toolPlugins: apiCapabilitiesRuntime.toolPlugins,
     llmRequests: apiCapabilitiesRuntime.llmRequests,
     visibleToolNames: apiCapabilitiesRuntime.visibleToolNames,

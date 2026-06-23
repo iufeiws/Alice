@@ -7,7 +7,7 @@ import type { ToolPlugin } from "../contracts/agent-contracts.js";
 const maxLLMRetryAttempts = 3;
 
 export type ChatLoopRequestSenderLog = {
-  kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "wait_chat_resume_error";
+  kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error";
   round: number;
   stream: boolean;
   model?: string;

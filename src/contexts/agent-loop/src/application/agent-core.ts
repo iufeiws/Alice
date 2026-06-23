@@ -8,7 +8,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { DailyShell } from "../../../agent-profile/src/domain/shell.js";
 import type { MemorySnapshot } from "../../../memory/src/memory.js";
@@ -361,16 +361,16 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           ? hydrateLLMSessionSnapshot(persistedSession)
           : undefined);
       }
-      const makePromptContext = () => ({
+      const buildPromptContext = () => makePromptContext({
         event,
         time,
-        dailyShell: deps.getDailyShell?.(),
-        dailyShellRaw: deps.getDailyShellRaw?.(),
-        appearanceDescription: deps.getAppearanceDescription?.(),
-        librarySetting: deps.getLibrarySetting?.(),
-        memory: deps.getMemorySnapshot?.(),
-        wakeBoundary: deps.getWakeBoundary?.(),
-        calendarContext: deps.getCalendarContext?.()
+        getDailyShell: deps.getDailyShell,
+        getDailyShellRaw: deps.getDailyShellRaw,
+        getAppearanceDescription: deps.getAppearanceDescription,
+        getLibrarySetting: deps.getLibrarySetting,
+        getMemorySnapshot: deps.getMemorySnapshot,
+        getWakeBoundary: deps.getWakeBoundary,
+        getCalendarContext: deps.getCalendarContext
       });
       const initiatedBehaviorRunPlan = initiatedBehavior;
       let initiatedBehaviorExecution: Awaited<ReturnType<typeof executeAgentInitiatedBehaviorBackendSteps>> | undefined;
@@ -430,7 +430,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       let createdSessionThisRun = false;
       let initiatedBehaviorMessageCount = 0;
       const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
-        const promptContext = makePromptContext();
+        const promptContext = buildPromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
         let initiatedBehaviorPromptToolResult: ToolResult | undefined;
         const session = await ensureChatLoopSessionContext<ActiveLLMSession, ModeState>({
@@ -529,7 +529,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           });
           return;
         }
-        const promptContext = makePromptContext();
+        const promptContext = buildPromptContext();
         if (session.mode === "fixed_prefix") {
           const appendMessages = await buildFixedPrefixAppendMessages({
             mode: modeStateFromSession(session),

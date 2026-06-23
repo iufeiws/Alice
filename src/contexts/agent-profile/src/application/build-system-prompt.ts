@@ -43,6 +43,20 @@ export type PromptRenderContext = {
   memory?: MemorySnapshot;
   wakeBoundary?: LLMTextWakeBoundary;
   calendarContext?: string;
+  preview?: boolean;
+};
+
+export type PromptContextDeps = {
+  event: AgentEvent;
+  time: CurrentTimeProvider;
+  getDailyShell?: () => string | undefined;
+  getDailyShellRaw?: () => DailyShell | undefined;
+  getAppearanceDescription?: () => string | undefined;
+  getLibrarySetting?: () => string | undefined;
+  getMemorySnapshot?: () => MemorySnapshot | undefined;
+  getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
+  getCalendarContext?: () => string | undefined;
+  preview?: boolean;
 };
 
 export type PromptProfileStore = {
@@ -156,10 +170,11 @@ export async function buildLayerMessagesWithToolResults(
 
     const toolCall = message.toolCalls?.[0];
     if (!toolCall) continue;
+    const toolInput = parsePromptToolArguments(toolCall.function.arguments);
     const result = await runTool(layer, {
       id: toolCall.id,
       toolName: toolCall.function.name,
-      input: parsePromptToolArguments(toolCall.function.arguments),
+      input: context.preview ? { ...toolInput, __preview: true } : toolInput,
       requester: context.event.source,
       externalSession: context.event.externalSession
     });
@@ -187,6 +202,21 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     wakeBoundary: context.wakeBoundary,
     calendarContext: context.calendarContext
   });
+}
+
+export function makePromptContext(input: PromptContextDeps): PromptRenderContext {
+  return {
+    event: input.event,
+    time: input.time,
+    dailyShell: input.getDailyShell?.(),
+    dailyShellRaw: input.getDailyShellRaw?.(),
+    appearanceDescription: input.getAppearanceDescription?.(),
+    librarySetting: input.getLibrarySetting?.(),
+    memory: input.getMemorySnapshot?.(),
+    wakeBoundary: input.getWakeBoundary?.(),
+    calendarContext: input.getCalendarContext?.(),
+    preview: input.preview
+  };
 }
 
 export function renderTemplate(content: string, variables: LLMTextVariables): string {

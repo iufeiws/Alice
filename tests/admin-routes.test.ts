@@ -1941,6 +1941,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
         { occurredAt: "2026-05-23T22:00:00.000", source: "inferred_start" },
         { occurredAt: "2026-05-24T06:00:00.000", source: "sleep" }
       ],
+      latestWakeBoundary: () => undefined,
       recordSleepBoundary() {}
     },
     calendarStore: {

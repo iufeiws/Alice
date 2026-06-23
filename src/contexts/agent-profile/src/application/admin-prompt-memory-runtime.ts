@@ -1,6 +1,6 @@
 import type { ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createAdminMemoryRuntime } from "../../../memory/src/application/admin-memory-runtime.js";
-import { defaultPromptRegistry, promptVariables, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
+import { defaultPromptRegistry, makePromptContext, promptVariables, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
 import { isToolVisibleInPromptProfile } from "../../../initiative/src/domain/initiated-behavior.js";
 import { buildLLMTextVariables, renderLLMValue, type LLMTextVariables } from "./llm-text-renderer.js";
 import { readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
@@ -79,17 +79,19 @@ export function writeServiceResult(response: any, result: { status: number; body
 export function getPromptVariablePreview(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): LLMTextVariables {
   const target = resolvePromptPreviewTarget(context);
   const receivedTime = context.time.now();
-  return promptVariables(store.get(), {
+  const profile = store.get();
+  return promptVariables(profile, makePromptContext({
     time: context.time,
-    dailyShell: context.getDailyShell(),
-    dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
-    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
-    librarySetting: resolveLibrarySetting(context),
-    memory: context.memoryStore.read(),
-    calendarContext: buildCalendarContext({
+    getDailyShell: () => context.getDailyShell(),
+    getDailyShellRaw: () => context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
+    getAppearanceDescription: () => context.coreProfileStore.get().appearanceDescription,
+    getLibrarySetting: () => resolveLibrarySetting(context),
+    getMemorySnapshot: () => context.memoryStore.read(),
+    getWakeBoundary: () => context.diaryStore.latestWakeBoundary(),
+    getCalendarContext: () => buildCalendarContext({
       calendarStore: context.calendarStore,
       time: context.time,
-      userName: store.get().userName
+      userName: profile.userName
     }),
     event: {
       id: "preview",
@@ -110,7 +112,7 @@ export function getPromptVariablePreview(context: AdminRoutesContext, store: Pro
         receivedAtUtc: receivedTime.date.toISOString()
       }
     }
-  });
+  }));
 }
 
 export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string } {

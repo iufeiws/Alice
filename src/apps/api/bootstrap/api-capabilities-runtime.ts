@@ -78,6 +78,7 @@ export function createApiCapabilitiesRuntime(input: {
     },
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
+    calendarStore: input.calendarStore,
     toolPlugins: toolRuntime.toolPlugins,
     llmRequests,
     messagingTools: toolRuntime.messagingTools

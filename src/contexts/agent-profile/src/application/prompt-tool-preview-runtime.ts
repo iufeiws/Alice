@@ -3,10 +3,12 @@ import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { ToolDefinition } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import {
   buildAppendPromptMessagesWithToolResults,
-  buildPromptMessagesWithToolResults
+  buildPromptMessagesWithToolResults,
+  makePromptContext,
+  promptVariables
 } from "./build-system-prompt.js";
-import { buildLLMTextVariables } from "./llm-text-renderer.js";
 import { memoryToolDefinitions } from "../../../memory/src/memory.js";
+import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
@@ -15,6 +17,7 @@ export function createPromptToolPreviewRuntime(input: {
   getLibrarySetting?(): string;
   memoryStore: any;
   diaryStore: any;
+  calendarStore: any;
   toolPlugins: any[];
   llmRequests: { buildTools(names: string[], variables: unknown): LLMChatInput["tools"] };
   messagingTools: { execute(call: any): Promise<unknown> | unknown };
@@ -27,15 +30,7 @@ export function createPromptToolPreviewRuntime(input: {
   };
 
   function visibleToolSpecs(profile: any): LLMChatInput["tools"] {
-    const variables = buildLLMTextVariables({
-      userName: profile.userName,
-      time: input.time,
-      dailyShell: input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
-      dailyShellRaw: input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
-      appearanceDescription: input.coreProfileStore.get().appearanceDescription,
-      librarySetting: input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
-      memory: input.memoryStore.read()
-    });
+    const variables = promptVariables(profile, makePreviewPromptContext(profile, previewEvent()));
     return input.llmRequests.buildTools(visibleToolNames(profile), variables);
   }
 
@@ -63,16 +58,7 @@ export function createPromptToolPreviewRuntime(input: {
     event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"],
     includeFakeCheckChat = false
   ): Promise<LLMChatInput["messages"]> {
-    const context = {
-      event,
-      time: input.time,
-      dailyShell: input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
-      dailyShellRaw: input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
-      appearanceDescription: input.coreProfileStore.get().appearanceDescription,
-      librarySetting: input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
-      memory: input.memoryStore.read(),
-      wakeBoundary: input.diaryStore.latestWakeBoundary()
-    };
+    const context = makePreviewPromptContext(profile, event);
     const runPreviewTool = async (_layer: unknown, call: any) => {
       if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {
         return {
@@ -82,10 +68,7 @@ export function createPromptToolPreviewRuntime(input: {
         };
       }
       try {
-        return await input.messagingTools.execute({
-          ...call,
-          input: { ...call.input, __preview: true }
-        });
+        return await input.messagingTools.execute(call);
       } catch (error) {
         return {
           callId: call.id,
@@ -101,5 +84,36 @@ export function createPromptToolPreviewRuntime(input: {
       ...messages,
       ...appendMessages
     ];
+  }
+
+  function makePreviewPromptContext(profile: any, event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"]) {
+    return makePromptContext({
+      event,
+      time: input.time,
+      getDailyShell: () => input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
+      getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
+      getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
+      getLibrarySetting: () => input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
+      getMemorySnapshot: () => input.memoryStore.read(),
+      getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
+      getCalendarContext: () => buildCalendarContext({
+        calendarStore: input.calendarStore,
+        time: input.time,
+        userName: profile.userName
+      }),
+      preview: true
+    });
+  }
+
+  function previewEvent(): Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"] {
+    const now = input.time.now();
+    return {
+      id: "tool_preview",
+      source: { plugin: "preview", channelId: "preview", userId: "preview" },
+      externalSession: { scope: "dm", sessionId: "preview" },
+      type: "message.text",
+      payload: { kind: "text", text: "" },
+      meta: { receivedAt: now.iso, receivedAtUtc: now.date.toISOString() }
+    };
   }
 }

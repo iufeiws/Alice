@@ -52,6 +52,7 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
   };
 
   async function enterSleepCocoon(call: ToolCall): Promise<ToolResult> {
+    if (deps.agentState.getSnapshot().state === "going_to_sleep") return toolError(call, sleepCocoonToolText.alreadyEntered);
     const sleepDurationMs = resolveSleepDurationMs(call.input.hours, random);
     const now = deps.time.now();
     deps.agentState.setState("going_to_sleep", {

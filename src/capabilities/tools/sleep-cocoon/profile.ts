@@ -22,6 +22,7 @@ export const sleepCocoonToolText = {
   unknownTool: (toolName: string) => `Unknown sleep_cocoon tool: ${toolName}`,
   unsupportedAction: "unsupported action",
   success: "success",
+  alreadyEntered: "already entered sleep cocoon",
   alreadySleeping: "already sleeping",
   noCountdownToCancel: "no sleep cocoon countdown to cancel",
   enterNotice: "-少女就寝中-",

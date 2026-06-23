@@ -121,6 +121,36 @@ test("sleep_cocoon in sends non-persisted sleep notice to current chat", async (
   assert.deepEqual(sent[0].content, { kind: "text", text: "-少女就寝中-" });
 });
 
+test("sleep_cocoon in rejects repeated entry while going_to_sleep", async () => {
+  const sent: AgentOutput[] = [];
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => new Date("2026-05-25T00:00:00.000Z"),
+    random: () => 0
+  });
+  controller.setState("going_to_sleep", {
+    sleepCocoonEnteredAt: "2026-05-25T00:00:00.000",
+    sleepDurationMs: 8 * 60 * 60 * 1000
+  });
+  const tools = createSleepCocoonTools({
+    agentState: controller,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T01:00:00.000Z")),
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+      }
+    }
+  });
+
+  const result = await tools.execute({ id: "call_in_again", toolName: "sleep_cocoon", input: { action: "in" } });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "already entered sleep cocoon");
+  assert.equal(controller.getSnapshot().state, "going_to_sleep");
+  assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T00:00:00.000");
+  assert.equal(sent.length, 0);
+});
+
 test("sleep_cocoon duration uses requested integer hours plus fifteen minute jitter", () => {
   assert.equal(resolveSleepDurationMs(8, () => 0), 7.75 * 60 * 60 * 1000);
   assert.equal(resolveSleepDurationMs(8, () => 1), 8.25 * 60 * 60 * 1000);

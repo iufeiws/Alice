@@ -1,3 +1,5 @@
+import { describeError } from "../../../../shared/errors/src/index.js";
+
 export type AgentHeartbeatRuntime = {
   schedule(delayMs?: number): void;
   clear(): void;
@@ -93,7 +95,7 @@ export function createAgentHeartbeatRuntime(input: {
     try {
       input.onPausedChange?.(paused);
     } catch (error) {
-      input.appendLog("warn", `agent heartbeat state persist failed: ${error instanceof Error ? error.message : String(error)}`);
+      input.appendLog("warn", `agent heartbeat state persist failed: ${describeError(error)}`);
     }
   }
 
@@ -115,7 +117,7 @@ export function createAgentHeartbeatRuntime(input: {
     timer = setTimeout(() => {
       timer = undefined;
       void run().catch((error) => {
-        input.appendLog("error", `agent heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+        input.appendLog("error", `agent heartbeat failed: ${describeError(error)}`);
       });
     }, Math.max(0, delayMs));
     (timer as { unref?: () => void }).unref?.();
@@ -130,7 +132,7 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     try {
       await tasks.onIdleTimerTransition?.({ delayMs: tasks.getIdleTransitionDelayMs?.() ?? 0 });
     } catch (error) {
-      tasks.appendLog("warn", `idle timer transition hook failed: ${error instanceof Error ? error.message : String(error)}`);
+      tasks.appendLog("warn", `idle timer transition hook failed: ${describeError(error)}`);
     }
   }
   const randomizedInitiatedEvent = idleTransitionDue
@@ -157,9 +159,9 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
       if (started) processed += 1;
     } catch (error) {
       if (isHeartbeatCancellationError(error)) {
-        tasks.appendLog("info", `agent talk session cancelled: session=${talkSessionId} reason=${error instanceof Error ? error.message : String(error)}`);
+        tasks.appendLog("info", `agent talk session cancelled: session=${talkSessionId} reason=${describeError(error)}`);
       } else {
-        tasks.appendLog("error", `agent talk session failed: session=${talkSessionId} error=${error instanceof Error ? error.message : String(error)}`);
+        tasks.appendLog("error", `agent talk session failed: session=${talkSessionId} error=${describeError(error)}`);
         tasks.markTalkSessionReady?.(talkSessionId);
       }
     }
@@ -206,7 +208,7 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
         tasks.markSessionNotPending(sessionId);
       }
     } catch (error) {
-      tasks.appendLog("error", `agent session failed: ${error instanceof Error ? error.message : String(error)}`);
+      tasks.appendLog("error", `agent session failed: ${describeError(error)}`);
     } finally {
       tasks.finishProcessingSession(sessionId);
     }

@@ -360,7 +360,9 @@ test("message runtime marks inbound core failed and does not retry the same batc
     core: {
       async prepareEventRun() {
         coreCalls += 1;
-        throw new Error("llm failed");
+        throw new Error("llm failed", {
+          cause: Object.assign(new Error("provider stream terminated"), { code: "UND_ERR_SOCKET" })
+        });
       }
     },
     outputRouter: {
@@ -383,7 +385,11 @@ test("message runtime marks inbound core failed and does not retry the same batc
   assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-星界信号丢失-");
   assert.equal(store.listMessagesForConversation("session-1", 10).at(-1)?.senderRole, "system");
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
-  assert.ok(store.listMessageLogs(20).some((entry) => entry.status === "core_failed" && entry.error === "llm failed"));
+  const failedLog = store.listMessageLogs(20).find((entry) => entry.status === "core_failed");
+  assert.match(failedLog?.error ?? "", /Error: llm failed/);
+  assert.match(failedLog?.error ?? "", /cause: Error: provider stream terminated/);
+  assert.match(failedLog?.error ?? "", /details: code=UND_ERR_SOCKET/);
+  assert.match(failedLog?.error ?? "", /at Object\.prepareEventRun/);
   assert.ok(logs.some((message) => message.includes("marked 1 inbound message(s) processed as failed")));
 });
 

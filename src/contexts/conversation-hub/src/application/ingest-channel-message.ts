@@ -11,6 +11,7 @@ import {
 } from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
 import { createCurrentTimeProvider, parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { describeError } from "../../../../shared/errors/src/index.js";
 import type {
   InsertOutboundMessageInput,
   StoredConversationMessage,
@@ -401,7 +402,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         userId: target.userId,
         sessionId: target.sessionId
       }, llmFailureNotice);
-      deps.appendLog("error", `manual process now failed: ${error instanceof Error ? error.message : String(error)}`);
+      deps.appendLog("error", `manual process now failed: ${describeError(error)}`);
       return false;
     } finally {
       await setTypingIndicator({ ...target, typing: false });
@@ -457,7 +458,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.appendLog("info", `${label} session handled: ${outputs.length} output(s)`);
       return true;
     } catch (error) {
-      deps.appendLog("error", `${label} session failed: ${error instanceof Error ? error.message : String(error)}`);
+      deps.appendLog("error", `${label} session failed: ${describeError(error)}`);
       return false;
     } finally {
       await setTypingIndicator({ ...event.source, sessionId: event.externalSession.sessionId, typing: false });
@@ -750,7 +751,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   function markPendingCoreFailed(pending: StoredConversationMessage[], error: unknown): void {
     const failedAt = time.now().iso;
     const batchId = createId("core_failed");
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = describeError(error);
     deps.store.markMessagesCoreProcessed(pending.map((entry) => entry.id), failedAt, batchId);
     for (const entry of pending) {
       deps.appendMessageLog({

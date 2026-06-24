@@ -5,7 +5,7 @@ const path = await import("node:path");
 
 type DatabaseSync = any;
 
-export type CalendarEntryKind = "holiday" | "birthday" | "reminder";
+export type CalendarEntryKind = "holiday" | "birthday" | "schedule";
 export type CalendarSystem = "gregorian" | "lunar";
 
 export type CalendarEntry = {
@@ -14,6 +14,7 @@ export type CalendarEntry = {
   title: string;
   note: string;
   source: string;
+  meta: string;
   calendarSystem: CalendarSystem;
   year?: number;
   month: number;
@@ -41,6 +42,7 @@ export type CalendarStore = {
     title: string;
     note?: string;
     source?: string;
+    meta?: string;
     calendarSystem: CalendarSystem;
     year?: number;
     month: number;
@@ -64,7 +66,8 @@ export type CalendarStore = {
   }): CalendarEntry;
   latestBirthday(): CalendarEntry | undefined;
   listEntries(kind?: CalendarEntryKind): CalendarEntry[];
-  consumeDueReminder(input: { dates: CalendarDueDate[]; firedAt: string; firedAtUtc?: string }): CalendarEntry | undefined;
+  updateEntryDetails(input: { id: number; note?: string; meta?: string }): CalendarEntry | undefined;
+  consumeDueSchedule(input: { dates: CalendarDueDate[]; firedAt: string; firedAtUtc?: string }): CalendarEntry | undefined;
 };
 
 export function createCalendarStore(dbPath: string): CalendarStore {
@@ -76,13 +79,14 @@ export function createCalendarStore(dbPath: string): CalendarStore {
   return {
     addEntry(input) {
       db.prepare(`
-        INSERT INTO calendar_entries(kind, title, note, source, calendar_system, year, month, day, is_leap_month, time, created_at, created_at_utc)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO calendar_entries(kind, title, note, source, meta, calendar_system, year, month, day, is_leap_month, time, created_at, created_at_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.kind,
         input.title,
         input.note ?? "",
         input.source ?? "",
+        input.meta ?? "",
         input.calendarSystem,
         input.year ?? null,
         input.month,
@@ -121,7 +125,16 @@ export function createCalendarStore(dbPath: string): CalendarStore {
         ORDER BY id ASC
       `).all(...params).map((row: unknown) => normalizeCalendarEntry(row)!).filter(Boolean);
     },
-    consumeDueReminder(input) {
+    updateEntryDetails(input) {
+      db.prepare(`
+        UPDATE calendar_entries
+        SET note = COALESCE(?, note),
+            meta = COALESCE(?, meta)
+        WHERE id = ?
+      `).run(input.note ?? null, input.meta ?? null, input.id);
+      return normalizeCalendarEntry(db.prepare(`${selectCalendarEntrySql()} WHERE id = ?`).get(input.id));
+    },
+    consumeDueSchedule(input) {
       if (input.dates.length === 0) return undefined;
       const clauses: string[] = [];
       const params: unknown[] = [input.firedAt, input.firedAtUtc ?? null];
@@ -135,7 +148,7 @@ export function createCalendarStore(dbPath: string): CalendarStore {
         WHERE id = (
           SELECT id
           FROM calendar_entries
-          WHERE kind = 'reminder'
+          WHERE kind = 'schedule'
             AND fired_at IS NULL
             AND (${clauses.join(" OR ")})
           ORDER BY id ASC
@@ -151,10 +164,11 @@ function initialize(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS calendar_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      kind TEXT NOT NULL CHECK (kind IN ('holiday', 'birthday', 'reminder')),
+      kind TEXT NOT NULL CHECK (kind IN ('holiday', 'birthday', 'schedule')),
       title TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '',
       source TEXT NOT NULL DEFAULT '',
+      meta TEXT NOT NULL DEFAULT '',
       calendar_system TEXT NOT NULL CHECK (calendar_system IN ('gregorian', 'lunar')),
       year INTEGER,
       month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
@@ -170,6 +184,7 @@ function initialize(db: DatabaseSync): void {
       ON calendar_entries(kind, calendar_system, month, day, time);
   `);
   ensureColumn(db, "calendar_entries", "source", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "calendar_entries", "meta", "TEXT NOT NULL DEFAULT ''");
 }
 
 function selectCalendarEntrySql(): string {
@@ -183,6 +198,7 @@ function calendarEntryColumns(): string {
     "title",
     "note",
     "source",
+    "meta",
     "calendar_system AS calendarSystem",
     "year",
     "month",
@@ -205,6 +221,7 @@ function normalizeCalendarEntry(row: unknown): CalendarEntry | undefined {
     title: value.title,
     note: value.note,
     source: value.source,
+    meta: value.meta,
     calendarSystem: value.calendarSystem,
     year: value.year === null || value.year === undefined ? undefined : Number(value.year),
     month: Number(value.month),

@@ -2,21 +2,23 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const calendarTool: ToolDefinition = {
   name: "calendar",
-  description: "管理日历事实和一次性定时提醒。支持 action=add 添加 holiday/reminder，action=remove 按 id 删除。",
+  description: "管理和查看日历。支持 action=add 添加 schedule，action=remove 按 title/datetime 删除 schedule，action=search 搜索，action=list 查看日历。",
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["add", "remove"] },
-      type: { type: "string", enum: ["holiday", "reminder"] },
-      calendarSystem: { type: "string", enum: ["gregorian", "lunar"] },
+      action: { type: "string", enum: ["add", "remove", "search", "list"] },
       title: { type: "string" },
+      datetime: { type: "string" },
       note: { type: "string" },
-      year: { type: "integer" },
-      month: { type: "integer", minimum: 1, maximum: 12 },
-      day: { type: "integer", minimum: 1, maximum: 31 },
-      isLeapMonth: { type: "boolean" },
-      time: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
-      id: { type: "integer", minimum: 1 }
+      searchkey: {
+        anyOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" }, minItems: 1 }
+        ]
+      },
+      scope: { type: "string", enum: ["future", "past", "both"] },
+      daysBefore: { type: "integer", minimum: 0, maximum: 30 },
+      daysAfter: { type: "integer", minimum: 0, maximum: 30 }
     },
     required: ["action"],
     additionalProperties: false
@@ -28,9 +30,9 @@ export const calendarToolText = {
   unsupportedAction: "unsupported action",
   invalidType: "invalid type",
   invalidTitle: "invalid title",
-  invalidCalendarSystem: "invalid calendar system",
-  invalidDate: "invalid date",
-  invalidTime: "invalid time",
-  invalidId: "invalid id",
+  invalidDatetime: "invalid datetime",
+  pastDatetime: "datetime must be now or future",
+  duplicateSchedule: "duplicate schedule",
+  invalidSearch: "invalid search",
   notFound: "not found"
 };

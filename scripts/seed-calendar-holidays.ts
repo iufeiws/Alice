@@ -20,6 +20,7 @@ const args = parseArgs(process.argv.slice(2));
 const years = args.years ?? currentAndNextYear(config.core.timezone);
 const dbPath = args.dbPath ?? path.join(config.memoryFiles.root, "alice.sqlite");
 const store = createCalendarStore(dbPath);
+const migrated = migrateDateHolidayNotes(store);
 let added = 0;
 let skipped = 0;
 
@@ -31,7 +32,7 @@ for (const country of args.countries) {
   }
 }
 
-console.log(`seeded calendar holidays: added=${added} skipped=${skipped} db=${dbPath}`);
+console.log(`seeded calendar holidays: added=${added} skipped=${skipped} migrated=${migrated} db=${dbPath}`);
 
 function seedCountryYear(store: CalendarStore, country: string, year: number): { added: number; skipped: number } {
   const countryCode = country.trim().toUpperCase();
@@ -55,8 +56,8 @@ function seedCountryYear(store: CalendarStore, country: string, year: number): {
     store.addEntry({
       kind: "holiday",
       title: holiday.name,
-      note: holidayNote(holiday),
       source,
+      meta: holidayMeta(holiday),
       calendarSystem: "gregorian",
       year: Number(localDate.slice(0, 4)),
       month: Number(localDate.slice(5, 7)),
@@ -107,12 +108,33 @@ function datePart(holiday: HolidaysTypes.Holiday): string {
   return holiday.date.slice(0, 10);
 }
 
-function holidayNote(holiday: HolidaysTypes.Holiday): string {
-  return [holiday.type, holiday.substitute ? "substitute" : ""].filter(Boolean).join(" ");
+function holidayMeta(holiday: HolidaysTypes.Holiday): string {
+  return JSON.stringify({
+    type: holiday.type,
+    substitute: holiday.substitute === true
+  });
 }
 
 function holidayKey(source: string, title: string, year: number | undefined, month: number, day: number): string {
   return `${source}\0${title}\0${year ?? ""}\0${month}\0${day}`;
+}
+
+function migrateDateHolidayNotes(store: CalendarStore): number {
+  let migrated = 0;
+  for (const entry of store.listEntries("holiday")) {
+    if (!entry.source.startsWith("date-holidays:") || !isDateHolidayTypeNote(entry.note)) continue;
+    store.updateEntryDetails({
+      id: entry.id,
+      note: "",
+      meta: entry.meta || JSON.stringify({ type: entry.note, substitute: false })
+    });
+    migrated += 1;
+  }
+  return migrated;
+}
+
+function isDateHolidayTypeNote(value: string): boolean {
+  return /^(public|bank|optional|school|observance)( substitute)?$/.test(value);
 }
 
 function loadDotEnv(filePath: string): void {

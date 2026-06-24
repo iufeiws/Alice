@@ -28,7 +28,7 @@ export function createCalendarEventRuntime(input: {
     const target = input.getDefaultTarget();
     if (!target) return undefined;
     const dates = dueDatesInWindow(fromExclusive, now.epochMs, input.time.timeZone);
-    const reminder = input.calendarStore.consumeDueReminder({
+    const reminder = input.calendarStore.consumeDueSchedule({
       dates,
       firedAt: now.iso,
       firedAtUtc: now.date.toISOString()

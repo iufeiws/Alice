@@ -13,6 +13,7 @@ export type CalendarEntry = {
   kind: CalendarEntryKind;
   title: string;
   note: string;
+  source: string;
   calendarSystem: CalendarSystem;
   year?: number;
   month: number;
@@ -39,6 +40,7 @@ export type CalendarStore = {
     kind: CalendarEntryKind;
     title: string;
     note?: string;
+    source?: string;
     calendarSystem: CalendarSystem;
     year?: number;
     month: number;
@@ -74,12 +76,13 @@ export function createCalendarStore(dbPath: string): CalendarStore {
   return {
     addEntry(input) {
       db.prepare(`
-        INSERT INTO calendar_entries(kind, title, note, calendar_system, year, month, day, is_leap_month, time, created_at, created_at_utc)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO calendar_entries(kind, title, note, source, calendar_system, year, month, day, is_leap_month, time, created_at, created_at_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.kind,
         input.title,
         input.note ?? "",
+        input.source ?? "",
         input.calendarSystem,
         input.year ?? null,
         input.month,
@@ -151,6 +154,7 @@ function initialize(db: DatabaseSync): void {
       kind TEXT NOT NULL CHECK (kind IN ('holiday', 'birthday', 'reminder')),
       title TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
       calendar_system TEXT NOT NULL CHECK (calendar_system IN ('gregorian', 'lunar')),
       year INTEGER,
       month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
@@ -165,6 +169,7 @@ function initialize(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS calendar_entries_lookup_idx
       ON calendar_entries(kind, calendar_system, month, day, time);
   `);
+  ensureColumn(db, "calendar_entries", "source", "TEXT NOT NULL DEFAULT ''");
 }
 
 function selectCalendarEntrySql(): string {
@@ -177,6 +182,7 @@ function calendarEntryColumns(): string {
     "kind",
     "title",
     "note",
+    "source",
     "calendar_system AS calendarSystem",
     "year",
     "month",
@@ -198,6 +204,7 @@ function normalizeCalendarEntry(row: unknown): CalendarEntry | undefined {
     kind: value.kind,
     title: value.title,
     note: value.note,
+    source: value.source,
     calendarSystem: value.calendarSystem,
     year: value.year === null || value.year === undefined ? undefined : Number(value.year),
     month: Number(value.month),
@@ -209,4 +216,10 @@ function normalizeCalendarEntry(row: unknown): CalendarEntry | undefined {
     createdAt: value.createdAt,
     createdAtUtc: value.createdAtUtc || undefined
   };
+}
+
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((entry) => entry.name === column)) return;
+  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }

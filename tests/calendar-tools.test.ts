@@ -32,6 +32,24 @@ test("calendar tool adds and removes holiday", async () => {
   assert.deepEqual(store.listEntries(), []);
 });
 
+test("calendar store persists entry source", () => {
+  const store = createCalendarStore(dbPath("calendar-source"));
+  const entry = store.addEntry({
+    kind: "holiday",
+    title: "Christmas Day",
+    source: "date-holidays:US:2026",
+    calendarSystem: "gregorian",
+    year: 2026,
+    month: 12,
+    day: 25,
+    now: "2026-06-22T00:00:00.000",
+    nowUtc: "2026-06-22T00:00:00.000Z"
+  });
+
+  assert.equal(entry.source, "date-holidays:US:2026");
+  assert.equal(store.listEntries("holiday")[0].source, "date-holidays:US:2026");
+});
+
 test("calendar tool adds and removes gregorian reminder", async () => {
   const store = createCalendarStore(dbPath("calendar-reminder"));
   const tools = createCalendarTools({

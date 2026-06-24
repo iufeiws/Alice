@@ -67,8 +67,12 @@
       "enabled": true,
       "content": "",
       "order": 30,
-      "toolName": "Read",
-      "toolArguments": "{\"file_path\":\"{{memorize/target/fileName}}\"}",
+      "toolCalls": [
+        {
+          "toolName": "Read",
+          "toolArguments": "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+        }
+      ],
       "thinking": "(好的我正在进行一场梦境般的回顾, 一次对记忆档案的反思. 接下来我要开始修改<persistent-memory>)\n(让我再确认一下目前有的内容)"
     }
   ],
@@ -88,8 +92,12 @@
       "enabled": true,
       "content": "",
       "order": 20,
-      "toolName": "Read",
-      "toolArguments": "{\"file_path\":\"{{memorize/target/fileName}}\"}",
+      "toolCalls": [
+        {
+          "toolName": "Read",
+          "toolArguments": "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+        }
+      ],
       "thinking": "(好的我正在进行一场梦境般的回顾, 一次对记忆档案的反思. 接下来我要开始修改<persistent-memory>)\n(让我再确认一下目前有的内容)"
     }
   ]

@@ -93,7 +93,7 @@ test("prompt profile persists append layers", () => {
   const saved = store.save({
     ...initial,
     appendLayers: [
-      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolName: "check_chat", toolArguments: "{}", order: 1 }
+      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }
     ]
   });
 
@@ -157,9 +157,11 @@ test("prompt messages pair tool request layers with actual tool results", async 
         enabled: true,
         content: "",
         thinking: "thinking for {{user}}",
-        toolName: "check_chat",
-        toolCallId: "call_prompt_1",
-        toolArguments: "{}",
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_prompt_1",
+          toolArguments: "{}"
+        }],
         order: 1
       }
     ]
@@ -190,6 +192,37 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.match(messageContentText(messages[1].content), /小王:hello/);
 });
 
+test("prompt messages pair multiple tool calls with results", async () => {
+  const profile = {
+    ...defaultPromptProfile(),
+    layers: [{
+      id: "request",
+      title: "Tool Request",
+      role: "tool_request" as const,
+      enabled: true,
+      content: "",
+      toolCalls: [
+        { toolName: "check_chat", toolCallId: "call_prompt_1", toolArguments: "{}" },
+        { toolName: "search_messages", toolCallId: "call_prompt_2", toolArguments: "{\"query\":\"hi\"}" }
+      ],
+      order: 1
+    }]
+  };
+
+  const calls: string[] = [];
+  const messages = await buildPromptMessagesWithToolResults(profile, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  }, async (_layer, call) => {
+    calls.push(`${call.id}:${call.toolName}`);
+    return { callId: call.id, ok: true, output: call.toolName };
+  });
+
+  assert.deepEqual(calls, ["call_prompt_1:check_chat", "call_prompt_2:search_messages"]);
+  assert.deepEqual(messages[0].toolCalls?.map((call) => call.id), ["call_prompt_1", "call_prompt_2"]);
+  assert.deepEqual(messages.slice(1).map((message) => message.toolCallId), ["call_prompt_1", "call_prompt_2"]);
+});
+
 test("append prompt messages pair tool request layers with actual tool results", async () => {
   const profile = {
     ...defaultPromptProfile(),
@@ -203,9 +236,11 @@ test("append prompt messages pair tool request layers with actual tool results",
         enabled: true,
         content: "",
         thinking: "append thinking for {{user}}",
-        toolName: "check_chat",
-        toolCallId: "call_append_1",
-        toolArguments: "{}",
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_append_1",
+          toolArguments: "{}"
+        }],
         order: 1
       }
     ]

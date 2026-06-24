@@ -475,7 +475,7 @@ test("agent core resumes pending finish_and_wait with check_chat result on heart
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Fake check_chat", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Fake check_chat", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     tools: [chatTestTools((call) => {
       if (call.toolName === "check_chat") checkInputs.push(call.input);
@@ -625,7 +625,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     tools: [{
       id: "test-tools",
@@ -1088,7 +1088,7 @@ test("agent core keeps fixed prefix static messages when token pressure rebuilds
     userName: "user",
     visibleTools: { feishu: true },
     layers: [{ id: "static", title: "Static", role: "system" as const, enabled: true, content: "static prompt", order: 1 }],
-    appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+    appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
   };
   const primerCore = createAgentCore({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
@@ -1219,7 +1219,7 @@ test("agent core restores fixed prefix static messages from an initial session s
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     initialLLMSession: {
       messages: [
@@ -1305,7 +1305,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     initialLLMSession: {
       messages: [
@@ -1636,9 +1636,11 @@ test("agent core runs prompt tool request layers and appends actual tool result"
         enabled: true,
         content: "",
         thinking: "need history",
-        toolName: "check_chat",
-        toolCallId: "call_prompt_history",
-        toolArguments: "{}",
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_prompt_history",
+          toolArguments: "{}"
+        }],
         order: 1
       }]
     }),
@@ -2463,8 +2465,7 @@ test("agent core skips fake append tool requests on first llm round", async () =
         role: "tool_request",
         enabled: true,
         content: "",
-        toolName: "check_chat",
-        toolArguments: "{}",
+        toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }],
         order: 1
       }]
     }),
@@ -2581,7 +2582,7 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "fake reason", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "fake reason", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     tools: [{
       id: "messaging-test",
@@ -2836,7 +2837,7 @@ test("agent core uses fixed prefix check chat preview scope for token pressure b
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
     }),
     tools: [{
       id: "test-tools",

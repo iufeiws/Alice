@@ -62,9 +62,14 @@
       "enabled": true,
       "content": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})",
       "order": 90,
-      "toolCallId": "call_00_eeEDr3C59Y0KCgjTkUZv1319",
-      "toolArguments": "{\"scope\": \"today\"}",
-      "thinking": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})"
+      "thinking": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})",
+      "toolCalls": [
+        {
+          "toolName": "check_chat",
+          "toolCallId": "call_00_eeEDr3C59Y0KCgjTkUZv1319",
+          "toolArguments": "{\"scope\": \"today\"}"
+        }
+      ]
     },
     {
       "id": "layer_1780766095981",

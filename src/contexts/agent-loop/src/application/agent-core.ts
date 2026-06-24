@@ -550,12 +550,15 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         const appendProfile = {
           ...promptProfile,
           appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
-            layer.role !== "tool_request" || Boolean(findToolPlugin(toolPlugins, layer.toolName || "check_chat"))
+            layer.role !== "tool_request" || (layer.toolCalls ?? []).every((call) => Boolean(findToolPlugin(toolPlugins, call.toolName)))
           )).map((layer) => {
             if (layer.role !== "tool_request") return layer;
             return {
               ...layer,
-              toolCallId: layer.toolCallId ?? `append_${layer.id}`
+              toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
+                ...call,
+                toolCallId: call.toolCallId ?? `append_${layer.id}_${index + 1}`
+              }))
             };
           })
         };

@@ -76,9 +76,11 @@ export type AdminRuntimeContext = {
         enabled: boolean;
         content: string;
         order: number;
-        toolName?: string;
-        toolCallId?: string;
-        toolArguments?: string;
+        toolCalls?: Array<{
+          toolName: string;
+          toolCallId?: string;
+          toolArguments: string;
+        }>;
         thinking?: string;
       }>;
     };

@@ -548,8 +548,10 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
         enabled: true,
         order: 90,
         content: "",
-        toolName: "Read",
-        toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}",
+        toolCalls: [{
+          toolName: "Read",
+          toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+        }],
         thinking: "先读取长期记忆文件，保持工具上下文一致。"
       }
     ],
@@ -1360,14 +1362,14 @@ function buildMemoryPromptMessages(
     });
     messages.push(message);
     if (layer.role !== "tool_request") continue;
-    const call = message.toolCalls?.[0];
-    if (!call) continue;
-    messages.push({
-      role: "tool",
-      name: call.function.name,
-      toolCallId: call.id,
-      content: memoryPromptToolResult(deps, target, call.function.name, call.function.arguments)
-    });
+    for (const call of message.toolCalls ?? []) {
+      messages.push({
+        role: "tool",
+        name: call.function.name,
+        toolCallId: call.id,
+        content: memoryPromptToolResult(deps, target, call.function.name, call.function.arguments)
+      });
+    }
   }
   return messages;
 }
@@ -1914,18 +1916,11 @@ function normalizeMemoryInductionPrompts(value: Partial<MemoryInductionPrompts>)
 function migrateMemoryPromptLayers(layers: MemoryPromptLayer[]): MemoryPromptLayer[] {
   return layers.map((layer) => {
     if (layer.role !== "tool_request") return layer;
-    if (layer.toolName === "Read" && layer.toolArguments === "{\"file_path\":\"persistent-memory.md\"}") {
-      return {
-        ...layer,
-        toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}"
-      };
-    }
-    if (layer.toolName !== "read_memory") return layer;
     return {
       ...layer,
-      title: layer.title === "Fake read_memory" ? "Fake Read" : layer.title,
-      toolName: "Read",
-      toolArguments: layer.toolArguments && layer.toolArguments !== "{}" ? layer.toolArguments : "{\"file_path\":\"{{memorize/target/fileName}}\"}"
+      toolCalls: (layer.toolCalls ?? []).map((call) => call.toolName === "Read" && call.toolArguments === "{\"file_path\":\"persistent-memory.md\"}"
+        ? { ...call, toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}" }
+        : call)
     };
   });
 }

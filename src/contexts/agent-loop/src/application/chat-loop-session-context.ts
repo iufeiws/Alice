@@ -18,7 +18,7 @@ export async function buildFixedPrefixAppendMessages(input: {
   const callId = input.nextToolCallId();
   const publicArguments = {};
   const result = await executePromptToolRequest(
-    { id: "fixed_prefix_check_chat", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: JSON.stringify(publicArguments), order: 0 },
+    { id: "fixed_prefix_check_chat", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: JSON.stringify(publicArguments) }], order: 0 },
     {
       id: callId,
       toolName: "check_chat",
@@ -75,7 +75,7 @@ export async function buildWaitChatResumeMessages(input: {
     } else {
       const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), input.session);
       result = await executePromptToolRequest(
-        { id: `finish_and_wait_resume_${call.id}`, title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolName: call.function.name, toolArguments: call.function.arguments, order: 0 },
+        { id: `finish_and_wait_resume_${call.id}`, title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: call.function.name, toolArguments: call.function.arguments }], order: 0 },
         {
           id: call.id,
           toolName: call.function.name,
@@ -189,7 +189,7 @@ async function runWaitChatResumeCheck(
     ? { scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
     : {};
   const result = await executePromptToolRequest(
-    { id: "finish_and_wait_resume_check_chat", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolName: "check_chat", toolArguments: "{}", order: 0 },
+    { id: "finish_and_wait_resume_check_chat", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 0 },
     {
       id: callId,
       toolName: "check_chat",

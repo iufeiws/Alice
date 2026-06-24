@@ -54,8 +54,13 @@
       "enabled": true,
       "content": "{scope= today}",
       "order": 80,
-      "toolArguments": "{\"scope\": \"today\"}",
-      "thinking": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})"
+      "thinking": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})",
+      "toolCalls": [
+        {
+          "toolName": "check_chat",
+          "toolArguments": "{\"scope\": \"today\"}"
+        }
+      ]
     }
   ],
   "appendLayers": [
@@ -66,9 +71,13 @@
       "enabled": true,
       "content": "",
       "order": 20,
-      "toolName": "check_chat",
-      "toolArguments": "{}",
-      "thinking": "(看看{{user}}有什么新消息吧, 应该用send_chat来回复)"
+      "thinking": "(看看{{user}}有什么新消息吧, 应该用send_chat来回复)",
+      "toolCalls": [
+        {
+          "toolName": "check_chat",
+          "toolArguments": "{}"
+        }
+      ]
     }
   ]
 }

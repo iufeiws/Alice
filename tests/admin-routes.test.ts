@@ -344,9 +344,11 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
         content: "",
         order: 10,
         thinking: "check first",
-        toolName: "check_chat",
-        toolCallId: "call_check",
-        toolArguments: "{\"target\":\"dm\"}"
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_check",
+          toolArguments: "{\"target\":\"dm\"}"
+        }]
       }]
     }
   }), response);
@@ -362,9 +364,11 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
         content: "",
         order: 10,
         thinking: "check first",
-        toolName: "check_chat",
-        toolCallId: "call_check",
-        toolArguments: "{\"target\":\"dm\"}"
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_check",
+          toolArguments: "{\"target\":\"dm\"}"
+        }]
       }]
     }
   });

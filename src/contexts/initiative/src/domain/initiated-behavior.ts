@@ -245,7 +245,7 @@ export function resolveAgentInitiatedBehaviorAvailability(
       const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
       const unavailableTool = normalizePromptLayers(profile.layers)
         .filter((layer) => layer.enabled && layer.role === "tool_request")
-        .map((layer) => layer.toolName || "check_chat")
+        .flatMap((layer) => (layer.toolCalls ?? []).map((call) => call.toolName))
         .find((toolName) => !isToolVisibleInPromptProfile(promptProfile, toolName) || !findToolByName(tools, toolName));
       if (!unavailableTool) return { kind: step.kind, status: "available" as const };
       const reason = !isToolVisibleInPromptProfile(promptProfile, unavailableTool)

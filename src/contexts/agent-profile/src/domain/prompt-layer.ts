@@ -3,6 +3,12 @@ import { renderLLMText, type LLMTextVariables } from "../../../../contexts/agent
 
 export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
 
+export type PromptLayerToolCall = {
+  toolName: string;
+  toolCallId?: string;
+  toolArguments: string;
+};
+
 export type PromptLayer = {
   id: string;
   title: string;
@@ -10,9 +16,7 @@ export type PromptLayer = {
   enabled: boolean;
   content: string;
   order: number;
-  toolName?: string;
-  toolCallId?: string;
-  toolArguments?: string;
+  toolCalls?: PromptLayerToolCall[];
   thinking?: string;
 };
 
@@ -37,9 +41,7 @@ export function normalizePromptLayers(
       enabled: raw.enabled !== false,
       content: typeof raw.content === "string" ? raw.content : "",
       order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : (index + 1) * 10,
-      toolName: role === "tool_request" ? nonEmptyString(raw.toolName) : undefined,
-      toolCallId: role === "tool_request" ? nonEmptyString(raw.toolCallId) : undefined,
-      toolArguments: role === "tool_request" && typeof raw.toolArguments === "string" ? raw.toolArguments : undefined,
+      toolCalls: role === "tool_request" ? normalizePromptLayerToolCalls(raw.toolCalls) : undefined,
       thinking: (role === "assistant" || role === "tool_request") && typeof raw.thinking === "string" ? raw.thinking : undefined
     };
   });
@@ -51,21 +53,19 @@ export function promptLayerToMessage(
   options: PromptLayerParserOptions = {}
 ): LLMMessage {
   if (layer.role === "tool_request") {
-    const toolName = normalizePromptToolName(layer.toolName, options);
     const prefix = options.toolCallIdPrefix ?? "prompt";
-    const toolCallId = layer.toolCallId || `${prefix}_${layer.id}`;
     return {
       role: "assistant",
       content: renderLLMText(layer.content || "", variables),
       reasoningContent: renderLLMText(layer.thinking ?? layer.content ?? "", variables),
-      toolCalls: [{
-        id: toolCallId,
+      toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
+        id: call.toolCallId || `${prefix}_${layer.id}_${index + 1}`,
         type: "function",
         function: {
-          name: toolName,
-          arguments: renderLLMText(layer.toolArguments || "{}", variables)
+          name: normalizePromptToolName(call.toolName, options),
+          arguments: renderLLMText(call.toolArguments, variables)
         }
-      }]
+      }))
     };
   }
   return {
@@ -90,9 +90,21 @@ function normalizePromptLayerRole(value: unknown): PromptLayerRole {
 }
 
 function normalizePromptToolName(value: unknown, options: PromptLayerParserOptions): string {
-  const fallback = options.defaultToolName ?? "check_chat";
+  const fallback = options.defaultToolName ?? "";
   const name = nonEmptyString(value) ?? fallback;
   return options.allowedToolNames && !options.allowedToolNames.includes(name) ? fallback : name;
+}
+
+function normalizePromptLayerToolCalls(value: unknown): PromptLayerToolCall[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const raw = entry && typeof entry === "object" ? entry as Partial<PromptLayerToolCall> : {};
+    return {
+      toolName: nonEmptyString(raw.toolName) ?? "",
+      toolCallId: nonEmptyString(raw.toolCallId),
+      toolArguments: typeof raw.toolArguments === "string" ? raw.toolArguments : "{}"
+    };
+  });
 }
 
 function nonEmptyString(value: unknown): string | undefined {

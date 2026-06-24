@@ -44,9 +44,11 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
         enabled: boolean;
         content: string;
         order: number;
-        toolName?: string;
-        toolCallId?: string;
-        toolArguments?: string;
+        toolCalls?: Array<{
+          toolName: string;
+          toolCallId?: string;
+          toolArguments: string;
+        }>;
         thinking?: string;
       }>;
     };
@@ -97,18 +99,14 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
             ...normalized,
             thinking: layer.thinking,
             ...(role === "tool_request" ? {
-              toolName: typeof layer.toolName === "string" ? layer.toolName : undefined,
-              toolCallId: typeof layer.toolCallId === "string" ? layer.toolCallId : undefined,
-              toolArguments: typeof layer.toolArguments === "string" ? layer.toolArguments : "{}"
+              toolCalls: normalizeAdminPromptToolCalls(layer.toolCalls)
             } : {})
           };
         }
         if (role === "tool_request") {
           return {
             ...normalized,
-            toolName: typeof layer.toolName === "string" ? layer.toolName : undefined,
-            toolCallId: typeof layer.toolCallId === "string" ? layer.toolCallId : undefined,
-            toolArguments: typeof layer.toolArguments === "string" ? layer.toolArguments : "{}"
+            toolCalls: normalizeAdminPromptToolCalls(layer.toolCalls)
           };
         }
         return normalized;
@@ -117,6 +115,20 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
   }
   if (Object.keys(patch).length === 0) throw new HttpJsonError(400, "empty_behavior_patch");
   return patch;
+}
+
+function normalizeAdminPromptToolCalls(value: unknown): Array<{ toolName: string; toolCallId?: string; toolArguments: string }> {
+  if (!Array.isArray(value)) throw new HttpJsonError(400, "prompt_tool_calls_array_required");
+  return value.map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new HttpJsonError(400, "invalid_prompt_tool_call");
+    const call = raw as Record<string, unknown>;
+    if (typeof call.toolName !== "string" || !call.toolName) throw new HttpJsonError(400, "tool_name_string_required");
+    return {
+      toolName: call.toolName,
+      toolCallId: typeof call.toolCallId === "string" ? call.toolCallId : undefined,
+      toolArguments: typeof call.toolArguments === "string" ? call.toolArguments : "{}"
+    };
+  });
 }
 
 function initiatedBehaviorPlanView(context: AdminRoutesContext, plan: AgentInitiatedBehaviorPlan) {

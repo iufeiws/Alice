@@ -65,9 +65,11 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
         enabled: true,
         content: "",
         thinking: "checking chat for {{user}}",
-        toolName: "check_chat",
-        toolCallId: "call_check_chat",
-        toolArguments: "{\"target\":\"{{user}}\"}",
+        toolCalls: [{
+          toolName: "check_chat",
+          toolCallId: "call_check_chat",
+          toolArguments: "{\"target\":\"{{user}}\"}"
+        }],
         order: 10
       }
     ]
@@ -111,6 +113,49 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
   assert.equal(messages[1].role, "tool");
   assert.equal(messages[1].toolCallId, "call_check_chat");
   assert.equal(messages[1].content, "history for YY");
+});
+
+test("initiated behavior prompt layers execute multiple assistant tool calls", async () => {
+  const filePath = path.join(process.cwd(), ".tmp-tests", `initiated-behavior-tools-test-${process.pid}.json`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({
+    layers: [{
+      id: "fake_tools",
+      title: "Fake Tools",
+      role: "tool_request",
+      enabled: true,
+      content: "",
+      toolCalls: [
+        { toolName: "check_chat", toolCallId: "call_one", toolArguments: "{\"target\":\"{{user}}\"}" },
+        { toolName: "search_messages", toolCallId: "call_two", toolArguments: "{\"query\":\"{{user}}\"}" }
+      ],
+      order: 10
+    }]
+  }));
+  const plan: AgentInitiatedBehaviorPlan = {
+    id: "custom",
+    kind: "event",
+    enabled: true,
+    triggerEvent: "custom.event",
+    steps: [{ kind: "llm_instruction", promptProfilePath: filePath }]
+  };
+  const toolCalls: ToolCall[] = [];
+  const messages = await buildAgentInitiatedBehaviorMessages(plan, {
+    userName: "YY",
+    visibleTools: { feishu: true },
+    layers: [],
+    appendLayers: []
+  }, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("UTC")
+  }, async (_layer, call) => {
+    toolCalls.push(call);
+    return { callId: call.id, ok: true, output: `${call.toolName} result` };
+  });
+
+  assert.deepEqual(toolCalls.map((call) => call.id), ["call_one", "call_two"]);
+  assert.deepEqual(messages[0].toolCalls?.map((call) => call.function.name), ["check_chat", "search_messages"]);
+  assert.deepEqual(messages.slice(1).map((message) => message.toolCallId), ["call_one", "call_two"]);
 });
 
 test("default randomized behavior plans use proactive initiation types", () => {

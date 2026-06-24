@@ -168,22 +168,22 @@ export async function buildLayerMessagesWithToolResults(
     messages.push(message);
     if (layer.role !== "tool_request") continue;
 
-    const toolCall = message.toolCalls?.[0];
-    if (!toolCall) continue;
-    const toolInput = parsePromptToolArguments(toolCall.function.arguments);
-    const result = await runTool(layer, {
-      id: toolCall.id,
-      toolName: toolCall.function.name,
-      input: context.preview ? { ...toolInput, __preview: true } : toolInput,
-      requester: context.event.source,
-      externalSession: context.event.externalSession
-    });
-    messages.push({
-      role: "tool",
-      name: toolCall.function.name,
-      toolCallId: toolCall.id,
-      content: formatPromptToolResult(result, variables)
-    });
+    for (const toolCall of message.toolCalls ?? []) {
+      const toolInput = parsePromptToolArguments(toolCall.function.arguments);
+      const result = await runTool(layer, {
+        id: toolCall.id,
+        toolName: toolCall.function.name,
+        input: context.preview ? { ...toolInput, __preview: true } : toolInput,
+        requester: context.event.source,
+        externalSession: context.event.externalSession
+      });
+      messages.push({
+        role: "tool",
+        name: toolCall.function.name,
+        toolCallId: toolCall.id,
+        content: formatPromptToolResult(result, variables)
+      });
+    }
   }
 
   return messages;

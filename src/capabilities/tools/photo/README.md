@@ -14,8 +14,6 @@ Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
 }
 ```
 
-`aspectRatio` 可选，默认 `3:4`。
-
 调用后，工具会：
 
 1. 向当前会话发送 `-少女拍照中-`。

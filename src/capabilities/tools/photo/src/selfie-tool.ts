@@ -33,8 +33,6 @@ export type SelfieContext = {
   outfitImageUrl?: string;
 };
 
-export type SelfieAspectRatio = "1:1" | "4:3" | "3:4" | "16:9" | "9:16";
-
 export type SelfieExecutorInput = {
   command: string;
   workDir: string;
@@ -43,7 +41,6 @@ export type SelfieExecutorInput = {
   prompt: string;
   referenceImages: string[];
   referenceImagePrompt: string;
-  aspectRatio: SelfieAspectRatio;
   timeoutMs: number;
   apiKey?: string;
   apiBaseURL: string;
@@ -80,7 +77,6 @@ export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
   resolveOutputTarget?: ToolOutputTargetResolver;
 };
 
-const allowedAspectRatios = new Set<SelfieAspectRatio>(["1:1", "4:3", "3:4", "16:9", "9:16"]);
 const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.png";
 const libraryReferenceFileName = "magic-library-reference.png";
@@ -103,9 +99,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
     const pose = stringValue(call.input.pose).trim();
     if (!pose) return toolError(call, photoToolText.poseRequired);
-
-    const aspectRatio = normalizeAspectRatio(call.input.aspectRatio);
-    if (!aspectRatio) return toolError(call, photoToolText.unsupportedAspectRatio);
 
     const context = deps.getSelfieContext?.();
     if (!context) return toolError(call, photoToolText.contextUnavailable);
@@ -142,7 +135,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         `codexWorkDir=${codexWorkDir}`,
         `file=${fileName}`,
         `mode=${photoConfig.selfieMode}`,
-        `aspectRatio=${aspectRatio}`,
         `promptLength=${prompt.length}`,
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
         references.missingOutfitImage ? "missingOutfitImage=true" : "",
@@ -157,7 +149,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         prompt,
         referenceImages: references.images,
         referenceImagePrompt: references.prompt,
-        aspectRatio,
         timeoutMs: photoConfig.selfieCodexTimeoutMs,
         apiKey: imageApiSettings.key,
         apiBaseURL: imageApiSettings.baseURL,
@@ -343,11 +334,6 @@ function resolveOutfitImage(context: SelfieContext): string {
 function excerpt(value: string | undefined, maxLength = 500): string {
   const compact = value?.replace(/\s+/g, " ").trim() ?? "";
   return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
-}
-
-function normalizeAspectRatio(value: unknown): SelfieAspectRatio | undefined {
-  const text = stringValue(value) || "3:4";
-  return allowedAspectRatios.has(text as SelfieAspectRatio) ? text as SelfieAspectRatio : undefined;
 }
 
 function toolError(call: ToolCall, error: string): ToolResult {

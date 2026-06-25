@@ -8,7 +8,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, defaultPromptProfile, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { DailyShell } from "../../../agent-profile/src/domain/shell.js";
 import type { MemorySnapshot } from "../../../memory/src/memory.js";
@@ -350,7 +350,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         ];
       }
 
-      const promptProfile = deps.getPromptProfile?.() ?? defaultPromptProfile();
+      const promptProfile = requirePromptProfile();
       const allToolPlugins = deps.tools ?? [];
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
       let initiatedBehavior = agentInitiatedBehaviorPlanFromEvent(
@@ -743,7 +743,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
   function buildTurnTextVariables(event: AgentEvent): LLMTextVariables {
     return buildLLMTextVariables({
-      userName: (deps.getPromptProfile?.() ?? defaultPromptProfile()).userName,
+      userName: requirePromptProfile().userName,
       time,
       event,
       dailyShell: deps.getDailyShell?.(),
@@ -754,6 +754,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       wakeBoundary: deps.getWakeBoundary?.(),
       calendarContext: deps.getCalendarContext?.()
     });
+  }
+
+  function requirePromptProfile(): PromptProfile {
+    const profile = deps.getPromptProfile?.();
+    if (!profile) throw new Error("AgentCore requires getPromptProfile");
+    return profile;
   }
 
   async function shouldResetSessionForTokenPressure(

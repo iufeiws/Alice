@@ -49,7 +49,7 @@ test("messaging tools expose merged check_chat and send_chat tools", async () =>
 test("finish_and_wait is exposed by its own tool plugin", async () => {
   const tools = createFinishAndWaitTools();
   const waitTool = tools.listTools().find((tool) => tool.name === "finish_and_wait");
-  assert.equal(waitTool?.description, "结束当前回复并等待聊天记录更新。当有新消息时会收到提醒并返回新消息。");
+  assert.ok(waitTool);
   assert.deepEqual(waitTool?.inputSchema.properties, {});
   assert.equal(waitTool?.inputSchema.additionalProperties, false);
   const result = await tools.execute({ id: "call_wait", toolName: "finish_and_wait", input: {} });

@@ -17,7 +17,6 @@ export async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promi
     prompt: input.prompt,
     referenceImages: input.referenceImages,
     referenceImagePrompt: input.referenceImagePrompt,
-    aspectRatio: input.aspectRatio,
     codexCommand: input.command,
     timeoutMs: runnerTimeoutMs
   }));

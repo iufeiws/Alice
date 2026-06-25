@@ -20,7 +20,6 @@ export const photoToolText = {
   selfieDisabled: "photo selfie is disabled",
   noCurrentSession: "No current messaging session is available",
   poseRequired: "pose is required",
-  unsupportedAspectRatio: "unsupported aspectRatio",
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",
   takingNotice: "-少女拍照中-",

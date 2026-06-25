@@ -23,14 +23,8 @@ test("prompt profile store creates defaults and persists edits", () => {
   const store = createPromptProfileStore(filePath);
   const initial = store.get();
   assert.equal(initial.userName, "user");
-  assert.deepEqual(initial.layers.map((layer) => layer.title), [
-    "安全边际",
-    "角色设定",
-    "职责",
-    "Skill",
-      "记忆",
-    "壳设定 + DeepSeek Role Immersion"
-  ]);
+  assert.deepEqual(initial.layers, []);
+  assert.deepEqual(initial.appendLayers, []);
 
   const saved = store.save({
     ...initial,

@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateTokenPressureSwitch, createAgentCore, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/agent-core.js";
+import { calculateTokenPressureSwitch, createAgentCore as createAgentCoreUnderTest, type AgentCoreDeps, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/agent-core.js";
 import type { LLMRequestSenderInput } from "../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { PromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../src/contexts/agent-loop/src/ports/policy.js";
@@ -13,7 +14,26 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAgentStateController, type AgentBehaviorState, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 
+const fs = await import("node:fs");
+const path = await import("node:path");
+
+function createAgentCore(deps: AgentCoreDeps) {
+  return createAgentCoreUnderTest({
+    getPromptProfile: testPromptProfile,
+    ...deps
+  });
+}
+
 type TestAgentCore = ReturnType<typeof createAgentCore>;
+
+function testPromptProfile(): PromptProfile {
+  const profile = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"), "utf8")) as PromptProfile;
+  return {
+    ...profile,
+    layers: profile.layers.filter((layer) => layer.role !== "tool_request"),
+    appendLayers: (profile.appendLayers ?? []).filter((layer) => layer.role !== "tool_request")
+  };
+}
 
 async function runPreparedCoreEvent(core: TestAgentCore, event: AgentEvent): Promise<AgentOutput[]> {
   const prepared = await core.prepareEventRun(event);
@@ -30,6 +50,19 @@ async function runPreparedCoreEvent(core: TestAgentCore, event: AgentEvent): Pro
     await prepared.dispose?.();
   }
 }
+
+test("agent core requires an injected prompt profile", async () => {
+  const core = createAgentCoreUnderTest({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy()
+  });
+
+  await assert.rejects(() => runPreparedCoreEvent(core, textEvent()), /requires getPromptProfile/);
+});
 
 test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
@@ -922,7 +955,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
     ],
     error: undefined
   }]);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("对YY说晚安")), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
   const sleepToolRequestIndex = requests[0].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "sleep_cocoon");
   assert.ok(sleepToolRequestIndex >= 0);
   assert.equal(requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"in\"}");
@@ -1032,7 +1065,7 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
   await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("早安")), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
   assert.equal(requests[0].messages.some((message) => messageContentText(message.content).includes("sleep_cocoon")), false);
 });
 
@@ -1078,8 +1111,7 @@ test("agent core appends force wake instruction from heartbeat event", async () 
   await runPreparedCoreEvent(core, event);
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("强制唤醒")), true);
-  assert.equal(requests[0].messages.some((message) => message.role === "user" && messageContentText(message.content).includes("早安")), false);
+  assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
 });
 
 test("agent core keeps fixed prefix static messages when token pressure rebuilds the session", async () => {

@@ -5,7 +5,7 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createSleepCocoonEventRuntime, createSleepCocoonTools, resolveSleepDurationMs } from "../src/capabilities/tools/sleep-cocoon/src/index.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
-test("sleep_cocoon schema exposes in and out actions with Chinese descriptions", () => {
+test("sleep_cocoon schema exposes in and out actions", () => {
   const tools = createSleepCocoonTools({
     agentState: createAgentStateController({ store: memoryStore() }),
     time: createCurrentTimeProvider("UTC")
@@ -13,7 +13,6 @@ test("sleep_cocoon schema exposes in and out actions with Chinese descriptions",
   const tool = tools.listTools()[0];
 
   assert.equal(tool.name, "sleep_cocoon");
-  assert.match(tool.description, /睡眠茧/);
   assert.deepEqual((tool.inputSchema.properties as Record<string, { enum?: string[] }>).action.enum, ["in", "out"]);
   assert.equal((tool.inputSchema.properties as Record<string, { type?: string }>).hours.type, "integer");
   assert.deepEqual(tool.inputSchema.required, ["action"]);

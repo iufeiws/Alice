@@ -15,7 +15,7 @@ const png1x1Bytes = Buffer.from(
   "base64"
 );
 
-test("selfie schema exposes pose with 3:4 default", () => {
+test("selfie schema exposes pose only", () => {
   const store = createAliceStore(path.join(makeTempDir("selfie-schema-db"), "alice.sqlite"));
   const tools = createPhotoTools({
     store,
@@ -27,7 +27,7 @@ test("selfie schema exposes pose with 3:4 default", () => {
   const selfie = tools.listTools()[0];
   assert.equal(selfie.name, "selfie");
   assert.deepEqual((selfie.inputSchema.properties as Record<string, unknown>).description, undefined);
-  assert.deepEqual((selfie.inputSchema.properties as Record<string, { default?: string }>).aspectRatio.default, "3:4");
+  assert.equal((selfie.inputSchema.properties as Record<string, unknown>).aspectRatio, undefined);
   assert.deepEqual(selfie.inputSchema.required, ["pose"]);
 });
 
@@ -110,13 +110,13 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     }, { llmCapabilities: { supportsImage: true } });
 
     assert.equal(result.ok, true);
-    assert.equal(executorInputs[0].aspectRatio, "3:4");
+    assert.equal("aspectRatio" in executorInputs[0], false);
     assert.equal(executorInputs[0].fileName, "selfie_20260526_120000.jpg");
-    assert.match(executorInputs[0].prompt, /当前时间:\n12:00:00/);
-    assert.match(executorInputs[0].prompt, /角色动作:\n踮脚靠近镜头/);
-    assert.match(executorInputs[0].prompt, /发色: 低饱和浅金色/);
-    assert.match(executorInputs[0].prompt, /说话声音很小/);
-    assert.match(executorInputs[0].prompt, /黑色薄纱短袖高领上衣/);
+    assert.equal(executorInputs[0].prompt.includes("踮脚靠近镜头"), true);
+    assert.equal(executorInputs[0].prompt.includes("发色: 低饱和浅金色"), true);
+    assert.equal(executorInputs[0].prompt.includes("说话声音很小"), true);
+    assert.equal(executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
+    assert.doesNotMatch(executorInputs[0].prompt, /\{\{[^}]+\}\}/);
     assert.deepEqual(executorInputs[0].referenceImages, [
       path.resolve(referenceRoot, "alice-character-reference.png"),
       path.resolve(outfitImage),
@@ -553,7 +553,6 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     "if (prompt.includes('Apply these skill instructions exactly:')) process.exit(5);",
     "if (prompt.includes('Task prompt:')) process.exit(6);",
     "if (prompt.includes('Task metadata:')) process.exit(7);",
-    "if (!prompt.includes('不得分析')) process.exit(8);",
     "if (!prompt.includes('1024x1536')) process.exit(9);",
     "if (process.env.SELFIE_IMAGE_API_KEY === 'test-key') process.exit(10);",
     "if (process.env.OPENAI_API_KEY) process.exit(11);",

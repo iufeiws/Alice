@@ -4,9 +4,7 @@
 
 ## Tool
 
-- `selfie({ pose, aspectRatio? })`: generates an Alice selfie/photo from the pose description, current character context, shell/outfit context, and reference images, then sends the image to the current chat session.
-
-`aspectRatio` defaults to `3:4`; supported values are `1:1`, `4:3`, `3:4`, `16:9`, and `9:16`.
+- `selfie({ pose })`: generates an Alice selfie/photo from the pose description, current character context, shell/outfit context, and reference images, then sends the image to the current chat session.
 
 ## Runtime Behavior
 

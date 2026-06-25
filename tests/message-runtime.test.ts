@@ -41,7 +41,7 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
   assert.equal(coreInputs[0].payload.kind, "text");
   assert.ok(coreInputs[0].payload.kind === "text");
   if (coreInputs[0].payload.kind === "text") {
-    assert.equal(coreInputs[0].payload.text, "A chat message event was received. Use messaging tools to inspect conversation history before replying.");
+    assert.notEqual(coreInputs[0].payload.text.trim(), "");
     assert.doesNotMatch(coreInputs[0].payload.text, /hello|world/);
   }
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);

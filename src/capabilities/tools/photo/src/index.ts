@@ -5,7 +5,7 @@ import { createSelfieExecutor, type PhotoToolsDeps } from "./selfie-tool.js";
 
 export { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig } from "./config.js";
 export type { PhotoPluginConfig, PhotoPluginPublicConfig, SelfieGenerationMode } from "./config.js";
-export type { PhotoToolTarget, PhotoToolsDeps, SelfieAspectRatio, SelfieContext, SelfieExecutor, SelfieExecutorInput, SelfieExecutorResult } from "./selfie-tool.js";
+export type { PhotoToolTarget, PhotoToolsDeps, SelfieContext, SelfieExecutor, SelfieExecutorInput, SelfieExecutorResult } from "./selfie-tool.js";
 
 export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");

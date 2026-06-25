@@ -11,6 +11,7 @@ export async function buildFixedPrefixAppendMessages(input: {
   toolPlugins: ToolPlugin[];
   nextToolCallId(): string;
   buildTextVariables(event: AgentEvent): LLMTextVariables;
+  onCheckChatResult?(result: ToolResult): void;
 }): Promise<LLMChatInput["messages"]> {
   const messages: LLMChatInput["messages"] = [];
   const plugin = findToolPlugin(input.toolPlugins, "check_chat");
@@ -28,6 +29,7 @@ export async function buildFixedPrefixAppendMessages(input: {
     },
     input.toolPlugins
   );
+  input.onCheckChatResult?.(result);
   messages.push({
     role: "assistant",
     content: "",

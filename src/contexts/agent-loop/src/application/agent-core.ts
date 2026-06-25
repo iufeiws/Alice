@@ -539,7 +539,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             event,
             toolPlugins,
             nextToolCallId: () => "append_fixed_prefix_check_chat",
-            buildTextVariables: buildTurnTextVariables
+            buildTextVariables: buildTurnTextVariables,
+            onCheckChatResult(result) {
+              const cursor = checkChatCursorFromResult("check_chat", result);
+              session.lastCheckChatCursorMessageId = cursor ?? session.lastCheckChatCursorMessageId;
+              session.fixedPrefixCursorMessageId = cursor ?? session.fixedPrefixCursorMessageId;
+            }
           });
           if (appendMessages.length === 0) return;
           appendLoopSessionContext({

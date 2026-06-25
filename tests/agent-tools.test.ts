@@ -714,7 +714,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
   assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
   assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
-  assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 42);
+  assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 0);
   assert.equal(checkChatCallsInSession, 1);
   assert.deepEqual([...new Set(sessionUpdates.map((update) => update.id))], [1, 2]);
   assert.equal(sessionUpdates.at(-1)?.id, 2);
@@ -730,7 +730,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
   const fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
   assert.equal(fromPrefixInputs.length, 2);
-  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [42, 42]);
+  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0, 42]);
 });
 
 test("agent core does not duplicate fixed prefix messages when appending fixed prefix context", async () => {
@@ -1380,7 +1380,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(messages.some((message) => message.content === "old live context"), false);
   assert.equal(messages.some((message) => message.content === "<book>expired story</book>"), false);
   assert.equal(messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase"), false);
-  assert.equal(messages.at(-1)?.content, "fresh normal chat");
+  assert.equal(messages.at(-1)?.content, "new static prompt");
   assert.equal(sessionUpdates.at(-1)?.mode, "normal");
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
@@ -3195,7 +3195,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
 
   await runPreparedCoreEvent(core, textEvent());
   assert.equal(requests.length, 10);
-  assert.equal(calls.filter((name, index) => !(index === 0 && name === "check_chat")).length, 10);
+  assert.equal(calls.length, 10);
 });
 
 test("agent core stops after three consecutive identical send_chat calls", async () => {
@@ -3362,7 +3362,7 @@ test("agent core executes all exposed tools when send_chat appears in the same r
   });
 
   await runPreparedCoreEvent(core, textEvent());
-  assert.deepEqual(calls.filter((name, index) => !(index === 0 && name === "check_chat")), ["check_chat", "send_chat"]);
+  assert.deepEqual(calls, ["check_chat", "send_chat"]);
 });
 
 test("agent core does not stream send_chat when non-message type is explicit", async () => {

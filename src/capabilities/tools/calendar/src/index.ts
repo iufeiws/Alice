@@ -110,8 +110,7 @@ export function createCalendarTools(deps: CalendarToolsDeps): ToolPlugin {
         calendarStore: deps.calendarStore,
         time: deps.time,
         daysBefore: integerInRange(call.input.daysBefore, 0, 30) ?? 5,
-        daysAfter: integerInRange(call.input.daysAfter, 0, 30) ?? 5,
-        includeEmptyDays: true
+        daysAfter: integerInRange(call.input.daysAfter, 0, 30) ?? 5
       })
     };
   }

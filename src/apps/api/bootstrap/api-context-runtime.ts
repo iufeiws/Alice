@@ -54,6 +54,8 @@ export function createApiContextRuntime(input: {
     sleepMemoryStateStore: profileMemoryRuntime.sleepMemoryStateStore,
     dailyShellStore: profileMemoryRuntime.dailyShellStore,
     getAgentInitiatedBehaviorPlans: initiatedBehaviorRuntime.getPlans,
+    createAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.createCustom,
+    deleteAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.deleteCustom,
     setAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.setConfig,
     setAgentInitiatedBehaviorEnabled: initiatedBehaviorRuntime.setEnabled,
     initiatedBehaviorRunStore

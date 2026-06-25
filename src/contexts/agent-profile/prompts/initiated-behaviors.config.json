@@ -8,6 +8,17 @@
       "kind": "randomized",
       "weight": 2,
       "priority": 0
+    },
+    "calendar_reminder": {
+      "enabled": true,
+      "kind": "event"
+    },
+    "selfie": {
+      "custom": true,
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 2,
+      "priority": 0
     }
   }
 }

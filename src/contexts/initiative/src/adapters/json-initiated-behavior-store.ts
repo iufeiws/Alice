@@ -8,6 +8,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 export type AgentInitiatedBehaviorOverrides = Record<string, {
+  custom?: boolean;
   enabled?: boolean;
   kind?: AgentInitiatedBehaviorPlan["kind"];
   triggerEvent?: string;
@@ -39,6 +40,7 @@ export function readAgentInitiatedBehaviorOverrides(
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const entry = raw as Record<string, unknown>;
       overrides[id] = {};
+      if (entry.custom === true) overrides[id].custom = true;
       if (typeof entry.enabled === "boolean") overrides[id].enabled = entry.enabled;
       if (entry.kind === "event" || entry.kind === "randomized") overrides[id].kind = entry.kind;
       if (typeof entry.triggerEvent === "string") overrides[id].triggerEvent = entry.triggerEvent;
@@ -69,20 +71,49 @@ export function writeAgentInitiatedBehaviorPromptProfile(filePath: string, profi
   fs.renameSync(tmpPath, resolved);
 }
 
+export function deleteAgentInitiatedBehaviorPromptProfile(filePath: string): void {
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+  if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
+}
+
 export function applyAgentInitiatedBehaviorOverrides(
   plans: AgentInitiatedBehaviorPlan[],
   overrides: AgentInitiatedBehaviorOverrides
 ): AgentInitiatedBehaviorPlan[] {
-  return plans.map((plan) => {
+  const builtInIds = new Set(plans.map((plan) => plan.id));
+  const builtIns = plans.map((plan) => {
     const override = overrides[plan.id];
     if (!override) return plan;
+    const kind = override.kind ?? plan.kind;
     return {
       ...plan,
       ...(typeof override.enabled === "boolean" ? { enabled: override.enabled } : {}),
-      ...(override.kind ? { kind: override.kind } : {}),
-      ...(typeof override.triggerEvent === "string" ? { triggerEvent: override.triggerEvent } : {}),
+      kind,
+      ...(kind === "event" ? { triggerEvent: typeof override.triggerEvent === "string" ? override.triggerEvent : plan.triggerEvent } : { triggerEvent: undefined }),
       ...(typeof override.weight === "number" ? { weight: override.weight } : {}),
       ...(typeof override.priority === "number" ? { priority: override.priority } : {})
     };
   });
+  const customs = Object.entries(overrides)
+    .filter(([id, override]) => override.custom === true && !builtInIds.has(id) && /^[A-Za-z0-9_-]+$/.test(id))
+    .map(([id, override]) => customAgentInitiatedBehaviorPlan(id, override));
+  return [...builtIns, ...customs];
+}
+
+export function customAgentInitiatedBehaviorPlan(id: string, override: AgentInitiatedBehaviorOverrides[string]): AgentInitiatedBehaviorPlan {
+  const promptProfilePath = `src/contexts/initiative/behaviors/${id}.json`;
+  return {
+    id,
+    custom: true,
+    enabled: override.enabled !== false,
+    kind: override.kind === "randomized" ? "randomized" : "event",
+    ...(override.kind === "randomized" ? {
+      weight: typeof override.weight === "number" ? override.weight : 0,
+      priority: typeof override.priority === "number" ? override.priority : 0
+    } : {
+      triggerEvent: typeof override.triggerEvent === "string" ? override.triggerEvent : ""
+    }),
+    promptProfilePath,
+    steps: [{ kind: "llm_instruction", promptProfilePath }]
+  };
 }

@@ -402,6 +402,48 @@ test("initiated behavior config patch rejects system prompt layers", async () =>
   assert.match(response.body, /invalid_initiated_behavior_prompt_layer_role/);
 });
 
+test("admin initiated behavior create and delete route custom plans", async () => {
+  const root = makeTempDir("admin-initiated-behavior-custom");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = baseContext(root, memoryStore, promptStore);
+  let receivedCreate: unknown;
+  let receivedDelete = "";
+  context.createAgentInitiatedBehaviorConfig = (id: string, patch: unknown) => {
+    receivedCreate = { id, patch };
+    return { id, custom: true, kind: "event", enabled: true, triggerEvent: "custom.check", steps: [] };
+  };
+  context.deleteAgentInitiatedBehaviorConfig = (id: string) => {
+    receivedDelete = id;
+    return id === "custom_check" ? { id, custom: true, kind: "event", enabled: true, steps: [] } : undefined;
+  };
+  const handler = createAdminHandler(context);
+
+  const createResponseBody = createResponse();
+  await handler(createRequest("POST", "/admin/api/initiated-behaviors", {
+    id: "custom_check",
+    kind: "event",
+    triggerEvent: "custom.check",
+    promptProfile: { layers: [] }
+  }), createResponseBody);
+
+  assert.equal(createResponseBody.statusCode, 200);
+  assert.deepEqual(receivedCreate, {
+    id: "custom_check",
+    patch: {
+      kind: "event",
+      triggerEvent: "custom.check",
+      promptProfile: { layers: [] }
+    }
+  });
+
+  const deleteResponse = createResponse();
+  await handler(createRequest("DELETE", "/admin/api/initiated-behaviors/custom_check", {}), deleteResponse);
+
+  assert.equal(deleteResponse.statusCode, 200);
+  assert.equal(receivedDelete, "custom_check");
+});
+
 test("admin plugin list exposes tts config card state", async () => {
   const root = makeTempDir("admin-plugin-list");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");

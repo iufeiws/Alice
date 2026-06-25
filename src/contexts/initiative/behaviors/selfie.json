@@ -5,7 +5,7 @@
       "title": "Layer 1",
       "role": "user",
       "enabled": true,
-      "content": "有一个日程的时间到了, 爱丽丝来确认一下吧",
+      "content": "给{{user}}拍张照,让他看看你现在在哪里吧",
       "order": 10
     }
   ]

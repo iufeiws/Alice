@@ -165,12 +165,16 @@ export function renderAdminHtmlV2(): string {
       .behavior-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
       .behavior-toolbar h2 { margin: 0 0 4px; }
       .behavior-toolbar label { margin: 0; min-width: 220px; }
+      .behavior-toolbar-actions { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+      .behavior-toolbar-actions label { min-width: 120px; }
+      .behavior-toolbar-actions input { min-width: 180px; }
       .behavior-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; border: 1px solid #d7dce3; border-radius: 8px; }
       .behavior-table { --column-indent: clamp(6px, 0.9vw, 14px); width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
       .behavior-table th, .behavior-table td { border-bottom: 1px solid #e4e7eb; padding: 8px var(--column-indent); text-align: left; vertical-align: middle; overflow-wrap: anywhere; word-break: break-word; }
       .behavior-table th { color: #667085; font-weight: 800; background: #f8fafc; }
       .behavior-table tr:last-child td { border-bottom: 0; }
       .behavior-table button { margin: 0; padding: 6px 9px; max-width: 100%; white-space: normal; }
+      .behavior-table-actions { display: flex; gap: 6px; flex-wrap: wrap; }
       .behavior-row:hover td { background: #f8fafc; }
       .behavior-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 800; }
       .behavior-kind { display: inline-flex; max-width: 100%; align-items: center; border-radius: 999px; padding: 2px 7px; font-weight: 800; background: #eef1f5; color: #475467; overflow-wrap: anywhere; }
@@ -249,8 +253,8 @@ export function renderAdminHtmlV2(): string {
         .prompt-editor-grid { grid-template-areas: "mode" "api" "editor" "preview"; }
         .prompt-preview-pane { position: static; }
         .prompt-preview-pane .logs, .prompt-preview-pane > pre, .logs { max-height: 55vh; }
-        .prompt-preview-head, .plugin-toolbar, .plugin-config-head, .plugin-section-head, .behavior-toolbar, .behavior-config-head, .shell-head, .shell-option summary, .shell-group summary { align-items: stretch; flex-wrap: wrap; }
-        .plugin-toolbar label, .behavior-toolbar label, .usage-controls label, .memory-controls label { min-width: min(100%, 180px); flex: 1 1 180px; }
+        .prompt-preview-head, .plugin-toolbar, .plugin-config-head, .plugin-section-head, .behavior-toolbar, .behavior-toolbar-actions, .behavior-config-head, .shell-head, .shell-option summary, .shell-group summary { align-items: stretch; flex-wrap: wrap; }
+        .plugin-toolbar label, .behavior-toolbar label, .behavior-toolbar-actions label, .usage-controls label, .memory-controls label { min-width: min(100%, 180px); flex: 1 1 180px; }
         .plugin-grid { grid-template-columns: minmax(0, 1fr); }
         .plugin-actions { align-items: flex-start; flex-wrap: wrap; }
         .behavior-table-wrap { overflow-x: auto; }
@@ -271,8 +275,8 @@ export function renderAdminHtmlV2(): string {
         .panel-body { padding: 12px; }
         .qr-box { width: 100%; min-height: 180px; }
         .usage-grid { grid-template-columns: minmax(0, 1fr); }
-        .usage-controls, .memory-controls, .prompt-actions, .tool-preview-actions, .behavior-config-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-        .prompt-actions button, .tool-preview-actions button, .behavior-config-actions button { margin: 0; width: 100%; }
+        .usage-controls, .memory-controls, .prompt-actions, .tool-preview-actions, .behavior-toolbar-actions, .behavior-config-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+        .prompt-actions button, .tool-preview-actions button, .behavior-toolbar-actions button, .behavior-config-actions button { margin: 0; width: 100%; }
         .plugin-card { min-height: 0; }
         .plugin-card-head { grid-template-columns: 34px minmax(0, 1fr); }
         .plugin-icon { width: 34px; height: 34px; }
@@ -567,13 +571,25 @@ export function renderAdminHtmlV2(): string {
                 <h2>Initiated Behaviors</h2>
                 <p class="muted">Runtime plans and layer-based prompt profiles from src/contexts/agent-profile/prompts.</p>
               </div>
-              <label for="behaviorTypeFilter">Type
-                <select id="behaviorTypeFilter">
-                  <option value="all">all</option>
-                  <option value="event">event</option>
-                  <option value="randomized">randomized</option>
-                </select>
-              </label>
+              <div class="behavior-toolbar-actions">
+                <label for="behaviorNewId">New behavior
+                  <input id="behaviorNewId" placeholder="custom_id" />
+                </label>
+                <label for="behaviorNewKind">Type
+                  <select id="behaviorNewKind">
+                    <option value="event">event</option>
+                    <option value="randomized">randomized</option>
+                  </select>
+                </label>
+                <button type="button" id="behaviorAdd">Add</button>
+                <label for="behaviorTypeFilter">Filter
+                  <select id="behaviorTypeFilter">
+                    <option value="all">all</option>
+                    <option value="event">event</option>
+                    <option value="randomized">randomized</option>
+                  </select>
+                </label>
+              </div>
             </div>
             <div class="behavior-layout">
               <div class="behavior-table-wrap">
@@ -775,13 +791,52 @@ export function renderAdminHtmlV2(): string {
             '<td>' + escapeHtml(responseRatio) + '</td>' +
             '<td>' + escapeHtml(lastRun ? formatAdminTime(lastRun.triggeredAt) : "never") + '</td>' +
             '<td><span class="behavior-status ' + (health === "ok" ? "on" : "") + '">' + escapeHtml(health) + '</span></td>' +
-            '<td><button type="button" data-behavior-config="' + escapeAttr(plan.id) + '">Config</button></td>' +
+            '<td><div class="behavior-table-actions"><button type="button" data-behavior-config="' + escapeAttr(plan.id) + '">Config</button>' + (plan.custom ? '<button type="button" class="secondary" data-behavior-delete="' + escapeAttr(plan.id) + '">Delete</button>' : "") + '</div></td>' +
           '</tr>';
         }).join("") || '<tr><td colspan="10" class="muted">No initiated behavior plans.</td></tr>';
         document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
+        document.querySelectorAll("[data-behavior-delete]").forEach((button) => button.addEventListener("click", () => deleteInitiatedBehavior(button.dataset.behaviorDelete)));
         document.querySelectorAll("[data-behavior-enabled]").forEach((input) => input.addEventListener("change", () => setInitiatedBehaviorEnabled(input.dataset.behaviorEnabled, input.checked, input)));
         renderInitiatedBehaviorRuns(runs);
         renderInitiatedBehaviorChart(initiatedBehaviorPayload.buckets || []);
+      }
+      async function createInitiatedBehavior() {
+        const id = $("behaviorNewId").value.trim();
+        const kind = $("behaviorNewKind").value === "randomized" ? "randomized" : "event";
+        if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+          alert("Behavior id must use letters, numbers, underscores, or hyphens.");
+          return;
+        }
+        $("behaviorAdd").disabled = true;
+        try {
+          const body = kind === "randomized"
+            ? { id, kind, enabled: true, weight: 0, priority: 0, promptProfile: { layers: [] } }
+            : { id, kind, enabled: true, triggerEvent: "", promptProfile: { layers: [] } };
+          const response = await fetch("/admin/api/initiated-behaviors", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw new Error(await response.text());
+          $("behaviorNewId").value = "";
+          await refreshInitiatedBehaviors();
+          openInitiatedBehaviorConfig(id);
+        } catch (error) {
+          alert("Failed to add behavior: " + (error && error.message ? error.message : String(error)));
+        } finally {
+          $("behaviorAdd").disabled = false;
+        }
+      }
+      async function deleteInitiatedBehavior(id) {
+        if (!id || !confirm("Delete custom behavior " + id + "?")) return;
+        try {
+          const response = await fetch("/admin/api/initiated-behaviors/" + encodeURIComponent(id), { method: "DELETE" });
+          if (!response.ok) throw new Error(await response.text());
+          if (behaviorConfigId === id) closeInitiatedBehaviorConfig();
+          await refreshInitiatedBehaviors();
+        } catch (error) {
+          alert("Failed to delete behavior: " + (error && error.message ? error.message : String(error)));
+        }
       }
       async function setInitiatedBehaviorEnabled(id, enabled, input) {
         if (!id) return;
@@ -1122,6 +1177,7 @@ export function renderAdminHtmlV2(): string {
       }));
       document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
       $("behaviorBack").addEventListener("click", closeInitiatedBehaviorConfig);
+      $("behaviorAdd").addEventListener("click", createInitiatedBehavior);
       $("behaviorTypeFilter").addEventListener("change", renderInitiatedBehaviorList);
       $("behaviorConfigSave").addEventListener("click", saveBehaviorConfig);
       $("behaviorConfigReset").addEventListener("click", resetBehaviorConfig);
@@ -3451,8 +3507,8 @@ Timing:
             <input data-field="group" value="\${escapeAttr(option.group || "")}" placeholder="root / 原神 / ..." />
             \${category === "outfits" ? \`
               <label>Image</label>
-              <div class="shell-image-drop" data-field="imageDrop">
-                <span class="muted">拖入图片自动上传</span>
+              <div class="shell-image-drop" data-field="imageDrop" tabindex="0">
+                <span class="muted">拖入或粘贴图片自动上传</span>
                 <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
               </div>
             \` : ""}
@@ -3749,6 +3805,19 @@ Timing:
           const file = [...(event.dataTransfer?.files || [])].find((item) => String(item.type || "").startsWith("image/"));
           if (!file) {
             $("shell-status").textContent = "Drop an image file.";
+            return;
+          }
+          uploadShellOutfitImage(optionRoot, option, category, index, file).catch((error) => {
+            $("shell-status").textContent = "Image upload failed: " + (error?.message || "unknown error");
+          });
+        });
+        drop.addEventListener("paste", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const file = [...(event.clipboardData?.files || [])].find((item) => String(item.type || "").startsWith("image/"))
+            || [...(event.clipboardData?.items || [])].map((item) => item.kind === "file" ? item.getAsFile() : undefined).find((item) => String(item?.type || "").startsWith("image/"));
+          if (!file) {
+            $("shell-status").textContent = "Paste an image file.";
             return;
           }
           uploadShellOutfitImage(optionRoot, option, category, index, file).catch((error) => {

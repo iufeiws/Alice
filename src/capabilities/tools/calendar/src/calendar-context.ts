@@ -32,7 +32,7 @@ export function buildCalendarContext(input: {
     days.push(lines.join("\n"));
   }
 
-  return `<calendar>\n${days.join("\n\n")}\n</calendar>`;
+  return `<calendar>\n${days.length ? days.join("\n\n") : "-空-"}\n</calendar>`;
 }
 
 function matchesAnyDate(entry: CalendarEntry, dates: CalendarDueDate[]): boolean {
@@ -54,7 +54,11 @@ function formatCalendarEntry(entry: CalendarEntry, userName: string | undefined)
 }
 
 function relativeDayText(offset: number): string {
+  if (offset === -2) return "前天";
+  if (offset === -1) return "昨天";
   if (offset === 0) return "今天";
+  if (offset === 1) return "明天";
+  if (offset === 2) return "后天";
   return offset < 0 ? `${Math.abs(offset)}天前` : `${offset}天后`;
 }
 

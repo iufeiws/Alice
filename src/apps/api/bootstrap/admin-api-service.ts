@@ -12,7 +12,7 @@ import { generateTtsPreview, serveTtsAsset, uploadTtsReferenceAudio } from "../.
 import { deleteShellOption, getShellConfig, readShellUiOrder, saveShellOption, saveShellSettings, saveShellUiOrder, serveShellAsset, uploadShellOutfitImage } from "../../../contexts/agent-profile/src/application/shell-admin-runtime.js";
 import { AGENT_STATES, getAdminConfig, handleAdminRuntimeApi, saveAgentConfig, saveAgentState, saveCoreProfile } from "./admin-runtime.js";
 import { getAdminTools, getMemoryAdminRuntime, getPromptVariablePreview, getVisiblePromptTools, isMemoryTarget, previewToolResult, savePromptApiProfile, savePromptProfile, saveTalkPromptProfile, writeServiceResult } from "../../../contexts/agent-profile/src/application/admin-prompt-memory-runtime.js";
-import { patchInitiatedBehavior, writeInitiatedBehaviors } from "../../../contexts/initiative/src/application/admin-runtime.js";
+import { createInitiatedBehavior, deleteInitiatedBehavior, patchInitiatedBehavior, writeInitiatedBehaviors } from "../../../contexts/initiative/src/application/admin-runtime.js";
 import type { AdminRouteServices, AdminRuntimeContext as AdminRoutesContext } from "./admin-route-context.js";
 
 export function createAdminRouteServices(context: AdminRoutesContext): AdminRouteServices {
@@ -88,9 +88,20 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     return;
   }
 
+  if (request.method === "POST" && request.url === "/admin/api/initiated-behaviors") {
+    await createInitiatedBehavior(context, request, response);
+    return;
+  }
+
   if (request.method === "PATCH" && request.url.startsWith("/admin/api/initiated-behaviors/")) {
     const id = decodeURIComponent(request.url.slice("/admin/api/initiated-behaviors/".length).split("?")[0] ?? "");
     await patchInitiatedBehavior(context, request, response, id);
+    return;
+  }
+
+  if (request.method === "DELETE" && request.url.startsWith("/admin/api/initiated-behaviors/")) {
+    const id = decodeURIComponent(request.url.slice("/admin/api/initiated-behaviors/".length).split("?")[0] ?? "");
+    deleteInitiatedBehavior(context, response, id);
     return;
   }
 

@@ -67,6 +67,15 @@ test("llm api preset form tracks dirty and saved states like shell editor", () =
   assert.match(html, /bindLLMApiPresetFormDirtyTracking\(\)/);
 });
 
+test("shell outfit image drop zone accepts pasted images", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /data-field="imageDrop" tabindex="0"/);
+  assert.match(html, /拖入或粘贴图片自动上传/);
+  assert.match(html, /drop\.addEventListener\("paste"/);
+  assert.match(html, /event\.clipboardData\?\.items/);
+});
+
 test("prompt profile editor exposes birthday calendar settings", () => {
   const html = renderAdminHtmlV2();
 

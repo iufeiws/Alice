@@ -857,7 +857,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
     type: "system.heartbeat" as const,
     meta: {
       receivedAt: "2026-05-26T00:00:00.000Z",
-      raw: { sleepCocoonGoodnight: true }
+      raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
     }
   };
   const core = createAgentCore({
@@ -945,7 +945,7 @@ test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async 
     type: "system.heartbeat" as const,
     meta: {
       receivedAt: "2026-05-26T00:00:00.000Z",
-      raw: { sleepCocoonGoodnight: true }
+      raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
     }
   };
   const core = createAgentCore({
@@ -1003,7 +1003,7 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
     type: "system.heartbeat" as const,
     meta: {
       receivedAt: "2026-05-26T08:00:00.000Z",
-      raw: { sleepCocoonMorning: true }
+      raw: { agentInitiatedTriggerEvent: "sleep_cocoon.wake" }
     }
   };
   const core = createAgentCore({
@@ -1049,7 +1049,7 @@ test("agent core appends force wake instruction from heartbeat event", async () 
     type: "system.heartbeat" as const,
     meta: {
       receivedAt: "2026-05-26T08:00:00.000Z",
-      raw: { sleepCocoonForceWake: true }
+      raw: { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }
     }
   };
   const core = createAgentCore({
@@ -1369,12 +1369,12 @@ test("agent core passes agent loop run context to exposed selfie tool calls", as
               {
                 id: "tool_selfie_1",
                 type: "function",
-                function: { name: "selfie", arguments: "{\"action\":\"first\"}" }
+                function: { name: "selfie", arguments: "{\"pose\":\"first\"}" }
               },
               {
                 id: "tool_selfie_2",
                 type: "function",
-                function: { name: "selfie", arguments: "{\"action\":\"second\"}" }
+                function: { name: "selfie", arguments: "{\"pose\":\"second\"}" }
               }
             ]
           }
@@ -1402,7 +1402,7 @@ test("agent core passes agent loop run context to exposed selfie tool calls", as
         return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
       },
       async execute(call, context) {
-        executed.push(String(call.input.action));
+        executed.push(String(call.input.pose));
         contexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }

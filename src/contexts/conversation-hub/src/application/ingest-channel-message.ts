@@ -6,7 +6,7 @@ import { sanitizeAudioTranscript, sanitizeMessageText, summarizeAudioText } from
 import type { AgentStateController, AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import {
   defaultAgentInitiatedBehaviorPlans,
-  selectRandomizedAgentInitiatedBehaviorPlan,
+  hasRandomizedAgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorPlan
 } from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
 import { createCurrentTimeProvider, parseZonedIso } from "../../../../platform/time/src/index.js";
@@ -520,11 +520,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     const elapsedMs = Math.max(0, now().getTime() - lastMessageAt);
     const probability = Math.min(elapsedMs / (4 * 60 * 60 * 1000), 1) / 2;
     if (random() >= probability) return undefined;
-    const plan = selectRandomizedAgentInitiatedBehaviorPlan(
-      deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans,
-      random
-    );
-    if (!plan) return undefined;
+    if (!hasRandomizedAgentInitiatedBehaviorPlan(deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans)) return undefined;
     const target = deps.getRandomInitiatedBehaviorTarget?.() ?? deps.getProcessNowTarget?.();
     if (!target) return undefined;
     const receivedTime = time.now();
@@ -549,8 +545,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         receivedAt: receivedTime.iso,
         receivedAtUtc: receivedTime.date.toISOString(),
         raw: {
-          agentInitiatedBehaviorId: plan.id,
-          randomizedInitiatedBehavior: true
+          agentInitiatedTriggerEvent: "randomized"
         }
       }
     };

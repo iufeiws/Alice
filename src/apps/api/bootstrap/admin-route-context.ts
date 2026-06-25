@@ -30,6 +30,30 @@ export type AdminRoutesContext = {
   services: AdminRouteServices;
 };
 
+type AgentInitiatedBehaviorConfigPatch = {
+  enabled?: boolean;
+  kind?: AgentInitiatedBehaviorPlan["kind"];
+  triggerEvent?: string;
+  weight?: number;
+  priority?: number;
+  promptProfile?: {
+    layers: Array<{
+      id: string;
+      title: string;
+      role: "user" | "assistant" | "tool_request";
+      enabled: boolean;
+      content: string;
+      order: number;
+      toolCalls?: Array<{
+        toolName: string;
+        toolCallId?: string;
+        toolArguments: string;
+      }>;
+      thinking?: string;
+    }>;
+  };
+};
+
 export type AdminRuntimeContext = {
   config: AppConfig;
   logs: unknown[];
@@ -62,29 +86,9 @@ export type AdminRuntimeContext = {
   talkPromptProfileStore: PromptProfileStore;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
   setAgentInitiatedBehaviorEnabled?: (id: string, enabled: boolean) => AgentInitiatedBehaviorPlan | undefined;
-  setAgentInitiatedBehaviorConfig?: (id: string, patch: {
-    enabled?: boolean;
-    kind?: AgentInitiatedBehaviorPlan["kind"];
-    triggerEvent?: string;
-    weight?: number;
-    priority?: number;
-    promptProfile?: {
-      layers: Array<{
-        id: string;
-        title: string;
-        role: "user" | "assistant" | "tool_request";
-        enabled: boolean;
-        content: string;
-        order: number;
-        toolCalls?: Array<{
-          toolName: string;
-          toolCallId?: string;
-          toolArguments: string;
-        }>;
-        thinking?: string;
-      }>;
-    };
-  }) => AgentInitiatedBehaviorPlan | undefined;
+  createAgentInitiatedBehaviorConfig?: (id: string, patch: AgentInitiatedBehaviorConfigPatch) => AgentInitiatedBehaviorPlan | undefined;
+  deleteAgentInitiatedBehaviorConfig?: (id: string) => AgentInitiatedBehaviorPlan | undefined;
+  setAgentInitiatedBehaviorConfig?: (id: string, patch: AgentInitiatedBehaviorConfigPatch) => AgentInitiatedBehaviorPlan | undefined;
   initiatedBehaviorRunStore?: AgentInitiatedBehaviorRunStore;
   memoryStore: MemoryStore;
   diaryStore: DiaryStore;

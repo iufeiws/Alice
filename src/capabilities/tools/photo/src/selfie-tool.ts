@@ -101,8 +101,8 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     const target = resolveTarget(call);
     if (!target) return toolError(call, photoToolText.noCurrentSession);
 
-    const action = stringValue(call.input.action).trim();
-    if (!action) return toolError(call, photoToolText.actionRequired);
+    const pose = stringValue(call.input.pose).trim();
+    if (!pose) return toolError(call, photoToolText.poseRequired);
 
     const aspectRatio = normalizeAspectRatio(call.input.aspectRatio);
     if (!aspectRatio) return toolError(call, photoToolText.unsupportedAspectRatio);
@@ -134,7 +134,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       let assetId = path.join(relativeDir, fileName);
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
-      const prompt = buildSelfiePrompt(action, context);
+      const prompt = buildSelfiePrompt(pose, context);
       const references = await resolveReferenceImages(context);
       deps.appendLog?.("info", [
         "selfie generation start:",
@@ -233,7 +233,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(action: string, context: SelfieContext): string {
+  function buildSelfiePrompt(pose: string, context: SelfieContext): string {
     const referenceDir = runtimePhotoConfig().selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
@@ -268,7 +268,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         }
       }),
       user: deps.getUserName?.() || "user",
-      action,
+      pose,
     });
   }
 

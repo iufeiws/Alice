@@ -489,7 +489,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
 test("talk exposed selfie tool calls receive agent loop run context", async () => {
   let sendCalls = 0;
   let activeSession: any;
-  const executedActions: string[] = [];
+  const executedPoses: string[] = [];
   const observedContexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
@@ -522,7 +522,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
         inputSchema: { type: "object", properties: {} }
       }],
       async execute(call, context) {
-        executedActions.push(String(call.input.action));
+        executedPoses.push(String(call.input.pose));
         observedContexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
         return { callId: call.id, ok: true, output: "sent" };
       }
@@ -542,11 +542,11 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
             toolCalls: [{
               id: "call-selfie-1",
               type: "function",
-              function: { name: "selfie", arguments: "{\"action\":\"first\"}" }
+              function: { name: "selfie", arguments: "{\"pose\":\"first\"}" }
             }, {
               id: "call-selfie-2",
               type: "function",
-              function: { name: "selfie", arguments: "{\"action\":\"second\"}" }
+              function: { name: "selfie", arguments: "{\"pose\":\"second\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -562,7 +562,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
   await runPreparedTalkAgentLoop(controller, 108);
 
   assert.equal(sendCalls, 2);
-  assert.deepEqual(executedActions, ["first", "second"]);
+  assert.deepEqual(executedPoses, ["first", "second"]);
   assert.deepEqual(observedContexts, [
     { agentLoopRunSeq: 1, llmSessionId: 108 },
     { agentLoopRunSeq: 1, llmSessionId: 108 }

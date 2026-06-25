@@ -29,6 +29,31 @@ export async function patchInitiatedBehavior(context: AdminRoutesContext, reques
   });
 }
 
+export async function createInitiatedBehavior(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const id = parseInitiatedBehaviorId(body.id);
+  const plan = context.createAgentInitiatedBehaviorConfig?.(id, parseInitiatedBehaviorConfigPatch(body));
+  if (!plan) throw new HttpJsonError(400, "behavior_create_failed");
+  writeJson(response, 200, {
+    ok: true,
+    plan: initiatedBehaviorPlanView(context, plan)
+  });
+}
+
+export function deleteInitiatedBehavior(context: AdminRoutesContext, response: any, id: string): void {
+  if (!id) throw new HttpJsonError(400, "behavior_id_required");
+  const plan = context.deleteAgentInitiatedBehaviorConfig?.(id);
+  if (!plan) throw new HttpJsonError(404, "custom_behavior_not_found");
+  writeJson(response, 200, { ok: true, id });
+}
+
+function parseInitiatedBehaviorId(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) throw new HttpJsonError(400, "behavior_id_required");
+  const id = value.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new HttpJsonError(400, "invalid_behavior_id");
+  return id;
+}
+
 function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
   const patch: {
     enabled?: boolean;

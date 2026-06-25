@@ -20,7 +20,7 @@ const quality = process.env.SELFIE_IMAGE_API_QUALITY ?? "low";
 const outputFormat = process.env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg";
 const outputCompression = process.env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION ?? "45";
 const apiTimeoutMs = numberValue(process.env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000);
-const action = process.argv.slice(2).join(" ").trim() || "lean close to the camera, tilt her head slightly, with a shy expression";
+const pose = process.argv.slice(2).join(" ").trim() || "lean close to the camera, tilt her head slightly, with a shy expression";
 
 if (!apiKey) {
   console.error("OPENAI_API_KEY or SELFIE_IMAGE_API_KEY is required. Put it in /home/wyf98/Alice/.env or export it in the shell.");
@@ -31,7 +31,7 @@ const referencesDir = path.join(repoRoot, "assets", "selfie", "references");
 const outputDir = path.join(repoRoot, "assets", "generated", "selfies", "api-tests");
 const outputName = `selfie_api_${formatDateTime(new Date())}.${outputFormat === "jpeg" ? "jpg" : outputFormat}`;
 const outputPath = path.join(outputDir, outputName);
-const prompt = buildPrompt(action);
+const prompt = buildPrompt(pose);
 const imagePaths = [
   path.join(referencesDir, "alice-character-reference.png"),
   resolveOutfitImage(),
@@ -113,7 +113,7 @@ fs.writeFileSync(outputPath, Buffer.from(b64, "base64"));
 const stat = fs.statSync(outputPath);
 console.error(`Completed in ${elapsedSeconds.toFixed(1)}s, wrote ${outputPath} (${Math.round(stat.size / 1024)} KiB)`);
 
-function buildPrompt(actionText) {
+function buildPrompt(poseText) {
   const template = fs.readFileSync(path.join(referencesDir, "selfie-prompt.txt"), "utf8");
   const profile = JSON.parse(fs.readFileSync(path.join(repoRoot, "memory-files", "config", "prompt-profile.json"), "utf8"));
   const shell = JSON.parse(fs.readFileSync(path.join(repoRoot, "memory-files", "shell", "daily-shell.json"), "utf8"));
@@ -122,7 +122,7 @@ function buildPrompt(actionText) {
   return [
     template
       .replaceAll("{{time}}", formatPromptTime(new Date()))
-      .replaceAll("{{action}}", actionText)
+      .replaceAll("{{pose}}", poseText)
       .replaceAll("{{char}}", extractCharacterFeatures(renderProfilePrompt(profile)))
       .replaceAll("{{persenality}}", formatNamedBlock(personality.name, personality.content))
       .replaceAll("{{personality}}", formatNamedBlock(personality.name, personality.content))

@@ -38,12 +38,11 @@
 p = min(t / 4小时, 1) / 2
 ```
 
-当随机数小于 `p` 时，从启用的随机事件池中按 `weight` 加权抽取一种事件，并生成一条 `system.heartbeat` 事件交给 Agent Core。命中后不再执行 idle 的普通 `waiting/away/idle` roll；主动会话结束后状态落到 `waiting`。生成事件必须包含：
+当随机数小于 `p` 时，从启用的随机事件池中按 `weight` 加权抽取一种事件，并生成一条 `system.heartbeat` 事件交给 Agent Core。命中后不再执行 idle 的普通 `waiting/away/idle` roll；主动会话结束后状态落到 `waiting`。生成事件必须包含统一事件名：
 
 ```json
 {
-  "agentInitiatedBehaviorId": "<selected behavior id>",
-  "randomizedInitiatedBehavior": true
+  "agentInitiatedTriggerEvent": "randomized"
 }
 ```
 
@@ -98,6 +97,8 @@ type AgentInitiatedBehaviorPlan = {
 ```
 
 `AgentInitiatedBehaviorPlan` 不等同于 prompt。它是 Agent 层对一次主动行为的完整执行计划。
+
+所有主动行为事件都通过 `meta.raw.agentInitiatedTriggerEvent` 路由。事件生产方只写事件名；Agent Core 用该事件名匹配启用的 `triggerEvent`，不再读取每种事件的 boolean 标记，也不再用 `agentInitiatedBehaviorId` 做事件路由。随机主动行为统一使用 `randomized`，具体行为在 resolver 内按权重选择。
 
 ### Step 类型
 

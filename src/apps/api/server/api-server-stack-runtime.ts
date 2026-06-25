@@ -49,7 +49,7 @@ export function createApiServerStackRuntime(input: {
     getSleepCocoonGoodnightEvent: () => input.sleepCocoonEventRuntime.maybeBuildGoodnightEvent(),
     getSleepCocoonWakeEvent: () => input.sleepCocoonEventRuntime.consumeMorningEvent(),
     getCalendarReminderEvent: () => input.calendarEventRuntime.consumeDueReminderEvent(),
-    queueForceWakeEvent: () => input.sleepCocoonEventRuntime.queueForceWakeEvent({ sleepCocoonForceWake: true }),
+    queueForceWakeEvent: () => input.sleepCocoonEventRuntime.queueForceWakeEvent({ agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }),
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });

@@ -10,7 +10,7 @@ Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
 
 ```json
 {
-  "action": "lean close to the camera and smile shyly"
+  "pose": "lean close to the camera and smile shyly"
 }
 ```
 

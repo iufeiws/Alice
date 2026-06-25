@@ -7,10 +7,12 @@ import {
   createAgentInitiatedBehaviorRun,
   createAgentInitiatedBehaviorRunStore,
   defaultAgentInitiatedBehaviorPlans,
+  agentInitiatedBehaviorPlanFromEvent,
   resolveAgentInitiatedBehaviorAvailability,
   selectRandomizedAgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorPlan
 } from "../src/contexts/initiative/src/domain/initiated-behavior.js";
+import { createInitiatedBehaviorRuntime } from "../src/contexts/initiative/src/application/evaluate-triggers.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import type { AgentEvent, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -177,6 +179,32 @@ test("default randomized behavior plans use proactive initiation types", () => {
   ]);
 });
 
+test("initiated behavior runtime creates and deletes custom plans", () => {
+  const id = `custom_check_in_${process.pid}_${Date.now()}`;
+  const dir = path.join(process.cwd(), ".tmp-tests", id);
+  const runtime = createInitiatedBehaviorRuntime({
+    configPath: path.join(dir, "initiated-behaviors.config.json"),
+    appendLog() {}
+  });
+
+  const created = runtime.createCustom(id, {
+    enabled: true,
+    kind: "event",
+    triggerEvent: "custom.check_in",
+    promptProfile: { layers: [] }
+  });
+  const profilePath = path.resolve(created?.promptProfilePath ?? "");
+
+  assert.equal(created?.custom, true);
+  assert.equal(created?.triggerEvent, "custom.check_in");
+  assert.deepEqual(JSON.parse(fs.readFileSync(profilePath, "utf8")), { layers: [] });
+  assert.ok(runtime.getPlans().some((plan) => plan.id === id && plan.custom === true));
+  assert.equal(runtime.deleteCustom("sleep_morning"), undefined);
+  assert.equal(runtime.deleteCustom(id)?.id, id);
+  assert.equal(runtime.getPlans().some((plan) => plan.id === id), false);
+  assert.equal(fs.existsSync(profilePath), false);
+});
+
 test("randomized behavior selection uses only enabled positive weight plans", () => {
   const base = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
   const disabled = { ...base, id: "disabled", enabled: false, weight: 100 };
@@ -188,6 +216,18 @@ test("randomized behavior selection uses only enabled positive weight plans", ()
   assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, dryRun, zero], () => 0), undefined);
   assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, first, second], () => 0)?.id, "first");
   assert.equal(selectRandomizedAgentInitiatedBehaviorPlan([disabled, first, second], () => 0.99)?.id, "second");
+});
+
+test("randomized initiated event uses one trigger and selects a plan inside resolver", () => {
+  const base = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const first = { ...base, id: "first", enabled: true, dryRun: false, weight: 1 };
+  const second = { ...base, id: "second", enabled: true, dryRun: false, weight: 3 };
+
+  assert.equal(agentInitiatedBehaviorPlanFromEvent(
+    textEvent({ agentInitiatedTriggerEvent: "randomized" }),
+    [first, second],
+    () => 0.99
+  )?.id, "second");
 });
 
 test("initiated behavior run store aggregates randomized thirty minute buckets", () => {
@@ -290,13 +330,16 @@ test("initiated behavior availability is unavailable when sleep_cocoon is hidden
   assert.equal(availability.reason, "tool_hidden:sleep_cocoon");
 });
 
-function textEvent(): AgentEvent {
+function textEvent(raw?: Record<string, unknown>): AgentEvent {
   return {
     id: "evt",
     type: "message.text",
     source: { plugin: "test", userId: "user" },
     externalSession: { scope: "dm", sessionId: "session" },
     payload: { kind: "text", text: "hi" },
-    meta: { receivedAt: "2026-06-06T00:00:00.000Z" }
+    meta: {
+      receivedAt: "2026-06-06T00:00:00.000Z",
+      ...(raw ? { raw } : {})
+    }
   };
 }

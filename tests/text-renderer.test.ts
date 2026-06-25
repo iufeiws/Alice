@@ -52,10 +52,10 @@ test("buildLLMTextVariables exposes latest wake boundary date and weekday", () =
 
 test("buildLLMTextVariables exposes calendar context text", () => {
   const variables = buildLLMTextVariables({
-    calendarContext: "<calendar>\n2026-06-22 星期一 今天\n无日程\n</calendar>"
+    calendarContext: "<calendar>\n2026-06-22 星期一 今天\n09:30 买药\n</calendar>"
   });
 
-  assert.equal(renderLLMText("{{calendar/context}}", variables), "<calendar>\n2026-06-22 星期一 今天\n无日程\n</calendar>");
+  assert.equal(renderLLMText("{{calendar/context}}", variables), "<calendar>\n2026-06-22 星期一 今天\n09:30 买药\n</calendar>");
 });
 
 test("buildLLMTextVariables exposes memory limit placeholders", () => {

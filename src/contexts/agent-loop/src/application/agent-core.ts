@@ -211,6 +211,7 @@ export type AgentCoreDeps = {
   loadLLMSession?(): LLMSessionSnapshot | undefined;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
   recordAgentInitiatedBehaviorRun?(run: AgentInitiatedBehaviorRun): void;
+  random?: () => number;
 };
 
 export interface AgentCore {
@@ -225,6 +226,7 @@ export interface AgentCore {
 export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const channels: ChannelPlugin[] = [];
   const time = deps.time ?? createCurrentTimeProvider("UTC");
+  const random = deps.random ?? Math.random;
   let lastCompletedToolName: string | undefined;
   type ActiveLLMSession = ChatAgentLoopSession & {
     id: number;
@@ -353,7 +355,8 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
       let initiatedBehavior = agentInitiatedBehaviorPlanFromEvent(
         event,
-        deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans
+        deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans,
+        random
       );
       if (deps.loadLLMSession) {
         const persistedSession = deps.loadLLMSession();

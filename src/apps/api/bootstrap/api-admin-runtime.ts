@@ -64,6 +64,8 @@ export function createApiAdminRuntime(input: {
     talkPromptProfileStore: input.apiContextRuntime.talkPromptProfileStore,
     getAgentInitiatedBehaviorPlans: input.apiContextRuntime.getAgentInitiatedBehaviorPlans,
     setAgentInitiatedBehaviorEnabled: input.apiContextRuntime.setAgentInitiatedBehaviorEnabled,
+    createAgentInitiatedBehaviorConfig: input.apiContextRuntime.createAgentInitiatedBehaviorConfig,
+    deleteAgentInitiatedBehaviorConfig: input.apiContextRuntime.deleteAgentInitiatedBehaviorConfig,
     setAgentInitiatedBehaviorConfig: input.apiContextRuntime.setAgentInitiatedBehaviorConfig,
     initiatedBehaviorRunStore: input.apiContextRuntime.initiatedBehaviorRunStore,
     memoryStore: input.apiContextRuntime.memoryStore,

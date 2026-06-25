@@ -15,6 +15,11 @@
       "kind": "event",
       "triggerEvent": "sleep_cocoon.wake"
     },
+    "calendar_reminder": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "calendar.schedule_due"
+    },
     "care": {
       "enabled": true,
       "kind": "randomized",

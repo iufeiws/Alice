@@ -8,6 +8,29 @@ import type { AdminRuntimeContext } from "./admin-route-context.js";
 import { createApiRequestHandler } from "../routes/admin-routes.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
+type AgentInitiatedBehaviorConfigPatch = {
+  enabled?: boolean;
+  kind?: AgentInitiatedBehaviorPlan["kind"];
+  triggerEvent?: string;
+  weight?: number;
+  priority?: number;
+  promptProfile?: {
+    layers: Array<{
+      id: string;
+      title: string;
+      role: "user" | "assistant" | "tool_request";
+      enabled: boolean;
+      content: string;
+      order: number;
+      toolCalls?: Array<{
+        toolName: string;
+        toolCallId?: string;
+        toolArguments: string;
+      }>;
+      thinking?: string;
+    }>;
+  };
+};
 
 export function createAdminRequestHandlerRuntime(input: {
   config: AppConfig;
@@ -36,29 +59,9 @@ export function createAdminRequestHandlerRuntime(input: {
   talkPromptProfileStore: any;
   getAgentInitiatedBehaviorPlans(): any[];
   setAgentInitiatedBehaviorEnabled(id: string, enabled: boolean): AgentInitiatedBehaviorPlan | undefined;
-  setAgentInitiatedBehaviorConfig(id: string, patch: {
-    enabled?: boolean;
-    kind?: AgentInitiatedBehaviorPlan["kind"];
-    triggerEvent?: string;
-    weight?: number;
-    priority?: number;
-    promptProfile?: {
-      layers: Array<{
-        id: string;
-        title: string;
-        role: "user" | "assistant" | "tool_request";
-        enabled: boolean;
-        content: string;
-        order: number;
-        toolCalls?: Array<{
-          toolName: string;
-          toolCallId?: string;
-          toolArguments: string;
-        }>;
-        thinking?: string;
-      }>;
-    };
-  }): AgentInitiatedBehaviorPlan | undefined;
+  createAgentInitiatedBehaviorConfig(id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined;
+  deleteAgentInitiatedBehaviorConfig(id: string): AgentInitiatedBehaviorPlan | undefined;
+  setAgentInitiatedBehaviorConfig(id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined;
   initiatedBehaviorRunStore: any;
   memoryStore: any;
   diaryStore: any;
@@ -134,6 +137,8 @@ export function createAdminRequestHandlerRuntime(input: {
     talkPromptProfileStore: input.talkPromptProfileStore,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     setAgentInitiatedBehaviorEnabled: input.setAgentInitiatedBehaviorEnabled,
+    createAgentInitiatedBehaviorConfig: input.createAgentInitiatedBehaviorConfig,
+    deleteAgentInitiatedBehaviorConfig: input.deleteAgentInitiatedBehaviorConfig,
     setAgentInitiatedBehaviorConfig: input.setAgentInitiatedBehaviorConfig,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
     memoryStore: input.memoryStore,

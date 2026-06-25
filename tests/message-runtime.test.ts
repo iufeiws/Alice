@@ -741,7 +741,7 @@ test("message runtime queues sleep cocoon force wake event on force wake", async
         type: "system.heartbeat",
         meta: {
           receivedAt: "2026-05-24T08:00:00.000Z",
-          raw: { sleepCocoonForceWake: true }
+          raw: { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }
         }
       };
     },
@@ -770,7 +770,7 @@ test("message runtime queues sleep cocoon force wake event on force wake", async
   runtime.pauseHeartbeat();
 
   assert.equal(coreInputs[0].type, "system.heartbeat");
-  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonForceWake: true });
+  assert.deepEqual(coreInputs[0].meta.raw, { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" });
 });
 
 test("message runtime can run sleep cocoon morning event on heartbeat", async () => {
@@ -784,7 +784,7 @@ test("message runtime can run sleep cocoon morning event on heartbeat", async ()
       type: "system.heartbeat",
       meta: {
         receivedAt: "2026-05-24T08:00:00.000Z",
-        raw: { sleepCocoonMorning: true }
+        raw: { agentInitiatedTriggerEvent: "sleep_cocoon.wake" }
       }
     }),
     store,
@@ -805,7 +805,7 @@ test("message runtime can run sleep cocoon morning event on heartbeat", async ()
   runtime.pauseHeartbeat();
 
   assert.equal(coreInputs[0].type, "system.heartbeat");
-  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonMorning: true });
+  assert.deepEqual(coreInputs[0].meta.raw, { agentInitiatedTriggerEvent: "sleep_cocoon.wake" });
 });
 
 test("message runtime runs sleep cocoon morning event after wake tick", async () => {
@@ -828,7 +828,7 @@ test("message runtime runs sleep cocoon morning event after wake tick", async ()
         type: "system.heartbeat",
         meta: {
           receivedAt: "2026-06-01T18:00:00.000",
-          raw: { sleepCocoonMorning: true }
+          raw: { agentInitiatedTriggerEvent: "sleep_cocoon.wake" }
         }
       };
     }
@@ -866,7 +866,7 @@ test("message runtime runs sleep cocoon morning event after wake tick", async ()
 
   assert.equal(controller.getSnapshot().state, "waiting");
   assert.equal(coreInputs[0].type, "system.heartbeat");
-  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonMorning: true });
+  assert.deepEqual(coreInputs[0].meta.raw, { agentInitiatedTriggerEvent: "sleep_cocoon.wake" });
 });
 
 test("message runtime can run sleep cocoon goodnight event on heartbeat", async () => {
@@ -880,7 +880,7 @@ test("message runtime can run sleep cocoon goodnight event on heartbeat", async 
       type: "system.heartbeat",
       meta: {
         receivedAt: "2026-05-24T00:00:00.000Z",
-        raw: { sleepCocoonGoodnight: true }
+        raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
       }
     }),
     store,
@@ -901,7 +901,7 @@ test("message runtime can run sleep cocoon goodnight event on heartbeat", async 
   runtime.pauseHeartbeat();
 
   assert.equal(coreInputs[0].type, "system.heartbeat");
-  assert.deepEqual(coreInputs[0].meta.raw, { sleepCocoonGoodnight: true });
+  assert.deepEqual(coreInputs[0].meta.raw, { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" });
 });
 
 test("message runtime does not count sleep cocoon goodnight when generated session fails", async () => {
@@ -915,7 +915,7 @@ test("message runtime does not count sleep cocoon goodnight when generated sessi
       type: "system.heartbeat",
       meta: {
         receivedAt: "2026-05-24T00:00:00.000Z",
-        raw: { sleepCocoonGoodnight: true }
+        raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
       }
     } : undefined,
     store,
@@ -955,7 +955,7 @@ test("message runtime does not run sleep cocoon goodnight while user messages ar
         type: "system.heartbeat",
         meta: {
           receivedAt: "2026-05-24T00:00:00.000Z",
-          raw: { sleepCocoonGoodnight: true }
+          raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
         }
       };
     },
@@ -1227,8 +1227,7 @@ test("message runtime triggers randomized initiated behavior on eligible idle ti
   assert.equal(coreInputs[0].payload.kind, "text");
   assert.equal(coreInputs[0].payload.kind === "text" ? coreInputs[0].payload.text : "", "A randomized proactive event was triggered. Use messaging tools to inspect context before sending a short, low-interruption message.");
   assert.deepEqual(coreInputs[0].meta.raw, {
-    agentInitiatedBehaviorId: "care",
-    randomizedInitiatedBehavior: true
+    agentInitiatedTriggerEvent: "randomized"
   });
   assert.equal(tickCalls, 0);
   assert.equal(state, "waiting");

@@ -277,7 +277,7 @@ test("sleep cocoon goodnight event only runs from idle state", () => {
   state = "idle";
   const event = runtime.maybeBuildGoodnightEvent();
 
-  assert.equal(event?.meta.raw.sleepCocoonGoodnight, true);
+  assert.equal(event?.meta.raw.agentInitiatedTriggerEvent, "sleep_cocoon.auto_goodnight_check");
   assert.equal(autoChecked, 1);
 });
 

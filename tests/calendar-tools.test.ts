@@ -27,7 +27,7 @@ test("calendar tool adds schedule and returns that day", async () => {
 
   assert.equal(added.ok, true);
   assert.equal(store.listEntries("schedule")[0].title, "买药");
-  assert.match((added.output as { calendar: string }).calendar, /2026-06-23 星期二 1天后\n09:30 买药 带医保卡/);
+  assert.match((added.output as { calendar: string }).calendar, /2026-06-23 星期二 明天\n09:30 买药 带医保卡/);
 });
 
 test("calendar store persists entry source", () => {
@@ -139,7 +139,7 @@ test("calendar tool searches future schedules", async () => {
   assert.deepEqual(result.output, [{ title: "买药", datetime: "2026-06-23 09:30", note: "医保卡" }]);
 });
 
-test("calendar tool lists calendar range with empty days", async () => {
+test("calendar tool lists only days with entries and uses one empty marker when all empty", async () => {
   const store = createCalendarStore(dbPath("calendar-list"));
   const tools = createCalendarTools({
     calendarStore: store,
@@ -158,19 +158,27 @@ test("calendar tool lists calendar range with empty days", async () => {
   const listed = await tools.execute({
     id: "call_list_calendar",
     toolName: "calendar",
-    input: { action: "list", daysBefore: 1, daysAfter: 1 }
+    input: { action: "list", daysBefore: 2, daysAfter: 2 }
   });
 
   assert.equal(listed.ok, true);
   assert.equal(listed.output, [
     "<calendar>",
-    "2026-06-21 星期日 1天前",
-    "-空-",
-    "",
     "2026-06-22 星期一 今天",
     "端午",
-    "",
-    "2026-06-23 星期二 1天后",
+    "</calendar>"
+  ].join("\n"));
+
+  store.removeEntry(store.listEntries()[0].id);
+  const empty = await tools.execute({
+    id: "call_list_calendar_empty",
+    toolName: "calendar",
+    input: { action: "list", daysBefore: 2, daysAfter: 2 }
+  });
+
+  assert.equal(empty.ok, true);
+  assert.equal(empty.output, [
+    "<calendar>",
     "-空-",
     "</calendar>"
   ].join("\n"));
@@ -200,7 +208,7 @@ test("calendar due reminder uses short local-time window and marks one fired", (
   const event = runtime.consumeDueReminderEvent();
 
   assert.equal(event?.meta.raw.calendarReminder, true);
-  assert.equal(event?.meta.raw.agentInitiatedBehaviorId, "calendar_reminder");
+  assert.equal(event?.meta.raw.agentInitiatedTriggerEvent, "calendar.schedule_due");
   assert.equal(store.listEntries("schedule")[0].firedAt, "2026-06-22T00:01:00.000");
   assert.equal(runtime.consumeDueReminderEvent(), undefined);
 });

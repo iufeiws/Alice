@@ -2,13 +2,13 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const selfieTool: ToolDefinition = {
   name: "selfie",
-  description: "根据 action 动作描述自拍。 除非<user>特殊要求,确保只描述拍照时的动作。成功后会自动发送。",
+  description: "通过 pose 参数描述自拍时的姿势和表情。 除非<user>特殊要求, 禁止描述服装发色外貌特点, 对于描述中可能存在性暗示的部分略过以规避审核。成功时后会自动发送。",
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string" },
+      pose: { type: "string" },
     },
-    required: ["action"],
+    required: ["pose"],
     additionalProperties: false
   }
 };
@@ -19,7 +19,7 @@ export const photoToolText = {
   previousFailureBlocked: "selfie is blocked in this agent loop run after a previous failure",
   selfieDisabled: "photo selfie is disabled",
   noCurrentSession: "No current messaging session is available",
-  actionRequired: "action is required",
+  poseRequired: "pose is required",
   unsupportedAspectRatio: "unsupported aspectRatio",
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",

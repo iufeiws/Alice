@@ -15,7 +15,7 @@ const png1x1Bytes = Buffer.from(
   "base64"
 );
 
-test("selfie schema exposes action with 3:4 default", () => {
+test("selfie schema exposes pose with 3:4 default", () => {
   const store = createAliceStore(path.join(makeTempDir("selfie-schema-db"), "alice.sqlite"));
   const tools = createPhotoTools({
     store,
@@ -28,7 +28,7 @@ test("selfie schema exposes action with 3:4 default", () => {
   assert.equal(selfie.name, "selfie");
   assert.deepEqual((selfie.inputSchema.properties as Record<string, unknown>).description, undefined);
   assert.deepEqual((selfie.inputSchema.properties as Record<string, { default?: string }>).aspectRatio.default, "3:4");
-  assert.deepEqual(selfie.inputSchema.required, ["action"]);
+  assert.deepEqual(selfie.inputSchema.required, ["pose"]);
 });
 
 test("photo config rejects invalid persisted values", () => {
@@ -62,7 +62,7 @@ test("photo tool entry returns config errors to the agent", async () => {
   const result = await tools.execute({
     id: "call_selfie_bad_config",
     toolName: "selfie",
-    input: { action: "测试坏配置" }
+    input: { pose: "测试坏配置" }
   });
 
   assert.equal(result.ok, false);
@@ -106,7 +106,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     const result = await tools.execute({
       id: "call_selfie",
       toolName: "selfie",
-      input: { action: "踮脚靠近镜头，比一个很小的剪刀手" }
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     }, { llmCapabilities: { supportsImage: true } });
 
     assert.equal(result.ok, true);
@@ -169,7 +169,7 @@ test("selfie converts generated non-JPEG bytes to JPEG before sending", async ()
     const result = await tools.execute({
       id: "call_selfie_png_conversion",
       toolName: "selfie",
-      input: { action: "拍一张 PNG 结果的测试自拍" }
+      input: { pose: "拍一张 PNG 结果的测试自拍" }
     }, { llmCapabilities: { supportsImage: true } });
 
     assert.equal(result.ok, true);
@@ -228,7 +228,7 @@ test("selfie uses default output target for voice call requester", async () => {
     const result = await tools.execute({
       id: "call_selfie_voice",
       toolName: "selfie",
-      input: { action: "对镜头挥手" },
+      input: { pose: "对镜头挥手" },
       requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
       externalSession: { scope: "dm", sessionId: "talk-session-1" }
     });
@@ -272,19 +272,19 @@ test("selfie blocks retries in the same agent loop run after generation failure"
     const first = await tools.execute({
       id: "call_selfie_fail_1",
       toolName: "selfie",
-      input: { action: "失败自拍" }
+      input: { pose: "失败自拍" }
     }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const sameRoundRetry = await tools.execute({
       id: "call_selfie_fail_2",
       toolName: "selfie",
-      input: { action: "同轮重试" }
+      input: { pose: "同轮重试" }
     }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const nextRoundRetry = await tools.execute({
       id: "call_selfie_fail_3",
       toolName: "selfie",
-      input: { action: "下一轮重试" }
+      input: { pose: "下一轮重试" }
     }, { llmSessionId: 123, agentLoopRunSeq: 5 });
 
     assert.equal(first.ok, false);
@@ -354,7 +354,7 @@ test("selfie default openai executor calls Image API directly", async () => {
     const result = await tools.execute({
       id: "call_selfie_openai_direct",
       toolName: "selfie",
-      input: { action: "靠近镜头" }
+      input: { pose: "靠近镜头" }
     });
 
     assert.equal(apiCalled, true);
@@ -441,7 +441,7 @@ test("selfie openai executor uses openai relay edits route with image field", as
     const result = await tools.execute({
       id: "call_selfie_api_relay",
       toolName: "selfie",
-      input: { action: "relay route" }
+      input: { pose: "relay route" }
     });
 
     assert.equal(result.ok, true);
@@ -497,7 +497,7 @@ test("selfie openai relay fetch failure logs url and cause details", async () =>
     const result = await tools.execute({
       id: "call_selfie_api_relay_fetch_failure",
       toolName: "selfie",
-      input: { action: "relay failure" }
+      input: { pose: "relay failure" }
     });
 
     const joinedLogs = logs.join("\n");
@@ -593,7 +593,7 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     const result = await tools.execute({
       id: "call_selfie_codex_mode",
       toolName: "selfie",
-      input: { action: "转头看镜头" }
+      input: { pose: "转头看镜头" }
     });
 
     assert.equal(result.ok, true);
@@ -684,7 +684,7 @@ test("selfie codex mode logs codex stdout and stderr when runner fails", async (
     const result = await tools.execute({
       id: "call_selfie_codex_fail_log",
       toolName: "selfie",
-      input: { action: "fail and log codex output" }
+      input: { pose: "fail and log codex output" }
     });
 
     const joinedLogs = logs.join("\n");
@@ -742,7 +742,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
     const result = await tools.execute({
       id: "call_selfie_missing_outfit",
       toolName: "selfie",
-      input: { action: "看镜头" }
+      input: { pose: "看镜头" }
     });
 
     assert.equal(result.ok, true);
@@ -793,7 +793,7 @@ test("selfie uses world wanderer streetview as reference image 3 when outfit is 
     const result = await tools.execute({
       id: "call_selfie_world_wanderer",
       toolName: "selfie",
-      input: { action: "在当前位置自拍" }
+      input: { pose: "在当前位置自拍" }
     });
 
     assert.equal(result.ok, true);
@@ -839,7 +839,7 @@ test("selfie does not keep streetview as image 3 when outfit reference is missin
     const result = await tools.execute({
       id: "call_selfie_world_wanderer_missing_outfit",
       toolName: "selfie",
-      input: { action: "服装图缺失时自拍" }
+      input: { pose: "服装图缺失时自拍" }
     });
 
     assert.equal(result.ok, true);
@@ -888,7 +888,7 @@ test("selfie fails when world wanderer streetview lookup fails", async () => {
     const result = await tools.execute({
       id: "call_selfie_world_wanderer_fail",
       toolName: "selfie",
-      input: { action: "街景失败时自拍" }
+      input: { pose: "街景失败时自拍" }
     });
 
     assert.equal(result.ok, false);
@@ -934,7 +934,7 @@ test("selfie sends start notice before required reference failures", async () =>
     const result = await tools.execute({
       id: "call_selfie_missing_character",
       toolName: "selfie",
-      input: { action: "看镜头" }
+      input: { pose: "看镜头" }
     });
 
     assert.equal(result.ok, false);
@@ -980,7 +980,7 @@ test("selfie cleans up temporary directory when codex does not create the reques
     const result = await tools.execute({
       id: "call_selfie_missing",
       toolName: "selfie",
-      input: { action: "missing file" }
+      input: { pose: "missing file" }
     });
 
     assert.equal(result.ok, false);
@@ -1018,7 +1018,7 @@ test("selfie rejects output directories outside assets", async () => {
     const result = await tools.execute({
       id: "call_selfie_outside",
       toolName: "selfie",
-      input: { action: "outside assets" }
+      input: { pose: "outside assets" }
     });
 
     assert.equal(result.ok, false);
@@ -1054,7 +1054,7 @@ function writeReferenceFiles(root: string): void {
     "当前时间:",
     "{{time}}",
     "角色动作:",
-    "{{action}}",
+    "{{pose}}",
     "角色特征:",
     "{{appearance}}",
     "{{dailyShell/persona/content}}",

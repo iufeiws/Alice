@@ -23,7 +23,7 @@ export function createApiBehaviorRuntime(input: {
     clearLLMSession: input.clearLLMSession,
     sendSleepNotice: input.sendSleepNotice,
     triggerSleepMemoryInduction: input.triggerSleepMemoryInduction,
-    queueMorningEvent: () => sleepCocoonEventRuntime.queueMorningEvent({ sleepCocoonMorning: true }),
+    queueMorningEvent: () => sleepCocoonEventRuntime.queueMorningEvent({ agentInitiatedTriggerEvent: "sleep_cocoon.wake" }),
     appendLog: input.appendLog
   });
   sleepCocoonEventRuntime = createSleepCocoonEventRuntime({

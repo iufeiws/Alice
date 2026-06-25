@@ -56,7 +56,7 @@ export function createSleepCocoonEventRuntime(input: {
     const triggered = random() < probability;
     input.agentState.noteSleepCocoonAutoChecked();
     if (!triggered) return undefined;
-    return buildGeneratedEvent("sleep_cocoon_goodnight", { sleepCocoonGoodnight: true });
+    return buildGeneratedEvent("sleep_cocoon_goodnight", { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" });
   }
 
   function buildGeneratedEvent(idPrefix: string, raw: Record<string, unknown>) {

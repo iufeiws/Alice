@@ -56,7 +56,7 @@ export function createCalendarEventRuntime(input: {
         receivedAtUtc: now.date.toISOString(),
         raw: {
           calendarReminder: true,
-          agentInitiatedBehaviorId: "calendar_reminder",
+          agentInitiatedTriggerEvent: "calendar.schedule_due",
           calendarReminderId: reminder.id
         }
       }

@@ -27,6 +27,7 @@ export type AgentInitiatedBehaviorStep =
 
 export type AgentInitiatedBehaviorPlan = {
   id: string;
+  custom?: boolean;
   kind: AgentInitiatedBehaviorKind;
   enabled: boolean;
   triggerEvent?: string;
@@ -131,6 +132,7 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     id: "calendar_reminder",
     kind: "event",
     enabled: true,
+    triggerEvent: "calendar.schedule_due",
     promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json",
     steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json" }]
   },
@@ -139,43 +141,26 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
 
 export function agentInitiatedBehaviorPlanFromEvent(
   event: AgentEvent,
-  plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans
+  plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans,
+  random: () => number = Math.random
 ): AgentInitiatedBehaviorPlan | undefined {
-  const explicitBehaviorId = agentInitiatedBehaviorIdFromRaw(event.meta.raw);
-  if (explicitBehaviorId) {
-    return plans.find((plan) => plan.enabled && plan.id === explicitBehaviorId);
-  }
   const triggerEvent = agentInitiatedTriggerEventFromRaw(event.meta.raw);
   if (!triggerEvent) return undefined;
+  if (triggerEvent === "randomized") return selectRandomizedAgentInitiatedBehaviorPlan(plans, random);
   return plans.find((plan) => plan.kind === "event" && plan.enabled && plan.triggerEvent === triggerEvent);
-}
-
-export function agentInitiatedBehaviorIdFromRaw(raw: unknown): string | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const id = (raw as { agentInitiatedBehaviorId?: unknown }).agentInitiatedBehaviorId;
-  return typeof id === "string" && id ? id : undefined;
 }
 
 export function agentInitiatedTriggerEventFromRaw(raw: unknown): string | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  if ((raw as { sleepCocoonGoodnight?: unknown }).sleepCocoonGoodnight) return "sleep_cocoon.auto_goodnight_check";
-  if ((raw as { sleepCocoonMorning?: unknown }).sleepCocoonMorning) return "sleep_cocoon.wake";
-  if ((raw as { sleepCocoonForceWake?: unknown }).sleepCocoonForceWake) return "sleep_cocoon.force_wake";
-  return undefined;
+  const triggerEvent = (raw as { agentInitiatedTriggerEvent?: unknown }).agentInitiatedTriggerEvent;
+  return typeof triggerEvent === "string" && triggerEvent ? triggerEvent : undefined;
 }
 
 export function selectRandomizedAgentInitiatedBehaviorPlan(
   plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans,
   random: () => number = Math.random
 ): AgentInitiatedBehaviorPlan | undefined {
-  const candidates = plans.filter((plan) => (
-    plan.kind === "randomized"
-    && plan.enabled
-    && plan.dryRun !== true
-    && typeof plan.weight === "number"
-    && Number.isFinite(plan.weight)
-    && plan.weight > 0
-  ));
+  const candidates = randomizedAgentInitiatedBehaviorPlans(plans);
   const totalWeight = candidates.reduce((total, plan) => total + (plan.weight ?? 0), 0);
   if (totalWeight <= 0) return undefined;
   let roll = random() * totalWeight;
@@ -184,6 +169,23 @@ export function selectRandomizedAgentInitiatedBehaviorPlan(
     if (roll < 0) return plan;
   }
   return candidates.at(-1);
+}
+
+export function hasRandomizedAgentInitiatedBehaviorPlan(
+  plans: AgentInitiatedBehaviorPlan[] = defaultAgentInitiatedBehaviorPlans
+): boolean {
+  return randomizedAgentInitiatedBehaviorPlans(plans).length > 0;
+}
+
+function randomizedAgentInitiatedBehaviorPlans(plans: AgentInitiatedBehaviorPlan[]): AgentInitiatedBehaviorPlan[] {
+  return plans.filter((plan) => (
+    plan.kind === "randomized"
+    && plan.enabled
+    && plan.dryRun !== true
+    && typeof plan.weight === "number"
+    && Number.isFinite(plan.weight)
+    && plan.weight > 0
+  ));
 }
 
 export async function buildAgentInitiatedBehaviorMessages(

@@ -10,7 +10,6 @@ import {
   type WebRtcVoiceTtsArchiveInput,
   type WebRtcVoiceStatusEvent
 } from "../../../channels/webrtc-voice/src/index.js";
-import { createAsrInboundStreamSession } from "../../../channels/asr/src/index.js";
 import type { TalkRuntime } from "../../../contexts/talk-session/src/application/talk-session-runtime.js";
 import type { voiceCallRoutes } from "../routes/voice-call-contract.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
@@ -46,12 +45,7 @@ export function createWebRtcVoiceRuntime(input: {
       });
     },
     createAsrSession(start) {
-      return createAsrInboundStreamSession(start, input.asrPlugin.config, {
-        resolveApiPreset(name) {
-          return input.readLLMApiPresets().find((entry) => entry.name === name);
-        },
-        appendLog: input.appendLog
-      });
+      return input.asrPlugin.createInboundStreamSession(start);
     },
     voiceSynthesizer: input.voiceSynthesizer as any,
     supportsAudioInput: input.supportsAudioInput,

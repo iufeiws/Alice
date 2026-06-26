@@ -95,6 +95,27 @@ test("talk runtime uses created LLM session id and rejects stale session writes"
   assert.deepEqual(runtime.buildNextLoopMessagePatch(opened.sessionId).messages, [{ role: "user", content: "fresh id" }]);
 });
 
+test("talk runtime emits input audio parts only when audio is supported", () => {
+  const runtime = createTestRuntime("audio-input-message");
+
+  runtime.openSession(sessionInput(1780830000098));
+  runtime.ingestInput({
+    kind: "audio.input.final",
+    sessionId: 1780830000098,
+    source: { plugin: "webrtc_voice", accountId: "main", channelId: "call-42", userId: "browser-42" },
+    sequence: 1,
+    occurredAt: "2026-06-07T00:00:01.000",
+    occurredAtUtc: "2026-06-06T15:00:01.000Z",
+    payload: { kind: "audio", text: "[语音]", data: "UklGRg==", format: "wav", mimeType: "audio/wav" }
+  });
+
+  assert.deepEqual(runtime.buildNextLoopMessagePatch(1780830000098, { supportsAudio: true }).messages, [{
+    role: "user",
+    content: [{ type: "input_audio", input_audio: { data: "UklGRg==", format: "wav" } }]
+  }]);
+  assert.deepEqual(runtime.buildNextLoopMessagePatch(1780830000098).messages, [{ role: "user", content: "[语音]" }]);
+});
+
 test("talk runtime keeps parenthesized output in storage but out of TTS chunks across deltas", () => {
   const runtime = createTestRuntime("parenthesized");
 

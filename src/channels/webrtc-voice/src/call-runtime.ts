@@ -9,6 +9,7 @@ import type {
   PlaybackItem,
   WebRtcVoiceCall,
   WebRtcVoiceDeps,
+  WebRtcVoiceInputAudio,
   WebRtcVoiceTtsArchiveInput
 } from "./types.js";
 import { WebRtcVoiceError } from "./errors.js";
@@ -45,6 +46,8 @@ export async function createCallState(
   let asrStreamId = `asr-${input.callId}-${asrStreamIndex}`;
   let inboundSequence = 0;
   let inboundAudioStats = createInboundAudioStats();
+  const directAudioInput = deps.supportsAudioInput?.() === true;
+  let directAudioChunks: Uint8Array[] = [];
   let closed = false;
   let speechActive = false;
   let playbackGeneration = 0;
@@ -74,7 +77,7 @@ export async function createCallState(
   } else {
     deps.emitStatus?.({ state: "talk_runtime.open.todo", detail: String(talkSessionId) });
   }
-  let asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
+  let asrSession = directAudioInput ? undefined : createCallAsrSession(input, talkSessionId, asrStreamId, deps);
   let outboundFrameSequence = 0;
   const playbackQueue: PlaybackItem[] = [];
   const localPlaybackItemsById = new Map<string, PlaybackItem>();
@@ -143,8 +146,9 @@ export async function createCallState(
     asrStreamId = `asr-${input.callId}-${asrStreamIndex}`;
     inboundSequence = 0;
     inboundAudioStats = createInboundAudioStats();
-    asrSession = createCallAsrSession(input, talkSessionId, asrStreamId, deps);
-    deps.emitStatus?.({ state: "asr.stream.restarted", detail: `${asrStreamId}:${reason}` });
+    directAudioChunks = [];
+    asrSession = directAudioInput ? undefined : createCallAsrSession(input, talkSessionId, asrStreamId, deps);
+    deps.emitStatus?.({ state: directAudioInput ? "audio.input.restarted" : "asr.stream.restarted", detail: `${asrStreamId}:${reason}` });
   };
   const pendingTalkChunks: TalkChunk[] = [];
   const waitForForegroundPlaybackIdle = async () => {
@@ -497,6 +501,11 @@ export async function createCallState(
       const sequence = inboundSequence;
       inboundSequence += 1;
       recordInboundAudioStats(inboundAudioStats, bytes, timing);
+      if (directAudioInput) {
+        directAudioChunks.push(bytes);
+        return undefined;
+      }
+      if (!asrSession) throw new Error("ASR session is not available");
       const result = await acceptAsrFrame(asrSession, {
         type: "chunk",
         streamId: asrStreamId,
@@ -537,6 +546,29 @@ export async function createCallState(
     },
     async endInboundAudio() {
       if (closed) return undefined;
+      if (directAudioInput) {
+        const audio = buildDirectAudioInput(directAudioChunks, inboundAudioStats, deps);
+        if (!audio) return undefined;
+        if (interruptController.batch.items.length > 0) {
+          await interruptController.markStableAudioInput(audio, "barge_in", asrStreamId);
+        } else if (deps.talkRuntime) {
+          const stamp = nowStamp();
+          await deps.talkRuntime.ingestInput?.({
+            kind: "audio.input.final",
+            sessionId: talkSessionId,
+            source,
+            sequence: stableSequence++,
+            occurredAt: stamp.occurredAt,
+            occurredAtUtc: stamp.occurredAtUtc,
+            payload: { ...audio, text: "[语音]" },
+            raw: { asrStreamId, directAudioInput: true }
+          });
+          deps.emitStatus?.({ state: "talk_runtime.ingress", detail: `audio.input.final:${audio.bytes ?? 0}` });
+        }
+        restartAsrStream("audio_input_final");
+        return undefined;
+      }
+      if (!asrSession) throw new Error("ASR session is not available");
       const result = await acceptAsrFinalFrame(asrSession, {
         type: "end",
         streamId: asrStreamId,
@@ -641,7 +673,7 @@ export async function createCallState(
       playback.stopTextCacheStatus();
       await interruptController.runInterrupt("call_close");
       await interruptController.commitStableInputsIfReady();
-      await asrSession.accept({
+      await asrSession?.accept({
         type: "abort",
         streamId: asrStreamId,
         reason,
@@ -716,6 +748,43 @@ function summarizeInboundAudioStats(stats: InboundAudioStats): string {
     ? Math.max(0, stats.lastEndMs - stats.firstStartMs)
     : stats.durationMs;
   return `chunks=${stats.chunks} bytes=${stats.bytes} durationMs=${Math.round(timedDurationMs)}`;
+}
+
+function buildDirectAudioInput(chunks: Uint8Array[], stats: InboundAudioStats, deps: WebRtcVoiceDeps): WebRtcVoiceInputAudio | undefined {
+  if (chunks.length === 0 || stats.bytes <= 0) return undefined;
+  const wav = wrapPcm16AsWav(chunks, deps.config.inboundAudio.sampleRateHz, deps.config.inboundAudio.channels);
+  return {
+    kind: "audio",
+    data: wav.toString("base64"),
+    format: "wav",
+    mimeType: "audio/wav",
+    sampleRateHz: deps.config.inboundAudio.sampleRateHz,
+    channels: deps.config.inboundAudio.channels,
+    encoding: deps.config.inboundAudio.encoding,
+    bytes: wav.byteLength,
+    durationMs: stats.firstStartMs !== undefined && stats.lastEndMs !== undefined
+      ? Math.max(0, stats.lastEndMs - stats.firstStartMs)
+      : stats.durationMs
+  };
+}
+
+function wrapPcm16AsWav(chunks: Uint8Array[], sampleRateHz: number, channels: number): Buffer {
+  const dataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRateHz, 24);
+  header.writeUInt32LE(sampleRateHz * channels * 2, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, ...chunks.map((chunk) => Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))]);
 }
 
 function summarizeAsrFinalResult(result: AsrInboundStreamAcceptResult): string {

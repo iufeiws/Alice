@@ -26,6 +26,7 @@ export function createWebRtcVoiceRuntime(input: {
   asrPlugin: AsrPlugin;
   voiceSynthesizer: unknown;
   talkRuntime: TalkRuntime;
+  supportsAudioInput(): boolean;
   readLLMApiPresets(): LLMApiPreset[];
   appendLog: AppendLog;
 }) {
@@ -53,6 +54,7 @@ export function createWebRtcVoiceRuntime(input: {
       });
     },
     voiceSynthesizer: input.voiceSynthesizer as any,
+    supportsAudioInput: input.supportsAudioInput,
     decodeAudioFileToFrames(decodeInput) {
       return decodeAudioFileToOpusRtpFrames(decodeInput);
     },

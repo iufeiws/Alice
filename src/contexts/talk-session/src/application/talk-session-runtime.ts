@@ -46,7 +46,7 @@ export type TalkRuntime = {
   }): TalkOutputInterrupt | undefined;
   interruptAgentLoop(sessionId: number, input?: { reason?: string; interruptEpoch?: number }): void;
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
-  buildNextLoopMessagePatch(sessionId: number): TalkLoopMessagePatch;
+  buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): TalkLoopMessagePatch;
 };
 
 export type TalkLoopMessagePatch = {
@@ -79,10 +79,23 @@ export type StableInputItem = {
   reason: "barge_in" | "manual" | "asr_failure" | "call_close";
   asrStreamId?: string;
   text: string;
+  audio?: TalkAudioInputPayload;
   occurredAt: string;
   occurredAtUtc?: string;
   targetOutputId?: string;
   targetChunkId?: string;
+};
+
+export type TalkAudioInputPayload = {
+  kind: "audio";
+  data: string;
+  format: string;
+  mimeType?: string;
+  sampleRateHz?: number;
+  channels?: number;
+  encoding?: string;
+  bytes?: number;
+  durationMs?: number;
 };
 
 export type TalkRuntimeDeps = {
@@ -204,16 +217,17 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       assertOpenSession(deps.store, event.sessionId);
       const inserted = deps.store.insertEvent(event);
       if (!inserted.inserted) return;
-      if (event.kind === "audio.transcript.final" || event.kind === "text.final") {
+      if (event.kind === "audio.input.final" || event.kind === "audio.transcript.final" || event.kind === "text.final") {
         agentLoopInterruptedSessions.delete(event.sessionId);
-        const text = payloadText(event.payload);
+        const audio = audioPayload(event.payload);
+        const text = payloadText(event.payload) ?? (audio ? "[语音]" : undefined);
         if (!text) return;
         const segment = deps.store.insertSegment({
           sessionId: event.sessionId,
           eventId: inserted.id,
           segmentId: segmentId(event.kind, inserted.id),
           role: "user",
-          kind: event.kind === "audio.transcript.final" ? "transcript" : "text",
+          kind: event.kind === "text.final" ? "text" : event.kind === "audio.input.final" ? "audio" : "transcript",
           contentText: text,
           contentJson: event.payload,
           endedAt: event.occurredAt,
@@ -262,15 +276,16 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
         const ordered = [...batch.inputs].sort((a, b) => a.sequence - b.sequence);
         for (const item of ordered) {
           const event = deps.store.insertEvent({
-            kind: item.reason === "manual" ? "text.final" : "audio.transcript.final",
+            kind: item.reason === "manual" ? "text.final" : item.audio ? "audio.input.final" : "audio.transcript.final",
             sessionId: batch.sessionId,
             source: { plugin: "webrtc_voice" },
             sequence: item.sequence,
             occurredAt: item.occurredAt,
             occurredAtUtc: item.occurredAtUtc,
             payload: {
-              kind: item.reason === "manual" ? "text" : "transcript",
+              kind: item.reason === "manual" ? "text" : item.audio ? "audio" : "transcript",
               text: item.text,
+              ...(item.audio ?? {}),
               interruptId: item.interruptId,
               batchId: batch.batchId,
               interruptEpoch: batch.interruptEpoch,
@@ -303,9 +318,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
             eventId: event.id,
             segmentId: `stable:${batch.batchId}:${item.interruptId}`,
             role: "user",
-            kind: item.reason === "manual" ? "text" : "transcript",
+            kind: item.reason === "manual" ? "text" : item.audio ? "audio" : "transcript",
             contentText: item.text,
             contentJson: {
+              ...(item.audio ?? {}),
               batchId: batch.batchId,
               interruptId: item.interruptId,
               interruptEpoch: batch.interruptEpoch,
@@ -330,7 +346,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
             contentText: item.text,
             occurredAt: item.occurredAt,
             occurredAtUtc: item.occurredAtUtc,
-            sourceKind: item.reason === "manual" ? "text.final" : "audio.transcript.final",
+            sourceKind: item.reason === "manual" ? "text.final" : item.audio ? "audio.input.final" : "audio.transcript.final",
             sourceId: segment.segmentId ?? String(segment.id)
           });
         }
@@ -558,7 +574,7 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       assertSessionExists(deps.store, sessionId);
       loopPrefixMessageCounts.set(sessionId, Math.max(0, count));
     },
-    buildNextLoopMessagePatch(sessionId) {
+    buildNextLoopMessagePatch(sessionId, options) {
       assertSessionExists(deps.store, sessionId);
       const latestInterrupt = deps.store.latestUnresolvedInterrupt(sessionId);
       const segments = deps.store.listSegments(sessionId).filter((segment) => segment.kind !== "interrupt");
@@ -577,7 +593,10 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
             continue;
           }
         }
-        messages.push({ role: segment.role, content: segment.contentText });
+        const audio = options?.supportsAudio ? audioPayload(parseJsonObject(segment.contentJson)) : undefined;
+        messages.push(audio
+          ? { role: segment.role, content: [{ type: "input_audio", input_audio: { data: audio.data, format: audio.format } }] }
+          : { role: segment.role, content: segment.contentText });
       }
       if (shouldAppendNoSpeechUserMessage(sessionId, latestInterrupt, messages)) {
         messages.push({ role: "user", content: noSpeechUserMessage });
@@ -653,6 +672,23 @@ function payloadText(payload: unknown): string | undefined {
   return payload && typeof payload === "object" && typeof (payload as { text?: unknown }).text === "string"
     ? (payload as { text: string }).text
     : undefined;
+}
+
+function audioPayload(payload: unknown): TalkAudioInputPayload | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const value = payload as Record<string, unknown>;
+  if (value.kind !== "audio" || typeof value.data !== "string" || typeof value.format !== "string") return undefined;
+  return {
+    kind: "audio",
+    data: value.data,
+    format: value.format,
+    mimeType: stringValue(value.mimeType),
+    sampleRateHz: numberValue(value.sampleRateHz),
+    channels: numberValue(value.channels),
+    encoding: stringValue(value.encoding),
+    bytes: numberValue(value.bytes),
+    durationMs: numberValue(value.durationMs)
+  };
 }
 
 function interruptReason(payload: unknown): string {
@@ -875,4 +911,8 @@ function parseJsonObject(value: string | undefined): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

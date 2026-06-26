@@ -191,6 +191,7 @@ export type WebRtcVoiceDeps = {
   }): Promise<ServerWebRtcPeer> | ServerWebRtcPeer;
   createAsrSession(start: InboundAudioStreamStartFrame): AsrInboundStreamSession;
   voiceSynthesizer: WebRtcVoiceSynthesizer;
+  supportsAudioInput?(): boolean;
   decodeAudioFileToFrames(input: DecodeAudioFileInput): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
   /** @deprecated WebRTC voice playback now decodes synthesized file blocks in the playback consumer. */
   encodePcmL16ToFrames?(input: EncodePcmL16Input): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
@@ -228,9 +229,22 @@ export type InterruptItem = {
   runtimeInterrupted: boolean;
   stableInputReady: boolean;
   stableInputText?: string;
+  stableInputAudio?: WebRtcVoiceInputAudio;
   sequence: number;
   runtimeInterruptPromise?: Promise<void>;
   stableInputTimeout?: NodeJS.Timeout;
+};
+
+export type WebRtcVoiceInputAudio = {
+  kind: "audio";
+  data: string;
+  format: string;
+  mimeType?: string;
+  sampleRateHz?: number;
+  channels?: number;
+  encoding?: string;
+  bytes?: number;
+  durationMs?: number;
 };
 
 export type TtsTask = {

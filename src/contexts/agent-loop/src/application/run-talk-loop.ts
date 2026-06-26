@@ -89,10 +89,10 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     }
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
-      const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId);
+      const config = deps.getLLMConfig();
+      const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId, config);
       session.agentLoopRunSeq = options.agentLoopRunSeq ?? session.agentLoopRunSeq ?? 1;
       deps.updateActiveTalkLLMSessionTranscript(session);
-      const config = deps.getLLMConfig();
       if (!canStartTalkLoop(sessionId, options.signal)) return;
       const prepared = buildTalkAgentLoopSpec({
         sessionId,
@@ -240,11 +240,12 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     return false;
   }
 
-  async function buildTalkAgentLoopState(sessionId: number): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
+  async function buildTalkAgentLoopState(sessionId: number, config: TalkAgentLoopLLMConfig): Promise<TalkAgentLoopState & { session: AgentLoopTranscriptSession }> {
     return prepareTalkLoopSessionContext({
       sessionId,
       state,
-      deps
+      deps,
+      supportsAudio: config.supportsAudio
     });
   }
 

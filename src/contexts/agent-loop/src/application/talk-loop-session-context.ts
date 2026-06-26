@@ -23,7 +23,7 @@ export type TalkLoopSessionContextDeps = {
   memoryStore: { read(): PromptRenderContext["memory"] };
   diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
-  buildNextLoopMessagePatch(sessionId: number): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
+  buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
     id?: number;
     messages: LLMMessage[];
@@ -75,6 +75,7 @@ export async function prepareTalkLoopSessionContext(input: {
   sessionId: number;
   state: TalkLoopRuntimeState;
   deps: TalkLoopSessionContextDeps;
+  supportsAudio?: boolean;
 }): Promise<TalkLoopPreparedSessionContext> {
   const { deps, sessionId, state } = input;
   const textSessionId = String(sessionId);
@@ -112,7 +113,7 @@ export async function prepareTalkLoopSessionContext(input: {
       context,
       runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]
     ),
-    buildMessagePatch: () => deps.buildNextLoopMessagePatch(sessionId),
+    buildMessagePatch: () => deps.buildNextLoopMessagePatch(sessionId, { supportsAudio: input.supportsAudio }),
     updateTranscript: deps.updateActiveTalkLLMSessionTranscript,
     onConversationStartIndex(prefixMessageCount) {
       state.conversationStartIndexes.set(sessionId, prefixMessageCount);

@@ -12,7 +12,7 @@ export function createWebRtcVoicePlugin(deps: WebRtcVoiceDeps): WebRtcVoicePlugi
     },
     async createCall(input) {
       if (!deps.config.enabled) throw new WebRtcVoiceError("plugin_disabled");
-      if (deps.testAsr) {
+      if (deps.testAsr && deps.supportsAudioInput?.() !== true) {
         deps.emitStatus?.({ state: "asr.preflight.started", detail: "checking" });
         const result = await deps.testAsr();
         if (!result.ok) {

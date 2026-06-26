@@ -12,6 +12,7 @@ export function createApiCommunicationRuntime(input: {
   asrPlugin: any;
   voiceSynthesizer: any;
   talkRuntime: any;
+  supportsAudioInput(): boolean;
   agentLoopRuntime: any;
   readLLMApiPresets(): any[];
   apiContextRuntime: any;
@@ -38,6 +39,7 @@ export function createApiCommunicationRuntime(input: {
     asrPlugin: input.asrPlugin,
     voiceSynthesizer: input.voiceSynthesizer,
     talkRuntime: input.talkRuntime,
+    supportsAudioInput: input.supportsAudioInput,
     readLLMApiPresets: input.readLLMApiPresets,
     appendLog: input.appendLog
   });

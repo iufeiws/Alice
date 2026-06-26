@@ -1,4 +1,4 @@
-import type { InterruptItem, TtsTask, WebRtcVoiceDeps } from "./types.js";
+import type { InterruptItem, TtsTask, WebRtcVoiceDeps, WebRtcVoiceInputAudio } from "./types.js";
 import type { VoicePlaybackConsumer } from "./playback-consumer.js";
 
 const interruptStableInputTimeoutMs = 30_000;
@@ -66,7 +66,8 @@ export function createInterruptController(ctx: {
               sequence: item.sequence,
               reason: item.reason,
               asrStreamId: item.asrStreamId,
-              text: item.stableInputText ?? "-杂音-",
+              text: item.stableInputText ?? (item.stableInputAudio ? "[语音]" : "-杂音-"),
+              audio: item.stableInputAudio,
               occurredAt: stamp.occurredAt,
               occurredAtUtc: stamp.occurredAtUtc,
               targetOutputId: item.targetOutputId,
@@ -111,6 +112,35 @@ export function createInterruptController(ctx: {
     clearStableInputTimeout(target);
     target.reason = reason;
     target.stableInputText = text;
+    target.stableInputReady = true;
+    await commitStableInputsIfReady();
+  };
+
+  const markStableAudioInput = async (audio: WebRtcVoiceInputAudio, reason: InterruptItem["reason"], streamId?: string) => {
+    const target = findLatestPendingStableInput(streamId);
+    if (!target) {
+      const stamp = ctx.nowStamp();
+      if (ctx.deps.talkRuntime?.ingestInput) {
+        await ctx.deps.talkRuntime.ingestInput({
+          kind: "audio.input.final",
+          sessionId: ctx.talkSessionId,
+          source: ctx.source,
+          sequence: ctx.nextStableSequence(),
+          occurredAt: stamp.occurredAt,
+          occurredAtUtc: stamp.occurredAtUtc,
+          payload: { ...audio, text: "[语音]" }
+        });
+        ctx.deps.emitStatus?.({ state: "talk_runtime.ingress", detail: `audio.input.final:${audio.bytes ?? 0}` });
+      } else {
+        ctx.deps.emitStatus?.({ state: "talk_runtime.ingress.todo", detail: `audio.input.final:${audio.bytes ?? 0}` });
+      }
+      return;
+    }
+    failEarlierPendingStableInputs(target, "superseded_by_later_stable_input");
+    clearStableInputTimeout(target);
+    target.reason = reason;
+    target.stableInputText = "[语音]";
+    target.stableInputAudio = audio;
     target.stableInputReady = true;
     await commitStableInputsIfReady();
   };
@@ -237,6 +267,7 @@ export function createInterruptController(ctx: {
       return true;
     },
     markStableInput,
+    markStableAudioInput,
     runInterrupt
   };
 

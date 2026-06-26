@@ -172,6 +172,43 @@ test("WebRTC voice caches TalkRuntime returned session id for runtime submission
   assert.equal((closed[0] as { sessionId?: number }).sessionId, 1780830000000);
 });
 
+test("WebRTC voice sends base64 audio directly when talk preset supports audio", async () => {
+  let asrCreated = 0;
+  const ingested: any[] = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    supportsAudioInput: () => true,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => {
+      asrCreated += 1;
+      return new FakeAsrSession([]);
+    },
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {
+        return { sessionId: 1780830000100 };
+      },
+      ingestInput(event) {
+        ingested.push(event);
+      }
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-direct-audio", userId: "browser-direct-audio", offerSdp: "offer" });
+  await call.acceptInboundAudioChunk(new Uint8Array([1, 0, 2, 0]), { startMs: 0, endMs: 100, durationMs: 100 });
+  await call.endInboundAudio();
+
+  assert.equal(asrCreated, 0);
+  assert.equal(ingested[0].kind, "audio.input.final");
+  assert.equal(ingested[0].payload.kind, "audio");
+  assert.equal(ingested[0].payload.format, "wav");
+  assert.equal(Buffer.from(ingested[0].payload.data, "base64").subarray(0, 4).toString("ascii"), "RIFF");
+  assert.equal(ingested[0].payload.sampleRateHz, 16000);
+  assert.equal(ingested[0].payload.channels, 1);
+  await call.close("test_done");
+});
+
 test("WebRTC voice call requires a server outbound audio track", async () => {
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,

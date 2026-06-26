@@ -7,6 +7,7 @@ type DatabaseSync = any;
 
 export type TalkEventKind =
   | "session.started"
+  | "audio.input.final"
   | "audio.transcript.final"
   | "text.final"
   | "input.interrupted"

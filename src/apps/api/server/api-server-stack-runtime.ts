@@ -34,6 +34,7 @@ export function createApiServerStackRuntime(input: {
     asrPlugin: input.apiToolingRuntime.asrPlugin,
     voiceSynthesizer: input.apiToolingRuntime.ttsPlugin.voiceSynthesizer,
     talkRuntime: input.talkRuntime,
+    supportsAudioInput: () => input.llmConfigRuntime.currentTalkLLMConfig().supportsAudio === true,
     agentLoopRuntime: input.agentLoopRuntime,
     readLLMApiPresets: input.readLLMApiPresets,
     apiContextRuntime: input.apiContextRuntime,

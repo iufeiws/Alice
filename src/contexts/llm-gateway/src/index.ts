@@ -18,7 +18,8 @@ export * from "./token-usage-runtime.js";
 
 export type LLMContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "input_audio"; input_audio: { data: string; format: string } };
 
 export type LLMMessageContent = string | LLMContentPart[];
 

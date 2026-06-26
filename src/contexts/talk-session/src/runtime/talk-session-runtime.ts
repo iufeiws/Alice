@@ -52,8 +52,8 @@ export function createTalkRuntimeRuntime(input: {
     setLoopPrefixMessageCount(sessionId, count) {
       talkRuntime.setLoopPrefixMessageCount(sessionId, count);
     },
-    buildNextLoopMessagePatch(sessionId) {
-      return talkRuntime.buildNextLoopMessagePatch(sessionId);
+    buildNextLoopMessagePatch(sessionId, options) {
+      return talkRuntime.buildNextLoopMessagePatch(sessionId, options);
     },
     loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,

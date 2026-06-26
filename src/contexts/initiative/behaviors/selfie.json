@@ -5,7 +5,7 @@
       "title": "Layer 1",
       "role": "user",
       "enabled": true,
-      "content": "给{{user}}拍张照,让他看看你现在在哪里吧",
+      "content": "问问{{user}}想不想让你拍张照给他看吧",
       "order": 10
     }
   ]

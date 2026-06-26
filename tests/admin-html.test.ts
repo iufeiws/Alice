@@ -76,6 +76,14 @@ test("shell outfit image drop zone accepts pasted images", () => {
   assert.match(html, /event\.clipboardData\?\.items/);
 });
 
+test("shell option save updates bound option object in place", () => {
+  const html = renderAdminHtmlV2();
+
+  assert.match(html, /Object\.assign\(option, result\.option, \{ _previousId: result\.option\.id \}\)/);
+  assert.doesNotMatch(html, /shellData\[category\]\[index\] = \{ \.\.\.result\.option/);
+  assert.doesNotMatch(html, /shellData\[category\]\[index\] = \{ \.\.\.saved\.option/);
+});
+
 test("prompt profile editor exposes birthday calendar settings", () => {
   const html = renderAdminHtmlV2();
 
@@ -127,6 +135,23 @@ test("plugin config save skips readonly and empty password fields", () => {
 
   assert.match(html, /if \(input\.readOnly\) return;/);
   assert.match(html, /if \(input\.type === "password" && input\.value === ""\) return;/);
+});
+
+test("admin script defines dom helper before top-level event bindings", () => {
+  const html = renderAdminHtmlV2();
+  const script = html.match(/<script>\n([\s\S]*)\n    <\/script>/)?.[1] ?? "";
+  const helperIndex = script.indexOf('const $ = (id) => document.getElementById(id);');
+
+  assert.notEqual(helperIndex, -1);
+  for (const binding of [
+    '$("llm-form").addEventListener',
+    '$("feishu-form").addEventListener',
+    '$("wechat-form").addEventListener'
+  ]) {
+    const bindingIndex = script.indexOf(binding);
+    assert.notEqual(bindingIndex, -1);
+    assert.ok(helperIndex < bindingIndex, `${binding} must be after $ helper`);
+  }
 });
 
 test("chat prompt editor keeps variables in preview side pane", () => {

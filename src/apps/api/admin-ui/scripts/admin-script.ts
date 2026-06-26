@@ -19,7 +19,8 @@ import { renderImageUploadScript } from "../shared/image-upload-script.js";
 import { renderPromptLayerScript } from "../shared/prompt-layer-script.js";
 
 export function renderAdminScript(deepSeekPricesCnyPer1M: unknown): string {
-  return `${renderDomScript()}
+  return `      const $ = (id) => document.getElementById(id);
+${renderDomScript()}
 ${renderPromptLayerScript()}
 ${renderImageUploadScript()}
 ${renderGenericPluginConfigScript()}
@@ -38,7 +39,6 @@ ${renderAdminSidebarScript()}
 ${renderFeishuPluginScript()}
 ${renderWechatPluginScript()}
 ${renderPromptsScript()}
-      const $ = (id) => document.getElementById(id);
       function setTabs(kind, name) {
         document.querySelectorAll("[data-" + kind + "-tab]").forEach((button) => button.classList.toggle("active", button.dataset[kind + "Tab"] === name));
         document.querySelectorAll(kind === "left" ? "#left-llm,#left-feishu,#left-core,#left-agent" : "#main-prompts,#main-shells,#main-llm-chain,#main-token-usage,#main-memory,#main-plugins,#main-initiated-behaviors,#main-tool-preview").forEach((pane) => pane.classList.remove("active"));

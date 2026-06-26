@@ -2,9 +2,9 @@
   "userName": "Y",
   "visibleTools": {
     "feishu": false,
-    "photo": true,
-    "media": true,
-    "shell": true
+    "photo": false,
+    "shell": false,
+    "media": false
   },
   "layers": [
     {

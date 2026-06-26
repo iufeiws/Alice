@@ -216,8 +216,7 @@ export function renderShellsScript(): string {
             setShellOnBodyStatus(optionRoot, "Saving generated flag...");
             generatedCheckbox.disabled = true;
             try {
-              const saved = await persistShellOption(category, currentShellIndex(optionRoot));
-              shellData[category][currentShellIndex(optionRoot)] = { ...saved.option, _previousId: saved.option.id };
+              await persistShellOption(category, currentShellIndex(optionRoot));
               markShellOption(optionRoot, "saved");
               setShellOnBodyStatus(optionRoot, option.outfitImageGenerated ? "已禁用生成" : "Generated flag saved.");
             } catch (error) {
@@ -282,7 +281,6 @@ export function renderShellsScript(): string {
         const previousGroup = option?.group || "root";
         const result = await persistShellOption(category, index);
         $("shell-status").textContent = "Shell saved: " + (option?.name || option?.id || category);
-        shellData[category][index] = { ...result.option, _previousId: result.option.id };
         const nextGroup = result.option.group || "root";
         if (previousGroup !== nextGroup) {
           rerenderShellGroup(category, previousGroup);
@@ -307,7 +305,7 @@ export function renderShellsScript(): string {
           body: JSON.stringify({ category, previousId, option: payload })
         }).then((res) => res.json());
         if (!result.ok) throw new Error(result.error || "unknown error");
-        shellData[category][index] = { ...result.option, _previousId: result.option.id };
+        Object.assign(option, result.option, { _previousId: result.option.id });
         return result;
       }
 
@@ -441,7 +439,6 @@ export function renderShellsScript(): string {
         option.imageUrl = result.imageUrl;
         updateShellImagePreview(optionRoot, result.imageUrl, true);
         const saved = await persistShellOption(category, index);
-        shellData[category][index] = { ...saved.option, _previousId: saved.option.id };
         optionRootLabel(category, index, saved.option);
         markShellOption(optionRoot, "saved");
         $("shell-status").textContent = "Image uploaded and saved: " + (saved.option.name || saved.option.id || "outfit");
@@ -497,8 +494,7 @@ export function renderShellsScript(): string {
             option.onBodyImageUrl = result.imageUrl;
             option.onBodyGenerationAttempted = true;
             updateShellOnBodyPreview(optionRoot, result.imageUrl, true);
-            const saved = await persistShellOption(category, index);
-            shellData[category][index] = { ...saved.option, _previousId: saved.option.id };
+            await persistShellOption(category, index);
             markShellOption(optionRoot, "saved");
             setShellOnBodyStatus(optionRoot, "On-body image generated: " + result.imageUrl);
           } catch (error) {

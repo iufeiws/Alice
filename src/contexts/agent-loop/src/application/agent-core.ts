@@ -197,8 +197,6 @@ export type AgentCoreDeps = {
   createActiveLoopSessionContext?<TSession>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
   prepareChatLoopSessionContext?<TSession>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
   ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
-  getLoopSessionState?(): unknown;
-  setLoopSessionState?(state: unknown | undefined): void;
   getLLMConfig?: () => CoreLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
@@ -228,7 +226,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const random = deps.random ?? Math.random;
   let lastCompletedToolName: string | undefined;
-  type ActiveLLMSession = ChatAgentLoopSession & {
+  type LLMSessionRecord = ChatAgentLoopSession & {
     id: number;
     messages: LLMChatInput["messages"];
     staticPromptFingerprint: string;
@@ -247,59 +245,26 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     fixedPrefixCursorMessageId?: number;
     waitChatStartedAt?: number;
     lastCheckChatCursorMessageId?: number;
-    hydratedFixedPrefixPendingRebuild?: boolean;
   };
-  const setActiveLoopSessionContext = deps.setActiveLoopSessionContext ?? ((input: AgentLoopSetActiveSessionContextInput<ActiveLLMSession>) => {
+  const setActiveLoopSessionContext = deps.setActiveLoopSessionContext ?? ((input: AgentLoopSetActiveSessionContextInput<LLMSessionRecord>) => {
     setAgentLoopActiveSessionContext(input);
-    deps.setLoopSessionState?.(input.session);
   });
-  const clearActiveLoopSessionContext = deps.clearActiveLoopSessionContext ?? ((input: AgentLoopClearActiveSessionContextInput<ActiveLLMSession>) => {
-    const cleared = clearAgentLoopActiveSessionContext(input);
-    if (cleared) deps.setLoopSessionState?.(undefined);
-    return cleared;
+  const clearActiveLoopSessionContext = deps.clearActiveLoopSessionContext ?? ((input: AgentLoopClearActiveSessionContextInput<LLMSessionRecord>) => {
+    return clearAgentLoopActiveSessionContext(input);
   });
-  const createActiveLoopSessionContext = deps.createActiveLoopSessionContext ?? ((input: AgentLoopCreateActiveSessionContextInput<ActiveLLMSession>) => {
-    const session = createAgentLoopActiveSessionContext(input);
-    deps.setLoopSessionState?.(session);
-    return session;
+  const createActiveLoopSessionContext = deps.createActiveLoopSessionContext ?? ((input: AgentLoopCreateActiveSessionContextInput<LLMSessionRecord>) => {
+    return createAgentLoopActiveSessionContext(input);
   });
-  const prepareChatLoopSessionContext = deps.prepareChatLoopSessionContext ?? ((input: AgentLoopPrepareChatSessionContextInput<ActiveLLMSession>) => {
+  const prepareChatLoopSessionContext = deps.prepareChatLoopSessionContext ?? ((input: AgentLoopPrepareChatSessionContextInput<LLMSessionRecord>) => {
     return prepareAgentLoopChatSessionContext({
       ...input,
       updateSession(session) {
         input.updateSession?.(session);
-        deps.setLoopSessionState?.(session);
       }
     });
   });
   const ensureChatLoopSessionContext = deps.ensureChatLoopSessionContext ?? ensureAgentLoopChatSessionContext;
-  let activeLLMSession: ActiveLLMSession | undefined;
   let applyModeStateToNewSession: ModeState | undefined;
-
-  const setActiveLLMSession = (session: ActiveLLMSession | undefined): void => {
-    setActiveLoopSessionContext({
-      kind: "chat",
-      session,
-      setLocalSession(nextSession) {
-        activeLLMSession = nextSession;
-      }
-    });
-  };
-
-  const clearActiveLLMSession = (onCleared?: () => void): boolean => clearActiveLoopSessionContext({
-    kind: "chat",
-    getLocalSession: () => activeLLMSession,
-    setLocalSession(nextSession) {
-      activeLLMSession = nextSession;
-    },
-    onCleared
-  });
-
-  const initialSession = deps.initialLLMSession?.staticPromptFingerprint
-    ? hydrateLLMSessionSnapshot(deps.initialLLMSession)
-    : undefined;
-  const existingLoopSessionState = deps.getLoopSessionState?.() as ActiveLLMSession | undefined;
-  setActiveLLMSession(existingLoopSessionState ?? initialSession);
 
   return {
     async start() {
@@ -318,7 +283,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       deps.outputRouter.register(plugin);
     },
     clearLLMSession(reason) {
-      clearActiveLLMSession(() => deps.onLLMSessionCleared?.(reason));
+      deps.onLLMSessionCleared?.(reason);
     },
     async prepareEventRun(event, options = {}) {
       const decision = await deps.policy.check(event);
@@ -353,6 +318,26 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       const promptProfile = requirePromptProfile();
       const allToolPlugins = deps.tools ?? [];
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
+      let loopSession = deps.initialLLMSession?.staticPromptFingerprint
+        ? hydrateLLMSessionSnapshot(deps.initialLLMSession)
+        : undefined;
+      const setLoopSession = (session: LLMSessionRecord | undefined): void => {
+        setActiveLoopSessionContext({
+          kind: "chat",
+          session,
+          setLocalSession(nextSession) {
+            loopSession = nextSession;
+          }
+        });
+      };
+      const clearLoopSession = (onCleared?: () => void): boolean => clearActiveLoopSessionContext({
+        kind: "chat",
+        getLocalSession: () => loopSession,
+        setLocalSession(nextSession) {
+          loopSession = nextSession;
+        },
+        onCleared
+      });
       let initiatedBehavior = agentInitiatedBehaviorPlanFromEvent(
         event,
         deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans,
@@ -360,7 +345,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       );
       if (deps.loadLLMSession) {
         const persistedSession = deps.loadLLMSession();
-        setActiveLLMSession(persistedSession?.staticPromptFingerprint
+        setLoopSession(persistedSession?.staticPromptFingerprint
           ? hydrateLLMSessionSnapshot(persistedSession)
           : undefined);
       }
@@ -432,12 +417,12 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
       let createdSessionThisRun = false;
       let initiatedBehaviorMessageCount = 0;
-      const ensureActiveLLMSession = async (): Promise<ActiveLLMSession> => {
+      const ensureLoopSession = async (): Promise<LLMSessionRecord> => {
         const promptContext = buildPromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
         let initiatedBehaviorPromptToolResult: ToolResult | undefined;
-        const session = await ensureChatLoopSessionContext<ActiveLLMSession, ModeState>({
-          getSession: () => activeLLMSession,
+        const session = await ensureChatLoopSessionContext<LLMSessionRecord, ModeState>({
+          getSession: () => loopSession,
           getPendingMode: () => applyModeStateToNewSession,
           setPendingMode(mode) {
             applyModeStateToNewSession = mode;
@@ -445,12 +430,11 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           defaultMode: defaultModeState,
           shouldClearForInitiatedBehavior: () => Boolean(initiatedBehavior),
           isModeExpired,
-          isHydratedFixedPrefixPendingRebuild: (session) => session.hydratedFixedPrefixPendingRebuild === true,
           isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
           shouldResetForTokenPressure: (session) => shouldResetSessionForTokenPressure(session, event, findToolPlugin(toolPlugins, "check_chat")),
           modeFromSession: modeStateFromSession,
           clearSession(reason) {
-            return clearActiveLLMSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
+            return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
           },
           async prepareSession(mode) {
             let promptCheckChatCursor: number | undefined;
@@ -474,7 +458,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                   ...mode.modeStaticMessages
                 ];
               },
-              createSession(promptMessages): ActiveLLMSession {
+              createSession(promptMessages): LLMSessionRecord {
                 return {
                   id: time.now().epochMs,
                   messages: promptMessages,
@@ -494,7 +478,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 };
               },
               setLocalSession(session) {
-                activeLLMSession = session;
+                loopSession = session;
               }
             });
             initiatedBehavior = undefined;
@@ -504,17 +488,17 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         });
         if (initiatedBehaviorPromptToolResult) {
           applyBackendToolSessionControlToActiveSession(session, initiatedBehaviorPromptToolResult, time.now().epochMs);
-          noteLLMSessionUpdated();
+          noteLLMSessionUpdated(session);
         }
-        if (!activeLLMSession) throw new Error("llm_session_unavailable");
-        return activeLLMSession;
+        if (!loopSession) throw new Error("llm_session_unavailable");
+        return loopSession;
       };
       let sentMessage = false;
       let sessionRunStarted = false;
       let llmInput: ChatAgentLoopInput["llmInput"] | undefined;
       let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
       const appendLoopSessionContext = deps.appendLoopSessionContext ?? appendAgentLoopSessionContext;
-      const appendSessionContext = async (session: ActiveLLMSession): Promise<void> => {
+      const appendSessionContext = async (session: LLMSessionRecord): Promise<void> => {
         const waitChatResumeMessages = await buildWaitChatResumeMessages({
           session,
           event,
@@ -585,7 +569,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       };
       return {
         async prepare() {
-          await ensureActiveLLMSession();
+          await ensureLoopSession();
           if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed" && initiatedBehaviorRunPlan.steps.some((step) => step.kind === "llm_instruction") && initiatedBehaviorMessageCount === 0) {
             recordInitiatedBehaviorRun({
               result: "skipped",
@@ -597,7 +581,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             });
             return [];
           }
-          if (!activeLLMSession || activeLLMSession.messages.length === 0) {
+          if (!loopSession || loopSession.messages.length === 0) {
             if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
               recordInitiatedBehaviorRun({
                 result: "skipped",
@@ -612,9 +596,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
           deps.onLLMHeartbeatStarted?.();
           sessionRunStarted = true;
-          activeLLMSession.agentLoopRunSeq = options.agentLoopRunSeq ?? activeLLMSession.agentLoopRunSeq ?? 1;
-          noteLLMSessionUpdated();
-          await appendSessionContext(activeLLMSession);
+          loopSession.agentLoopRunSeq = options.agentLoopRunSeq ?? loopSession.agentLoopRunSeq ?? 1;
+          noteLLMSessionUpdated(loopSession);
+          await appendSessionContext(loopSession);
           const llmConfig = deps.getLLMConfig?.() ?? {
             client: deps.llm,
             model: deps.config.llm.model,
@@ -627,7 +611,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             supportsAudio: false
           };
           llmInput = {
-            messages: activeLLMSession.messages,
+            messages: loopSession.messages,
             client: llmConfig.client,
             model: llmConfig.model,
             temperature: llmConfig.temperature,
@@ -643,25 +627,27 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             llmInput,
             event,
             toolPlugins,
-            session: activeLLMSession,
-            ensureSession: ensureActiveLLMSession,
+            session: loopSession,
+            ensureSession: ensureLoopSession,
             appendSessionContext,
             llm: deps.llm,
             llmRequestSender: deps.llmRequestSender,
             time,
             buildTextVariables: buildTurnTextVariables,
-            noteSessionUpdated: noteLLMSessionUpdated,
+            noteSessionUpdated: () => {
+              if (loopSession) noteLLMSessionUpdated(loopSession);
+            },
             getLastCompletedToolName: () => lastCompletedToolName,
             setLastCompletedToolName(name) {
               lastCompletedToolName = name;
             },
             applyModeStateToNewSession(mode) {
               applyModeStateToNewSession = mode;
-              clearActiveLLMSession();
+              clearLoopSession();
             },
             onSessionRebuilt: deps.onLLMSessionRebuilt,
             isLLMRunCancelled: deps.isLLMRunCancelled,
-            agentLoopRunSeq: activeLLMSession.agentLoopRunSeq,
+            agentLoopRunSeq: loopSession.agentLoopRunSeq,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,
             onLLMLog: deps.onLLMLog
@@ -708,9 +694,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
                 error: "llm_result_missing"
               });
             } else {
-              if (activeLLMSession && initiatedBehaviorExecution.toolResult) {
-                applyBackendToolSessionControlToActiveSession(activeLLMSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
-                noteLLMSessionUpdated();
+              if (loopSession && initiatedBehaviorExecution.toolResult) {
+                applyBackendToolSessionControlToActiveSession(loopSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+                noteLLMSessionUpdated(loopSession);
               }
               recordInitiatedBehaviorRun({
                 result: "completed",
@@ -722,23 +708,23 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
             }
           }
           if (llmResult.cancelled) {
-            clearActiveLLMSession(() => deps.onLLMSessionCleared?.("admin_cancel"));
+            clearLoopSession(() => deps.onLLMSessionCleared?.("admin_cancel"));
             return [];
           }
           if (llmResult.invalidateSession) {
-            clearActiveLLMSession(() => deps.onLLMSessionCleared?.("prompt_static_changed"));
+            clearLoopSession(() => deps.onLLMSessionCleared?.("prompt_static_changed"));
           }
           const usage = llmResult.finalResult?.usage;
           const usageModel = llmResult.finalResult?.model ?? llmInput?.model;
-          if (activeLLMSession && usage) {
+          if (loopSession && usage) {
             if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-              activeLLMSession.lastTotalTokens = usage.totalTokens;
+              loopSession.lastTotalTokens = usage.totalTokens;
             }
             if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
-              activeLLMSession.lastInputTokens = usage.inputTokens;
+              loopSession.lastInputTokens = usage.inputTokens;
             }
-            if (usageModel) activeLLMSession.lastUsageModel = usageModel;
-            noteLLMSessionUpdated();
+            if (usageModel) loopSession.lastUsageModel = usageModel;
+            noteLLMSessionUpdated(loopSession);
           }
           return [];
         }
@@ -768,58 +754,54 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
   }
 
   async function shouldResetSessionForTokenPressure(
-    session: ActiveLLMSession,
+    session: LLMSessionRecord,
     event: AgentEvent,
     plugin: ToolPlugin | undefined
   ): Promise<boolean> {
     const inputTokens = finiteTokenCount(session.lastInputTokens) ?? finiteTokenCount(session.lastTotalTokens);
     if (inputTokens === undefined || inputTokens <= 0) return false;
     if (!plugin) return false;
-    try {
-      const previewInput = tokenPressurePreviewInput(session);
-      const preview = await plugin.execute({
-        id: createId("token_pressure_preview"),
-        toolName: "check_chat",
-        input: previewInput,
-        requester: event.source,
-        externalSession: event.externalSession
-      });
-      if (!preview.ok) return false;
-      const currentPreviewTokens = estimateTextTokens(toolResultText(preview));
-      const baselineKey = tokenPressureBaselineKey(session, previewInput.__scope);
-      const baseline = session.tokenPressurePreviewBaselines[baselineKey];
-      if (!isTokenPressurePreviewBaseline(baseline)) {
-        session.tokenPressurePreviewBaselines[baselineKey] = {
-          inputTokens,
-          previewTokens: currentPreviewTokens
-        };
-        noteLLMSessionUpdated();
-        return false;
-      }
-      const price = deepSeekPriceForModel(session.lastUsageModel ?? deps.config.llm.model);
-      const comparison = calculateTokenPressureSwitch({
-        lastInputTokens: inputTokens,
-        baselineInputTokens: baseline.inputTokens,
-        baselinePreviewTokens: baseline.previewTokens,
-        currentPreviewTokens,
-        cacheHitPrice: price.hit,
-        cacheMissPrice: price.miss,
-        contextImportance: deps.config.llm.tokenPressureContextImportance
-      });
-      if (comparison.shouldReset) {
-        session.tokenPressurePreviewBaselines[baselineKey] = {
-          inputTokens: comparison.estimatedCurrentInputTokens,
-          previewTokens: currentPreviewTokens
-        };
-        noteLLMSessionUpdated();
-      }
-      return comparison.shouldReset;
-    } catch {
+    const previewInput = tokenPressurePreviewInput(session);
+    const preview = await plugin.execute({
+      id: createId("token_pressure_preview"),
+      toolName: "check_chat",
+      input: previewInput,
+      requester: event.source,
+      externalSession: event.externalSession
+    });
+    if (!preview.ok) return false;
+    const currentPreviewTokens = estimateTextTokens(toolResultText(preview));
+    const baselineKey = tokenPressureBaselineKey(session, previewInput.__scope);
+    const baseline = session.tokenPressurePreviewBaselines[baselineKey];
+    if (!isTokenPressurePreviewBaseline(baseline)) {
+      session.tokenPressurePreviewBaselines[baselineKey] = {
+        inputTokens,
+        previewTokens: currentPreviewTokens
+      };
+      noteLLMSessionUpdated(session);
       return false;
     }
+    const price = deepSeekPriceForModel(session.lastUsageModel ?? deps.config.llm.model);
+    const comparison = calculateTokenPressureSwitch({
+      lastInputTokens: inputTokens,
+      baselineInputTokens: baseline.inputTokens,
+      baselinePreviewTokens: baseline.previewTokens,
+      currentPreviewTokens,
+      cacheHitPrice: price.hit,
+      cacheMissPrice: price.miss,
+      contextImportance: deps.config.llm.tokenPressureContextImportance
+    });
+    if (comparison.shouldReset) {
+      session.tokenPressurePreviewBaselines[baselineKey] = {
+        inputTokens: comparison.estimatedCurrentInputTokens,
+        previewTokens: currentPreviewTokens
+      };
+      noteLLMSessionUpdated(session);
+    }
+    return comparison.shouldReset;
   }
 
-  function tokenPressurePreviewInput(session: ActiveLLMSession): { __preview: true; __scope: "today" | "from_prefix"; __fromPrefixAfterMessageId?: number } {
+  function tokenPressurePreviewInput(session: LLMSessionRecord): { __preview: true; __scope: "today" | "from_prefix"; __fromPrefixAfterMessageId?: number } {
     if (session.mode === "fixed_prefix") {
       return {
         __preview: true,
@@ -830,7 +812,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return { __preview: true, __scope: "today" };
   }
 
-  function tokenPressureBaselineKey(session: ActiveLLMSession, scope: "today" | "from_prefix"): string {
+  function tokenPressureBaselineKey(session: LLMSessionRecord, scope: "today" | "from_prefix"): string {
     return [
       session.lastUsageModel ?? deps.config.llm.model ?? "",
       session.mode || "normal",
@@ -839,7 +821,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     ].join("|");
   }
 
-  function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot): ActiveLLMSession {
+  function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot): LLMSessionRecord {
     const modeStaticMessages = cloneLLMMessages(snapshot.modeStaticMessages ?? []);
     const mode = snapshot.mode || "normal";
     const parsedModeStartedAt = typeof snapshot.modeStartedAt === "string" ? Date.parse(snapshot.modeStartedAt) : NaN;
@@ -879,8 +861,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
         : undefined,
       lastCheckChatCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
         ? snapshot.fixedPrefixCursorMessageId
-        : undefined,
-      hydratedFixedPrefixPendingRebuild: mode === "fixed_prefix"
+        : undefined
     };
   }
 
@@ -888,7 +869,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return defaultChatAgentModeState();
   }
 
-  function modeStateFromSession(session: ActiveLLMSession): ModeState {
+  function modeStateFromSession(session: LLMSessionRecord): ModeState {
     return {
       mode: session.mode || "normal",
       modeStaticMessages: cloneLLMMessages(session.modeStaticMessages),
@@ -901,7 +882,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     };
   }
 
-  function isModeExpired(session: ActiveLLMSession): boolean {
+  function isModeExpired(session: LLMSessionRecord): boolean {
     if (session.mode !== "fixed_prefix") return false;
     if (!Number.isFinite(session.modeExpiresAt)) return false;
     return time.now().epochMs >= Number(session.modeExpiresAt);
@@ -917,27 +898,26 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
     return result;
   }
 
-  function noteLLMSessionUpdated(): void {
-    if (!activeLLMSession) return;
+  function noteLLMSessionUpdated(session: LLMSessionRecord): void {
     deps.onLLMSessionUpdated?.({
-      id: activeLLMSession.id,
-      messages: cloneLLMMessages(activeLLMSession.messages),
-      staticPromptFingerprint: activeLLMSession.staticPromptFingerprint,
-      staticPromptMessageCount: activeLLMSession.staticPromptMessageCount,
-      requestTimestamps: activeLLMSession.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
-      agentLoopRunSeq: activeLLMSession.agentLoopRunSeq,
-      lastTotalTokens: activeLLMSession.lastTotalTokens,
-      lastInputTokens: activeLLMSession.lastInputTokens,
-      lastUsageModel: activeLLMSession.lastUsageModel,
-      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(activeLLMSession.tokenPressurePreviewBaselines),
-      mode: activeLLMSession.mode,
-      modeStaticMessages: cloneLLMMessages(activeLLMSession.modeStaticMessages),
-      modeStaticTokenEstimate: activeLLMSession.modeStaticTokenEstimate,
-      modeStartedAt: typeof activeLLMSession.modeStartedAt === "number" ? new Date(activeLLMSession.modeStartedAt).toISOString() : undefined,
-      modeExpiresAt: typeof activeLLMSession.modeExpiresAt === "number" ? new Date(activeLLMSession.modeExpiresAt).toISOString() : undefined,
-      fixedPrefixKind: activeLLMSession.fixedPrefixKind,
-      fixedPrefixCursorMessageId: activeLLMSession.fixedPrefixCursorMessageId,
-      waitChatStartedAt: typeof activeLLMSession.waitChatStartedAt === "number" ? new Date(activeLLMSession.waitChatStartedAt).toISOString() : undefined
+      id: session.id,
+      messages: cloneLLMMessages(session.messages),
+      staticPromptFingerprint: session.staticPromptFingerprint,
+      staticPromptMessageCount: session.staticPromptMessageCount,
+      requestTimestamps: session.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
+      agentLoopRunSeq: session.agentLoopRunSeq,
+      lastTotalTokens: session.lastTotalTokens,
+      lastInputTokens: session.lastInputTokens,
+      lastUsageModel: session.lastUsageModel,
+      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(session.tokenPressurePreviewBaselines),
+      mode: session.mode,
+      modeStaticMessages: cloneLLMMessages(session.modeStaticMessages),
+      modeStaticTokenEstimate: session.modeStaticTokenEstimate,
+      modeStartedAt: typeof session.modeStartedAt === "number" ? new Date(session.modeStartedAt).toISOString() : undefined,
+      modeExpiresAt: typeof session.modeExpiresAt === "number" ? new Date(session.modeExpiresAt).toISOString() : undefined,
+      fixedPrefixKind: session.fixedPrefixKind,
+      fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+      waitChatStartedAt: typeof session.waitChatStartedAt === "number" ? new Date(session.waitChatStartedAt).toISOString() : undefined
     });
   }
 }

@@ -30,7 +30,7 @@ test("talk loop returns no prepared run while voice output backpressure is activ
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 101,
+    getCurrentTalkLLMSessionId: () => 101,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => pendingChars,
     isForegroundPlaybackIdle: () => true,
@@ -93,7 +93,7 @@ test("talk loop prepares spec for external function-call runtime execution", asy
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 102,
+    getCurrentTalkLLMSessionId: () => 102,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -150,60 +150,12 @@ test("talk loop prepares spec for external function-call runtime execution", asy
   assert.equal(activeSession.messages.at(-1)?.content, "runtime talk reply");
 });
 
-test("talk loop stores runtime state in injected loop session holder", async () => {
-  let runtimeState: unknown;
-  let activeSession: any;
-  const controller = createTalkAgentLoopForSession({
-    isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 103,
-    isTalkSessionOpen: () => true,
-    pendingVoiceOutputCharCount: () => 0,
-    isForegroundPlaybackIdle: () => true,
-    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
-    setLoopPrefixMessageCount: () => {},
-    buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
-    loadActiveTalkLLMSessionTranscript: () => activeSession,
-    updateActiveTalkLLMSessionTranscript: (session) => {
-      activeSession = session;
-    },
-    visibleToolNames: () => [],
-    toolPlugins: [],
-    getLLMConfig: () => ({
-      client: noopClient,
-      stream: false
-    }),
-    async sendRequest() {
-      return { message: { role: "assistant", content: "holder reply" }, finishReason: "stop" };
-    },
-    getLoopSessionState: () => runtimeState,
-    setLoopSessionState: (state) => {
-      runtimeState = state;
-    },
-    appendAssistantDelta: () => {},
-    finishAssistantOutput: () => {},
-    log: () => {}
-  });
-
-  await runPreparedTalkAgentLoop(controller, 103);
-
-  assert.equal(controller.getConversationStartIndex(103), 0);
-  assert.equal(runtimeState && typeof runtimeState === "object", true);
-});
-
 test("talk loop delegates transcript preparation to injected session context runtime", async () => {
   let prepareCalls = 0;
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 104,
+    getCurrentTalkLLMSessionId: () => 104,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -285,7 +237,7 @@ test("talk loop returns no prepared run until foreground playback is idle", asyn
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 105,
+    getCurrentTalkLLMSessionId: () => 105,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => foregroundIdle,
@@ -343,7 +295,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 106,
+    getCurrentTalkLLMSessionId: () => 106,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -415,7 +367,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 107,
+    getCurrentTalkLLMSessionId: () => 107,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -494,7 +446,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 108,
+    getCurrentTalkLLMSessionId: () => 108,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -588,7 +540,7 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
   const sentMessages: unknown[][] = [];
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 109,
+    getCurrentTalkLLMSessionId: () => 109,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
@@ -650,7 +602,7 @@ test("talk loop logs llm cancellation without error severity", async () => {
   let activeSession: any;
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
-    getActiveTalkLLMSessionId: () => 110,
+    getCurrentTalkLLMSessionId: () => 110,
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,

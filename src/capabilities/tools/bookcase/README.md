@@ -19,4 +19,4 @@
 
 进入固定前缀时会记录 `modeStartedAt`、`modeExpiresAt`、`fixedPrefixKind` 和 `fixedPrefixCursorMessageId`，重启后继续保留。默认 2 小时后过期并回到 `normal` mode。
 
-`fixed_prefix` mode 是全局 active LLM session 级别；当前不按聊天 sessionId 分开。
+`fixed_prefix` mode 是全局 main LLM session 级别；当前不按聊天 sessionId 分开。

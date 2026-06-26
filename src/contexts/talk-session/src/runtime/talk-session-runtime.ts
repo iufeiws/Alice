@@ -8,7 +8,7 @@ const path = await import("node:path");
 
 export function createTalkRuntimeRuntime(input: {
   isActiveTalkLLMSession(sessionId: number): boolean;
-  getActiveTalkLLMSessionId(): number | undefined;
+  getCurrentTalkLLMSessionId(): number | undefined;
   getTalkPromptProfile(): any;
   time: any;
   dailyShellStore: any;
@@ -32,7 +32,7 @@ export function createTalkRuntimeRuntime(input: {
   let talkRuntime: any;
   const talkAgentLoop = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: input.isActiveTalkLLMSession,
-    getActiveTalkLLMSessionId: input.getActiveTalkLLMSessionId,
+    getCurrentTalkLLMSessionId: input.getCurrentTalkLLMSessionId,
     isTalkSessionOpen(sessionId) {
       return talkRuntime.store.getSession(sessionId)?.status === "open";
     },
@@ -64,12 +64,6 @@ export function createTalkRuntimeRuntime(input: {
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,
     sendRequest: input.sendRequest,
-    getLoopSessionState: input.agentLoopRuntime
-      ? () => input.agentLoopRuntime.getLoopSessionState("talk")
-      : undefined,
-    setLoopSessionState: input.agentLoopRuntime
-      ? (state) => input.agentLoopRuntime.setLoopSessionState("talk", state)
-      : undefined,
     appendAssistantDelta({ sessionId, outputId, delta }) {
       talkRuntime.appendAssistantDelta({ sessionId, outputId, delta });
     },

@@ -42,7 +42,6 @@ export function createApiAgentStackRuntime(input: {
     initiatedBehaviorRunStore: input.apiContextRuntime.initiatedBehaviorRunStore,
     agentLoopRuntime: input.agentLoopRuntime,
     conversationStore: input.store,
-    getActiveLLMSession: input.apiRuntimeState.getActiveLLMSession,
     setLLMSessionBusy: input.apiRuntimeState.setLLMSessionBusy,
     messagingTools: input.apiToolingRuntime.messagingTools,
     llmLogRuntime: input.apiLLMRuntime.llmLogRuntime,

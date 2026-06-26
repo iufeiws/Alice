@@ -21,7 +21,7 @@ export function createApiSupportRuntime(input: {
     time: input.time,
     archive: input.apiLLMRuntime.llmSessionArchive,
     requestLogs: input.apiRuntimeState.llmRequestLogs,
-    getActiveSession: input.apiRuntimeState.getActiveLLMSession,
+    getActiveSession: () => input.apiLLMRuntime.llmSessionArchive.readCurrent(),
     listRecentMessages: () => input.store?.listMessages(500) ?? [],
     getPromptProfile: () => input.apiContextRuntime.promptProfileStore.get(),
     getTalkPromptProfile: () => input.apiContextRuntime.talkPromptProfileStore.get(),

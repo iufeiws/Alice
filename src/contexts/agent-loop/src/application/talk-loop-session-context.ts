@@ -53,7 +53,6 @@ export type TalkLoopSessionContextDeps = {
   prepareSessionContext?(input: AgentLoopSessionContextInput): Promise<AgentLoopPreparedSessionContext>;
   visibleToolNames(profile: PromptProfile): string[];
   toolPlugins: readonly ToolPlugin[];
-  setLoopSessionState?(state: unknown | undefined): void;
 };
 
 export type TalkLoopPreparedSessionContext = {
@@ -117,7 +116,6 @@ export async function prepareTalkLoopSessionContext(input: {
     updateTranscript: deps.updateActiveTalkLLMSessionTranscript,
     onConversationStartIndex(prefixMessageCount) {
       state.conversationStartIndexes.set(sessionId, prefixMessageCount);
-      deps.setLoopSessionState?.(state);
     },
     onPrefixMessageCount(prefixMessageCount) {
       deps.setLoopPrefixMessageCount(sessionId, prefixMessageCount);
@@ -161,17 +159,4 @@ export function buildTalkAgentEvent(sessionId: number, time: CurrentTimeProvider
       receivedAtUtc: now.date.toISOString()
     }
   } as const;
-}
-
-export function restoreTalkLoopRuntimeState(value: unknown): TalkLoopRuntimeState {
-  if (isTalkLoopRuntimeState(value)) return value;
-  return {
-    conversationStartIndexes: new Map<number, number>()
-  };
-}
-
-function isTalkLoopRuntimeState(value: unknown): value is TalkLoopRuntimeState {
-  if (!value || typeof value !== "object") return false;
-  const state = value as Partial<TalkLoopRuntimeState>;
-  return state.conversationStartIndexes instanceof Map;
 }

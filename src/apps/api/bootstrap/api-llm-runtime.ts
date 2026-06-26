@@ -15,16 +15,14 @@ export function createApiLLMRuntime(input: {
   const apiSessionRuntime = createApiSessionRuntime({
     config: input.config,
     time: input.time,
-    getSession: input.apiRuntimeState.getActiveLLMSession,
-    setSession: input.apiRuntimeState.setActiveLLMSession,
     getConversationStartIndex: input.getConversationStartIndex,
     buildTalkRuntimeMessages: input.buildTalkRuntimeMessages,
     appendLog: input.appendLog
   });
   const llmSessionArchive = apiSessionRuntime.llmSessionArchive;
-  const activeLLMSessionRuntime = apiSessionRuntime.activeLLMSessionRuntime;
-  apiSessionRuntime.restoreActiveLLMSession();
-  input.agentLoopRuntime.setActiveLLMSessionRuntime(activeLLMSessionRuntime);
+  const llmSessionRuntime = apiSessionRuntime.llmSessionRuntime;
+  apiSessionRuntime.restoreCurrentLLMSession();
+  input.agentLoopRuntime.setLLMSessionRuntime(llmSessionRuntime);
 
   const llmObservabilityRuntime = createLLMObservabilityRuntime({
     time: input.time,
@@ -33,13 +31,12 @@ export function createApiLLMRuntime(input: {
     responseLogs: input.apiRuntimeState.llmResponseLogs,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     agentLoopRuntime: input.agentLoopRuntime,
-    getActiveSession: input.apiRuntimeState.getActiveLLMSession,
     appendLog: input.appendLog
   });
 
   return {
     llmSessionArchive,
-    activeLLMSessionRuntime,
+    llmSessionRuntime,
     llmLogRuntime: llmObservabilityRuntime.llmLogRuntime,
     recordTokenUsageEvent: llmObservabilityRuntime.recordTokenUsageEvent,
     appendLLMUsageLog: llmObservabilityRuntime.appendLLMUsageLog,

@@ -12,7 +12,7 @@ import {
   writeLLMSessionJsonl,
   writeLLMSessionJsonlMetadata
 } from "../adapters/jsonl-llm-session-log.js";
-import type { ActiveLLMSession } from "../domain/llm-session.js";
+import type { LLMSessionRecord } from "../domain/llm-session.js";
 import {
   parseRequestInfo,
   parseResponseInfo,
@@ -70,7 +70,7 @@ export function createLLMSessionArchive(input: {
     return absoluteLLMSessionJsonlPath(root(), relativePath);
   }
 
-  function writeCurrentPointer(session: ActiveLLMSession): void {
+  function writeCurrentPointer(session: LLMSessionRecord): void {
     if (!session.archiveFilePath) return;
     fs.mkdirSync(root(), { recursive: true });
     fs.writeFileSync(currentPointerPath(), `${JSON.stringify({
@@ -87,7 +87,7 @@ export function createLLMSessionArchive(input: {
     }
   }
 
-  function sessionMetadata(session: ActiveLLMSession): Record<string, unknown> {
+  function sessionMetadata(session: LLMSessionRecord): Record<string, unknown> {
     const agentId = session.agentId ?? "chat";
     const last = session.messages.at(-1);
     return {
@@ -130,14 +130,14 @@ export function createLLMSessionArchive(input: {
     };
   }
 
-  function writeFile(session: ActiveLLMSession): void {
+  function writeFile(session: LLMSessionRecord): void {
     const filePath = session.archiveFilePath ?? createFilePath(session.startedAtUtc ?? session.startedAt, session.agentId ?? "chat");
     session.archiveFilePath = filePath;
     session.archiveMetadata = sessionMetadata(session);
     writeLLMSessionJsonl(filePath, session.archiveMetadata, session.messages);
   }
 
-  function writeMetadata(session: ActiveLLMSession): void {
+  function writeMetadata(session: LLMSessionRecord): void {
     session.archiveMetadata = sessionMetadata(session);
     if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
       writeFile(session);
@@ -146,7 +146,7 @@ export function createLLMSessionArchive(input: {
     writeLLMSessionJsonlMetadata(session.archiveFilePath, session.archiveMetadata);
   }
 
-  function appendMessages(session: ActiveLLMSession, messages: LLMChatInput["messages"]): void {
+  function appendMessages(session: LLMSessionRecord, messages: LLMChatInput["messages"]): void {
     if (messages.length === 0) return;
     if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
       writeFile(session);
@@ -155,7 +155,7 @@ export function createLLMSessionArchive(input: {
     appendLLMSessionJsonlMessages(session.archiveFilePath, messages);
   }
 
-  function readCurrent(): ActiveLLMSession | undefined {
+  function readCurrent(): LLMSessionRecord | undefined {
     const pointer = currentPointerPath();
     if (!fs.existsSync(pointer)) return undefined;
     const parsedPointer = JSON.parse(fs.readFileSync(pointer, "utf8")) as { path?: unknown };
@@ -163,7 +163,7 @@ export function createLLMSessionArchive(input: {
     return readFile(absolutePath(parsedPointer.path));
   }
 
-  function restorePersistedActive(): ActiveLLMSession | undefined {
+  function restorePersistedActive(): LLMSessionRecord | undefined {
     const pointer = currentPointerPath();
     if (!fs.existsSync(pointer)) return undefined;
     try {
@@ -187,21 +187,21 @@ export function createLLMSessionArchive(input: {
     }
   }
 
-  function readAll(): ActiveLLMSession[] {
+  function readAll(): LLMSessionRecord[] {
     const sessionRoot = root();
     if (!fs.existsSync(sessionRoot)) return [];
     const files: string[] = [];
     collectFiles(sessionRoot, files);
     return files
       .map((filePath) => readFile(filePath))
-      .filter((session): session is ActiveLLMSession => Boolean(session));
+      .filter((session): session is LLMSessionRecord => Boolean(session));
   }
 
   function collectFiles(dir: string, files: string[]): void {
     collectLLMSessionJsonlFiles(dir, files);
   }
 
-  function readFile(filePath: string): ActiveLLMSession | undefined {
+  function readFile(filePath: string): LLMSessionRecord | undefined {
     try {
       const parsed = readLLMSessionJsonl(filePath);
       if (!parsed) return undefined;

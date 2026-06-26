@@ -10,8 +10,8 @@ export function createApiAdminRuntime(input: {
   apiContextRuntime: any;
   adminLLMSessionRuntime: any;
   apiCapabilitiesRuntime: any;
-  getActiveSession(): any;
-  getActiveLLMSessionSnapshot(): unknown;
+  getActiveMainLLMSession(): any;
+  getCurrentLLMSessionSnapshot(): unknown;
   store: any;
   getTokenUsageReport(query: any): unknown;
   core: any;
@@ -37,8 +37,8 @@ export function createApiAdminRuntime(input: {
     messageLogs: input.messageLogs,
     llmRequestLogs: input.llmRequestLogs,
     llmResponseLogs: input.llmResponseLogs,
-    getActiveLLMSession: () => input.getActiveSession()?.agentId === "talk" ? undefined : input.getActiveLLMSessionSnapshot(),
-    getActiveTalkLLMSession: () => input.getActiveSession()?.agentId === "talk" ? input.getActiveLLMSessionSnapshot() : undefined,
+    getCurrentLLMSession: () => input.getActiveMainLLMSession()?.agentId === "talk" ? undefined : input.getCurrentLLMSessionSnapshot(),
+    getCurrentTalkLLMSession: () => input.getActiveMainLLMSession()?.agentId === "talk" ? input.getCurrentLLMSessionSnapshot() : undefined,
     getClearedLLMSessions: input.adminLLMSessionRuntime.llmSessionListRuntime.getClearedLLMSessions,
     getTalkLLMSessions: input.adminLLMSessionRuntime.llmSessionListRuntime.getTalkLLMSessions,
     getMemoryLLMSessions: input.adminLLMSessionRuntime.llmSessionBrowserRuntime.getMemoryLLMSessions,

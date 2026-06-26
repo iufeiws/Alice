@@ -1,7 +1,7 @@
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import type {
-  ActiveLLMSession,
+  LLMSessionRecord,
   LLMRequestLogEntry,
   LLMResponseLogEntry,
   LLMSessionRequestInfo,
@@ -9,7 +9,7 @@ import type {
   LLMSessionTurn
 } from "../domain/llm-session.js";
 
-export function summarizeLLMSession(session: ActiveLLMSession): unknown {
+export function summarizeLLMSession(session: LLMSessionRecord): unknown {
   const roundCount = llmSessionRoundCount(session);
   const latestMessage = session.messages.at(-1);
   return {
@@ -43,7 +43,7 @@ export function summarizeLLMSession(session: ActiveLLMSession): unknown {
   };
 }
 
-export function buildLLMSessionTurns(session: ActiveLLMSession): LLMSessionTurn[] {
+export function buildLLMSessionTurns(session: LLMSessionRecord): LLMSessionTurn[] {
   const requests = [...(session.requests ?? [])].sort(compareLLMLogEntries);
   const responses = [...(session.responses ?? [])].sort(compareLLMLogEntries);
   if (requests.length === 0 && responses.length === 0) {
@@ -74,7 +74,7 @@ export function compareLLMLogEntries(left: { time?: string; id?: number }, right
   return Number(left.id || 0) - Number(right.id || 0);
 }
 
-function llmSessionRoundCount(session: ActiveLLMSession): number {
+function llmSessionRoundCount(session: LLMSessionRecord): number {
   const rounds = [
     session.requests?.length ?? 0,
     session.responses?.length ?? 0,
@@ -87,7 +87,7 @@ function llmSessionRoundCount(session: ActiveLLMSession): number {
   return Math.max(0, ...rounds);
 }
 
-function buildLLMSessionTurnsFromTranscript(session: ActiveLLMSession): LLMSessionTurn[] {
+function buildLLMSessionTurnsFromTranscript(session: LLMSessionRecord): LLMSessionTurn[] {
   const messages = cloneLLMMessages(session.messages);
   const staticCount = Math.max(0, Math.min(messages.length, session.staticPromptMessageCount ?? 0));
   const responseIndexes: number[] = [];
@@ -128,7 +128,7 @@ function isSyntheticPromptToolRequest(message: LLMChatInput["messages"][number])
 }
 
 function transcriptResponseEntry(
-  session: ActiveLLMSession,
+  session: LLMSessionRecord,
   round: number,
   responseIndex: number,
   message: LLMChatInput["messages"][number],
@@ -145,7 +145,7 @@ function transcriptResponseEntry(
 }
 
 function messagesForLLMSessionTurn(
-  session: ActiveLLMSession,
+  session: LLMSessionRecord,
   index: number,
   request: LLMRequestLogEntry | undefined,
   response: LLMResponseLogEntry | undefined,

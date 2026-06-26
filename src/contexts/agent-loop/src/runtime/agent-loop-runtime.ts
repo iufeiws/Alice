@@ -39,23 +39,18 @@ export type ActiveMainLLMSessionState = {
   phase: AgentLoopPhase;
 };
 
-export type ActiveMainSessionContext<TState = unknown> = {
-  kind: AgentLoopKind;
-  session: TState;
-};
-
-export type ActiveLLMSessionRuntimePort = {
-  ensureActiveLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
+export type LLMSessionRuntimePort = {
+  ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
-  noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
-  noteActiveLLMResponse(entry: unknown): void;
+  noteLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: number): boolean;
-  loadActiveLLMSessionTranscript(): unknown;
-  updateActiveLLMSessionTranscript(session: unknown): void;
+  loadCurrentLLMSessionTranscript(): unknown;
+  updateCurrentLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;
   rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
-  clearActiveLLMSession(reason: unknown): void;
-  getActiveLLMSessionSnapshot?(): unknown;
+  clearCurrentLLMSession(reason: unknown): void;
+  getCurrentLLMSessionSnapshot?(): unknown;
 };
 
 export type AgentLoopChatRunRequest = {
@@ -100,22 +95,18 @@ export type AgentLoopRunSpec = {
 
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
-  setActiveLLMSessionRuntime(runtime: ActiveLLMSessionRuntimePort | undefined): void;
-  ensureActiveLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
+  setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
+  ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
-  noteActiveLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
-  noteActiveLLMResponse(entry: unknown): void;
+  noteLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: number): boolean;
-  loadActiveLLMSessionTranscript(): unknown;
-  updateActiveLLMSessionTranscript(session: unknown): void;
+  loadCurrentLLMSessionTranscript(): unknown;
+  updateCurrentLLMSessionTranscript(session: unknown): void;
   updateActiveTalkLLMSessionTranscript(session: unknown): void;
   rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
-  clearActiveLLMSession(reason: unknown): void;
-  getActiveLLMSessionSnapshot(): unknown;
-  getActiveMainSessionContext<T = unknown>(): ActiveMainSessionContext<T> | undefined;
-  getLoopSessionState<T = unknown>(kind: AgentLoopKind): T | undefined;
-  setLoopSessionState<T = unknown>(kind: AgentLoopKind, state: T | undefined): void;
-  clearLoopSessionState(kind: AgentLoopKind): void;
+  clearCurrentLLMSession(reason: unknown): void;
+  getCurrentLLMSessionSnapshot(): unknown;
   isRunning(): boolean;
   setRunners(runners: Partial<AgentLoopRunners>): void;
   setActiveSessionContext<TSession = unknown>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
@@ -139,68 +130,47 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   let agentLoopRunSeq = 0;
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
-  let activeLLMSessionRuntime: ActiveLLMSessionRuntimePort | undefined;
-  let activeMainSessionContext: ActiveMainSessionContext | undefined;
+  let llmSessionRuntime: LLMSessionRuntimePort | undefined;
 
   return {
     getActiveMainLLMSession() {
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
     },
-    setActiveLLMSessionRuntime(runtime) {
-      activeLLMSessionRuntime = runtime;
+    setLLMSessionRuntime(runtime) {
+      llmSessionRuntime = runtime;
     },
-    ensureActiveLLMSession(time, agentId) {
-      return requireActiveLLMSessionRuntime().ensureActiveLLMSession(time, agentId);
+    ensureCurrentLLMSession(time, agentId) {
+      return requireLLMSessionRuntime().ensureCurrentLLMSession(time, agentId);
     },
     createTalkLLMSession(time) {
-      return requireActiveLLMSessionRuntime().createTalkLLMSession(time);
+      return requireLLMSessionRuntime().createTalkLLMSession(time);
     },
-    noteActiveLLMRequest(entry, agentId) {
-      requireActiveLLMSessionRuntime().noteActiveLLMRequest(entry, agentId);
+    noteLLMRequest(entry, agentId) {
+      requireLLMSessionRuntime().noteLLMRequest(entry, agentId);
     },
-    noteActiveLLMResponse(entry) {
-      requireActiveLLMSessionRuntime().noteActiveLLMResponse(entry);
+    noteLLMResponse(entry) {
+      requireLLMSessionRuntime().noteLLMResponse(entry);
     },
     isActiveTalkLLMSession(sessionId) {
-      return activeLLMSessionRuntime?.isActiveTalkLLMSession(sessionId) ?? false;
+      return llmSessionRuntime?.isActiveTalkLLMSession(sessionId) ?? false;
     },
-    loadActiveLLMSessionTranscript() {
-      return activeLLMSessionRuntime?.loadActiveLLMSessionTranscript();
+    loadCurrentLLMSessionTranscript() {
+      return llmSessionRuntime?.loadCurrentLLMSessionTranscript();
     },
-    updateActiveLLMSessionTranscript(session) {
-      requireActiveLLMSessionRuntime().updateActiveLLMSessionTranscript(session);
+    updateCurrentLLMSessionTranscript(session) {
+      requireLLMSessionRuntime().updateCurrentLLMSessionTranscript(session);
     },
     updateActiveTalkLLMSessionTranscript(session) {
-      requireActiveLLMSessionRuntime().updateActiveTalkLLMSessionTranscript(session);
+      requireLLMSessionRuntime().updateActiveTalkLLMSessionTranscript(session);
     },
     rewriteActiveTalkLLMSessionFromRuntime(sessionId) {
-      requireActiveLLMSessionRuntime().rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+      requireLLMSessionRuntime().rewriteActiveTalkLLMSessionFromRuntime(sessionId);
     },
-    clearActiveLLMSession(reason) {
-      requireActiveLLMSessionRuntime().clearActiveLLMSession(reason);
+    clearCurrentLLMSession(reason) {
+      requireLLMSessionRuntime().clearCurrentLLMSession(reason);
     },
-    getActiveLLMSessionSnapshot() {
-      return activeLLMSessionRuntime?.getActiveLLMSessionSnapshot?.();
-    },
-    getActiveMainSessionContext() {
-      return activeMainSessionContext
-        ? { ...activeMainSessionContext } as never
-        : undefined;
-    },
-    getLoopSessionState(kind) {
-      return activeMainSessionContext?.kind === kind
-        ? activeMainSessionContext.session as never
-        : undefined;
-    },
-    setLoopSessionState(kind, state) {
-      if (state === undefined) {
-        if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;
-        return;
-      }
-      activeMainSessionContext = { kind, session: state };
-    },
-    clearLoopSessionState(kind) {
-      if (activeMainSessionContext?.kind === kind) activeMainSessionContext = undefined;
+    getCurrentLLMSessionSnapshot() {
+      return llmSessionRuntime?.getCurrentLLMSessionSnapshot?.();
     },
     isRunning() {
       return running;
@@ -213,24 +183,18 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     },
     setActiveSessionContext(input) {
       setAgentLoopActiveSessionContext(input);
-      this.setLoopSessionState(input.kind, input.session);
     },
     clearActiveSessionContext(input) {
-      const cleared = clearAgentLoopActiveSessionContext(input);
-      if (cleared) this.clearLoopSessionState(input.kind);
-      return cleared;
+      return clearAgentLoopActiveSessionContext(input);
     },
     createActiveSessionContext(input) {
-      const session = createAgentLoopActiveSessionContext(input);
-      this.setLoopSessionState(input.kind, session);
-      return session;
+      return createAgentLoopActiveSessionContext(input);
     },
     prepareChatSessionContext(input) {
       return prepareAgentLoopChatSessionContext({
         ...input,
         updateSession: (session) => {
           input.updateSession?.(session);
-          this.setLoopSessionState("chat", session);
         }
       });
     },
@@ -318,9 +282,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     }
   }
 
-  function requireActiveLLMSessionRuntime(): ActiveLLMSessionRuntimePort {
-    if (!activeLLMSessionRuntime) throw new Error("active_llm_session_runtime_unavailable");
-    return activeLLMSessionRuntime;
+  function requireLLMSessionRuntime(): LLMSessionRuntimePort {
+    if (!llmSessionRuntime) throw new Error("llm_session_runtime_unavailable");
+    return llmSessionRuntime;
   }
 }
 

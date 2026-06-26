@@ -901,20 +901,15 @@ test("LLM log runtime binds responses to the request session instead of current 
   assert.equal(responseLogs[0].sessionId, 100);
 });
 
-test("active LLM session writes chat request and response directly to jsonl", () => {
-  const root = makeTempDir("active-llm-session-jsonl");
-  let cachedSession: any;
+test("LLM session runtime writes chat request and response directly to jsonl", () => {
+  const root = makeTempDir("llm-session-jsonl");
   const runtime = createApiSessionRuntime({
     config: { memoryFiles: { root } },
     time: fixedTime("2026-06-14T01:00:00.000Z"),
-    getSession: () => cachedSession,
-    setSession(session) {
-      cachedSession = session;
-    },
     getConversationStartIndex: () => undefined,
     buildTalkRuntimeMessages: () => [],
     appendLog() {}
-  }).activeLLMSessionRuntime;
+  }).llmSessionRuntime;
 
   const request: any = {
     id: 1,
@@ -927,14 +922,13 @@ test("active LLM session writes chat request and response directly to jsonl", ()
       { role: "user" as const, content: "hello" }
     ]
   };
-  runtime.noteActiveLLMRequest(request, "chat");
+  runtime.noteLLMRequest(request, "chat");
   const sessionId = request.sessionId;
   const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { path: string };
   const filePath = path.join(root, "llm-sessions", pointer.path);
   assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user"]);
 
-  cachedSession = undefined;
-  runtime.noteActiveLLMResponse({
+  runtime.noteLLMResponse({
     id: 2,
     agentId: "chat",
     sessionId,
@@ -946,8 +940,7 @@ test("active LLM session writes chat request and response directly to jsonl", ()
   });
   assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user", "assistant"]);
 
-  cachedSession = undefined;
-  runtime.noteActiveLLMRequest({
+  runtime.noteLLMRequest({
     id: 3,
     agentId: "chat",
     time: "2026-06-14T01:00:02.000",

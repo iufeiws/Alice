@@ -23,13 +23,13 @@ export function createAgentCoreRuntime(input: {
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
-  loadActiveLLMSessionTranscript(): any;
+  loadCurrentLLMSessionTranscript(): any;
   appendLLMRequestLog(input: any, agentId?: "chat" | "talk"): any;
   appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: any): void;
   setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
-  updateActiveLLMSessionTranscript(session: any): void;
-  clearActiveLLMSession(reason: any): void;
+  updateCurrentLLMSessionTranscript(session: any): void;
+  clearCurrentLLMSession(reason: any): void;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
@@ -55,12 +55,6 @@ export function createAgentCoreRuntime(input: {
       : undefined,
     ensureChatLoopSessionContext: input.agentLoopRuntime
       ? (contextInput: any) => input.agentLoopRuntime.ensureChatSessionContext(contextInput)
-      : undefined,
-    getLoopSessionState: input.agentLoopRuntime
-      ? () => input.agentLoopRuntime.getLoopSessionState("chat")
-      : undefined,
-    setLoopSessionState: input.agentLoopRuntime
-      ? (state) => input.agentLoopRuntime.setLoopSessionState("chat", state)
       : undefined,
     getLLMConfig: input.currentChatLLMConfig,
     isLLMRunCancelled: () => input.llmRequests.isCancelRequested(),
@@ -89,7 +83,7 @@ export function createAgentCoreRuntime(input: {
     recordAgentInitiatedBehaviorRun(run) {
       input.initiatedBehaviorRunStore.record(run);
     },
-    loadLLMSession: input.loadActiveLLMSessionTranscript,
+    loadLLMSession: input.loadCurrentLLMSessionTranscript,
     onLLMRequestPrepared: (request) => input.appendLLMRequestLog(request, "chat"),
     onLLMResponseReceived: (result, request) => input.appendLLMResponseLog(result, "chat", request),
     onLLMHeartbeatStarted() {
@@ -98,15 +92,15 @@ export function createAgentCoreRuntime(input: {
       input.messagingTools.noteLLMRequestStarted();
     },
     onLLMSessionUpdated(session) {
-      input.updateActiveLLMSessionTranscript(session);
+      input.updateCurrentLLMSessionTranscript(session);
     },
     onLLMSessionCleared(reason) {
       input.setLLMSessionBusy(false);
       input.messagingTools.noteLLMSessionCompleted();
-      input.clearActiveLLMSession(reason);
+      input.clearCurrentLLMSession(reason);
     },
     onLLMSessionRebuilt() {
-      input.clearActiveLLMSession("mode_transition");
+      input.clearCurrentLLMSession("mode_transition");
       input.messagingTools.noteLLMSessionCompleted();
       input.messagingTools.noteLLMRequestStarted();
     },

@@ -129,7 +129,7 @@ export function renderAdminSidebarScript(): string {
       });
       $("llm-chain-clear").addEventListener("click", async () => {
         const result = await fetch("/admin/api/llm-chain/clear", { method: "POST" }).then((res) => res.json());
-        $("llmChainSessions").textContent = result.ok ? "Active session cleared." : "Failed to clear active session.";
+        $("llmChainSessions").textContent = result.ok ? "Current session cleared." : "Failed to clear current session.";
         await refreshLLMRequests();
         await refreshLLMChain();
       });

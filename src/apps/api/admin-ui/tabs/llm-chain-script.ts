@@ -23,7 +23,7 @@ export function renderLlmChainScript(): string {
         $("activeSessionLogs").scrollTop = $("activeSessionLogs").scrollHeight;
       }
 
-      function renderActiveLLMSession(session) {
+      function renderCurrentLLMSession(session) {
         return \`<div class="log-line">Active session #\${escapeHtml(session.id || "")} mode=\${escapeHtml(session.mode || "normal")} started=\${escapeHtml(session.startedAt || "")} updated=\${escapeHtml(session.updatedAt || "")} rounds=\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} messages=\${escapeHtml(session.messageCount ?? 0)}</div>\`;
       }
 
@@ -72,12 +72,12 @@ export function renderLlmChainScript(): string {
       }
 
       function renderLLMSessionGroups(activeSession, clearedSessions, memorySessions, talkActiveSession, talkSessions) {
-        const active = activeSession ? renderActiveLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
+        const active = activeSession ? renderCurrentLLMSession(activeSession) : '<div class="log-line">Active session: none</div>';
         const activeGroup = activeSession
           ? renderLLMSessionShell(activeSession, "Active Session")
           : "";
         const archived = sortedLLMSessions(clearedSessions).map((session) => renderLLMSessionShell(session, "Chat Saved Session")).join("");
-        const talkActive = talkActiveSession ? renderActiveLLMSession(talkActiveSession) : '<div class="log-line">Talk active session: none</div>';
+        const talkActive = talkActiveSession ? renderCurrentLLMSession(talkActiveSession) : '<div class="log-line">Talk active session: none</div>';
         const talkActiveGroup = talkActiveSession
           ? renderLLMSessionShell(talkActiveSession, "Talk Active Session")
           : "";

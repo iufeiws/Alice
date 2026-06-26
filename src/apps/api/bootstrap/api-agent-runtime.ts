@@ -23,7 +23,6 @@ export function createApiAgentRuntime(input: {
   initiatedBehaviorRunStore: any;
   agentLoopRuntime: any;
   conversationStore: any;
-  getActiveLLMSession(): any;
   setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
   llmLogRuntime: any;
@@ -33,7 +32,10 @@ export function createApiAgentRuntime(input: {
 }) {
   const { talkAgentLoop, talkRuntime } = createTalkRuntimeRuntime({
     isActiveTalkLLMSession: (sessionId) => input.agentLoopRuntime.isActiveTalkLLMSession(sessionId),
-    getActiveTalkLLMSessionId: () => input.getActiveLLMSession()?.id,
+    getCurrentTalkLLMSessionId: () => {
+      const active = input.agentLoopRuntime.getActiveMainLLMSession();
+      return active?.agentId === "talk" && typeof active.id === "number" ? active.id : undefined;
+    },
     getTalkPromptProfile: () => input.talkPromptProfileStore.get(),
     time: input.time,
     dailyShellStore: input.dailyShellStore,
@@ -47,7 +49,7 @@ export function createApiAgentRuntime(input: {
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     agentLoopRuntime: input.agentLoopRuntime,
     createLLMSession: (occurredAt) => input.agentLoopRuntime.createTalkLLMSession(occurredAt).id,
-    loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadActiveLLMSessionTranscript(),
+    loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     updateActiveTalkLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveTalkLLMSessionTranscript(session),
     rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.agentLoopRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),
     conversationStore: input.conversationStore,
@@ -74,16 +76,16 @@ export function createApiAgentRuntime(input: {
     agentState: input.agentState,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
-    loadActiveLLMSessionTranscript: () => input.agentLoopRuntime.loadActiveLLMSessionTranscript(),
+    loadCurrentLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     appendLLMRequestLog: (requestInput, agentId = "chat") => input.llmLogRuntime.appendRequestLog(requestInput, agentId),
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
     setLLMSessionBusy: input.setLLMSessionBusy,
     messagingTools: input.messagingTools,
-    updateActiveLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveLLMSessionTranscript(session),
-    clearActiveLLMSession: (reason) => input.agentLoopRuntime.clearActiveLLMSession(reason),
+    updateCurrentLLMSessionTranscript: (session) => input.agentLoopRuntime.updateCurrentLLMSessionTranscript(session),
+    clearCurrentLLMSession: (reason) => input.agentLoopRuntime.clearCurrentLLMSession(reason),
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,
-    initialLLMSession: input.getActiveLLMSession()
+    initialLLMSession: input.agentLoopRuntime.loadCurrentLLMSessionTranscript()
   });
 
   return { talkAgentLoop, talkRuntime, core };

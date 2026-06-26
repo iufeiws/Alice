@@ -1,18 +1,13 @@
-import type { ActiveLLMSession, LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/llm-session/src/index.js";
+import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/llm-session/src/index.js";
 
 export function createApiRuntimeState() {
   const llmRequestLogs: LLMRequestLogEntry[] = [];
   const llmResponseLogs: LLMResponseLogEntry[] = [];
-  let activeLLMSession: ActiveLLMSession | undefined;
   let llmSessionBusy = false;
 
   return {
     llmRequestLogs,
     llmResponseLogs,
-    getActiveLLMSession: () => activeLLMSession,
-    setActiveLLMSession: (session: ActiveLLMSession | undefined) => {
-      activeLLMSession = session;
-    },
     isLLMSessionBusy: () => llmSessionBusy,
     setLLMSessionBusy: (busy: boolean) => {
       llmSessionBusy = busy;

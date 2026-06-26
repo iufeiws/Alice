@@ -60,8 +60,8 @@ export type AdminRuntimeContext = {
   messageLogs: unknown[];
   llmRequestLogs: unknown[];
   llmResponseLogs: unknown[];
-  getActiveLLMSession(): unknown;
-  getActiveTalkLLMSession?(): unknown;
+  getCurrentLLMSession(): unknown;
+  getCurrentTalkLLMSession?(): unknown;
   getClearedLLMSessions(): unknown[];
   getTalkLLMSessions?(): unknown[];
   getMemoryLLMSessions(): unknown[];

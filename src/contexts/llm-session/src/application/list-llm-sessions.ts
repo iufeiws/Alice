@@ -1,9 +1,9 @@
-import type { ActiveLLMSession } from "../domain/llm-session.js";
+import type { LLMSessionRecord } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
 
 export function createLLMSessionListRuntime(input: {
-  archive: { readAll(): ActiveLLMSession[] };
-  getActiveSession(): ActiveLLMSession | undefined;
+  archive: { readAll(): LLMSessionRecord[] };
+  getActiveSession(): LLMSessionRecord | undefined;
 }) {
   return {
     getClearedLLMSessions,
@@ -11,7 +11,7 @@ export function createLLMSessionListRuntime(input: {
   };
 
   function getClearedLLMSessions(): unknown[] {
-    const latestById = new Map<number, ActiveLLMSession>();
+    const latestById = new Map<number, LLMSessionRecord>();
     for (const session of input.archive.readAll()) {
       if ((session.agentId ?? "chat") !== "chat") continue;
       latestById.set(session.id, session);
@@ -24,7 +24,7 @@ export function createLLMSessionListRuntime(input: {
   }
 
   function getTalkLLMSessions(): unknown[] {
-    const latestById = new Map<number, ActiveLLMSession>();
+    const latestById = new Map<number, LLMSessionRecord>();
     for (const session of input.archive.readAll()) {
       if (session.agentId !== "talk") continue;
       latestById.set(session.id, session);

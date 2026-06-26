@@ -26,8 +26,8 @@
 
 ### 设计原则
 
-- `activeMainLLMSession` 是 agent loop 运行态的全局唯一主 LLM session boundary，chat/talk 都通过它暴露当前 loop/session 状态；`activeMainSessionContext` 承载单一 `{ kind, session }` 主 session object，`getLoopSessionState(kind)` 只是兼容门面。
-- 当前阶段保留 `ensureActiveLLMSession(agentId)` 遇到不同 `agentId` 时切 session 的行为，因为 chat/talk static prefix 不兼容；因此 llm-session 存储层的 `archive/current` pointer 尚未彻底统一成 chat/talk 混用同一条主 session。
+- `activeMainLLMSession` 是 agent loop 运行态的全局唯一主 LLM session boundary；除它之外，任何 LLM session 内容都只从 `llm-session` 的 `archive/current` JSONL 指针读取和写入。
+- chat/talk 可以切换 current session 文件，但切换和 request/response 写回都必须通过 `llm-session` current pointer 完成，不在 API runtime 或 agent loop runtime 另存 session 对象。
 - `messagingTools` 不再自行推断 LLM session 边界；它应从 `agent-loop-runtime` 暴露的主 session 状态读取当前 loop/session 信息。
 - 所有下一轮发起收敛到 heartbeat。message runtime 和 talk runtime 只记录输入、状态和 ready/dirty 标记，不直接启动 LLM loop。
 - LLM request 运行时 heartbeat 暂停或跳过调度；请求完成后由 runtime 恢复调度。
@@ -68,22 +68,22 @@
 
 1. [done] 将 `agent-loop/src/runtime/agent-loop-runtime.ts` 改名为 `agent-state-runtime.ts`，更新 import/export，保持行为不变。
 2. [done] 新建 `agent-loop/src/runtime/agent-loop-runtime.ts`，维护全局 `activeMainLLMSession`、running 状态和 interrupt，并通过注册的 chat/talk runner 统一发起 loop run。
-3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；`messagingTools` 默认 `check_chat` scope 已从该 port 获取 session boundary，不再依赖内部 `activeLLMSession/checkChatCallsInLLMSession` 猜测。
+3. [done] 引入 `activeMainLLMSession` 命名和主 session 状态 port；`messagingTools` 默认 `check_chat` scope 已从该 port 获取 session boundary，不再依赖工具内部计数猜测。
 4. [done] 将 message runtime 中 heartbeat timer/pause/resume、tick、pending 扫描和 generated/talk 触发编排迁移到 `agent-heartbeat-runtime.ts`；message runtime 保留 ingest、store、pending set 和具体任务回调。
 5. [done] 普通 inbound、manual process、finish_and_wait resume、initiated behavior、sleep cocoon events 的 loop 发起统一经 heartbeat/task 路径调用 `agent-loop-runtime.requestRun(...)`。
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
 7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec；生产 chat runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。
-8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。talk 首轮构筑 active LLM session prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
-9. [done] `agent-loop-runtime.requestRun(kind)` 已只接受 `prepareChat/prepareTalk` prepared run，并统一执行 prepared spec；API 生产 chat/talk wiring 和 `conversation-hub` fallback 均不再注册 legacy `runChat/runTalk` runner，message runtime 的 core 依赖也已收紧为 `prepareEventRun(...)`。`AgentCore` 已不再暴露 direct `handleEvent(...)` 执行入口，只构建 prepared run；`run-chat-loop.ts` 已只导出 `buildChatAgentLoop(...)` spec 构建器，`run-talk-loop.ts` 已只导出 talk prepared run 构建入口，不再导出 direct run 方法；talk runtime 的外部入口已改为 `markAgentLoopReady(...)`、`claimReadyAgentLoopSession(...)`、`prepareReadyAgentLoopSession(...)`，只表达 ready/claim/prepare，不再暴露 `startAgentLoop` 命名；旧 `SessionDirtyFlagger` 独立延迟调度残留已删除。prepared run 支持 lazy `prepare()`，chat 的 `ensureActiveLLMSession`、spec 构建已进入 runtime 执行链调用阶段；chat/talk session state holder 已改为 `agent-loop-runtime` 内的单一 `activeMainSessionContext`，不再用 `Map<AgentLoopKind, unknown>` 分槽持有。talk transcript 的 load/create prefix、`{ replaceFrom, messages }` patch append 和 writeback 已通过 `agent-loop-runtime.prepareSessionContext(...)` 执行；talk builder 已删除内部 sleep/backpressure 等待和私有 AbortController，voice output/foreground idle 不 ready 时直接返回 undefined 交还 heartbeat 下次 tick，`agent-loop-runtime.requestRun(...)` 的 AbortSignal 透传到 talk LLM request。chat prompt messages + active session object prepare 已通过 `agent-loop-runtime.prepareChatSessionContext(...)` 执行，chat active session create/set/clear lifecycle 已通过 `agent-loop-runtime.createActiveSessionContext(...)`、`setActiveSessionContext(...)`、`clearActiveSessionContext(...)` 执行，chat append session context 的 append+writeback 已通过 `agent-loop-runtime.appendSessionContext(...)` 执行；chat reset/ensure session 外壳已通过 `agent-loop-runtime.ensureChatSessionContext(...)` 编排，reset 判定本身仍由 `AgentCore` 以回调提供。active LLM session archive/current pointer 暂由 `llm-session` 实现，API chat/talk wiring 与 LLM observability request/response 写回已通过 `agent-loop-runtime` active session 门面访问 ensure/create/load/update/clear/rewrite/note；`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。
+8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。talk 首轮构筑 current transcript prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
+9. [done] `agent-loop-runtime.requestRun(kind)` 已只接受 `prepareChat/prepareTalk` prepared run，并统一执行 prepared spec；API 生产 chat/talk wiring 和 `conversation-hub` fallback 均不再注册 legacy `runChat/runTalk` runner，message runtime 的 core 依赖也已收紧为 `prepareEventRun(...)`。`AgentCore` 已不再暴露 direct `handleEvent(...)` 执行入口，只构建 prepared run；`run-chat-loop.ts` 已只导出 `buildChatAgentLoop(...)` spec 构建器，`run-talk-loop.ts` 已只导出 talk prepared run 构建入口，不再导出 direct run 方法；talk runtime 的外部入口已改为 `markAgentLoopReady(...)`、`claimReadyAgentLoopSession(...)`、`prepareReadyAgentLoopSession(...)`，只表达 ready/claim/prepare，不再暴露 `startAgentLoop` 命名；旧 `SessionDirtyFlagger` 独立延迟调度残留已删除。prepared run 支持 lazy `prepare()`；agent loop runtime 不再持有 session object，chat/talk transcript 的 load/update/clear 均通过 `llm-session` current JSONL 指针完成；LLM observability request/response 写回也通过同一 `llmSessionRuntime` port 完成。`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。
 10. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档；`processNow` 的 manual fallback 也已通过 heartbeat forced run task 发起，不再由 message runtime 直接 fallback 启动 loop。
 11. [done] 抽出 `AgentLoopToolExecutor`，chat/talk 普通 LLM tool call、prompt tool call 统一走公共 `toolPlugins` lookup/execute/error/format 路径；chat 的 streaming send 仍作为流式输出 adapter hook 保留。
-12. [done] 抽出 `AgentLoopSessionInitializer`，`agent-loop-runtime` 通过公共 helper 处理 active session context create/set/clear、chat prompt session prepare/ensure、talk prefix 初始化和 runtime transcript patch append/writeback。
+12. [done] 抽出 `AgentLoopSessionInitializer`，`agent-loop-runtime` 通过公共 helper 处理 loop-local session context create/set/clear、chat prompt session prepare/ensure、talk prefix 初始化和 runtime transcript patch append/writeback。
 13. [done] 抽出 `AgentFunctionCallLoopSpec` 构筑 helper，chat/talk 不再各自直接拼默认 function-call loop limits，统一经公共 builder 生成 `llm-tool-loop` spec。
 14. [done] 删除 prompt tool request 对 `send_chat` 的 loop 层特殊拦截；已配置/暴露的 prompt tool call 统一走 `toolPlugins` 执行，禁用能力由配置层不暴露或不配置处理。
 15. [done] 将 prompt tool request helper 移入 `AgentLoopToolExecutor`，`run-chat-loop` 只保留兼容 re-export 和 adapter 调用，不再拥有 prompt tool 执行实现。
 16. [done] 将 chat 每分钟 LLM request timestamp 窗口维护抽入 `AgentLoopSessionInitializer.claimAgentLoopRequestWindow(...)`，`run-chat-loop` 不再手写 requestTimestamps 过滤和追加。
 17. [done] 抽出 `chat-loop-tool-control.ts`，`run-chat-loop` 不再直接展开 tool result reset/fixed-prefix mode 构筑逻辑，而是执行 tool 后调用 helper 生成 loop control 和待应用 mode state。
-18. [done] 抽出 `talk-loop-session-context.ts`，`run-talk-loop` 不再直接构建 talk prompt context、prompt variables、prompt tool runner 和 active session transcript patch，只消费 prepared session context。
+18. [done] 抽出 `talk-loop-session-context.ts`，`run-talk-loop` 不再直接构建 talk prompt context、prompt variables、prompt tool runner 和 current transcript patch，只消费 prepared session context。
 19. [done] 抽出 `chat-loop-request-sender.ts`，`run-chat-loop` 不再拥有本地 LLM request sender、tool schema rendering、retry/backoff 和 lifecycle logging 实现。
 20. [done] 抽出 `chat-loop-session-context.ts`，`run-chat-loop` 不再拥有 fixed-prefix append、finish_and_wait resume、check_chat cursor、token estimate 和 session-context helper 实现，仅保留兼容 re-export。
 
@@ -92,7 +92,7 @@
 - `finish_and_wait` resume 依赖主 session 中未完成 tool call，后续迁移 llm-session 存储层 pointer 时必须保留 pending tool result 拼接语义。
 - talk 对延迟敏感；calling 状态下 heartbeat 可能需要短 tick 或事件唤醒，而非固定 1 秒。
 - `messagingTools` 的默认 `check_chat` scope 必须由主 loop/session 状态明确决定，不能再由工具私有计数跨 agent 边界推断。
-- `activeMainLLMSession` 当前只证明 loop 运行态唯一；llm-session 的 archive/current pointer 仍由 `activeLLMSessionRuntime` 维护，并保留 chat/talk agentId 切换行为。
+- `activeMainLLMSession` 是唯一运行态 session 指针；`llm-session` 的 `archive/current` JSONL 是会话内容事实源。
 
 ## Capability tool output target refactor
 

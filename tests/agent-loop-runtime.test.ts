@@ -231,12 +231,12 @@ test("agent heartbeat logs failed talk runs and requeues readiness", async () =>
   assert.equal(logs.some((entry) => entry.level === "error" && entry.message.includes("agent talk session failed")), true);
 });
 
-test("agent loop runtime exposes active llm session pointer operations", () => {
+test("agent loop runtime delegates llm session storage operations", () => {
   const runtime = createAgentLoopRuntime();
   const calls: string[] = [];
   const transcript = { messages: [{ role: "user", content: "hello" }] };
-  runtime.setActiveLLMSessionRuntime({
-    ensureActiveLLMSession(time, agentId) {
+  runtime.setLLMSessionRuntime({
+    ensureCurrentLLMSession(time, agentId) {
       calls.push(`ensure:${agentId ?? "chat"}:${time}`);
       return { id: `${agentId ?? "chat"}-session` };
     },
@@ -244,21 +244,21 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
       calls.push(`create:${time}`);
       return { id: 2002 };
     },
-    noteActiveLLMRequest(_entry, agentId) {
+    noteLLMRequest(_entry, agentId) {
       calls.push(`note-request:${agentId ?? "chat"}`);
     },
-    noteActiveLLMResponse() {
+    noteLLMResponse() {
       calls.push("note-response");
     },
     isActiveTalkLLMSession(sessionId) {
       calls.push(`is-talk:${sessionId}`);
       return sessionId === 2002;
     },
-    loadActiveLLMSessionTranscript() {
+    loadCurrentLLMSessionTranscript() {
       calls.push("load");
       return transcript;
     },
-    updateActiveLLMSessionTranscript(session) {
+    updateCurrentLLMSessionTranscript(session) {
       calls.push(`update-chat:${(session as { id: string }).id}`);
     },
     updateActiveTalkLLMSessionTranscript(session) {
@@ -267,26 +267,26 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
     rewriteActiveTalkLLMSessionFromRuntime(sessionId) {
       calls.push(`rewrite-talk:${sessionId}`);
     },
-    clearActiveLLMSession(reason) {
+    clearCurrentLLMSession(reason) {
       calls.push(`clear:${String(reason)}`);
     },
-    getActiveLLMSessionSnapshot() {
+    getCurrentLLMSessionSnapshot() {
       calls.push("snapshot");
       return { id: "active" };
     }
   });
 
-  assert.deepEqual(runtime.ensureActiveLLMSession("2026-06-12T00:00:00.000", "chat").id, "chat-session");
+  assert.deepEqual(runtime.ensureCurrentLLMSession("2026-06-12T00:00:00.000", "chat").id, "chat-session");
   assert.deepEqual(runtime.createTalkLLMSession("2026-06-12T00:00:00.000").id, 2002);
-  runtime.noteActiveLLMRequest({ id: "request" }, "talk");
-  runtime.noteActiveLLMResponse({ id: "response" });
+  runtime.noteLLMRequest({ id: "request" }, "talk");
+  runtime.noteLLMResponse({ id: "response" });
   assert.equal(runtime.isActiveTalkLLMSession(2002), true);
-  assert.equal(runtime.loadActiveLLMSessionTranscript(), transcript);
-  runtime.updateActiveLLMSessionTranscript({ id: "chat-session" });
+  assert.equal(runtime.loadCurrentLLMSessionTranscript(), transcript);
+  runtime.updateCurrentLLMSessionTranscript({ id: "chat-session" });
   runtime.updateActiveTalkLLMSessionTranscript({ id: "talk-session" });
   runtime.rewriteActiveTalkLLMSessionFromRuntime(2002);
-  runtime.clearActiveLLMSession("admin_clear");
-  assert.deepEqual(runtime.getActiveLLMSessionSnapshot(), { id: "active" });
+  runtime.clearCurrentLLMSession("admin_clear");
+  assert.deepEqual(runtime.getCurrentLLMSessionSnapshot(), { id: "active" });
   assert.deepEqual(calls, [
     "ensure:chat:2026-06-12T00:00:00.000",
     "create:2026-06-12T00:00:00.000",
@@ -300,28 +300,6 @@ test("agent loop runtime exposes active llm session pointer operations", () => {
     "clear:admin_clear",
     "snapshot"
   ]);
-});
-
-test("agent loop runtime stores one active main session context", () => {
-  const runtime = createAgentLoopRuntime();
-  const chatState = { id: "chat-state" };
-  const talkState = { id: "talk-state" };
-
-  runtime.setLoopSessionState("chat", chatState);
-  assert.equal(runtime.getLoopSessionState("chat"), chatState);
-  assert.equal(runtime.getLoopSessionState("talk"), undefined);
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", session: chatState });
-
-  runtime.setLoopSessionState("talk", talkState);
-
-  assert.equal(runtime.getLoopSessionState("chat"), undefined);
-  assert.equal(runtime.getLoopSessionState("talk"), talkState);
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "talk", session: talkState });
-
-  runtime.clearLoopSessionState("chat");
-  assert.equal(runtime.getLoopSessionState("talk"), talkState);
-  runtime.clearLoopSessionState("talk");
-  assert.equal(runtime.getActiveMainSessionContext(), undefined);
 });
 
 test("agent loop runtime prepares and writes loop session context", async () => {
@@ -408,8 +386,6 @@ test("agent loop runtime sets and clears active session context", () => {
   });
 
   assert.deepEqual(localSession, { id: "chat-session" });
-  assert.deepEqual(runtime.getLoopSessionState("chat"), { id: "chat-session" });
-  assert.deepEqual(runtime.getActiveMainSessionContext(), { kind: "chat", session: { id: "chat-session" } });
 
   const cleared = runtime.clearActiveSessionContext({
     kind: "chat",
@@ -421,7 +397,6 @@ test("agent loop runtime sets and clears active session context", () => {
 
   assert.equal(cleared, true);
   assert.equal(localSession, undefined);
-  assert.equal(runtime.getLoopSessionState("chat"), undefined);
 });
 
 test("agent loop runtime creates active session context", () => {
@@ -438,7 +413,6 @@ test("agent loop runtime creates active session context", () => {
 
   assert.equal(created.id, "created-chat");
   assert.equal(localSession, created);
-  assert.equal(runtime.getLoopSessionState("chat"), created);
 });
 
 test("agent loop runtime prepares chat session context", async () => {
@@ -458,7 +432,6 @@ test("agent loop runtime prepares chat session context", async () => {
   assert.equal(prepared.session.fingerprint, "chat-fingerprint");
   assert.equal(prepared.messages.length, 1);
   assert.equal(localSession, prepared.session);
-  assert.equal(runtime.getLoopSessionState("chat"), prepared.session);
 });
 
 test("agent loop runtime ensures chat session context through reset callbacks", async () => {
@@ -476,7 +449,6 @@ test("agent loop runtime ensures chat session context through reset callbacks", 
     defaultMode: () => ({ id: "normal" }),
     shouldClearForInitiatedBehavior: () => false,
     isModeExpired: (current) => current.expired === true,
-    isHydratedFixedPrefixPendingRebuild: () => false,
     isStaticPromptChanged: () => false,
     shouldResetForTokenPressure: () => false,
     modeFromSession: () => ({ id: "from-old" }),

@@ -12,7 +12,6 @@ import {
 } from "../runtime/agent-loop-runtime.js";
 import {
   prepareTalkLoopSessionContext,
-  restoreTalkLoopRuntimeState,
   type TalkLoopExecutedToolCall,
   type TalkLoopSessionContextDeps,
   type TalkLoopRuntimeState
@@ -49,14 +48,13 @@ type TalkAgentLoopState = {
 
 type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
   isActiveTalkLLMSession(sessionId: number): boolean;
-  getActiveTalkLLMSessionId(): number | undefined;
+  getCurrentTalkLLMSessionId(): number | undefined;
   isTalkSessionOpen(sessionId: number): boolean;
   pendingVoiceOutputCharCount(sessionId: number): number;
   isForegroundPlaybackIdle(sessionId: number): boolean;
   maxPendingVoiceOutputChars?: number;
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
-  getLoopSessionState?(): unknown;
   appendAssistantDelta(input: { sessionId: number; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: number; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
@@ -74,13 +72,12 @@ export type PreparedTalkAgentLoop = {
 };
 
 export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgentLoopController {
-  const state = restoreTalkLoopRuntimeState(deps.getLoopSessionState?.());
-  deps.setLoopSessionState?.(state);
+  const state: TalkLoopRuntimeState = { conversationStartIndexes: new Map<number, number>() };
   const maxPendingVoiceOutputChars = deps.maxPendingVoiceOutputChars ?? defaultTalkOutputReadyChars;
 
   async function prepareTalkAgentLoopForSession(sessionId: number, options: { signal?: AbortSignal; agentLoopRunSeq?: number } = {}): Promise<PreparedAgentLoopRun | undefined> {
     if (!deps.isActiveTalkLLMSession(sessionId)) {
-      deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
+      deps.log("warn", `talk loop skipped: session id mismatch session=${sessionId} active=${deps.getCurrentTalkLLMSessionId() ?? "none"}`);
       return;
     }
     if (!deps.isTalkSessionOpen(sessionId)) {
@@ -226,7 +223,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
       return false;
     }
     if (!deps.isActiveTalkLLMSession(sessionId)) {
-      deps.log("warn", `talk loop stopped: session id mismatch session=${sessionId} active=${deps.getActiveTalkLLMSessionId() ?? "none"}`);
+      deps.log("warn", `talk loop stopped: session id mismatch session=${sessionId} active=${deps.getCurrentTalkLLMSessionId() ?? "none"}`);
       return false;
     }
     if (!deps.isTalkSessionOpen(sessionId)) {

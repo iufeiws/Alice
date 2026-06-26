@@ -303,8 +303,8 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
 
   if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
     writeJson(response, 200, {
-      activeSession: context.getActiveLLMSession(),
-      talkActiveSession: context.getActiveTalkLLMSession?.(),
+      activeSession: context.getCurrentLLMSession(),
+      talkActiveSession: context.getCurrentTalkLLMSession?.(),
       clearedSessions: context.getClearedLLMSessions(),
       talkSessions: context.getTalkLLMSessions?.() ?? [],
       memorySessions: context.getMemoryLLMSessions(),
@@ -339,7 +339,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
 
   if (request.method === "POST" && request.url === "/admin/api/llm-chain/clear") {
     context.clearLLMChainCache();
-    context.appendLog("info", "llm active session clear requested");
+    context.appendLog("info", "llm current session clear requested");
     writeJson(response, 200, { ok: true });
     return;
   }

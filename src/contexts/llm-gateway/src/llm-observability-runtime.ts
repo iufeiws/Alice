@@ -8,7 +8,6 @@ export function createLLMObservabilityRuntime(input: {
   responseLogs: any[];
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   agentLoopRuntime: any;
-  getActiveSession(): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const tokenUsageRuntime = createTokenUsageRuntime({
@@ -21,10 +20,10 @@ export function createLLMObservabilityRuntime(input: {
     time: input.time,
     requestLogs: input.requestLogs,
     responseLogs: input.responseLogs,
-    ensureActiveSession: (time, agentId = "chat") => input.agentLoopRuntime.ensureActiveLLMSession(time, agentId),
-    getActiveSession: input.getActiveSession,
-    noteRequest: (entry, agentId = "chat") => input.agentLoopRuntime.noteActiveLLMRequest(entry, agentId),
-    noteResponse: (entry) => input.agentLoopRuntime.noteActiveLLMResponse(entry),
+    ensureActiveSession: (time, agentId = "chat") => input.agentLoopRuntime.ensureCurrentLLMSession(time, agentId),
+    getActiveSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
+    noteRequest: (entry, agentId = "chat") => input.agentLoopRuntime.noteLLMRequest(entry, agentId),
+    noteResponse: (entry) => input.agentLoopRuntime.noteLLMResponse(entry),
     appendUsageLog: tokenUsageRuntime.appendLLMUsageLog,
     resolveModel: (agentId) => input.resolvePromptApiPreset(agentId === "talk" ? "talk" : "chat")?.model,
     recordTokenUsage: tokenUsageRuntime.recordTokenUsage

@@ -72,7 +72,7 @@ export type LLMSessionTurn = {
   messages: LLMChatInput["messages"];
 };
 
-export type ActiveLLMSession = {
+export type LLMSessionRecord = {
   id: number;
   agentId?: "chat" | "talk";
   startedAt: string;

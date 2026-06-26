@@ -38,8 +38,8 @@ export function createAdminRequestHandlerRuntime(input: {
   messageLogs: unknown[];
   llmRequestLogs: unknown[];
   llmResponseLogs: unknown[];
-  getActiveLLMSession(): unknown;
-  getActiveTalkLLMSession(): unknown;
+  getCurrentLLMSession(): unknown;
+  getCurrentTalkLLMSession(): unknown;
   getClearedLLMSessions(): unknown[];
   getTalkLLMSessions(): unknown[];
   getMemoryLLMSessions(): unknown[];
@@ -116,8 +116,8 @@ export function createAdminRequestHandlerRuntime(input: {
     messageLogs: input.messageLogs,
     llmRequestLogs: input.llmRequestLogs,
     llmResponseLogs: input.llmResponseLogs,
-    getActiveLLMSession: input.getActiveLLMSession,
-    getActiveTalkLLMSession: input.getActiveTalkLLMSession,
+    getCurrentLLMSession: input.getCurrentLLMSession,
+    getCurrentTalkLLMSession: input.getCurrentTalkLLMSession,
     getClearedLLMSessions: input.getClearedLLMSessions,
     getTalkLLMSessions: input.getTalkLLMSessions,
     getMemoryLLMSessions: input.getMemoryLLMSessions,

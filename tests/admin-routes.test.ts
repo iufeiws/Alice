@@ -2100,7 +2100,7 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     messageLogs: [],
     llmRequestLogs: [],
     llmResponseLogs: [],
-    getActiveLLMSession: () => undefined,
+    getCurrentLLMSession: () => undefined,
     getClearedLLMSessions: () => [],
     getMemoryLLMSessions: () => [],
     getLLMSession: () => undefined,

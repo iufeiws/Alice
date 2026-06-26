@@ -106,7 +106,6 @@ export type AgentLoopEnsureChatSessionContextInput<TSession = unknown, TMode = u
   defaultMode(): TMode;
   shouldClearForInitiatedBehavior(session: TSession): boolean;
   isModeExpired(session: TSession): boolean;
-  isHydratedFixedPrefixPendingRebuild(session: TSession): boolean;
   isStaticPromptChanged(session: TSession): boolean;
   shouldResetForTokenPressure(session: TSession): Promise<boolean> | boolean;
   modeFromSession(session: TSession): TMode;
@@ -235,13 +234,6 @@ export async function ensureAgentLoopChatSessionContext<TSession = unknown, TMod
   if (session && input.isModeExpired(session)) {
     input.clearSession("mode_timeout");
     input.setPendingMode(input.defaultMode());
-  }
-
-  session = input.getSession();
-  if (session && input.isHydratedFixedPrefixPendingRebuild(session) && !input.getPendingMode()) {
-    const mode = input.modeFromSession(session);
-    input.clearSession();
-    input.setPendingMode(mode);
   }
 
   session = input.getSession();

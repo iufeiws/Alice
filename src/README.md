@@ -32,14 +32,14 @@
 - `bootstrap/api-root-runtime.ts`: 顶层 composition root，创建 foundation、LLM runtime、control runtime、tooling runtime、agent runtime、server runtime。
 - `bootstrap/api-foundation-runtime.ts`: 基础设施装配，包括 time、config、logging、storage。
 - `bootstrap/api-bootstrap-runtime.ts`: dotenv、配置、LLM preset store、进程单例锁和基础 LLM client。
-- `bootstrap/api-runtime-state.ts`: API 进程内 mutable 状态，例如 active LLM session、近期 request/response logs。
+- `bootstrap/api-runtime-state.ts`: API 进程内 mutable 状态，例如近期 request/response logs；LLM session 内容由 `llm-session` 的 current JSONL 指针承载。
 - `bootstrap/api-agent-runtime.ts`: 把 app 层依赖注入 agent-loop 和 talk-session runtime。
 - `bootstrap/api-agent-stack-runtime.ts`: 聚合 chat core、talk loop、talk runtime。
 - `bootstrap/api-capabilities-runtime.ts`: 装配 tools、TTS/ASR channel、prompt preview service、LLM request runtime。
 - `bootstrap/api-communication-runtime.ts`: 装配 Feishu、WeChat、WebRTC voice 等通信 channel。
 - `bootstrap/api-context-runtime.ts`: 装配 profile、memory、initiative、channel state stores。
 - `bootstrap/api-control-runtime.ts`: 装配控制面、主动行为、系统通知。
-- `bootstrap/api-llm-runtime.ts`: 装配 LLM session archive、active session runtime、observability。
+- `bootstrap/api-llm-runtime.ts`: 装配 LLM session archive、current session runtime、observability。
 - `bootstrap/api-log-runtime.ts`: 进程内日志缓存和日志 store hydration。
 - `bootstrap/api-notice-runtime.ts`: 装配 conversation-hub 的 outbound notice runtime。
 - `bootstrap/api-startup-runtime.ts`: 启动后启动 channel、注册调度器、执行初始化。
@@ -175,7 +175,7 @@
 
 ## `contexts/llm-session/`
 
-职责：拥有 LLM session 指针、归档文件、active session 恢复、session list/detail view。
+职责：拥有 LLM session current 指针、归档文件、current session 恢复、session list/detail view。
 
 不负责：memory LLM session 的归纳逻辑、LLM provider client、tool execution。
 
@@ -184,12 +184,12 @@
 - `adapters/jsonl-llm-session-log.ts`: JSONL session archive adapter。负责 session 文件路径、metadata、messages 读写和 clone。
 - `domain/llm-session.ts`: LLM session domain types。
 - `domain/llm-session-utils.ts`: metadata 中 request/response/round 的解析 helper。
-- `application/active-llm-session.ts`: active session pointer、transcript 更新、talk/chat active session 判断。
+- `application/llm-session-runtime.ts`: current session pointer、transcript 更新、talk/chat current session 判断。
 - `application/archive-llm-session.ts`: session archive root、文件收集、相对路径、安全路径解析。
-- `application/create-llm-session.ts`: API session runtime，负责恢复 active session、创建 chat/talk session。
+- `application/create-llm-session.ts`: API session runtime，负责恢复 current session、创建 chat/talk session。
 - `application/list-llm-sessions.ts`: session 列表聚合。
 - `application/llm-session-view.ts`: session detail、turns、jsonl entries 构造。
-- `application/admin-llm-session.ts`: 管理后台会话聚合入口，组合 active/list/view/preview/memory console。
+- `application/admin-llm-session.ts`: 管理后台会话聚合入口，组合 current/list/view/preview/memory console。
 - `src/index.ts`: context public exports。
 
 ## `contexts/memory/`

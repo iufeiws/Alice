@@ -11,7 +11,7 @@ export function createLLMLogRuntime(input: {
   requestLogs: LLMRequestLogEntry[];
   responseLogs: LLMResponseLogEntry[];
   ensureActiveSession(time: string, agentId: AgentId): { id: number };
-  getActiveSession(): { id: number; requestIds: number[] } | undefined;
+  getActiveSession(): { id: number | string; requestIds?: number[] } | undefined;
   noteRequest(entry: LLMRequestLogEntry, agentId: AgentId): void;
   noteResponse(entry: LLMResponseLogEntry): void;
   appendUsageLog(result: LLMChatResult, modelFallback: string | undefined): void;
@@ -60,11 +60,12 @@ export function createLLMLogRuntime(input: {
     input.appendUsageLog(result, result.model ?? input.resolveModel(agentId));
     const now = input.time.now();
     const activeSession = request ? undefined : input.getActiveSession();
+    const activeSessionId = typeof activeSession?.id === "number" ? activeSession.id : undefined;
     const entry = {
       id: nextResponseId,
       agentId,
-      sessionId: request?.sessionId ?? activeSession?.id,
-      requestId: request?.id ?? activeSession?.requestIds.at(-1),
+      sessionId: request?.sessionId ?? activeSessionId,
+      requestId: request?.id ?? activeSession?.requestIds?.at(-1),
       time: now.iso,
       timeUtc: now.date.toISOString(),
       message: { ...result.message },

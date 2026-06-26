@@ -18,9 +18,22 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 function createAgentCore(deps: AgentCoreDeps) {
+  let persistedSession = deps.initialLLMSession;
+  const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
+  const onLLMSessionUpdated = deps.onLLMSessionUpdated;
+  const onLLMSessionCleared = deps.onLLMSessionCleared;
   return createAgentCoreUnderTest({
     getPromptProfile: testPromptProfile,
-    ...deps
+    ...deps,
+    loadLLMSession,
+    onLLMSessionUpdated(session) {
+      if (!deps.loadLLMSession) persistedSession = session;
+      onLLMSessionUpdated?.(session);
+    },
+    onLLMSessionCleared(reason) {
+      if (!deps.loadLLMSession) persistedSession = undefined;
+      onLLMSessionCleared?.(reason);
+    }
   });
 }
 
@@ -1114,7 +1127,7 @@ test("agent core appends force wake instruction from heartbeat event", async () 
   assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
 });
 
-test("agent core keeps fixed prefix static messages when token pressure rebuilds the session", async () => {
+test("agent core keeps fixed prefix current transcript when token pressure runs", async () => {
   let capturedSession: LLMSessionSnapshot | undefined;
   const promptProfile = {
     userName: "user",
@@ -1208,16 +1221,13 @@ test("agent core keeps fixed prefix static messages when token pressure rebuilds
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
-  assert.equal(messages.some((message) => message.content === "old session marker"), false);
-  const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  assert.equal(messages.some((message) => message.content === "old session marker"), true);
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
-  assert.ok(bookcaseIndex >= 0);
-  assert.ok(checkChatIndex > bookcaseIndex);
-  assert.equal(messages[bookcaseIndex + 1]?.content, "<book>persistent story</book>");
+  assert.ok(checkChatIndex >= 0);
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
 });
 
-test("agent core restores fixed prefix static messages from an initial session snapshot", async () => {
+test("agent core uses fixed prefix current transcript from an initial session snapshot", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
@@ -1291,8 +1301,8 @@ test("agent core restores fixed prefix static messages from an initial session s
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
-  assert.equal(messages.some((message) => message.content === "old live context"), false);
-  assert.equal(messages.some((message) => message.content === "old static prompt"), false);
+  assert.equal(messages.some((message) => message.content === "old live context"), true);
+  assert.equal(messages.some((message) => message.content === "old static prompt"), true);
   const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
   assert.ok(bookcaseIndex >= 0);
@@ -2895,6 +2905,7 @@ test("agent core uses fixed prefix check chat preview scope for token pressure b
     }]
   });
 
+  await runPreparedCoreEvent(core, textEvent());
   await runPreparedCoreEvent(core, textEvent());
   await runPreparedCoreEvent(core, textEvent());
 

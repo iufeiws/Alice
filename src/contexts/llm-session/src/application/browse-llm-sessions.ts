@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { readLLMSessionJsonl } from "../adapters/jsonl-llm-session-log.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
-import type { ActiveLLMSession } from "../domain/llm-session.js";
+import type { LLMSessionRecord } from "../domain/llm-session.js";
 import {
   parseRequestInfo,
   parseResponseInfo,
@@ -24,7 +24,7 @@ export function createLLMSessionBrowserRuntime(input: {
   sessionRoot(): string;
   collectFiles(dir: string, files: string[]): void;
   relativePath(filePath: string): string;
-  getActiveSession?(): ActiveLLMSession | undefined;
+  getActiveSession?(): LLMSessionRecord | undefined;
   sources: LLMSessionBrowserSource[];
 }) {
   return {
@@ -115,7 +115,7 @@ export function createLLMSessionBrowserRuntime(input: {
     }
   }
 
-  function buildActiveSessionDetail(session: ActiveLLMSession): unknown {
+  function buildActiveSessionDetail(session: LLMSessionRecord): unknown {
     const metadata = session.archiveMetadata ?? {
       type: "llm_session",
       sessionId: session.id,

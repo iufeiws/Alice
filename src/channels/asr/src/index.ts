@@ -10,14 +10,31 @@ import type {
   InboundAudioStreamChunkFrame,
   InboundAudioStreamEndFrame,
   InboundAudioStreamFrame,
-  InboundAudioStreamStartFrame
+  InboundAudioStreamStartFrame,
+  ToolDefinition
 } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { LLMClient, LLMToolCall } from "../../../contexts/llm-gateway/src/index.js";
+import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { sanitizeAudioTranscript } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const tencentLocalAudioUploadLimitBytes = 5 * 1024 * 1024;
 const defaultPseudoStreamMinPauseMs = 1500;
+const submitAudioContextTool: ToolDefinition = {
+  name: "submit_audio_context",
+  description: "",
+  inputSchema: {
+    type: "object",
+    properties: {
+      speakText: { type: "string" },
+      emotion: { type: "string" },
+      description: { type: "string" }
+    },
+    required: ["speakText", "emotion", "description"],
+    additionalProperties: false
+  }
+};
 
-export type AsrProvider = "tencent" | "openai_compatible";
+export type AsrProvider = "tencent" | "openai_compatible" | "multimodal_llm";
 export type AsrResponseFormat = "json" | "text" | "verbose_json";
 
 export type AsrApiPreset = {
@@ -43,6 +60,11 @@ export type AsrPluginConfig = {
       responseFormat?: AsrResponseFormat;
       retryCount?: number;
       retryBackoffMs?: number;
+    };
+    multimodalLlm?: {
+      apiPresetName?: string;
+      prompt?: string;
+      extraParams?: Record<string, unknown>;
     };
     tencent?: {
       appId?: string;
@@ -113,6 +135,8 @@ export type AsrPluginDeps = {
   resolveApiPreset?(name: string): AsrApiPreset | undefined;
   sleep?(ms: number): Promise<void>;
   splitAudio?(input: AsrSplitAudioInput): Promise<AsrAudioChunk[]>;
+  llmRequestSender?: LLMRequestSender;
+  createLlmClientFromPreset?(preset: AsrApiPreset, env: Record<string, string | undefined>): LLMClient | undefined;
   now?(): Date;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
@@ -626,6 +650,7 @@ export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginCo
     pseudoStreamMinPauseMs: numberValue(parsed.pseudoStreamMinPauseMs, undefined),
     providers: {
       openaiCompatible: parseOpenAiCompatibleConfig(providers.openaiCompatible),
+      multimodalLlm: parseMultimodalLlmConfig(providers.multimodalLlm),
       tencent: parseTencentConfig(providers.tencent)
     }
   };
@@ -659,7 +684,9 @@ export async function transcribeWithAsrPlugin(
   try {
     const result = provider === "tencent"
       ? await transcribeTencent(input, config, deps)
-      : await transcribeOpenAiCompatible(input, config, deps);
+      : provider === "multimodal_llm"
+        ? await transcribeMultimodalLlm(input, config, deps)
+        : await transcribeOpenAiCompatible(input, config, deps);
     const text = result.text.trim();
     if (!text) return { ok: false, error: "empty_transcription", provider, requestId: result.requestId };
     return {
@@ -715,6 +742,59 @@ async function transcribeOpenAiCompatible(input: AsrTranscribeInput, config: Asr
     model,
     language: input.language,
     raw
+  };
+}
+
+async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPluginConfig, deps: AsrPluginDeps): Promise<AsrTranscribeResult> {
+  const providerConfig = config.providers.multimodalLlm;
+  const preset = providerConfig?.apiPresetName ? deps.resolveApiPreset?.(providerConfig.apiPresetName) : undefined;
+  const client = preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined;
+  const prompt = providerConfig?.prompt;
+  if (!providerConfig?.apiPresetName || !preset || !client || !deps.llmRequestSender || !prompt) {
+    throw new AsrConfigError("missing_provider_config");
+  }
+
+  const audio = await readAudioInput(input);
+  const mimeType = input.mimeType || mimeTypeForFileName(input.filename || audio.filename);
+  const result = await deps.llmRequestSender({
+    agentId: "asr",
+    client,
+    presetName: providerConfig.apiPresetName,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "input_audio", input_audio: { data: audioDataUrl(audio.bytes, mimeType), format: audioFormatForMimeType(mimeType) } },
+        { type: "text", text: prompt }
+      ]
+    }],
+    model: preset.model,
+    temperature: preset.temperature,
+    extraParams: providerConfig.extraParams ?? {},
+    toolNames: [submitAudioContextTool.name],
+    inlineTools: [submitAudioContextTool],
+    toolVariables: {
+      provider: "multimodal_llm",
+      filename: input.filename || audio.filename,
+      mimeType,
+      metadata: input.metadata ?? {}
+    },
+    round: 0,
+    stream: false,
+    metadata: {
+      pluginId: "asr",
+      provider: "multimodal_llm",
+      filename: input.filename || audio.filename,
+      mimeType
+    }
+  });
+  const toolCall = requireSingleToolCall(result.message.toolCalls, submitAudioContextTool.name);
+  const args = parseSubmitAudioContextArguments(toolCall.function.arguments);
+  return {
+    text: renderSubmitAudioContextText(args),
+    provider: "multimodal_llm",
+    model: result.model ?? preset.model,
+    requestId: result.id,
+    raw: result.raw
   };
 }
 
@@ -922,6 +1002,59 @@ function parseOpenAiCompatibleConfig(value: unknown): AsrPluginConfig["providers
   };
 }
 
+function parseMultimodalLlmConfig(value: unknown): AsrPluginConfig["providers"]["multimodalLlm"] {
+  const parsed = parseJsonObject(value);
+  if (!Object.keys(parsed).length) return undefined;
+  return {
+    apiPresetName: stringValue(parsed.apiPresetName),
+    prompt: stringValue(parsed.prompt),
+    extraParams: recordValue(parsed.extraParams)
+  };
+}
+
+function requireSingleToolCall(toolCalls: LLMToolCall[] | undefined, toolName: string): LLMToolCall {
+  if (!toolCalls?.length) throw new Error("multimodal_llm_asr_missing_tool_call");
+  if (toolCalls.length !== 1) throw new Error("multimodal_llm_asr_unexpected_tool_call_count");
+  const call = toolCalls[0];
+  if (call.function.name !== toolName) throw new Error(`multimodal_llm_asr_unexpected_tool_call:${call.function.name}`);
+  return call;
+}
+
+function parseSubmitAudioContextArguments(raw: string): { speakText: string; emotion: string; description: string } {
+  const parsed = JSON.parse(raw || "{}") as Record<string, unknown>;
+  if (typeof parsed.speakText !== "string" || typeof parsed.emotion !== "string" || typeof parsed.description !== "string") {
+    throw new Error("multimodal_llm_asr_invalid_tool_arguments");
+  }
+  return {
+    speakText: parsed.speakText,
+    emotion: parsed.emotion,
+    description: parsed.description
+  };
+}
+
+function renderSubmitAudioContextText(args: { speakText: string; emotion: string; description: string }): string {
+  const speakText = args.speakText.trim();
+  if (speakText) return `[语音][${args.emotion.trim()}]${speakText}`;
+  return `[语音][${args.description.trim()}]`;
+}
+
+function audioDataUrl(bytes: Uint8Array, mimeType: string): string {
+  return `data:${mimeType};base64,${base64FromBytes(bytes)}`;
+}
+
+function audioFormatForMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3";
+  if (normalized.includes("wav") || normalized.includes("wave")) return "wav";
+  if (normalized.includes("mp4") || normalized.includes("m4a")) return "mp4";
+  if (normalized.includes("ogg")) return "ogg";
+  return "wav";
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
 function copyInboundChunk(frame: InboundAudioStreamChunkFrame): InboundAudioStreamChunkFrame {
   const bytes = new Uint8Array(frame.bytes.byteLength);
   bytes.set(frame.bytes);
@@ -1060,7 +1193,7 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
 }
 
 function asrProviderValue(value: unknown): AsrProvider | undefined {
-  return value === "tencent" || value === "openai_compatible" ? value : undefined;
+  return value === "tencent" || value === "openai_compatible" || value === "multimodal_llm" ? value : undefined;
 }
 
 function booleanValue(value: unknown, fallback: boolean): boolean {

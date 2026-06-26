@@ -1254,6 +1254,11 @@ test("admin plugin config patch writes ASR config with preset references only", 
         model: "whisper-1",
         responseFormat: "json"
       },
+      multimodalLlm: {
+        apiPresetName: "asr-openai",
+        prompt: "configured prompt",
+        extraParams: "{\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"submit_audio_context\"}}}"
+      },
       tencent: {
         secretId: "secret-id",
         secretKey: "secret-key",
@@ -1271,11 +1276,25 @@ test("admin plugin config patch writes ASR config with preset references only", 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configValue.providers.openaiCompatible.apiPresetName, "asr-openai");
+  assert.equal(body.configValue.providers.multimodalLlm.apiPresetName, "asr-openai");
+  assert.equal(body.configValue.providers.multimodalLlm.prompt, "configured prompt");
+  assert.deepEqual(body.configValue.providers.multimodalLlm.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    }
+  });
   assert.equal(body.configValue.providers.tencent.secretId, "secret-id");
   assert.equal(body.configValue.providers.tencent.secretKey, "secret-key");
   assert.equal(saved.providers.openaiCompatible.apiKey, undefined);
   assert.equal(saved.providers.tencent.secretKey, "secret-key");
   assert.equal(saved.providers.openaiCompatible.model, undefined);
+  assert.deepEqual(saved.providers.multimodalLlm.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    }
+  });
   assert.equal(saved.providers.tencent.engineModelType, "16k_zh");
 });
 
@@ -1347,10 +1366,12 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai_compatible", "tencent"]);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai_compatible", "multimodal_llm", "tencent"]);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "enabled").group, "general");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.model"), undefined);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.apiPresetName").group, "openai_compatible");
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.apiPresetName").group, "multimodal_llm");
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.extraParams").type, "textarea");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.tencent.engineModelType").group, "tencent");
 });
 
@@ -1634,6 +1655,89 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   assert.equal(body.result.provider, "openai_compatible");
   assert.equal(body.result.model, "whisper-1");
   assert.equal(typeof body.result.timing.totalMs, "number");
+  fs.rmSync(audioPath, { force: true });
+});
+
+test("admin plugin test runs multimodal LLM ASR through llm request dependencies", async () => {
+  const root = makeTempDir("admin-asr-plugin-test-multimodal");
+  const assetRoot = path.join(root, "assets");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
+  const audioAssetPath = path.join("assets", "plugin", "asr", `test-${path.basename(root)}.wav`);
+  const audioPath = path.join(assetRoot, "plugin", "asr", `test-${path.basename(root)}.wav`);
+  let capturedRequest: any;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+  fs.writeFileSync(audioPath, "audio");
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    testAudioPath: audioAssetPath,
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "asr",
+        prompt: "configured prompt",
+        extraParams: {
+          tool_choice: {
+            type: "function",
+            function: { name: "submit_audio_context" }
+          }
+        }
+      }
+    }
+  })}\n`);
+  writePreset(root, "asr");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: {
+      asr: {
+        configPath,
+        assetRoot
+      }
+    },
+    llmRequestSender: async (request: any) => {
+      capturedRequest = request;
+      return {
+        id: "admin-asr-request",
+        model: "flash",
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "submit_audio_context",
+              arguments: JSON.stringify({ speakText: "后台识别", emotion: "calm", description: "" })
+            }
+          }]
+        }
+      };
+    }
+  };
+  const handler = createAdminHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("POST", "/admin/api/plugins/asr/test", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.result.output, "[语音][calm]后台识别");
+  assert.equal(body.result.provider, "multimodal_llm");
+  assert.equal(body.result.model, "flash");
+  assert.equal(body.result.requestId, "admin-asr-request");
+  assert.equal(capturedRequest.agentId, "asr");
+  assert.equal(capturedRequest.client && typeof capturedRequest.client.chat, "function");
+  assert.equal(capturedRequest.presetName, "asr");
+  assert.deepEqual(capturedRequest.toolNames, ["submit_audio_context"]);
+  assert.deepEqual(capturedRequest.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    }
+  });
   fs.rmSync(audioPath, { force: true });
 });
 

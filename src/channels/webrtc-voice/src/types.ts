@@ -16,7 +16,7 @@ export type WebRtcVoiceConfig = {
   signalingPath: string;
   accountId: string;
   language: string;
-  asrProvider?: "tencent" | "openai_compatible";
+  asrProvider?: "tencent" | "openai_compatible" | "multimodal_llm";
   inboundAudio: {
     sampleRateHz: number;
     channels: number;

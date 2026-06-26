@@ -167,12 +167,12 @@ export type FeishuAsrTranscriber = {
     filename?: string;
     mimeType?: string;
     language?: string;
-    provider?: "tencent" | "openai_compatible";
+    provider?: "tencent" | "openai_compatible" | "multimodal_llm";
     prompt?: string;
     metadata?: Record<string, unknown>;
   }): Promise<
-    | { text: string; provider: "tencent" | "openai_compatible"; model?: string; language?: string; durationMs?: number; requestId?: string; raw?: unknown }
-    | { ok: false; error: string; message?: string; provider?: "tencent" | "openai_compatible"; requestId?: string }
+    | { text: string; provider: "tencent" | "openai_compatible" | "multimodal_llm"; model?: string; language?: string; durationMs?: number; requestId?: string; raw?: unknown }
+    | { ok: false; error: string; message?: string; provider?: "tencent" | "openai_compatible" | "multimodal_llm"; requestId?: string }
   >;
 };
 

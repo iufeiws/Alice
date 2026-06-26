@@ -39,9 +39,11 @@ export function createVoicePluginRuntime(input: {
     appendLog: input.appendLog
   });
   const asrPlugin = createAsrPlugin({
+    llmRequestSender: (request) => input.sendLLMRequest(request),
     resolveApiPreset(name) {
       return input.readLLMApiPresets().find((entry) => entry.name === name);
     },
+    createLlmClientFromPreset: createAsrLlmClientFromPreset,
     appendLog: input.appendLog
   });
 
@@ -50,6 +52,19 @@ export function createVoicePluginRuntime(input: {
     ttsPlugin,
     asrPlugin
   };
+}
+
+function createAsrLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, string | undefined>) {
+  const apiKey = preset.apiKey || (preset.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
+  if (!preset.baseURL || !apiKey) return undefined;
+  return createOpenAICompatibleClient({
+    baseURL: preset.baseURL,
+    apiKey,
+    model: preset.model,
+    temperature: preset.temperature,
+    timeoutMs: preset.timeoutMs,
+    extraParams: preset.extraParams
+  });
 }
 
 function createTtsLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, string | undefined>) {

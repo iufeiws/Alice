@@ -153,6 +153,214 @@ test("ASR provider requests include abort signals for configured timeouts", asyn
   assert.equal(result.text, "ok");
 });
 
+test("multimodal LLM ASR sends one tool-call request and renders speech text", async () => {
+  const audioPath = writeAudioFixture("multimodal.wav");
+  let capturedRequest: any;
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "mimo",
+        prompt: "configured prompt",
+        extraParams: {
+          tool_choice: {
+            type: "function",
+            function: { name: "submit_audio_context" }
+          }
+        }
+      }
+    }
+  };
+
+  const result = await transcribeWithAsrPlugin({
+    audioFile: audioPath,
+    filename: "speech.wav",
+    mimeType: "audio/wav",
+    metadata: { source: "unit-test" }
+  }, config, {
+    resolveApiPreset(name: string) {
+      assert.equal(name, "mimo");
+      return {
+        name,
+        baseURL: "https://api.example.test/v1",
+        apiKey: "secret",
+        model: "mimo-v2.5",
+        temperature: 0.2,
+        timeoutMs: 120_000,
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    createLlmClientFromPreset(preset) {
+      assert.equal(preset.model, "mimo-v2.5");
+      return {
+        async chat() {
+          throw new Error("llmRequestSender should own sending");
+        }
+      };
+    },
+    async llmRequestSender(request) {
+      capturedRequest = request;
+      return {
+        id: "chatcmpl_asr",
+        model: "mimo-v2.5",
+        finishReason: "tool_calls",
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "submit_audio_context",
+              arguments: JSON.stringify({ speakText: "こんにちは", emotion: "calm", description: "" })
+            }
+          }]
+        }
+      };
+    }
+  });
+
+  assertAsrSuccess(result);
+  assert.equal(result.text, "[语音][calm]こんにちは");
+  assert.equal(result.provider, "multimodal_llm");
+  assert.equal(result.model, "mimo-v2.5");
+  assert.equal(result.requestId, "chatcmpl_asr");
+  assert.equal(capturedRequest.agentId, "asr");
+  assert.equal(capturedRequest.presetName, "mimo");
+  assert.equal(capturedRequest.stream, false);
+  assert.deepEqual(capturedRequest.toolNames, ["submit_audio_context"]);
+  assert.equal(capturedRequest.inlineTools[0].name, "submit_audio_context");
+  assert.deepEqual(capturedRequest.extraParams, config.providers.multimodalLlm?.extraParams);
+  assert.equal(capturedRequest.messages[0].role, "user");
+  assert.equal(capturedRequest.messages[0].content[0].type, "input_audio");
+  assert.match(capturedRequest.messages[0].content[0].input_audio.data, /^data:audio\/wav;base64,/);
+  assert.deepEqual(capturedRequest.toolVariables.metadata, { source: "unit-test" });
+});
+
+test("multimodal LLM ASR renders description when speech text is empty", async () => {
+  const result = await transcribeWithAsrPlugin({
+    audioFile: new Uint8Array([1, 2, 3]),
+    filename: "noise.mp3",
+    mimeType: "audio/mpeg"
+  }, {
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "mimo",
+        prompt: "configured prompt"
+      }
+    }
+  }, {
+    resolveApiPreset() {
+      return {
+        name: "mimo",
+        baseURL: "https://api.example.test/v1",
+        apiKey: "secret",
+        model: "mimo-v2.5",
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    createLlmClientFromPreset() {
+      return { async chat() { return { message: { role: "assistant", content: "" } }; } };
+    },
+    async llmRequestSender() {
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "submit_audio_context",
+              arguments: JSON.stringify({ speakText: "", emotion: "", description: "door knock" })
+            }
+          }]
+        }
+      };
+    }
+  });
+
+  assertAsrSuccess(result);
+  assert.equal(result.text, "[语音][door knock]");
+});
+
+test("multimodal LLM ASR fails when prompt or tool call is missing", async () => {
+  const missingPrompt = await transcribeWithAsrPlugin({
+    audioFile: new Uint8Array([1]),
+    filename: "speech.wav"
+  }, {
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "mimo"
+      }
+    }
+  }, {
+    resolveApiPreset() {
+      return {
+        name: "mimo",
+        baseURL: "https://api.example.test/v1",
+        apiKey: "secret",
+        model: "mimo-v2.5",
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    createLlmClientFromPreset() {
+      return { async chat() { return { message: { role: "assistant", content: "" } }; } };
+    },
+    async llmRequestSender() {
+      throw new Error("should not send without prompt");
+    }
+  });
+  assertAsrError(missingPrompt);
+  assert.equal(missingPrompt.error, "missing_provider_config");
+
+  const missingToolCall = await transcribeWithAsrPlugin({
+    audioFile: new Uint8Array([1]),
+    filename: "speech.wav"
+  }, {
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "mimo",
+        prompt: "configured prompt"
+      }
+    }
+  }, {
+    resolveApiPreset() {
+      return {
+        name: "mimo",
+        baseURL: "https://api.example.test/v1",
+        apiKey: "secret",
+        model: "mimo-v2.5",
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    createLlmClientFromPreset() {
+      return { async chat() { return { message: { role: "assistant", content: "" } }; } };
+    },
+    async llmRequestSender() {
+      return { message: { role: "assistant", content: "no tool" } };
+    }
+  });
+  assertAsrError(missingToolCall);
+  assert.equal(missingToolCall.error, "provider_request_failed");
+  assert.match(missingToolCall.message ?? "", /missing_tool_call/);
+});
+
 test("Tencent ASR splits local files larger than provider upload limit and sends every chunk", async () => {
   const audioPath = writeAudioFixture("tencent-large.wav", 5 * 1024 * 1024 + 1);
   let createCalls = 0;

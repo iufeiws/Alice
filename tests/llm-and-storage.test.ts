@@ -416,6 +416,59 @@ test("LLM request message sanitization settings can be disabled separately", asy
   assert.equal(requestMessages?.[1].content, "separate");
 });
 
+test("LLM request sender renders extra params and supports inline tools", async () => {
+  let request: any;
+  const client: LLMClient = {
+    async chat(input) {
+      request = input;
+      return { message: { role: "assistant", content: "ok" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "asr",
+    client,
+    messages: [],
+    extraParams: {
+      tool_choice: {
+        type: "function",
+        function: { name: "{{toolName}}" }
+      }
+    },
+    toolNames: ["submit_audio_context"],
+    inlineTools: [{
+      name: "submit_audio_context",
+      description: "",
+      inputSchema: {
+        type: "object",
+        properties: {
+          speakText: { type: "string" }
+        }
+      }
+    }],
+    toolVariables: {
+      toolName: "submit_audio_context"
+    },
+    round: 0,
+    stream: false
+  });
+
+  assert.deepEqual(request.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    }
+  });
+  assert.equal(request.tools[0].function.name, "submit_audio_context");
+});
+
 test("openai-compatible client removes parenthesized assistant response content", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({
@@ -1004,6 +1057,68 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
 
   assert.deepEqual(requestPresetNames, ["chat-flash"]);
   assert.deepEqual(responseRequestIds, [10]);
+});
+
+test("LLM requests runtime writes non-main requests to subagent sessions", async () => {
+  const subagentRoot = makeTempDir("llm-subagent-session");
+  const usageEvents: any[] = [];
+  const client: LLMClient = {
+    async chat() {
+      return {
+        model: "mimo-v2.5",
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "submit_audio_context", arguments: "{}" }
+          }]
+        },
+        finishReason: "tool_calls"
+      };
+    }
+  };
+  const runtime = createLLMRequestsRuntime({
+    getTool() {
+      return undefined;
+    },
+    appendLLMRequestLog() {
+      throw new Error("subagent should not use main request log");
+    },
+    appendLLMResponseLog() {
+      throw new Error("subagent should not use main response log");
+    },
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent(event) {
+      usageEvents.push(event);
+    },
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "fallback" }),
+    appendLog() {},
+    subagentSessionRoot: subagentRoot
+  });
+
+  await runtime.send({
+    agentId: "asr",
+    client,
+    messages: [{ role: "user", content: "audio" }],
+    model: "mimo-v2.5",
+    toolNames: [],
+    round: 0,
+    stream: false,
+    metadata: { pluginId: "asr" }
+  });
+
+  const sessionDir = path.join(subagentRoot, "asr", "2026-06-14");
+  const files = fs.readdirSync(sessionDir).filter((entry) => entry.endsWith(".jsonl"));
+  assert.equal(files.length, 1);
+  const parsed = readLLMSessionJsonl(path.join(sessionDir, files[0]));
+  assert.equal(parsed?.metadata.type, "llm_subagent_session");
+  assert.equal(parsed?.metadata.agent, "asr");
+  assert.deepEqual(parsed?.metadata.metadata, { pluginId: "asr" });
+  assert.deepEqual(parsed?.messages.map((message) => message.role), ["user", "assistant"]);
+  assert.deepEqual(usageEvents.map((event) => event.agentId), ["asr"]);
 });
 
 test("LLMRequests does not retry a successful call when response hook fails", async () => {

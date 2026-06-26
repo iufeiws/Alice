@@ -68,7 +68,7 @@ export type InboundAudioStreamStartFrame = {
     encoding?: string;
   };
   language?: string;
-  provider?: "tencent" | "openai_compatible";
+  provider?: "tencent" | "openai_compatible" | "multimodal_llm";
   prompt?: string;
   metadata?: Record<string, unknown>;
 };

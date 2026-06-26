@@ -3,6 +3,7 @@ import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
+const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
   config: any;
@@ -36,7 +37,8 @@ export function createApiCapabilitiesRuntime(input: {
     recordTokenUsageEvent: input.recordTokenUsageEvent,
     time: input.time,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
-    appendLog: input.appendLog
+    appendLog: input.appendLog,
+    subagentSessionRoot: path.join(input.config.memoryFiles.root, "llm-sessions", "sub_agent")
   });
 
   const voicePluginRuntime = createVoicePluginRuntime({

@@ -545,12 +545,14 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
       groups: [
         { key: "general", label: "General" },
         { key: "openai_compatible", label: "OpenAI Compatible" },
+        { key: "multimodal_llm", label: "Multimodal LLM" },
         { key: "tencent", label: "Tencent Cloud" }
       ],
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable ASR requests." },
         { key: "defaultProvider", label: "Default Provider", type: "select", group: "general", options: [
           { value: "openai_compatible", label: "OpenAI Compatible" },
+          { value: "multimodal_llm", label: "Multimodal LLM" },
           { value: "tencent", label: "Tencent Cloud" }
         ], description: "Provider used when callers do not explicitly choose one." },
         { key: "testAudioPath", label: "Test Audio", type: "fileUpload", group: "general", assetKey: "test-audio", accept: "audio/*", description: "Plugin-owned test audio under assets/plugin/asr/test-audio/." },
@@ -563,6 +565,9 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
         ] },
         { key: "providers.openaiCompatible.retryCount", label: "OpenAI Retry Count", type: "number", group: "openai_compatible", min: 0, max: 5, step: 1, description: "Retries for timeout or transient provider failures. Default is 1." },
         { key: "providers.openaiCompatible.retryBackoffMs", label: "OpenAI Retry Backoff Ms", type: "number", group: "openai_compatible", min: 0, max: 30000, step: 100, description: "Base retry backoff in milliseconds. Default is 500." },
+        { key: "providers.multimodalLlm.apiPresetName", label: "Multimodal LLM Preset", type: "apiPresetSelect", group: "multimodal_llm", description: "Preset used for one-shot multimodal audio understanding." },
+        { key: "providers.multimodalLlm.prompt", label: "Multimodal Prompt", type: "textarea", group: "multimodal_llm", description: "Prompt sent with the audio. Required; no default prompt is injected by code." },
+        { key: "providers.multimodalLlm.extraParams", label: "Multimodal Extra Params JSON", type: "textarea", group: "multimodal_llm", description: "JSON object rendered by the shared LLM request layer, for example tool_choice." },
         { key: "providers.tencent.appId", label: "Tencent AppID", type: "text", group: "tencent", description: "Tencent Cloud AppID used by native real-time WebSocket ASR. Omit to use pseudo streaming." },
         { key: "providers.tencent.secretId", label: "Tencent SecretId", type: "text", group: "tencent", description: "Tencent Cloud SecretId from the CAM API key pair." },
         { key: "providers.tencent.secretKey", label: "Tencent SecretKey", type: "text", group: "tencent", description: "Tencent Cloud SecretKey used to sign ASR requests." },
@@ -1506,6 +1511,10 @@ function asrConfigMissingPreset(config: AsrPluginConfig, presetNames: Set<string
     const name = config.providers.openaiCompatible?.apiPresetName;
     return !name || !presetNames.has(name);
   }
+  if (provider === "multimodal_llm") {
+    const name = config.providers.multimodalLlm?.apiPresetName;
+    return !name || !presetNames.has(name) || !config.providers.multimodalLlm?.prompt;
+  }
   return !config.providers.tencent?.secretId || !config.providers.tencent?.secretKey;
 }
 
@@ -1525,6 +1534,18 @@ async function testAsrPlugin(context: AdminRoutesContext, input: Record<string, 
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
+      createLlmClientFromPreset(preset) {
+        if (!preset.baseURL || !preset.apiKey) return undefined;
+        return createOpenAICompatibleClient({
+          baseURL: preset.baseURL,
+          apiKey: preset.apiKey,
+          model: preset.model,
+          temperature: preset.temperature,
+          timeoutMs: preset.timeoutMs,
+          extraParams: preset.extraParams
+        });
+      },
+      llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
       appendLog: context.appendLog
     }));
   if (isAsrTranscribeError(result)) return { error: result.error };
@@ -1556,9 +1577,14 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
   const openAiPatch = providersPatch.openaiCompatible && typeof providersPatch.openaiCompatible === "object" && !Array.isArray(providersPatch.openaiCompatible)
     ? providersPatch.openaiCompatible as Record<string, unknown>
     : {};
+  const multimodalLlmPatch = providersPatch.multimodalLlm && typeof providersPatch.multimodalLlm === "object" && !Array.isArray(providersPatch.multimodalLlm)
+    ? providersPatch.multimodalLlm as Record<string, unknown>
+    : {};
   const tencentPatch = providersPatch.tencent && typeof providersPatch.tencent === "object" && !Array.isArray(providersPatch.tencent)
     ? providersPatch.tencent as Record<string, unknown>
     : {};
+  const multimodalExtraParams = parseAsrExtraParams(multimodalLlmPatch.extraParams, current.providers.multimodalLlm?.extraParams ?? {});
+  if ("error" in multimodalExtraParams) return { error: "invalid_multimodal_extra_params" };
 
   const next: AsrPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
@@ -1571,6 +1597,11 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
         responseFormat: openAiPatch.responseFormat === undefined ? current.providers.openaiCompatible?.responseFormat : asrResponseFormatFromUnknown(openAiPatch.responseFormat),
         retryCount: openAiPatch.retryCount === undefined ? current.providers.openaiCompatible?.retryCount : optionalNumberFromUnknown(openAiPatch.retryCount),
         retryBackoffMs: openAiPatch.retryBackoffMs === undefined ? current.providers.openaiCompatible?.retryBackoffMs : optionalNumberFromUnknown(openAiPatch.retryBackoffMs)
+      },
+      multimodalLlm: {
+        apiPresetName: multimodalLlmPatch.apiPresetName === undefined ? current.providers.multimodalLlm?.apiPresetName : optionalString(multimodalLlmPatch.apiPresetName),
+        prompt: multimodalLlmPatch.prompt === undefined ? current.providers.multimodalLlm?.prompt : optionalString(multimodalLlmPatch.prompt),
+        extraParams: multimodalExtraParams.value
       },
       tencent: {
         appId: tencentPatch.appId === undefined ? current.providers.tencent?.appId : optionalString(tencentPatch.appId),
@@ -1599,14 +1630,15 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
 }
 
 function validateAsrConfig(context: AdminRoutesContext, config: AsrPluginConfig): string | undefined {
-  if (config.defaultProvider !== "openai_compatible" && config.defaultProvider !== "tencent") return "invalid_asr_provider";
+  if (config.defaultProvider !== "openai_compatible" && config.defaultProvider !== "multimodal_llm" && config.defaultProvider !== "tencent") return "invalid_asr_provider";
   if (config.testAudioPath && !isPluginAssetPath("asr", config.testAudioPath)) return "invalid_asset_path";
   const pseudoPause = config.pseudoStreamMinPauseMs;
   if (pseudoPause !== undefined && invalidNumber(pseudoPause, 500, 10_000)) return "invalid_pseudo_stream_pause";
   const presets = new Set(readLLMApiPresets(context).map((entry) => entry.name));
-  for (const name of [config.providers.openaiCompatible?.apiPresetName]) {
+  for (const name of [config.providers.openaiCompatible?.apiPresetName, config.providers.multimodalLlm?.apiPresetName]) {
     if (name && !presets.has(name)) return "invalid_api_preset";
   }
+  if (config.defaultProvider === "multimodal_llm" && !config.providers.multimodalLlm?.prompt) return "missing_multimodal_prompt";
   const responseFormat = config.providers.openaiCompatible?.responseFormat;
   if (responseFormat !== undefined && responseFormat !== "json" && responseFormat !== "text" && responseFormat !== "verbose_json") return "invalid_asr_response_format";
   if (config.providers.tencent?.endpoint && !isValidHttpUrl(config.providers.tencent.endpoint)) return "invalid_tencent_endpoint";
@@ -1671,6 +1703,7 @@ function publicAsrConfig(config: AsrPluginConfig): AsrPluginConfig {
     pseudoStreamMinPauseMs: config.pseudoStreamMinPauseMs,
     providers: {
       openaiCompatible: config.providers.openaiCompatible ? { ...config.providers.openaiCompatible } : undefined,
+      multimodalLlm: config.providers.multimodalLlm ? { ...config.providers.multimodalLlm } : undefined,
       tencent: config.providers.tencent ? { ...config.providers.tencent } : undefined
     }
   };
@@ -1699,6 +1732,20 @@ function asrResponseFormatFromUnknown(value: unknown): "json" | "text" | "verbos
   if (value === undefined || value === null || value === "") return undefined;
   if (value === "json" || value === "text" || value === "verbose_json") return value;
   return requiredString(value).trim() as "json";
+}
+
+function parseAsrExtraParams(value: unknown, fallback: Record<string, unknown>): { value: Record<string, unknown> } | { error: string } {
+  if (value === undefined) return { value: fallback };
+  if (value && typeof value === "object" && !Array.isArray(value)) return { value: value as Record<string, unknown> };
+  const text = optionalString(value);
+  if (!text) return { value: {} };
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "invalid_extra_params" };
+    return { value: parsed as Record<string, unknown> };
+  } catch {
+    return { error: "invalid_extra_params" };
+  }
 }
 
 function optionalNumberFromUnknown(value: unknown): number | undefined {

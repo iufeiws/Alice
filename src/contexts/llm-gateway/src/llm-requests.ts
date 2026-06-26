@@ -25,6 +25,7 @@ export type LLMRequestsDeps = {
   getTool(name: string): ToolDefinition | undefined;
   onRequestPrepared?(input: LLMRequestSenderInput, request: LLMChatInput): void;
   onResponseReceived?(input: LLMRequestSenderInput, request: LLMChatInput, result: LLMChatResult): void;
+  onRequestSettled?(input: LLMRequestSenderInput): void;
   onLog?(event: LLMRequestLogEvent): void;
   messageSanitization?: LLMMessageSanitizationOptions;
   retryDelayMs?: (attempt: number) => number;
@@ -48,12 +49,17 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
   let cancelRequested = false;
 
   function buildTools(toolNames: string[], variables?: Record<string, unknown>): LLMToolSpec[] {
+    return buildToolsFromDefinitions(toolNames, variables);
+  }
+
+  function buildToolsFromDefinitions(toolNames: string[], variables?: Record<string, unknown>, inlineTools: ToolDefinition[] = []): LLMToolSpec[] {
     const seen = new Set<string>();
+    const inlineToolMap = new Map(inlineTools.map((tool) => [tool.name, tool]));
     const tools: LLMToolSpec[] = [];
     for (const name of toolNames) {
       if (seen.has(name)) continue;
       seen.add(name);
-      const tool = deps.getTool(name);
+      const tool = inlineToolMap.get(name) ?? deps.getTool(name);
       if (!tool) throw new Error(`unknown LLM tool: ${name}`);
       tools.push({
         type: "function",
@@ -81,9 +87,9 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       model: input.model,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
-      extraParams: input.extraParams,
+      extraParams: renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | undefined),
       presetName: input.presetName,
-      tools: buildTools(input.toolNames, input.toolVariables),
+      tools: buildToolsFromDefinitions(input.toolNames, input.toolVariables, input.inlineTools),
       signal: requestController.signal
     };
     try {
@@ -135,6 +141,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     } finally {
       input.signal?.removeEventListener("abort", abort);
       if (activeController === requestController) activeController = undefined;
+      deps.onRequestSettled?.(input);
     }
   }
 

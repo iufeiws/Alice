@@ -72,6 +72,12 @@ export function renderAdminHtmlV2(): string {
       .shell-image-preview.hidden { display: none; }
       .shell-image-drop { border: 1px dashed #98a2b3; border-radius: 6px; padding: 10px; background: #f8fafc; transition: border-color 120ms ease, background 120ms ease; }
       .shell-image-drop.dragging { border-color: #2563eb; background: #eff6ff; }
+      .shell-outfit-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+      .shell-image-box { min-width: 0; }
+      .shell-on-body-box { border: 1px solid #d7dce3; border-radius: 6px; padding: 10px; background: #f8fafc; }
+      .shell-on-body-box button { margin-top: 10px; }
+      .shell-on-body-box label { margin-top: 10px; }
+      .shell-on-body-status { min-height: 16px; margin-top: 8px; }
       .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .shell-group { border-bottom: 1px solid #e4e7eb; padding: 8px 0; }
       .shell-group summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; }
@@ -1805,15 +1811,18 @@ export function renderAdminHtmlV2(): string {
         const assetKey = input.dataset.pluginUpload;
         const presetName = document.querySelector('[data-plugin-field="voice.modelEditPresetName"]')?.value || document.querySelector('[data-plugin-field="voice.modelConfigName"]')?.value || "";
         for (const file of files) {
+          const body = pluginId === "photo" && (assetKey === "character-reference" || assetKey === "on-body-reference")
+            ? await convertImageToJpeg(file, 0.99)
+            : file;
           const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/assets/" + encodeURIComponent(assetKey), {
             method: "POST",
             headers: {
-              "content-type": file.type || "application/octet-stream",
+              "content-type": body.type || file.type || "application/octet-stream",
               "x-file-name": encodeURIComponent(file.name || "asset"),
               "x-relative-dir": encodeURIComponent(file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(0, -1).join("/") : ""),
               "x-preset-name": encodeURIComponent(presetName)
             },
-            body: file
+            body
           }).then((res) => res.json());
           if (!result.ok) {
             $("plugin-status").textContent = "Upload failed: " + (result.error || "unknown error");
@@ -3506,10 +3515,23 @@ Timing:
             <label>Group</label>
             <input data-field="group" value="\${escapeAttr(option.group || "")}" placeholder="root / 原神 / ..." />
             \${category === "outfits" ? \`
-              <label>Image</label>
-              <div class="shell-image-drop" data-field="imageDrop" tabindex="0">
-                <span class="muted">拖入或粘贴图片自动上传</span>
-                <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
+              <div class="shell-outfit-images">
+                <div class="shell-image-box">
+                  <label>Image</label>
+                  <div class="shell-image-drop" data-field="imageDrop" tabindex="0">
+                    <span class="muted">拖入或粘贴图片自动上传</span>
+                    <img class="shell-image-preview \${option.imageUrl ? "" : "hidden"}" data-field="imagePreview" src="\${escapeAttr(shellImageSrc(option.imageUrl || ""))}" alt="" />
+                  </div>
+                </div>
+                <div class="shell-image-box">
+                  <label>穿着参考</label>
+                  <div class="shell-on-body-box">
+                    <img class="shell-image-preview \${option.onBodyImageUrl ? "" : "hidden"}" data-field="onBodyPreview" src="\${escapeAttr(shellImageSrc(option.onBodyImageUrl || ""))}" alt="" />
+                    <label><input type="checkbox" data-field="outfitImageGenerated" \${option.outfitImageGenerated ? "checked" : ""} /> 当前服装本身已是生成结果</label>
+                    <button type="button" data-action="generate-on-body" \${option.outfitImageGenerated ? "disabled" : ""}>生成</button>
+                    <p class="muted shell-on-body-status" data-field="onBodyStatus">\${option.outfitImageGenerated ? "已禁用生成" : ""}</p>
+                  </div>
+                </div>
               </div>
             \` : ""}
             <label>Content</label>
@@ -3568,6 +3590,26 @@ Timing:
         optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
         optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
         bindShellImageDrop(optionRoot, option, category, index);
+        bindShellOnBodyGenerate(optionRoot, option, category, index);
+        const generatedCheckbox = optionRoot.querySelector('[data-field="outfitImageGenerated"]');
+        if (generatedCheckbox) {
+          generatedCheckbox.addEventListener("change", async (event) => {
+            option.outfitImageGenerated = event.target.checked;
+            updateShellOnBodyGenerateDisabled(optionRoot, option.outfitImageGenerated);
+            setShellOnBodyStatus(optionRoot, "Saving generated flag...");
+            generatedCheckbox.disabled = true;
+            try {
+              const saved = await persistShellOption(category, currentShellIndex(optionRoot));
+              shellData[category][currentShellIndex(optionRoot)] = { ...saved.option, _previousId: saved.option.id };
+              markShellOption(optionRoot, "saved");
+              setShellOnBodyStatus(optionRoot, option.outfitImageGenerated ? "已禁用生成" : "Generated flag saved.");
+            } catch (error) {
+              setShellOnBodyStatus(optionRoot, "Save failed: " + (error?.message || "unknown error"));
+            } finally {
+              generatedCheckbox.disabled = false;
+            }
+          });
+        }
         optionRoot.querySelector('[data-field="content"]').addEventListener("input", (event) => { option.content = event.target.value; markShellOption(optionRoot, "dirty"); });
         optionRoot.querySelector('[data-action="save-one"]').addEventListener("click", async (event) => {
           event.preventDefault();
@@ -3726,6 +3768,26 @@ Timing:
         preview.classList.toggle("hidden", !src);
       }
 
+      function updateShellOnBodyPreview(optionRoot, imageUrl, bustCache) {
+        const preview = optionRoot.querySelector('[data-field="onBodyPreview"]');
+        if (!preview) return;
+        const baseSrc = shellImageSrc(imageUrl);
+        const src = baseSrc && bustCache ? baseSrc + (baseSrc.includes("?") ? "&" : "?") + "v=" + Date.now() : baseSrc;
+        preview.src = src;
+        preview.classList.toggle("hidden", !src);
+      }
+
+      function setShellOnBodyStatus(optionRoot, message) {
+        const status = optionRoot.querySelector('[data-field="onBodyStatus"]');
+        if (status) status.textContent = message || "";
+        if ($("shell-status")) $("shell-status").textContent = message || "";
+      }
+
+      function updateShellOnBodyGenerateDisabled(optionRoot, disabled) {
+        const button = optionRoot.querySelector('[data-action="generate-on-body"]');
+        if (button) button.disabled = Boolean(disabled);
+      }
+
       async function rerollShell() {
         const result = await fetch("/admin/api/shell/reroll", { method: "POST" }).then((res) => res.json());
         $("shell-status").textContent = result.todayVariables ? "Daily shell rerolled." : "Daily shell reroll failed.";
@@ -3826,7 +3888,56 @@ Timing:
         });
       }
 
-      function convertImageToJpeg(file) {
+      function bindShellOnBodyGenerate(optionRoot, option, category, index) {
+        const button = optionRoot.querySelector('[data-action="generate-on-body"]');
+        if (!button) return;
+        button.addEventListener("click", async () => {
+          if (option.outfitImageGenerated) {
+            setShellOnBodyStatus(optionRoot, "已禁用生成");
+            updateShellOnBodyGenerateDisabled(optionRoot, true);
+            return;
+          }
+          if (!option.imageUrl) {
+            setShellOnBodyStatus(optionRoot, "Generate failed: missing outfit image.");
+            return;
+          }
+          button.disabled = true;
+          setShellOnBodyStatus(optionRoot, "Generating on-body image...");
+          try {
+            const response = await fetch("/admin/api/plugins/photo/on-body", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                outfitId: option.id,
+                outfitName: option.name,
+                outfitContent: option.content,
+                outfitGroup: option.group,
+                outfitImageUrl: option.imageUrl,
+                onBodyImageUrl: option.onBodyImageUrl,
+                outfitImageGenerated: option.outfitImageGenerated
+              })
+            });
+            const text = await response.text();
+            const result = text ? JSON.parse(text) : {};
+            if (!result.ok) {
+              setShellOnBodyStatus(optionRoot, "Generate failed: " + (result.error || response.statusText || "unknown error"));
+              return;
+            }
+            option.onBodyImageUrl = result.imageUrl;
+            updateShellOnBodyPreview(optionRoot, result.imageUrl, true);
+            const saved = await persistShellOption(category, index);
+            shellData[category][index] = { ...saved.option, _previousId: saved.option.id };
+            markShellOption(optionRoot, "saved");
+            setShellOnBodyStatus(optionRoot, "On-body image generated: " + result.imageUrl);
+          } catch (error) {
+            setShellOnBodyStatus(optionRoot, "Generate failed: " + (error?.message || "unknown error"));
+          } finally {
+            updateShellOnBodyGenerateDisabled(optionRoot, Boolean(option.outfitImageGenerated));
+          }
+        });
+      }
+
+      function convertImageToJpeg(file, quality = 0.92) {
         return new Promise((resolve, reject) => {
           const url = URL.createObjectURL(file);
           const image = new Image();
@@ -3842,7 +3953,7 @@ Timing:
               canvas.toBlob((blob) => {
                 URL.revokeObjectURL(url);
                 blob ? resolve(blob) : reject(new Error("image_convert_failed"));
-              }, "image/jpeg", 0.92);
+              }, "image/jpeg", quality);
             } catch (error) {
               URL.revokeObjectURL(url);
               reject(error);

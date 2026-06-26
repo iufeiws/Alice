@@ -745,7 +745,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
 
   assert.equal(schemaResponse.statusCode, 200);
   assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["openai", "openaiRelay", "codex"]);
-  assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage"]);
+  assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage", "on_body"]);
   assert.equal(fieldGroups.get("selfieImageApiKeySet"), "openai");
   assert.equal(fieldGroups.get("selfieImageApiKey"), "openai");
   assert.equal(fieldGroups.get("selfieImageApiBaseURL"), "openai");
@@ -756,6 +756,8 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(fieldGroups.get("selfieImageApiRelayBaseURL"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayModel"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayTimeoutMs"), "openai_relay");
+  assert.equal(fieldGroups.get("onBodyReferenceImage"), "on_body");
+  assert.equal(fieldGroups.get("onBodyPrompt"), "on_body");
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiRelayKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiKey, undefined);
@@ -787,7 +789,9 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     selfieImageApiRelayOutputFormat: "webp",
     selfieImageApiRelayOutputCompression: 77,
     selfieImageApiRelayTimeoutMs: 90000,
-    selfieMaxBytes: 10 * 1024 * 1024
+    selfieMaxBytes: 10 * 1024 * 1024,
+    onBodyReferenceImage: "assets/selfie/references/full-body-reference.jpg",
+    onBodyPrompt: "configured-prompt"
   }), response);
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -805,8 +809,66 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(saved.selfieImageApiModeration, "low");
   assert.equal(saved.selfieImageApiRelayModel, "relay-image-model");
   assert.equal(saved.selfieImageApiRelayOutputFormat, "webp");
+  assert.equal(saved.onBodyReferenceImage, "assets/selfie/references/full-body-reference.jpg");
+  assert.equal(saved.onBodyPrompt, "configured-prompt");
   assert.equal(saved.selfieImageApiKeySet, undefined);
   assert.equal(saved.selfieImageApiRelayKeySet, undefined);
+});
+
+test("admin photo on-body generation writes beside outfit image", async () => {
+  const root = makeTempDir("admin-photo-on-body");
+  const configPath = path.join(root, "config", "plugin", "photo", "config.json");
+  const referencePath = path.join(root, "assets", "selfie", "references", "full-body-reference.jpg");
+  const outfitPath = path.join(root, "memory-files", "shell", "outfits", "dress_1.jpg");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(path.dirname(referencePath), { recursive: true });
+  fs.mkdirSync(path.dirname(outfitPath), { recursive: true });
+  fs.writeFileSync(referencePath, "reference");
+  fs.writeFileSync(outfitPath, "outfit");
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "openai",
+    selfieImageApiKey: "image-key",
+    onBodyReferenceImage: path.relative(process.cwd(), referencePath),
+    onBodyPrompt: "configured-prompt {{outfit/content}}"
+  })}\n`);
+  const previousFetch = globalThis.fetch;
+  let renderedPrompt = "";
+  globalThis.fetch = (async (_url, init) => {
+    renderedPrompt = String((init?.body as FormData).get("prompt"));
+    return new Response(JSON.stringify({
+      data: [{ b64_json: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64") }]
+    }));
+  }) as typeof fetch;
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    config: { ...base.config, photo: photoDefaults() },
+    pluginConfigs: { photo: { configPath } }
+  };
+  const handler = createAdminHandler(context);
+
+  try {
+    const response = createResponse();
+    await handler(createRequest("POST", "/admin/api/plugins/photo/on-body", {
+      outfitId: "dress_1",
+      outfitName: "Dress 1",
+      outfitContent: "black dress",
+      outfitImageUrl: path.relative(process.cwd(), outfitPath)
+    }), response);
+    const body = JSON.parse(response.body);
+    const expectedPath = path.join(path.dirname(path.relative(process.cwd(), outfitPath)), "dress_1.On_Body_Ref.jpg");
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.imageUrl, expectedPath);
+    assert.equal(renderedPrompt, "configured-prompt black dress");
+    assert.equal(fs.existsSync(path.join(path.dirname(outfitPath), "dress_1.On_Body_Ref.jpg")), true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("admin plugin config patch writes tts config with preset reference only", async () => {

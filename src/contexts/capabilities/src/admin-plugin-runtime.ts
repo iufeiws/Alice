@@ -1,11 +1,14 @@
 import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/src/index.js";
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
-import { buildLLMTextVariables } from "../../agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, renderLLMText } from "../../agent-profile/src/application/llm-text-renderer.js";
 import { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
+import { extensionForOutputFormat, selectedImageApiSettings } from "../../../capabilities/tools/photo/src/config.js";
+import { detectImageMime, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "../../../capabilities/tools/photo/src/image-files.js";
+import { runOpenAIAPISelfie } from "../../../capabilities/tools/photo/src/openai-api-selfie.js";
 import { HttpJsonError, readJsonBody, readRawBody } from "../../../apps/api/middleware/http-utils.js";
 import { publicLLMApiPresets, readLLMApiPresets, resolvePromptApiPreset } from "../../llm-gateway/src/admin-presets.js";
 import { writeJson } from "../../../apps/api/routes/admin-http.js";
@@ -172,6 +175,11 @@ export async function handleAdminPluginApi(context: AdminRoutesContext, request:
   }
 
   if (parts.length !== 5) return false;
+
+  if (request.method === "POST" && pluginId === "photo" && action === "on-body") {
+    await generatePhotoOnBody(context, request, response);
+    return true;
+  }
 
   if (request.method === "GET" && action === "config") {
     writeAdminPluginConfig(context, response, pluginId);
@@ -407,11 +415,20 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
       return photoPluginSummary(context);
     },
     config(context) {
-      return publicPhotoPluginConfig(readPhotoConfigForAdmin(context));
+      return {
+        ...publicPhotoPluginConfig(readPhotoConfigForAdmin(context)),
+        selfiePromptTemplate: readSelfiePromptTemplate(context),
+        selfieCharacterReferenceImage: photoReferenceAssetPath(context, "alice-character-reference.jpg")
+      };
     },
     patch(context, patch) {
       const result = updatePhotoConfig(context, patch);
-      return "error" in result ? result : { config: publicPhotoPluginConfig(result.config) };
+      if ("error" in result) return result;
+      if (patch.selfiePromptTemplate !== undefined) writeSelfiePromptTemplate(context, requiredString(patch.selfiePromptTemplate));
+      return { config: publicPhotoPluginConfig(result.config) };
+    },
+    uploadAsset(context, assetKey, request) {
+      return uploadPhotoPluginAsset(context, assetKey, request);
     },
     setEnabled(context, enabled) {
       const result = updatePhotoConfig(context, { enabled });
@@ -426,7 +443,8 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "openai", label: "OpenAI" },
         { key: "openai_relay", label: "OpenAI Relay" },
         { key: "codex", label: "Codex" },
-        { key: "storage", label: "Storage" }
+        { key: "storage", label: "Storage" },
+        { key: "on_body", label: "On Body" }
       ],
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the selfie tool route." },
@@ -472,8 +490,13 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "selfieCodexCommand", label: "Codex Command", type: "text", group: "codex" },
         { key: "selfieCodexTimeoutMs", label: "Codex Timeout Ms", type: "number", group: "codex", min: 1000, max: 600000, step: 1000 },
         { key: "selfieReferenceDir", label: "Reference Folder", type: "text", group: "storage" },
+        { key: "selfiePromptTemplate", label: "Prompt Template", type: "textarea", group: "storage", description: "Edits assets/selfie/references/selfie-prompt.txt." },
+        { key: "selfieCharacterReferenceImage", label: "Character Ref", type: "fileUpload", group: "storage", assetKey: "character-reference", accept: "image/*", description: "Uploaded as alice-character-reference.jpg." },
         { key: "selfieOutputDir", label: "Output Folder", type: "text", group: "storage", description: "Must stay under assets/ so generated images can be routed as assets." },
-        { key: "selfieMaxBytes", label: "Max Image Bytes", type: "number", group: "storage", min: 1024, max: 52428800, step: 1024 }
+        { key: "selfieMaxBytes", label: "Max Image Bytes", type: "number", group: "storage", min: 1024, max: 52428800, step: 1024 },
+        { key: "onBodyReferenceImage", label: "Full Body Ref", type: "fileUpload", group: "on_body", assetKey: "on-body-reference", accept: "image/*", description: "Generation image 1." },
+        { key: "onBodyPrompt", label: "Prompt", type: "textarea", group: "on_body", description: "Used exactly as the on-body generation prompt." },
+        { key: "selfieOnBodyPrompt", label: "Selfie Prompt", type: "textarea", group: "on_body", description: "Used exactly when selfie uses an on-body reference." }
       ]
     },
     routePreview: [
@@ -486,6 +509,7 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
       "read selfie prompt template and reference images",
       "call selected Image API or ephemeral Codex CLI session",
       "write generated image under assets/generated/selfies",
+      "read on-body full reference and outfit reference",
       "send generated image to the current messaging session"
     ]
   };
@@ -736,6 +760,45 @@ function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfi
   };
 }
 
+async function uploadPhotoPluginAsset(
+  context: AdminRoutesContext,
+  assetKey: string,
+  request: any
+): Promise<{ config: unknown; assetPath: string } | { error: string; statusCode?: number }> {
+  if (assetKey !== "character-reference" && assetKey !== "on-body-reference") return { error: "unsupported_photo_asset" };
+  const body = await readRawBody(request, { maxBytes: 10 * 1024 * 1024 });
+  if (body.length === 0) return { error: "empty_upload" };
+  const config = readPhotoConfigForAdmin(context);
+  const fullPath = assetKey === "on-body-reference"
+    ? path.resolve(config.onBodyReferenceImage)
+    : path.resolve(config.selfieReferenceDir, "alice-character-reference.jpg");
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, body);
+  return {
+    config: {
+      ...publicPhotoPluginConfig(config),
+      selfiePromptTemplate: readSelfiePromptTemplate(context),
+      selfieCharacterReferenceImage: photoReferenceAssetPath(context, "alice-character-reference.jpg")
+    },
+    assetPath: fullPath
+  };
+}
+
+function readSelfiePromptTemplate(context: AdminRoutesContext): string {
+  const filePath = path.resolve(readPhotoConfigForAdmin(context).selfieReferenceDir, "selfie-prompt.txt");
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+}
+
+function writeSelfiePromptTemplate(context: AdminRoutesContext, value: string): void {
+  const filePath = path.resolve(readPhotoConfigForAdmin(context).selfieReferenceDir, "selfie-prompt.txt");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, value);
+}
+
+function photoReferenceAssetPath(context: AdminRoutesContext, fileName: string): string {
+  return path.resolve(readPhotoConfigForAdmin(context).selfieReferenceDir, fileName);
+}
+
 function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: PhotoPluginConfig } | { error: string } {
   const current = readPhotoConfigForAdmin(context);
   const next: PhotoPluginConfig = {
@@ -764,7 +827,10 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat),
     selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : photoNumberFromUnknown(patch.selfieImageApiRelayOutputCompression),
     selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiRelayTimeoutMs),
-    selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : photoNumberFromUnknown(patch.selfieMaxBytes)
+    selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : photoNumberFromUnknown(patch.selfieMaxBytes),
+    onBodyReferenceImage: patch.onBodyReferenceImage === undefined ? current.onBodyReferenceImage : requiredString(patch.onBodyReferenceImage).trim(),
+    onBodyPrompt: patch.onBodyPrompt === undefined ? current.onBodyPrompt : requiredString(patch.onBodyPrompt),
+    selfieOnBodyPrompt: patch.selfieOnBodyPrompt === undefined ? current.selfieOnBodyPrompt : requiredString(patch.selfieOnBodyPrompt)
   };
 
   const validationError = validatePhotoConfig(next);
@@ -796,6 +862,7 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (invalidNumber(config.selfieImageApiRelayOutputCompression, 0, 100)) return "invalid_selfie_relay_output_compression";
   if (invalidNumber(config.selfieImageApiRelayTimeoutMs, 1000, 600_000)) return "invalid_selfie_api_relay_timeout";
   if (invalidNumber(config.selfieMaxBytes, 1024, 50 * 1024 * 1024)) return "invalid_selfie_max_bytes";
+  if (!config.onBodyReferenceImage) return "missing_on_body_reference_image";
   return undefined;
 }
 
@@ -837,7 +904,10 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiRelayOutputFormat: photo.selfieImageApiRelayOutputFormat,
     selfieImageApiRelayOutputCompression: photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: photo.selfieImageApiRelayTimeoutMs,
-    selfieMaxBytes: photo.selfieMaxBytes
+    selfieMaxBytes: photo.selfieMaxBytes,
+    onBodyReferenceImage: photo.onBodyReferenceImage,
+    onBodyPrompt: photo.onBodyPrompt,
+    selfieOnBodyPrompt: photo.selfieOnBodyPrompt
   };
 }
 
@@ -854,6 +924,161 @@ function photoConfigMtime(context: AdminRoutesContext): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+async function generatePhotoOnBody(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  const body = await readJsonBody(request);
+  const config = readPhotoConfigForAdmin(context);
+  const promptTemplate = config.onBodyPrompt;
+  if (!promptTemplate.trim()) {
+    writeJson(response, 400, { ok: false, error: "missing_on_body_prompt" });
+    return;
+  }
+  const fullBodyReference = photoImagePath(config.onBodyReferenceImage);
+  if (!fullBodyReference) {
+    writeJson(response, 400, { ok: false, error: "missing_on_body_reference_image" });
+    return;
+  }
+  const outfitImageUrl = requiredString(body.outfitImageUrl);
+  const outfitId = safeFilePart(requiredString(body.outfitId));
+  if (!outfitId) {
+    writeJson(response, 400, { ok: false, error: "missing_outfit_id" });
+    return;
+  }
+  const outfitReference = photoImagePath(outfitImageUrl);
+  if (!outfitReference) {
+    writeJson(response, 400, { ok: false, error: "missing_outfit_reference_image" });
+    return;
+  }
+  const imageApiSettings = selectedImageApiSettings(config);
+  if (!imageApiSettings.key) {
+    writeJson(response, 400, { ok: false, error: "missing_photo_image_api_key" });
+    return;
+  }
+
+  const outputDir = path.dirname(outfitReference);
+  const finalFileName = `${outfitId}.On_Body_Ref.jpg`;
+  const finalImageUrl = path.join(path.dirname(outfitImageUrl), finalFileName);
+  const tempFileName = `${outfitId}.On_Body_Ref.${extensionForOutputFormat(imageApiSettings.outputFormat)}`;
+  const tempDir = path.join(outputDir, `.tmp_on_body_${Date.now()}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  try {
+    const outfit = resolvePhotoOnBodyOutfit(context, body, outfitId, outfitImageUrl);
+    if (!outfit) {
+      writeJson(response, 400, { ok: false, error: "missing_outfit_content" });
+      return;
+    }
+    const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
+    let tempFilePath = path.resolve(tempDir, tempFileName);
+    await runOpenAIAPISelfie({
+      command: "",
+      workDir: tempDir,
+      fileName: tempFileName,
+      prompt,
+      referenceImages: [fullBodyReference, outfitReference],
+      referenceImagePrompt: "",
+      timeoutMs: imageApiSettings.timeoutMs,
+      apiKey: imageApiSettings.key,
+      apiBaseURL: imageApiSettings.baseURL,
+      apiEndpoint: imageApiSettings.endpoint,
+      apiModel: imageApiSettings.model,
+      apiSize: imageApiSettings.size,
+      apiQuality: imageApiSettings.quality,
+      apiModeration: imageApiSettings.moderation,
+      apiOutputFormat: imageApiSettings.outputFormat,
+      apiOutputCompression: imageApiSettings.outputCompression,
+      apiTimeoutMs: imageApiSettings.timeoutMs,
+      proxyUrl: process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy
+    });
+
+    validateGeneratedImage(tempFilePath, tempDir, config.selfieMaxBytes);
+    const normalizedImage = await normalizeGeneratedSelfieJpeg({
+      tempFilePath,
+      fileName: tempFileName,
+      tempDir,
+      maxBytes: config.selfieMaxBytes,
+      timeoutMs: imageApiSettings.timeoutMs
+    });
+    tempFilePath = normalizedImage.tempFilePath;
+    const finalFilePath = path.resolve(outputDir, finalFileName);
+    fs.renameSync(tempFilePath, finalFilePath);
+    validateGeneratedImage(finalFilePath, outputDir, config.selfieMaxBytes);
+    const mime = detectImageMime(fs.readFileSync(finalFilePath)) ?? "image/jpeg";
+    context.appendLog("info", `photo on-body generated: ${finalImageUrl}`);
+    writeJson(response, 200, {
+      ok: true,
+      imageUrl: finalImageUrl,
+      mime
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.appendLog("warn", `photo on-body generation failed: ${message}`);
+    writeJson(response, 500, { ok: false, error: message });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function photoImagePath(value: string): string | undefined {
+  const fullPath = path.resolve(value);
+  return fs.existsSync(fullPath) && fs.statSync(fullPath).isFile() ? fullPath : undefined;
+}
+
+function safeFilePart(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function resolvePhotoOnBodyOutfit(context: AdminRoutesContext, body: Record<string, unknown>, outfitId: string, outfitImageUrl: string): {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+} | undefined {
+  const shellConfig = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
+  const stored = Array.isArray(shellConfig.outfits)
+    ? shellConfig.outfits.find((outfit) => outfit.id === outfitId)
+    : undefined;
+  const name = stored?.name ?? optionalString(body.outfitName);
+  const content = stored?.content ?? optionalString(body.outfitContent);
+  if (!name || !content) return undefined;
+  return {
+    id: outfitId,
+    name,
+    content,
+    group: stored?.group ?? optionalString(body.outfitGroup),
+    imageUrl: outfitImageUrl,
+    onBodyImageUrl: stored?.onBodyImageUrl ?? optionalString(body.onBodyImageUrl),
+    outfitImageGenerated: stored?.outfitImageGenerated ?? body.outfitImageGenerated === true
+  };
+}
+
+function renderPhotoOnBodyPrompt(context: AdminRoutesContext, template: string, outfit: {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+}): string {
+  const daily = context.dailyShellStore.get(context.time.now().date, context.time.timeZone);
+  return renderLLMText(template, buildLLMTextVariables({
+    userName: context.promptProfileStore.get().userName,
+    time: context.time,
+    dailyShellRaw: {
+      date: daily.date,
+      createdAt: daily.createdAt,
+      personality: daily.personality,
+      relationship: daily.relationship,
+      outfit
+    },
+    appearanceDescription: context.coreProfileStore.get().appearanceDescription
+  }));
 }
 
 function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {

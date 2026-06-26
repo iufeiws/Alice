@@ -29,6 +29,9 @@ export type PhotoPluginConfig = {
   selfieImageApiRelayOutputCompression: number;
   selfieImageApiRelayTimeoutMs: number;
   selfieMaxBytes: number;
+  onBodyReferenceImage: string;
+  onBodyPrompt: string;
+  selfieOnBodyPrompt: string;
 };
 
 export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey"> & {
@@ -95,7 +98,10 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     selfieImageApiRelayOutputFormat: outputFormatValue(parsed.selfieImageApiRelayOutputFormat, defaults.selfieImageApiRelayOutputFormat ?? defaults.selfieImageApiOutputFormat ?? "jpeg", "selfieImageApiRelayOutputFormat"),
     selfieImageApiRelayOutputCompression: numberValue(parsed.selfieImageApiRelayOutputCompression, defaults.selfieImageApiRelayOutputCompression ?? defaults.selfieImageApiOutputCompression ?? 45, "selfieImageApiRelayOutputCompression"),
     selfieImageApiRelayTimeoutMs: numberValue(parsed.selfieImageApiRelayTimeoutMs, defaults.selfieImageApiRelayTimeoutMs ?? defaults.selfieImageApiTimeoutMs ?? 120_000, "selfieImageApiRelayTimeoutMs"),
-    selfieMaxBytes: numberValue(parsed.selfieMaxBytes, defaults.selfieMaxBytes ?? 10 * 1024 * 1024, "selfieMaxBytes")
+    selfieMaxBytes: numberValue(parsed.selfieMaxBytes, defaults.selfieMaxBytes ?? 10 * 1024 * 1024, "selfieMaxBytes"),
+    onBodyReferenceImage: requiredStringValue(parsed.onBodyReferenceImage, defaults.onBodyReferenceImage ?? "assets/selfie/references/full-body-reference.jpg", "onBodyReferenceImage"),
+    onBodyPrompt: optionalStringValue(parsed.onBodyPrompt, defaults.onBodyPrompt, "onBodyPrompt") ?? "",
+    selfieOnBodyPrompt: optionalStringValue(parsed.selfieOnBodyPrompt, defaults.selfieOnBodyPrompt, "selfieOnBodyPrompt") ?? ""
   };
 }
 

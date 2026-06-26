@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAsrInboundStreamSession, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/channels/asr/src/index.js";
+import { createAsrInboundStreamSession, createAsrPlugin, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/channels/asr/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -362,6 +362,52 @@ test("ASR inbound stream protocol buffers chunks and transcribes final audio wit
   assert.deepEqual(receivedFiles, [{ name: "stream.wav", size: 5, model: "whisper-1" }]);
 });
 
+test("ASR plugin inbound stream session reuses plugin deps", async () => {
+  const configPath = writeAsrConfigFixture("plugin-stream-deps.json", {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "plugin-preset",
+        responseFormat: "json"
+      }
+    }
+  });
+  const calls: string[] = [];
+  const plugin = createAsrPlugin({
+    configPath,
+    resolveApiPreset(name) {
+      calls.push(`preset:${name}`);
+      return {
+        name,
+        baseURL: "https://api.example.com/v1",
+        apiKey: "secret",
+        model: "stream-model"
+      };
+    },
+    fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+      calls.push(`fetch:${(init?.body as FormData).get("model")}`);
+      return jsonResponse({ text: "插件 deps 生效" });
+    }
+  });
+
+  const session = plugin.createInboundStreamSession({
+    type: "start",
+    streamId: "plugin-stream",
+    audio: {
+      filename: "stream.wav",
+      mimeType: "audio/wav"
+    }
+  });
+  await session.accept({ type: "chunk", streamId: "plugin-stream", sequence: 0, bytes: new Uint8Array([1, 2, 3]) });
+  const final = await session.accept({ type: "end", streamId: "plugin-stream" });
+
+  assert.equal(final.ok, true);
+  assert.equal(final.type, "final");
+  assert.equal(final.result?.text, "插件 deps 生效");
+  assert.deepEqual(calls, ["preset:plugin-preset", "fetch:stream-model"]);
+});
+
 test("ASR pseudo stream cuts on conservative long pauses and returns stable partials", async () => {
   const receivedFiles: Array<{ name: string; size: number; model: unknown }> = [];
   const responses = ["第一句", "第二句"];
@@ -670,6 +716,14 @@ function writeAudioFixture(fileName: string, size = 14): string {
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, fileName);
   fs.writeFileSync(filePath, new Uint8Array(size).fill(1));
+  return filePath;
+}
+
+function writeAsrConfigFixture(fileName: string, config: AsrPluginConfig): string {
+  const dir = path.join(process.cwd(), ".tmp-tests", "alice-asr-plugin-tests");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, fileName);
+  fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return filePath;
 }
 

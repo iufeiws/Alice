@@ -141,6 +141,7 @@ export type AsrPlugin = {
   id: "asr";
   config: AsrPluginConfig;
   transcribe(input: AsrTranscribeInput): Promise<AsrTranscribeResult | AsrTranscribeError>;
+  createInboundStreamSession(start: InboundAudioStreamStartFrame): AsrInboundStreamSession;
 };
 
 export type AsrInboundStreamAccepted = {
@@ -200,6 +201,9 @@ export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
   return {
     id: "asr",
     config: readAsrPluginConfig(deps.configPath),
+    createInboundStreamSession(start) {
+      return createAsrInboundStreamSession(start, readAsrPluginConfig(deps.configPath), deps);
+    },
     transcribe(input) {
       return transcribeWithAsrPlugin(input, readAsrPluginConfig(deps.configPath), deps);
     }

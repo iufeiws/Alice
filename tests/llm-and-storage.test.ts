@@ -4,6 +4,7 @@ import { createMutableLLMClient, createOpenAICompatibleClient, type LLMClient } 
 import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
 import { createLLMRequestsRuntime } from "../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../src/contexts/llm-gateway/src/llm-log-runtime.js";
+import { createApiSessionRuntime } from "../src/contexts/llm-session/src/index.js";
 import { acquireSingletonLock } from "../src/apps/api/server/singleton-lock.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -898,6 +899,70 @@ test("LLM log runtime binds responses to the request session instead of current 
   assert.equal(response.sessionId, 100);
   assert.equal(response.requestId, request.id);
   assert.equal(responseLogs[0].sessionId, 100);
+});
+
+test("active LLM session writes chat request and response directly to jsonl", () => {
+  const root = makeTempDir("active-llm-session-jsonl");
+  let cachedSession: any;
+  const runtime = createApiSessionRuntime({
+    config: { memoryFiles: { root } },
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    getSession: () => cachedSession,
+    setSession(session) {
+      cachedSession = session;
+    },
+    getConversationStartIndex: () => undefined,
+    buildTalkRuntimeMessages: () => [],
+    appendLog() {}
+  }).activeLLMSessionRuntime;
+
+  const request: any = {
+    id: 1,
+    agentId: "chat" as const,
+    time: "2026-06-14T01:00:00.000",
+    timeUtc: "2026-06-14T01:00:00.000Z",
+    model: "chat-model",
+    messages: [
+      { role: "system" as const, content: "system" },
+      { role: "user" as const, content: "hello" }
+    ]
+  };
+  runtime.noteActiveLLMRequest(request, "chat");
+  const sessionId = request.sessionId;
+  const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { path: string };
+  const filePath = path.join(root, "llm-sessions", pointer.path);
+  assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user"]);
+
+  cachedSession = undefined;
+  runtime.noteActiveLLMResponse({
+    id: 2,
+    agentId: "chat",
+    sessionId,
+    requestId: 1,
+    time: "2026-06-14T01:00:01.000",
+    timeUtc: "2026-06-14T01:00:01.000Z",
+    message: { role: "assistant", content: "done" },
+    finishReason: "stop"
+  });
+  assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user", "assistant"]);
+
+  cachedSession = undefined;
+  runtime.noteActiveLLMRequest({
+    id: 3,
+    agentId: "chat",
+    time: "2026-06-14T01:00:02.000",
+    timeUtc: "2026-06-14T01:00:02.000Z",
+    model: "chat-model",
+    messages: [
+      { role: "system", content: "system" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "done" },
+      { role: "user", content: "again" }
+    ]
+  }, "chat");
+  const metadata = readLLMSessionJsonl(filePath)?.metadata;
+  assert.equal((metadata?.latestRequest as any)?.round, 1);
+  assert.deepEqual(metadata?.requestIds, [1, 3]);
 });
 
 test("LLM requests runtime passes request-scoped log entry to response logging", async () => {

@@ -38,41 +38,26 @@ export function createActiveLLMSessionRuntime(input: {
   };
 
   function ensureActiveLLMSession(time: string, agentId: "chat" | "talk" = "chat"): ActiveLLMSession {
-    let activeSession = input.getSession();
+    let activeSession = input.archive.readCurrent();
     if (activeSession && (activeSession.agentId ?? "chat") !== agentId) {
       activeSession = undefined;
-      input.setSession(undefined);
     }
     if (!activeSession) {
-      const timeUtc = parseZonedIso(time, input.time.timeZone).toISOString();
-      const sessionId = utcTimestamp(timeUtc) ?? nextSessionId;
-      activeSession = {
-        id: sessionId,
-        agentId,
-        startedAt: time,
-        startedAtUtc: timeUtc,
-        updatedAt: time,
-        updatedAtUtc: timeUtc,
-        archiveFilePath: input.archive.createFilePath(timeUtc, agentId),
-        requestIds: [],
-        responseIds: [],
-        messages: [],
-        latestRequest: undefined,
-        staticPromptMessageCount: 0,
-        requestTimestamps: []
-      };
-      nextSessionId += 1;
+      activeSession = createNewSession(time, agentId);
       input.archive.writeFile(activeSession);
       input.archive.writeCurrentPointer(activeSession);
-      input.setSession(activeSession);
     }
     activeSession.agentId = agentId;
+    input.setSession(activeSession);
     return activeSession;
   }
 
   function createTalkLLMSession(time: string): ActiveLLMSession {
-    input.setSession(undefined);
-    return ensureActiveLLMSession(time, "talk");
+    const session = createNewSession(time, "talk");
+    input.archive.writeFile(session);
+    input.archive.writeCurrentPointer(session);
+    input.setSession(session);
+    return session;
   }
 
   function noteActiveLLMRequest(entry: LLMRequestLogEntry, agentId: "chat" | "talk" = "chat"): void {
@@ -106,17 +91,15 @@ export function createActiveLLMSessionRuntime(input: {
       presetName: entry.presetName,
       messageCount: entry.messages.length
     };
-    if (agentId === "talk") {
-      session.messages = cloneLLMMessages(entry.messages);
-      input.archive.writeFile(session);
-    } else {
-      input.archive.writeMetadata(session);
-    }
+    session.messages = cloneLLMMessages(entry.messages);
+    input.archive.writeFile(session);
+    input.archive.writeCurrentPointer(session);
+    input.setSession(session);
   }
 
   function noteActiveLLMResponse(entry: LLMResponseLogEntry): void {
     const activeSession = entry.sessionId === undefined
-      ? input.getSession()
+      ? input.archive.readCurrent()
       : readLatestLLMSessionSnapshot(entry.sessionId, entry.agentId);
     if (!activeSession) return;
     if (entry.sessionId !== undefined && activeSession.id !== entry.sessionId) {
@@ -143,15 +126,15 @@ export function createActiveLLMSessionRuntime(input: {
       usage: entry.usage,
       toolCallCount: entry.message.toolCalls?.length ?? 0
     };
-    if (entry.agentId === "talk") {
-      activeSession.messages = [...activeSession.messages, cloneLLMMessages([entry.message])[0]];
-      input.archive.appendMessages(activeSession, [entry.message]);
-    }
+    activeSession.messages = [...activeSession.messages, cloneLLMMessages([entry.message])[0]];
+    input.archive.appendMessages(activeSession, [entry.message]);
     input.archive.writeMetadata(activeSession);
+    input.archive.writeCurrentPointer(activeSession);
+    input.setSession(activeSession);
   }
 
   function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: number): void {
-    const session = input.getSession();
+    const session = input.archive.readCurrent();
     if (!session || session.agentId !== "talk" || session.id !== talkSessionId) return;
     const conversationStartIndex = input.getConversationStartIndex(talkSessionId);
     if (conversationStartIndex === undefined) return;
@@ -175,10 +158,12 @@ export function createActiveLLMSessionRuntime(input: {
     session.reason = "talk_interrupt";
     input.archive.writeFile(session);
     input.archive.writeMetadata(session);
+    input.archive.writeCurrentPointer(session);
+    input.setSession(session);
   }
 
   function isActiveTalkLLMSession(sessionId: number): boolean {
-    const session = input.getSession();
+    const session = input.archive.readCurrent();
     return session?.agentId === "talk" && session.id === sessionId;
   }
 
@@ -243,6 +228,8 @@ export function createActiveLLMSessionRuntime(input: {
     session.waitChatStartedAt = nextWaitChatStartedAt;
     if (delta.length > 0) input.archive.appendMessages(session, delta);
     if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
+    input.archive.writeCurrentPointer(session);
+    input.setSession(session);
   }
 
   function updateActiveTalkLLMSessionTranscript(sessionInput: LLMSessionSnapshot): void {
@@ -274,16 +261,21 @@ export function createActiveLLMSessionRuntime(input: {
       const delta = session.messages.slice(previousMessages.length);
       if (delta.length > 0) input.archive.appendMessages(session, delta);
       input.archive.writeMetadata(session);
+      input.archive.writeCurrentPointer(session);
+      input.setSession(session);
       return;
     }
     input.archive.writeFile(session);
     input.archive.writeMetadata(session);
+    input.archive.writeCurrentPointer(session);
+    input.setSession(session);
   }
 
   function clearActiveLLMSession(reason: LLMSessionClearReason): void {
-    const activeSession = input.getSession();
+    const activeSession = input.archive.readCurrent();
     if (!activeSession) {
       input.archive.clearCurrentPointer();
+      input.setSession(undefined);
       return;
     }
     const sessionId = activeSession.id;
@@ -299,16 +291,18 @@ export function createActiveLLMSessionRuntime(input: {
   }
 
   function getActiveLLMSessionSnapshot(): unknown {
-    const activeSession = input.getSession();
+    const activeSession = input.archive.readCurrent();
     if (!activeSession) return undefined;
-    return summarizeLLMSession(readLatestLLMSessionSnapshot(activeSession.id) ?? activeSession);
+    input.setSession(activeSession);
+    return summarizeLLMSession(activeSession);
   }
 
   function loadActiveLLMSessionTranscript(): LLMSessionSnapshot | undefined {
-    const activeSession = input.getSession();
+    const activeSession = input.archive.readCurrent();
     if (!activeSession) return undefined;
-    const latest = readLatestLLMSessionSnapshot(activeSession.id);
-    if (!latest || latest.clearedAt) return undefined;
+    const latest = activeSession;
+    if (latest.clearedAt) return undefined;
+    input.setSession(latest);
     return {
       id: latest.id,
       messages: latest.messages ?? [],
@@ -333,8 +327,6 @@ export function createActiveLLMSessionRuntime(input: {
   }
 
   function readLatestLLMSessionSnapshot(id: number, agentId?: "chat" | "talk"): ActiveLLMSession | undefined {
-    const activeSession = input.getSession();
-    if (activeSession?.id === id && (!agentId || (activeSession.agentId ?? "chat") === agentId)) return activeSession;
     return selectLatestSessionSnapshot(input.archive.readAll()
       .filter((session: ActiveLLMSession) => session.id === id && (!agentId || (session.agentId ?? "chat") === agentId)));
   }
@@ -344,6 +336,27 @@ export function createActiveLLMSessionRuntime(input: {
     if (session) nextSessionId = Math.max(nextSessionId, session.id + 1);
     input.setSession(session);
     return session;
+  }
+
+  function createNewSession(time: string, agentId: "chat" | "talk"): ActiveLLMSession {
+    const timeUtc = parseZonedIso(time, input.time.timeZone).toISOString();
+    const sessionId = utcTimestamp(timeUtc) ?? nextSessionId;
+    nextSessionId += 1;
+    return {
+      id: sessionId,
+      agentId,
+      startedAt: time,
+      startedAtUtc: timeUtc,
+      updatedAt: time,
+      updatedAtUtc: timeUtc,
+      archiveFilePath: input.archive.createFilePath(timeUtc, agentId),
+      requestIds: [],
+      responseIds: [],
+      messages: [],
+      latestRequest: undefined,
+      staticPromptMessageCount: 0,
+      requestTimestamps: []
+    };
   }
 }
 

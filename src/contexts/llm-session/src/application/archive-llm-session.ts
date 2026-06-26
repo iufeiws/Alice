@@ -43,6 +43,7 @@ export function createLLMSessionArchive(input: {
     writeFile,
     writeMetadata,
     appendMessages,
+    readCurrent,
     restorePersistedActive,
     readAll,
     collectFiles,
@@ -118,6 +119,8 @@ export function createLLMSessionArchive(input: {
       currentRound: session.currentRound,
       latestRequest: session.latestRequestInfo,
       latestResponse: session.latestResponseInfo,
+      requestIds: session.requestIds,
+      responseIds: session.responseIds,
       messageCount: session.messages.length,
       lastMessageRole: last?.role,
       lastMessageAt: session.updatedAt,
@@ -150,6 +153,14 @@ export function createLLMSessionArchive(input: {
       return;
     }
     appendLLMSessionJsonlMessages(session.archiveFilePath, messages);
+  }
+
+  function readCurrent(): ActiveLLMSession | undefined {
+    const pointer = currentPointerPath();
+    if (!fs.existsSync(pointer)) return undefined;
+    const parsedPointer = JSON.parse(fs.readFileSync(pointer, "utf8")) as { path?: unknown };
+    if (typeof parsedPointer.path !== "string") return undefined;
+    return readFile(absolutePath(parsedPointer.path));
   }
 
   function restorePersistedActive(): ActiveLLMSession | undefined {
@@ -210,8 +221,8 @@ export function createLLMSessionArchive(input: {
         updatedAtUtc: typeof metadata.updatedAtUtc === "string" ? metadata.updatedAtUtc : undefined,
         archiveFilePath: filePath,
         archiveMetadata: metadata,
-        requestIds: [],
-        responseIds: [],
+        requestIds: numberArray(metadata.requestIds),
+        responseIds: numberArray(metadata.responseIds),
         messages: cloneLLMMessages(messages),
         latestRequest: undefined,
         staticPromptFingerprint: staticPromptFingerprintFromMetadata(metadata, messages, staticPromptMessageCount),
@@ -249,6 +260,12 @@ export function createLLMSessionArchive(input: {
 function messageCountFromMetadata(value: unknown, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(max, Math.floor(value)));
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry))
+    : [];
 }
 
 function staticPromptFingerprintFromMetadata(

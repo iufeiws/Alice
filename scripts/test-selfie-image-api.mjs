@@ -33,9 +33,9 @@ const outputName = `selfie_api_${formatDateTime(new Date())}.${outputFormat === 
 const outputPath = path.join(outputDir, outputName);
 const prompt = buildPrompt(pose);
 const imagePaths = [
-  path.join(referencesDir, "alice-character-reference.png"),
+  path.join(referencesDir, "alice-character-reference.jpg"),
   resolveOutfitImage(),
-  path.join(referencesDir, "magic-library-reference.png")
+  path.join(referencesDir, "magic-library-reference.jpg")
 ];
 
 for (const imagePath of imagePaths) {

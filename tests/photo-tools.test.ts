@@ -47,6 +47,21 @@ test("photo config rejects invalid persisted values", () => {
   assert.throws(() => readPhotoPluginConfig(configPath), /invalid photo plugin config JSON/);
 });
 
+test("photo config reads on-body generation settings", () => {
+  const configPath = path.join(makeTempDir("on-body-config"), "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    onBodyReferenceImage: "assets/ref/full-body.jpg",
+    onBodyPrompt: "use image 1 as body reference and image 2 as outfit reference",
+    selfieOnBodyPrompt: "use image 1 as on-body reference and image 2 as scene reference"
+  }));
+
+  const config = readPhotoPluginConfig(configPath);
+
+  assert.equal(config.onBodyReferenceImage, "assets/ref/full-body.jpg");
+  assert.equal(config.onBodyPrompt, "use image 1 as body reference and image 2 as outfit reference");
+  assert.equal(config.selfieOnBodyPrompt, "use image 1 as on-body reference and image 2 as scene reference");
+});
+
 test("photo tool entry returns config errors to the agent", async () => {
   const configPath = path.join(makeTempDir("selfie-tool-invalid-config"), "config.json");
   const store = createAliceStore(path.join(makeTempDir("selfie-tool-invalid-config-db"), "alice.sqlite"));
@@ -118,9 +133,9 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     assert.equal(executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
     assert.doesNotMatch(executorInputs[0].prompt, /\{\{[^}]+\}\}/);
     assert.deepEqual(executorInputs[0].referenceImages, [
-      path.resolve(referenceRoot, "alice-character-reference.png"),
+      path.resolve(referenceRoot, "alice-character-reference.jpg"),
       path.resolve(outfitImage),
-      path.resolve(referenceRoot, "magic-library-reference.png")
+      path.resolve(referenceRoot, "magic-library-reference.jpg")
     ]);
     assert.equal(fs.existsSync(executorInputs[0].workDir), false);
     assert.equal(sent[0].content.kind, "text");
@@ -184,6 +199,96 @@ test("selfie converts generated non-JPEG bytes to JPEG before sending", async ()
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
+test("selfie uses stored on-body reference with the selfie on-body prompt", async () => {
+  const outputRoot = makeAssetTempDir("selfie-on-body-reference");
+  const referenceRoot = makeTempDir("selfie-ref-on-body-reference");
+  const onBodyImage = path.join(makeTempDir("selfie-on-body-image"), "dress.On_Body_Ref.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-on-body-db"), "alice.sqlite"));
+  let executorInput: SelfieExecutorInput | undefined;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(onBodyImage, "on-body-image");
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieOnBodyPrompt: "on-body prompt {{pose}} {{outfit/content}}",
+      selfieExecutor: async (input) => {
+        executorInput = input;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: () => ({ ...selfieContext(), onBodyImageUrl: onBodyImage }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_on_body",
+      toolName: "selfie",
+      input: { pose: "看镜头" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(executorInput?.referenceImages.map((image) => path.basename(image)), [
+      "alice-character-reference.jpg",
+      "dress.On_Body_Ref.jpg",
+      "magic-library-reference.jpg"
+    ]);
+    assert.match(executorInput?.prompt ?? "", /on-body prompt 看镜头 黑色薄纱短袖高领上衣/);
+    assert.doesNotMatch(executorInput?.prompt ?? "", /角色动作:/);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(onBodyImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie uses current outfit image as on-body reference when marked generated", async () => {
+  const outputRoot = makeAssetTempDir("selfie-generated-outfit-reference");
+  const referenceRoot = makeTempDir("selfie-ref-generated-outfit-reference");
+  const outfitImage = path.join(makeTempDir("selfie-generated-outfit-image"), "uploaded.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-generated-outfit-db"), "alice.sqlite"));
+  let referenceImages: string[] = [];
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(outfitImage, "uploaded-on-body-image");
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieOnBodyPrompt: "generated outfit prompt {{pose}}",
+      selfieExecutor: async (input) => {
+        referenceImages = input.referenceImages;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage, outfitImageGenerated: true }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_generated_outfit",
+      toolName: "selfie",
+      input: { pose: "挥手" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(referenceImages.map((image) => path.basename(image)), [
+      "alice-character-reference.jpg",
+      "uploaded.jpg",
+      "magic-library-reference.jpg"
+    ]);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
   }
 });
 
@@ -401,9 +506,9 @@ test("selfie openai executor uses openai relay edits route with image field", as
     assert.equal(form.getAll("image").length, 3);
     assert.equal(form.getAll("image[]").length, 0);
     assert.deepEqual(form.getAll("image").map((value) => value instanceof File ? value.name : ""), [
-      "alice-character-reference.png",
+      "alice-character-reference.jpg",
       "dress.jpg",
-      "magic-library-reference.png"
+      "magic-library-reference.jpg"
     ]);
     assert.doesNotMatch(String(form.get("prompt")), /画幅比例|API生成约束|输入图片顺序/);
     return new Response(JSON.stringify({
@@ -607,7 +712,7 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
     assert.equal(codexArgs.includes("--output-last-message"), false);
     const imageArgs = codexArgs.filter((arg) => arg.startsWith("--image="));
     assert.equal(imageArgs.length, 3);
-    assert.deepEqual(imageArgs.map((arg) => path.basename(arg.slice("--image=".length))), ["reference-1.png", "reference-2.jpg", "reference-3.png"]);
+    assert.deepEqual(imageArgs.map((arg) => path.basename(arg.slice("--image=".length))), ["reference-1.jpg", "reference-2.jpg", "reference-3.jpg"]);
     assert.equal(sent[1].content.kind, "image");
     const sentAssetId = sent[1].content.kind === "image" ? sent[1].content.assetId : "";
     const finalPath = path.join(assetRootFromOutputDir(outputRoot), sentAssetId);
@@ -746,7 +851,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
 
     assert.equal(result.ok, true);
     assert.equal(referenceImages.length, 2);
-    assert.deepEqual(referenceImages.map((image) => path.basename(image)), ["alice-character-reference.png", "magic-library-reference.png"]);
+    assert.deepEqual(referenceImages.map((image) => path.basename(image)), ["alice-character-reference.jpg", "magic-library-reference.jpg"]);
     assert.equal(referenceImagePrompt, "");
     assert.equal(sent[0].content.kind, "text");
     assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
@@ -797,7 +902,7 @@ test("selfie uses world wanderer streetview as reference image 3 when outfit is 
 
     assert.equal(result.ok, true);
     assert.deepEqual(referenceImages.map((image) => path.basename(image)), [
-      "alice-character-reference.png",
+      "alice-character-reference.jpg",
       "dress.jpg",
       "street.jpg"
     ]);
@@ -843,7 +948,7 @@ test("selfie does not keep streetview as image 3 when outfit reference is missin
 
     assert.equal(result.ok, true);
     assert.deepEqual(referenceImages.map((image) => path.basename(image)), [
-      "alice-character-reference.png",
+      "alice-character-reference.jpg",
       "street.jpg"
     ]);
   } finally {
@@ -909,7 +1014,7 @@ test("selfie sends start notice before required reference failures", async () =>
   const store = createAliceStore(path.join(makeTempDir("selfie-missing-character-db"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   writeReferenceFiles(referenceRoot);
-  fs.rmSync(path.join(referenceRoot, "alice-character-reference.png"));
+  fs.rmSync(path.join(referenceRoot, "alice-character-reference.jpg"));
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
@@ -1060,8 +1165,8 @@ function writeReferenceFiles(root: string): void {
     "服装特征:",
     "{{outfit/content}}"
   ].join("\n"));
-  fs.writeFileSync(path.join(root, "alice-character-reference.png"), "alice-image");
-  fs.writeFileSync(path.join(root, "magic-library-reference.png"), "library-image");
+  fs.writeFileSync(path.join(root, "alice-character-reference.jpg"), "alice-image");
+  fs.writeFileSync(path.join(root, "magic-library-reference.jpg"), "library-image");
 }
 
 function makeAssetTempDir(name: string): string {

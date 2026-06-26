@@ -31,6 +31,8 @@ export type SelfieContext = {
   outfitName: string;
   outfitContent: string;
   outfitImageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
 };
 
 export type SelfieExecutorInput = {
@@ -78,8 +80,8 @@ export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
 };
 
 const selfiePromptFileName = "selfie-prompt.txt";
-const characterReferenceFileName = "alice-character-reference.png";
-const libraryReferenceFileName = "magic-library-reference.png";
+const characterReferenceFileName = "alice-character-reference.jpg";
+const libraryReferenceFileName = "magic-library-reference.jpg";
 
 export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProvider, proxyUrl?: string): (call: ToolCall, executionContext?: ToolExecutionContext) => Promise<ToolResult> {
   let failedSelfieMarker: number | undefined;
@@ -127,8 +129,8 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       let assetId = path.join(relativeDir, fileName);
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
-      const prompt = buildSelfiePrompt(pose, context);
       const references = await resolveReferenceImages(context);
+      const prompt = buildSelfiePrompt(pose, context, references.usesOnBodyReference);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -137,6 +139,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         `mode=${photoConfig.selfieMode}`,
         `promptLength=${prompt.length}`,
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
+        references.usesOnBodyReference ? "usesOnBodyReference=true" : "",
         references.missingOutfitImage ? "missingOutfitImage=true" : "",
         references.worldWandererStreetViewImage ? `worldWandererStreetView=${path.basename(references.worldWandererStreetViewImage)}` : ""
       ].join(" "));
@@ -224,11 +227,19 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(pose: string, context: SelfieContext): string {
-    const referenceDir = runtimePhotoConfig().selfieReferenceDir;
+  function buildSelfiePrompt(pose: string, context: SelfieContext, usesOnBodyReference: boolean): string {
+    const photoConfig = runtimePhotoConfig();
+    if (usesOnBodyReference) {
+      if (!photoConfig.selfieOnBodyPrompt.trim()) throw new Error(photoToolText.selfieOnBodyPromptRequired);
+      return renderSelfiePrompt(photoConfig.selfieOnBodyPrompt, pose, context);
+    }
+    const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
-    const template = fs.readFileSync(templatePath, "utf8");
+    return renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"), pose, context);
+  }
+
+  function renderSelfiePrompt(template: string, pose: string, context: SelfieContext): string {
     const now = time.now();
     return renderLLMText(template, {
       ...buildLLMTextVariables({
@@ -254,7 +265,9 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
             id: context.outfitId,
             name: context.outfitName,
             content: context.outfitContent,
-            ...(context.outfitImageUrl ? { imageUrl: context.outfitImageUrl } : {})
+            ...(context.outfitImageUrl ? { imageUrl: context.outfitImageUrl } : {}),
+            ...(context.onBodyImageUrl ? { onBodyImageUrl: context.onBodyImageUrl } : {}),
+            ...(context.outfitImageGenerated ? { outfitImageGenerated: context.outfitImageGenerated } : {})
           }
         }
       }),
@@ -263,13 +276,15 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     });
   }
 
-  async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; worldWandererStreetViewImage?: string }> {
+  async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; usesOnBodyReference: boolean; worldWandererStreetViewImage?: string }> {
     const referenceDir = runtimePhotoConfig().selfieReferenceDir;
-    const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), photoToolText.characterReferenceNotFound);
-    const outfitImage = optionalFile(resolveOutfitImage(context));
+    const onBodyReference = resolveOnBodyReference(context);
     const worldWandererStreetViewImage = await resolveWorldWandererStreetViewReferenceImage();
+    const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), photoToolText.characterReferenceNotFound);
     const images = [characterImage];
-    if (outfitImage) images.push(outfitImage);
+    const outfitImage = onBodyReference ? undefined : optionalFile(resolveOutfitImage(context));
+    if (onBodyReference) images.push(onBodyReference);
+    if (!onBodyReference && outfitImage) images.push(outfitImage);
     if (worldWandererStreetViewImage) {
       images.push(worldWandererStreetViewImage);
     } else {
@@ -278,9 +293,16 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     return {
       images,
       prompt: "",
-      missingOutfitImage: !outfitImage,
+      missingOutfitImage: !onBodyReference && !outfitImage,
+      usesOnBodyReference: Boolean(onBodyReference),
       worldWandererStreetViewImage
     };
+  }
+
+  function resolveOnBodyReference(context: SelfieContext): string | undefined {
+    if (context.outfitImageGenerated === true) return requireFile(resolveOutfitImage(context), photoToolText.onBodyReferenceNotFound);
+    const imageUrl = context.onBodyImageUrl?.trim();
+    return imageUrl ? requireFile(path.resolve(imageUrl), photoToolText.onBodyReferenceNotFound) : undefined;
   }
 
   async function resolveWorldWandererStreetViewReferenceImage(): Promise<string | undefined> {

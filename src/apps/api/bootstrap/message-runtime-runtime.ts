@@ -22,6 +22,7 @@ export function createMessageRuntimeRuntime(input: {
   getSleepCocoonWakeEvent(): any;
   getCalendarReminderEvent(): any;
   worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
+  attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
@@ -65,7 +66,8 @@ export function createMessageRuntimeRuntime(input: {
       });
     },
     onHeartbeatTick() {
-      input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
+      const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
+      void input.attemptDailyOutfitOnBodyGeneration?.(daily);
       input.initiatedBehaviorRunStore.finalizeExpiredResponses(input.time.now().date);
     },
     async onIdleTimerTransition(transitionInput) {

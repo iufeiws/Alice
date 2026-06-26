@@ -2,6 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { DailyShellStore, ShellOption } from "../../../../contexts/agent-profile/src/ports/shell-store.js";
+import { filterOutfits, resolveOutfitByName, shouldAttemptOnBodyGeneration } from "../../../../contexts/agent-profile/src/domain/outfit.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
@@ -21,6 +22,7 @@ export type ShellToolsDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
+  attemptOnBodyGeneration?(outfit: ShellOption): Promise<unknown> | unknown;
   getDefaultTarget?(): ShellToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?(input: {
@@ -112,6 +114,10 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
 
     const noticeResult = await sendChangingNotice(call.id, target);
     if (noticeResult.ok === false) return noticeResult.result;
+    if (shouldAttemptOnBodyGeneration(shell.outfit)) {
+      await deps.attemptOnBodyGeneration?.(shell.outfit);
+      shell = deps.dailyShellStore.get(time.now().date, time.timeZone);
+    }
 
     return {
       callId: call.id,
@@ -213,45 +219,13 @@ function toOutfitOutput(outfit: ShellOption, current: boolean): Record<string, u
     imageUrl: outfit.imageUrl,
     onBodyImageUrl: outfit.onBodyImageUrl,
     outfitImageGenerated: outfit.outfitImageGenerated,
+    onBodyGenerationAttempted: outfit.onBodyGenerationAttempted,
     current
   };
 }
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function filterOutfits(outfits: ShellOption[], query: string): ShellOption[] {
-  const normalizedQuery = normalizeSearchText(query);
-  return outfits.filter((outfit) => outfitSearchText(outfit).includes(normalizedQuery));
-}
-
-function resolveOutfitByName(outfits: ShellOption[], name: string):
-  | { kind: "one"; outfit: ShellOption }
-  | { kind: "ambiguous"; outfits: ShellOption[] }
-  | { kind: "none" } {
-  const normalizedName = normalizeSearchText(name);
-  const exact = outfits.filter((outfit) => normalizeSearchText(outfit.name) === normalizedName);
-  if (exact.length === 1) return { kind: "one", outfit: exact[0] };
-  if (exact.length > 1) return { kind: "ambiguous", outfits: exact };
-
-  const matches = filterOutfits(outfits, name);
-  if (matches.length === 1) return { kind: "one", outfit: matches[0] };
-  if (matches.length > 1) return { kind: "ambiguous", outfits: matches };
-  return { kind: "none" };
-}
-
-function outfitSearchText(outfit: ShellOption): string {
-  return normalizeSearchText([
-    outfit.name,
-    outfit.id,
-    outfit.group ?? "",
-    outfit.content
-  ].join("\n"));
-}
-
-function normalizeSearchText(value: string): string {
-  return value.trim().toLocaleLowerCase();
 }
 
 function extractSentMessageId(value: unknown): string | undefined {

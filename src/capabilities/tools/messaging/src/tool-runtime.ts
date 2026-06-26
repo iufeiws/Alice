@@ -8,6 +8,7 @@ import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
+import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 
@@ -58,6 +59,15 @@ export function createToolRuntime(input: {
   });
 
   const photoConfigPath = "config/plugin/photo/config.json";
+  const attemptOnBodyGeneration = createOutfitOnBodyGenerationAttempt({
+    config: input.config,
+    dailyShellStore: input.dailyShellStore,
+    time: input.time,
+    promptProfileStore: input.promptProfileStore,
+    coreProfileStore: input.coreProfileStore,
+    photoConfigPath,
+    appendLog: input.appendLog
+  });
   const photoTools = createPhotoTools({
     store: input.store,
     outputRouter: input.outputRouter,
@@ -99,7 +109,8 @@ export function createToolRuntime(input: {
         outfitContent: daily.outfit.content,
         outfitImageUrl: daily.outfit.imageUrl,
         onBodyImageUrl: daily.outfit.onBodyImageUrl,
-        outfitImageGenerated: daily.outfit.outfitImageGenerated
+        outfitImageGenerated: daily.outfit.outfitImageGenerated,
+        onBodyGenerationAttempted: daily.outfit.onBodyGenerationAttempted
       };
     },
     getUserName: () => input.promptProfileStore.get().userName,
@@ -117,6 +128,7 @@ export function createToolRuntime(input: {
     store: input.store,
     outputRouter: input.outputRouter,
     time: input.time,
+    attemptOnBodyGeneration,
     getDefaultTarget() {
       return input.getDefaultTarget();
     },

@@ -12,6 +12,7 @@ export function createApiBehaviorRuntime(input: {
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   getDefaultTarget(): any;
+  attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   let sleepCocoonEventRuntime: any;
@@ -24,6 +25,7 @@ export function createApiBehaviorRuntime(input: {
     sendSleepNotice: input.sendSleepNotice,
     triggerSleepMemoryInduction: input.triggerSleepMemoryInduction,
     queueMorningEvent: () => sleepCocoonEventRuntime.queueMorningEvent({ agentInitiatedTriggerEvent: "sleep_cocoon.wake" }),
+    attemptDailyOutfitOnBodyGeneration: input.attemptDailyOutfitOnBodyGeneration,
     appendLog: input.appendLog
   });
   sleepCocoonEventRuntime = createSleepCocoonEventRuntime({

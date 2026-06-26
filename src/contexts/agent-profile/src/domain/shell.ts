@@ -1,5 +1,6 @@
 import { formatZonedIso, parseZonedIso } from "../../../../platform/time/src/index.js";
 import { promptStoragePath } from "../adapters/json-prompt-profile-store.js";
+import { findOutfit, pickOutfit } from "./outfit.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -12,6 +13,7 @@ export type ShellOption = {
   imageUrl?: string;
   onBodyImageUrl?: string;
   outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
 };
 
 export type DailyShell = {
@@ -106,7 +108,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
           createdAt,
           personality: findOption(personalities, existing.personalityId) ?? pick(personalities),
           relationship: findOption(relationships, existing.relationshipId) ?? pick(relationships),
-          outfit: findOption(outfits, existing.outfitId) ?? pick(outfits)
+          outfit: findOutfit(outfits, existing.outfitId) ?? pickOutfit(outfits)
         };
         cachedRecentRelationshipIds = normalizeRecentRelationshipIds(existing.recentRelationshipIds, relationships);
         const nextRecentRelationshipIds = updateRecentRelationshipIds(
@@ -134,7 +136,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
         relationship,
-        outfit: pick(outfits)
+        outfit: pickOutfit(outfits)
       };
       cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
@@ -162,7 +164,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
     },
     switchOutfit(date, timeZone, outfitId) {
       const outfits = readOptions(paths.outfitsDir, defaultOutfits());
-      const outfit = findOption(outfits, outfitId);
+      const outfit = findOutfit(outfits, outfitId);
       if (!outfit) throw new Error("unknown_outfit");
       const current = this.get(date, timeZone);
       const daily: DailyShell = {
@@ -230,7 +232,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
         relationship,
-        outfit: pick(readOptions(paths.outfitsDir, defaultOutfits()))
+        outfit: pickOutfit(readOptions(paths.outfitsDir, defaultOutfits()))
       };
       cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
@@ -481,6 +483,7 @@ function normalizeOption(value: unknown): ShellOption | undefined {
   const item = value as Record<string, unknown>;
   if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.content !== "string") return undefined;
   if (!item.id.trim() || !item.name.trim() || !item.content.trim()) return undefined;
+  const onBodyImageUrl = typeof item.onBodyImageUrl === "string" && item.onBodyImageUrl.trim() ? item.onBodyImageUrl : undefined;
   return {
     id: item.id,
     name: item.name,
@@ -491,8 +494,9 @@ function normalizeOption(value: unknown): ShellOption | undefined {
         ? item.tag1
         : undefined,
     imageUrl: typeof item.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : undefined,
-    onBodyImageUrl: typeof item.onBodyImageUrl === "string" && item.onBodyImageUrl.trim() ? item.onBodyImageUrl : undefined,
-    outfitImageGenerated: item.outfitImageGenerated === true || undefined
+    onBodyImageUrl,
+    outfitImageGenerated: item.outfitImageGenerated === true || undefined,
+    onBodyGenerationAttempted: item.onBodyGenerationAttempted === true || item.outfitImageGenerated === true || Boolean(onBodyImageUrl) || undefined
   };
 }
 

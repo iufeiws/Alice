@@ -320,7 +320,8 @@ test("daily shell store preserves outfit image urls", () => {
       group: "fantasy",
       imageUrl: "memory-files/shell/assets/custom.png",
       onBodyImageUrl: "memory-files/shell/assets/custom-on-body.png",
-      outfitImageGenerated: true
+      outfitImageGenerated: true,
+      onBodyGenerationAttempted: false
     }
   ]);
 
@@ -329,9 +330,30 @@ test("daily shell store preserves outfit image urls", () => {
   assert.equal(config.outfits[0].imageUrl, "memory-files/shell/assets/custom.png");
   assert.equal(config.outfits[0].onBodyImageUrl, "memory-files/shell/assets/custom-on-body.png");
   assert.equal(config.outfits[0].outfitImageGenerated, true);
+  assert.equal(config.outfits[0].onBodyGenerationAttempted, true);
   assert.equal(config.outfits[0].group, "fantasy");
   assert.doesNotMatch(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai"), /图片地址:/);
 });
+
+test("daily shell store treats generated outfit images as on-body attempted", () => {
+  const root = makeTempDir("daily-shell-generated-attempted");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "outfits", [
+    {
+      id: "generated_outfit",
+      name: "Generated Outfit",
+      content: "generated content",
+      imageUrl: "memory-files/shell/assets/generated.png",
+      outfitImageGenerated: true
+    }
+  ]);
+
+  const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+
+  assert.equal(config.outfits[0].outfitImageGenerated, true);
+  assert.equal(config.outfits[0].onBodyGenerationAttempted, true);
+});
+
 
 test("daily shell prompt template is editable", () => {
   const root = makeTempDir("daily-shell-prompt");

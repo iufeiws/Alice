@@ -10,6 +10,7 @@ import {
 } from "../src/contexts/memory/src/memory.js";
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createPromptProfileStore } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import { createDailyShellStore } from "../src/contexts/agent-profile/src/domain/shell.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
 import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
@@ -756,6 +757,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(fieldGroups.get("selfieImageApiRelayBaseURL"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayModel"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayTimeoutMs"), "openai_relay");
+  assert.equal(fieldGroups.get("autoGenerateOutfitOnBody"), "on_body");
   assert.equal(fieldGroups.get("onBodyReferenceImage"), "on_body");
   assert.equal(fieldGroups.get("onBodyPrompt"), "on_body");
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
@@ -790,6 +792,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     selfieImageApiRelayOutputCompression: 77,
     selfieImageApiRelayTimeoutMs: 90000,
     selfieMaxBytes: 10 * 1024 * 1024,
+    autoGenerateOutfitOnBody: true,
     onBodyReferenceImage: "assets/selfie/references/full-body-reference.jpg",
     onBodyPrompt: "configured-prompt"
   }), response);
@@ -809,6 +812,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(saved.selfieImageApiModeration, "low");
   assert.equal(saved.selfieImageApiRelayModel, "relay-image-model");
   assert.equal(saved.selfieImageApiRelayOutputFormat, "webp");
+  assert.equal(saved.autoGenerateOutfitOnBody, true);
   assert.equal(saved.onBodyReferenceImage, "assets/selfie/references/full-body-reference.jpg");
   assert.equal(saved.onBodyPrompt, "configured-prompt");
   assert.equal(saved.selfieImageApiKeySet, undefined);
@@ -842,11 +846,19 @@ test("admin photo on-body generation writes beside outfit image", async () => {
   }) as typeof fetch;
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const dailyShellStore = createDailyShellStore(root);
+  dailyShellStore.saveOption("outfits", {
+    id: "dress_1",
+    name: "Dress 1",
+    content: "black dress",
+    imageUrl: path.relative(process.cwd(), outfitPath)
+  });
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
     config: { ...base.config, photo: photoDefaults() },
-    pluginConfigs: { photo: { configPath } }
+    pluginConfigs: { photo: { configPath } },
+    dailyShellStore
   };
   const handler = createAdminHandler(context);
 
@@ -866,6 +878,67 @@ test("admin photo on-body generation writes beside outfit image", async () => {
     assert.equal(body.imageUrl, expectedPath);
     assert.equal(renderedPrompt, "configured-prompt black dress");
     assert.equal(fs.existsSync(path.join(path.dirname(outfitPath), "dress_1.On_Body_Ref.jpg")), true);
+    assert.equal(dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits.find((outfit) => outfit.id === "dress_1")?.onBodyGenerationAttempted, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("admin photo on-body generation marks moderation failures but not 503", async () => {
+  const root = makeTempDir("admin-photo-on-body-errors");
+  const configPath = path.join(root, "config", "plugin", "photo", "config.json");
+  const referencePath = path.join(root, "assets", "selfie", "references", "full-body-reference.jpg");
+  const outfitDir = path.join(root, "memory-files", "shell", "outfits");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.mkdirSync(path.dirname(referencePath), { recursive: true });
+  fs.mkdirSync(outfitDir, { recursive: true });
+  fs.writeFileSync(referencePath, "reference");
+  fs.writeFileSync(path.join(outfitDir, "blocked.jpg"), "outfit");
+  fs.writeFileSync(path.join(outfitDir, "busy.jpg"), "outfit");
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    selfieMode: "openai",
+    selfieImageApiKey: "image-key",
+    onBodyReferenceImage: path.relative(process.cwd(), referencePath),
+    onBodyPrompt: "configured-prompt {{outfit/content}}"
+  })}\n`);
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) => {
+    const prompt = String((init?.body as FormData).get("prompt"));
+    if (prompt.includes("blocked")) return new Response(JSON.stringify({ error: { message: "rejected by safety system" } }), { status: 400, statusText: "Bad Request" });
+    return new Response("upstream busy", { status: 503, statusText: "Service Unavailable" });
+  }) as typeof fetch;
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const dailyShellStore = createDailyShellStore(root);
+  dailyShellStore.saveOption("outfits", { id: "blocked", name: "Blocked", content: "blocked", imageUrl: path.relative(process.cwd(), path.join(outfitDir, "blocked.jpg")) });
+  dailyShellStore.saveOption("outfits", { id: "busy", name: "Busy", content: "busy", imageUrl: path.relative(process.cwd(), path.join(outfitDir, "busy.jpg")) });
+  const base = baseContext(root, memoryStore, promptStore);
+  const handler = createAdminHandler({
+    ...base,
+    config: { ...base.config, photo: photoDefaults() },
+    pluginConfigs: { photo: { configPath } },
+    dailyShellStore
+  });
+
+  try {
+    const blocked = createResponse();
+    await handler(createRequest("POST", "/admin/api/plugins/photo/on-body", {
+      outfitId: "blocked",
+      outfitImageUrl: path.relative(process.cwd(), path.join(outfitDir, "blocked.jpg"))
+    }), blocked);
+    const busy = createResponse();
+    await handler(createRequest("POST", "/admin/api/plugins/photo/on-body", {
+      outfitId: "busy",
+      outfitImageUrl: path.relative(process.cwd(), path.join(outfitDir, "busy.jpg"))
+    }), busy);
+    const outfits = dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits;
+
+    assert.equal(blocked.statusCode, 500);
+    assert.equal(JSON.parse(blocked.body).onBodyGenerationAttempted, true);
+    assert.equal(busy.statusCode, 503);
+    assert.equal(outfits.find((outfit) => outfit.id === "blocked")?.onBodyGenerationAttempted, true);
+    assert.equal(outfits.find((outfit) => outfit.id === "busy")?.onBodyGenerationAttempted, undefined);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -2136,7 +2209,8 @@ function photoDefaults() {
     selfieImageApiRelayOutputFormat: "jpeg",
     selfieImageApiRelayOutputCompression: 45,
     selfieImageApiRelayTimeoutMs: 120_000,
-    selfieMaxBytes: 10 * 1024 * 1024
+    selfieMaxBytes: 10 * 1024 * 1024,
+    autoGenerateOutfitOnBody: false
   };
 }
 

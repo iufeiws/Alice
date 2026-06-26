@@ -202,6 +202,61 @@ test("wardrobe switch reports changing notice send failures", async () => {
   }]);
 });
 
+test("wardrobe switch attempts on-body generation once for unattempted outfits", async () => {
+  const root = makeTempDir("wardrobe-on-body-attempt");
+  const shellStore = createDailyShellStore(root);
+  replaceShellCategory(root, shellStore, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one", onBodyGenerationAttempted: true },
+    { id: "o2", name: "O Two", content: "outfit two" }
+  ]);
+  const attempted: string[] = [];
+  const tools = createShellTools({
+    dailyShellStore: shellStore,
+    store: createAliceStore(path.join(makeTempDir("wardrobe-on-body-attempt-db"), "alice.sqlite")),
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z")),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
+    attemptOnBodyGeneration(outfit) {
+      attempted.push(outfit.id);
+      shellStore.saveOption("outfits", { ...outfit, onBodyGenerationAttempted: true }, outfit.id);
+    }
+  });
+
+  const first = await tools.execute({ id: "call_switch_attempt", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+  const second = await tools.execute({ id: "call_switch_skip", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.deepEqual(attempted, ["o2"]);
+  assert.equal(JSON.parse(String(first.output)).current.onBodyGenerationAttempted, true);
+});
+
+test("wardrobe switch skips on-body generation for generated outfit images", async () => {
+  const root = makeTempDir("wardrobe-on-body-generated-skip");
+  const shellStore = createDailyShellStore(root);
+  replaceShellCategory(root, shellStore, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two", outfitImageGenerated: true }
+  ]);
+  const attempted: string[] = [];
+  const tools = createShellTools({
+    dailyShellStore: shellStore,
+    store: createAliceStore(path.join(makeTempDir("wardrobe-on-body-generated-skip-db"), "alice.sqlite")),
+    outputRouter: { async send() {} },
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z")),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
+    attemptOnBodyGeneration(outfit) {
+      attempted.push(outfit.id);
+    }
+  });
+
+  const result = await tools.execute({ id: "call_switch_generated_skip", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(attempted, []);
+  assert.equal(JSON.parse(String(result.output)).current.onBodyGenerationAttempted, true);
+});
+
 test("wardrobe switch returns candidates for ambiguous names", async () => {
   const root = makeTempDir("wardrobe-ambiguous");
   const shellStore = createDailyShellStore(root);

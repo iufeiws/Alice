@@ -67,6 +67,7 @@ export type AppConfig = {
     selfieImageApiRelayOutputCompression: number;
     selfieImageApiRelayTimeoutMs: number;
     selfieMaxBytes: number;
+    autoGenerateOutfitOnBody: boolean;
   };
   tts: {
     backend: "genie-tts" | "moss-onnx";
@@ -230,7 +231,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieImageApiRelayOutputFormat: env.SELFIE_IMAGE_API_RELAY_OUTPUT_FORMAT ?? env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
       selfieImageApiRelayOutputCompression: envNumber(env.SELFIE_IMAGE_API_RELAY_OUTPUT_COMPRESSION, envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45)),
       selfieImageApiRelayTimeoutMs: envNumber(env.SELFIE_IMAGE_API_RELAY_TIMEOUT_MS, envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000)),
-      selfieMaxBytes: envNumber(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024)
+      selfieMaxBytes: envNumber(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024),
+      autoGenerateOutfitOnBody: envBool(env.PHOTO_AUTO_GENERATE_OUTFIT_ON_BODY, false)
     },
     tts: {
       backend: normalizeTTSBackend(env.TTS_BACKEND),

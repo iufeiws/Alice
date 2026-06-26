@@ -11,6 +11,7 @@ export function createAgentStateRuntime(input: {
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   queueMorningEvent(): void;
+  attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const agentState = createAgentStateController({
@@ -55,6 +56,7 @@ export function createAgentStateRuntime(input: {
         nowUtc: now.date.toISOString()
       });
       const daily = input.getDailyShellStore().reroll(now.date, input.time.timeZone);
+      void input.attemptDailyOutfitOnBodyGeneration?.(daily);
       input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
       input.queueMorningEvent();
     }

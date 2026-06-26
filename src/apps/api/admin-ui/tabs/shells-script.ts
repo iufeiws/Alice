@@ -145,7 +145,7 @@ export function renderShellsScript(): string {
                     <img class="shell-image-preview \${option.onBodyImageUrl ? "" : "hidden"}" data-field="onBodyPreview" src="\${escapeAttr(shellImageSrc(option.onBodyImageUrl || ""))}" alt="" />
                     <label><input type="checkbox" data-field="outfitImageGenerated" \${option.outfitImageGenerated ? "checked" : ""} /> 当前服装本身已是生成结果</label>
                     <button type="button" data-action="generate-on-body" \${option.outfitImageGenerated ? "disabled" : ""}>生成</button>
-                    <p class="muted shell-on-body-status" data-field="onBodyStatus">\${option.outfitImageGenerated ? "已禁用生成" : ""}</p>
+                    <p class="muted shell-on-body-status" data-field="onBodyStatus">\${option.outfitImageGenerated ? "已禁用生成" : option.onBodyGenerationAttempted ? "已尝试生成" : ""}</p>
                   </div>
                 </div>
               </div>
@@ -211,6 +211,7 @@ export function renderShellsScript(): string {
         if (generatedCheckbox) {
           generatedCheckbox.addEventListener("change", async (event) => {
             option.outfitImageGenerated = event.target.checked;
+            if (option.outfitImageGenerated) option.onBodyGenerationAttempted = true;
             updateShellOnBodyGenerateDisabled(optionRoot, option.outfitImageGenerated);
             setShellOnBodyStatus(optionRoot, "Saving generated flag...");
             generatedCheckbox.disabled = true;
@@ -482,16 +483,19 @@ export function renderShellsScript(): string {
                 outfitGroup: option.group,
                 outfitImageUrl: option.imageUrl,
                 onBodyImageUrl: option.onBodyImageUrl,
-                outfitImageGenerated: option.outfitImageGenerated
+                outfitImageGenerated: option.outfitImageGenerated,
+                onBodyGenerationAttempted: option.onBodyGenerationAttempted
               })
             });
             const text = await response.text();
             const result = text ? JSON.parse(text) : {};
             if (!result.ok) {
+              if (result.onBodyGenerationAttempted) option.onBodyGenerationAttempted = true;
               setShellOnBodyStatus(optionRoot, "Generate failed: " + (result.error || response.statusText || "unknown error"));
               return;
             }
             option.onBodyImageUrl = result.imageUrl;
+            option.onBodyGenerationAttempted = true;
             updateShellOnBodyPreview(optionRoot, result.imageUrl, true);
             const saved = await persistShellOption(category, index);
             shellData[category][index] = { ...saved.option, _previousId: saved.option.id };

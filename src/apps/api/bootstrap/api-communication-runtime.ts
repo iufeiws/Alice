@@ -2,6 +2,7 @@ import { createWebRtcVoiceRuntime } from "./web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
+import { createOutfitOnBodyGenerationAttempt } from "../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const path = await import("node:path");
@@ -60,6 +61,14 @@ export function createApiCommunicationRuntime(input: {
     random: Math.random,
     appendLog: input.appendLog
   });
+  const attemptOutfitOnBodyGeneration = createOutfitOnBodyGenerationAttempt({
+    config: input.config,
+    dailyShellStore: input.dailyShellStore,
+    time: input.time,
+    promptProfileStore: input.apiContextRuntime.promptProfileStore,
+    coreProfileStore: input.apiContextRuntime.coreProfileStore,
+    appendLog: input.appendLog
+  });
 
   messageRuntime = createMessageRuntimeRuntime({
     config: input.config,
@@ -81,6 +90,7 @@ export function createApiCommunicationRuntime(input: {
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
     getCalendarReminderEvent: input.getCalendarReminderEvent,
     worldWandererRuntime,
+    attemptDailyOutfitOnBodyGeneration: (daily) => attemptOutfitOnBodyGeneration(daily.outfit),
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog

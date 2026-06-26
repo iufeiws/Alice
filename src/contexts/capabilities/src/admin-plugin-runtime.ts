@@ -494,6 +494,7 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "selfieCharacterReferenceImage", label: "Character Ref", type: "fileUpload", group: "storage", assetKey: "character-reference", accept: "image/*", description: "Uploaded as alice-character-reference.jpg." },
         { key: "selfieOutputDir", label: "Output Folder", type: "text", group: "storage", description: "Must stay under assets/ so generated images can be routed as assets." },
         { key: "selfieMaxBytes", label: "Max Image Bytes", type: "number", group: "storage", min: 1024, max: 52428800, step: 1024 },
+        { key: "autoGenerateOutfitOnBody", label: "Auto On-Body", type: "switch", group: "on_body", description: "Automatically attempts outfit on-body generation after outfit selection." },
         { key: "onBodyReferenceImage", label: "Full Body Ref", type: "fileUpload", group: "on_body", assetKey: "on-body-reference", accept: "image/*", description: "Generation image 1." },
         { key: "onBodyPrompt", label: "Prompt", type: "textarea", group: "on_body", description: "Used exactly as the on-body generation prompt." },
         { key: "selfieOnBodyPrompt", label: "Selfie Prompt", type: "textarea", group: "on_body", description: "Used exactly when selfie uses an on-body reference." }
@@ -828,6 +829,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : photoNumberFromUnknown(patch.selfieImageApiRelayOutputCompression),
     selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiRelayTimeoutMs),
     selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : photoNumberFromUnknown(patch.selfieMaxBytes),
+    autoGenerateOutfitOnBody: patch.autoGenerateOutfitOnBody === undefined ? current.autoGenerateOutfitOnBody : booleanFromUnknown(patch.autoGenerateOutfitOnBody),
     onBodyReferenceImage: patch.onBodyReferenceImage === undefined ? current.onBodyReferenceImage : requiredString(patch.onBodyReferenceImage).trim(),
     onBodyPrompt: patch.onBodyPrompt === undefined ? current.onBodyPrompt : requiredString(patch.onBodyPrompt),
     selfieOnBodyPrompt: patch.selfieOnBodyPrompt === undefined ? current.selfieOnBodyPrompt : requiredString(patch.selfieOnBodyPrompt)
@@ -905,6 +907,7 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiRelayOutputCompression: photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: photo.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: photo.selfieMaxBytes,
+    autoGenerateOutfitOnBody: photo.autoGenerateOutfitOnBody,
     onBodyReferenceImage: photo.onBodyReferenceImage,
     onBodyPrompt: photo.onBodyPrompt,
     selfieOnBodyPrompt: photo.selfieOnBodyPrompt
@@ -926,34 +929,45 @@ function photoConfigMtime(context: AdminRoutesContext): string | undefined {
   }
 }
 
+export type PhotoOnBodyGenerationResult =
+  | { ok: true; imageUrl: string; mime: string; onBodyGenerationAttempted: true }
+  | { ok: false; error: string; statusCode: number; onBodyGenerationAttempted?: true };
+
 async function generatePhotoOnBody(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
+  const result = await generatePhotoOnBodyImage(context, await readJsonBody(request));
+  if (result.ok) {
+    writeJson(response, 200, result);
+  } else {
+    writeJson(response, result.statusCode, result);
+  }
+}
+
+export async function generatePhotoOnBodyImage(context: AdminRoutesContext, body: Record<string, unknown>): Promise<PhotoOnBodyGenerationResult> {
   const config = readPhotoConfigForAdmin(context);
   const promptTemplate = config.onBodyPrompt;
   if (!promptTemplate.trim()) {
-    writeJson(response, 400, { ok: false, error: "missing_on_body_prompt" });
-    return;
+    return { ok: false, statusCode: 400, error: "missing_on_body_prompt" };
   }
   const fullBodyReference = photoImagePath(config.onBodyReferenceImage);
   if (!fullBodyReference) {
-    writeJson(response, 400, { ok: false, error: "missing_on_body_reference_image" });
-    return;
+    return { ok: false, statusCode: 400, error: "missing_on_body_reference_image" };
   }
   const outfitImageUrl = requiredString(body.outfitImageUrl);
   const outfitId = safeFilePart(requiredString(body.outfitId));
   if (!outfitId) {
-    writeJson(response, 400, { ok: false, error: "missing_outfit_id" });
-    return;
+    return { ok: false, statusCode: 400, error: "missing_outfit_id" };
   }
   const outfitReference = photoImagePath(outfitImageUrl);
   if (!outfitReference) {
-    writeJson(response, 400, { ok: false, error: "missing_outfit_reference_image" });
-    return;
+    return { ok: false, statusCode: 400, error: "missing_outfit_reference_image" };
   }
   const imageApiSettings = selectedImageApiSettings(config);
   if (!imageApiSettings.key) {
-    writeJson(response, 400, { ok: false, error: "missing_photo_image_api_key" });
-    return;
+    return { ok: false, statusCode: 400, error: "missing_photo_image_api_key" };
+  }
+  const outfit = resolvePhotoOnBodyOutfit(context, body, outfitId, outfitImageUrl);
+  if (!outfit) {
+    return { ok: false, statusCode: 400, error: "missing_outfit_content" };
   }
 
   const outputDir = path.dirname(outfitReference);
@@ -965,11 +979,6 @@ async function generatePhotoOnBody(context: AdminRoutesContext, request: any, re
   fs.mkdirSync(outputDir, { recursive: true });
 
   try {
-    const outfit = resolvePhotoOnBodyOutfit(context, body, outfitId, outfitImageUrl);
-    if (!outfit) {
-      writeJson(response, 400, { ok: false, error: "missing_outfit_content" });
-      return;
-    }
     const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
     let tempFilePath = path.resolve(tempDir, tempFileName);
     await runOpenAIAPISelfie({
@@ -1006,16 +1015,25 @@ async function generatePhotoOnBody(context: AdminRoutesContext, request: any, re
     fs.renameSync(tempFilePath, finalFilePath);
     validateGeneratedImage(finalFilePath, outputDir, config.selfieMaxBytes);
     const mime = detectImageMime(fs.readFileSync(finalFilePath)) ?? "image/jpeg";
+    savePhotoOnBodyAttempt(context, outfit, finalImageUrl);
     context.appendLog("info", `photo on-body generated: ${finalImageUrl}`);
-    writeJson(response, 200, {
+    return {
       ok: true,
       imageUrl: finalImageUrl,
-      mime
-    });
+      mime,
+      onBodyGenerationAttempted: true
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const attempted = !isPhotoOnBodyRetryableFailure(message) && isPhotoOnBodyModerationFailure(message);
+    if (attempted) savePhotoOnBodyAttempt(context, outfit);
     context.appendLog("warn", `photo on-body generation failed: ${message}`);
-    writeJson(response, 500, { ok: false, error: message });
+    return {
+      ok: false,
+      statusCode: photoOnBodyFailureStatus(message),
+      error: message,
+      ...(attempted ? { onBodyGenerationAttempted: true as const } : {})
+    };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1038,6 +1056,7 @@ function resolvePhotoOnBodyOutfit(context: AdminRoutesContext, body: Record<stri
   imageUrl?: string;
   onBodyImageUrl?: string;
   outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
 } | undefined {
   const shellConfig = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
   const stored = Array.isArray(shellConfig.outfits)
@@ -1053,7 +1072,8 @@ function resolvePhotoOnBodyOutfit(context: AdminRoutesContext, body: Record<stri
     group: stored?.group ?? optionalString(body.outfitGroup),
     imageUrl: outfitImageUrl,
     onBodyImageUrl: stored?.onBodyImageUrl ?? optionalString(body.onBodyImageUrl),
-    outfitImageGenerated: stored?.outfitImageGenerated ?? body.outfitImageGenerated === true
+    outfitImageGenerated: stored?.outfitImageGenerated ?? body.outfitImageGenerated === true,
+    onBodyGenerationAttempted: stored?.onBodyGenerationAttempted ?? body.onBodyGenerationAttempted === true
   };
 }
 
@@ -1065,6 +1085,7 @@ function renderPhotoOnBodyPrompt(context: AdminRoutesContext, template: string, 
   imageUrl?: string;
   onBodyImageUrl?: string;
   outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
 }): string {
   const daily = context.dailyShellStore.get(context.time.now().date, context.time.timeZone);
   return renderLLMText(template, buildLLMTextVariables({
@@ -1079,6 +1100,42 @@ function renderPhotoOnBodyPrompt(context: AdminRoutesContext, template: string, 
     },
     appearanceDescription: context.coreProfileStore.get().appearanceDescription
   }));
+}
+
+function savePhotoOnBodyAttempt(context: AdminRoutesContext, outfit: {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
+}, imageUrl?: string): void {
+  context.dailyShellStore.saveOption("outfits", {
+    ...outfit,
+    ...(imageUrl ? { onBodyImageUrl: imageUrl } : {}),
+    onBodyGenerationAttempted: true
+  }, outfit.id);
+}
+
+function photoOnBodyFailureStatus(message: string): number {
+  const status = imageApiHttpStatus(message);
+  return status && [502, 503, 504].includes(status) ? status : 500;
+}
+
+function isPhotoOnBodyRetryableFailure(message: string): boolean {
+  const status = imageApiHttpStatus(message);
+  return status !== undefined && [502, 503, 504].includes(status);
+}
+
+function imageApiHttpStatus(message: string): number | undefined {
+  const match = /\bHTTP\s+(\d{3})\b/.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
+function isPhotoOnBodyModerationFailure(message: string): boolean {
+  return /moderation|safety|content[_ -]?policy|policy violation|content[_ -]?filter|blocked|rejected/i.test(message);
 }
 
 function googleStreetViewPluginEntry(): AdminPluginRegistryEntry {

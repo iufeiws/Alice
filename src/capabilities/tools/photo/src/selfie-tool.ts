@@ -33,6 +33,7 @@ export type SelfieContext = {
   outfitImageUrl?: string;
   onBodyImageUrl?: string;
   outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
 };
 
 export type SelfieExecutorInput = {
@@ -267,7 +268,8 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
             content: context.outfitContent,
             ...(context.outfitImageUrl ? { imageUrl: context.outfitImageUrl } : {}),
             ...(context.onBodyImageUrl ? { onBodyImageUrl: context.onBodyImageUrl } : {}),
-            ...(context.outfitImageGenerated ? { outfitImageGenerated: context.outfitImageGenerated } : {})
+            ...(context.outfitImageGenerated ? { outfitImageGenerated: context.outfitImageGenerated } : {}),
+            ...(context.onBodyGenerationAttempted ? { onBodyGenerationAttempted: context.onBodyGenerationAttempted } : {})
           }
         }
       }),

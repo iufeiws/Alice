@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createMessageRuntimeRuntime } from "../src/apps/api/bootstrap/message-runtime-runtime.js";
 import { createMessageRuntime } from "../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { createAgentStateController, type AgentStateStore } from "../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createAliceStore, type StoredMessageLog } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -7,6 +8,47 @@ import type { AgentEvent, AgentOutput } from "../src/contexts/agent-loop/src/con
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+
+test("message runtime heartbeat attempts daily outfit on-body generation", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-daily-outfit-on-body"), "alice.sqlite"));
+  const daily = { outfit: { id: "o1" } };
+  const attempted: string[] = [];
+  const runtime = createMessageRuntimeRuntime({
+    config: { core: { inboundDebounceMs: 0, heartbeatPaused: true } },
+    time: {
+      timeZone: "UTC",
+      now: () => ({ iso: "2026-05-26T00:00:00.000Z", date: new Date("2026-05-26T00:00:00.000Z") })
+    },
+    store,
+    core: { clearLLMSession() {}, async prepareEventRun() { return []; } },
+    agentLoopRuntime: undefined,
+    talkRuntime: undefined,
+    agentState: { tick() {}, getSnapshot: () => ({ state: "waiting" }), onChange() {}, canRunHeartbeat: () => true },
+    outputRouter: { async sendAll() {} },
+    isLLMSessionActive: () => false,
+    feishu: { async setTyping() {} },
+    wechat: { async setTyping() {} },
+    dailyShellStore: { get: () => daily },
+    initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
+    getAgentInitiatedBehaviorPlans: () => [],
+    getDefaultMessagingTarget: () => undefined,
+    getSleepCocoonGoodnightEvent: () => undefined,
+    getSleepCocoonWakeEvent: () => undefined,
+    getCalendarReminderEvent: () => undefined,
+    queueForceWakeEvent() {},
+    attemptDailyOutfitOnBodyGeneration(input) {
+      attempted.push(input.outfit.id);
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.processNow();
+
+  assert.deepEqual(attempted, ["o1"]);
+});
 
 test("message runtime sends one LLM request for pending inbound logs and marks them processed", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime"), "alice.sqlite"));

@@ -211,6 +211,8 @@ function toOutfitOutput(outfit: ShellOption, current: boolean): Record<string, u
     content: outfit.content,
     group: outfit.group,
     imageUrl: outfit.imageUrl,
+    onBodyImageUrl: outfit.onBodyImageUrl,
+    outfitImageGenerated: outfit.outfitImageGenerated,
     current
   };
 }

@@ -97,7 +97,9 @@ export function createToolRuntime(input: {
         outfitId: daily.outfit.id,
         outfitName: daily.outfit.name,
         outfitContent: daily.outfit.content,
-        outfitImageUrl: daily.outfit.imageUrl
+        outfitImageUrl: daily.outfit.imageUrl,
+        onBodyImageUrl: daily.outfit.onBodyImageUrl,
+        outfitImageGenerated: daily.outfit.outfitImageGenerated
       };
     },
     getUserName: () => input.promptProfileStore.get().userName,

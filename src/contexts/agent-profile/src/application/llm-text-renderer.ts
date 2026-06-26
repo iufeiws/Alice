@@ -12,6 +12,8 @@ export type LLMTextShellOption = {
   content: string;
   group?: string;
   imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
 };
 
 export type LLMTextDailyShell = {
@@ -205,7 +207,9 @@ function optionVariable(option: LLMTextShellOption): LLMTextVariables {
     name: option.name,
     content: option.content,
     ...(option.group ? { group: option.group } : {}),
-    ...(option.imageUrl ? { imageUrl: option.imageUrl } : {})
+    ...(option.imageUrl ? { imageUrl: option.imageUrl } : {}),
+    ...(option.onBodyImageUrl ? { onBodyImageUrl: option.onBodyImageUrl } : {}),
+    ...(option.outfitImageGenerated ? { outfitImageGenerated: option.outfitImageGenerated } : {})
   };
 }
 

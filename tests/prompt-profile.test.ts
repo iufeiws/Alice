@@ -313,12 +313,22 @@ test("daily shell store preserves outfit image urls", () => {
   const root = makeTempDir("daily-shell-image");
   const store = createDailyShellStore(root);
   replaceShellCategory(root, store, "outfits", [
-    { id: "custom_outfit", name: "Custom Outfit", content: "custom content", group: "fantasy", imageUrl: "memory-files/shell/assets/custom.png" }
+    {
+      id: "custom_outfit",
+      name: "Custom Outfit",
+      content: "custom content",
+      group: "fantasy",
+      imageUrl: "memory-files/shell/assets/custom.png",
+      onBodyImageUrl: "memory-files/shell/assets/custom-on-body.png",
+      outfitImageGenerated: true
+    }
   ]);
 
   assert.equal(fs.existsSync(path.join(root, "shell", "outfits", "custom_outfit.json")), true);
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   assert.equal(config.outfits[0].imageUrl, "memory-files/shell/assets/custom.png");
+  assert.equal(config.outfits[0].onBodyImageUrl, "memory-files/shell/assets/custom-on-body.png");
+  assert.equal(config.outfits[0].outfitImageGenerated, true);
   assert.equal(config.outfits[0].group, "fantasy");
   assert.doesNotMatch(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai"), /图片地址:/);
 });

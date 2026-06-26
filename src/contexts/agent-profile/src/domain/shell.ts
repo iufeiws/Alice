@@ -10,6 +10,8 @@ export type ShellOption = {
   content: string;
   group?: string;
   imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
 };
 
 export type DailyShell = {
@@ -488,7 +490,9 @@ function normalizeOption(value: unknown): ShellOption | undefined {
       : typeof item.tag1 === "string" && item.tag1.trim()
         ? item.tag1
         : undefined,
-    imageUrl: typeof item.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : undefined
+    imageUrl: typeof item.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : undefined,
+    onBodyImageUrl: typeof item.onBodyImageUrl === "string" && item.onBodyImageUrl.trim() ? item.onBodyImageUrl : undefined,
+    outfitImageGenerated: item.outfitImageGenerated === true || undefined
   };
 }
 

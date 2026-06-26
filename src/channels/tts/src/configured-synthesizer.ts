@@ -28,6 +28,8 @@ import { createGenieTtsVoiceSynthesizer, isRemoteGenieProtocolError } from "./ge
 import { createMossOnnxVoiceSynthesizer } from "./moss-synthesizer.js";
 import { normalizeBaseURL, requireAssetDirectory, requireAssetPath, requireGenieReferenceText, resolveAssetScopedPath } from "./internal.js";
 
+const remoteStreamFetchRetries = 2;
+
 export function createConfiguredVoiceSynthesizer(input?: TTSConfig, deps: ConfiguredVoiceSynthesizerDeps = {}): VoiceSynthesizer {
   const config = input ?? { backend: "genie-tts" as const };
   const disableMoss = Boolean(
@@ -234,22 +236,32 @@ export function createTtsRemoteAwareVoiceSynthesizer(
       yield* selectedLocal.streamAudio(request);
       return;
     }
-    let yielded = false;
-    try {
-      deps.appendLog?.("info", `tts remote-aware stream using remote Genie: chars=${Array.from(request.text).length}`);
-      for await (const chunk of remote.streamAudio(request)) {
-        yielded = true;
-        yield chunk;
+    let attempt = 0;
+    while (true) {
+      let yielded = false;
+      try {
+        deps.appendLog?.("info", `tts remote-aware stream using remote Genie: chars=${Array.from(request.text).length}`);
+        for await (const chunk of remote.streamAudio(request)) {
+          yielded = true;
+          yield chunk;
+        }
+        deps.appendLog?.("info", "tts remote-aware stream remote complete");
+        return;
+      } catch (error) {
+        if (yielded) throw error;
+        if (isRemoteGenieProtocolError(error)) throw error;
+        if (isFetchFailedError(error) && attempt < remoteStreamFetchRetries) {
+          attempt += 1;
+          deps.appendLog?.("warn", `tts remote Genie stream fetch failed before audio; retry ${attempt}/${remoteStreamFetchRetries}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
+        if (!route.localFallbackEnabled) throw error;
+        deps.appendLog?.("warn", `tts remote Genie stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+        const selectedLocal = localFor();
+        if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+        yield* selectedLocal.streamAudio(request);
+        return;
       }
-      deps.appendLog?.("info", "tts remote-aware stream remote complete");
-    } catch (error) {
-      if (yielded) throw error;
-      if (isRemoteGenieProtocolError(error)) throw error;
-      if (!route.localFallbackEnabled) throw error;
-      deps.appendLog?.("warn", `tts remote Genie stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
-      const selectedLocal = localFor();
-      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      yield* selectedLocal.streamAudio(request);
     }
   };
   synthesize.streamAudioWithText = async function* (request) {
@@ -267,26 +279,36 @@ export function createTtsRemoteAwareVoiceSynthesizer(
       for await (const chunk of selectedLocal.streamAudio(request)) yield { chunk };
       return;
     }
-    let yielded = false;
-    try {
-      deps.appendLog?.("info", `tts remote-aware text stream using remote Genie: chars=${Array.from(request.text).length}`);
-      for await (const chunk of remote.streamAudioWithText(request)) {
-        yielded = true;
-        yield chunk;
-      }
-      deps.appendLog?.("info", "tts remote-aware text stream remote complete");
-    } catch (error) {
-      if (yielded) throw error;
-      if (isRemoteGenieProtocolError(error)) throw error;
-      if (!route.localFallbackEnabled) throw error;
-      deps.appendLog?.("warn", `tts remote Genie text stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
-      const selectedLocal = localFor();
-      if (selectedLocal.streamAudioWithText) {
-        yield* selectedLocal.streamAudioWithText(request);
+    let attempt = 0;
+    while (true) {
+      let yielded = false;
+      try {
+        deps.appendLog?.("info", `tts remote-aware text stream using remote Genie: chars=${Array.from(request.text).length}`);
+        for await (const chunk of remote.streamAudioWithText(request)) {
+          yielded = true;
+          yield chunk;
+        }
+        deps.appendLog?.("info", "tts remote-aware text stream remote complete");
+        return;
+      } catch (error) {
+        if (yielded) throw error;
+        if (isRemoteGenieProtocolError(error)) throw error;
+        if (isFetchFailedError(error) && attempt < remoteStreamFetchRetries) {
+          attempt += 1;
+          deps.appendLog?.("warn", `tts remote Genie text stream fetch failed before audio; retry ${attempt}/${remoteStreamFetchRetries}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
+        if (!route.localFallbackEnabled) throw error;
+        deps.appendLog?.("warn", `tts remote Genie text stream failed before audio; falling back to local Genie: ${error instanceof Error ? error.message : String(error)}`);
+        const selectedLocal = localFor();
+        if (selectedLocal.streamAudioWithText) {
+          yield* selectedLocal.streamAudioWithText(request);
+          return;
+        }
+        if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
+        for await (const chunk of selectedLocal.streamAudio(request)) yield { chunk };
         return;
       }
-      if (!selectedLocal.streamAudio) throw new Error("Local Genie TTS stream is unavailable");
-      for await (const chunk of selectedLocal.streamAudio(request)) yield { chunk };
     }
   };
   synthesize.noteActivity = () => {
@@ -313,6 +335,11 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     await local?.shutdown?.();
   };
   return synthesize;
+}
+
+function isFetchFailedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /fetch failed/i.test(error.message);
 }
 
 export function createFallbackVoiceSynthesizer(

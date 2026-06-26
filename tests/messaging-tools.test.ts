@@ -3071,6 +3071,57 @@ test("remote-aware tts disabled local fallback does not start local Genie after 
   assert.equal(logs.some((message) => message.includes("falling back to local Genie")), false);
 });
 
+test("remote-aware tts retries fetch failed stream before audio", async () => {
+  const dir = makeTempDir("tts-remote-aware-stream-retry");
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: {
+      provider: "genie",
+      genie: {
+        enabled: true,
+        baseURL: "remote.test",
+        localFallbackEnabled: false
+      }
+    },
+    translationEnabled: false,
+    prompt: ""
+  }));
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+      if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (parsed.pathname === "/stream") {
+        if (calls.filter((call) => call === "POST /stream").length < 3) throw new Error("fetch failed");
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2]));
+            controller.close();
+          }
+        }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+      }
+      throw new Error(`unexpected request: ${parsed.pathname}`);
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any,
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({ text: "第一段。", time: createCurrentTimeProvider("UTC") })) {
+    chunks.push(Array.from(chunk.chunk));
+  }
+
+  assert.deepEqual(calls, ["GET /health", "POST /stream", "GET /health", "POST /stream", "GET /health", "POST /stream"]);
+  assert.deepEqual(chunks, [[1, 2]]);
+  assert.equal(logs.filter((message) => message.includes("fetch failed before audio; retry")).length, 2);
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), false);
+});
+
 test("fallback voice synthesizer streams from local when remote stream fails before audio", async () => {
   const calls: string[] = [];
   const remote = Object.assign(async () => {

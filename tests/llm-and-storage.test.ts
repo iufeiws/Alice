@@ -469,6 +469,81 @@ test("LLM request sender renders extra params and supports inline tools", async 
   assert.equal(request.tools[0].function.name, "submit_audio_context");
 });
 
+test("LLM request sender adds stream usage options when streaming is enabled", async () => {
+  let request: any;
+  const client: LLMClient = {
+    async chat() {
+      throw new Error("chat should not be used for streaming requests");
+    },
+    async chatStream(input) {
+      request = input;
+      return { message: { role: "assistant", content: "ok" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [],
+    extraParams: {
+      stream_options: {
+        include_usage: false,
+        foo: "bar"
+      }
+    },
+    toolNames: [],
+    round: 0,
+    stream: true
+  });
+
+  assert.deepEqual(request.extraParams.stream_options, {
+    include_usage: true,
+    foo: "bar"
+  });
+});
+
+test("LLM request sender treats extra param stream true as streaming", async () => {
+  let request: any;
+  const client: LLMClient = {
+    async chat() {
+      throw new Error("chat should not be used when extra params enable stream");
+    },
+    async chatStream(input) {
+      request = input;
+      return { message: { role: "assistant", content: "ok" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequests({
+    getTool() {
+      return undefined;
+    },
+    retryDelayMs: () => 0,
+    sleep: async () => {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [],
+    extraParams: {
+      stream: true
+    },
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(request.extraParams.stream_options, {
+    include_usage: true
+  });
+});
+
 test("openai-compatible client removes parenthesized assistant response content", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({

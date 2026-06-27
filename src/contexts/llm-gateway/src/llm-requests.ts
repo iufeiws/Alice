@@ -82,19 +82,20 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     const abort = () => requestController.abort();
     if (input.signal?.aborted) requestController.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
+    const renderedExtraParams = renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | undefined);
+    const useStream = (input.stream === true || renderedExtraParams?.stream === true) && Boolean(client.chatStream);
     const request: LLMChatInput = {
       messages: sanitizeLLMRequestMessages(input.messages, deps.messageSanitization),
       model: input.model,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
-      extraParams: renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | undefined),
+      extraParams: withStreamUsageOptions(renderedExtraParams, useStream),
       presetName: input.presetName,
       tools: buildToolsFromDefinitions(input.toolNames, input.toolVariables, input.inlineTools),
       signal: requestController.signal
     };
     try {
       deps.onRequestPrepared?.(input, request);
-      const useStream = input.stream === true && Boolean(client.chatStream);
       let lastError: unknown;
       let result: LLMChatResult | undefined;
       for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
@@ -167,6 +168,18 @@ function sanitizeLLMChatResult(result: LLMChatResult, options?: LLMMessageSaniti
   return {
     ...result,
     message: sanitizeLLMResponseMessage(result.message, options)
+  };
+}
+
+function withStreamUsageOptions(extraParams: Record<string, unknown> | undefined, stream: boolean): Record<string, unknown> | undefined {
+  if (!stream) return extraParams;
+  const streamOptions = extraParams?.stream_options;
+  return {
+    ...(extraParams ?? {}),
+    stream_options: {
+      ...(streamOptions && typeof streamOptions === "object" && !Array.isArray(streamOptions) ? streamOptions : {}),
+      include_usage: true
+    }
   };
 }
 

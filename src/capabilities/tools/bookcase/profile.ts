@@ -10,7 +10,7 @@ export const bookcaseTool: ToolDefinition = {
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["draw", "return"], default: "draw", description: "draw 抽取一本书；return 归还书本并请求重开会话。" },
+      action: { type: "string", enum: ["draw", "return"], default: "draw", description: "draw 抽取一本书；return 归还书本并解除固定前缀。" },
       title: { type: "string", description: "可选，按书名模糊匹配。" },
       author: { type: "string", description: "可选，按作者模糊匹配。" },
       genre: { type: "string", description: "可选，按类型模糊匹配，如 Fantasy、Satire、Crime Fiction。" },
@@ -29,7 +29,7 @@ export const bookcaseToolText = {
   noMatchingSummaries: "no matching book summaries found",
   drawNotice: "-少女已取书-",
   returnNotice: "-少女已还书-",
-  returnMessage: "书已归还书橱；当前 LLM 会话将重开，以释放书本母版占用的上下文。"
+  returnMessage: "书已归还书橱；当前固定前缀已解除。"
 };
 
 export const bookcaseInstructionBlockLines = [

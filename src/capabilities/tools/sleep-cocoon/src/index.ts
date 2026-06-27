@@ -85,7 +85,6 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       ok: true,
       resetLLMSession: true,
       clearFixedPrefix: true,
-      invalidateLLMSession: true,
       output: sleepCocoonToolText.success
     };
   }

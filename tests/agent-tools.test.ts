@@ -812,6 +812,127 @@ test("agent core does not duplicate fixed prefix messages when appending fixed p
   assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").length, 1);
 });
 
+for (const scenario of [
+  {
+    fixedPrefixKind: "sleep_cocoon",
+    enterCallId: "tool_sleep_in",
+    clearCallId: "tool_sleep_out",
+    clearArguments: "{\"action\":\"out\"}"
+  },
+  {
+    fixedPrefixKind: "bookcase",
+    enterCallId: "tool_bookcase_draw",
+    clearCallId: "tool_bookcase_return",
+    clearArguments: "{\"action\":\"return\"}"
+  }
+] as const) {
+  test(`agent core clears ${scenario.fixedPrefixKind} fixed prefix without rebuilding the session`, async () => {
+    const fixedPrefixStatic: LLMChatInput["messages"] = [
+      { role: "system", content: `${scenario.fixedPrefixKind} fixed prompt` },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: scenario.enterCallId,
+          type: "function",
+          function: { name: scenario.fixedPrefixKind, arguments: "{}" }
+        }]
+      },
+      { role: "tool", name: scenario.fixedPrefixKind, toolCallId: scenario.enterCallId, content: "success" }
+    ];
+    const requests: LLMChatInput[] = [];
+    const sessionUpdates: LLMSessionSnapshot[] = [];
+    let cleared = false;
+    const core = createAgentCore({
+      config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
+      llm: {
+        async chat(input) {
+          requests.push(input);
+          if (requests.length > 1) return { message: { role: "assistant", content: "done" } };
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: scenario.clearCallId,
+                type: "function",
+                function: { name: scenario.fixedPrefixKind, arguments: scenario.clearArguments }
+              }]
+            },
+            finishReason: "tool_calls"
+          };
+        }
+      },
+      outputRouter: createOutputRouter(),
+      intentRouter: createIntentRouter(),
+      sessionResolver: createSessionResolver(),
+      policy: createAllowAllPolicy(),
+      getPromptProfile: () => ({
+        userName: "user",
+        visibleTools: { feishu: true },
+        layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
+        appendLayers: []
+      }),
+      initialLLMSession: {
+        messages: fixedPrefixStatic,
+        staticPromptFingerprint: "old-fingerprint",
+        requestTimestamps: [],
+        mode: "fixed_prefix",
+        modeStaticMessages: fixedPrefixStatic,
+        modeStaticTokenEstimate: 50,
+        modeStartedAt: "2026-05-30T00:00:00.000Z",
+        modeExpiresAt: "2026-05-30T03:00:00.000Z",
+        fixedPrefixKind: scenario.fixedPrefixKind,
+        fixedPrefixCursorMessageId: 12
+      },
+      tools: [{
+        id: scenario.fixedPrefixKind,
+        listTools() {
+          return [
+            { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+            { name: scenario.fixedPrefixKind, description: scenario.fixedPrefixKind, inputSchema: { type: "object" } }
+          ];
+        },
+        async execute(call) {
+          if (call.toolName === "check_chat") return { callId: call.id, ok: true, output: "nothing new" };
+          return {
+            callId: call.id,
+            ok: true,
+            resetLLMSession: true,
+            clearFixedPrefix: true,
+            output: "success"
+          };
+        }
+      }],
+      onLLMSessionUpdated(session) {
+        sessionUpdates.push(session);
+      },
+      onLLMSessionCleared() {
+        cleared = true;
+      }
+    });
+
+    await runPreparedCoreEvent(core, textEvent());
+
+    assert.equal(requests.length, 2);
+    assert.equal(cleared, false);
+    const secondRequestMessages = requests[1].messages;
+    const requestClearIndex = secondRequestMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === scenario.clearCallId);
+    assert.ok(requestClearIndex >= 0);
+    assert.equal(secondRequestMessages[requestClearIndex + 1]?.role, "tool");
+    assert.equal(secondRequestMessages[requestClearIndex + 1]?.toolCallId, scenario.clearCallId);
+    const latest = sessionUpdates.at(-1);
+    assert.equal(latest?.mode, "normal");
+    assert.equal(latest?.fixedPrefixKind, undefined);
+    assert.equal(latest?.fixedPrefixCursorMessageId, undefined);
+    const clearIndex = latest?.messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === scenario.clearCallId) ?? -1;
+    assert.ok(clearIndex >= 0);
+    assert.equal(latest?.messages[clearIndex + 1]?.role, "tool");
+    assert.equal(latest?.messages[clearIndex + 1]?.toolCallId, scenario.clearCallId);
+  });
+}
+
 test("agent core injects fixed prefix cursor into model requested from_prefix checks", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {

@@ -111,7 +111,6 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       ok: true,
       resetLLMSession: true,
       clearFixedPrefix: true,
-      invalidateLLMSession: true,
       output: formatReturnAsXml(bookcaseToolText.returnMessage)
     };
     await sendBookcaseNotice(call, bookcaseToolText.returnNotice);
@@ -326,7 +325,7 @@ function staticMessagesForCall(call: ToolCall, output: string): NonNullable<Tool
 
 function formatReturnAsXml(message: string): string {
   return [
-    '<bookcase action="return" invalidate_llm_session="true">',
+    '<bookcase action="return" clear_fixed_prefix="true">',
     `  <message>${escapeXml(message)}</message>`,
     "</bookcase>"
   ].join("\n");

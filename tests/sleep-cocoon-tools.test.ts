@@ -180,7 +180,7 @@ test("sleep_cocoon out returns going_to_sleep to waiting", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.resetLLMSession, true);
   assert.equal(result.clearFixedPrefix, true);
-  assert.equal(result.invalidateLLMSession, true);
+  assert.equal(result.invalidateLLMSession, undefined);
   assert.equal(result.output, "success");
   assert.equal(controller.getSnapshot().state, "waiting");
   assert.equal(controller.getSnapshot().reason, "sleep_cocoon_out");

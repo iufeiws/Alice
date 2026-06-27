@@ -76,6 +76,7 @@ export type ChatAgentLoopInput = {
   getLastCompletedToolName(): string | undefined;
   setLastCompletedToolName(name: string): void;
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
+  onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
   onSessionRebuilt?(): void;
   isLLMRunCancelled?(): boolean;
   agentLoopRunSeq?: number;
@@ -224,6 +225,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         nowMs: input.time.now().epochMs,
         lastCheckChatCursorMessageId: session.lastCheckChatCursorMessageId
       });
+      if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       if (execution.sessionRebuilt) input.onSessionRebuilt?.();
       return followup.messages.length > 0

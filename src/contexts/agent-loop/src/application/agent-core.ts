@@ -417,6 +417,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
       }
       let createdSessionThisRun = false;
       let initiatedBehaviorMessageCount = 0;
+      const alignSessionStaticPromptFingerprint = (session: { staticPromptFingerprint: string }): void => {
+        session.staticPromptFingerprint = staticPromptFingerprint(promptProfile, buildPromptContext());
+      };
       const ensureLoopSession = async (): Promise<LLMSessionRecord> => {
         const promptContext = buildPromptContext();
         const fingerprint = staticPromptFingerprint(promptProfile, promptContext);
@@ -487,7 +490,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
           }
         });
         if (initiatedBehaviorPromptToolResult) {
-          applyBackendToolSessionControlToActiveSession(session, initiatedBehaviorPromptToolResult, time.now().epochMs);
+          applyBackendToolSessionControlToActiveSession(session, initiatedBehaviorPromptToolResult, time.now().epochMs, alignSessionStaticPromptFingerprint);
           noteLLMSessionUpdated(session);
         }
         if (!loopSession) throw new Error("llm_session_unavailable");
@@ -645,6 +648,9 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               applyModeStateToNewSession = mode;
               clearLoopSession();
             },
+            onFixedPrefixCleared(session) {
+              alignSessionStaticPromptFingerprint(session as LLMSessionRecord);
+            },
             onSessionRebuilt: deps.onLLMSessionRebuilt,
             isLLMRunCancelled: deps.isLLMRunCancelled,
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
@@ -695,7 +701,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
               });
             } else {
               if (loopSession && initiatedBehaviorExecution.toolResult) {
-                applyBackendToolSessionControlToActiveSession(loopSession, initiatedBehaviorExecution.toolResult, time.now().epochMs);
+                applyBackendToolSessionControlToActiveSession(loopSession, initiatedBehaviorExecution.toolResult, time.now().epochMs, alignSessionStaticPromptFingerprint);
                 noteLLMSessionUpdated(loopSession);
               }
               recordInitiatedBehaviorRun({
@@ -988,6 +994,7 @@ async function executeAgentInitiatedBehaviorBackendSteps(
 function applyBackendToolSessionControlToActiveSession(
   session: {
     messages: LLMChatInput["messages"];
+    staticPromptFingerprint: string;
     mode: string;
     modeStaticMessages: LLMChatInput["messages"];
     modeStaticTokenEstimate: number;
@@ -999,7 +1006,8 @@ function applyBackendToolSessionControlToActiveSession(
     lastCheckChatCursorMessageId?: number;
   },
   toolResult: ToolResult,
-  nowMs: number
+  nowMs: number,
+  alignStaticPromptFingerprint: (session: { staticPromptFingerprint: string }) => void
 ): void {
   if (!toolResult.resetLLMSession) return;
   if (toolResult.clearFixedPrefix) {
@@ -1012,6 +1020,7 @@ function applyBackendToolSessionControlToActiveSession(
     session.modeExpiresAt = undefined;
     session.fixedPrefixKind = undefined;
     session.fixedPrefixCursorMessageId = undefined;
+    alignStaticPromptFingerprint(session);
     return;
   }
   const fixedPrefixKind = typeof toolResult.fixedPrefixKind === "string" && toolResult.fixedPrefixKind

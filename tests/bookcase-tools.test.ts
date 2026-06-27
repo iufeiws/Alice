@@ -49,7 +49,7 @@ test("bookcase tool reports no matching summaries", async () => {
   assert.match(result.error ?? "", /no matching/);
 });
 
-test("bookcase tool returns a book and invalidates the LLM session", async () => {
+test("bookcase tool returns a book and clears fixed prefix", async () => {
   const tools = createBookcaseTools({ dbPath: createFixtureDb() });
 
   const result = await tools.execute({
@@ -61,10 +61,10 @@ test("bookcase tool returns a book and invalidates the LLM session", async () =>
   assert.equal(result.ok, true);
   assert.equal(result.resetLLMSession, true);
   assert.equal(result.clearFixedPrefix, true);
-  assert.equal(result.invalidateLLMSession, true);
+  assert.equal(result.invalidateLLMSession, undefined);
   const output = String(result.output);
-  assert.match(output, /<bookcase action="return" invalidate_llm_session="true">/);
-  assert.match(output, /<message>.*重开.*<\/message>/);
+  assert.match(output, /<bookcase action="return" clear_fixed_prefix="true">/);
+  assert.match(output, /<message>.*固定前缀已解除.*<\/message>/);
 });
 
 test("bookcase tool sends system notices without persisting them as messages", async () => {

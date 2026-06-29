@@ -1835,7 +1835,7 @@ test("chat agent runs prompt tool request layers and appends actual tool result"
   assert.equal(requests[0].messages[1].content, "actual history");
 });
 
-test("chat agent streams send_chat message content on newlines before final tool JSON", async () => {
+test("chat agent waits for final send_chat JSON and sends newline message content once", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const completed: Array<{ sentMessage: boolean }> = [];
@@ -1862,7 +1862,7 @@ test("chat agent streams send_chat message content on newlines before final tool
             arguments: "two\\nthree\"}"
           }
         });
-        assert.deepEqual(sentLines, ["one"]);
+        assert.deepEqual(sentLines, []);
         return {
           message: {
             role: "assistant",
@@ -1909,12 +1909,12 @@ test("chat agent streams send_chat message content on newlines before final tool
 
   const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
-  assert.deepEqual(sentLines, ["one", "two", "three"]);
+  assert.deepEqual(sentLines, ["one\ntwo\nthree"]);
   assert.equal(requests.length, 2);
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("chat agent holds unsafe streamed send_chat prefix before sending safe line", async () => {
+test("chat agent waits for final send_chat JSON before sending duplicated-content arguments", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const llm: LLMClient = {
@@ -2000,11 +2000,10 @@ test("chat agent holds unsafe streamed send_chat prefix before sending safe line
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.equal(sentLines.includes("原来如此。那这个测试,"), false);
   assert.deepEqual(sentLines, ["算是通过了吗,父皇？", "原来如此。那这个测试算是通过了吗,父皇？"]);
 });
 
-test("chat agent streams send_chat voice content on newlines before final tool JSON", async () => {
+test("chat agent waits for final send_chat JSON and sends newline voice content once", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2030,7 +2029,7 @@ test("chat agent streams send_chat voice content on newlines before final tool J
           arguments: "第二句\\\\n第三句\"}"
         }
       });
-      assert.deepEqual(sentLines, ["voice:第一句"]);
+      assert.deepEqual(sentLines, []);
       return {
         message: {
           role: "assistant",
@@ -2071,7 +2070,7 @@ test("chat agent streams send_chat voice content on newlines before final tool J
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(sentLines, ["voice:第一句", "voice:第二句", "voice:第三句"]);
+  assert.deepEqual(sentLines, ["voice:第一句\\n第二句\\n第三句"]);
 });
 
 test("chat agent waits for final send_chat JSON when type is omitted", async () => {
@@ -2140,10 +2139,10 @@ test("chat agent waits for final send_chat JSON when type is omitted", async () 
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(sentLines, ["one", "two"]);
+  assert.deepEqual(sentLines, ["one\ntwo"]);
 });
 
-test("chat agent keeps streamed send_chat lines when tool metadata arrives after arguments", async () => {
+test("chat agent sends one final send_chat message when tool metadata arrives after arguments", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2208,11 +2207,7 @@ test("chat agent keeps streamed send_chat lines when tool metadata arrives after
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(sentLines, [
-    "对、对不起……主人不是在凶您。",
-    "只是上次您熬到凌晨五点，",
-    "主人有点担心……"
-  ]);
+  assert.deepEqual(sentLines, ["对、对不起……主人不是在凶您。\n只是上次您熬到凌晨五点，\n主人有点担心……"]);
 });
 
 test("chat agent does not stream send_chat before type is known", async () => {
@@ -2285,7 +2280,7 @@ test("chat agent does not stream send_chat before type is known", async () => {
   assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
 });
 
-test("chat agent merges streamed send_chat chat outputs into one tool message", async () => {
+test("chat agent sends final newline send_chat content into one tool message", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2351,7 +2346,7 @@ test("chat agent merges streamed send_chat chat outputs into one tool message", 
 
   await runPreparedChatEvent(core, textEvent());
   const toolMessage = requests[1].messages.find((message) => message.role === "tool");
-  assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\n[today 22:48]\nAlice:two\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
+  assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\ntwo\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
 });
 
 test("chat agent can disable LLM streaming from config", async () => {

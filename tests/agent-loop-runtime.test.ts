@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentHeartbeatRuntime } from "../src/contexts/agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import { claimAgentLoopRequestWindow, createAgentLoopRuntime } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
-import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { claimAgentLoopRequestWindow, createAgentLoopRuntime, runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { buildChatAgentLoop } from "../src/contexts/agent-loop/src/application/run-chat-loop.js";
+import type { AgentEvent, ToolPlugin } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
   const runtime = createAgentLoopRuntime();
@@ -522,7 +523,6 @@ test("agent loop runtime executes prepared chat runs through the function-call l
 });
 
 test("standalone agent function-call loop is exported for loop adapters", async () => {
-  const { runAgentFunctionCallLoop } = await import("../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js");
   const calls: string[] = [];
   const result = await runAgentFunctionCallLoop({
     initialMessages: [{ role: "user", content: "use tool" }],
@@ -566,6 +566,77 @@ test("standalone agent function-call loop is exported for loop adapters", async 
   assert.deepEqual(calls, ["test_tool"]);
   assert.equal(result.stopReason, "completed");
   assert.equal(result.rounds, 2);
+});
+
+test("chat loop sends assistant chat blocks and exposes send_chat", async () => {
+  const session = {
+    messages: [{ role: "user" as const, content: "go" }],
+    requestTimestamps: [],
+    mode: "normal"
+  };
+  const sent: string[] = [];
+  const tools: ToolPlugin[] = [{
+    id: "messaging",
+    listTools() {
+      return [
+        { name: "send_chat", description: "send", inputSchema: {} },
+        { name: "test_tool", description: "test", inputSchema: {} }
+      ];
+    },
+    async execute(call) {
+      if (call.toolName === "send_chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
+      return { callId: call.id, ok: true, output: "ok" };
+    }
+  }];
+  const exposedToolNames: string[][] = [];
+  const loop = buildChatAgentLoop({
+    llmInput: { messages: session.messages, toolNames: ["send_chat", "test_tool"] },
+    event: textEvent("session-content-send"),
+    toolPlugins: tools,
+    session,
+    ensureSession: async () => session,
+    appendSessionContext: async () => {},
+    llm: { async chat() { throw new Error("unused"); } },
+    async llmRequestSender({ round, toolNames }) {
+      exposedToolNames.push(toolNames);
+      if (round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: [
+              "before",
+              "<chat alice='core' type='voice'>",
+              "prefix",
+              "</chat ignored>",
+            ].join("\n"),
+            toolCalls: [{
+              id: "call_test",
+              type: "function",
+              function: { name: "test_tool", arguments: "{}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "<chat type=\"bad\" alice=\"bad\">done" }, finishReason: "stop" };
+    },
+    time: {
+      timeZone: "UTC",
+      now: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" }),
+      addMs: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" })
+    },
+    buildTextVariables: () => ({}),
+    noteSessionUpdated: () => {},
+    getLastCompletedToolName: () => undefined,
+    setLastCompletedToolName: () => {},
+    applyModeStateToNewSession: () => {}
+  });
+
+  const result = loop.complete(await runAgentFunctionCallLoop(loop.spec));
+
+  assert.equal(result.sentMessage, true);
+  assert.deepEqual(exposedToolNames, [["send_chat", "test_tool"], ["send_chat", "test_tool"]]);
+  assert.deepEqual(sent, ["core:voice:prefix", "shell:message:done"]);
 });
 
 function textEvent(sessionId: string): AgentEvent {

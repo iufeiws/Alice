@@ -1,5 +1,5 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall, LLMToolCallDelta } from "../../../llm-gateway/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
@@ -119,7 +119,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     setLastCompletedToolName: input.setLastCompletedToolName
   });
   const visibleToolNames = input.llmInput.toolNames;
-  let streamingToolSender: ReturnType<typeof createStreamingSendMessageHandler> | undefined;
+  let assistantContentSentMessage = false;
   const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
     async beforeRound({ round }) {
@@ -146,7 +146,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       return { messages: session.messages };
     },
     buildRequest({ round, messages }) {
-      streamingToolSender = createStreamingSendMessageHandler(input.event, toolExecutor.toolMap);
       return {
         agentId: input.llmInput.agentId ?? "chat",
         client: input.llmInput.client ?? input.llm,
@@ -158,12 +157,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         presetName: input.llmInput.presetName,
         toolNames: visibleToolNames,
         toolVariables: input.buildTextVariables(input.event),
-        stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream),
-        streamHandlers: {
-          onToolCallDelta(delta) {
-            return streamingToolSender?.onToolCallDelta(delta);
-          }
-        }
+        stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream)
       };
     },
     sendRequest: input.llmRequestSender ?? createChatLoopRequestSender({
@@ -173,32 +167,14 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       onLLMResponseReceived: input.onLLMResponseReceived,
       onLLMLog: input.onLLMLog
     }),
-    async afterRequest() {
-      await streamingToolSender?.finish();
+    async afterRequest({ round, result }) {
+      assistantContentSentMessage = await sendAssistantContentAsChat(round, result.message.content) || assistantContentSentMessage;
     },
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
     async executeTool(call, { round, result }): Promise<AgentFunctionCallToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
-      const streamedResult = streamingToolSender?.resultFor(call.id);
-      if (streamedResult) {
-        session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, streamedResult) ?? session.lastCheckChatCursorMessageId;
-        input.setLastCompletedToolName(call.function.name);
-        return {
-          message: {
-            role: "tool" as const,
-            toolCallId: call.id,
-            name: call.function.name,
-            content: formatToolResultForLLM(streamedResult, textVariables)
-          },
-          control: {
-            sentMessage: isSendChatToolName(call.function.name) && streamedResult.ok,
-            invalidateSession: streamedResult.invalidateLLMSession === true,
-            yieldReturn: streamedResult.meta?.yieldReturn === true
-          }
-        };
-      }
       const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
         variables: textVariables,
         agentLoopRunSeq: input.agentLoopRunSeq,
@@ -245,13 +221,28 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       return {
         message: loopResult.finalMessage,
-        sentMessage: loopResult.sentMessage,
+        sentMessage: loopResult.sentMessage || assistantContentSentMessage,
         invalidateSession: loopResult.invalidateSession,
         cancelled: loopResult.stopReason === "cancelled",
         finalResult: loopResult.finalResult
       };
     }
   };
+
+  async function sendAssistantContentAsChat(round: number, content: LLMChatInput["messages"][number]["content"]): Promise<boolean> {
+    const parts = parseAssistantChatBlocks(messageContentText(content));
+    if (parts.length === 0 || !toolExecutor.toolMap.has(sendChatToolName)) return false;
+    let sent = false;
+    for (const [index, part] of parts.entries()) {
+      const result = await toolExecutor.executeToolCall({
+        id: `assistant_content_send_${round}_${index + 1}`,
+        toolName: sendChatToolName,
+        input: { type: part.type, alice: part.alice, content: part.content }
+      });
+      sent = sent || result.ok;
+    }
+    return sent;
+  }
 }
 
 export { runPromptToolRequest } from "./agent-loop-tool-executor.js";
@@ -267,97 +258,8 @@ export {
   toolResultText
 } from "./chat-loop-session-context.js";
 
-function createStreamingSendMessageHandler(event: AgentEvent, toolMap: Map<string, ToolPlugin>) {
-  const states = new Map<number, StreamingSendMessageState>();
-  const resultsByCallId = new Map<string, ToolResult>();
-  const sentCounts = new Map<string, number>();
-  let sendChain = Promise.resolve();
-
-  return {
-    onToolCallDelta(delta: LLMToolCallDelta) {
-      const state = states.get(delta.index) ?? new StreamingSendMessageState();
-      states.set(delta.index, state);
-      const { readyLines } = state.accept(delta);
-      const callId = state.callId;
-      const plugin = toolMap.get(sendChatToolName);
-      if (!callId || !plugin || !isSendChatToolName(state.toolName)) {
-        state.restoreReadyLines(readyLines);
-        return;
-      }
-      const lines = state.canStreamNow() && !state.hasUnsafeArguments() ? state.stageStreamingLines(readyLines) : [];
-      if (lines.length === 0) return;
-      state.dropPendingLines();
-      sendChain = sendChain.then(async () => {
-        const sendType = state.sendType();
-        for (const line of lines) {
-          const sentCount = sentCounts.get(callId) ?? 0;
-          await sendStreamingLine(plugin, event, callId, sendType, line, resultsByCallId);
-          sentCounts.set(callId, sentCount + 1);
-        }
-      });
-    },
-    async finish() {
-      for (const state of states.values()) {
-        if (state.hasUnsafeArguments()) continue;
-        const lines = state.finish();
-        const callId = state.callId;
-        const plugin = toolMap.get(sendChatToolName);
-        if (!callId || !plugin || !isSendChatToolName(state.toolName) || !state.shouldSendAsStreamingType()) continue;
-        sendChain = sendChain.then(async () => {
-          const sendType = state.sendType();
-          for (const line of lines) {
-            const sentCount = sentCounts.get(callId) ?? 0;
-            await sendStreamingLine(plugin, event, callId, sendType, line, resultsByCallId);
-            sentCounts.set(callId, sentCount + 1);
-          }
-        });
-      }
-      await sendChain;
-    },
-    resultFor(callId: string) {
-      return resultsByCallId.get(callId);
-    }
-  };
-}
-
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
   return formatAgentLoopToolResultForLLM(result, variables);
-}
-
-async function sendStreamingLine(
-  plugin: ToolPlugin,
-  event: AgentEvent,
-  callId: string,
-  type: "message" | "voice",
-  line: string,
-  resultsByCallId: Map<string, ToolResult>
-): Promise<void> {
-  const previous = resultsByCallId.get(callId);
-  const previousOutput = typeof previous?.output === "string" ? previous.output : "";
-  try {
-    const result = await plugin.execute({
-      id: `${callId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      toolName: sendChatToolName,
-      input: { type, content: line },
-      requester: event.source,
-      externalSession: event.externalSession
-    });
-    const output = formatToolResultForLLM(result);
-    resultsByCallId.set(callId, {
-      callId,
-      ok: previous?.ok === false ? false : result.ok,
-      output: mergeToolOutputs(previousOutput, output),
-      error: previous?.error ?? result.error
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    resultsByCallId.set(callId, {
-      callId,
-      ok: false,
-      output: previousOutput,
-      error: previous?.error ?? reason
-    });
-  }
 }
 
 function isSendChatToolName(toolName: string | undefined): boolean {
@@ -368,191 +270,50 @@ function isWaitChatToolName(toolName: string | undefined): boolean {
   return toolName === "finish_and_wait";
 }
 
-function mergeToolOutputs(previousOutput: string, nextOutput: string): string {
-  if (!previousOutput) return nextOutput;
-  if (!nextOutput) return previousOutput;
-  const previousChat = parseChatToolOutput(previousOutput);
-  const nextChat = parseChatToolOutput(nextOutput);
-  if (!previousChat || !nextChat) return [previousOutput, nextOutput].filter(Boolean).join("\n");
-  return `<chat-log>\n${[previousChat.body, nextChat.body].filter(Boolean).join("\n")}\n</chat-log>\n<time>${nextChat.currentTime}<\\time>`;
+function messageContentText(content: LLMChatInput["messages"][number]["content"]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
-function parseChatToolOutput(output: string): { body: string; currentTime: string } | undefined {
-  const match = /^<chat-log>\n([\s\S]*)\n<\/chat-log>\n<time>([\s\S]*?)<\\time>$/.exec(output.trim());
-  if (!match) return undefined;
-  return { body: match[1], currentTime: match[2] };
+type AssistantChatBlock = {
+  type: "message" | "markdown" | "image" | "voice";
+  alice: "core" | "shell";
+  content: string;
+};
+
+function parseAssistantChatBlocks(text: string): AssistantChatBlock[] {
+  const blocks: AssistantChatBlock[] = [];
+  const openTag = /<\s*chat\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = openTag.exec(text))) {
+    const contentStart = openTag.lastIndex;
+    const closeMatch = /<\s*\/\s*chat\b[^>]*>/gi.exec(text.slice(contentStart));
+    const contentEnd = closeMatch ? contentStart + closeMatch.index : text.length;
+    const content = text.slice(contentStart, contentEnd).trim();
+    if (content) {
+      blocks.push({
+        type: normalizeChatType(readTagAttribute(match[1], "type")),
+        alice: normalizeAliceName(readTagAttribute(match[1], "alice")),
+        content
+      });
+    }
+    openTag.lastIndex = closeMatch ? contentEnd + closeMatch[0].length : text.length;
+  }
+  return blocks;
 }
 
-class StreamingSendMessageState {
-  callId?: string;
-  toolName?: string;
-  private argumentsText = "";
-  private scanIndex = 0;
-  private contentStarted = false;
-  private contentDone = false;
-  private escaped = false;
-  private unicodeBuffer = "";
-  private pendingLine = "";
-  private heldStreamingLine: string | undefined;
-  private readyLines: string[] = [];
-  private pendingLines: string[] = [];
-  private explicitStreamingType: "message" | "voice" | undefined;
-  private sawNonStreamingType = false;
-
-  accept(delta: LLMToolCallDelta): { readyLines: string[]; pendingLines: string[] } {
-    if (delta.id) this.callId = delta.id;
-    if (delta.function?.name) this.toolName = delta.function.name;
-    if (delta.function?.arguments) {
-      this.argumentsText += delta.function.arguments;
-      this.updateTypeState();
-      this.scan();
-    }
-    return {
-      readyLines: this.drainReadyLines(),
-      pendingLines: [...this.pendingLines]
-    };
-  }
-
-  finish(): string[] {
-    const lines = this.shouldSendAsStreamingType()
-      ? [...this.pendingLines, ...this.stageStreamingLines(this.drainReadyLines())]
-      : [];
-    this.pendingLines = [];
-    if (this.heldStreamingLine && this.shouldSendAsStreamingType()) lines.push(this.heldStreamingLine);
-    this.heldStreamingLine = undefined;
-    const tail = this.pendingLine.trim();
-    if (tail && this.shouldSendAsStreamingType()) lines.push(tail);
-    this.pendingLine = "";
-    return lines;
-  }
-
-  canStreamNow(): boolean {
-    return Boolean(this.explicitStreamingType) && !this.sawNonStreamingType;
-  }
-
-  shouldSendAsStreamingType(): boolean {
-    return !this.sawNonStreamingType;
-  }
-
-  sendType(): "message" | "voice" {
-    return this.explicitStreamingType ?? "message";
-  }
-
-  dropPendingLines(): void {
-    this.pendingLines = [];
-  }
-
-  stageStreamingLines(lines: string[]): string[] {
-    const ready: string[] = [];
-    for (const line of lines) {
-      if (this.heldStreamingLine) ready.push(this.heldStreamingLine);
-      this.heldStreamingLine = line;
-    }
-    return ready;
-  }
-
-  hasUnsafeArguments(): boolean {
-    return hasUnsafeSendChatArguments(this.argumentsText);
-  }
-
-  private updateTypeState(): void {
-    const typeMatch = /"type"\s*:\s*"([^"]*)"/.exec(this.argumentsText);
-    if (!typeMatch) return;
-    this.explicitStreamingType = typeMatch[1] === "message" || typeMatch[1] === "voice" ? typeMatch[1] : undefined;
-    this.sawNonStreamingType = !this.explicitStreamingType;
-  }
-
-  private scan(): void {
-    if (!this.contentStarted) {
-      const match = /"content"\s*:\s*"/.exec(this.argumentsText.slice(this.scanIndex));
-      if (!match) return;
-      this.scanIndex += match.index + match[0].length;
-      this.contentStarted = true;
-    }
-
-    while (this.scanIndex < this.argumentsText.length && !this.contentDone) {
-      const char = this.argumentsText[this.scanIndex];
-      this.scanIndex += 1;
-      if (this.unicodeBuffer) {
-        this.unicodeBuffer += char;
-        if (this.unicodeBuffer.length === 4) {
-          this.pushDecoded(String.fromCharCode(Number.parseInt(this.unicodeBuffer, 16)));
-          this.unicodeBuffer = "";
-          this.escaped = false;
-        }
-        continue;
-      }
-      if (this.escaped) {
-        if (char === "u") {
-          this.unicodeBuffer = "";
-          continue;
-        }
-        this.pushDecoded(decodeJsonEscape(char));
-        this.escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        this.escaped = true;
-        continue;
-      }
-      if (char === "\"") {
-        this.contentDone = true;
-        continue;
-      }
-      this.pushDecoded(char);
-    }
-  }
-
-  private pushDecoded(char: string): void {
-    if ((char === "n" || char === "r") && this.pendingLine.endsWith("\\")) {
-      this.pendingLine = this.pendingLine.slice(0, -1);
-      if (char === "r") return;
-      this.pushDecoded("\n");
-      return;
-    }
-    if (char === "\n") {
-      const line = this.pendingLine.trim();
-      if (line) {
-        if (this.canStreamNow()) {
-          this.readyLines.push(line);
-        } else {
-          this.pendingLines.push(line);
-        }
-      }
-      this.pendingLine = "";
-      return;
-    }
-    if (char !== "\r") this.pendingLine += char;
-  }
-
-  private drainReadyLines(): string[] {
-    const lines = this.readyLines;
-    this.readyLines = [];
-    return lines;
-  }
-
-  restoreReadyLines(lines: string[]): void {
-    this.readyLines = [...lines, ...this.readyLines];
-  }
+function readTagAttribute(raw: string, name: string): string | undefined {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(raw);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
-function decodeJsonEscape(char: string): string {
-  if (char === "n") return "\n";
-  if (char === "r") return "\r";
-  if (char === "t") return "\t";
-  if (char === "b") return "\b";
-  if (char === "f") return "\f";
-  return char;
+function normalizeChatType(value: string | undefined): AssistantChatBlock["type"] {
+  return value === "markdown" || value === "image" || value === "voice" ? value : "message";
 }
 
-function hasUnsafeSendChatArguments(rawArguments: string): boolean {
-  return containsDsmlMarkup(rawArguments) || countJsonContentKeys(rawArguments) > 1;
-}
-
-function containsDsmlMarkup(value: string): boolean {
-  return /<\s*[｜|]{2}\s*DSML\s*[｜|]{2}/i.test(value);
-}
-
-function countJsonContentKeys(raw: string): number {
-  return raw.match(/"content"\s*:/g)?.length ?? 0;
+function normalizeAliceName(value: string | undefined): AssistantChatBlock["alice"] {
+  return value === "core" ? "core" : "shell";
 }

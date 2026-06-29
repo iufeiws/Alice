@@ -361,6 +361,7 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
         id: "fake_check",
         title: "Fake Check",
         role: "tool_request",
+        name: "{{user}}",
         enabled: true,
         content: "",
         order: 10,
@@ -469,6 +470,7 @@ test("admin plugin list exposes tts config card state", async () => {
   const tts = body.plugins.find((plugin: { id: string }) => plugin.id === "tts");
 
   assert.equal(response.statusCode, 200);
+  assert.equal(body.plugins.some((plugin: { id: string }) => plugin.id === "feishu"), false);
   assert.equal(tts.status, "enabled");
   assert.equal(tts.health, "healthy");
   assert.equal(tts.configurable, true);
@@ -543,6 +545,50 @@ test("admin plugin list exposes photo selfie config card state", async () => {
   assert.equal(photo.configurable, true);
   assert.equal(photo.switchable, true);
   assert.equal(photo.configSource, configPath);
+});
+
+test("admin plugin config exposes and writes messaging config", async () => {
+  const root = makeTempDir("admin-messaging-plugin");
+  const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { messaging: { configPath } }
+  };
+  const handler = createAdminHandler(context);
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/messaging/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(configBody.configValue.splitMultilineSendChat, true);
+  assert.equal(configBody.configValue.limitConsecutiveSends, true);
+  assert.equal(configBody.configValue.feishuTypingEmojiEnabled, true);
+  assert.match(JSON.stringify(configBody.configSchema), /splitMultilineSendChat/);
+  assert.deepEqual(configBody.configSchema.groups, [
+    { key: "general", label: "General" },
+    { key: "feishu", label: "Feishu" }
+  ]);
+  assert.match(JSON.stringify(configBody.configSchema), /feishuTypingEmojiEnabled/);
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/messaging/config", {
+    splitMultilineSendChat: false,
+    limitConsecutiveSends: false,
+    feishuTypingEmojiEnabled: false
+  }), patchResponse);
+  const patchBody = JSON.parse(patchResponse.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  assert.equal(patchResponse.statusCode, 200);
+  assert.deepEqual(patchBody.configValue, {
+    splitMultilineSendChat: false,
+    limitConsecutiveSends: false,
+    feishuTypingEmojiEnabled: false
+  });
+  assert.deepEqual(saved, patchBody.configValue);
 });
 
 test("admin plugin config exposes and writes world wanderer config", async () => {

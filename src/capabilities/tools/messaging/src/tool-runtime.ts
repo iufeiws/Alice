@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import { createMessagingTools } from "./index.js";
+import { createMessagingTools, defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
 import { createShellTools } from "../../shell/src/index.js";
 import { createBookcaseTools } from "../../bookcase/src/index.js";
@@ -47,6 +47,7 @@ export function createToolRuntime(input: {
     voiceSynthesizer: input.voiceSynthesizer,
     voiceMessageTtsTrainingOutputDir: input.config.tts?.voiceMessageTrainingOutputDir,
     wechatVoiceFallbackToText: input.config.tts?.wechatVoiceFallbackToText,
+    config: () => readMessagingPluginConfig(defaultMessagingPluginConfigPath),
     getUserName: () => input.promptProfileStore.get().userName,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,

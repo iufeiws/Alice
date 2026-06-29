@@ -165,6 +165,7 @@ export function renderInitiatedBehaviorsScript(): string {
           id: layer.id || "layer_" + (index + 1),
           title: layer.title || layer.id || "Layer " + (index + 1),
           role: behaviorLayerRoles.includes(layer.role) ? layer.role : "user",
+          name: layer.name || "",
           enabled: layer.enabled !== false,
           content: layer.content || "",
           order: Number.isFinite(Number(layer.order)) ? Number(layer.order) : (index + 1) * 10,
@@ -204,6 +205,7 @@ export function renderInitiatedBehaviorsScript(): string {
           attributes: 'data-behavior-layer-id="' + escapeAttr(layer.id) + '"',
           title: layer.title,
           role,
+          name: layer.name,
           roleOptions: behaviorLayerRoles,
           enabled: layer.enabled,
           toolCalls: layer.toolCalls,
@@ -218,6 +220,10 @@ export function renderInitiatedBehaviorsScript(): string {
         if (!root) return;
         root.querySelector('[data-field="title"]').addEventListener("input", (event) => {
           layer.title = event.target.value;
+          renderBehaviorPromptPreview();
+        });
+        root.querySelector('[data-field="name"]').addEventListener("input", (event) => {
+          layer.name = event.target.value;
           renderBehaviorPromptPreview();
         });
         root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
@@ -278,6 +284,7 @@ export function renderInitiatedBehaviorsScript(): string {
         if (layer.role === "tool_request") {
           return {
             role: "assistant",
+            name: layer.name || undefined,
             content: renderPromptPreviewText(layer.content || ""),
             reasoningContent: renderPromptPreviewText(layer.thinking || layer.content || ""),
             toolCalls: cloneToolCalls(layer.toolCalls).map((call, index) => ({
@@ -292,6 +299,7 @@ export function renderInitiatedBehaviorsScript(): string {
         }
         return {
           role: layer.role === "assistant" ? "assistant" : "user",
+          name: layer.name || undefined,
           content: renderPromptPreviewText(layer.content || ""),
           reasoningContent: layer.role === "assistant" && layer.thinking ? renderPromptPreviewText(layer.thinking) : undefined
         };

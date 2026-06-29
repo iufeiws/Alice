@@ -1,6 +1,7 @@
 import { createMessageRuntime } from "../../../contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
 
 export function createMessageRuntimeRuntime(input: {
   config: any;
@@ -12,6 +13,7 @@ export function createMessageRuntimeRuntime(input: {
   agentState: any;
   outputRouter: any;
   isLLMSessionActive(): boolean;
+  messagingConfigPath?: string;
   feishu: any;
   wechat: any;
   dailyShellStore: any;
@@ -50,6 +52,7 @@ export function createMessageRuntimeRuntime(input: {
     isLLMSessionActive: input.isLLMSessionActive,
     async setTypingIndicator(typingInput) {
       if (typingInput.plugin === "feishu") {
+        if (typingInput.typing && !isFeishuTypingEmojiEnabled(input.messagingConfigPath)) return;
         await input.feishu.setTyping({
           userId: typingInput.userId,
           channelId: typingInput.channelId,
@@ -96,4 +99,8 @@ export function createMessageRuntimeRuntime(input: {
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
+}
+
+function isFeishuTypingEmojiEnabled(configPath = defaultMessagingPluginConfigPath): boolean {
+  return readMessagingPluginConfig(configPath).feishuTypingEmojiEnabled;
 }

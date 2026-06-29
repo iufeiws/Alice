@@ -6,7 +6,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 type DatabaseSync = any;
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export type StoredMessageLog = {
   id: number;
@@ -39,6 +39,7 @@ export type StoredConversationMessage = {
   direction: "inbound" | "outbound";
   senderId?: string;
   senderRole: "user" | "assistant" | "system";
+  senderName?: string;
   contentType: string;
   contentText: string;
   contentJson?: string;
@@ -97,6 +98,7 @@ export type UpsertInboundMessageInput = {
   conversationId: string;
   senderId?: string;
   senderRole?: "user" | "assistant" | "system";
+  senderName?: string;
   contentType: string;
   contentText: string;
   contentJson?: string;
@@ -112,6 +114,7 @@ export type InsertOutboundMessageInput = {
   conversationId: string;
   senderId?: string;
   senderRole?: "user" | "assistant" | "system";
+  senderName?: string;
   contentType: string;
   contentText: string;
   contentJson?: string;
@@ -173,6 +176,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       const messageColumns = messageDb.prepare("PRAGMA table_info(messages)").all().map((row: any) => row.name);
       addColumnIfMissing(messageDb, messageColumns, "created_at_utc", "ALTER TABLE messages ADD COLUMN created_at_utc TEXT");
       addColumnIfMissing(messageDb, messageColumns, "last_event_at_utc", "ALTER TABLE messages ADD COLUMN last_event_at_utc TEXT");
+      addColumnIfMissing(messageDb, messageColumns, "sender_name", "ALTER TABLE messages ADD COLUMN sender_name TEXT");
       if (currentVersion < 3) {
         logDb.exec("UPDATE message_logs SET processed_at = time, processed_batch_id = 'legacy' WHERE direction = 'inbound' AND processed_at IS NULL");
       }
@@ -282,7 +286,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       if (existing) {
         messageDb.prepare(`
           UPDATE messages
-          SET conversation_id = ?, sender_id = ?, sender_role = ?, content_type = ?,
+          SET conversation_id = ?, sender_id = ?, sender_role = ?, sender_name = ?, content_type = ?,
             content_text = ?, content_json = ?, created_at = ?, created_at_utc = ?, last_event_at = ?, last_event_at_utc = ?,
             core_processed_at = COALESCE(core_processed_at, ?)
           WHERE id = ?
@@ -290,6 +294,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
           input.conversationId,
           input.senderId ?? null,
           input.senderRole ?? "user",
+          input.senderName ?? null,
           input.contentType,
           input.contentText,
           input.contentJson ?? null,
@@ -306,16 +311,17 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       const result = messageDb.prepare(`
         INSERT INTO messages(
           plugin, external_message_id, conversation_id, direction, sender_id,
-          sender_role, content_type, content_text, content_json, created_at, created_at_utc,
+          sender_role, sender_name, content_type, content_text, content_json, created_at, created_at_utc,
           status, is_read, is_recalled, reactions_json, last_event_at, last_event_at_utc,
           core_processed_at
-        ) VALUES (?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, 'sent', 0, 0, '{}', ?, ?, ?)
+        ) VALUES (?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, 'sent', 0, 0, '{}', ?, ?, ?)
       `).run(
         input.plugin,
         input.externalMessageId,
         input.conversationId,
         input.senderId ?? null,
         input.senderRole ?? "user",
+        input.senderName ?? null,
         input.contentType,
         input.contentText,
         input.contentJson ?? null,
@@ -332,15 +338,16 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       const createdAt = localIsoFromUtc(createdAtUtc, time.timeZone);
       const result = messageDb.prepare(`
         INSERT INTO messages(
-          plugin, conversation_id, direction, sender_id, sender_role,
+          plugin, conversation_id, direction, sender_id, sender_role, sender_name,
           content_type, content_text, content_json, created_at, created_at_utc, status,
           is_read, is_recalled, reactions_json, last_event_at, last_event_at_utc
-        ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, 'sending', 0, 0, '{}', ?, ?)
+        ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, 'sending', 0, 0, '{}', ?, ?)
       `).run(
         input.plugin,
         input.conversationId,
         input.senderId ?? null,
         input.senderRole ?? "assistant",
+        input.senderName ?? null,
         input.contentType,
         input.contentText,
         input.contentJson ?? null,
@@ -582,6 +589,7 @@ function initializeMessageDatabase(db: DatabaseSync): void {
       direction TEXT NOT NULL,
       sender_id TEXT,
       sender_role TEXT NOT NULL,
+      sender_name TEXT,
       content_type TEXT NOT NULL,
       content_text TEXT NOT NULL,
       content_json TEXT,
@@ -631,10 +639,10 @@ function migrateLegacyMessagesToMessageDb(legacyDb: DatabaseSync, messageDb: Dat
     const insert = messageDb.prepare(`
       INSERT OR IGNORE INTO messages(
         id, plugin, external_message_id, conversation_id, direction, sender_id,
-        sender_role, content_type, content_text, content_json, created_at, created_at_utc, status,
+        sender_role, sender_name, content_type, content_text, content_json, created_at, created_at_utc, status,
         is_read, read_at, is_recalled, recalled_at, reactions_json, last_event_at, last_event_at_utc,
         core_processed_at, core_batch_id, send_failure_reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     messageDb.exec("BEGIN");
     try {
@@ -647,6 +655,7 @@ function migrateLegacyMessagesToMessageDb(legacyDb: DatabaseSync, messageDb: Dat
           row.direction,
           row.senderId ?? null,
           row.senderRole,
+          row.senderName ?? null,
           row.contentType,
           row.contentText,
           row.contentJson ?? null,
@@ -752,6 +761,7 @@ function backfillMessagesFromEventLogs(db: DatabaseSync): void {
       direction,
       sender_id,
       sender_role,
+      sender_name,
       content_type,
       content_text,
       content_json,
@@ -774,6 +784,7 @@ function backfillMessagesFromEventLogs(db: DatabaseSync): void {
       direction,
       actor_id,
       CASE WHEN direction = 'outbound' THEN 'assistant' ELSE 'user' END,
+      NULL,
       kind,
       summary,
       raw_json,
@@ -924,6 +935,7 @@ function conversationMessageSelect(suffix: string): string {
       direction,
       sender_id AS senderId,
       sender_role AS senderRole,
+      sender_name AS senderName,
       content_type AS contentType,
       content_text AS contentText,
       content_json AS contentJson,

@@ -127,6 +127,7 @@ export type AgentOutput = {
   meta: {
     createdAt: string;
     createdAtUtc?: string;
+    senderName?: string;
     urgency: "silent" | "normal" | "important";
     allowStreaming?: boolean;
   };

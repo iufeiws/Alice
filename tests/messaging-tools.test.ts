@@ -44,6 +44,9 @@ test("messaging tools expose merged check_chat and send_chat tools", async () =>
   const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
   assert.deepEqual(properties, {});
   assert.equal(checkChat?.inputSchema.additionalProperties, false);
+  const sendChat = tools.listTools().find((tool) => tool.name === "send_chat");
+  assert.deepEqual((sendChat?.inputSchema.properties as Record<string, unknown>).alice, { type: "string", enum: ["core", "shell"] });
+  assert.deepEqual(sendChat?.inputSchema.required, ["type", "content"]);
 });
 
 test("finish_and_wait is exposed by its own tool plugin", async () => {
@@ -189,6 +192,51 @@ test("check_chat defaults to unread new messages", async () => {
   assert.equal(recentAgain.ok, true);
   assert.doesNotMatch(String(recentAgain.output), /hello today/);
   assert.match(String(recentAgain.output), /after today check/);
+});
+
+test("check_chat formats multiline text messages with speaker on its own line", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-multiline-format"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_multiline_user",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "user first\nuser second",
+    createdAt: "2026-05-26T12:00:00.000Z"
+  });
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    contentType: "text",
+    contentText: "alice first\nalice second",
+    createdAt: "2026-05-26T12:00:01.000Z"
+  });
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session-1",
+    contentType: "image",
+    contentText: "generated/selfies/selfie.jpg",
+    contentJson: JSON.stringify({ kind: "image", assetId: "generated/selfies/selfie.jpg" }),
+    createdAt: "2026-05-26T12:00:02.000Z"
+  });
+
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:01:00.000Z")),
+    outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({ id: "call_multiline_format", toolName: "check_chat", input: { scope: "today" } });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /\{\{user\}\}:\nuser first\nuser second/);
+  assert.match(String(result.output), /Alice:\nalice first\nalice second/);
+  assert.doesNotMatch(String(result.output), /\{\{user\}\}:user first\nuser second/);
+  assert.doesNotMatch(String(result.output), /Alice:alice first\nalice second/);
+  assert.match(String(result.output), /Alice发送了一张图片/);
+  assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
 });
 
 test("check_chat default scope ignores active main llm session generation", async () => {
@@ -899,24 +947,84 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   const result = await tools.execute({
     id: "call_send",
     toolName: "send_chat",
-    input: { content: "one\n\ntwo" }
+    input: { content: "one\n\ntwo", alice: "shell" }
   });
 
   assert.equal(result.ok, true);
   assert.match(String(result.output), /^<chat-log>\n/);
-  assert.match(String(result.output), /Alice:one/);
-  assert.match(String(result.output), /Alice:two/);
+  assert.match(String(result.output), /Alice\(shell\):one/);
+  assert.match(String(result.output), /Alice\(shell\):two/);
   assert.doesNotMatch(String(result.output), /old context should not come back from send_chat/);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
+  assert.deepEqual(stored.map((message) => message.senderName), ["shell", "shell"]);
 
   const noNew = await tools.execute({ id: "call_check_new", toolName: "check_chat", input: {} });
   assert.equal(noNew.ok, true);
-  assert.match(String(noNew.output), /Alice:one/);
-  assert.match(String(noNew.output), /Alice:two/);
+  assert.match(String(noNew.output), /Alice\(shell\):one/);
+  assert.match(String(noNew.output), /Alice\(shell\):two/);
+});
+
+test("send_chat can keep newline text in one send from messaging config", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-no-split"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    config: { splitMultilineSendChat: false, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_no_split",
+    toolName: "send_chat",
+    input: { type: "message", content: "one\n\ntwo", alice: "shell" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one\n\ntwo"]);
+});
+
+test("send_chat sends feishu core message as italic markdown", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-core-markdown"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_core",
+    toolName: "send_chat",
+    input: { content: "core text\nsecond", alice: "core" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content), [{ kind: "markdown", markdown: "*core text\nsecond*" }]);
+  assert.match(String(result.output), /Alice\(core\):\n\*core text\nsecond\*/);
+  const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
+  assert.deepEqual(stored.map((message) => message.contentType), ["markdown"]);
+  assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
 test("send_chat blocks when the user has not replied recently", async () => {
@@ -951,6 +1059,39 @@ test("send_chat blocks when the user has not replied recently", async () => {
   assert.equal(result.error, "send_chat blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。");
   assert.equal(sendCalls, 0);
   assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 20).filter((message) => message.direction === "outbound").length, 10);
+});
+
+test("send_chat can disable consecutive-send limit from messaging config", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-no-wait-user"), "alice.sqlite"));
+  for (let index = 0; index < 10; index += 1) {
+    store.insertOutboundMessage({
+      plugin: "wechat",
+      conversationId: "wechat:dm:wx-user",
+      contentType: "text",
+      contentText: `sent ${index + 1}`,
+      createdAt: new Date(Date.parse("2026-05-26T00:00:00.000Z") + index).toISOString()
+    });
+  }
+  let sendCalls = 0;
+  const tools = createMessagingTools({
+    store,
+    config: { splitMultilineSendChat: true, limitConsecutiveSends: false, feishuTypingEmojiEnabled: true },
+    outputRouter: {
+      async send() {
+        sendCalls += 1;
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_no_wait_user",
+    toolName: "send_chat",
+    input: { type: "message", content: "should send", alice: "shell" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sendCalls, 1);
 });
 
 test("send_chat filters parenthetical text before sending and storing", async () => {
@@ -2267,7 +2408,7 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   assert.equal(result.ok, true);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
-  assert.deepEqual(sent[1].content, { kind: "text", text: "[晚点见]" });
+  assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "晚点见" });
   assert.equal(fs.existsSync(generatedPath), false);
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
   assert.doesNotMatch(String(result.output), /Alice:\[晚点见\]/);
@@ -2275,6 +2416,46 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   assert.equal(stored.length, 1);
   assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见"]);
   assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
+});
+
+test("send_chat voice sends italic markdown transcript for feishu core", async () => {
+  const dir = makeTempDir("messaging-send-voice-feishu-core-transcript");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "feishu:dm:oc_1", "feishu");
+  const sent: AgentOutput[] = [];
+  let generatedPath = "";
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    voiceSynthesizer: async ({ text }) => {
+      generatedPath = path.join(dir, "voice.wav");
+      fs.writeFileSync(generatedPath, `voice:${text}`);
+      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "oc_1", sessionId: "feishu:dm:oc_1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_feishu_core_transcript",
+    toolName: "send_chat",
+    input: { type: "voice", content: "晚点见", alice: "core" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
+  assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "*晚点见*" });
+  assert.equal(fs.existsSync(generatedPath), false);
+  assert.match(String(result.output), /Alice\(core\):\[语音\]晚点见/);
+  const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
+  assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
 test("send_chat voice retries feishu transcript without storing it", async () => {
@@ -2298,7 +2479,7 @@ test("send_chat voice retries feishu transcript without storing it", async () =>
     outputRouter: {
       async send(output) {
         sent.push(output);
-        if (output.content.kind === "text") {
+        if (output.content.kind === "markdown") {
           transcriptAttempts += 1;
           if (transcriptAttempts === 1) throw new Error("temporary feishu failure");
         }
@@ -2323,7 +2504,7 @@ test("send_chat voice retries feishu transcript without storing it", async () =>
   assert.equal(result.ok, true);
   assert.equal(transcriptAttempts, 2);
   assert.equal(sent.length, 3);
-  assert.deepEqual(sent.map((output) => output.content.kind), ["audio", "text", "text"]);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["audio", "markdown", "markdown"]);
   assert.equal(fs.existsSync(generatedPath), false);
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
   assert.equal(stored.length, 1);
@@ -3357,6 +3538,44 @@ test("send_chat voice splits newline and escaped newline text into multiple audi
   ]);
 });
 
+test("send_chat voice can keep newline text in one audio message from messaging config", async () => {
+  const dir = makeTempDir("messaging-send-voice-no-split");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
+  const sent: AgentOutput[] = [];
+  const synthesizedTexts: string[] = [];
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    config: { splitMultilineSendChat: false, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true },
+    wechatVoiceFallbackToText: false,
+    voiceSynthesizer: async ({ text }) => {
+      synthesizedTexts.push(text);
+      const filePath = path.join(dir, "voice.wav");
+      fs.writeFileSync(filePath, text);
+      return { assetId: "generated/tts/voice.wav", filePath };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `voice_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_voice_no_split",
+    toolName: "send_chat",
+    input: { type: "voice", content: "第一句\n第二句\\n第三句", alice: "shell" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(synthesizedTexts, ["第一句\n第二句\n第三句"]);
+  assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句\n第二句\n第三句"]);
+});
+
 test("send_chat voice returns tts failure without sending fallback text", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-voice-tts-failed"), "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
@@ -3588,13 +3807,19 @@ test("send_message updates delay timestamp before send attempt completes", async
     getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({
-    id: "call_send_attempt_delay",
+  const first = await tools.execute({
+    id: "call_send_attempt_delay_1",
     toolName: "send_message",
-    input: { content: "hello\nhello" }
+    input: { content: "hello" }
+  });
+  const second = await tools.execute({
+    id: "call_send_attempt_delay_2",
+    toolName: "send_message",
+    input: { content: "hello" }
   });
 
-  assert.equal(result.ok, true);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
   assert.deepEqual(sleeps, [2300]);
   assert.deepEqual(sentAt, [
     Date.parse("2026-05-26T00:00:00.000Z"),

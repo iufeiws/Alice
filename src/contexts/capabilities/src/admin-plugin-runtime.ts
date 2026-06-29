@@ -6,6 +6,7 @@ import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlu
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
+import { defaultMessagingPluginConfigPath, readMessagingPluginConfig, type MessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
 import { extensionForOutputFormat, selectedImageApiSettings } from "../../../capabilities/tools/photo/src/config.js";
 import { detectImageMime, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "../../../capabilities/tools/photo/src/image-files.js";
 import { runOpenAIAPISelfie } from "../../../capabilities/tools/photo/src/openai-api-selfie.js";
@@ -22,7 +23,7 @@ const path = await import("node:path");
 const maxPluginAssetUploadBytes = 100 * 1024 * 1024;
 const maxPluginModelAssetUploadBytes = 512 * 1024 * 1024;
 type AdminPluginKind = "channel" | "tool" | "voice" | "asr" | "presentation" | "context";
-type AdminPluginStatus = "enabled" | "disabled" | "planned" | "external_config" | "missing_config" | "error";
+type AdminPluginStatus = "enabled" | "disabled" | "planned" | "missing_config" | "error";
 type AdminPluginHealth = "healthy" | "degraded" | "failing" | "unknown";
 
 type AdminPluginSummary = {
@@ -223,13 +224,95 @@ function findAdminPluginEntry(context: AdminRoutesContext, pluginId: string): Ad
 
 function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryEntry[] {
   return [
+    messagingPluginEntry(),
     asrPluginEntry(),
     ttsPluginEntry(),
     photoPluginEntry(),
     googleStreetViewPluginEntry(),
-    worldWandererPluginEntry(),
-    feishuPluginEntry()
+    worldWandererPluginEntry()
   ];
+}
+
+function messagingPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      const config = readMessagingConfigForAdmin(context);
+      return {
+        id: "messaging",
+        name: "Messaging",
+        kind: "tool",
+        status: "enabled",
+        health: "healthy",
+        description: "Shared check_chat and send_chat tool behavior.",
+        configurable: true,
+        switchable: false,
+        configSource: messagingConfigPath(context),
+        lastLoadedAt: messagingConfigMtime(context)
+      };
+    },
+    config(context) {
+      return readMessagingConfigForAdmin(context);
+    },
+    patch(context, patch) {
+      const config = updateMessagingConfig(context, patch);
+      return { config };
+    },
+    reload(context) {
+      return { config: readMessagingConfigForAdmin(context) };
+    },
+    configSchema: {
+      groups: [
+        { key: "general", label: "General" },
+        { key: "feishu", label: "Feishu" }
+      ],
+      fields: [
+        { key: "splitMultilineSendChat", label: "Split Multiline Send Chat", type: "switch", group: "general", description: "Split send_chat message and voice content on newlines. Feishu core messages rendered as markdown are never split." },
+        { key: "limitConsecutiveSends", label: "Limit Consecutive Sends", type: "switch", group: "general", description: "Block send_chat after 10 recent outbound messages until the user replies." },
+        { key: "feishuTypingEmojiEnabled", label: "Typing Emoji Indicator", type: "switch", group: "feishu", description: "Use the Feishu reaction-based typing indicator while Alice is preparing a reply." }
+      ]
+    },
+    routePreview: [
+      "send_chat tool call",
+      "messaging plugin config",
+      "conversation store",
+      "channel send"
+    ],
+    runtimeAccess: [
+      "read current messaging conversation",
+      "write outbound message records",
+      "send text, markdown, image, or voice through the selected channel"
+    ]
+  };
+}
+
+function updateMessagingConfig(context: AdminRoutesContext, patch: Record<string, unknown>): MessagingPluginConfig {
+  const current = readMessagingConfigForAdmin(context);
+  const next: MessagingPluginConfig = {
+    splitMultilineSendChat: patch.splitMultilineSendChat === undefined ? current.splitMultilineSendChat : booleanFromUnknown(patch.splitMultilineSendChat),
+    limitConsecutiveSends: patch.limitConsecutiveSends === undefined ? current.limitConsecutiveSends : booleanFromUnknown(patch.limitConsecutiveSends),
+    feishuTypingEmojiEnabled: patch.feishuTypingEmojiEnabled === undefined ? current.feishuTypingEmojiEnabled : booleanFromUnknown(patch.feishuTypingEmojiEnabled)
+  };
+  writeMessagingConfig(context, next);
+  return next;
+}
+
+function readMessagingConfigForAdmin(context: AdminRoutesContext): MessagingPluginConfig {
+  return readMessagingPluginConfig(messagingConfigPath(context));
+}
+
+function writeMessagingConfig(context: AdminRoutesContext, config: MessagingPluginConfig): void {
+  const filePath = messagingConfigPath(context);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function messagingConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.messaging?.configPath ?? defaultMessagingPluginConfigPath;
+}
+
+function messagingConfigMtime(context: AdminRoutesContext): string | undefined {
+  const filePath = messagingConfigPath(context);
+  return fs.existsSync(filePath) ? fs.statSync(filePath).mtime.toISOString() : undefined;
 }
 
 function writeAdminPluginConfig(context: AdminRoutesContext, response: any, pluginId: string): void {
@@ -714,24 +797,6 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
       "pass translated text to TTS",
       "do not persist translated text to message log"
     ]
-  };
-}
-
-function feishuPluginEntry(): AdminPluginRegistryEntry {
-  return {
-    summary(context) {
-      return {
-        id: "feishu",
-        name: "Feishu",
-        kind: "channel",
-        status: "external_config",
-        health: context.runtime.feishuStarted ? "healthy" : "unknown",
-        description: "Feishu channel plugin for inbound and outbound messages.",
-        configurable: false,
-        switchable: false,
-        configSource: ".env"
-      };
-    }
   };
 }
 

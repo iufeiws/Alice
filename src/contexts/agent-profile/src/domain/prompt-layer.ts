@@ -13,6 +13,7 @@ export type PromptLayer = {
   id: string;
   title: string;
   role: PromptLayerRole;
+  name?: string;
   enabled: boolean;
   content: string;
   order: number;
@@ -38,6 +39,7 @@ export function normalizePromptLayers(
       id: nonEmptyString(raw.id) ?? `layer_${index + 1}`,
       title: nonEmptyString(raw.title) ?? `Layer ${index + 1}`,
       role,
+      name: nonEmptyString(raw.name) ?? "{{user}}",
       enabled: raw.enabled !== false,
       content: typeof raw.content === "string" ? raw.content : "",
       order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : (index + 1) * 10,
@@ -56,6 +58,7 @@ export function promptLayerToMessage(
     const prefix = options.toolCallIdPrefix ?? "prompt";
     return {
       role: "assistant",
+      name: renderLLMText(layer.name ?? "{{user}}", variables),
       content: renderLLMText(layer.content || "", variables),
       reasoningContent: renderLLMText(layer.thinking ?? layer.content ?? "", variables),
       toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
@@ -70,6 +73,7 @@ export function promptLayerToMessage(
   }
   return {
     role: layer.role,
+    name: renderLLMText(layer.name ?? "{{user}}", variables),
     content: renderLLMText(layer.content, variables),
     reasoningContent: layer.role === "assistant" && layer.thinking ? renderLLMText(layer.thinking, variables) : undefined
   };

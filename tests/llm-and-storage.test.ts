@@ -1342,7 +1342,7 @@ test("sqlite store initializes schema version without losing existing logs", () 
   assert.equal(reopened.listUnprocessedInboundForSession("session-1", 10).length, 0);
 
   const db: any = new sqlite.DatabaseSync(dbPath);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
 });
 
 test("sqlite migration marks legacy inbound logs processed", () => {
@@ -1367,7 +1367,7 @@ test("sqlite migration marks legacy inbound logs processed", () => {
 
   const store = createAliceStore(dbPath);
   assert.equal(store.listUnprocessedInboundForSession("session-legacy", 10).length, 0);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
 });
 
 test("sqlite migration backfills message event logs into core-facing messages", () => {
@@ -1432,7 +1432,7 @@ test("sqlite migration backfills message event logs into core-facing messages", 
   assert.equal(message.contentText, "old text");
   assert.equal(Boolean(message.isRead), true);
   assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
 });
 
 test("sqlite store keeps core-facing message state separate from event logs", () => {
@@ -1450,6 +1450,15 @@ test("sqlite store keeps core-facing message state separate from event logs", ()
   });
 
   assert.equal(message.contentText, "hello");
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "feishu:dm:ou_user",
+    senderName: "shell",
+    contentType: "text",
+    contentText: "from shell",
+    createdAt: "2026-05-24T00:01:00.000Z"
+  });
+  assert.equal(outbound.senderName, "shell");
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "feishu:dm:ou_user");
   assert.equal(store.updateMessageReaction({
     plugin: "feishu",

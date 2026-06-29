@@ -126,6 +126,9 @@ export type AdminRuntimeContext = {
   };
   runtime: { feishuStarted: boolean; wechatStarted: boolean };
   pluginConfigs?: {
+    messaging?: {
+      configPath?: string;
+    };
     photo?: {
       configPath?: string;
     };

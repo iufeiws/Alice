@@ -50,6 +50,69 @@ test("message runtime heartbeat attempts daily outfit on-body generation", async
   assert.deepEqual(attempted, ["o1"]);
 });
 
+test("message runtime skips Feishu typing start when messaging config disables emoji indicator", async () => {
+  const root = makeTempDir("runtime-feishu-typing-config");
+  const store = createAliceStore(path.join(root, "alice.sqlite"));
+  const messagingConfigPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  fs.mkdirSync(path.dirname(messagingConfigPath), { recursive: true });
+  fs.writeFileSync(messagingConfigPath, `${JSON.stringify({
+    splitMultilineSendChat: true,
+    limitConsecutiveSends: true,
+    feishuTypingEmojiEnabled: false
+  })}\n`);
+  const typingEvents: Array<{ sessionId?: string; typing: boolean }> = [];
+  const runtime = createMessageRuntimeRuntime({
+    config: { core: { inboundDebounceMs: 0, heartbeatPaused: false } },
+    time: {
+      timeZone: "UTC",
+      now: () => ({ iso: "2026-05-26T00:00:00.000Z", date: new Date("2026-05-26T00:00:00.000Z") })
+    },
+    store,
+    chatAgent: { clearLLMSession() {}, async prepareEventRun() { return [textOutput("session-1", "ok")]; } },
+    agentLoopRuntime: undefined,
+    talkRuntime: undefined,
+    agentState: {
+      tick() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      getSnapshot: () => ({ state: "waiting" }),
+      onChange: () => () => {},
+      canReplyToInbound: () => true,
+      canRunHeartbeat: () => true,
+      getInboundDelayMs: () => 0,
+      noteInboundMessage() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    isLLMSessionActive: () => false,
+    messagingConfigPath,
+    feishu: {
+      async setTyping(input: { sessionId?: string; typing: boolean }) {
+        typingEvents.push({ sessionId: input.sessionId, typing: input.typing });
+      }
+    },
+    wechat: { async setTyping() {} },
+    dailyShellStore: { get: () => ({ outfit: { id: "o1" } }) },
+    initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
+    getAgentInitiatedBehaviorPlans: () => [],
+    getDefaultMessagingTarget: () => undefined,
+    getSleepCocoonGoodnightEvent: () => undefined,
+    getSleepCocoonWakeEvent: () => undefined,
+    getCalendarReminderEvent: () => undefined,
+    queueForceWakeEvent() {},
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(textEvent("session-1", "om_1", "hello"));
+  await waitFor(() => store.listMessagesForConversation("session-1", 10).some((entry) => entry.direction === "outbound"));
+
+  assert.deepEqual(typingEvents, [{ sessionId: "session-1", typing: false }]);
+});
+
 test("message runtime sends one LLM request for pending inbound logs and marks them processed", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];

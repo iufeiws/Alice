@@ -19,6 +19,10 @@ export function renderPromptLayerScript(): string {
                   \${roleOptions.map((item) => \`<option value="\${item}" \${role === item ? "selected" : ""}>\${item}</option>\`).join("")}
                 </select>
               </div>
+              <div>
+                <label>Name</label>
+                <input data-field="name" value="\${escapeAttr(options.name || "")}" />
+              </div>
               <label><input data-field="enabled" type="checkbox" \${options.enabled ? "checked" : ""} /> Enabled</label>
             </div>
             \${isToolRequest ? \`

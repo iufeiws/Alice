@@ -16,6 +16,7 @@ import type {
 import { checkChatTool, messagingSystemPromptMessages, messagingToolText, sendChatTool } from "../profile.js";
 
 const fsp = await import("node:fs/promises");
+const fs = await import("node:fs");
 const path = await import("node:path");
 
 export * from "./sent-message-utils.js";
@@ -46,6 +47,7 @@ export type MessagingToolsDeps = {
   voiceSynthesizer?: VoiceSynthesizer;
   voiceMessageTtsTrainingOutputDir?: string;
   wechatVoiceFallbackToText?: boolean;
+  config?: MessagingPluginConfig | (() => MessagingPluginConfig);
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
@@ -67,6 +69,14 @@ export type MessagingToolsDeps = {
   }): unknown;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
+
+export type MessagingPluginConfig = {
+  splitMultilineSendChat: boolean;
+  limitConsecutiveSends: boolean;
+  feishuTypingEmojiEnabled: boolean;
+};
+
+export const defaultMessagingPluginConfigPath = "config/plugin/messaging/config.json";
 
 export type MessagingToolPlugin = ToolPlugin & {
   noteLLMRequestStarted(): void;
@@ -279,28 +289,37 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const type = normalizeSendType(call.input.type);
     if (!type) return toolError(call, messagingToolText.unsupportedMessageType);
     const rawContent = stringValue(call.input.content);
+    const senderName = normalizeSenderName(call.input.alice ?? call.input.senderName);
     const content = type === "message" || type === "voice"
       ? filterParentheticalSendContent(rawContent)
       : rawContent;
     if (!content.trim()) return toolError(call, messagingToolText.contentRequired);
-    const parts = type === "message" || type === "voice"
+    const config = resolveMessagingConfig();
+    const renderedType = renderSendPart(target, type, "", senderName).type;
+    const parts = shouldSplitSendContent(config, type, renderedType)
       ? splitSendContentParts(content)
-      : [content];
+      : [type === "message" || type === "voice" ? content.trim() : content];
     if (parts.length === 0) return toolError(call, messagingToolText.contentRequired);
-    if (!recentMessagesAllowSend(target)) return toolError(call, messagingToolText.waitForUserReplyBeforeSending);
+    if (config.limitConsecutiveSends && !recentMessagesAllowSend(target)) return toolError(call, messagingToolText.waitForUserReplyBeforeSending);
 
     const results = [];
     for (const part of parts) {
       if (type === "voice") {
-        results.push(...await sendVoicePart(target, part));
+        results.push(...await sendVoicePart(target, part, senderName));
       } else {
-        results.push(await sendOutputPart(target, type, part, { retry: true }));
+        results.push(await sendOutputPart(target, type, part, { retry: true, senderName }));
       }
     }
 
     const failed = results.find((result) => !result.ok);
     const view = viewSentMessageResults(call.id, target, results);
     return failed ? { ...view, ok: false, error: failed.error } : view;
+  }
+
+  function resolveMessagingConfig(): MessagingPluginConfig {
+    return typeof deps.config === "function"
+      ? deps.config()
+      : deps.config ?? normalizeMessagingPluginConfig({});
   }
 
   function recentMessagesAllowSend(target: MessagingToolTarget): boolean {
@@ -340,20 +359,20 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
   }
 
-  async function sendVoicePart(target: MessagingToolTarget, text: string): Promise<SendPartResult[]> {
+  async function sendVoicePart(target: MessagingToolTarget, text: string, senderName?: string): Promise<SendPartResult[]> {
     await waitForMessageSendSlot(text);
     if (target.plugin === "wechat" && deps.wechatVoiceFallbackToText !== false) {
       deps.appendLog?.("info", `wechat voice fallback to text: chars=${Array.from(text).length}`);
-      return [await sendOutputPart(target, "message", text, { retry: true, skipWait: true })];
+      return [await sendOutputPart(target, "message", text, { retry: true, skipWait: true, senderName })];
     }
     let synthesized: VoiceSynthesisResult | undefined;
     try {
       deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);
       synthesized = await voiceSynthesizer({ text, time });
-      const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true });
+      const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true, senderName });
       await archiveVoiceMessageTtsOutput(target, text, synthesized, audioResult.ok ? "sent" : "failed");
       if (target.plugin !== "feishu" || !audioResult.ok) return [audioResult];
-      await sendFeishuVoiceTranscript(target, text);
+      await sendFeishuVoiceTranscript(target, text, senderName);
       return [audioResult];
     } catch (error) {
       const reason = normalizeSendError(error);
@@ -400,10 +419,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     target: MessagingToolTarget,
     type: SendType,
     content: string,
-    options: { transcript?: string; retry: boolean; skipWait?: boolean }
+    options: { transcript?: string; retry: boolean; skipWait?: boolean; senderName?: string }
   ): Promise<SendPartResult> {
     if (!options.skipWait) await waitForMessageSendSlot(options.transcript ?? content);
-    const output = buildOutput(target, type, content, options.transcript);
+    const rendered = renderSendPart(target, type, content, options.senderName);
+    const output = buildOutput(target, rendered.type, rendered.content, options.transcript, options.senderName);
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
     try {
       markMessageAttemptedNow();
@@ -438,8 +458,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
   }
 
-  async function sendFeishuVoiceTranscript(target: MessagingToolTarget, text: string): Promise<void> {
-    const output = buildOutput(target, "message", `[${text}]`);
+  async function sendFeishuVoiceTranscript(target: MessagingToolTarget, text: string, senderName?: string): Promise<void> {
+    const content = text;
+    const output = buildOutput(target, "markdown", senderName === "core" ? markdownItalic(content) : content, undefined, senderName);
     let lastReason = "";
     for (let attempt = 1; attempt <= maxSendRetryAttempts; attempt += 1) {
       try {
@@ -538,7 +559,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     };
   }
 
-  function buildOutput(target: MessagingToolTarget, type: SendType, content: string, transcript?: string): AgentOutput {
+  function renderSendPart(target: MessagingToolTarget, type: SendType, content: string, senderName?: string): { type: SendType; content: string } {
+    if (target.plugin === "feishu" && type === "message" && senderName === "core") {
+      return { type: "markdown", content: markdownItalic(content) };
+    }
+    return { type, content };
+  }
+
+  function markdownItalic(content: string): string {
+    return `*${content.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")}*`;
+  }
+
+  function buildOutput(target: MessagingToolTarget, type: SendType, content: string, transcript?: string, senderName?: string): AgentOutput {
     const now = time.now();
     return {
       id: createId("tool_out"),
@@ -559,6 +591,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       meta: {
         createdAt: now.iso,
         createdAtUtc: now.date.toISOString(),
+        senderName,
         urgency: "normal",
         allowStreaming: false
       }
@@ -574,6 +607,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         relationshipName: entry.relationshipName
       }))
       .filter((entry) => entry.time.getTime() >= sinceDate.getTime());
+  }
+
+  function shouldSplitSendContent(config: MessagingPluginConfig, type: SendType, renderedType: SendType): boolean {
+    return config.splitMultilineSendChat && renderedType !== "markdown" && (type === "message" || type === "voice");
   }
 }
 
@@ -698,7 +735,7 @@ function appendCurrentTime(output: string, currentTime: string): string {
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {
   const isSystem = isSystemPromptMessage(message);
   const speaker = message.direction === "outbound" || message.senderRole === "assistant"
-      ? "Alice"
+      ? formatAssistantSpeaker(message.senderName)
       : userName;
   const recalled = message.isRecalled ? messagingToolText.recalledTag : "";
   const sendStatus = !isSystem && message.direction === "outbound" && message.status === "send_failed"
@@ -709,7 +746,12 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
   const reactions = summarizeReactions(message.reactionsJson);
   const content = `${message.isRecalled ? messagingToolText.recalledMessage : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
   if (isSystem) return content;
-  return isMediaActionMessage(message) ? `${speaker}${content}` : `${speaker}:${content}`;
+  if (isMediaActionMessage(message)) return `${speaker}${content}`;
+  return content.includes("\n") ? `${speaker}:\n${content}` : `${speaker}:${content}`;
+}
+
+function formatAssistantSpeaker(value: string | undefined): string {
+  return value === "core" || value === "shell" ? `Alice(${value})` : "Alice";
 }
 
 function formatMessageContent(message: StoredConversationMessage): string {
@@ -950,6 +992,7 @@ function toStoredOutbound(output: AgentOutput): InsertOutboundMessageInput {
     plugin: output.target.plugin,
     conversationId: output.target.sessionId,
     senderRole: "assistant",
+    senderName: output.meta.senderName,
     contentType: output.content.kind,
     contentText: summarizeOutput(output),
     contentJson: JSON.stringify(output.content),
@@ -967,6 +1010,10 @@ function summarizeOutput(output: AgentOutput): string {
   if (content.kind === "file") return content.filename || content.assetId;
   if (content.kind === "card") return content.card.title;
   return content.kind;
+}
+
+function normalizeSenderName(value: unknown): string | undefined {
+  return value === "core" || value === "shell" ? value : undefined;
 }
 
 function extractSentMessageId(value: unknown): string | undefined {
@@ -1010,6 +1057,32 @@ function normalizeSendError(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+export function readMessagingPluginConfig(configPath = defaultMessagingPluginConfigPath): MessagingPluginConfig {
+  const resolved = path.resolve(configPath);
+  const parsed = parseJsonObject(fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}");
+  return normalizeMessagingPluginConfig(parsed);
+}
+
+export function normalizeMessagingPluginConfig(parsed: Record<string, unknown>): MessagingPluginConfig {
+  return {
+    splitMultilineSendChat: booleanValue(parsed.splitMultilineSendChat, true, "splitMultilineSendChat"),
+    limitConsecutiveSends: booleanValue(parsed.limitConsecutiveSends, true, "limitConsecutiveSends"),
+    feishuTypingEmojiEnabled: booleanValue(parsed.feishuTypingEmojiEnabled, true, "feishuTypingEmojiEnabled")
+  };
+}
+
+function parseJsonObject(content: string): Record<string, unknown> {
+  const parsed = JSON.parse(content) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid messaging plugin config JSON");
+  return parsed as Record<string, unknown>;
+}
+
+function booleanValue(value: unknown, fallback: boolean, field: string): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value === "boolean") return value;
+  throw new Error(`invalid ${field}: ${String(value)}`);
 }
 
 function messageDelayForContent(content: string): number {

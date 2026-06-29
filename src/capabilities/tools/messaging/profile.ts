@@ -2,7 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const checkChatTool: ToolDefinition = {
   name: "check_chat",
-  description: "查看聊天记录。默认返回新增消息。",
+  description: "查看聊天记录。默认返回新增消息",
   inputSchema: {
     type: "object",
     properties: {},
@@ -12,11 +12,12 @@ export const checkChatTool: ToolDefinition = {
 
 export const sendChatTool: ToolDefinition = {
   name: "send_chat",
-  description: "发送消息到当前聊天会话。必须先提供 type，再提供 content；type=message 和 type=voice 会把 content 中的换行拆成多条消息并间隔发送；type=voice 会把每段文本合成为语音并发送。",
+  description: "给{{user}}发送消息。需要先提供 type、alice, 再提供content。alice省略时为shell",
   inputSchema: {
     type: "object",
     properties: {
       type: { type: "string", enum: ["message", "markdown", "image", "voice"] },
+      alice: { type: "string", enum: ["core", "shell"] },
       content: { type: "string" }
     },
     required: ["type", "content"],

@@ -117,6 +117,26 @@ test("prompt messages render variables and preserve unknown placeholders", () =>
   assert.match(messageContentText(messages[0].content), /\{\{missing\}\}/);
 });
 
+test("prompt layers render message name", () => {
+  const store = createPromptProfileStore(path.join(makeTempDir("prompt-layer-name"), "prompt-profile.json"));
+  const saved = store.save({
+    ...defaultPromptProfile(),
+    userName: "小王",
+    layers: [
+      { id: "default_name", title: "Default Name", role: "user", enabled: true, content: "hello", order: 1 },
+      { id: "named", title: "Named", role: "user", name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 }
+    ]
+  });
+  const messages = buildPromptMessages(saved, {
+    event: textEvent(),
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
+
+  assert.equal(saved.layers[0].name, "{{user}}");
+  assert.equal(messages[0].name, "小王");
+  assert.equal(messages[1].name, "小王_speaker");
+});
+
 test("prompt messages render memory variables", () => {
   const profile = {
     ...defaultPromptProfile(),

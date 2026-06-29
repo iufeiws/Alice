@@ -246,6 +246,10 @@ export function renderPromptsScript(): string {
                   \${["system", "user", "assistant", "tool_request"].map((item) => \`<option value="\${item}" \${role === item ? "selected" : ""}>\${item}</option>\`).join("")}
                 </select>
               </div>
+              <div>
+                <label>Name</label>
+                <input data-field="name" value="\${escapeAttr(layer.name || "")}" />
+              </div>
               \${isToolRequest ? \`
               <div>
                 <label>Tool Calls JSON</label>
@@ -276,6 +280,7 @@ export function renderPromptsScript(): string {
         const root = document.querySelector('[data-memory-layer-group="' + cssEscape(group) + '"][data-memory-layer-id="' + cssEscape(layer.id) + '"]');
         if (!root) return;
         root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
+        root.querySelector('[data-field="name"]').addEventListener("input", (event) => { layer.name = event.target.value; });
         root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
           layer.role = event.target.value;
           if (layer.role === "tool_request") {
@@ -323,6 +328,7 @@ export function renderPromptsScript(): string {
           attributes: 'data-layer-id="' + escapeAttr(layer.id) + '" data-layer-collection="' + escapeAttr(collection) + '"',
           title: layer.title,
           role,
+          name: layer.name,
           enabled: layer.enabled,
           toolCalls: layer.toolCalls,
           thinking: layer.thinking,
@@ -343,6 +349,7 @@ export function renderPromptsScript(): string {
         const root = document.querySelector('[data-layer-collection="' + cssEscape(collection) + '"][data-layer-id="' + cssEscape(layer.id) + '"]');
         if (!root) return;
         root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
+        root.querySelector('[data-field="name"]').addEventListener("input", (event) => { layer.name = event.target.value; });
         root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
           layer.role = event.target.value;
           if (layer.role !== "tool_request") {

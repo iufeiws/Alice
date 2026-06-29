@@ -66,6 +66,7 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
         id: string;
         title: string;
         role: "user" | "assistant" | "tool_request";
+        name?: string;
         enabled: boolean;
         content: string;
         order: number;
@@ -115,6 +116,7 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
           id: typeof layer.id === "string" && layer.id ? layer.id : `layer_${index + 1}`,
           title: typeof layer.title === "string" ? layer.title : "",
           role,
+          name: typeof layer.name === "string" && layer.name ? layer.name : "{{user}}",
           enabled: layer.enabled !== false,
           content: typeof layer.content === "string" ? layer.content : "",
           order: typeof layer.order === "number" && Number.isFinite(layer.order) ? layer.order : (index + 1) * 10

@@ -193,18 +193,18 @@ LLM 发送聊天消息只能通过 `send_chat`：
 
 | `send_chat.type` | 最终出站 kind | 含义 | 备注 |
 | --- | --- | --- | --- |
-| `message` | `text` | 直接发送文本 | 会按换行拆分 |
+| `message` | `text` | 直接发送文本 | 默认按换行拆分，可由 messaging plugin 配置关闭 |
 | `markdown` | `markdown` | 直接发送 Markdown | 插件不支持时会发送失败 |
 | `image` | `image` | 发送已有 `assetId` 图片 | `content` 必须是 asset id |
 | `voice`（语音） | `audio`（语音） | 先 TTS 合成音频，再发送音频 | 二者是同一种语音消息语义，字段名来自不同接口 |
  
 共享 `AgentOutput.content.kind` 还定义了 `html`、`card`、`file`。它们不是当前 `send_chat` 暴露给 LLM 的类型，但其它工具或 Core 输出可以构造这些 kind。
 
-`send_chat` 构造统一的 `AgentOutput`，并通过 `outputRouter.send(output)` 发给平台插件。每段发送前都会先 `insertOutboundMessage()`，初始状态为 `sending`；成功后更新为 `sent`，失败后更新为 `send_failed` 并写入失败原因。文本、Markdown、图片发送失败时会进入最多 3 次的 retry queue。
+`send_chat` 构造统一的 `AgentOutput`，并通过 `outputRouter.send(output)` 发给平台插件。每条发送前都会先 `insertOutboundMessage()`，初始状态为 `sending`；成功后更新为 `sent`，失败后更新为 `send_failed` 并写入失败原因。文本、Markdown、图片发送失败时会进入最多 3 次的 retry queue。
 
-`message` 和 `voice`（语音）会按真实换行以及字面量 `\n` / `\r\n` 拆分为多条消息，并按内容长度节流。
+`message` 和 `voice`（语音）默认会按真实换行以及字面量 `\n` / `\r\n` 拆分为多条消息；`config/plugin/messaging/config.json` 中的 `splitMultilineSendChat=false` 会关闭拆分。`markdown`、`image` 不拆分。Feishu 的 core message 会渲染成 markdown，因此不受拆分开关影响。
 
-当 LLM adapter 支持 streaming tool-call delta 时，ChatAgent 会监听 `send_chat` arguments：只要 `type` 已经出现，`content` 中完成的一行可以提前发送，不必等待完整 JSON arguments 结束。最终 tool call 仍由 messaging tool 负责落库、发送和返回结果。
+`limitConsecutiveSends=true` 时，如果当前会话最近 10 条消息里没有用户入站回复，`send_chat` 会阻止继续发送；设为 `false` 会关闭该限制。
 
 如果同一轮 LLM 响应包含 `send_chat`，ChatAgent 会把它视为当前入站事件的终止动作：只执行 `send_chat`，跳过同轮其它读取或搜索工具，也不会把发送结果再喂回下一轮 LLM。
 

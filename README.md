@@ -13,7 +13,6 @@ Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 
   - 支持配置 `LLM_BASE_URL`。
   - 可接入 OpenAI、DeepSeek、opencode 以及类似 `/v1/chat/completions` 的服务。
   - 支持 OpenAI 风格 function tool calls，由 ChatAgent 执行工具。
-  - 支持 streaming tool-call delta，用于 `send_chat(type="message")` 的逐行提前发送。
   - 未配置 API key 或 base URL 时会使用本地 stub 客户端。
 - 飞书 Channel Plugin：
   - 通过飞书/Lark SDK 使用 WebSocket 事件订阅。
@@ -31,6 +30,7 @@ Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 
   - 使用角色、图书馆参考图；如果当前服装参考图存在，会作为第三张参考图，否则降级为文字服装描述。
   - 生成前先发送简短进行中提示。
   - 阻止连续两次调用 `selfie`。
+- Tool description 编写规则见 [tool_description_guideline.md](/home/yf/Alice/src/capabilities/tools/tool_description_guideline.md)。
 - 本地持久化：
   - SQLite Core 侧消息历史。
   - SQLite 追加式消息事件日志。

@@ -2,7 +2,7 @@ import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 import { buildLLMTextVariables, renderLLMText } from "../../agent-profile/src/application/llm-text-renderer.js";
 import { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
-import { readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
+import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
 import { defaultPhotoPluginConfigPath, publicPhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig, type SelfieGenerationMode } from "../../../capabilities/tools/photo/src/index.js";
@@ -115,7 +115,7 @@ type TtsAdminConfig = {
   };
 };
 
-type AdminPluginFieldType = "switch" | "text" | "password" | "number" | "textarea" | "select" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly";
+type AdminPluginFieldType = "switch" | "text" | "password" | "number" | "textarea" | "select" | "apiPresetSelect" | "fileUpload" | "folderUpload" | "readonly" | "readonlyTextarea";
 
 type AdminPluginConfigField = {
   key: string;
@@ -555,6 +555,7 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
           { value: "multimodal_llm", label: "Multimodal LLM" },
           { value: "tencent", label: "Tencent Cloud" }
         ], description: "Provider used when callers do not explicitly choose one." },
+        { key: "directAudioInputEnabled", label: "Direct Audio Input", type: "switch", group: "general", description: "Bypass ASR and send final voice audio directly to talk LLMs that support audio input." },
         { key: "testAudioPath", label: "Test Audio", type: "fileUpload", group: "general", assetKey: "test-audio", accept: "audio/*", description: "Plugin-owned test audio under assets/plugin/asr/test-audio/." },
         { key: "pseudoStreamMinPauseMs", label: "Pseudo Stream Pause Ms", type: "number", group: "general", min: 500, max: 10000, step: 100, description: "Conservative pause threshold for pseudo streaming. Default is 1500 ms." },
         { key: "providers.openaiCompatible.apiPresetName", label: "OpenAI-Compatible Preset", type: "apiPresetSelect", group: "openai_compatible", description: "Preset for OpenAI or SiliconFlow compatible ASR. The plugin stores only the preset name." },
@@ -566,8 +567,9 @@ function asrPluginEntry(): AdminPluginRegistryEntry {
         { key: "providers.openaiCompatible.retryCount", label: "OpenAI Retry Count", type: "number", group: "openai_compatible", min: 0, max: 5, step: 1, description: "Retries for timeout or transient provider failures. Default is 1." },
         { key: "providers.openaiCompatible.retryBackoffMs", label: "OpenAI Retry Backoff Ms", type: "number", group: "openai_compatible", min: 0, max: 30000, step: 100, description: "Base retry backoff in milliseconds. Default is 500." },
         { key: "providers.multimodalLlm.apiPresetName", label: "Multimodal LLM Preset", type: "apiPresetSelect", group: "multimodal_llm", description: "Preset used for one-shot multimodal audio understanding." },
-        { key: "providers.multimodalLlm.prompt", label: "Multimodal Prompt", type: "textarea", group: "multimodal_llm", description: "Prompt sent with the audio. Required; no default prompt is injected by code." },
-        { key: "providers.multimodalLlm.extraParams", label: "Multimodal Extra Params JSON", type: "textarea", group: "multimodal_llm", description: "JSON object rendered by the shared LLM request layer, for example tool_choice." },
+        { key: "providers.multimodalLlm.prompt", label: "Multimodal Prompt", type: "textarea", group: "multimodal_llm", description: "Prompt sent with the audio. Defaults to the MIMO audio understanding prompt." },
+        { key: "providers.multimodalLlm.extraParams", label: "Multimodal Extra Params JSON", type: "textarea", group: "multimodal_llm", description: "JSON object rendered by the shared LLM request layer. Defaults to tool_choice=submit_audio_context and max_completion_tokens=8192." },
+        { key: "providers.multimodalLlm.protocolCall", label: "submit_audio_context Protocol Call", type: "readonlyTextarea", group: "multimodal_llm", description: JSON.stringify(multimodalLlmAsrProtocolCall(), null, 2) },
         { key: "providers.tencent.appId", label: "Tencent AppID", type: "text", group: "tencent", description: "Tencent Cloud AppID used by native real-time WebSocket ASR. Omit to use pseudo streaming." },
         { key: "providers.tencent.secretId", label: "Tencent SecretId", type: "text", group: "tencent", description: "Tencent Cloud SecretId from the CAM API key pair." },
         { key: "providers.tencent.secretKey", label: "Tencent SecretKey", type: "text", group: "tencent", description: "Tencent Cloud SecretKey used to sign ASR requests." },
@@ -1589,6 +1591,7 @@ function updateAsrConfig(context: AdminRoutesContext, patch: Record<string, unkn
   const next: AsrPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     defaultProvider: patch.defaultProvider === undefined ? current.defaultProvider : asrProviderFromUnknown(patch.defaultProvider),
+    directAudioInputEnabled: patch.directAudioInputEnabled === undefined ? current.directAudioInputEnabled : booleanFromUnknown(patch.directAudioInputEnabled),
     testAudioPath: patch.testAudioPath === undefined ? current.testAudioPath : optionalString(patch.testAudioPath),
     pseudoStreamMinPauseMs: patch.pseudoStreamMinPauseMs === undefined ? current.pseudoStreamMinPauseMs : optionalNumberFromUnknown(patch.pseudoStreamMinPauseMs),
     providers: {
@@ -1699,6 +1702,7 @@ function publicAsrConfig(config: AsrPluginConfig): AsrPluginConfig {
   return {
     enabled: config.enabled,
     defaultProvider: config.defaultProvider,
+    directAudioInputEnabled: config.directAudioInputEnabled === true,
     testAudioPath: config.testAudioPath,
     pseudoStreamMinPauseMs: config.pseudoStreamMinPauseMs,
     providers: {

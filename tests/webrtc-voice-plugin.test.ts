@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createWebRtcVoiceRuntime } from "../src/apps/api/bootstrap/web-rtc-voice-runtime.js";
 import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type PlaybackConsumerSnapshot, type PlaybackItemSettled, type ServerAudioFrame, type ServerOutboundAudioTrack, type WebRtcVoiceConfig } from "../src/channels/webrtc-voice/src/index.js";
 import type { AsrInboundStreamAcceptResult, AsrInboundStreamSession } from "../src/channels/asr/src/index.js";
 import { createTalkRuntime } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
@@ -207,6 +208,33 @@ test("WebRTC voice sends base64 audio directly when talk preset supports audio",
   assert.equal(ingested[0].payload.sampleRateHz, 16000);
   assert.equal(ingested[0].payload.channels, 1);
   await call.close("test_done");
+});
+
+test("WebRTC runtime keeps ASR preflight when direct audio input is disabled", async () => {
+  const runtime = createWebRtcVoiceRuntime({
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-28T00:00:00.000Z")),
+    asrPlugin: {
+      id: "asr",
+      config: {
+        enabled: true,
+        defaultProvider: "openai_compatible",
+        directAudioInputEnabled: false,
+        providers: {}
+      },
+      transcribe: async () => ({ ok: false, error: "missing_audio_file" }),
+      createInboundStreamSession: () => new FakeAsrSession([])
+    },
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    talkRuntime: {} as any,
+    supportsAudioInput: () => true,
+    readLLMApiPresets: () => [],
+    appendLog: () => {}
+  });
+
+  await assert.rejects(
+    runtime.plugin.createCall({ callId: "call-direct-disabled", userId: "browser-direct-disabled", offerSdp: "offer" }),
+    (error) => error instanceof WebRtcVoiceError && error.code === "asr_preflight_failed"
+  );
 });
 
 test("WebRTC voice call requires a server outbound audio track", async () => {

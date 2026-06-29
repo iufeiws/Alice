@@ -1,9 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAsrInboundStreamSession, createAsrPlugin, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/channels/asr/src/index.js";
+import { createAsrInboundStreamSession, createAsrPlugin, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig } from "../src/channels/asr/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+
+test("ASR direct audio input is disabled by default", () => {
+  const configPath = writeAsrConfigFixture("direct-audio-default.json", {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  });
+
+  assert.equal(readAsrPluginConfig(configPath).directAudioInputEnabled, false);
+});
 
 test("openai compatible ASR sends multipart transcription request and normalizes text", async () => {
   const audioPath = writeAudioFixture("openai-compatible.wav");
@@ -291,8 +301,9 @@ test("multimodal LLM ASR renders description when speech text is empty", async (
   assert.equal(result.text, "[语音][door knock]");
 });
 
-test("multimodal LLM ASR fails when prompt or tool call is missing", async () => {
-  const missingPrompt = await transcribeWithAsrPlugin({
+test("multimodal LLM ASR uses default prompt and extra params", async () => {
+  let capturedRequest: any;
+  const result = await transcribeWithAsrPlugin({
     audioFile: new Uint8Array([1]),
     filename: "speech.wav"
   }, {
@@ -301,6 +312,66 @@ test("multimodal LLM ASR fails when prompt or tool call is missing", async () =>
     providers: {
       multimodalLlm: {
         apiPresetName: "mimo"
+      }
+    }
+  }, {
+    resolveApiPreset() {
+      return {
+        name: "mimo",
+        baseURL: "https://api.example.test/v1",
+        apiKey: "secret",
+        model: "mimo-v2.5",
+        stream: false,
+        extraParams: {},
+        followupExtraParams: {}
+      };
+    },
+    createLlmClientFromPreset() {
+      return { async chat() { return { message: { role: "assistant", content: "" } }; } };
+    },
+    async llmRequestSender(request) {
+      capturedRequest = request;
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "submit_audio_context",
+              arguments: JSON.stringify({ speakText: "default prompt works", emotion: "calm", description: "" })
+            }
+          }]
+        }
+      };
+    }
+  });
+
+  assertAsrSuccess(result);
+  assert.match(capturedRequest.messages[0].content[1].text, /描述这段音频的内容/);
+  assert.deepEqual(capturedRequest.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    },
+    max_completion_tokens: 8192
+  });
+  assert.equal(capturedRequest.inlineTools[0].description, "提交音频理解结果。必须只调用本工具，不要输出自然语言。");
+  assert.equal(capturedRequest.inlineTools[0].inputSchema.properties.speakText.description, "音频中可识别语音的原始语言转写；没有语音时填空字符串；不要翻译。");
+});
+
+test("multimodal LLM ASR fails when prompt is empty or tool call is missing", async () => {
+  const missingPrompt = await transcribeWithAsrPlugin({
+    audioFile: new Uint8Array([1]),
+    filename: "speech.wav"
+  }, {
+    enabled: true,
+    defaultProvider: "multimodal_llm",
+    providers: {
+      multimodalLlm: {
+        apiPresetName: "mimo",
+        prompt: ""
       }
     }
   }, {

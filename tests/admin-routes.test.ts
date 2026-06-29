@@ -1248,6 +1248,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
   await handler(createRequest("PATCH", "/admin/api/plugins/asr/config", {
     enabled: true,
     defaultProvider: "openai_compatible",
+    directAudioInputEnabled: true,
     providers: {
       openaiCompatible: {
         apiPresetName: "asr-openai",
@@ -1275,6 +1276,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
+  assert.equal(body.configValue.directAudioInputEnabled, true);
   assert.equal(body.configValue.providers.openaiCompatible.apiPresetName, "asr-openai");
   assert.equal(body.configValue.providers.multimodalLlm.apiPresetName, "asr-openai");
   assert.equal(body.configValue.providers.multimodalLlm.prompt, "configured prompt");
@@ -1287,6 +1289,7 @@ test("admin plugin config patch writes ASR config with preset references only", 
   assert.equal(body.configValue.providers.tencent.secretId, "secret-id");
   assert.equal(body.configValue.providers.tencent.secretKey, "secret-key");
   assert.equal(saved.providers.openaiCompatible.apiKey, undefined);
+  assert.equal(saved.directAudioInputEnabled, true);
   assert.equal(saved.providers.tencent.secretKey, "secret-key");
   assert.equal(saved.providers.openaiCompatible.model, undefined);
   assert.deepEqual(saved.providers.multimodalLlm.extraParams, {
@@ -1368,10 +1371,22 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai_compatible", "multimodal_llm", "tencent"]);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "enabled").group, "general");
+  assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "directAudioInputEnabled").type, "switch");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.model"), undefined);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.apiPresetName").group, "openai_compatible");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.apiPresetName").group, "multimodal_llm");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.extraParams").type, "textarea");
+  const protocolField = body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.protocolCall");
+  assert.equal(protocolField.type, "readonlyTextarea");
+  assert.match(protocolField.description, /submit_audio_context/);
+  assert.match(body.configValue.providers.multimodalLlm.prompt, /描述这段音频的内容/);
+  assert.deepEqual(body.configValue.providers.multimodalLlm.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    },
+    max_completion_tokens: 8192
+  });
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.tencent.engineModelType").group, "tencent");
 });
 

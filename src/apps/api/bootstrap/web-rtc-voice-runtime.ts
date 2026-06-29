@@ -48,7 +48,7 @@ export function createWebRtcVoiceRuntime(input: {
       return input.asrPlugin.createInboundStreamSession(start);
     },
     voiceSynthesizer: input.voiceSynthesizer as any,
-    supportsAudioInput: input.supportsAudioInput,
+    supportsAudioInput: () => input.asrPlugin.config.directAudioInputEnabled === true && input.supportsAudioInput(),
     decodeAudioFileToFrames(decodeInput) {
       return decodeAudioFileToOpusRtpFrames(decodeInput);
     },

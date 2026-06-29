@@ -19,20 +19,50 @@ import { sanitizeAudioTranscript } from "../../../contexts/agent-loop/src/contra
 
 const tencentLocalAudioUploadLimitBytes = 5 * 1024 * 1024;
 const defaultPseudoStreamMinPauseMs = 1500;
+export const defaultMultimodalLlmAsrPrompt = `描述这段音频的内容:
+- 如果是语音转写为原始语言文本，不要翻译
+- 如果是声音，简短描述声音
+- emotion 只填一个词，用于概括情绪、语气或声音氛围；无法判断填空字符串`;
+export function defaultMultimodalLlmAsrExtraParams(): Record<string, unknown> {
+  return {
+    tool_choice: { type: "function", function: { name: "submit_audio_context" } },
+    max_completion_tokens: 8192
+  };
+}
 const submitAudioContextTool: ToolDefinition = {
   name: "submit_audio_context",
-  description: "",
+  description: "提交音频理解结果。必须只调用本工具，不要输出自然语言。",
   inputSchema: {
     type: "object",
     properties: {
-      speakText: { type: "string" },
-      emotion: { type: "string" },
-      description: { type: "string" }
+      speakText: { type: "string", description: "音频中可识别语音的原始语言转写；没有语音时填空字符串；不要翻译。" },
+      emotion: { type: "string", description: "只填一个词，用于概括说话人的情绪、语气，或非语音声音的氛围；无法判断时填空字符串。" },
+      description: { type: "string", description: "简短描述非语音声音或必要补充。" }
     },
     required: ["speakText", "emotion", "description"],
     additionalProperties: false
   }
 };
+export function multimodalLlmAsrProtocolCall(): Record<string, unknown> {
+  return {
+    messages: [{
+      role: "user",
+      content: [
+        { type: "input_audio", input_audio: { data: "data:<audio-mime>;base64,<audio-base64>" } },
+        { type: "text", text: defaultMultimodalLlmAsrPrompt }
+      ]
+    }],
+    tools: [{
+      type: "function",
+      function: {
+        name: submitAudioContextTool.name,
+        description: submitAudioContextTool.description,
+        parameters: submitAudioContextTool.inputSchema
+      }
+    }],
+    ...defaultMultimodalLlmAsrExtraParams()
+  };
+}
 
 export type AsrProvider = "tencent" | "openai_compatible" | "multimodal_llm";
 export type AsrResponseFormat = "json" | "text" | "verbose_json";
@@ -52,6 +82,7 @@ export type AsrApiPreset = {
 export type AsrPluginConfig = {
   enabled: boolean;
   defaultProvider: AsrProvider;
+  directAudioInputEnabled?: boolean;
   testAudioPath?: string;
   pseudoStreamMinPauseMs?: number;
   providers: {
@@ -650,6 +681,7 @@ export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginCo
   return {
     enabled: booleanValue(parsed.enabled, false),
     defaultProvider: asrProviderValue(parsed.defaultProvider) ?? "openai_compatible",
+    directAudioInputEnabled: booleanValue(parsed.directAudioInputEnabled, false),
     testAudioPath: stringValue(parsed.testAudioPath),
     pseudoStreamMinPauseMs: numberValue(parsed.pseudoStreamMinPauseMs, undefined),
     providers: {
@@ -753,7 +785,7 @@ async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPlu
   const providerConfig = config.providers.multimodalLlm;
   const preset = providerConfig?.apiPresetName ? deps.resolveApiPreset?.(providerConfig.apiPresetName) : undefined;
   const client = preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined;
-  const prompt = providerConfig?.prompt;
+  const prompt = providerConfig?.prompt ?? defaultMultimodalLlmAsrPrompt;
   if (!providerConfig?.apiPresetName || !preset || !client || !deps.llmRequestSender || !prompt) {
     throw new AsrConfigError("missing_provider_config");
   }
@@ -773,7 +805,7 @@ async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPlu
     }],
     model: preset.model,
     temperature: preset.temperature,
-    extraParams: providerConfig.extraParams ?? {},
+    extraParams: providerConfig.extraParams ?? defaultMultimodalLlmAsrExtraParams(),
     toolNames: [submitAudioContextTool.name],
     inlineTools: [submitAudioContextTool],
     toolVariables: {
@@ -1008,11 +1040,10 @@ function parseOpenAiCompatibleConfig(value: unknown): AsrPluginConfig["providers
 
 function parseMultimodalLlmConfig(value: unknown): AsrPluginConfig["providers"]["multimodalLlm"] {
   const parsed = parseJsonObject(value);
-  if (!Object.keys(parsed).length) return undefined;
   return {
     apiPresetName: stringValue(parsed.apiPresetName),
-    prompt: stringValue(parsed.prompt),
-    extraParams: recordValue(parsed.extraParams)
+    prompt: stringValue(parsed.prompt) ?? defaultMultimodalLlmAsrPrompt,
+    extraParams: recordValue(parsed.extraParams) ?? defaultMultimodalLlmAsrExtraParams()
   };
 }
 

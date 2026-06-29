@@ -4,6 +4,7 @@
       "id": "instruction",
       "title": "Goodnight Reply",
       "role": "user",
+      "name": "Cheshire Cat",
       "enabled": true,
       "content": "现在是{{time}}, 爱丽丝你觉得困了。进入睡眠茧, 然后对{{user}}说晚安吧",
       "order": 10

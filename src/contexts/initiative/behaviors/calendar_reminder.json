@@ -4,6 +4,7 @@
       "id": "layer_1",
       "title": "Layer 1",
       "role": "user",
+      "name": "Cheshire Cat",
       "enabled": true,
       "content": "有一个日程的时间到了, 爱丽丝来确认一下吧",
       "order": 10

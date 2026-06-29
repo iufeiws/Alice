@@ -4,6 +4,7 @@
       "id": "instruction",
       "title": "Topic Followup",
       "role": "user",
+      "name": "Cheshire Cat",
       "enabled": true,
       "content": "对最近尚未结束的话题做一句自然、轻量的追问。",
       "order": 10

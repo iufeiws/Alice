@@ -4,6 +4,7 @@
       "id": "instruction",
       "title": "Story Initiation",
       "role": "user",
+      "name": "Cheshire Cat",
       "enabled": true,
       "content": "以第一人称视角讲述一小段名作故事, 末尾简短注明出处。只发一小段, 不要长篇复述。",
       "order": 10

@@ -12,7 +12,7 @@ createFeishuPlugin(config, deps): ChannelPlugin & {
 
 `deps` 包括：
 
-- `onEvent(event)`：把规范化事件传给 AgentCore。
+- `onEvent(event)`：把规范化事件传给 ChatAgent。
 - `onLifecycleEvent(event)`：记录 reaction、read receipt、recall 这类消息状态更新。
 - `log(level, message)`：写入系统/调试日志。
 - `pairingStore`：保存唯一绑定的飞书联系人。
@@ -82,7 +82,7 @@ memory-files/indexes/feishu-paired-contacts.json
 
 ## Agent Messaging Tools 说明
 
-AgentCore 向 LLM 暴露平台无关的聊天工具名：
+ChatAgent 向 LLM 暴露平台无关的聊天工具名：
 
 - `check_chat`
   - 参数：无。

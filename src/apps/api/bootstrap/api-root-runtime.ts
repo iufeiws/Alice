@@ -26,7 +26,7 @@ export function createApiRootRuntime() {
     config: foundation.config,
     time: foundation.currentTime,
     store: foundation.store,
-    getCore: () => apiAgentStackRuntime.core,
+    getChatAgent: () => apiAgentStackRuntime.chatAgent,
     triggerSleepMemoryInduction: () => apiToolingRuntime.sleepMemoryInductionRuntime.trigger(),
     appendLog: foundation.appendLog,
     appendMessageLog: foundation.appendMessageLog
@@ -76,7 +76,7 @@ export function createApiRootRuntime() {
     appendLog: foundation.appendLog
   });
   agentLoopRuntime.setRunners({
-    prepareChat: ({ event, agentLoopRunSeq }) => apiAgentStackRuntime.core.prepareEventRun(event, { agentLoopRunSeq }),
+    prepareChat: ({ event, agentLoopRunSeq }) => apiAgentStackRuntime.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => apiAgentStackRuntime.talkRuntime.prepareReadyAgentLoopSession(sessionId, { signal, agentLoopRunSeq }) as any
   });
   const apiServerStackRuntime = createApiServerStackRuntime({
@@ -94,7 +94,7 @@ export function createApiRootRuntime() {
     store: foundation.store,
     outputRouter: apiControlRuntime.outputRouter,
     readLLMApiPresets: foundation.readLLMApiPresets,
-    core: apiAgentStackRuntime.core,
+    chatAgent: apiAgentStackRuntime.chatAgent,
     talkRuntime: apiAgentStackRuntime.talkRuntime,
     agentState: apiControlRuntime.agentState,
     sleepCocoonEventRuntime: apiControlRuntime.sleepCocoonEventRuntime,

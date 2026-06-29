@@ -34,7 +34,7 @@
 - `bootstrap/api-bootstrap-runtime.ts`: dotenv、配置、LLM preset store、进程单例锁和基础 LLM client。
 - `bootstrap/api-runtime-state.ts`: API 进程内 mutable 状态，例如近期 request/response logs；LLM session 内容由 `llm-session` 的 current JSONL 指针承载。
 - `bootstrap/api-agent-runtime.ts`: 把 app 层依赖注入 agent-loop 和 talk-session runtime。
-- `bootstrap/api-agent-stack-runtime.ts`: 聚合 chat core、talk loop、talk runtime。
+- `bootstrap/api-agent-stack-runtime.ts`: 聚合 ChatAgent、talk loop、talk runtime。
 - `bootstrap/api-capabilities-runtime.ts`: 装配 tools、TTS/ASR channel、prompt preview service、LLM request runtime。
 - `bootstrap/api-communication-runtime.ts`: 装配 Feishu、WeChat、WebRTC voice 等通信 channel。
 - `bootstrap/api-context-runtime.ts`: 装配 profile、memory、initiative、channel state stores。
@@ -75,13 +75,13 @@
 
 ## `contexts/agent-loop/`
 
-职责：拥有 AgentCore、chat/talk LLM loop、agent 状态机、tool-call 流程与 session 模式切换。
+职责：拥有 ChatAgent、chat/talk LLM loop、agent 状态机、tool-call 流程与 session 模式切换。
 
 不负责：HTTP、具体 channel SDK、长期记忆写入策略、LLM provider client。
 
 关键模块：
 
-- `application/agent-core.ts`: AgentCore facade。接收 AgentEvent，解析 intent，运行 chat loop，处理 LLM session、固定前缀、token pressure、主动行为事件。
+- `application/chat-agent.ts`: ChatAgent facade。接收 AgentEvent，解析 intent，运行 chat loop，处理 LLM session、固定前缀、token pressure、主动行为事件。
 - `application/run-chat-loop.ts`: Chat loop 的核心执行器。负责 prompt 构建、tool-call round、finish_and_wait yield、streaming send_chat 处理、tool result 追加。
 - `application/run-talk-loop.ts`: Talk loop 执行器。面向实时对话 session，和 chat loop 分离 agent id 与消息构造。
 - `application/intent-router.ts`: 默认 intent router。把文本事件分成 chat、codex 或 unsupported。
@@ -90,7 +90,7 @@
 - `domain/agent-loop-state.ts`: agent 行为状态机，包括 idle、waiting、sleeping、going_to_sleep 等状态和 transition 数据。
 - `ports/policy.ts`: policy port。当前提供 allow-all 默认实现。
 - `contracts/agent-contracts.ts`: AgentEvent、AgentOutput、ChannelPlugin、ToolPlugin、ToolDefinition 等跨模块 contract。
-- `runtime/agent-core-runtime.ts`: 将 app 层 stores、LLM runtime、output router、tools 注入 AgentCore。
+- `runtime/chat-agent-runtime.ts`: 将 app 层 stores、LLM runtime、output router、tools 注入 ChatAgent。
 - `runtime/agent-state-runtime.ts`: agent state runtime 和状态持久化 wiring。
 - `runtime/agent-loop-runtime.ts`: 主 LLM loop runtime，规划中用于统一 chat/talk loop 调度、运行状态和中断。
 - `runtime/agent-heartbeat-runtime.ts`: heartbeat timer/pause/resume runtime，驱动 chat/talk 下一轮调度。
@@ -196,7 +196,7 @@
 
 职责：拥有长期记忆、记忆文件/SQLite store、记忆归纳、sleep window、Memory prompt preview、memorize LLM session 管理。
 
-不负责：HTTP route、Chat AgentCore、channel 发送。
+不负责：HTTP route、ChatAgent、channel 发送。
 
 关键模块：
 
@@ -324,7 +324,7 @@
 
 ## `capabilities/tools/bookcase/`
 
-职责：讲故事书橱 tool。抽书、归还书，并触发 AgentCore fixed-prefix mode。
+职责：讲故事书橱 tool。抽书、归还书，并触发 ChatAgent fixed-prefix mode。
 
 关键模块：
 

@@ -81,7 +81,7 @@ export type MessageRuntimeDeps = {
     markMessageRecalled(plugin: string, externalMessageId: string, recalledAt: string, recalledAtUtc?: string): boolean;
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
-  core: {
+  chatAgent: {
     prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   };
   agentState?: Pick<
@@ -146,7 +146,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "-星界信号丢失-";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
-    prepareChat: ({ event, agentLoopRunSeq }) => deps.core.prepareEventRun(event, { agentLoopRunSeq }),
+    prepareChat: ({ event, agentLoopRunSeq }) => deps.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
   });
   const heartbeat = createAgentHeartbeatRuntime({
@@ -763,7 +763,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         summary: entry.contentText
       });
     }
-    deps.appendLog("error", `core failed; marked ${pending.length} inbound message(s) processed as failed, batch=${batchId}`);
+    deps.appendLog("error", `chat agent failed; marked ${pending.length} inbound message(s) processed as failed, batch=${batchId}`);
   }
 
   function buildAgentEventFromMessageLog(sessionId: string, pending: StoredConversationMessage[]): AgentEvent {

@@ -1,4 +1,4 @@
-import { createAgentCoreRuntime } from "../../../contexts/agent-loop/src/runtime/agent-core-runtime.js";
+import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime/chat-agent-runtime.js";
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
 
 export function createApiAgentRuntime(input: {
@@ -57,7 +57,7 @@ export function createApiAgentRuntime(input: {
     appendLog: input.appendLog
   });
 
-  const core = createAgentCoreRuntime({
+  const chatAgent = createChatAgentRuntime({
     config: input.config,
     activeLLM: input.activeLLM,
     agentLoopRuntime: input.agentLoopRuntime,
@@ -88,5 +88,5 @@ export function createApiAgentRuntime(input: {
     initialLLMSession: input.agentLoopRuntime.loadCurrentLLMSessionTranscript()
   });
 
-  return { talkAgentLoop, talkRuntime, core };
+  return { talkAgentLoop, talkRuntime, chatAgent };
 }

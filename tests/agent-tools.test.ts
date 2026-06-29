@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateTokenPressureSwitch, createAgentCore as createAgentCoreUnderTest, type AgentCoreDeps, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/agent-core.js";
+import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTest, type ChatAgentDeps, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMRequestSenderInput } from "../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -17,12 +17,12 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-function createAgentCore(deps: AgentCoreDeps) {
+function createChatAgent(deps: ChatAgentDeps) {
   let persistedSession = deps.initialLLMSession;
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;
   const onLLMSessionCleared = deps.onLLMSessionCleared;
-  return createAgentCoreUnderTest({
+  return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
     loadLLMSession,
@@ -37,7 +37,7 @@ function createAgentCore(deps: AgentCoreDeps) {
   });
 }
 
-type TestAgentCore = ReturnType<typeof createAgentCore>;
+type TestChatAgent = ReturnType<typeof createChatAgent>;
 
 function testPromptProfile(): PromptProfile {
   const profile = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"), "utf8")) as PromptProfile;
@@ -48,7 +48,7 @@ function testPromptProfile(): PromptProfile {
   };
 }
 
-async function runPreparedCoreEvent(core: TestAgentCore, event: AgentEvent): Promise<AgentOutput[]> {
+async function runPreparedChatEvent(core: TestChatAgent, event: AgentEvent): Promise<AgentOutput[]> {
   const prepared = await core.prepareEventRun(event);
   if (Array.isArray(prepared)) return prepared;
   try {
@@ -64,8 +64,8 @@ async function runPreparedCoreEvent(core: TestAgentCore, event: AgentEvent): Pro
   }
 }
 
-test("agent core requires an injected prompt profile", async () => {
-  const core = createAgentCoreUnderTest({
+test("chat agent requires an injected prompt profile", async () => {
+  const core = createChatAgentUnderTest({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
     outputRouter: createOutputRouter(),
@@ -74,10 +74,10 @@ test("agent core requires an injected prompt profile", async () => {
     policy: createAllowAllPolicy()
   });
 
-  await assert.rejects(() => runPreparedCoreEvent(core, textEvent()), /requires getPromptProfile/);
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /requires getPromptProfile/);
 });
 
-test("agent core exposes platform-neutral tools and resolves tool calls before final reply", async () => {
+test("chat agent exposes platform-neutral tools and resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
   const toolCalls: ToolCall[] = [];
   const llm: LLMClient = {
@@ -102,7 +102,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
       return { message: { role: "assistant", content: "final answer" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -125,7 +125,7 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
     }]
   });
 
-  const outputs = await runPreparedCoreEvent(core, textEvent());
+  const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.equal(requests[0].tools?.[0].function.name, "check_chat");
   assert.equal(toolCalls[0].toolName, "check_chat");
@@ -134,13 +134,13 @@ test("agent core exposes platform-neutral tools and resolves tool calls before f
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
 
-test("agent core prepares chat loop execution for external function-call runtime", async () => {
+test("chat agent prepares chat loop execution for external function-call runtime", async () => {
   let externalRuntimeCalls = 0;
   let setActiveCalls = 0;
   let createActiveCalls = 0;
   let prepareChatSessionCalls = 0;
   let ensureChatSessionCalls = 0;
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
       async chat() {
@@ -227,9 +227,9 @@ test("token pressure calculation is independent from preview execution", () => {
 });
 
 
-test("agent core sends tool names to injected LLM sender without rendering schemas", async () => {
+test("chat agent sends tool names to injected LLM sender without rendering schemas", async () => {
   const senderInputs: LLMRequestSenderInput[] = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm: {
       async chat() {
@@ -263,12 +263,12 @@ test("agent core sends tool names to injected LLM sender without rendering schem
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(senderInputs[0].toolNames, ["check_chat"]);
 });
 
-test("agent core ordinary chat does not enter deprecated working state", async () => {
+test("chat agent ordinary chat does not enter deprecated working state", async () => {
   const controller = createAgentStateController({
     store: memoryStore(),
     random: () => 0
@@ -277,7 +277,7 @@ test("agent core ordinary chat does not enter deprecated working state", async (
   controller.onChange((snapshot) => {
     states.push(snapshot.state);
   });
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat() {
@@ -291,12 +291,12 @@ test("agent core ordinary chat does not enter deprecated working state", async (
     state: controller
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(states.includes("working"), false);
 });
 
-test("agent core appends assistant tool call and tool result before the next llm request", async () => {
+test("chat agent appends assistant tool call and tool result before the next llm request", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -322,7 +322,7 @@ test("agent core appends assistant tool call and tool result before the next llm
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -344,7 +344,7 @@ test("agent core appends assistant tool call and tool result before the next llm
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   const toolCallIndex = requests[1].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === "tool_1");
@@ -357,7 +357,7 @@ test("agent core appends assistant tool call and tool result before the next llm
   assert.equal(requests[1].messages[toolCallIndex + 1]?.content, "history result");
 });
 
-test("agent core stops before another llm request when a tool invalidates the session", async () => {
+test("chat agent stops before another llm request when a tool invalidates the session", async () => {
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMChatInput["messages"][] = [];
   const clearedReasons: string[] = [];
@@ -385,7 +385,7 @@ test("agent core stops before another llm request when a tool invalidates the se
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -421,7 +421,7 @@ test("agent core stops before another llm request when a tool invalidates the se
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 1);
   assert.equal(clearActiveCalls, 1);
@@ -433,7 +433,7 @@ test("agent core stops before another llm request when a tool invalidates the se
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
 });
 
-test("agent core exits the current loop after finish_and_wait", async () => {
+test("chat agent exits the current loop after finish_and_wait", async () => {
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
   const llm: LLMClient = {
@@ -454,7 +454,7 @@ test("agent core exits the current loop after finish_and_wait", async () => {
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
     llm,
@@ -474,7 +474,7 @@ test("agent core exits the current loop after finish_and_wait", async () => {
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, "2026-05-26T00:00:00.000Z");
@@ -483,7 +483,7 @@ test("agent core exits the current loop after finish_and_wait", async () => {
   assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "finish_and_wait"), false);
 });
 
-test("agent core resumes pending finish_and_wait with check_chat result on heartbeat", async () => {
+test("chat agent resumes pending finish_and_wait with check_chat result on heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   const checkInputs: Record<string, unknown>[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -509,7 +509,7 @@ test("agent core resumes pending finish_and_wait with check_chat result on heart
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
     llm,
@@ -535,9 +535,9 @@ test("agent core resumes pending finish_and_wait with check_chat result on heart
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await runPreparedCoreEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
 
   assert.equal(requests.length, 2);
   assert.deepEqual(checkInputs, [{}]);
@@ -551,7 +551,7 @@ test("agent core resumes pending finish_and_wait with check_chat result on heart
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
 
-test("agent core executes same-round tools when finish_and_wait appears and resumes wait result later", async () => {
+test("chat agent executes same-round tools when finish_and_wait appears and resumes wait result later", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -587,7 +587,7 @@ test("agent core executes same-round tools when finish_and_wait appears and resu
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
     llm,
@@ -611,7 +611,7 @@ test("agent core executes same-round tools when finish_and_wait appears and resu
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(calls, ["check_chat", "finish_and_wait", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
@@ -622,7 +622,7 @@ test("agent core executes same-round tools when finish_and_wait appears and resu
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
 
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await runPreparedCoreEvent(core, { ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
 
   const resumedMessages = requests[1].messages;
   assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
@@ -630,7 +630,7 @@ test("agent core executes same-round tools when finish_and_wait appears and resu
   assert.equal(resumedMessages.filter((message) => message.role === "tool" && message.toolCallId === "tool_later").length, 1);
 });
 
-test("agent core rebuilds fixed prefix session immediately after bookcase draw", async () => {
+test("chat agent rebuilds fixed prefix session immediately after bookcase draw", async () => {
   const requests: LLMChatInput[] = [];
   const checkChatInputs: Record<string, unknown>[] = [];
   let checkChatCallsInSession = 0;
@@ -660,7 +660,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
       return { message: { role: "assistant", content: "story starts" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -714,7 +714,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   const secondMessages = requests[1].messages;
@@ -733,7 +733,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   assert.equal(sessionUpdates.at(-1)?.id, 2);
   assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 3);
   const thirdMessages = requests[2].messages;
@@ -746,7 +746,7 @@ test("agent core rebuilds fixed prefix session immediately after bookcase draw",
   assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0, 42]);
 });
 
-test("agent core does not duplicate fixed prefix messages when appending fixed prefix context", async () => {
+test("chat agent does not duplicate fixed prefix messages when appending fixed prefix context", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     { role: "system", content: "fixed static prompt" },
     {
@@ -761,7 +761,7 @@ test("agent core does not duplicate fixed prefix messages when appending fixed p
     { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
   ];
   const requests: LLMChatInput[] = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
     llm: {
@@ -803,7 +803,7 @@ test("agent core does not duplicate fixed prefix messages when appending fixed p
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   const messages = requests[0].messages;
   assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
@@ -826,7 +826,7 @@ for (const scenario of [
     clearArguments: "{\"action\":\"return\"}"
   }
 ] as const) {
-  test(`agent core clears ${scenario.fixedPrefixKind} fixed prefix without rebuilding the session`, async () => {
+  test(`chat agent clears ${scenario.fixedPrefixKind} fixed prefix without rebuilding the session`, async () => {
     const fixedPrefixStatic: LLMChatInput["messages"] = [
       { role: "system", content: `${scenario.fixedPrefixKind} fixed prompt` },
       {
@@ -843,7 +843,7 @@ for (const scenario of [
     const requests: LLMChatInput[] = [];
     const sessionUpdates: LLMSessionSnapshot[] = [];
     let cleared = false;
-    const core = createAgentCore({
+    const core = createChatAgent({
       config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
       llm: {
@@ -913,7 +913,7 @@ for (const scenario of [
       }
     });
 
-    await runPreparedCoreEvent(core, textEvent());
+    await runPreparedChatEvent(core, textEvent());
 
     assert.equal(requests.length, 2);
     assert.equal(cleared, false);
@@ -933,7 +933,7 @@ for (const scenario of [
   });
 }
 
-test("agent core injects fixed prefix cursor into model requested from_prefix checks", async () => {
+test("chat agent injects fixed prefix cursor into model requested from_prefix checks", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
@@ -947,7 +947,7 @@ test("agent core injects fixed prefix cursor into model requested from_prefix ch
     { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
   ];
   const checkChatInputs: Array<{ id: string; input: Record<string, unknown> }> = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
     llm: {
@@ -1003,12 +1003,12 @@ test("agent core injects fixed prefix cursor into model requested from_prefix ch
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(checkChatInputs.find((entry) => entry.id === "tool_check")?.input.__fromPrefixAfterMessageId, 12);
 });
 
-test("agent core appends sleep cocoon goodnight instruction from heartbeat event", async () => {
+test("chat agent appends sleep cocoon goodnight instruction from heartbeat event", async () => {
   const requests: LLMChatInput[] = [];
   const sleepCalls: Array<Record<string, unknown>> = [];
   const behaviorRuns: Array<{ result: string; steps: Array<{ kind: string; result: string }>; error?: string }> = [];
@@ -1027,7 +1027,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
       raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1072,7 +1072,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
     }
   });
 
-  await runPreparedCoreEvent(core, event);
+  await runPreparedChatEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
@@ -1097,7 +1097,7 @@ test("agent core appends sleep cocoon goodnight instruction from heartbeat event
   assert.equal(requests[0].messages[sleepToolRequestIndex + 1]?.toolCallId, requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.id);
 });
 
-test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async () => {
+test("chat agent skips sleep cocoon goodnight when sleep tool is hidden", async () => {
   const requests: LLMChatInput[] = [];
   const sleepCalls: Array<Record<string, unknown>> = [];
   const behaviorRuns: Array<{ result: string; error?: string }> = [];
@@ -1115,7 +1115,7 @@ test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async 
       raw: { agentInitiatedTriggerEvent: "sleep_cocoon.auto_goodnight_check" }
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1150,14 +1150,14 @@ test("agent core skips sleep cocoon goodnight when sleep tool is hidden", async 
     }
   });
 
-  await runPreparedCoreEvent(core, event);
+  await runPreparedChatEvent(core, event);
 
   assert.equal(requests.length, 0);
   assert.deepEqual(sleepCalls, []);
   assert.deepEqual(behaviorRuns.map((run) => ({ result: run.result, error: run.error })), [{ result: "skipped", error: "tool_hidden:sleep_cocoon" }]);
 });
 
-test("agent core appends sleep cocoon morning instruction from heartbeat event", async () => {
+test("chat agent appends sleep cocoon morning instruction from heartbeat event", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1173,7 +1173,7 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
       raw: { agentInitiatedTriggerEvent: "sleep_cocoon.wake" }
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1196,14 +1196,14 @@ test("agent core appends sleep cocoon morning instruction from heartbeat event",
     })
   });
 
-  await runPreparedCoreEvent(core, event);
+  await runPreparedChatEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
   assert.equal(requests[0].messages.some((message) => messageContentText(message.content).includes("sleep_cocoon")), false);
 });
 
-test("agent core appends force wake instruction from heartbeat event", async () => {
+test("chat agent appends force wake instruction from heartbeat event", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1219,7 +1219,7 @@ test("agent core appends force wake instruction from heartbeat event", async () 
       raw: { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1242,13 +1242,13 @@ test("agent core appends force wake instruction from heartbeat event", async () 
     })
   });
 
-  await runPreparedCoreEvent(core, event);
+  await runPreparedChatEvent(core, event);
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
 });
 
-test("agent core keeps fixed prefix current transcript when token pressure runs", async () => {
+test("chat agent keeps fixed prefix current transcript when token pressure runs", async () => {
   let capturedSession: LLMSessionSnapshot | undefined;
   const promptProfile = {
     userName: "user",
@@ -1256,7 +1256,7 @@ test("agent core keeps fixed prefix current transcript when token pressure runs"
     layers: [{ id: "static", title: "Static", role: "system" as const, enabled: true, content: "static prompt", order: 1 }],
     appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
   };
-  const primerCore = createAgentCore({
+  const primerCore = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm: { async chat() { return { message: { role: "assistant", content: "primer" } }; } },
     outputRouter: createOutputRouter(),
@@ -1277,7 +1277,7 @@ test("agent core keeps fixed prefix current transcript when token pressure runs"
       capturedSession = session;
     }
   });
-  await runPreparedCoreEvent(primerCore, textEvent());
+  await runPreparedChatEvent(primerCore, textEvent());
   assert.ok(capturedSession?.staticPromptFingerprint);
 
   const fixedPrefixStatic: LLMChatInput["messages"] = [
@@ -1294,7 +1294,7 @@ test("agent core keeps fixed prefix current transcript when token pressure runs"
   ];
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
     llm: {
@@ -1337,7 +1337,7 @@ test("agent core keeps fixed prefix current transcript when token pressure runs"
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
@@ -1348,7 +1348,7 @@ test("agent core keeps fixed prefix current transcript when token pressure runs"
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
 });
 
-test("agent core uses fixed prefix current transcript from an initial session snapshot", async () => {
+test("chat agent uses fixed prefix current transcript from an initial session snapshot", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
@@ -1365,7 +1365,7 @@ test("agent core uses fixed prefix current transcript from an initial session sn
   const clearedReasons: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
   const modeStartedAt = "2026-05-30T00:00:00.000Z";
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T01:00:00.000Z")),
     llm: {
@@ -1417,7 +1417,7 @@ test("agent core uses fixed prefix current transcript from an initial session sn
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
@@ -1435,7 +1435,7 @@ test("agent core uses fixed prefix current transcript from an initial session sn
   assert.equal(sessionUpdates.at(-1)?.fixedPrefixKind, "bookcase");
 });
 
-test("agent core exits expired fixed prefix mode on the next request", async () => {
+test("chat agent exits expired fixed prefix mode on the next request", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
@@ -1451,7 +1451,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-30T02:01:00.000Z")),
     llm: {
@@ -1503,7 +1503,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(clearedReasons, ["mode_timeout"]);
   assert.equal(requests.length, 1);
@@ -1516,7 +1516,7 @@ test("agent core exits expired fixed prefix mode on the next request", async () 
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
 });
 
-test("agent core passes agent loop run context to exposed selfie tool calls", async () => {
+test("chat agent passes agent loop run context to exposed selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
   const contexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
@@ -1546,7 +1546,7 @@ test("agent core passes agent loop run context to exposed selfie tool calls", as
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     llm,
@@ -1572,7 +1572,7 @@ test("agent core passes agent loop run context to exposed selfie tool calls", as
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(executed, ["first", "second"]);
   assert.equal(requests[1].messages.at(-2)?.content, "sent");
@@ -1583,7 +1583,7 @@ test("agent core passes agent loop run context to exposed selfie tool calls", as
   ]);
 });
 
-test("agent core uses empty reasoning content for tool requests when missing", async () => {
+test("chat agent uses empty reasoning content for tool requests when missing", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1607,7 +1607,7 @@ test("agent core uses empty reasoning content for tool requests when missing", a
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1625,13 +1625,13 @@ test("agent core uses empty reasoning content for tool requests when missing", a
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "");
 });
 
-test("agent core filters messaging tools when feishu visibility is disabled", async () => {
+test("chat agent filters messaging tools when feishu visibility is disabled", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1639,7 +1639,7 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1666,11 +1666,11 @@ test("agent core filters messaging tools when feishu visibility is disabled", as
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(requests[0].tools, []);
 });
 
-test("agent core filters photo tools when photo visibility is disabled", async () => {
+test("chat agent filters photo tools when photo visibility is disabled", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1678,7 +1678,7 @@ test("agent core filters photo tools when photo visibility is disabled", async (
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1709,11 +1709,11 @@ test("agent core filters photo tools when photo visibility is disabled", async (
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_chat"]);
 });
 
-test("agent core skips llm calls when prompt profile has no enabled messages", async () => {
+test("chat agent skips llm calls when prompt profile has no enabled messages", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1721,7 +1721,7 @@ test("agent core skips llm calls when prompt profile has no enabled messages", a
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1735,12 +1735,12 @@ test("agent core skips llm calls when prompt profile has no enabled messages", a
     })
   });
 
-  const outputs = await runPreparedCoreEvent(core, textEvent());
+  const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.equal(requests.length, 0);
 });
 
-test("agent core renders prompt profile layers before user message", async () => {
+test("chat agent renders prompt profile layers before user message", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -1748,7 +1748,7 @@ test("agent core renders prompt profile layers before user message", async () =>
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1765,7 +1765,7 @@ test("agent core renders prompt profile layers before user message", async () =>
     })
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(requests[0].messages[0].role, "system");
   assert.equal(requests[0].messages[0].content, "hello 小王");
   assert.equal(requests[0].messages[1].role, "user");
@@ -1773,7 +1773,7 @@ test("agent core renders prompt profile layers before user message", async () =>
   assert.equal(requests[0].messages.length, 2);
 });
 
-test("agent core runs prompt tool request layers and appends actual tool result", async () => {
+test("chat agent runs prompt tool request layers and appends actual tool result", async () => {
   const requests: LLMChatInput[] = [];
   const toolCalls: ToolCall[] = [];
   const llm: LLMClient = {
@@ -1782,7 +1782,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1823,7 +1823,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].id, "call_prompt_history");
@@ -1835,7 +1835,7 @@ test("agent core runs prompt tool request layers and appends actual tool result"
   assert.equal(requests[0].messages[1].content, "actual history");
 });
 
-test("agent core streams send_chat message content on newlines before final tool JSON", async () => {
+test("chat agent streams send_chat message content on newlines before final tool JSON", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const completed: Array<{ sentMessage: boolean }> = [];
@@ -1881,7 +1881,7 @@ test("agent core streams send_chat message content on newlines before final tool
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1907,14 +1907,14 @@ test("agent core streams send_chat message content on newlines before final tool
     }]
   });
 
-  const outputs = await runPreparedCoreEvent(core, textEvent());
+  const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.deepEqual(sentLines, ["one", "two", "three"]);
   assert.equal(requests.length, 2);
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("agent core holds unsafe streamed send_chat prefix before sending safe line", async () => {
+test("chat agent holds unsafe streamed send_chat prefix before sending safe line", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const llm: LLMClient = {
@@ -1977,7 +1977,7 @@ test("agent core holds unsafe streamed send_chat prefix before sending safe line
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -1999,12 +1999,12 @@ test("agent core holds unsafe streamed send_chat prefix before sending safe line
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(sentLines.includes("原来如此。那这个测试,"), false);
   assert.deepEqual(sentLines, ["算是通过了吗,父皇？", "原来如此。那这个测试算是通过了吗,父皇？"]);
 });
 
-test("agent core streams send_chat voice content on newlines before final tool JSON", async () => {
+test("chat agent streams send_chat voice content on newlines before final tool JSON", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2047,7 +2047,7 @@ test("agent core streams send_chat voice content on newlines before final tool J
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2070,11 +2070,11 @@ test("agent core streams send_chat voice content on newlines before final tool J
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sentLines, ["voice:第一句", "voice:第二句", "voice:第三句"]);
 });
 
-test("agent core waits for final send_chat JSON when type is omitted", async () => {
+test("chat agent waits for final send_chat JSON when type is omitted", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2116,7 +2116,7 @@ test("agent core waits for final send_chat JSON when type is omitted", async () 
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2139,11 +2139,11 @@ test("agent core waits for final send_chat JSON when type is omitted", async () 
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sentLines, ["one", "two"]);
 });
 
-test("agent core keeps streamed send_chat lines when tool metadata arrives after arguments", async () => {
+test("chat agent keeps streamed send_chat lines when tool metadata arrives after arguments", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2184,7 +2184,7 @@ test("agent core keeps streamed send_chat lines when tool metadata arrives after
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2207,7 +2207,7 @@ test("agent core keeps streamed send_chat lines when tool metadata arrives after
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sentLines, [
     "对、对不起……主人不是在凶您。",
     "只是上次您熬到凌晨五点，",
@@ -2215,7 +2215,7 @@ test("agent core keeps streamed send_chat lines when tool metadata arrives after
   ]);
 });
 
-test("agent core does not stream send_chat before type is known", async () => {
+test("chat agent does not stream send_chat before type is known", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2258,7 +2258,7 @@ test("agent core does not stream send_chat before type is known", async () => {
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2281,11 +2281,11 @@ test("agent core does not stream send_chat before type is known", async () => {
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
 });
 
-test("agent core merges streamed send_chat chat outputs into one tool message", async () => {
+test("chat agent merges streamed send_chat chat outputs into one tool message", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2327,7 +2327,7 @@ test("agent core merges streamed send_chat chat outputs into one tool message", 
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2349,12 +2349,12 @@ test("agent core merges streamed send_chat chat outputs into one tool message", 
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   const toolMessage = requests[1].messages.find((message) => message.role === "tool");
   assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\n[today 22:48]\nAlice:two\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
 });
 
-test("agent core can disable LLM streaming from config", async () => {
+test("chat agent can disable LLM streaming from config", async () => {
   const sentLines: string[] = [];
   let chatCalls = 0;
   const llm: LLMClient = {
@@ -2382,7 +2382,7 @@ test("agent core can disable LLM streaming from config", async () => {
       throw new Error("chatStream should not be called when streaming is disabled");
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2405,14 +2405,14 @@ test("agent core can disable LLM streaming from config", async () => {
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(chatCalls, 2);
   assert.deepEqual(sentLines, ["one\ntwo"]);
 });
 
-test("agent core emits llm lifecycle logs for streaming and non-streaming calls", async () => {
+test("chat agent emits llm lifecycle logs for streaming and non-streaming calls", async () => {
   const streamLogs: string[] = [];
-  const streamCore = createAgentCore({
+  const streamCore = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat() {
@@ -2431,11 +2431,11 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
     }
   });
 
-  await runPreparedCoreEvent(streamCore, textEvent());
+  await runPreparedChatEvent(streamCore, textEvent());
   assert.deepEqual(streamLogs, ["call_start:true", "stream_start:true", "stream_end:true"]);
 
   const nonStreamLogs: string[] = [];
-  const nonStreamCore = createAgentCore({
+  const nonStreamCore = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm: {
       async chat() {
@@ -2454,11 +2454,11 @@ test("agent core emits llm lifecycle logs for streaming and non-streaming calls"
     }
   });
 
-  await runPreparedCoreEvent(nonStreamCore, textEvent());
+  await runPreparedChatEvent(nonStreamCore, textEvent());
   assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
 });
 
-test("agent core continues after send_chat until the next response has no tool calls", async () => {
+test("chat agent continues after send_chat until the next response has no tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -2504,7 +2504,7 @@ test("agent core continues after send_chat until the next response has no tool c
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2526,12 +2526,12 @@ test("agent core continues after send_chat until the next response has no tool c
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sent, ["final"]);
   assert.equal(requests.length, 4);
 });
 
-test("agent core uses first-call and follow-up extra params", async () => {
+test("chat agent uses first-call and follow-up extra params", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2555,7 +2555,7 @@ test("agent core uses first-call and follow-up extra params", async () => {
       return { message: { role: "assistant", content: "done" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({
       LLM_MODEL: "test-model",
       LLM_EXTRA_PARAMS: "{\"cache_prompt\":true}",
@@ -2577,16 +2577,16 @@ test("agent core uses first-call and follow-up extra params", async () => {
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(requests.map((request) => request.extraParams), [
     { cache_prompt: true },
     { cache_prompt: false, reasoning_effort: "low" }
   ]);
 });
 
-test("agent core skips fake append tool requests on first llm round", async () => {
+test("chat agent skips fake append tool requests on first llm round", async () => {
   const senderInputs: LLMRequestSenderInput[] = [];
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({
       LLM_MODEL: "test-model",
       LLM_EXTRA_PARAMS: "{\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"send_chat\"}}}",
@@ -2646,7 +2646,7 @@ test("agent core skips fake append tool requests on first llm round", async () =
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(senderInputs.length, 2);
   assert.equal(senderInputs[0].round, 0);
@@ -2657,7 +2657,7 @@ test("agent core skips fake append tool requests on first llm round", async () =
   assert.equal(senderInputs[1].messages.at(-1)?.content, "outfit");
 });
 
-test("agent core retries transient llm failures", async () => {
+test("chat agent retries transient llm failures", async () => {
   const attempts: string[] = [];
   const retryLogs: Array<{ attempt?: number; delayMs?: number }> = [];
   const llm: LLMClient = {
@@ -2670,7 +2670,7 @@ test("agent core retries transient llm failures", async () => {
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2682,7 +2682,7 @@ test("agent core retries transient llm failures", async () => {
     }
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(attempts.length, 3);
   assert.deepEqual(retryLogs, [
@@ -2691,7 +2691,7 @@ test("agent core retries transient llm failures", async () => {
   ]);
 });
 
-test("agent core does not retry non-transient llm failures", async () => {
+test("chat agent does not retry non-transient llm failures", async () => {
   let attempts = 0;
   const llm: LLMClient = {
     async chat() {
@@ -2699,7 +2699,7 @@ test("agent core does not retry non-transient llm failures", async () => {
       throw new Error("LLM request failed: 400 Bad Request invalid tool_call");
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2708,11 +2708,11 @@ test("agent core does not retry non-transient llm failures", async () => {
     policy: createAllowAllPolicy()
   });
 
-  await assert.rejects(() => runPreparedCoreEvent(core, textEvent()), /400 Bad Request/);
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /400 Bad Request/);
   assert.equal(attempts, 1);
 });
 
-test("agent core keeps an active transcript and appends fake check_chat on the next heartbeat", async () => {
+test("chat agent keeps an active transcript and appends fake check_chat on the next heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   let appendCheckCount = 0;
   let appendContextCalls = 0;
@@ -2722,7 +2722,7 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
       return { message: { role: "assistant", content: `final ${requests.length}` } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2759,8 +2759,8 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
   assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), false);
@@ -2771,7 +2771,7 @@ test("agent core keeps an active transcript and appends fake check_chat on the n
   assert.equal(appendContextCalls, 1);
 });
 
-test("agent core clears session before the next request when cached input cost exceeds check chat miss cost", async () => {
+test("chat agent clears session before the next request when cached input cost exceeds check chat miss cost", async () => {
   const requests: LLMChatInput[] = [];
   const events: string[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
@@ -2807,7 +2807,7 @@ test("agent core clears session before the next request when cached input cost e
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -2857,19 +2857,19 @@ test("agent core clears session before the next request when cached input cost e
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(events, ["completed"]);
   assert.deepEqual(normalCheckCalls, [{}]);
   assert.deepEqual(previewCalls, []);
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(events, ["completed", "completed"]);
   assert.deepEqual(previewCalls, [
     { __preview: true, __scope: "today" },
     { __preview: true, __scope: "today" }
   ]);
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(events, ["completed", "completed", "cleared:token_pressure", "completed"]);
   assert.deepEqual(previewCalls, [
@@ -2885,7 +2885,7 @@ test("agent core clears session before the next request when cached input cost e
   });
 });
 
-test("agent core restores token pressure baseline from persisted session snapshot", async () => {
+test("chat agent restores token pressure baseline from persisted session snapshot", async () => {
   const requests: LLMChatInput[] = [];
   const events: string[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
@@ -2941,9 +2941,9 @@ test("agent core restores token pressure baseline from persisted session snapsho
       }
     }]
   };
-  const firstCore = createAgentCore(baseDeps);
+  const firstCore = createChatAgent(baseDeps);
 
-  await runPreparedCoreEvent(firstCore, textEvent());
+  await runPreparedChatEvent(firstCore, textEvent());
   assert.ok(persistedSession);
   persistedSession = {
     ...persistedSession,
@@ -2952,8 +2952,8 @@ test("agent core restores token pressure baseline from persisted session snapsho
     tokenPressurePreviewBaselines: { "deepseek-v4-flash|normal|today|": { inputTokens: 1, previewTokens: 1 } }
   };
 
-  const restartedCore = createAgentCore(baseDeps);
-  await runPreparedCoreEvent(restartedCore, textEvent());
+  const restartedCore = createChatAgent(baseDeps);
+  await runPreparedChatEvent(restartedCore, textEvent());
 
   assert.deepEqual(previewCalls, [{ __preview: true, __scope: "today" }]);
   assert.deepEqual(events, ["cleared:token_pressure"]);
@@ -2961,7 +2961,7 @@ test("agent core restores token pressure baseline from persisted session snapsho
   assert.equal(requests[1].messages.some((message) => message.content === "final 1"), false);
 });
 
-test("agent core uses fixed prefix check chat preview scope for token pressure baseline", async () => {
+test("chat agent uses fixed prefix check chat preview scope for token pressure baseline", async () => {
   const requests: LLMChatInput[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
   const llm: LLMClient = {
@@ -2989,7 +2989,7 @@ test("agent core uses fixed prefix check chat preview scope for token pressure b
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "deepseek-chat", LLM_STREAM_ENABLED: "false" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3026,14 +3026,14 @@ test("agent core uses fixed prefix check chat preview scope for token pressure b
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
-  await runPreparedCoreEvent(core, textEvent());
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(previewCalls.at(0), { __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
 });
 
-test("agent core token pressure comparison uses model-specific prices", async () => {
+test("chat agent token pressure comparison uses model-specific prices", async () => {
   async function run(model: string): Promise<string[]> {
     const events: string[] = [];
     let persistedSession: LLMSessionSnapshot | undefined;
@@ -3046,7 +3046,7 @@ test("agent core token pressure comparison uses model-specific prices", async ()
         };
       }
     };
-    const core = createAgentCore({
+    const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: model, LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
       llm,
       outputRouter: createOutputRouter(),
@@ -3088,8 +3088,8 @@ test("agent core token pressure comparison uses model-specific prices", async ()
       }]
     });
 
-    await runPreparedCoreEvent(core, textEvent());
-    await runPreparedCoreEvent(core, textEvent());
+    await runPreparedChatEvent(core, textEvent());
+    await runPreparedChatEvent(core, textEvent());
     return events;
   }
 
@@ -3097,7 +3097,7 @@ test("agent core token pressure comparison uses model-specific prices", async ()
   assert.deepEqual(await run("deepseek-v4-pro"), []);
 });
 
-test("agent core clears only when static prompt fingerprint changes", async () => {
+test("chat agent clears only when static prompt fingerprint changes", async () => {
   const requests: LLMChatInput[] = [];
   const clears: string[] = [];
   let appendContent = "append one";
@@ -3108,7 +3108,7 @@ test("agent core clears only when static prompt fingerprint changes", async () =
       return { message: { role: "assistant", content: "ok" } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3139,11 +3139,11 @@ test("agent core clears only when static prompt fingerprint changes", async () =
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   appendContent = "append two";
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   staticContent = "static two";
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(clears, ["prompt_static_changed"]);
   assert.equal(requests[1].messages.some((message) => message.content === "ok"), true);
@@ -3151,7 +3151,7 @@ test("agent core clears only when static prompt fingerprint changes", async () =
   assert.equal(requests[2].messages.some((message) => message.content === "ok"), false);
 });
 
-test("agent core rechecks static prompt before each LLM request", async () => {
+test("chat agent rechecks static prompt before each LLM request", async () => {
   const requests: LLMChatInput[] = [];
   const clears: string[] = [];
   const sessionUpdates: LLMChatInput["messages"][] = [];
@@ -3185,7 +3185,7 @@ test("agent core rechecks static prompt before each LLM request", async () => {
       return { message: { role: "assistant", content: `ok ${requests.length}` } };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3223,7 +3223,7 @@ test("agent core rechecks static prompt before each LLM request", async () => {
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(clears, ["prompt_static_changed"]);
   assert.equal(requests.length, 2);
@@ -3234,7 +3234,7 @@ test("agent core rechecks static prompt before each LLM request", async () => {
   assert.equal(sessionUpdates.at(-1)?.some((message) => message.content === "switched"), false);
 });
 
-test("agent core stops after three consecutive identical tool calls", async () => {
+test("chat agent stops after three consecutive identical tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const llm: LLMClient = {
@@ -3256,7 +3256,7 @@ test("agent core stops after three consecutive identical tool calls", async () =
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3275,12 +3275,12 @@ test("agent core stops after three consecutive identical tool calls", async () =
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(requests.length, 3);
   assert.deepEqual(calls.filter((id) => id !== "append_append_check_chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
 });
 
-test("agent core falls back after max llm requests when tool calls alternate", async () => {
+test("chat agent falls back after max llm requests when tool calls alternate", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const llm: LLMClient = {
@@ -3303,7 +3303,7 @@ test("agent core falls back after max llm requests when tool calls alternate", a
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3325,12 +3325,12 @@ test("agent core falls back after max llm requests when tool calls alternate", a
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(requests.length, 10);
   assert.equal(calls.length, 10);
 });
 
-test("agent core stops after three consecutive identical send_chat calls", async () => {
+test("chat agent stops after three consecutive identical send_chat calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -3352,7 +3352,7 @@ test("agent core stops after three consecutive identical send_chat calls", async
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3371,7 +3371,7 @@ test("agent core stops after three consecutive identical send_chat calls", async
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(requests.length, 3);
   assert.deepEqual(sent, [
     "tool_send_1:same",
@@ -3380,7 +3380,7 @@ test("agent core stops after three consecutive identical send_chat calls", async
   ]);
 });
 
-test("agent core stops after the generic total tool call limit", async () => {
+test("chat agent stops after the generic total tool call limit", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
@@ -3405,7 +3405,7 @@ test("agent core stops after the generic total tool call limit", async () => {
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
     llm,
@@ -3425,7 +3425,7 @@ test("agent core stops after the generic total tool call limit", async () => {
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.equal(requests.length, 20);
   assert.equal(sent.length, 20);
   assert.deepEqual(sent.slice(0, 5), [
@@ -3438,7 +3438,7 @@ test("agent core stops after the generic total tool call limit", async () => {
   assert.equal(sent.at(-1), "tool_send_20:even");
 });
 
-test("agent core executes all exposed tools when send_chat appears in the same round", async () => {
+test("chat agent executes all exposed tools when send_chat appears in the same round", async () => {
   const calls: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -3471,7 +3471,7 @@ test("agent core executes all exposed tools when send_chat appears in the same r
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3493,11 +3493,11 @@ test("agent core executes all exposed tools when send_chat appears in the same r
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(calls, ["check_chat", "send_chat"]);
 });
 
-test("agent core does not stream send_chat when non-message type is explicit", async () => {
+test("chat agent does not stream send_chat when non-message type is explicit", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -3539,7 +3539,7 @@ test("agent core does not stream send_chat when non-message type is explicit", a
       };
     }
   };
-  const core = createAgentCore({
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
@@ -3562,7 +3562,7 @@ test("agent core does not stream send_chat when non-message type is explicit", a
     }]
   });
 
-  await runPreparedCoreEvent(core, textEvent());
+  await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(sentLines, ["markdown:should not send\n"]);
 });
 

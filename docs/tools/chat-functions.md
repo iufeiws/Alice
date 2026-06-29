@@ -28,9 +28,9 @@ Runtime and admin code may still pass internal inputs directly to the messaging 
 - `from` / `to`: internal range bounds for `scope=range`.
 - `__scope`: internal preview scope used by token-pressure checks.
 - `__preview`: internal read-only mode that must not advance read cursors.
-- `__fromPrefixAfterMessageId`: internal fixed-prefix cursor injected by AgentCore.
+- `__fromPrefixAfterMessageId`: internal fixed-prefix cursor injected by ChatAgent.
 
-AgentCore owns fixed-prefix use. In `fixed_prefix` mode it injects `check_chat` with `scope=from_prefix` and `__fromPrefixAfterMessageId`; the model should only see a normal `check_chat` tool call with no parameters.
+ChatAgent owns fixed-prefix use. In `fixed_prefix` mode it injects `check_chat` with `scope=from_prefix` and `__fromPrefixAfterMessageId`; the model should only see a normal `check_chat` tool call with no parameters.
 
 ### `send_chat`
 
@@ -51,12 +51,12 @@ LLM-visible parameters: none.
 
 `finish_and_wait` belongs to its own control tool plugin, not the messaging/chat tool plugin. Its resume behavior is still owned by the chat loop and uses `check_chat` internally.
 
-When an assistant tool-call batch contains `finish_and_wait`, AgentCore handles that batch specially:
+When an assistant tool-call batch contains `finish_and_wait`, ChatAgent handles that batch specially:
 
 - outbound tools such as `send_chat` execute immediately and their tool results are appended to the transcript.
 - inbound tools such as `check_chat` are deferred until the wait resumes.
 - `finish_and_wait` itself records pending yield metadata and does not immediately append a tool result.
-- on heartbeat resume, AgentCore fills the remaining tool results in original tool-call order, including the deferred inbound results and the final `finish_and_wait` result.
+- on heartbeat resume, ChatAgent fills the remaining tool results in original tool-call order, including the deferred inbound results and the final `finish_and_wait` result.
 
 The resume path must not add a new fake `check_chat` assistant/tool pair for the heartbeat. The chat-check output used for wakeup is attached to the pending `finish_and_wait` tool result instead.
 
@@ -70,6 +70,6 @@ When exposed intentionally, keep it separate from `check_chat`: `search_messages
 
 ## Boundary Rule
 
-`check_chat` is a zero-argument LLM function. Any scoped or cursor-based read is an internal AgentCore/admin/runtime operation, not an LLM contract.
+`check_chat` is a zero-argument LLM function. Any scoped or cursor-based read is an internal ChatAgent/admin/runtime operation, not an LLM contract.
 
 `finish_and_wait` is a chat-loop control function. Its first execution is control-only metadata, and its LLM-visible result is produced later by the heartbeat resume path.

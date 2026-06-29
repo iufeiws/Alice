@@ -11,7 +11,7 @@
 
 当前 context：
 
-- `agent-loop/`: chat/talk agent loop 与 AgentCore。
+- `agent-loop/`: chat/talk agent loop 与 ChatAgent。
 - `agent-profile/`: prompt/profile/shell/persona。
 - `conversation-hub/`: conversation/message/log 归一化和存储入口。
 - `initiative/`: 主动行为配置、触发和运行记录。
@@ -22,7 +22,7 @@
 
 ## Agent loop runtime refactor plan
 
-目标：把 chat/talk 的下一轮发起、主 LLM session 状态、运行中断和 heartbeat 调度收敛到 `agent-loop`，避免 message runtime、talk runtime、AgentCore 各自启动 loop 导致 session 边界泄漏。
+目标：把 chat/talk 的下一轮发起、主 LLM session 状态、运行中断和 heartbeat 调度收敛到 `agent-loop`，避免 message runtime、talk runtime、ChatAgent 各自启动 loop 导致 session 边界泄漏。
 
 ### 设计原则
 
@@ -74,7 +74,7 @@
 6. [done] talk runtime 外层自旋已改为 ready/claim 模式，内层 backpressure 已接入真实待播输出量；播放后的下一轮通过 ready 标记交回 heartbeat，function-call/tool-result follow-up 在同一次通用 run loop 内完成，不再交给 heartbeat。
 7. [done] 从 `run-chat-loop.ts` 抽出通用 loop execution spec；生产 chat runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。
 8. [done] 将 `run-talk-loop.ts` 改为 talk loop spec 构建器；生产 talk runtime 先构建 prepared spec，再由 `agent-loop-runtime.requestRun(...)` 内部统一执行。talk 首轮构筑 current transcript prefix，后续由 `talkRuntime.buildNextLoopMessagePatch(...)` 返回 `{ replaceFrom, messages }` 替换 prefix 后的 runtime transcript 尾部。
-9. [done] `agent-loop-runtime.requestRun(kind)` 已只接受 `prepareChat/prepareTalk` prepared run，并统一执行 prepared spec；API 生产 chat/talk wiring 和 `conversation-hub` fallback 均不再注册 legacy `runChat/runTalk` runner，message runtime 的 core 依赖也已收紧为 `prepareEventRun(...)`。`AgentCore` 已不再暴露 direct `handleEvent(...)` 执行入口，只构建 prepared run；`run-chat-loop.ts` 已只导出 `buildChatAgentLoop(...)` spec 构建器，`run-talk-loop.ts` 已只导出 talk prepared run 构建入口，不再导出 direct run 方法；talk runtime 的外部入口已改为 `markAgentLoopReady(...)`、`claimReadyAgentLoopSession(...)`、`prepareReadyAgentLoopSession(...)`，只表达 ready/claim/prepare，不再暴露 `startAgentLoop` 命名；旧 `SessionDirtyFlagger` 独立延迟调度残留已删除。prepared run 支持 lazy `prepare()`；agent loop runtime 不再持有 session object，chat/talk transcript 的 load/update/clear 均通过 `llm-session` current JSONL 指针完成；LLM observability request/response 写回也通过同一 `llmSessionRuntime` port 完成。`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。
+9. [done] `agent-loop-runtime.requestRun(kind)` 已只接受 `prepareChat/prepareTalk` prepared run，并统一执行 prepared spec；API 生产 chat/talk wiring 和 `conversation-hub` fallback 均不再注册 legacy `runChat/runTalk` runner，message runtime 的 chat agent 依赖也已收紧为 `prepareEventRun(...)`。`ChatAgent` 已不再暴露 direct `handleEvent(...)` 执行入口，只构建 prepared run；`run-chat-loop.ts` 已只导出 `buildChatAgentLoop(...)` spec 构建器，`run-talk-loop.ts` 已只导出 talk prepared run 构建入口，不再导出 direct run 方法；talk runtime 的外部入口已改为 `markAgentLoopReady(...)`、`claimReadyAgentLoopSession(...)`、`prepareReadyAgentLoopSession(...)`，只表达 ready/claim/prepare，不再暴露 `startAgentLoop` 命名；旧 `SessionDirtyFlagger` 独立延迟调度残留已删除。prepared run 支持 lazy `prepare()`；agent loop runtime 不再持有 session object，chat/talk transcript 的 load/update/clear 均通过 `llm-session` current JSONL 指针完成；LLM observability request/response 写回也通过同一 `llmSessionRuntime` port 完成。`run-talk-loop.ts` 保留 prompt/tool/voice IO adapter。
 10. [done] 删除旧兼容层和历史配置/接口残留，更新测试与文档；`processNow` 的 manual fallback 也已通过 heartbeat forced run task 发起，不再由 message runtime 直接 fallback 启动 loop。
 11. [done] 抽出 `AgentLoopToolExecutor`，chat/talk 普通 LLM tool call、prompt tool call 统一走公共 `toolPlugins` lookup/execute/error/format 路径；chat 的 streaming send 仍作为流式输出 adapter hook 保留。
 12. [done] 抽出 `AgentLoopSessionInitializer`，`agent-loop-runtime` 通过公共 helper 处理 loop-local session context create/set/clear、chat prompt session prepare/ensure、talk prefix 初始化和 runtime transcript patch append/writeback。
@@ -100,7 +100,7 @@
 
 ### 当前状态
 
-1. [done] `llm-gateway`/`AgentCore` 的 `toolNames -> getTool -> buildTools` 注册链路保持不变；chat/talk 不减少 tool call 暴露。
+1. [done] `llm-gateway`/`ChatAgent` 的 `toolNames -> getTool -> buildTools` 注册链路保持不变；chat/talk 不减少 tool call 暴露。
 2. [done] 新增 `capabilities/src/tool-output-target.ts`，提供统一 `ToolOutputTargetResolver`。
 3. [done] `messaging/photo/shell/bookcase/sleep-cocoon` 工具运行时接入统一 resolver。
 4. [done] `webrtc_voice` 这类非消息 requester 不再被当作图片/文本投递 channel；工具输出回落到当前默认消息目标。

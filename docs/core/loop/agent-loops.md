@@ -1,6 +1,6 @@
 # Agent Loops
 
-AgentCore has separate loop modules for LLM session policy. Runtime ingress stays outside these modules.
+ChatAgent has separate loop modules for LLM session policy. Runtime ingress stays outside these modules.
 
 ## ChatAgentLoop
 
@@ -23,7 +23,7 @@ The talk prompt profile is stored in `src/core/prompt/talk-prompt-profile.json` 
 
 ## Memorize
 
-Memorize remains a separate memory-induction path rather than an AgentCore chat/talk loop. Its prompts live in `src/core/prompt/memorize-prompts.json`, and its API binding remains `memorizePresetName`.
+Memorize remains a separate memory-induction path rather than an ChatAgent chat/talk loop. Its prompts live in `src/core/prompt/memorize-prompts.json`, and its API binding remains `memorizePresetName`.
 
 ## Boundary
 

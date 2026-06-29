@@ -4,7 +4,7 @@
 
 ## 当前定位
 
-飞书是 Alice 的 Channel Plugin，负责把飞书/Lark 消息接入 AgentCore，并把 Agent 输出发回飞书。它不是独立工具 plugin；Agent 与管理后台使用的是平台无关的 messaging 能力，再通过 target 路由到飞书。
+飞书是 Alice 的 Channel Plugin，负责把飞书/Lark 消息接入 ChatAgent，并把 Agent 输出发回飞书。它不是独立工具 plugin；Agent 与管理后台使用的是平台无关的 messaging 能力，再通过 target 路由到飞书。
 
 当前主路径是：
 
@@ -12,7 +12,7 @@
 飞书 WebSocket 事件
   -> plugins/feishu 规范化、配对、策略、去重
   -> apps/api messageRuntime 入库和调度
-  -> AgentCore
+  -> ChatAgent
   -> outputRouter / messaging tool
   -> plugins/feishu 出站渲染和发送
 ```
@@ -25,7 +25,7 @@
 - 已支持 WebSocket 事件订阅，启动后注册 `im.message.receive_v1` 文本消息事件。
 - 已支持 `start()` / `stop()` 幂等控制；管理后台可通过 `/admin/api/plugins/feishu/start` 和 `/admin/api/plugins/feishu/stop` 控制运行时。
 - 管理后台可保存 `FEISHU_ENABLED`、`FEISHU_CONNECTION_MODE`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REQUIRE_MENTION` 到 `.env`。
-- API 进程启动时创建飞书 plugin、注册到 AgentCore，并把飞书事件交给 `messageRuntime`。
+- API 进程启动时创建飞书 plugin、注册到 ChatAgent，并把飞书事件交给 `messageRuntime`。
 
 ### 入站文本消息
 
@@ -36,24 +36,24 @@
   - DM: `feishu:dm:<key>`
   - 群聊: `feishu:group:<key>`
   - thread 存在时优先用 `thread_id` 作为会话 key。
-- 已处理 mention token，进入 AgentCore 前会从正文中移除飞书 mention key。
+- 已处理 mention token，进入 ChatAgent 前会从正文中移除飞书 mention key。
 - 已记录 `receivedAt` 和 `receivedAtUtc`，用于消息库和调试日志。
 - 已把入站消息 upsert 到 SQLite `messages`，并把会话标记为待处理。
 
 ### 入站消息支持范围
 
-当前入站支持要和出站支持分开看。飞书 plugin 现在只把文本消息作为可触发 AgentCore 的用户消息处理：
+当前入站支持要和出站支持分开看。飞书 plugin 现在只把文本消息作为可触发 ChatAgent 的用户消息处理：
 
 | 飞书入站类型 | 当前状态 | 处理方式 |
 | --- | --- | --- |
 | 文本消息 | 已支持 | 通过 `im.message.receive_v1` 接收，解析 `content.text`，转换为 `type="message.text"`、`payload.kind="text"` 的 `AgentEvent`。 |
 | DM 文本 | 已支持 | `chat_type="p2p"` 时进入 DM 会话，默认需要先完成唯一配对。 |
-| 群聊文本 | 部分支持 | 可解析为 group 会话；默认要求 mention，且当前默认 `groupPolicy=allowlist`、allowlist 为空，需要配置放行后才会进入 AgentCore。 |
+| 群聊文本 | 部分支持 | 可解析为 group 会话；默认要求 mention，且当前默认 `groupPolicy=allowlist`、allowlist 为空，需要配置放行后才会进入 ChatAgent。 |
 | thread 文本 | 部分支持 | `thread_id` 会参与 session id 生成，但没有单独实现 thread 回复上下文、引用链或按 thread 发回复。 |
 | mention 文本 | 已支持 | 识别 `mentions`，并把 mention key 从正文里移除；策略可要求群聊必须 mention。 |
-| reaction 创建/删除 | 状态事件支持 | 不作为用户消息触发 AgentCore，只更新已有消息的 reaction 状态并写 message log。 |
-| 已读回执 | 状态事件支持 | 不作为用户消息触发 AgentCore，只更新已有消息的 read 状态并写 message log。 |
-| 撤回事件 | 状态事件支持 | 不作为用户消息触发 AgentCore，只更新已有消息的 recall 状态并写 message log。 |
+| reaction 创建/删除 | 状态事件支持 | 不作为用户消息触发 ChatAgent，只更新已有消息的 reaction 状态并写 message log。 |
+| 已读回执 | 状态事件支持 | 不作为用户消息触发 ChatAgent，只更新已有消息的 read 状态并写 message log。 |
+| 撤回事件 | 状态事件支持 | 不作为用户消息触发 ChatAgent，只更新已有消息的 recall 状态并写 message log。 |
 | 图片入站 | 未支持 | 出站可发图片，但入站图片还没有下载、资产入库或转换为 `AgentEvent`。 |
 | 语音/音频入站 | 未支持 | 出站可发音频；入站音频还没有下载、ASR 或文本化链路。 |
 | 文件入站 | 未支持 | 出站可发文件；入站文件还没有下载、资产入库或摘要/解析链路。 |
@@ -61,7 +61,7 @@
 
 ### 去重与异步处理
 
-- 已实现近期消息去重，重复 `message_id` 会在进入 AgentCore 前被忽略。
+- 已实现近期消息去重，重复 `message_id` 会在进入 ChatAgent 前被忽略。
 - 入站消息不会阻塞飞书事件回调；插件会把实际 Agent 处理放入异步队列。
 - 已有测试覆盖重复消息忽略，以及慢 Agent 处理不阻塞 `ingestTextMessage()` 返回。
 
@@ -84,7 +84,7 @@
 - `im.message.message_read_v1`
 - `im.message.recalled_v1`
 
-这些事件不会作为新消息交给 AgentCore，而是交给 `messageRuntime.ingestLifecycle()`：
+这些事件不会作为新消息交给 ChatAgent，而是交给 `messageRuntime.ingestLifecycle()`：
 
 - reaction 更新消息的 reaction JSON。
 - read 更新 `is_read`、`read_at`、`read_at_utc`。
@@ -111,7 +111,7 @@ target 解析规则：
 
 ### 通用聊天工具接入
 
-AgentCore 暴露的是通用工具，不是飞书专用工具：
+ChatAgent 暴露的是通用工具，不是飞书专用工具：
 
 - `check_chat`
 - `send_chat`
@@ -169,7 +169,7 @@ AgentCore 暴露的是通用工具，不是飞书专用工具：
 | `plugins/feishu/src/policy.ts` | DM/群聊访问策略。 |
 | `plugins/feishu/src/renderer.ts` | `AgentOutput` 到飞书发送计划的转换。 |
 | `plugins/feishu/src/dedupe.ts` | 近期消息去重。 |
-| `apps/api/src/index.ts` | 创建飞书 plugin，接入 `messageRuntime`、AgentCore 和管理后台上下文。 |
+| `apps/api/src/index.ts` | 创建飞书 plugin，接入 `messageRuntime`、ChatAgent 和管理后台上下文。 |
 | `apps/api/src/admin-routes.ts` | 飞书配置、启停、状态、pairing 和测试发送 API。 |
 | `apps/api/src/message-runtime.ts` | 入站消息入库、生命周期事件落库、会话调度。 |
 
@@ -256,6 +256,6 @@ AgentOutput
 
 ## 当前可用结论
 
-飞书已经具备个人 Agent 的基础可用链路：WebSocket 收文本、唯一用户配对、DM 权限控制、消息入库、AgentCore 调度、通用聊天工具、文本/markdown/图片/音频/文件出站，以及 read/reaction/recall 状态更新。
+飞书已经具备个人 Agent 的基础可用链路：WebSocket 收文本、唯一用户配对、DM 权限控制、消息入库、ChatAgent 调度、通用聊天工具、文本/markdown/图片/音频/文件出站，以及 read/reaction/recall 状态更新。
 
 它还不是完整的飞书平台集成。当前实现更适合作为单用户或受控小范围测试渠道；要进入多用户、多群、富媒体入站或生产级运维场景，需要优先补 webhook/多账号/非文本入站/权限后台/端到端诊断。

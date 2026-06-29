@@ -18,7 +18,7 @@ export function createApiCommunicationRuntime(input: {
   readLLMApiPresets(): any[];
   apiContextRuntime: any;
   store: any;
-  core: any;
+  chatAgent: any;
   agentState: any;
   outputRouter: any;
   isLLMSessionActive(): boolean;
@@ -74,7 +74,7 @@ export function createApiCommunicationRuntime(input: {
     config: input.config,
     time: input.time,
     store: input.store,
-    core: input.core,
+    chatAgent: input.chatAgent,
     agentLoopRuntime: input.agentLoopRuntime,
     talkRuntime: input.talkRuntime,
     agentState: input.agentState,

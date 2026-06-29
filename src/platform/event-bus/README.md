@@ -21,4 +21,4 @@ createInMemoryEventBus(): EventBus
 
 ## 当前状态
 
-Event bus 已可用，但当前 API 进程还没有把它作为中心路径。飞书插件现在通过 `deps.onEvent` 直接调用 AgentCore。
+Event bus 已可用，但当前 API 进程还没有把它作为中心路径。飞书插件现在通过 `deps.onEvent` 直接调用 ChatAgent。

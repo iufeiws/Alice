@@ -6,7 +6,7 @@ export function createMessageRuntimeRuntime(input: {
   config: any;
   time: any;
   store: any;
-  core: any;
+  chatAgent: any;
   agentLoopRuntime: any;
   talkRuntime: any;
   agentState: any;
@@ -42,7 +42,7 @@ export function createMessageRuntimeRuntime(input: {
       return input.getDefaultMessagingTarget();
     },
     store: input.store,
-    core: input.core,
+    chatAgent: input.chatAgent,
     agentLoopRuntime: input.agentLoopRuntime,
     talkRuntime: input.talkRuntime,
     agentState: input.agentState,
@@ -91,7 +91,7 @@ export function createMessageRuntimeRuntime(input: {
       input.queueForceWakeEvent();
     },
     clearLLMSession() {
-      input.core.clearLLMSession("mode_transition");
+      input.chatAgent.clearLLMSession("mode_transition");
     },
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog

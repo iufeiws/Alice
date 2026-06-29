@@ -54,6 +54,6 @@ export function createApiAgentStackRuntime(input: {
     apiAgentRuntime,
     talkAgentLoop: apiAgentRuntime.talkAgentLoop,
     talkRuntime: apiAgentRuntime.talkRuntime,
-    core: apiAgentRuntime.core
+    chatAgent: apiAgentRuntime.chatAgent
   };
 }

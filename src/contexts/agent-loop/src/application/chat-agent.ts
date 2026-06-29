@@ -147,7 +147,7 @@ export * from "../../../memory/src/sleep-memory-bridge-runtime.js";
 export * from "../../../memory/src/sleep-memory-induction-runtime.js";
 export * from "../../../talk-session/src/application/talk-session-runtime.js";
 
-type AgentCoreConfig = {
+type ChatAgentConfig = {
   llm: {
     model: string;
     temperature: number;
@@ -158,7 +158,7 @@ type AgentCoreConfig = {
   };
 };
 
-type CoreLLMRuntimeConfig = {
+type ChatLLMRuntimeConfig = {
   client?: LLMClient;
   model?: string;
   temperature?: number;
@@ -170,8 +170,8 @@ type CoreLLMRuntimeConfig = {
   supportsAudio?: boolean;
 };
 
-export type AgentCoreDeps = {
-  config: AgentCoreConfig;
+export type ChatAgentDeps = {
+  config: ChatAgentConfig;
   llm: LLMClient;
   intentRouter: IntentRouter;
   sessionResolver: SessionResolver;
@@ -197,7 +197,7 @@ export type AgentCoreDeps = {
   createActiveLoopSessionContext?<TSession>(input: AgentLoopCreateActiveSessionContextInput<TSession>): TSession;
   prepareChatLoopSessionContext?<TSession>(input: AgentLoopPrepareChatSessionContextInput<TSession>): Promise<AgentLoopPrepareChatSessionContextResult<TSession>>;
   ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
-  getLLMConfig?: () => CoreLLMRuntimeConfig;
+  getLLMConfig?: () => ChatLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
   onLLMHeartbeatStarted?(): void;
@@ -212,7 +212,7 @@ export type AgentCoreDeps = {
   random?: () => number;
 };
 
-export interface AgentCore {
+export interface ChatAgent {
   start(): Promise<void>;
   stop(): Promise<void>;
   prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
@@ -221,7 +221,7 @@ export interface AgentCore {
   clearLLMSession(reason: LLMSessionClearReason): void;
 }
 
-export function createAgentCore(deps: AgentCoreDeps): AgentCore {
+export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
   const channels: ChannelPlugin[] = [];
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const random = deps.random ?? Math.random;
@@ -755,7 +755,7 @@ export function createAgentCore(deps: AgentCoreDeps): AgentCore {
 
   function requirePromptProfile(): PromptProfile {
     const profile = deps.getPromptProfile?.();
-    if (!profile) throw new Error("AgentCore requires getPromptProfile");
+    if (!profile) throw new Error("ChatAgent requires getPromptProfile");
     return profile;
   }
 

@@ -8,7 +8,7 @@ export type { ApiRuntimeState };
 export function createApiLifecycleRuntime(input: {
   config: any;
   runtimeState: ApiRuntimeState;
-  core: any;
+  chatAgent: any;
   systemLogStore: any;
   time: any;
   ttsPlugin: any;
@@ -38,7 +38,7 @@ export function createApiLifecycleRuntime(input: {
       scheduler.stop();
       await input.ttsPlugin.voiceSynthesizer.shutdown?.();
       await input.messageRuntime.flushAll();
-      await input.core.stop();
+      await input.chatAgent.stop();
     },
     releaseLock: () => input.serviceLock.release()
   });
@@ -46,7 +46,7 @@ export function createApiLifecycleRuntime(input: {
   const apiStartupRuntime = createApiStartupRuntime({
     config: input.config,
     runtimeState: input.runtimeState,
-    core: input.core,
+    chatAgent: input.chatAgent,
     scheduler,
     messageRuntime: input.messageRuntime,
     appendLog: input.appendLog

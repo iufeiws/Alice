@@ -415,8 +415,8 @@ src
 | `src/core/agent/src/chat-loop.ts` | `src/contexts/agent-loop/src/application/run-chat-loop.ts` | 拆分为「会话构建 + 工具执行」两个阶段 |
 | `src/core/agent/src/talk-loop.ts` | `src/contexts/agent-loop/src/application/run-talk-loop.ts` | 保留文件名语义，拆分状态更新函数到 `domain` |
 | `src/core/agent/src/state.ts` | `src/contexts/agent-loop/src/domain/agent-loop-state.ts` | 拆分模型定义 |
-| `src/core/agent/src/agent-state-runtime.ts` | `src/contexts/agent-loop/src/runtime/agent-loop-runtime.ts` | 与 `agent-core-runtime.ts` 协同合并 |
-| `src/core/agent/src/agent-core-runtime.ts` | `src/contexts/agent-loop/src/runtime/agent-core-runtime.ts` | 与 `agent-state-runtime` 拆分运行时编排边界 |
+| `src/core/agent/src/agent-state-runtime.ts` | `src/contexts/agent-loop/src/runtime/agent-loop-runtime.ts` | 与 `chat-agent-runtime.ts` 协同合并 |
+| `src/core/agent/src/chat-agent-runtime.ts` | `src/contexts/agent-loop/src/runtime/chat-agent-runtime.ts` | 与 `agent-state-runtime` 拆分运行时编排边界 |
 
 #### 4.1.2 `agent-profile`
 

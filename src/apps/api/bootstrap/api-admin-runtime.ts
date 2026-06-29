@@ -14,7 +14,7 @@ export function createApiAdminRuntime(input: {
   getCurrentLLMSessionSnapshot(): unknown;
   store: any;
   getTokenUsageReport(query: any): unknown;
-  core: any;
+  chatAgent: any;
   cancelLLMRequest(): boolean;
   setLLMSessionBusy(busy: boolean): void;
   outputRouter: any;
@@ -48,10 +48,10 @@ export function createApiAdminRuntime(input: {
     getLLMRequestProfilePreview: input.adminLLMSessionRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.adminLLMSessionRuntime.getTalkLLMRequestProfilePreview,
     getTokenUsageReport: input.getTokenUsageReport,
-    clearLLMChainCache: () => input.core.clearLLMSession("admin_clear"),
+    clearLLMChainCache: () => input.chatAgent.clearLLMSession("admin_clear"),
     cancelActiveLLMRun: () => {
       const hadActiveRequest = input.cancelLLMRequest();
-      input.core.clearLLMSession("admin_cancel");
+      input.chatAgent.clearLLMSession("admin_cancel");
       input.setLLMSessionBusy(false);
       input.apiCapabilitiesRuntime.messagingTools.noteLLMSessionCompleted();
       return { ok: true, hadActiveRequest };

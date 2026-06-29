@@ -1,6 +1,6 @@
 # Photo Tool 说明
 
-Media tools 供 AgentCore 使用。当前实现暴露一个 LLM 工具：
+Media tools 供 ChatAgent 使用。当前实现暴露一个 LLM 工具：
 
 - `selfie`：生成并发送一张 Alice 自拍/照片到当前聊天会话。
 

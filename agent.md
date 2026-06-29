@@ -2,7 +2,7 @@
 
 ## 项目上下文
 
-Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentCore、占位式 Agent 行为、OpenAI 兼容 `/v1` 客户端、飞书与微信渠道插件、本地管理后台、SQLite 消息历史、JSONL LLM 会话归档，以及文件化系统日志。
+Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAgent、占位式 Agent 行为、OpenAI 兼容 `/v1` 客户端、飞书与微信渠道插件、本地管理后台、SQLite 消息历史、JSONL LLM 会话归档，以及文件化系统日志。
 
 ## 工程规则
 
@@ -60,7 +60,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 AgentC
 ## Agent 状态说明
 
 - 当前预期行为：在 `away`、`sleeping` 或 `working` 状态收到的消息，仍会把经过的 wall-clock 时间计入已保存的 `responseDelayMs`；当状态稍后允许回复时，如果旧未处理消息的等待时间已经超过延迟，就可能立刻处理。
-- 当前预期行为：AgentCore 被视为单一非并发 worker。`working` 状态已废弃，普通聊天、Codex 任务、后台任务和普通 heartbeat 都不应进入 `working`。
+- 当前预期行为：ChatAgent 被视为单一非并发 worker。`working` 状态已废弃，普通聊天、Codex 任务、后台任务和普通 heartbeat 都不应进入 `working`。
 
 ## Review Checklist
 

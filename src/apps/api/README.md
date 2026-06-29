@@ -1,6 +1,6 @@
 # API 应用
 
-`apps/api` 是当前进程入口，负责托管 HTTP API、管理后台、AgentCore 启动、飞书/微信插件接线、工具插件接线、存储初始化与调度器注册。
+`apps/api` 是当前进程入口，负责托管 HTTP API、管理后台、ChatAgent 启动、飞书/微信插件接线、工具插件接线、存储初始化与调度器注册。
 
 ## 入口文件
 
@@ -8,13 +8,13 @@
 src/apps/api/main.ts
 ```
 
-当前原型阶段这个文件有意保持单体结构。它会加载 `.env`、构建配置、创建 SQLite 与文件日志存储、接入 AgentCore 依赖、注册飞书/微信 Channel Plugin 与 messaging/photo/shell Tool Plugin，并启动 HTTP 服务。
+当前原型阶段这个文件有意保持单体结构。它会加载 `.env`、构建配置、创建 SQLite 与文件日志存储、接入 ChatAgent 依赖、注册飞书/微信 Channel Plugin 与 messaging/photo/shell Tool Plugin，并启动 HTTP 服务。
 
 ## 主要运行时职责
 
 - 服务 `/admin`。
 - 服务管理后台 JSON API。
-- 创建 `AgentCore`。
+- 创建 `ChatAgent`。
 - 创建飞书与微信 Channel Plugin。
 - 创建 messaging、photo 与 shell Tool Plugin。
 - 通过 `contexts/conversation-hub 和 platform/storage` 持久化 conversation-hub消息和消息事件日志。
@@ -119,9 +119,9 @@ Messaging tool 试用：
 
 运行时使用两层存储：
 
-- `messages`：每条会话消息一行，表示当前状态。Core 用它构造上下文，管理后台 Message Log 也把它作为聊天历史展示。
+- `messages`：每条会话消息一行，表示当前状态。ChatAgent 用它构造上下文，管理后台 Message Log 也把它作为聊天历史展示。
 - `message_logs`：追加式事件/调试条目，记录飞书回调、发送尝试、原始 JSON 与失败信息。
 
-飞书文本消息会 upsert `messages` 并把会话标记为 dirty。飞书 reaction/read/recall 回调只更新匹配的 `messages` 行并写入调试条目，不会单独触发 Core。
+飞书文本消息会 upsert `messages` 并把会话标记为 dirty。飞书 reaction/read/recall 回调只更新匹配的 `messages` 行并写入调试条目，不会单独触发 ChatAgent。
 
-管理后台的 `LLM Request` 与 `LLM Chain` 标签会展示 prompt 预览、最近请求/响应、活跃会话和已清理会话。AgentCore 在调用配置的 provider 或 stub client 前，会记录最终的 `messages` 数组。
+管理后台的 `LLM Request` 与 `LLM Chain` 标签会展示 prompt 预览、最近请求/响应、活跃会话和已清理会话。ChatAgent 在调用配置的 provider 或 stub client 前，会记录最终的 `messages` 数组。

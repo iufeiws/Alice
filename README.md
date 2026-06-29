@@ -1,18 +1,18 @@
 # Alice
 
-Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 `AgentCore / Plugin` 架构。目标架构见 [agent_core_plugin_architecture.md](/home/wyf98/Alice/agent_core_plugin_architecture.md)，当前代码实际实现见 [ARCHITECTURE.md](/home/wyf98/Alice/ARCHITECTURE.md)。
+Alice 是一个本地优先的个人陪伴型 Agent 框架，当前实现基于 `ChatAgent / Plugin` 架构。目标架构见 [agent_core_plugin_architecture.md](/home/wyf98/Alice/agent_core_plugin_architecture.md)，当前代码实际实现见 [ARCHITECTURE.md](/home/wyf98/Alice/ARCHITECTURE.md)。
 
 ## 当前实现
 
 - TypeScript monorepo 骨架，使用 pnpm workspace 元数据。
-- AgentCore 运行时边界：
+- ChatAgent 运行时边界：
   - 标准化 `AgentEvent` 与 `AgentOutput`。
   - 会话解析、输出路由、工具调用循环与 LLM 会话归档。
   - 可编辑 prompt profile、附加 prompt 层和每日 shell prompt。
 - 内部 OpenAI 兼容 `/v1` LLM 客户端：
   - 支持配置 `LLM_BASE_URL`。
   - 可接入 OpenAI、DeepSeek、opencode 以及类似 `/v1/chat/completions` 的服务。
-  - 支持 OpenAI 风格 function tool calls，由 AgentCore 执行工具。
+  - 支持 OpenAI 风格 function tool calls，由 ChatAgent 执行工具。
   - 支持 streaming tool-call delta，用于 `send_chat(type="message")` 的逐行提前发送。
   - 未配置 API key 或 base URL 时会使用本地 stub 客户端。
 - 飞书 Channel Plugin：

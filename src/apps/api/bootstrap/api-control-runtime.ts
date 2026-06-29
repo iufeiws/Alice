@@ -7,7 +7,7 @@ export function createApiControlRuntime(input: {
   config: any;
   time: any;
   store: any;
-  getCore(): any;
+  getChatAgent(): any;
   triggerSleepMemoryInduction(): Promise<unknown>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
@@ -38,7 +38,7 @@ export function createApiControlRuntime(input: {
     getDiaryStore: () => apiContextRuntime.diaryStore,
     getCalendarStore: () => apiContextRuntime.calendarStore,
     getDailyShellStore: () => apiContextRuntime.dailyShellStore,
-    clearLLMSession: () => input.getCore().clearLLMSession("mode_transition"),
+    clearLLMSession: () => input.getChatAgent().clearLLMSession("mode_transition"),
     sendSleepNotice: () => apiNoticeRuntime.outboundNoticeRuntime.sendSystemNoticeToDefaultTarget("-少女已入眠-"),
     triggerSleepMemoryInduction: input.triggerSleepMemoryInduction,
     getDefaultTarget: () => apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,

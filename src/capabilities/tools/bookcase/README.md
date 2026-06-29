@@ -9,7 +9,7 @@
 
 ## Fixed Prefix Mode
 
-`draw` 会触发 AgentCore 进入 `fixed_prefix` LLM session mode。进入时会固定当前会话前缀，后续重建为：
+`draw` 会触发 ChatAgent 进入 `fixed_prefix` LLM session mode。进入时会固定当前会话前缀，后续重建为：
 
 ```text
 [modeStaticMessages][check_chat({ scope: "from_prefix" })]

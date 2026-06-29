@@ -18,7 +18,7 @@ export function createApiServerStackRuntime(input: {
   store: any;
   outputRouter: any;
   readLLMApiPresets(): any;
-  core: any;
+  chatAgent: any;
   talkRuntime: any;
   agentState: any;
   sleepCocoonEventRuntime: any;
@@ -39,7 +39,7 @@ export function createApiServerStackRuntime(input: {
     readLLMApiPresets: input.readLLMApiPresets,
     apiContextRuntime: input.apiContextRuntime,
     store: input.store,
-    core: input.core,
+    chatAgent: input.chatAgent,
     agentState: input.agentState,
     outputRouter: input.outputRouter,
     isLLMSessionActive: input.apiRuntimeState.isLLMSessionBusy,
@@ -67,7 +67,7 @@ export function createApiServerStackRuntime(input: {
     getCurrentLLMSessionSnapshot: () => input.agentLoopRuntime.getCurrentLLMSessionSnapshot(),
     store: input.store,
     getTokenUsageReport: input.apiLLMRuntime.getTokenUsageReport,
-    core: input.core,
+    chatAgent: input.chatAgent,
     cancelLLMRequest: () => input.apiToolingRuntime.llmRequests.cancelActive("admin_cancel"),
     setLLMSessionBusy: input.apiRuntimeState.setLLMSessionBusy,
     outputRouter: input.outputRouter,
@@ -86,7 +86,7 @@ export function createApiServerStackRuntime(input: {
   const apiLifecycleRuntime = createApiLifecycleRuntime({
     config: input.config,
     runtimeState: apiAdminRuntime.runtimeState,
-    core: input.core,
+    chatAgent: input.chatAgent,
     systemLogStore: input.systemLogStore,
     time: input.time,
     ttsPlugin: input.apiToolingRuntime.ttsPlugin,
@@ -96,8 +96,8 @@ export function createApiServerStackRuntime(input: {
     serviceLock: input.serviceLock,
     appendLog: input.appendLog,
     registerChannels: () => {
-      input.core.registerChannel(apiCommunicationRuntime.feishu);
-      input.core.registerChannel(apiCommunicationRuntime.wechat);
+      input.chatAgent.registerChannel(apiCommunicationRuntime.feishu);
+      input.chatAgent.registerChannel(apiCommunicationRuntime.wechat);
     }
   });
 

@@ -69,7 +69,7 @@ export const defaultPromptRegistry: PromptDefinition[] = [
     id: "agent.profile.default",
     name: "Default Agent Prompt Profile",
     scope: "agent",
-    description: "Default editable prompt layers used by AgentCore.",
+    description: "Default editable prompt layers used by ChatAgent.",
     content: defaultPromptProfile().layers.map((layer) => `[${layer.role}] ${layer.title}\n${layer.content}`).join("\n\n")
   },
   {

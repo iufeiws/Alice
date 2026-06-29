@@ -1,10 +1,10 @@
-import { createAgentCore } from "../application/agent-core.js";
+import { createChatAgent } from "../application/chat-agent.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
 import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 
-export function createAgentCoreRuntime(input: {
+export function createChatAgentRuntime(input: {
   config: any;
   activeLLM: any;
   agentLoopRuntime?: any;
@@ -34,7 +34,7 @@ export function createAgentCoreRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
 }) {
-  return createAgentCore({
+  return createChatAgent({
     config: input.config,
     llm: input.activeLLM,
     llmRequestSender: input.llmRequests.send,

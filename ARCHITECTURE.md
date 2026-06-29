@@ -1,6 +1,6 @@
 # Alice 架构
 
-Alice 是一个本地优先的个人陪伴型 Agent 运行时。当前实现是单进程 Node.js/TypeScript 应用，在同一个 API 进程内组合了 HTTP 服务、管理后台、AgentCore、飞书 Channel Plugin、微信 iLink Channel Plugin、LLM 适配器、消息持久化与调度器。
+Alice 是一个本地优先的个人陪伴型 Agent 运行时。当前实现是单进程 Node.js/TypeScript 应用，在同一个 API 进程内组合了 HTTP 服务、管理后台、ChatAgent、飞书 Channel Plugin、微信 iLink Channel Plugin、LLM 适配器、消息持久化与调度器。
 
 较早的 [agent_core_plugin_architecture.md](/home/wyf98/Alice/agent_core_plugin_architecture.md) 描述的是更完整的目标架构；本文档描述当前代码已经实现的结构。
 
@@ -12,7 +12,7 @@ apps/api
     |
     | 创建
     v
-AgentCore
+ChatAgent
   意图路由
   LLM 调用
   工具调用执行
@@ -44,7 +44,7 @@ Feishu WebSocket event
   -> messages 表 upsert
   -> message event log 追加
   -> MessageRuntime 脏会话防抖
-  -> AgentCore.handleEvent()，使用 messages 构造上下文
+  -> ChatAgent.handleEvent()，使用 messages 构造上下文
   -> OpenAI 兼容 /v1/chat/completions 调用
   -> 可选的平台无关 messaging/media/shell tool calls
   -> AgentOutput 以 messages.status=sending 写入
@@ -70,7 +70,7 @@ getupdates 长轮询
   -> messages 表 upsert
   -> message event log 追加
   -> MessageRuntime 脏会话防抖
-  -> AgentCore.handleEvent()
+  -> ChatAgent.handleEvent()
   -> AgentOutput
   -> OutputRouter
   -> sendmessage，使用缓存的 context_token
@@ -134,9 +134,9 @@ assets/
 - `AgentPayload`：规范化消息负载。
 - `AgentOutput`：规范化出站消息。
 - `ChannelPlugin`：渠道生命周期与发送接口。
-- `ToolPlugin`：AgentCore 可执行的平台无关 function tools。
+- `ToolPlugin`：ChatAgent 可执行的平台无关 function tools。
 
-AgentCore 只消费 `AgentEvent` 并产出 `AgentOutput`。消息发送通常通过 `messaging` tool 写入存储后交给 `OutputRouter`，平台细节留在 plugin 内部。
+ChatAgent 只消费 `AgentEvent` 并产出 `AgentOutput`。消息发送通常通过 `messaging` tool 写入存储后交给 `OutputRouter`，平台细节留在 plugin 内部。
 
 ## 持久化
 

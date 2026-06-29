@@ -5,7 +5,7 @@
 ## 边界
 
 - 平台插件：负责平台私有接收和发送实现，但必须把入站消息转换为统一的 `AgentEvent`，把消息生命周期转换为统一的 lifecycle event，并实现统一的 `ChannelPlugin.send(output)`。
-- 消息运行时：`apps/api/src/message-runtime.ts` 是 Core 侧聊天消息入口，负责写入 `messages` / `message_logs`、去抖、恢复 pending 会话、调用 `AgentCore`、落库 outbound 并驱动发送。
+- 消息运行时：`apps/api/src/message-runtime.ts` 是 Core 侧聊天消息入口，负责写入 `messages` / `message_logs`、去抖、恢复 pending 会话、调用 `ChatAgent`、落库 outbound 并驱动发送。
 - Chat LLM 工具入口：`tools/messaging/src/index.ts` 向 LLM 暴露 `check_chat`、`send_chat`；`finish_and_wait` 由独立 control tool plugin 暴露。TTS 实现已经抽离到 `plugins/tts`，messaging 只调用注入的 `VoiceSynthesizer`。
 - 持久化入口：`packages/storage/src/sqlite-store.ts` 的 `messages` 表保存当前聊天状态，`message_logs` 保存追加式事件和调试记录。
 
@@ -204,9 +204,9 @@ LLM 发送聊天消息只能通过 `send_chat`：
 
 `message` 和 `voice`（语音）会按真实换行以及字面量 `\n` / `\r\n` 拆分为多条消息，并按内容长度节流。
 
-当 LLM adapter 支持 streaming tool-call delta 时，AgentCore 会监听 `send_chat` arguments：只要 `type` 已经出现，`content` 中完成的一行可以提前发送，不必等待完整 JSON arguments 结束。最终 tool call 仍由 messaging tool 负责落库、发送和返回结果。
+当 LLM adapter 支持 streaming tool-call delta 时，ChatAgent 会监听 `send_chat` arguments：只要 `type` 已经出现，`content` 中完成的一行可以提前发送，不必等待完整 JSON arguments 结束。最终 tool call 仍由 messaging tool 负责落库、发送和返回结果。
 
-如果同一轮 LLM 响应包含 `send_chat`，AgentCore 会把它视为当前入站事件的终止动作：只执行 `send_chat`，跳过同轮其它读取或搜索工具，也不会把发送结果再喂回下一轮 LLM。
+如果同一轮 LLM 响应包含 `send_chat`，ChatAgent 会把它视为当前入站事件的终止动作：只执行 `send_chat`，跳过同轮其它读取或搜索工具，也不会把发送结果再喂回下一轮 LLM。
 
 ## 出站接口契约
 

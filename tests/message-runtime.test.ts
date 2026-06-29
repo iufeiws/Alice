@@ -20,7 +20,7 @@ test("message runtime heartbeat attempts daily outfit on-body generation", async
       now: () => ({ iso: "2026-05-26T00:00:00.000Z", date: new Date("2026-05-26T00:00:00.000Z") })
     },
     store,
-    core: { clearLLMSession() {}, async prepareEventRun() { return []; } },
+    chatAgent: { clearLLMSession() {}, async prepareEventRun() { return []; } },
     agentLoopRuntime: undefined,
     talkRuntime: undefined,
     agentState: { tick() {}, getSnapshot: () => ({ state: "waiting" }), onChange() {}, canRunHeartbeat: () => true },
@@ -58,7 +58,7 @@ test("message runtime sends one LLM request for pending inbound logs and marks t
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return outputs;
@@ -101,7 +101,7 @@ test("message runtime processes inbound audio transcript while storing it as voi
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -163,7 +163,7 @@ test("message runtime uses agent state delay and records inbound activity", asyn
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -215,7 +215,7 @@ test("message runtime heartbeat waits until latest pending message exceeds saved
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -280,7 +280,7 @@ test("message runtime heartbeat does not count delay while state cannot reply", 
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -313,7 +313,7 @@ test("message runtime heartbeat waits while another llm session is active", asyn
     getHeartbeatIntervalMs: () => 10,
     isLLMSessionActive: () => llmActive,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -368,7 +368,7 @@ test("message runtime flushAll stops heartbeat without force-processing pending 
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -390,7 +390,7 @@ test("message runtime flushAll stops heartbeat without force-processing pending 
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
 });
 
-test("message runtime marks inbound core failed and does not retry the same batch", async () => {
+test("message runtime marks inbound chat agent failed and does not retry the same batch", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-fail"), "alice.sqlite"));
   let coreCalls = 0;
   const logs: string[] = [];
@@ -399,7 +399,7 @@ test("message runtime marks inbound core failed and does not retry the same batc
     getDelayMs: () => 10,
     getHeartbeatIntervalMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun() {
         coreCalls += 1;
         throw new Error("llm failed", {
@@ -442,7 +442,7 @@ test("message runtime can pause heartbeat and process pending messages on demand
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -478,7 +478,7 @@ test("message runtime can start with heartbeat paused", async () => {
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -515,7 +515,7 @@ test("message runtime reports heartbeat paused changes for env persistence", asy
         persisted = paused;
       },
       store,
-      core: {
+      chatAgent: {
         async prepareEventRun() {
           return [];
         }
@@ -558,7 +558,7 @@ test("message runtime processNow starts a manual LLM session without pending mes
       sessionId: "session-1"
     }),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -598,7 +598,7 @@ test("message runtime can recover pending sessions from storage", async () => {
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "ok")];
@@ -635,7 +635,7 @@ test("message runtime recovers wechat user id from persisted conversation id", a
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -659,13 +659,13 @@ test("message runtime recovers wechat user id from persisted conversation id", a
   assert.equal(coreInputs[0].externalSession.sessionId, "wechat:dm:wx-user");
 });
 
-test("message runtime records lifecycle events as message state updates without core handling", async () => {
+test("message runtime records lifecycle events as message state updates without chat agent handling", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-lifecycle"), "alice.sqlite"));
   let handled = 0;
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun() {
         handled += 1;
         return [];
@@ -705,7 +705,7 @@ test("message runtime records lifecycle events as message state updates without 
   assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
 });
 
-test("message runtime handles force wake without calling core", async () => {
+test("message runtime handles force wake without calling chat agent", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-force-wake"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
   const states: string[] = [];
@@ -729,7 +729,7 @@ test("message runtime handles force wake without calling core", async () => {
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -793,7 +793,7 @@ test("message runtime queues sleep cocoon force wake event on force wake", async
       return event;
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -830,7 +830,7 @@ test("message runtime can run sleep cocoon morning event on heartbeat", async ()
       }
     }),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -889,7 +889,7 @@ test("message runtime runs sleep cocoon morning event after wake tick", async ()
       return event;
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -926,7 +926,7 @@ test("message runtime can run sleep cocoon goodnight event on heartbeat", async 
       }
     }),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -961,7 +961,7 @@ test("message runtime does not count sleep cocoon goodnight when generated sessi
       }
     } : undefined,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun() {
         attempts += 1;
         throw new Error("llm down");
@@ -1002,7 +1002,7 @@ test("message runtime does not run sleep cocoon goodnight while user messages ar
       };
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -1046,7 +1046,7 @@ test("message runtime applies documented state landing after processing inbound 
       startHeartbeatPaused: true,
       agentState: controller,
       store,
-      core: {
+      chatAgent: {
         async prepareEventRun(event) {
           coreInputs.push(event);
           return [];
@@ -1084,7 +1084,7 @@ test("message runtime does not run idle no-message transition before processing 
     now: () => current,
     agentState: controller,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -1123,7 +1123,7 @@ test("message runtime clears LLM session when waiting degrades to idle", async (
       clearReasons.push(reason);
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun() {
         return [];
       }
@@ -1165,7 +1165,7 @@ test("message runtime keeps going_to_sleep after processing and only postpones s
     now: () => current,
     agentState: controller,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun() {
         return [];
       }
@@ -1244,7 +1244,7 @@ test("message runtime triggers randomized initiated behavior on eligible idle ti
       }
     },
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [textOutput("session-1", "checking in")];
@@ -1300,7 +1300,7 @@ test("message runtime does not trigger randomized initiated behavior when probab
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -1334,7 +1334,7 @@ test("message runtime skips randomized initiated behavior while pending inbound 
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current, 60_000),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -1385,7 +1385,7 @@ test("message runtime skips randomized initiated behavior without target or mess
       getProcessNowTarget: scenario.getTarget,
       agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
       store,
-      core: {
+      chatAgent: {
         async prepareEventRun(event) {
           coreInputs.push(event);
           return [];
@@ -1429,7 +1429,7 @@ test("message runtime evaluates randomized initiated behavior only once per idle
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];
@@ -1457,7 +1457,7 @@ test("message runtime processes all currently unprocessed messages for a session
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
     store,
-    core: {
+    chatAgent: {
       async prepareEventRun(event) {
         coreInputs.push(event);
         return [];

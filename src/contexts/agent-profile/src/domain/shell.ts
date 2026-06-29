@@ -96,7 +96,6 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
 
   return {
     get(date, timeZone) {
-      if (cached) return cached;
       const personalities = readOptions(paths.personalitiesDir, defaultPersonalities());
       const relationships = readOptions(paths.relationshipsDir, defaultRelationships());
       const outfits = readOptions(paths.outfitsDir, defaultOutfits());

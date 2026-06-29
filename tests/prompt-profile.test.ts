@@ -409,6 +409,32 @@ test("daily shell remains stable when the active option is edited", () => {
   assert.equal(store.render(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai"), store.render(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai"));
 });
 
+test("daily shell get refreshes active option files", () => {
+  const root = makeTempDir("daily-shell-refresh");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one" }
+  ]);
+  replaceShellCategory(root, store, "relationships", [
+    { id: "r1", name: "R One", content: "relationship one" }
+  ]);
+  replaceShellCategory(root, store, "outfits", [
+    { id: "o1", name: "O One", content: "outfit one", imageUrl: "memory-files/shell/outfits/o1.jpg" }
+  ]);
+
+  const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  const updated = {
+    ...first.outfit,
+    onBodyImageUrl: "memory-files/shell/outfits/o1.On_Body_Ref.jpg"
+  };
+  fs.writeFileSync(path.join(root, "shell", "outfits", "o1.json"), `${JSON.stringify(updated, null, 2)}\n`);
+
+  const second = store.get(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
+
+  assert.equal(second.outfit.id, "o1");
+  assert.equal(second.outfit.onBodyImageUrl, "memory-files/shell/outfits/o1.On_Body_Ref.jpg");
+});
+
 test("daily shell can switch only the active outfit", () => {
   const root = makeTempDir("daily-shell-switch-outfit");
   const switchEvents: string[] = [];

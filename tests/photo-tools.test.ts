@@ -232,7 +232,7 @@ test("selfie converts generated non-JPEG bytes to JPEG before sending", async ()
   }
 });
 
-test("selfie uses stored on-body reference with the selfie on-body prompt", async () => {
+test("selfie uses stored on-body reference with the standard selfie prompt", async () => {
   const outputRoot = makeAssetTempDir("selfie-on-body-reference");
   const referenceRoot = makeTempDir("selfie-ref-on-body-reference");
   const onBodyImage = path.join(makeTempDir("selfie-on-body-image"), "dress.On_Body_Ref.jpg");
@@ -269,8 +269,8 @@ test("selfie uses stored on-body reference with the selfie on-body prompt", asyn
       "dress.On_Body_Ref.jpg",
       "magic-library-reference.jpg"
     ]);
-    assert.match(executorInput?.prompt ?? "", /on-body prompt 看镜头 黑色薄纱短袖高领上衣/);
-    assert.doesNotMatch(executorInput?.prompt ?? "", /角色动作:/);
+    assert.match(executorInput?.prompt ?? "", /角色动作:\n看镜头/);
+    assert.doesNotMatch(executorInput?.prompt ?? "", /on-body prompt/);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

@@ -131,7 +131,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const references = await resolveReferenceImages(context);
-      const prompt = buildSelfiePrompt(pose, context, references.usesOnBodyReference);
+      const prompt = buildSelfiePrompt(pose, context);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -228,12 +228,8 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(pose: string, context: SelfieContext, usesOnBodyReference: boolean): string {
+  function buildSelfiePrompt(pose: string, context: SelfieContext): string {
     const photoConfig = runtimePhotoConfig();
-    if (usesOnBodyReference) {
-      if (!photoConfig.selfieOnBodyPrompt.trim()) throw new Error(photoToolText.selfieOnBodyPromptRequired);
-      return renderSelfiePrompt(photoConfig.selfieOnBodyPrompt, pose, context);
-    }
     const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);

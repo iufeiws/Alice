@@ -26,7 +26,7 @@ export function renderForFeishu(output: AgentOutput): FeishuSendPlan {
       kind: "markdown",
       receiveIdType,
       receiveId,
-      markdown: output.content.markdown,
+      markdown: output.meta.senderName === "core" ? markdownItalicLines(output.content.markdown) : output.content.markdown,
       replyTo: output.target.replyTo
     };
   }
@@ -73,6 +73,14 @@ export function renderForFeishu(output: AgentOutput): FeishuSendPlan {
   }
 
   throw new Error(`Feishu renderer does not support ${output.content.kind} yet`);
+}
+
+function markdownItalic(content: string): string {
+  return `*${content.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")}*`;
+}
+
+function markdownItalicLines(content: string): string {
+  return content.split("\n").map((line) => line.trim() ? markdownItalic(line) : line).join("\n");
 }
 
 function renderCardAsMarkdown(card: { title: string; body?: string; fields?: Array<{ label: string; value: string }> }): string {

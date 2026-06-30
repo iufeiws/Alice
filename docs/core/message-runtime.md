@@ -202,7 +202,7 @@ LLM 发送聊天消息只能通过 `send_chat`：
 
 `send_chat` 构造统一的 `AgentOutput`，并通过 `outputRouter.send(output)` 发给平台插件。每条发送前都会先 `insertOutboundMessage()`，初始状态为 `sending`；成功后更新为 `sent`，失败后更新为 `send_failed` 并写入失败原因。文本、Markdown、图片发送失败时会进入最多 3 次的 retry queue。
 
-`message` 和 `voice`（语音）默认会按真实换行以及字面量 `\n` / `\r\n` 拆分为多条消息；`config/plugin/messaging/config.json` 中的 `splitMultilineSendChat=false` 会关闭拆分。`markdown`、`image` 不拆分。Feishu 的 core message 会渲染成 markdown，因此不受拆分开关影响。
+`message` 默认会按真实换行以及字面量 `\n` / `\r\n` 拆分为多条消息；`config/plugin/messaging/config.json` 中的 `splitMultilineSendChat=false` 会关闭拆分。`voice`、`markdown`、`image` 不拆分。Feishu 的 core message 会渲染成 markdown，因此不受拆分开关影响。
 
 `limitConsecutiveSends=true` 时，如果当前会话最近 10 条消息里没有用户入站回复，`send_chat` 会阻止继续发送；设为 `false` 会关闭该限制。
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRecentMessageDeduper } from "../src/channels/feishu/src/dedupe.js";
-import { createFeishuPlugin } from "../src/channels/feishu/src/index.js";
+import { createFeishuPlugin, renderForFeishu } from "../src/channels/feishu/src/index.js";
 import type { FeishuAudioMessageEvent, FeishuTextMessageEvent } from "../src/channels/feishu/src/types.js";
 import type { FeishuConfig } from "../src/channels/feishu/src/types.js";
 import type { AgentEvent, AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -11,6 +11,25 @@ test("recent message deduper rejects repeated keys inside ttl", () => {
   assert.equal(deduper.remember("om_1", 1000), true);
   assert.equal(deduper.remember("om_1", 1100), false);
   assert.equal(deduper.remember("om_1", 2101), true);
+});
+
+test("feishu renderer applies core markdown styling only in send plan", () => {
+  const output: AgentOutput = {
+    id: "out_1",
+    target: { plugin: "feishu", channelId: "oc_chat", sessionId: "feishu:dm:oc_chat" },
+    content: { kind: "markdown", markdown: "core text\n\nsecond line" },
+    meta: {
+      createdAt: "2026-06-29T00:00:00.000",
+      createdAtUtc: "2026-06-28T15:00:00.000Z",
+      senderName: "core",
+      urgency: "normal"
+    }
+  };
+
+  const plan = renderForFeishu(output);
+
+  assert.equal(output.content.kind === "markdown" ? output.content.markdown : "", "core text\n\nsecond line");
+  assert.equal(plan.kind === "markdown" ? plan.markdown : "", "*core text*\n\n*second line*");
 });
 
 test("feishu plugin ignores duplicate message ids before agent handling", async () => {

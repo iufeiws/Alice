@@ -993,10 +993,10 @@ test("send_chat can keep newline text in one send from messaging config", async 
 
   assert.equal(result.ok, true);
   assert.equal(sent.length, 1);
-  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one\n\ntwo"]);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one\ntwo"]);
 });
 
-test("send_chat sends feishu core message as italic markdown", async () => {
+test("send_chat sends feishu core message as markdown without storing render markup", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-core-markdown"), "alice.sqlite"));
   seedUserInbound(store, "session-1", "feishu");
   const sent: AgentOutput[] = [];
@@ -1020,10 +1020,12 @@ test("send_chat sends feishu core message as italic markdown", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(sent.map((output) => output.content), [{ kind: "markdown", markdown: "*core text\nsecond*" }]);
-  assert.match(String(result.output), /Alice\(core\):\n\*core text\nsecond\*/);
+  assert.deepEqual(sent.map((output) => output.content), [{ kind: "markdown", markdown: "core text\nsecond" }]);
+  assert.match(String(result.output), /Alice\(core\):\ncore text\nsecond/);
+  assert.doesNotMatch(String(result.output), /\*core text/);
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
   assert.deepEqual(stored.map((message) => message.contentType), ["markdown"]);
+  assert.deepEqual(stored.map((message) => message.contentText), ["core text\nsecond"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
@@ -2418,7 +2420,7 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
 });
 
-test("send_chat voice sends italic markdown transcript for feishu core", async () => {
+test("send_chat voice sends plain markdown transcript for feishu core before channel render", async () => {
   const dir = makeTempDir("messaging-send-voice-feishu-core-transcript");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "feishu:dm:oc_1", "feishu");
@@ -2451,7 +2453,7 @@ test("send_chat voice sends italic markdown transcript for feishu core", async (
   assert.equal(result.ok, true);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
-  assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "*晚点见*" });
+  assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "晚点见" });
   assert.equal(fs.existsSync(generatedPath), false);
   assert.match(String(result.output), /Alice\(core\):\[语音\]晚点见/);
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
@@ -3492,7 +3494,7 @@ test("configured voice synthesizer falls back to moss when explicit genie servic
   await fsp.unlink(secondResult.filePath);
 });
 
-test("send_chat voice splits newline and escaped newline text into multiple audio messages", async () => {
+test("send_chat voice keeps newline and escaped newline text in one audio message", async () => {
   const dir = makeTempDir("messaging-send-voice-newline");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
@@ -3528,52 +3530,10 @@ test("send_chat voice splits newline and escaped newline text into multiple audi
   });
 
   assert.equal(result.ok, true);
-  assert.equal(sent.length, 3);
-  assert.deepEqual(synthesizedTexts, ["第一句", "第二句", "第三句"]);
-  assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句", "第二句", "第三句"]);
-  assert.deepEqual(logs, [
-    { status: "sent", summary: "[语音]第一句" },
-    { status: "sent", summary: "[语音]第二句" },
-    { status: "sent", summary: "[语音]第三句" }
-  ]);
-});
-
-test("send_chat voice can keep newline text in one audio message from messaging config", async () => {
-  const dir = makeTempDir("messaging-send-voice-no-split");
-  const store = createAliceStore(path.join(dir, "alice.sqlite"));
-  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
-  const sent: AgentOutput[] = [];
-  const synthesizedTexts: string[] = [];
-  const tools = createMessagingTools({
-    store,
-    sleep: async () => {},
-    config: { splitMultilineSendChat: false, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true },
-    wechatVoiceFallbackToText: false,
-    voiceSynthesizer: async ({ text }) => {
-      synthesizedTexts.push(text);
-      const filePath = path.join(dir, "voice.wav");
-      fs.writeFileSync(filePath, text);
-      return { assetId: "generated/tts/voice.wav", filePath };
-    },
-    outputRouter: {
-      async send(output) {
-        sent.push(output);
-        return { messageId: `voice_${sent.length}` };
-      }
-    },
-    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
-  });
-
-  const result = await tools.execute({
-    id: "call_send_voice_no_split",
-    toolName: "send_chat",
-    input: { type: "voice", content: "第一句\n第二句\\n第三句", alice: "shell" }
-  });
-
-  assert.equal(result.ok, true);
   assert.equal(sent.length, 1);
   assert.deepEqual(synthesizedTexts, ["第一句\n第二句\n第三句"]);
   assert.deepEqual(sent.map((output) => output.content.kind === "audio" ? output.content.transcript : ""), ["第一句\n第二句\n第三句"]);
+  assert.deepEqual(logs, [{ status: "sent", summary: "[语音]第一句\n第二句\n第三句" }]);
 });
 
 test("send_chat voice returns tts failure without sending fallback text", async () => {

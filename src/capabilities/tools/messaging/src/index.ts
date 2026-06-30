@@ -459,8 +459,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 
   async function sendFeishuVoiceTranscript(target: MessagingToolTarget, text: string, senderName?: string): Promise<void> {
-    const content = text;
-    const output = buildOutput(target, "markdown", senderName === "core" ? markdownItalic(content) : content, undefined, senderName);
+    const output = buildOutput(target, "markdown", text, undefined, senderName);
     let lastReason = "";
     for (let attempt = 1; attempt <= maxSendRetryAttempts; attempt += 1) {
       try {
@@ -561,13 +560,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   function renderSendPart(target: MessagingToolTarget, type: SendType, content: string, senderName?: string): { type: SendType; content: string } {
     if (target.plugin === "feishu" && type === "message" && senderName === "core") {
-      return { type: "markdown", content: markdownItalic(content) };
+      return { type: "markdown", content };
     }
     return { type, content };
-  }
-
-  function markdownItalic(content: string): string {
-    return `*${content.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")}*`;
   }
 
   function buildOutput(target: MessagingToolTarget, type: SendType, content: string, transcript?: string, senderName?: string): AgentOutput {
@@ -610,7 +605,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   }
 
   function shouldSplitSendContent(config: MessagingPluginConfig, type: SendType, renderedType: SendType): boolean {
-    return config.splitMultilineSendChat && renderedType !== "markdown" && (type === "message" || type === "voice");
+    return config.splitMultilineSendChat && renderedType !== "markdown" && type === "message";
   }
 }
 
@@ -952,6 +947,7 @@ function filterParentheticalSendContent(content: string): string {
     .replace(/[ \t]*（[^（）\r\n]*）[ \t]*/g, " ")
     .split(/\r?\n|\\r\\n|\\n/g)
     .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .filter(Boolean)
     .join("\n");
 }
 

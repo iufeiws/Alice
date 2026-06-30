@@ -266,7 +266,7 @@ function messagingPluginEntry(): AdminPluginRegistryEntry {
         { key: "feishu", label: "Feishu" }
       ],
       fields: [
-        { key: "splitMultilineSendChat", label: "Split Multiline Send Chat", type: "switch", group: "general", description: "Split send_chat message and voice content on newlines. Feishu core messages rendered as markdown are never split." },
+        { key: "splitMultilineSendChat", label: "Split Multiline Send Chat", type: "switch", group: "general", description: "Split send_chat message content on newlines. Voice, markdown, image, and Feishu core markdown sends are never split." },
         { key: "limitConsecutiveSends", label: "Limit Consecutive Sends", type: "switch", group: "general", description: "Block send_chat after 10 recent outbound messages until the user replies." },
         { key: "feishuTypingEmojiEnabled", label: "Typing Emoji Indicator", type: "switch", group: "feishu", description: "Use the Feishu reaction-based typing indicator while Alice is preparing a reply." }
       ]

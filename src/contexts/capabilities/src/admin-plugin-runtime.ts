@@ -1,7 +1,7 @@
 import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/src/index.js";
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
 import { buildLLMTextVariables, renderLLMText } from "../../agent-profile/src/application/llm-text-renderer.js";
-import { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsLlmClient, type TtsPluginConfig, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsConversionProvider, type TtsLlmClient, type TtsPluginConfig, type TtsTextFilter, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
@@ -46,13 +46,15 @@ type TtsAdminConfig = {
     enabled?: boolean;
     baseURL?: string;
     localFallbackEnabled?: boolean;
+    textFilters?: TtsTextFilter[];
   };
   conversion?: {
-    provider?: "genie" | "openai-api" | "bailian";
+    provider?: TtsConversionProvider;
     genie?: {
       enabled?: boolean;
       baseURL?: string;
       localFallbackEnabled?: boolean;
+      textFilters?: TtsTextFilter[];
     };
     openaiApi?: {
       apiPresetName?: string;
@@ -61,6 +63,7 @@ type TtsAdminConfig = {
       timeoutMs?: number;
       sampleRate?: number;
       channels?: number;
+      textFilters?: TtsTextFilter[];
       extraParamsJson?: string;
     };
     bailian?: {
@@ -78,6 +81,24 @@ type TtsAdminConfig = {
       timeoutMs?: number;
       sampleRate?: number;
       channels?: number;
+      textFilters?: TtsTextFilter[];
+      extraParamsJson?: string;
+    };
+    mimo?: {
+      mode?: "preset" | "voicedesign" | "voiceclone";
+      baseURL?: string;
+      apiKey?: string;
+      apiKeyEnv?: string;
+      model?: string;
+      voice?: string;
+      voiceDesignPrompt?: string;
+      voiceCloneAudioDataUrl?: string;
+      voiceCloneAudioDataUrlSet?: boolean;
+      audioFormat?: "wav" | "pcm16";
+      timeoutMs?: number;
+      sampleRate?: number;
+      channels?: number;
+      textFilters?: TtsTextFilter[];
       extraParamsJson?: string;
     };
   };
@@ -721,6 +742,7 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "model_genie", label: "Model / Conversion / Genie" },
         { key: "conversion_openai_api", label: "Conversion / OpenAI-API" },
         { key: "conversion_bailian", label: "Conversion / Bailian" },
+        { key: "conversion_mimo", label: "Conversion / MiMo" },
         { key: "general", label: "Common Settings" }
       ],
       fields: [
@@ -747,7 +769,8 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "conversion.provider", label: "Conversion Backend", type: "select", group: "general", options: [
           { value: "genie", label: "Genie" },
           { value: "openai-api", label: "OpenAI-API" },
-          { value: "bailian", label: "Bailian" }
+          { value: "bailian", label: "Bailian" },
+          { value: "mimo", label: "MiMo" }
         ], description: "Backend used after optional translation." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
         { key: "conversion.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
@@ -781,6 +804,25 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "conversion.bailian.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_bailian", min: 8000, max: 48000, step: 1000, description: "PCM sample rate returned by Bailian. Default is 24000." },
         { key: "conversion.bailian.channels", label: "PCM Channels", type: "number", group: "conversion_bailian", min: 1, max: 2, step: 1, description: "PCM channel count returned by Bailian. Default is 1." },
         { key: "conversion.bailian.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_bailian", description: "Optional JSON object merged into Bailian Qwen-TTS input fields." },
+        { key: "conversion.mimo.mode", label: "MiMo Mode", type: "select", group: "conversion_mimo", options: [
+          { value: "preset", label: "Preset Voice" },
+          { value: "voicedesign", label: "Voice Design" },
+          { value: "voiceclone", label: "Voice Clone" }
+        ], description: "MiMo V2.5 TTS mode." },
+        { key: "conversion.mimo.baseURL", label: "Base URL", type: "text", group: "conversion_mimo", description: "MiMo API base URL. Defaults to https://api.xiaomimimo.com/v1." },
+        { key: "conversion.mimo.apiKey", label: "API Key", type: "password", group: "conversion_mimo", description: "MiMo API key stored in the provider JSON. Leave blank to keep unchanged." },
+        { key: "conversion.mimo.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_mimo", description: "Environment variable containing the MiMo API key. Default is MIMO_API_KEY." },
+        { key: "conversion.mimo.voice", label: "Preset Voice", type: "text", group: "conversion_mimo", description: "Preset voice for mimo-v2.5-tts." },
+        { key: "conversion.mimo.voiceDesignPrompt", label: "Voice Design Prompt", type: "textarea", group: "conversion_mimo", description: "Sent as the MiMo user message only in voice design mode." },
+        { key: "conversion.mimo.voiceCloneAudioDataUrl", label: "Voice Clone Audio", type: "fileUpload", group: "conversion_mimo", assetKey: "mimo-voiceclone-audio", accept: "audio/wav,audio/mpeg,.wav,.mp3", description: "Uploaded WAV/MP3 is stored as data URL base64 in providers/mimo.json." },
+        { key: "conversion.mimo.audioFormat", label: "Audio Format", type: "select", group: "conversion_mimo", options: [
+          { value: "wav", label: "WAV" },
+          { value: "pcm16", label: "PCM16" }
+        ], description: "MiMo audio.format. WAV is the normal file output path." },
+        { key: "conversion.mimo.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_mimo", min: 1000, max: 300000, step: 1000, description: "Request timeout for MiMo TTS." },
+        { key: "conversion.mimo.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_mimo", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used when audioFormat is pcm16. Default is 24000." },
+        { key: "conversion.mimo.channels", label: "PCM Channels", type: "number", group: "conversion_mimo", min: 1, max: 2, step: 1, description: "PCM channel count used when audioFormat is pcm16. Default is 1." },
+        { key: "conversion.mimo.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_mimo", description: "Optional JSON object merged into the MiMo chat/completions request." },
         { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
@@ -796,7 +838,12 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
       "read outgoing voice text before TTS",
       "pass translated text to TTS",
       "do not persist translated text to message log"
-    ]
+    ],
+    testSchema: {
+      input: "text",
+      label: "Input",
+      buttonLabel: "Test translation and voice"
+    }
   };
 }
 
@@ -1901,7 +1948,11 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
         ? createBailianTtsVoiceSynthesizer(config, {
           appendLog: context.appendLog
         })
-      : createTtsFallbackTtsSynthesizer(context)
+      : config.conversion?.provider === "mimo"
+        ? createMimoTtsVoiceSynthesizer(config, {
+          appendLog: context.appendLog
+        })
+        : createTtsFallbackTtsSynthesizer(context)
   );
   let voice: Awaited<ReturnType<VoiceSynthesizer>>;
   let ttsMs = 0;
@@ -1964,7 +2015,8 @@ function updateTtsConfig(
   const nextRemote = {
     enabled: geniePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(geniePatch.enabled),
     baseURL: geniePatch.baseURL === undefined ? currentRemote.baseURL ?? "" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? ""),
-    localFallbackEnabled: geniePatch.localFallbackEnabled === undefined ? currentRemote.localFallbackEnabled ?? false : booleanFromUnknown(geniePatch.localFallbackEnabled)
+    localFallbackEnabled: geniePatch.localFallbackEnabled === undefined ? currentRemote.localFallbackEnabled ?? false : booleanFromUnknown(geniePatch.localFallbackEnabled),
+    textFilters: currentRemote.textFilters?.length ? currentRemote.textFilters : undefined
   };
   const openAiApiPatch = conversionPatch.openaiApi && typeof conversionPatch.openaiApi === "object" && !Array.isArray(conversionPatch.openaiApi)
     ? conversionPatch.openaiApi as Record<string, unknown>
@@ -1979,6 +2031,7 @@ function updateTtsConfig(
     timeoutMs: openAiApiPatch.timeoutMs === undefined ? currentOpenAiApi.timeoutMs ?? 60_000 : optionalNumberFromUnknown(openAiApiPatch.timeoutMs),
     sampleRate: openAiApiPatch.sampleRate === undefined ? currentOpenAiApi.sampleRate ?? 32_000 : optionalNumberFromUnknown(openAiApiPatch.sampleRate),
     channels: openAiApiPatch.channels === undefined ? currentOpenAiApi.channels ?? 1 : optionalNumberFromUnknown(openAiApiPatch.channels),
+    textFilters: currentOpenAiApi.textFilters?.length ? currentOpenAiApi.textFilters : undefined,
     extraParams: extraParamsResult.value
   };
   const bailianPatch = conversionPatch.bailian && typeof conversionPatch.bailian === "object" && !Array.isArray(conversionPatch.bailian)
@@ -2016,11 +2069,36 @@ function updateTtsConfig(
     timeoutMs: bailianPatch.timeoutMs === undefined ? currentBailian.timeoutMs ?? 60_000 : optionalNumberFromUnknown(bailianPatch.timeoutMs),
     sampleRate: bailianPatch.sampleRate === undefined ? currentBailian.sampleRate ?? 24_000 : optionalNumberFromUnknown(bailianPatch.sampleRate),
     channels: bailianPatch.channels === undefined ? currentBailian.channels ?? 1 : optionalNumberFromUnknown(bailianPatch.channels),
+    textFilters: currentBailian.textFilters?.length ? currentBailian.textFilters : undefined,
     extraParams: bailianExtraParamsResult.value
   };
+  const mimoPatch = conversionPatch.mimo && typeof conversionPatch.mimo === "object" && !Array.isArray(conversionPatch.mimo)
+    ? conversionPatch.mimo as Record<string, unknown>
+    : {};
+  const currentMimo = current.conversion?.mimo ?? {};
+  const mimoExtraParamsResult = parseOptionalJsonObject(mimoPatch.extraParamsJson, currentMimo.extraParams ?? {});
+  if ("error" in mimoExtraParamsResult) return { error: "invalid_mimo_extra_params" };
+  const nextMimoMode = mimoPatch.mode === undefined ? currentMimo.mode ?? "preset" : mimoModeFromUnknown(mimoPatch.mode);
+  if (!nextMimoMode) return { error: "invalid_mimo_mode" };
+  const nextMimo = {
+    mode: nextMimoMode,
+    baseURL: mimoPatch.baseURL === undefined ? currentMimo.baseURL ?? defaultMimoTtsBaseURL : requiredString(mimoPatch.baseURL),
+    apiKey: mimoPatch.apiKey === undefined ? currentMimo.apiKey : optionalString(mimoPatch.apiKey) ?? currentMimo.apiKey,
+    apiKeyEnv: mimoPatch.apiKeyEnv === undefined ? currentMimo.apiKeyEnv ?? "MIMO_API_KEY" : optionalString(mimoPatch.apiKeyEnv),
+    voice: mimoPatch.voice === undefined ? currentMimo.voice ?? "mimo_default" : requiredString(mimoPatch.voice),
+    voiceDesignPrompt: mimoPatch.voiceDesignPrompt === undefined ? currentMimo.voiceDesignPrompt : optionalString(mimoPatch.voiceDesignPrompt),
+    voiceCloneAudioDataUrl: currentMimo.voiceCloneAudioDataUrl,
+    audioFormat: mimoPatch.audioFormat === undefined ? currentMimo.audioFormat ?? "wav" : mimoAudioFormatFromUnknown(mimoPatch.audioFormat),
+    timeoutMs: mimoPatch.timeoutMs === undefined ? currentMimo.timeoutMs ?? 60_000 : optionalNumberFromUnknown(mimoPatch.timeoutMs),
+    sampleRate: mimoPatch.sampleRate === undefined ? currentMimo.sampleRate ?? 24_000 : optionalNumberFromUnknown(mimoPatch.sampleRate),
+    channels: mimoPatch.channels === undefined ? currentMimo.channels ?? 1 : optionalNumberFromUnknown(mimoPatch.channels),
+    textFilters: currentMimo.textFilters?.length ? currentMimo.textFilters : undefined,
+    extraParams: mimoExtraParamsResult.value
+  };
+  if (!nextMimo.audioFormat) return { error: "invalid_mimo_audio_format" };
   const nextConversionProvider = conversionPatch.provider === undefined
     ? current.conversion?.provider ?? "genie"
-    : conversionPatch.provider === "openai-api" ? "openai-api" : conversionPatch.provider === "bailian" ? "bailian" : conversionPatch.provider === "genie" ? "genie" : undefined;
+    : conversionPatch.provider === "openai-api" ? "openai-api" : conversionPatch.provider === "bailian" ? "bailian" : conversionPatch.provider === "mimo" ? "mimo" : conversionPatch.provider === "genie" ? "genie" : undefined;
   if (!nextConversionProvider) return { error: "invalid_conversion_provider" };
   const currentTranslationPresets = current.translationPresets ?? {};
   const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
@@ -2070,7 +2148,8 @@ function updateTtsConfig(
       provider: nextConversionProvider,
       genie: nextRemote,
       openaiApi: nextOpenAiApi,
-      bailian: nextBailian
+      bailian: nextBailian,
+      mimo: nextMimo
     },
     translationPresetName: activeTranslationPresetName,
     translationPresets: nextTranslationPresets,
@@ -2118,6 +2197,17 @@ function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   if (bailian?.timeoutMs !== undefined && invalidNumber(bailian.timeoutMs, 1000, 300000)) return "invalid_bailian_timeout";
   if (bailian?.sampleRate !== undefined && invalidNumber(bailian.sampleRate, 8000, 48000)) return "invalid_bailian_sample_rate";
   if (bailian?.channels !== undefined && invalidNumber(bailian.channels, 1, 2)) return "invalid_bailian_channels";
+  const mimo = config.conversion?.mimo;
+  if (config.conversion?.provider === "mimo") {
+    if (!mimo?.baseURL) return "missing_mimo_tts_base_url";
+    if (mimo.mode === "preset" && !mimo.voice) return "missing_mimo_tts_voice";
+    if (mimo.mode === "voicedesign" && !mimo.voiceDesignPrompt) return "missing_mimo_voice_design_prompt";
+    if (mimo.mode === "voiceclone" && !mimo.voiceCloneAudioDataUrl) return "missing_mimo_voice_clone_audio";
+  }
+  if (mimo?.audioFormat !== undefined && mimo.audioFormat !== "wav" && mimo.audioFormat !== "pcm16") return "invalid_mimo_audio_format";
+  if (mimo?.timeoutMs !== undefined && invalidNumber(mimo.timeoutMs, 1000, 300000)) return "invalid_mimo_timeout";
+  if (mimo?.sampleRate !== undefined && invalidNumber(mimo.sampleRate, 8000, 48000)) return "invalid_mimo_sample_rate";
+  if (mimo?.channels !== undefined && invalidNumber(mimo.channels, 1, 2)) return "invalid_mimo_channels";
   const voice = config.voice ?? {};
   for (const model of Object.values(voice.modelConfigs ?? {})) {
     if (model.speed !== undefined && invalidNumber(model.speed, 0.5, 2)) return "invalid_voice_speed";
@@ -2160,6 +2250,14 @@ function bailianServiceFromUnknown(value: unknown): "qwen" | "cosy" | undefined 
 
 function bailianModeFromUnknown(value: unknown): "commit" | "server_commit" | undefined {
   return value === "commit" || value === "server_commit" ? value : undefined;
+}
+
+function mimoModeFromUnknown(value: unknown): "preset" | "voicedesign" | "voiceclone" | undefined {
+  return value === "preset" || value === "voicedesign" || value === "voiceclone" ? value : undefined;
+}
+
+function mimoAudioFormatFromUnknown(value: unknown): "wav" | "pcm16" | undefined {
+  return value === "wav" || value === "pcm16" ? value : undefined;
 }
 
 function isTtsVoiceAssetPath(value: string): boolean {
@@ -2288,6 +2386,16 @@ function writeTtsConfig(context: AdminRoutesContext, config: TtsPluginConfig): v
   const filePath = ttsConfigPath(context);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(canonicalTtsConfig(config), null, 2)}\n`);
+  writeTtsProviderConfigs(context, config);
+}
+
+function writeTtsProviderConfigs(context: AdminRoutesContext, config: TtsPluginConfig): void {
+  const dir = ttsProviderConfigDirectory(context);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "genie.json"), `${JSON.stringify(config.conversion?.genie ?? {}, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, "openai-api.json"), `${JSON.stringify(config.conversion?.openaiApi ?? {}, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, "bailian.json"), `${JSON.stringify(config.conversion?.bailian ?? {}, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, "mimo.json"), `${JSON.stringify(config.conversion?.mimo ?? {}, null, 2)}\n`);
 }
 
 async function uploadGenericPluginAsset(
@@ -2308,6 +2416,11 @@ async function uploadGenericPluginAsset(
   if (body.length === 0) return { error: "empty_upload" };
 
   const presetName = decodeHeaderFileName(optionalString(request.headers?.["x-preset-name"]) ?? "");
+  if (pluginId === "tts" && assetKey === "mimo-voiceclone-audio") {
+    const result = writeTtsMimoVoiceCloneAudioUpload(context, config, fileName, body);
+    if ("error" in result) return result;
+    return result;
+  }
   const assetPath = pluginId === "tts"
     ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName, context.pluginConfigs?.tts?.assetRoot)
     : resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
@@ -2337,6 +2450,39 @@ async function uploadGenericPluginAsset(
   };
   writeTtsConfig(context, next);
   return { config: publicTtsConfig(next), assetPath: assetPath.assetPath };
+}
+
+function writeTtsMimoVoiceCloneAudioUpload(
+  context: AdminRoutesContext,
+  config: TtsPluginConfig,
+  fileName: string,
+  body: Buffer
+): { config: TtsAdminConfig; assetPath: string } | { error: string; statusCode?: number } {
+  const mimeType = mimoVoiceCloneMimeType(fileName);
+  if (!mimeType) return { error: "unsupported_mimo_voiceclone_audio_type" };
+  const currentMimo = config.conversion?.mimo ?? {};
+  const nextMode = "voiceclone" as const;
+  const next: TtsPluginConfig = {
+    ...config,
+    conversion: {
+      ...config.conversion,
+      provider: config.conversion?.provider ?? "mimo",
+      mimo: {
+        ...currentMimo,
+        mode: nextMode,
+        voiceCloneAudioDataUrl: `data:${mimeType};base64,${body.toString("base64")}`
+      }
+    }
+  };
+  writeTtsConfig(context, next);
+  return { config: publicTtsConfig(next), assetPath: `${path.join(ttsProviderConfigDirectory(context), "mimo.json").split(path.sep).join("/")}#voiceCloneAudioDataUrl` };
+}
+
+function mimoVoiceCloneMimeType(fileName: string): string | undefined {
+  const extension = path.extname(fileName).toLowerCase();
+  if (extension === ".wav") return "audio/wav";
+  if (extension === ".mp3") return "audio/mpeg";
+  return undefined;
 }
 
 function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
@@ -2447,6 +2593,10 @@ function ttsConfigPath(context: AdminRoutesContext): string {
   return context.pluginConfigs?.tts?.configPath ?? "config/plugin/tts/config.json";
 }
 
+function ttsProviderConfigDirectory(context: AdminRoutesContext): string {
+  return path.join(path.dirname(ttsConfigPath(context)), "providers");
+}
+
 function ttsConfigMtime(context: AdminRoutesContext): string | undefined {
   try {
     const stats = fs.statSync(ttsConfigPath(context)) as { mtime?: Date; mtimeMs?: number };
@@ -2469,19 +2619,22 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
   const conversion = config.conversion ?? { provider: "genie" as const, genie: config.remote };
   const openaiApi = conversion.openaiApi ?? {};
   const bailian = conversion.bailian ?? {};
+  const mimo = conversion.mimo ?? {};
   return {
     enabled: config.enabled,
     remote: {
       enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
       baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "",
-      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false
+      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false,
+      ...((conversion.genie?.textFilters ?? config.remote?.textFilters)?.length ? { textFilters: conversion.genie?.textFilters ?? config.remote?.textFilters } : {})
     },
     conversion: {
       provider: conversion.provider ?? "genie",
       genie: {
         enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
         baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "",
-        localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false
+        localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false,
+        ...((conversion.genie?.textFilters ?? config.remote?.textFilters)?.length ? { textFilters: conversion.genie?.textFilters ?? config.remote?.textFilters } : {})
       },
       openaiApi: {
         apiPresetName: openaiApi.apiPresetName,
@@ -2490,6 +2643,7 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
         timeoutMs: openaiApi.timeoutMs ?? 60_000,
         sampleRate: openaiApi.sampleRate ?? 32_000,
         channels: openaiApi.channels ?? 1,
+        ...(openaiApi.textFilters?.length ? { textFilters: openaiApi.textFilters } : {}),
         extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
       },
       bailian: {
@@ -2507,7 +2661,24 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
         timeoutMs: bailian.timeoutMs ?? 60_000,
         sampleRate: bailian.sampleRate ?? 24_000,
         channels: bailian.channels ?? 1,
+        ...(bailian.textFilters?.length ? { textFilters: bailian.textFilters } : {}),
         extraParamsJson: JSON.stringify(bailian.extraParams ?? {}, null, 2)
+      },
+      mimo: {
+        mode: mimo.mode ?? "preset",
+        baseURL: mimo.baseURL ?? defaultMimoTtsBaseURL,
+        apiKey: "",
+        apiKeyEnv: mimo.apiKeyEnv ?? "MIMO_API_KEY",
+        voice: mimo.voice ?? "mimo_default",
+        voiceDesignPrompt: mimo.voiceDesignPrompt,
+        voiceCloneAudioDataUrl: mimo.voiceCloneAudioDataUrl ? "(configured)" : "",
+        voiceCloneAudioDataUrlSet: Boolean(mimo.voiceCloneAudioDataUrl),
+        audioFormat: mimo.audioFormat ?? "wav",
+        timeoutMs: mimo.timeoutMs ?? 60_000,
+        sampleRate: mimo.sampleRate ?? 24_000,
+        channels: mimo.channels ?? 1,
+        ...(mimo.textFilters?.length ? { textFilters: mimo.textFilters } : {}),
+        extraParamsJson: JSON.stringify(mimo.extraParams ?? {}, null, 2)
       }
     },
     translationPresetName,
@@ -2540,51 +2711,10 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   const voice = config.voice ?? {};
   const modelConfigs = voice.modelConfigs ?? {};
   const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
-  const genie = config.conversion?.genie ?? config.remote;
-  const openaiApi = config.conversion?.openaiApi;
-  const bailian = config.conversion?.bailian;
   return {
     enabled: config.enabled,
-    remote: {
-      enabled: genie?.enabled ?? true,
-      baseURL: genie?.baseURL ?? "",
-      localFallbackEnabled: genie?.localFallbackEnabled ?? false
-    },
     conversion: {
-      provider: config.conversion?.provider ?? "genie",
-      genie: {
-        enabled: genie?.enabled ?? true,
-        baseURL: genie?.baseURL ?? "",
-        localFallbackEnabled: genie?.localFallbackEnabled ?? false
-      },
-      openaiApi: {
-        apiPresetName: openaiApi?.apiPresetName,
-        baseURL: openaiApi?.baseURL,
-        apiKeyEnv: openaiApi?.apiKeyEnv,
-        model: openaiApi?.model ?? "higgs-audio-v3-tts",
-        voice: openaiApi?.voice ?? "default",
-        timeoutMs: openaiApi?.timeoutMs ?? 60_000,
-        sampleRate: openaiApi?.sampleRate ?? 32_000,
-        channels: openaiApi?.channels ?? 1,
-        extraParams: openaiApi?.extraParams ?? {}
-      },
-      bailian: {
-        service: bailian?.service ?? "qwen",
-        endpoint: bailian?.endpoint ?? defaultBailianTtsEndpoint(bailian?.service),
-        apiKey: bailian?.apiKey,
-        apiKeyEnv: bailian?.apiKeyEnv ?? "DASHSCOPE_API_KEY",
-        workspaceId: bailian?.workspaceId,
-        userAgent: bailian?.userAgent,
-        model: bailian?.model ?? "qwen3-tts-vc-2026-01-22",
-        voice: bailian?.voice ?? "Cherry",
-        languageType: bailian?.languageType ?? "Chinese",
-        mode: bailian?.mode ?? "server_commit",
-        responseFormat: bailian?.responseFormat ?? "pcm",
-        timeoutMs: bailian?.timeoutMs ?? 60_000,
-        sampleRate: bailian?.sampleRate ?? 24_000,
-        channels: bailian?.channels ?? 1,
-        extraParams: bailian?.extraParams ?? {}
-      }
+      provider: config.conversion?.provider ?? "genie"
     },
     translationPresetName,
     translationPresets,
@@ -2615,7 +2745,7 @@ function ttsConfigSchema(): unknown {
       conversion: {
         type: "object",
         properties: {
-          provider: { type: "string", enum: ["genie", "openai-api", "bailian"] },
+          provider: { type: "string", enum: ["genie", "openai-api", "bailian", "mimo"] },
           genie: {
             type: "object",
             properties: {
@@ -2625,7 +2755,8 @@ function ttsConfigSchema(): unknown {
             }
           },
           openaiApi: { type: "object" },
-          bailian: { type: "object" }
+          bailian: { type: "object" },
+          mimo: { type: "object" }
         }
       },
       translationEnabled: { type: "boolean" },

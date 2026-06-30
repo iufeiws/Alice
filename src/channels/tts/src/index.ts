@@ -7,10 +7,12 @@ export type {
   TtsAudioTextChunk,
   TtsBailianConversionConfig,
   TtsConversionConfig,
+  TtsConversionProvider,
   TtsLlmClient,
   TtsLlmRequest,
   TtsLlmRequestSender,
   TtsLlmResult,
+  TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
   TtsPlugin,
   TtsPluginConfig,
@@ -19,6 +21,7 @@ export type {
   TtsStreamChunk,
   TtsStreamInput,
   TtsSynthesizer,
+  TtsTextFilter,
   TtsTranslationPreset,
   TtsVoiceModelConfig,
   VoiceSynthesisInput,
@@ -27,6 +30,7 @@ export type {
 } from "./types.js";
 export {
   defaultBailianTtsEndpoint,
+  defaultMimoTtsBaseURL,
   readTtsPluginConfig,
   selectedTtsConversionProvider,
   selectedTtsTranslationPreset,
@@ -51,6 +55,7 @@ export {
 } from "./stream.js";
 export {
   createBailianTtsVoiceSynthesizer,
+  createMimoTtsVoiceSynthesizer,
   createOpenAiApiTtsVoiceSynthesizer
 } from "./conversion.js";
 export {

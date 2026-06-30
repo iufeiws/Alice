@@ -98,13 +98,17 @@ export type TtsRemoteConfig = {
   enabled?: boolean;
   baseURL?: string;
   localFallbackEnabled?: boolean;
+  textFilters?: TtsTextFilter[];
 };
 
+export type TtsConversionProvider = "genie" | "openai-api" | "bailian" | "mimo";
+
 export type TtsConversionConfig = {
-  provider?: "genie" | "openai-api" | "bailian";
+  provider?: TtsConversionProvider;
   genie?: TtsRemoteConfig;
   openaiApi?: TtsOpenAiApiConversionConfig;
   bailian?: TtsBailianConversionConfig;
+  mimo?: TtsMimoConversionConfig;
 };
 
 export type TtsOpenAiApiConversionConfig = {
@@ -117,7 +121,14 @@ export type TtsOpenAiApiConversionConfig = {
   timeoutMs?: number;
   sampleRate?: number;
   channels?: number;
+  textFilters?: TtsTextFilter[];
   extraParams?: Record<string, unknown>;
+};
+
+export type TtsTextFilter = {
+  pattern: string;
+  flags?: string;
+  replacement?: string;
 };
 
 export type TtsBailianConversionConfig = {
@@ -135,6 +146,23 @@ export type TtsBailianConversionConfig = {
   sampleRate?: number;
   channels?: number;
   timeoutMs?: number;
+  textFilters?: TtsTextFilter[];
+  extraParams?: Record<string, unknown>;
+};
+
+export type TtsMimoConversionConfig = {
+  mode?: "preset" | "voicedesign" | "voiceclone";
+  baseURL?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  voice?: string;
+  voiceDesignPrompt?: string;
+  voiceCloneAudioDataUrl?: string;
+  audioFormat?: "wav" | "pcm16";
+  timeoutMs?: number;
+  sampleRate?: number;
+  channels?: number;
+  textFilters?: TtsTextFilter[];
   extraParams?: Record<string, unknown>;
 };
 

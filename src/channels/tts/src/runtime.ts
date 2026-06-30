@@ -7,10 +7,12 @@ export type {
   TtsAudioTextChunk,
   TtsBailianConversionConfig,
   TtsConversionConfig,
+  TtsConversionProvider,
   TtsLlmClient,
   TtsLlmRequest,
   TtsLlmRequestSender,
   TtsLlmResult,
+  TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
   TtsPlugin,
   TtsPluginConfig,
@@ -36,5 +38,5 @@ export {
 export { createTtsPlugin, createTtsTranslationSynthesizer } from "./plugin.js";
 export { resolveTtsText, translateTtsText } from "./translation.js";
 export { collectTtsStreamText, createTtsPcmProgressTextMapper, splitTtsStreamParts, splitTtsTextChunks, streamTtsText } from "./stream.js";
-export { createBailianTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer } from "./conversion.js";
+export { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer } from "./conversion.js";
 export { createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer } from "./synthesizers.js";

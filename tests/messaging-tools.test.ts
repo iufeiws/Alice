@@ -4,7 +4,7 @@ import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { formatToolResultForLLM } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../src/capabilities/tools/messaging/src/index.js";
 import { createFinishAndWaitTools } from "../src/capabilities/tools/finish-and-wait/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig } from "../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../src/channels/tts/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -1575,16 +1575,19 @@ test("tts plugin config reads switch, api preset, and prompt from plugin folder 
   assert.equal(config.voice?.modelConfigs?.jp?.splitText, false);
 });
 
-test("tts plugin config migrates legacy remote settings into Genie conversion", () => {
+test("tts plugin config reads Genie conversion settings from provider config", () => {
   const dir = makeTempDir("tts-config-conversion");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    remote: {
-      enabled: true,
-      baseURL: "192.168.0.103"
-    },
+    conversion: { provider: "genie" },
     translationEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103"
   }));
 
   const config = readTtsPluginConfig(configPath);
@@ -1610,17 +1613,17 @@ test("tts plugin config requires prompt when translation is enabled", () => {
 test("tts plugin config can disable local Genie fallback", () => {
   const dir = makeTempDir("tts-config-local-fallback");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    conversion: {
-      provider: "genie",
-      genie: {
-        enabled: true,
-        baseURL: "192.168.0.103",
-        localFallbackEnabled: false
-      }
-    },
+    conversion: { provider: "genie" },
     translationEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103",
+    localFallbackEnabled: false
   }));
 
   const config = readTtsPluginConfig(configPath);
@@ -1634,29 +1637,29 @@ test("tts plugin config can disable local Genie fallback", () => {
 test("tts plugin config reads Bailian conversion settings", () => {
   const dir = makeTempDir("tts-config-bailian");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    conversion: {
-      provider: "bailian",
-      bailian: {
-        service: "qwen",
-        endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-        apiKey: "inline-key",
-        apiKeyEnv: "DASHSCOPE_API_KEY",
-        workspaceId: "workspace-1",
-        userAgent: "Alice-Test",
-        model: "qwen3-tts-vc-2026-01-22",
-        voice: "custom-voice",
-        languageType: "Chinese",
-        mode: "server_commit",
-        responseFormat: "pcm",
-        sampleRate: 24000,
-        channels: 1,
-        timeoutMs: 5000,
-        extraParams: { volume: 50 }
-      }
-    },
+    conversion: { provider: "bailian" },
     translationEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "bailian.json"), JSON.stringify({
+    service: "qwen",
+    endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    apiKey: "inline-key",
+    apiKeyEnv: "DASHSCOPE_API_KEY",
+    workspaceId: "workspace-1",
+    userAgent: "Alice-Test",
+    model: "qwen3-tts-vc-2026-01-22",
+    voice: "custom-voice",
+    languageType: "Chinese",
+    mode: "server_commit",
+    responseFormat: "pcm",
+    sampleRate: 24000,
+    channels: 1,
+    timeoutMs: 5000,
+    extraParams: { volume: 50 }
   }));
 
   const config = readTtsPluginConfig(configPath);
@@ -1674,6 +1677,33 @@ test("tts plugin config reads Bailian conversion settings", () => {
   assert.equal(config.conversion?.bailian?.mode, "server_commit");
   assert.equal(config.conversion?.bailian?.sampleRate, 24000);
   assert.deepEqual(config.conversion?.bailian?.extraParams, { volume: 50 });
+});
+
+test("tts plugin config reads MiMo conversion settings from provider config", () => {
+  const dir = makeTempDir("tts-config-mimo");
+  const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: { provider: "mimo" },
+    translationEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "mimo.json"), JSON.stringify({
+    mode: "voiceclone",
+    apiKeyEnv: "MIMO_API_KEY",
+    model: "wrong-model-is-ignored",
+    voiceCloneAudioDataUrl: "data:audio/wav;base64,AAAA",
+    extraParams: { seed: 1 }
+  }));
+
+  const config = readTtsPluginConfig(configPath);
+
+  assert.equal(config.conversion?.provider, "mimo");
+  assert.equal(config.conversion?.mimo?.mode, "voiceclone");
+  assert.equal(Object.hasOwn(config.conversion?.mimo ?? {}, "model"), false);
+  assert.equal(config.conversion?.mimo?.voiceCloneAudioDataUrl, "data:audio/wav;base64,AAAA");
+  assert.deepEqual(config.conversion?.mimo?.extraParams, { seed: 1 });
 });
 
 test("tts plugin switch is read from plugin config at synthesis time", async () => {
@@ -1809,6 +1839,38 @@ test("openai-api tts sends non-stream pcm speech request with full text chunk", 
   } finally {
     fs.rmSync(result.filePath, { force: true });
   }
+});
+
+test("tts router applies selected provider text filters", async () => {
+  const texts: string[] = [];
+  const baseSynthesizer = (async (input) => {
+    texts.push(input.text);
+    return {
+      assetId: "generated/tts/filter-test.wav",
+      filePath: path.join(makeTempDir("tts-filter-route"), "filter-test.wav")
+    };
+  }) as VoiceSynthesizer;
+
+  await synthesizeTtsRouted({
+    text: "…第一句。\n…第二句。",
+    time: createCurrentTimeProvider("UTC")
+  }, {
+    enabled: true,
+    translationEnabled: false,
+    prompt: "Read aloud.",
+    conversion: {
+      provider: "genie",
+      genie: {
+        textFilters: [
+          { pattern: "^…+", flags: "gm", replacement: "" }
+        ]
+      }
+    }
+  }, {
+    baseSynthesizer
+  });
+
+  assert.deepEqual(texts, ["第一句。\n第二句。"]);
 });
 
 test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", async () => {
@@ -1964,6 +2026,69 @@ test("bailian tts uses CosyVoice SpeechSynthesizer endpoint and parameters", asy
   assert.deepEqual(chunks, [
     ["第一句。", [5, 6], 24000, 1]
   ]);
+});
+
+test("mimo tts voiceclone sends chat completions audio voice data url", async () => {
+  const outputDir = path.join(makeTempDir("mimo-tts-output"), "assets", "generated", "tts");
+  const requests: Array<{ url: string; headers: Headers; body: any }> = [];
+  const audio = Buffer.from("wav-bytes");
+  const synthesize = createMimoTtsVoiceSynthesizer({
+    enabled: true,
+    translationEnabled: false,
+    prompt: "unused",
+    conversion: {
+      provider: "mimo",
+      mimo: {
+        mode: "voiceclone",
+        apiKey: "mimo-key",
+        voiceCloneAudioDataUrl: "data:audio/wav;base64,AAAA",
+        audioFormat: "wav",
+        sampleRate: 24000,
+        channels: 1
+      }
+    }
+  }, {
+    outputDir,
+    fetch: async (url, init) => {
+      requests.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body))
+      });
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            audio: { data: audio.toString("base64") }
+          }
+        }]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-11T02:10:51.609Z"))
+  });
+
+  try {
+    assert.equal(requests[0].url, "https://api.xiaomimimo.com/v1/chat/completions");
+    assert.equal(requests[0].headers.get("api-key"), "mimo-key");
+    assert.deepEqual(requests[0].body, {
+      model: "mimo-v2.5-tts-voiceclone",
+      messages: [{ role: "assistant", content: "保存音频。" }],
+      audio: {
+        format: "wav",
+        voice: "data:audio/wav;base64,AAAA"
+      }
+    });
+    assert.equal(result.assetId, "generated/tts/2026-06-11T02_10_51.609-mimo.wav");
+    assert.deepEqual(fs.readFileSync(result.filePath), audio);
+  } finally {
+    fs.rmSync(result.filePath, { force: true });
+  }
 });
 
 test("tts PCM progress mapper falls back to UTF character slices without punctuation", () => {
@@ -3181,23 +3306,23 @@ test("fallback voice synthesizer uses local synthesis when remote synthesis fail
 test("remote-aware tts does not prepare local Genie when API provider is selected", async () => {
   const dir = makeTempDir("tts-remote-aware-api");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    conversion: {
-      provider: "openai-api",
-      genie: {
-        enabled: true,
-        baseURL: "192.168.0.103",
-        localFallbackEnabled: false
-      },
-      openaiApi: {
-        baseURL: "https://tts.example.test/v1",
-        model: "voice-model",
-        voice: "voice"
-      }
-    },
+    conversion: { provider: "openai-api" },
     translationEnabled: false,
     prompt: "Read aloud."
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103",
+    localFallbackEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "openai-api.json"), JSON.stringify({
+    baseURL: "https://tts.example.test/v1",
+    model: "voice-model",
+    voice: "voice"
   }));
   const calls: string[] = [];
   const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
@@ -3219,18 +3344,18 @@ test("remote-aware tts does not prepare local Genie when API provider is selecte
 test("remote-aware tts disabled local fallback does not start local Genie after remote failure", async () => {
   const dir = makeTempDir("tts-remote-aware-no-local-fallback");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    conversion: {
-      provider: "genie",
-      genie: {
-        enabled: true,
-        baseURL: "192.168.0.103",
-        localFallbackEnabled: false
-      }
-    },
+    conversion: { provider: "genie" },
     translationEnabled: false,
     prompt: "Read aloud."
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103",
+    localFallbackEnabled: false
   }));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -3257,18 +3382,18 @@ test("remote-aware tts disabled local fallback does not start local Genie after 
 test("remote-aware tts retries fetch failed stream before audio", async () => {
   const dir = makeTempDir("tts-remote-aware-stream-retry");
   const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify({
     enabled: true,
-    conversion: {
-      provider: "genie",
-      genie: {
-        enabled: true,
-        baseURL: "remote.test",
-        localFallbackEnabled: false
-      }
-    },
+    conversion: { provider: "genie" },
     translationEnabled: false,
     prompt: ""
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "remote.test",
+    localFallbackEnabled: false
   }));
   const calls: string[] = [];
   const logs: string[] = [];

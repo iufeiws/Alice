@@ -13,6 +13,7 @@ import type {
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
+  TtsConversionProvider,
   TtsStreamChunk,
   TtsStreamInput,
   TtsSynthesizer,
@@ -174,7 +175,7 @@ export function createTtsRemoteAwareVoiceSynthesizer(
   };
 
   const selectedRoute = (): {
-    provider: "genie" | "openai-api" | "bailian";
+    provider: TtsConversionProvider;
     remote?: VoiceSynthesizer;
     localPreferred: boolean;
     localFallbackEnabled: boolean;
@@ -184,7 +185,9 @@ export function createTtsRemoteAwareVoiceSynthesizer(
       ? "openai-api"
       : pluginConfig.conversion?.provider === "bailian"
         ? "bailian"
-        : "genie";
+        : pluginConfig.conversion?.provider === "mimo"
+          ? "mimo"
+          : "genie";
     const genie = pluginConfig.conversion?.genie ?? pluginConfig.remote;
     const localFallbackEnabled = genie?.localFallbackEnabled ?? true;
     if (provider !== "genie") {

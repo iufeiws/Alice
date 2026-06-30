@@ -3,13 +3,14 @@ const path = await import("node:path");
 import type {
   TtsPluginConfig,
   TtsPluginDeps,
+  TtsConversionProvider,
   VoiceSynthesisInput,
   VoiceSynthesisResult,
   VoiceSynthesizer
 } from "./types.js";
 
 import { writePcmL16Wav } from "./audio-utils.js";
-import { selectedTtsConversionProvider } from "./config.js";
+import { applyTtsTextFilters, selectedTtsConversionProvider, ttsProviderTextFilters } from "./config.js";
 import { createTtsConversionSynthesizer } from "./conversion.js";
 import { resolveAssetOutputDir, uniqueVoiceBaseName, validateGeneratedVoice } from "./internal.js";
 
@@ -45,11 +46,13 @@ export async function synthesizeTtsRouted(
   }
 
   const conversion = selectedTtsConversionProvider(config);
+  const text = applyTtsTextFilters(input.text, ttsProviderTextFilters(conversion, config));
+  const routedInput = text === input.text ? input : { ...input, text };
   const providerKey = ttsProviderCacheKey(conversion, config);
   const provider = resolveCachedTtsProvider(conversion, providerKey, config, deps);
   await waitForTtsProviderRateLimit(providerKey);
   return provider({
-    ...input,
+    ...routedInput,
     ...(provider === deps.baseSynthesizer && options.genie !== undefined ? { genie: options.genie } : {})
   });
 }
@@ -69,7 +72,7 @@ export function ttsSilentPcmL16(durationMs: number, format: { sampleRateHz?: num
 }
 
 function resolveCachedTtsProvider(
-  conversion: "genie" | "openai-api" | "bailian",
+  conversion: TtsConversionProvider,
   key: string,
   config: TtsPluginConfig,
   deps: TtsPluginDeps
@@ -82,9 +85,10 @@ function resolveCachedTtsProvider(
   return provider;
 }
 
-function ttsProviderCacheKey(conversion: "genie" | "openai-api" | "bailian", config: TtsPluginConfig): string {
+function ttsProviderCacheKey(conversion: TtsConversionProvider, config: TtsPluginConfig): string {
   if (conversion === "openai-api") return JSON.stringify({ conversion, config: config.conversion?.openaiApi });
   if (conversion === "bailian") return JSON.stringify({ conversion, config: config.conversion?.bailian });
+  if (conversion === "mimo") return JSON.stringify({ conversion, config: config.conversion?.mimo });
   return JSON.stringify({ conversion });
 }
 

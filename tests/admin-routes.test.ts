@@ -1038,6 +1038,8 @@ test("admin plugin config patch writes tts config with preset reference only", a
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
+  const savedGenie = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "genie.json"), "utf8"));
+
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configValue.translationPresetName, "default");
@@ -1045,8 +1047,9 @@ test("admin plugin config patch writes tts config with preset reference only", a
   assert.equal(body.configValue.translationPresets.main.apiPresetName, "voice");
   assert.equal(body.configValue.voice.modelConfigs[modelConfigName].language, "zh");
   assert.equal(saved.enabled, true);
-  assert.deepEqual(saved.remote, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
-  assert.equal(saved.conversion.genie.localFallbackEnabled, false);
+  assert.equal(saved.remote, undefined);
+  assert.deepEqual(savedGenie, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
+  assert.deepEqual(saved.conversion, { provider: "genie" });
   assert.equal(saved.translationPresetName, "default");
   assert.equal(saved.translationPresets.main.translationEnabled, false);
   assert.equal(saved.translationPresets.main.prompt, "New prompt");
@@ -1091,9 +1094,10 @@ test("admin TTS config schema exposes voice language and language model folder",
   const bailianServiceField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.service");
   const bailianKeyField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.apiKey");
   const bailianModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.model");
+  const mimoModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.mimo.model");
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "conversion_bailian", "general"]);
+  assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "conversion_bailian", "conversion_mimo", "general"]);
   assert.equal(configField.type, "select");
   assert.equal(configField.group, "model_genie");
   assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["jp"]);
@@ -1118,6 +1122,7 @@ test("admin TTS config schema exposes voice language and language model folder",
   assert.equal(bailianKeyField.group, "conversion_bailian");
   assert.equal(bailianModelField.type, "text");
   assert.equal(bailianModelField.group, "conversion_bailian");
+  assert.equal(mimoModelField, undefined);
 });
 
 test("admin TTS config patch stores Bailian api key and preserves it when blank", async () => {
@@ -1159,10 +1164,12 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     }
   }), first);
   const firstSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const firstBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
 
   assert.equal(first.statusCode, 200);
   assert.equal(JSON.parse(first.body).ok, true);
-  assert.equal(firstSaved.conversion.bailian.apiKey, "dashscope-secret");
+  assert.deepEqual(firstSaved.conversion, { provider: "bailian" });
+  assert.equal(firstBailian.apiKey, "dashscope-secret");
 
   const second = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
@@ -1175,10 +1182,12 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     }
   }), second);
   const secondSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const secondBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
 
   assert.equal(second.statusCode, 200);
   assert.equal(JSON.parse(second.body).ok, true);
-  assert.equal(secondSaved.conversion.bailian.apiKey, "dashscope-secret");
+  assert.deepEqual(secondSaved.conversion, { provider: "bailian" });
+  assert.equal(secondBailian.apiKey, "dashscope-secret");
 });
 
 test("admin TTS config patch switches Bailian service default endpoint", async () => {
@@ -1216,10 +1225,12 @@ test("admin TTS config patch switches Bailian service default endpoint", async (
     }
   }), response);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const savedBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
 
   assert.equal(response.statusCode, 200);
-  assert.equal(saved.conversion.bailian.service, "cosy");
-  assert.equal(saved.conversion.bailian.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+  assert.deepEqual(saved.conversion, { provider: "bailian" });
+  assert.equal(savedBailian.service, "cosy");
+  assert.equal(savedBailian.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {
@@ -1552,6 +1563,37 @@ test("admin plugin TTS reference audio upload converts to preset wav", async () 
   assert.equal(fs.existsSync(referenceWavPath), true);
   assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "jp", "reference.mp3")), false);
   assert.equal(fs.readFileSync(referenceWavPath).subarray(0, 4).toString("ascii"), "RIFF");
+});
+
+test("admin plugin TTS MiMo voice clone upload stores data url in provider config", async () => {
+  const root = makeTempDir("admin-plugin-mimo-audio");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    translationEnabled: false,
+    conversion: { provider: "mimo" }
+  })}\n`);
+  const context = {
+    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
+    pluginConfigs: { tts: { configPath } }
+  };
+  const handler = createAdminHandler(context);
+
+  const response = createResponse();
+  await handler(createRawRequest("POST", "/admin/api/plugins/tts/assets/mimo-voiceclone-audio", Buffer.from("audio-bytes"), {
+    "x-file-name": encodeURIComponent("clone.mp3")
+  }), response);
+  const body = JSON.parse(response.body);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const savedMimo = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "mimo.json"), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.deepEqual(saved.conversion, { provider: "mimo" });
+  assert.equal(savedMimo.mode, "voiceclone");
+  assert.equal(savedMimo.voiceCloneAudioDataUrl, `data:audio/mpeg;base64,${Buffer.from("audio-bytes").toString("base64")}`);
+  assert.equal(body.configValue.conversion.mimo.voiceCloneAudioDataUrlSet, true);
 });
 
 test("admin plugin ASR test audio upload stores plugin asset path", async () => {

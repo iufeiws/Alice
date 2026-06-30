@@ -9,7 +9,8 @@ import type {
   TtsAudioTextChunk,
   TtsBailianConversionConfig,
   TtsConversionConfig,
-  TtsOpenAiApiConversionConfig,
+  TtsConversionProvider,
+  TtsMimoConversionConfig,
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
@@ -22,18 +23,19 @@ import type {
   VoiceSynthesizer
 } from "./types.js";
 
-import { defaultBailianTtsEndpoint } from "./config.js";
+import { defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, defaultMimoTtsModel } from "./config.js";
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
 import { recordTtsApiUsage } from "./usage.js";
 
 export function createTtsConversionSynthesizer(
-  conversion: "genie" | "openai-api" | "bailian",
+  conversion: TtsConversionProvider,
   config: TtsPluginConfig,
   deps: TtsPluginDeps
 ): VoiceSynthesizer | undefined {
   if (conversion === "openai-api") return createOpenAiApiTtsVoiceSynthesizer(config, deps);
   if (conversion === "bailian") return createBailianTtsVoiceSynthesizer(config, deps);
+  if (conversion === "mimo") return createMimoTtsVoiceSynthesizer(config, deps);
   return undefined;
 }
 
@@ -230,6 +232,153 @@ export function createBailianTtsVoiceSynthesizer(
     };
   };
   return synthesize;
+}
+
+export function createMimoTtsVoiceSynthesizer(
+  config: TtsPluginConfig,
+  deps: Pick<TtsPluginDeps, "env" | "fetch" | "appendLog" | "recordTokenUsageEvent"> & { outputDir?: string } = {}
+): VoiceSynthesizer {
+  const synthesize = (async (request) => {
+    const settings = resolveMimoTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
+    const audio = await requestMimoTtsAudio(request.text, settings, deps);
+    const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
+    const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
+    const filePath = path.join(outputDir, `${stamp}-mimo.wav`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, settings.audioFormat === "pcm16" ? pcmToWav(audio, { sampleRate: settings.sampleRate, channels: settings.channels }) : audio);
+    return {
+      assetId: `generated/tts/${path.basename(filePath)}`,
+      filePath
+    };
+  }) as VoiceSynthesizer;
+
+  synthesize.streamAudio = async function* (request) {
+    const settings = resolveMimoTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
+    const audio = await requestMimoTtsAudio(request.text, settings, deps);
+    if (audio.byteLength) yield audio;
+  };
+  synthesize.streamAudioWithText = async function* (request) {
+    const settings = resolveMimoTtsSettings(config, deps);
+    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
+    const audio = await requestMimoTtsAudio(request.text, settings, deps);
+    if (!audio.byteLength) return;
+    yield {
+      text: request.text,
+      chunk: audio,
+      sampleRateHz: settings.sampleRate,
+      channels: settings.channels
+    };
+  };
+  return synthesize;
+}
+
+type MimoTtsSettings = Required<Pick<TtsMimoConversionConfig, "mode" | "baseURL" | "apiKey" | "audioFormat" | "timeoutMs" | "sampleRate" | "channels" | "extraParams">> & {
+  model: string;
+  voice?: string;
+  voiceDesignPrompt?: string;
+  voiceCloneAudioDataUrl?: string;
+};
+
+function resolveMimoTtsSettings(
+  config: TtsPluginConfig,
+  deps: Pick<TtsPluginDeps, "env">
+): MimoTtsSettings {
+  const conversion = config.conversion?.mimo ?? {};
+  const mode = conversion.mode === "voicedesign" || conversion.mode === "voiceclone" ? conversion.mode : "preset";
+  const env = deps.env ?? process.env;
+  const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || env.MIMO_API_KEY;
+  if (!apiKey) throw new Error("MiMo TTS conversion requires apiKey or MIMO_API_KEY");
+  if (mode === "voicedesign" && !conversion.voiceDesignPrompt) throw new Error("MiMo voice design requires voiceDesignPrompt");
+  if (mode === "voiceclone" && !conversion.voiceCloneAudioDataUrl) throw new Error("MiMo voice clone requires voiceCloneAudioDataUrl");
+  return {
+    mode,
+    baseURL: normalizeMimoBaseURL(conversion.baseURL || defaultMimoTtsBaseURL),
+    apiKey,
+    model: defaultMimoTtsModel(mode),
+    voice: conversion.voice || "mimo_default",
+    voiceDesignPrompt: conversion.voiceDesignPrompt,
+    voiceCloneAudioDataUrl: conversion.voiceCloneAudioDataUrl,
+    audioFormat: conversion.audioFormat === "pcm16" ? "pcm16" : "wav",
+    timeoutMs: conversion.timeoutMs ?? 60_000,
+    sampleRate: conversion.sampleRate ?? 24_000,
+    channels: conversion.channels ?? 1,
+    extraParams: conversion.extraParams ?? {}
+  };
+}
+
+async function requestMimoTtsAudio(
+  text: string,
+  settings: MimoTtsSettings,
+  deps: Pick<TtsPluginDeps, "fetch" | "appendLog">
+): Promise<Uint8Array> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), settings.timeoutMs);
+  deps.appendLog?.("info", `tts MiMo ${settings.mode} start: chars=${Array.from(text).length}`);
+  try {
+    const response = await fetchImpl(`${settings.baseURL}/chat/completions`, {
+      method: "POST",
+      signal: abort.signal,
+      headers: {
+        "api-key": settings.apiKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(mimoTtsRequestBody(text, settings))
+    });
+    if (!response.ok) {
+      throw new Error(`MiMo TTS HTTP error ${response.status}: ${await response.text()}`);
+    }
+    const data = parseJsonObject(await response.text());
+    const audio = parseMimoAudioData(data);
+    if (!audio) throw new Error("MiMo TTS returned no audio data");
+    return new Uint8Array(Buffer.from(audio, "base64"));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function mimoTtsRequestBody(text: string, settings: MimoTtsSettings): Record<string, unknown> {
+  return {
+    ...settings.extraParams,
+    model: settings.model,
+    messages: mimoTtsMessages(text, settings),
+    audio: {
+      format: settings.audioFormat,
+      ...(settings.mode === "preset" ? { voice: settings.voice } : {}),
+      ...(settings.mode === "voiceclone" ? { voice: settings.voiceCloneAudioDataUrl } : {})
+    }
+  };
+}
+
+function mimoTtsMessages(text: string, settings: MimoTtsSettings): Array<{ role: "user" | "assistant"; content: string }> {
+  if (settings.mode === "voicedesign") {
+    return [
+      { role: "user", content: settings.voiceDesignPrompt! },
+      { role: "assistant", content: text }
+    ];
+  }
+  return [{ role: "assistant", content: text }];
+}
+
+function parseMimoAudioData(value: Record<string, unknown>): string | undefined {
+  const choices = Array.isArray(value.choices) ? value.choices : [];
+  for (const choice of choices) {
+    const message = parseJsonObject(parseJsonObject(choice).message);
+    const audio = parseJsonObject(message.audio);
+    const data = stringValue(audio.data);
+    if (data) return data;
+  }
+  return undefined;
+}
+
+function normalizeMimoBaseURL(value: string): string {
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (!normalized) return defaultMimoTtsBaseURL;
+  return normalized.endsWith("/chat/completions")
+    ? normalized.slice(0, -"/chat/completions".length).replace(/\/+$/, "")
+    : normalized;
 }
 
 type BailianTtsSettings = {

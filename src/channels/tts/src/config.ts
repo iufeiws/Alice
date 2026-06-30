@@ -10,13 +10,17 @@ import type {
   TtsAudioTextChunk,
   TtsBailianConversionConfig,
   TtsConversionConfig,
+  TtsConversionProvider,
+  TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
+  TtsRemoteConfig,
   TtsStreamChunk,
   TtsStreamInput,
   TtsSynthesizer,
+  TtsTextFilter,
   TtsTranslationPreset,
   TtsVoiceModelConfig,
   VoiceSynthesisInput,
@@ -36,18 +40,17 @@ import {
 } from "./internal.js";
 
 const defaultConfigPath = "config/plugin/tts/config.json";
-const legacyTtsConfigPath = "src/channels/tts/config.json";
 const ttsPresetAssetRoot = path.join("assets", "tts", "preset");
 export const defaultBailianQwenTtsEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 export const defaultBailianCosyTtsEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer";
+export const defaultMimoTtsBaseURL = "https://api.xiaomimimo.com/v1";
 
 export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginConfig {
-  const resolved = resolveTtsConfigReadPath(configPath);
-  const raw = resolved ? fs.readFileSync(resolved, "utf8") : "{}";
+  const resolved = path.resolve(configPath);
+  const raw = fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}";
   const parsed = parseJsonObject(raw);
   const preset = parseJsonObject(parsed.api_preset);
-  const remote = parseJsonObject(parsed.remote);
-  const conversion = ttsConversionConfigValue(parsed.conversion, remote);
+  const conversion = ttsConversionConfigValue(resolved, parsed.conversion);
   const legacyPrompt = stringValue(parsed.prompt);
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
   const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName, {
@@ -98,22 +101,6 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
       modelConfigs
     }
   };
-}
-
-function resolveTtsConfigReadPath(configPath = defaultConfigPath): string | undefined {
-  const resolved = path.resolve(configPath);
-  if (fs.existsSync(resolved)) return resolved;
-  const defaultResolved = path.resolve(defaultConfigPath);
-  const legacyTtsResolved = path.resolve(legacyTtsConfigPath);
-  if (resolved === defaultResolved && fs.existsSync(legacyTtsResolved)) return legacyTtsResolved;
-  const parsed = path.parse(resolved);
-  const expectedSuffix = path.join("config", "plugin", "tts", "config.json");
-  if (resolved.endsWith(expectedSuffix)) {
-    const root = resolved.slice(0, -expectedSuffix.length);
-    const siblingLegacyTts = path.join(root || parsed.root, "plugins", "tts", "config.json");
-    if (fs.existsSync(siblingLegacyTts)) return siblingLegacyTts;
-  }
-  return undefined;
 }
 
 export function renderTtsPrompt(config: TtsPluginConfig, deps: TtsPluginDeps): string {
@@ -183,29 +170,52 @@ export function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginD
   return config.api_preset;
 }
 
-function ttsConversionConfigValue(value: unknown, legacyRemote: Record<string, unknown>): TtsConversionConfig {
+function ttsConversionConfigValue(configPath: string, value: unknown): TtsConversionConfig {
   const raw = parseJsonObject(value);
-  const genie = parseJsonObject(raw.genie);
-  const openaiApi = parseJsonObject(raw.openaiApi);
-  const bailian = parseJsonObject(raw.bailian);
-  const legacyGenie = {
-    enabled: booleanValue(legacyRemote.enabled, true),
-    baseURL: normalizeBaseURL(stringValue(legacyRemote.baseURL) || "http://192.168.0.103:8767")
-  };
-  const nextGenie = {
-    enabled: genie.enabled === undefined ? legacyGenie.enabled : booleanValue(genie.enabled, legacyGenie.enabled),
-    baseURL: normalizeBaseURL(stringValue(genie.baseURL) || legacyGenie.baseURL),
-    localFallbackEnabled: genie.localFallbackEnabled === undefined ? true : booleanValue(genie.localFallbackEnabled, true)
-  };
+  const provider = ttsConversionProviderValue(raw.provider);
+  const providersDir = ttsProviderConfigDir(configPath);
+  const genie = parseJsonObject(readTtsProviderConfig(providersDir, "genie"));
+  const openaiApi = parseJsonObject(readTtsProviderConfig(providersDir, "openai-api"));
+  const bailian = parseJsonObject(readTtsProviderConfig(providersDir, "bailian"));
+  const mimo = parseJsonObject(readTtsProviderConfig(providersDir, "mimo"));
   return {
-    provider: raw.provider === "openai-api" ? "openai-api" : raw.provider === "bailian" ? "bailian" : "genie",
-    genie: nextGenie,
+    provider,
+    genie: ttsGenieConversionConfigValue(genie),
     openaiApi: ttsOpenAiApiConversionConfigValue(openaiApi),
-    bailian: ttsBailianConversionConfigValue(bailian)
+    bailian: ttsBailianConversionConfigValue(bailian),
+    mimo: ttsMimoConversionConfigValue(mimo)
+  };
+}
+
+export function ttsProviderConfigDir(configPath = defaultConfigPath): string {
+  return path.join(path.dirname(path.resolve(configPath)), "providers");
+}
+
+export function ttsProviderConfigPath(configPath: string, provider: TtsConversionProvider): string {
+  return path.join(ttsProviderConfigDir(configPath), `${provider}.json`);
+}
+
+function readTtsProviderConfig(providersDir: string, provider: TtsConversionProvider): Record<string, unknown> {
+  const filePath = path.join(providersDir, `${provider}.json`);
+  return fs.existsSync(filePath) ? parseJsonObject(fs.readFileSync(filePath, "utf8")) : {};
+}
+
+function ttsConversionProviderValue(value: unknown): TtsConversionProvider {
+  return value === "openai-api" || value === "bailian" || value === "mimo" || value === "genie" ? value : "genie";
+}
+
+function ttsGenieConversionConfigValue(raw: Record<string, unknown>): TtsRemoteConfig {
+  const textFilters = ttsTextFiltersValue(raw.textFilters);
+  return {
+    enabled: raw.enabled === undefined ? true : booleanValue(raw.enabled, true),
+    baseURL: normalizeBaseURL(stringValue(raw.baseURL) || "http://192.168.0.103:8767"),
+    localFallbackEnabled: raw.localFallbackEnabled === undefined ? true : booleanValue(raw.localFallbackEnabled, true),
+    ...(textFilters.length ? { textFilters } : {})
   };
 }
 
 function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpenAiApiConversionConfig {
+  const textFilters = ttsTextFiltersValue(raw.textFilters);
   return {
     apiPresetName: stringValue(raw.apiPresetName),
     baseURL: stringValue(raw.baseURL),
@@ -216,12 +226,26 @@ function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpe
     timeoutMs: numberValue(raw.timeoutMs, 60_000),
     sampleRate: numberValue(raw.sampleRate, 32_000),
     channels: numberValue(raw.channels, 1),
+    ...(textFilters.length ? { textFilters } : {}),
     extraParams: recordValue(raw.extraParams)
   };
 }
 
+function ttsTextFiltersValue(value: unknown): TtsTextFilter[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => parseJsonObject(entry))
+    .map((entry) => ({
+      pattern: stringValue(entry.pattern),
+      flags: stringValue(entry.flags),
+      replacement: stringValue(entry.replacement)
+    }))
+    .filter((entry) => entry.pattern);
+}
+
 function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBailianConversionConfig {
   const service = raw.service === "cosy" ? "cosy" : "qwen";
+  const textFilters = ttsTextFiltersValue(raw.textFilters);
   return {
     service,
     endpoint: stringValue(raw.endpoint) || defaultBailianTtsEndpoint(service),
@@ -237,17 +261,59 @@ function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBaili
     sampleRate: numberValue(raw.sampleRate, 24_000),
     channels: numberValue(raw.channels, 1),
     timeoutMs: numberValue(raw.timeoutMs, 60_000),
+    ...(textFilters.length ? { textFilters } : {}),
     extraParams: recordValue(raw.extraParams)
   };
+}
+
+function ttsMimoConversionConfigValue(raw: Record<string, unknown>): TtsMimoConversionConfig {
+  const mode = raw.mode === "voicedesign" || raw.mode === "voiceclone" ? raw.mode : "preset";
+  const textFilters = ttsTextFiltersValue(raw.textFilters);
+  return {
+    mode,
+    baseURL: stringValue(raw.baseURL) || defaultMimoTtsBaseURL,
+    apiKey: stringValue(raw.apiKey),
+    apiKeyEnv: stringValue(raw.apiKeyEnv) || "MIMO_API_KEY",
+    voice: stringValue(raw.voice) || "mimo_default",
+    voiceDesignPrompt: stringValue(raw.voiceDesignPrompt),
+    voiceCloneAudioDataUrl: stringValue(raw.voiceCloneAudioDataUrl),
+    audioFormat: raw.audioFormat === "pcm16" ? "pcm16" : "wav",
+    timeoutMs: numberValue(raw.timeoutMs, 60_000),
+    sampleRate: numberValue(raw.sampleRate, 24_000),
+    channels: numberValue(raw.channels, 1),
+    ...(textFilters.length ? { textFilters } : {}),
+    extraParams: recordValue(raw.extraParams)
+  };
+}
+
+export function defaultMimoTtsModel(mode: "preset" | "voicedesign" | "voiceclone" | undefined): string {
+  if (mode === "voicedesign") return "mimo-v2.5-tts-voicedesign";
+  if (mode === "voiceclone") return "mimo-v2.5-tts-voiceclone";
+  return "mimo-v2.5-tts";
 }
 
 export function defaultBailianTtsEndpoint(service: "qwen" | "cosy" | undefined): string {
   return service === "cosy" ? defaultBailianCosyTtsEndpoint : defaultBailianQwenTtsEndpoint;
 }
 
-export function selectedTtsConversionProvider(config: TtsPluginConfig): "genie" | "openai-api" | "bailian" {
+export function selectedTtsConversionProvider(config: TtsPluginConfig): TtsConversionProvider {
   const provider = config.conversion?.provider;
-  return provider === "openai-api" || provider === "bailian" ? provider : "genie";
+  return provider === "openai-api" || provider === "bailian" || provider === "mimo" ? provider : "genie";
+}
+
+export function ttsProviderTextFilters(conversion: TtsConversionProvider, config: TtsPluginConfig): TtsTextFilter[] {
+  if (conversion === "openai-api") return config.conversion?.openaiApi?.textFilters ?? [];
+  if (conversion === "bailian") return config.conversion?.bailian?.textFilters ?? [];
+  if (conversion === "mimo") return config.conversion?.mimo?.textFilters ?? [];
+  return config.conversion?.genie?.textFilters ?? config.remote?.textFilters ?? [];
+}
+
+export function applyTtsTextFilters(text: string, filters: TtsTextFilter[]): string {
+  let next = text;
+  for (const filter of filters) {
+    next = next.replace(new RegExp(filter.pattern, filter.flags), filter.replacement ?? "");
+  }
+  return next;
 }
 
 function ttsLanguageValue(value: unknown): "jp" | "zh" | "en" {

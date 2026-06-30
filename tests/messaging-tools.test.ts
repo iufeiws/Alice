@@ -3825,12 +3825,40 @@ test("send_chat returns failed outbound messages as chat records", async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(result.ok, false);
-  assert.match(String(result.output), /^<chat-log>\n/);
+  assert.match(String(result.output), /^<send-chat-failed reason="Feishu API 230001: invalid receive_id log_id=log_1"\/>\n<chat-log>\n/);
   assert.match(String(result.output), /Alice:test\[发送失败\]/);
   assert.doesNotMatch(String(result.output), /#1 message failed/);
   assert.equal(logs[0].status, "send_failed");
   assert.equal(logs[0].error, "Feishu API 230001: invalid receive_id log_id=log_1");
   assert.equal(logs.filter((entry) => entry.status === "retry_failed").length, 1);
+});
+
+test("send_chat returns one failed tag per failed part", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-multiple-failed"), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    outputRouter: {
+      async send(output) {
+        const text = output.content.kind === "text" ? output.content.text : "unknown";
+        throw new Error(`bad ${text} <&"`);
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_failed_parts",
+    toolName: "send_chat",
+    input: { content: "one\n\ntwo" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(String(result.output), /^<send-chat-failed reason="bad one &lt;&amp;&quot;"\/>\n<send-chat-failed reason="bad two &lt;&amp;&quot;"\/>\n<chat-log>\n/);
+  assert.match(String(result.output), /Alice:one\[发送失败\]/);
+  assert.match(String(result.output), /Alice:two\[发送失败\]/);
 });
 
 test("send_message waits from llm start using content length based delay", async () => {

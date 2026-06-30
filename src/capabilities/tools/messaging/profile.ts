@@ -63,6 +63,7 @@ export const messagingToolText = {
   voiceCallEnded: "-已挂断-",
   shellSwitch: (personalityName: string, relationshipName: string) => `-壳切换:切换为${personalityName}的${relationshipName}爱丽丝-`,
   haveNewMessage: "<have-new-message/>",
+  sendChatFailed: (reason: string) => `<send-chat-failed reason="${reason}"/>`,
   appendCurrentTime: (output: string, currentTime: string, prefix?: string) => `${prefix ? `${prefix}\n` : ""}<chat-log>\n${output}\n</chat-log>\n<now local="${currentTime}"/>`,
   fallbackSentLine: (content: string, ok: boolean) => `Alice:${content}${ok ? "" : "[发送失败]"}`
 };

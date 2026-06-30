@@ -342,10 +342,14 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       messages.length > 0 ? formatTimelineBlocks(messages, [], time.timeZone, userName()) : "",
       ...fallback
     ].filter(Boolean).join("\n");
+    const prefix = results
+      .filter((result) => !result.ok)
+      .map((result) => messagingToolText.sendChatFailed(escapeXml(result.error ?? "unknown error")))
+      .join("\n") || undefined;
     return {
       callId,
       ok: true,
-      output: appendCurrentTime(output || messagingToolText.nothingNew, time.now().iso)
+      output: appendCurrentTime(output || messagingToolText.nothingNew, time.now().iso, prefix)
     };
   }
 
@@ -730,6 +734,16 @@ function appendCurrentTime(output: string, currentTime: string, prefix?: string)
 
 function isUnreadUserMessage(message: StoredConversationMessage): boolean {
   return !message.isRead && message.direction === "inbound" && message.senderRole === "user";
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[<>&"']/g, (char) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    '"': "&quot;",
+    "'": "&apos;"
+  }[char]!));
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {

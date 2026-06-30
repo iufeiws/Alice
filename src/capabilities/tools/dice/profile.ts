@@ -1,0 +1,22 @@
+import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+
+export const diceToolName = "dice";
+
+export const diceTool: ToolDefinition = {
+  name: diceToolName,
+  description: "投掷骰子。sides > 1, 默认 6；count > 0 默认 1；",
+  inputSchema: {
+    type: "object",
+    properties: {
+      sides: { type: "integer", minimum: 2 },
+      count: { type: "integer", minimum: 1 }
+    },
+    additionalProperties: false
+  }
+};
+
+export const diceToolText = {
+  unknownTool: (toolName: string) => `Unknown dice tool: ${toolName}`,
+  invalidSides: "sides must be an integer > 1",
+  invalidCount: "count must be an integer > 0"
+};

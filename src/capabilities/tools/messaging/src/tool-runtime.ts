@@ -7,6 +7,7 @@ import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
 import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
+import { createDiceTools } from "../../dice/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
@@ -164,6 +165,7 @@ export function createToolRuntime(input: {
     time: input.time
   });
   const finishAndWaitTools = createFinishAndWaitTools();
+  const diceTools = createDiceTools();
   const locationTools = createLocationTools({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles?.root ?? "memory-files", "alice.sqlite"),
@@ -180,7 +182,8 @@ export function createToolRuntime(input: {
     sleepCocoonTools,
     calendarTools,
     finishAndWaitTools,
+    diceTools,
     locationTools,
-    toolPlugins: [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, locationTools]
+    toolPlugins: [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools]
   };
 }

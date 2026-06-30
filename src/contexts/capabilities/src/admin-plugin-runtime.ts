@@ -1098,6 +1098,7 @@ export async function generatePhotoOnBodyImage(context: AdminRoutesContext, body
   fs.mkdirSync(outputDir, { recursive: true });
 
   try {
+    savePhotoOnBodyAttempt(context, outfit);
     const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
     let tempFilePath = path.resolve(tempDir, tempFileName);
     await runOpenAIAPISelfie({
@@ -1144,8 +1145,8 @@ export async function generatePhotoOnBodyImage(context: AdminRoutesContext, body
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const attempted = !isPhotoOnBodyRetryableFailure(message) && isPhotoOnBodyModerationFailure(message);
-    if (attempted) savePhotoOnBodyAttempt(context, outfit);
+    const attempted = isPhotoOnBodyModerationFailure(message) || hasPhotoOnBodyImage(context, outfit);
+    if (!attempted) clearPhotoOnBodyAttempt(context, outfit);
     context.appendLog("warn", `photo on-body generation failed: ${message}`);
     return {
       ok: false,
@@ -1231,21 +1232,44 @@ function savePhotoOnBodyAttempt(context: AdminRoutesContext, outfit: {
   outfitImageGenerated?: boolean;
   onBodyGenerationAttempted?: boolean;
 }, imageUrl?: string): void {
+  const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
+  const onBodyImageUrl = imageUrl ?? current?.onBodyImageUrl ?? outfit.onBodyImageUrl;
   context.dailyShellStore.saveOption("outfits", {
-    ...outfit,
-    ...(imageUrl ? { onBodyImageUrl: imageUrl } : {}),
+    ...(current ?? outfit),
+    ...(onBodyImageUrl ? { onBodyImageUrl } : {}),
     onBodyGenerationAttempted: true
   }, outfit.id);
+}
+
+function clearPhotoOnBodyAttempt(context: AdminRoutesContext, outfit: {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
+}): void {
+  if (hasPhotoOnBodyImage(context, outfit)) return;
+  const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
+  context.dailyShellStore.saveOption("outfits", {
+    ...(current ?? outfit),
+    onBodyGenerationAttempted: undefined
+  }, outfit.id);
+}
+
+function hasPhotoOnBodyImage(context: AdminRoutesContext, outfit: {
+  id: string;
+  onBodyImageUrl?: string;
+}): boolean {
+  const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
+  return Boolean(current?.onBodyImageUrl || outfit.onBodyImageUrl);
 }
 
 function photoOnBodyFailureStatus(message: string): number {
   const status = imageApiHttpStatus(message);
   return status && [502, 503, 504].includes(status) ? status : 500;
-}
-
-function isPhotoOnBodyRetryableFailure(message: string): boolean {
-  const status = imageApiHttpStatus(message);
-  return status !== undefined && [502, 503, 504].includes(status);
 }
 
 function imageApiHttpStatus(message: string): number | undefined {

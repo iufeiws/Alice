@@ -930,7 +930,7 @@ test("admin photo on-body generation writes beside outfit image", async () => {
   }
 });
 
-test("admin photo on-body generation marks moderation failures but not 503", async () => {
+test("admin photo on-body generation locks requests and clears only failed first attempts", async () => {
   const root = makeTempDir("admin-photo-on-body-errors");
   const configPath = path.join(root, "config", "plugin", "photo", "config.json");
   const referencePath = path.join(root, "assets", "selfie", "references", "full-body-reference.jpg");
@@ -941,6 +941,7 @@ test("admin photo on-body generation marks moderation failures but not 503", asy
   fs.writeFileSync(referencePath, "reference");
   fs.writeFileSync(path.join(outfitDir, "blocked.jpg"), "outfit");
   fs.writeFileSync(path.join(outfitDir, "busy.jpg"), "outfit");
+  fs.writeFileSync(path.join(outfitDir, "retry.jpg"), "outfit");
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
     selfieMode: "openai",
@@ -949,16 +950,35 @@ test("admin photo on-body generation marks moderation failures but not 503", asy
     onBodyPrompt: "configured-prompt {{outfit/content}}"
   })}\n`);
   const previousFetch = globalThis.fetch;
+  let readOutfitAttempted = (_id: string) => undefined as boolean | undefined;
   globalThis.fetch = (async (_url, init) => {
     const prompt = String((init?.body as FormData).get("prompt"));
     if (prompt.includes("blocked")) return new Response(JSON.stringify({ error: { message: "rejected by safety system" } }), { status: 400, statusText: "Bad Request" });
+    if (prompt.includes("busy")) assert.equal(readOutfitAttempted("busy"), true);
+    if (prompt.includes("retry")) assert.equal(readOutfitAttempted("retry"), true);
     return new Response("upstream busy", { status: 503, statusText: "Service Unavailable" });
   }) as typeof fetch;
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const dailyShellStore = createDailyShellStore(root);
-  dailyShellStore.saveOption("outfits", { id: "blocked", name: "Blocked", content: "blocked", imageUrl: path.relative(process.cwd(), path.join(outfitDir, "blocked.jpg")) });
+  const blockedOnBodyImageUrl = path.relative(process.cwd(), path.join(outfitDir, "blocked.On_Body_Ref.jpg"));
+  const retryOnBodyImageUrl = path.relative(process.cwd(), path.join(outfitDir, "retry.On_Body_Ref.jpg"));
+  readOutfitAttempted = (id) => dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits.find((outfit) => outfit.id === id)?.onBodyGenerationAttempted;
+  dailyShellStore.saveOption("outfits", {
+    id: "blocked",
+    name: "Blocked",
+    content: "blocked",
+    imageUrl: path.relative(process.cwd(), path.join(outfitDir, "blocked.jpg")),
+    onBodyImageUrl: blockedOnBodyImageUrl
+  });
   dailyShellStore.saveOption("outfits", { id: "busy", name: "Busy", content: "busy", imageUrl: path.relative(process.cwd(), path.join(outfitDir, "busy.jpg")) });
+  dailyShellStore.saveOption("outfits", {
+    id: "retry",
+    name: "Retry",
+    content: "retry",
+    imageUrl: path.relative(process.cwd(), path.join(outfitDir, "retry.jpg")),
+    onBodyImageUrl: retryOnBodyImageUrl
+  });
   const base = baseContext(root, memoryStore, promptStore);
   const handler = createAdminHandler({
     ...base,
@@ -978,13 +998,24 @@ test("admin photo on-body generation marks moderation failures but not 503", asy
       outfitId: "busy",
       outfitImageUrl: path.relative(process.cwd(), path.join(outfitDir, "busy.jpg"))
     }), busy);
+    const retry = createResponse();
+    await handler(createRequest("POST", "/admin/api/plugins/photo/on-body", {
+      outfitId: "retry",
+      outfitImageUrl: path.relative(process.cwd(), path.join(outfitDir, "retry.jpg"))
+    }), retry);
     const outfits = dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits;
 
     assert.equal(blocked.statusCode, 500);
     assert.equal(JSON.parse(blocked.body).onBodyGenerationAttempted, true);
     assert.equal(busy.statusCode, 503);
+    assert.equal(JSON.parse(busy.body).onBodyGenerationAttempted, undefined);
+    assert.equal(retry.statusCode, 503);
+    assert.equal(JSON.parse(retry.body).onBodyGenerationAttempted, true);
     assert.equal(outfits.find((outfit) => outfit.id === "blocked")?.onBodyGenerationAttempted, true);
+    assert.equal(outfits.find((outfit) => outfit.id === "blocked")?.onBodyImageUrl, blockedOnBodyImageUrl);
     assert.equal(outfits.find((outfit) => outfit.id === "busy")?.onBodyGenerationAttempted, undefined);
+    assert.equal(outfits.find((outfit) => outfit.id === "retry")?.onBodyGenerationAttempted, true);
+    assert.equal(outfits.find((outfit) => outfit.id === "retry")?.onBodyImageUrl, retryOnBodyImageUrl);
   } finally {
     globalThis.fetch = previousFetch;
   }

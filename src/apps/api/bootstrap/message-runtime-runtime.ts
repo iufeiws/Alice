@@ -16,7 +16,6 @@ export function createMessageRuntimeRuntime(input: {
   messagingConfigPath?: string;
   feishu: any;
   wechat: any;
-  dailyShellStore: any;
   initiatedBehaviorRunStore: any;
   getAgentInitiatedBehaviorPlans(): any[];
   getDefaultMessagingTarget(): any;
@@ -24,7 +23,6 @@ export function createMessageRuntimeRuntime(input: {
   getSleepCocoonWakeEvent(): any;
   getCalendarReminderEvent(): any;
   worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
-  attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   agentRunIndicator?: { setTyping?(input: { typing: boolean }): Promise<void> | void };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -71,8 +69,6 @@ export function createMessageRuntimeRuntime(input: {
       });
     },
     onHeartbeatTick() {
-      const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
-      void input.attemptDailyOutfitOnBodyGeneration?.(daily);
       input.initiatedBehaviorRunStore.finalizeExpiredResponses(input.time.now().date);
     },
     async onIdleTimerTransition(transitionInput) {

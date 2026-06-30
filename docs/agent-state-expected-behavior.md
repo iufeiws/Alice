@@ -135,7 +135,7 @@ Heartbeat 由 message runtime 管理，是驱动状态 tick、generated event �
 
 1. 调用 `agentState.tick()`，先推进状态计时器。
 2. 如果不是 force 模式，并且当前不能运行 heartbeat，则重新调度下一次 heartbeat 后退出。
-3. 如果可以运行 heartbeat，调用 `onHeartbeatTick()`；当前 API 进程用它确保每日外壳已加载。
+3. 如果可以运行 heartbeat，调用 `onHeartbeatTick()`；当前 API 进程用它执行每轮轻量维护。
 4. 检查并处理 sleep cocoon morning generated event。
 5. 在不存在未处理消息且没有正在处理的用户消息时，检查并处理 sleep cocoon goodnight generated event。
 6. 遍历有未处理消息的会话，按条件一次性处理该会话当前全部未处理入站文本消息。

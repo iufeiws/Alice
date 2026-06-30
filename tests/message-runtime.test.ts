@@ -9,47 +9,6 @@ import type { AgentEvent, AgentOutput } from "../src/contexts/agent-loop/src/con
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("message runtime heartbeat attempts daily outfit on-body generation", async () => {
-  const store = createAliceStore(path.join(makeTempDir("runtime-daily-outfit-on-body"), "alice.sqlite"));
-  const daily = { outfit: { id: "o1" } };
-  const attempted: string[] = [];
-  const runtime = createMessageRuntimeRuntime({
-    config: { core: { inboundDebounceMs: 0, heartbeatPaused: true } },
-    time: {
-      timeZone: "UTC",
-      now: () => ({ iso: "2026-05-26T00:00:00.000Z", date: new Date("2026-05-26T00:00:00.000Z") })
-    },
-    store,
-    chatAgent: { clearLLMSession() {}, async prepareEventRun() { return []; } },
-    agentLoopRuntime: undefined,
-    talkRuntime: undefined,
-    agentState: { tick() {}, getSnapshot: () => ({ state: "waiting" }), onChange() {}, canRunHeartbeat: () => true },
-    outputRouter: { async sendAll() {} },
-    isLLMSessionActive: () => false,
-    feishu: { async setTyping() {} },
-    wechat: { async setTyping() {} },
-    dailyShellStore: { get: () => daily },
-    initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
-    getAgentInitiatedBehaviorPlans: () => [],
-    getDefaultMessagingTarget: () => undefined,
-    getSleepCocoonGoodnightEvent: () => undefined,
-    getSleepCocoonWakeEvent: () => undefined,
-    getCalendarReminderEvent: () => undefined,
-    queueForceWakeEvent() {},
-    attemptDailyOutfitOnBodyGeneration(input) {
-      attempted.push(input.outfit.id);
-    },
-    appendLog() {},
-    appendMessageLog(input) {
-      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
-    }
-  });
-
-  await runtime.processNow();
-
-  assert.deepEqual(attempted, ["o1"]);
-});
-
 test("message runtime skips Feishu typing start when messaging config disables emoji indicator", async () => {
   const root = makeTempDir("runtime-feishu-typing-config");
   const store = createAliceStore(path.join(root, "alice.sqlite"));
@@ -99,7 +58,6 @@ test("message runtime skips Feishu typing start when messaging config disables e
         indicatorTypingEvents.push(input.typing);
       }
     },
-    dailyShellStore: { get: () => ({ outfit: { id: "o1" } }) },
     initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
     getAgentInitiatedBehaviorPlans: () => [],
     getDefaultMessagingTarget: () => undefined,

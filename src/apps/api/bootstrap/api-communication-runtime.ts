@@ -2,7 +2,6 @@ import { createWebRtcVoiceRuntime } from "./web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
-import { createOutfitOnBodyGenerationAttempt } from "../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import { createFeishuDynamicCardAgentRunIndicator, createJsonFeishuAgentRunIndicatorCardStore } from "../../../contexts/agent-run-indicator/src/index.js";
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -24,7 +23,6 @@ export function createApiCommunicationRuntime(input: {
   agentState: any;
   outputRouter: any;
   isLLMSessionActive(): boolean;
-  dailyShellStore: any;
   initiatedBehaviorRunStore: any;
   getAgentInitiatedBehaviorPlans(): any[];
   getDefaultMessagingTarget(): any;
@@ -75,14 +73,6 @@ export function createApiCommunicationRuntime(input: {
     random: Math.random,
     appendLog: input.appendLog
   });
-  const attemptOutfitOnBodyGeneration = createOutfitOnBodyGenerationAttempt({
-    config: input.config,
-    dailyShellStore: input.dailyShellStore,
-    time: input.time,
-    promptProfileStore: input.apiContextRuntime.promptProfileStore,
-    coreProfileStore: input.apiContextRuntime.coreProfileStore,
-    appendLog: input.appendLog
-  });
 
   messageRuntime = createMessageRuntimeRuntime({
     config: input.config,
@@ -96,7 +86,6 @@ export function createApiCommunicationRuntime(input: {
     isLLMSessionActive: input.isLLMSessionActive,
     feishu,
     wechat,
-    dailyShellStore: input.dailyShellStore,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     getDefaultMessagingTarget: input.getDefaultMessagingTarget,
@@ -104,7 +93,6 @@ export function createApiCommunicationRuntime(input: {
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
     getCalendarReminderEvent: input.getCalendarReminderEvent,
     worldWandererRuntime,
-    attemptDailyOutfitOnBodyGeneration: (daily) => attemptOutfitOnBodyGeneration(daily.outfit),
     agentRunIndicator,
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPhotoTools, readPhotoPluginConfig, type SelfieExecutorInput } from "../src/capabilities/tools/photo/src/index.js";
+import { runPhotoProvider } from "../src/capabilities/tools/photo/src/photo-provider.js";
 import { createOutfitOnBodyGenerationAttempt } from "../src/contexts/capabilities/src/outfit-on-body-runtime.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -64,6 +65,34 @@ test("photo config reads on-body generation settings", () => {
   assert.equal(config.onBodyReferenceImage, "assets/ref/full-body.jpg");
   assert.equal(config.onBodyPrompt, "use image 1 as body reference and image 2 as outfit reference");
   assert.equal(config.selfieOnBodyPrompt, "use image 1 as on-body reference and image 2 as scene reference");
+});
+
+test("photo provider limiter rejects duplicate content and third concurrent request", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started: string[] = [];
+  const executor = async (input: SelfieExecutorInput) => {
+    started.push(input.prompt);
+    await gate;
+    return { stdout: input.prompt };
+  };
+  const first = runPhotoProvider(providerInput("same", ["a.jpg"]), executor);
+  const duplicate = await runPhotoProvider(providerInput("same", ["a.jpg"]), executor)
+    .then(() => "", (error) => error instanceof Error ? error.message : String(error));
+  const second = runPhotoProvider(providerInput("other", ["b.jpg"]), executor);
+  const third = await runPhotoProvider(providerInput("third", ["c.jpg"]), executor)
+    .then(() => "", (error) => error instanceof Error ? error.message : String(error));
+
+  release();
+  await Promise.all([first, second]);
+  const afterRelease = await runPhotoProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "released" }));
+
+  assert.equal(duplicate, "photo provider duplicate request is already running");
+  assert.equal(third, "photo provider concurrency limit reached");
+  assert.deepEqual(started, ["same", "other"]);
+  assert.deepEqual(afterRelease, { stdout: "released" });
 });
 
 test("outfit on-body auto generation is disabled by default", async () => {
@@ -1162,6 +1191,27 @@ test("selfie rejects output directories outside assets", async () => {
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
   }
 });
+
+function providerInput(prompt: string, referenceImages: string[]): SelfieExecutorInput {
+  return {
+    command: "",
+    workDir: "",
+    fileName: "image.jpg",
+    prompt,
+    referenceImages,
+    referenceImagePrompt: "",
+    timeoutMs: 1000,
+    apiBaseURL: "https://api.example.test/v1",
+    apiEndpoint: "edits",
+    apiModel: "image-model",
+    apiSize: "768x1024",
+    apiQuality: "low",
+    apiModeration: "low",
+    apiOutputFormat: "jpeg",
+    apiOutputCompression: 45,
+    apiTimeoutMs: 1000
+  };
+}
 
 function selfieContext() {
   return {

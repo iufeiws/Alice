@@ -2,10 +2,9 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
-import { extensionForOutputFormat, normalizePhotoPluginConfig, readPhotoPluginConfig, selectedImageApiSettings, type PhotoPluginConfig, type SelfieGenerationMode } from "./config.js";
-import { runAliceSelfieFastSkill } from "./codex-selfie.js";
+import { extensionForOutputFormat, normalizePhotoPluginConfig, readPhotoPluginConfig, selectedImageApiSettings, type PhotoPluginConfig } from "./config.js";
 import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "./image-files.js";
-import { runOpenAIAPISelfie } from "./openai-api-selfie.js";
+import { photoProviderExecutorForMode, runPhotoProvider } from "./photo-provider.js";
 import { extractSentMessageId, sendImage, sendSelfieFailureNotice, sendText, type PhotoSendDeps } from "./send-output.js";
 import { photoToolText, selfieTool } from "../profile.js";
 
@@ -144,8 +143,8 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         references.missingOutfitImage ? "missingOutfitImage=true" : "",
         references.worldWandererStreetViewImage ? `worldWandererStreetView=${path.basename(references.worldWandererStreetViewImage)}` : ""
       ].join(" "));
-      const executor = deps.selfieExecutor ?? selfieExecutorForMode(photoConfig.selfieMode);
-      const executorResult = await executor({
+      const executor = deps.selfieExecutor ?? photoProviderExecutorForMode(photoConfig.selfieMode);
+      const executorResult = await runPhotoProvider({
         command: photoConfig.selfieCodexCommand,
         workDir: tempDir,
         codexWorkDir,
@@ -165,7 +164,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         apiOutputCompression: imageApiSettings.outputCompression,
         apiTimeoutMs: imageApiSettings.timeoutMs,
         proxyUrl
-      });
+      }, executor);
       if (executorResult) codexResult = executorResult;
       deps.appendLog?.("info", [
         "selfie generator finished:",
@@ -319,10 +318,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       ? readPhotoPluginConfig(deps.selfieConfigPath, deps)
       : normalizePhotoPluginConfig({}, deps);
   }
-}
-
-function selfieExecutorForMode(mode: SelfieGenerationMode): SelfieExecutor {
-  return mode === "codex" ? runAliceSelfieFastSkill : runOpenAIAPISelfie;
 }
 
 function selfieMarker(context?: ToolExecutionContext): number | undefined {

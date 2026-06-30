@@ -10,6 +10,7 @@ import { defaultMessagingPluginConfigPath, readMessagingPluginConfig, type Messa
 import { extensionForOutputFormat, selectedImageApiSettings } from "../../../capabilities/tools/photo/src/config.js";
 import { detectImageMime, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "../../../capabilities/tools/photo/src/image-files.js";
 import { runOpenAIAPISelfie } from "../../../capabilities/tools/photo/src/openai-api-selfie.js";
+import { runPhotoProvider } from "../../../capabilities/tools/photo/src/photo-provider.js";
 import { HttpJsonError, readJsonBody, readRawBody } from "../../../apps/api/middleware/http-utils.js";
 import { publicLLMApiPresets, readLLMApiPresets, resolvePromptApiPreset } from "../../llm-gateway/src/admin-presets.js";
 import { writeJson } from "../../../apps/api/routes/admin-http.js";
@@ -1101,7 +1102,7 @@ export async function generatePhotoOnBodyImage(context: AdminRoutesContext, body
     savePhotoOnBodyAttempt(context, outfit);
     const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
     let tempFilePath = path.resolve(tempDir, tempFileName);
-    await runOpenAIAPISelfie({
+    await runPhotoProvider({
       command: "",
       workDir: tempDir,
       fileName: tempFileName,
@@ -1120,7 +1121,7 @@ export async function generatePhotoOnBodyImage(context: AdminRoutesContext, body
       apiOutputCompression: imageApiSettings.outputCompression,
       apiTimeoutMs: imageApiSettings.timeoutMs,
       proxyUrl: process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy
-    });
+    }, runOpenAIAPISelfie);
 
     validateGeneratedImage(tempFilePath, tempDir, config.selfieMaxBytes);
     const normalizedImage = await normalizeGeneratedSelfieJpeg({

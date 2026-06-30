@@ -28,6 +28,7 @@ export function createApiAgentRuntime(input: {
   llmLogRuntime: any;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   visibleToolNames(profile: any): string[];
+  agentRunIndicator?: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const { talkAgentLoop, talkRuntime } = createTalkRuntimeRuntime({
@@ -84,6 +85,7 @@ export function createApiAgentRuntime(input: {
     updateCurrentLLMSessionTranscript: (session) => input.agentLoopRuntime.updateCurrentLLMSessionTranscript(session),
     clearCurrentLLMSession: (reason) => input.agentLoopRuntime.clearCurrentLLMSession(reason),
     resolvePromptApiPreset: input.resolvePromptApiPreset,
+    agentRunIndicator: input.agentRunIndicator,
     appendLog: input.appendLog,
     initialLLMSession: input.agentLoopRuntime.loadCurrentLLMSessionTranscript()
   });

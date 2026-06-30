@@ -1,5 +1,6 @@
 import { createApiAgentRuntime } from "./api-agent-runtime.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
+import { createAgentRunIndicatorRuntime } from "../../../contexts/agent-run-indicator/src/index.js";
 
 export function createApiAgentStackRuntime(input: {
   config: any;
@@ -17,6 +18,7 @@ export function createApiAgentStackRuntime(input: {
   resolvePromptApiPreset(kind: any): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
+  const agentRunIndicatorRuntime = createAgentRunIndicatorRuntime();
   const apiAgentRuntime = createApiAgentRuntime({
     config: input.config,
     activeLLM: input.activeLLM,
@@ -47,6 +49,7 @@ export function createApiAgentStackRuntime(input: {
     llmLogRuntime: input.apiLLMRuntime.llmLogRuntime,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     visibleToolNames: input.apiToolingRuntime.visibleToolNames,
+    agentRunIndicator: agentRunIndicatorRuntime,
     appendLog: input.appendLog
   });
 
@@ -54,6 +57,7 @@ export function createApiAgentStackRuntime(input: {
     apiAgentRuntime,
     talkAgentLoop: apiAgentRuntime.talkAgentLoop,
     talkRuntime: apiAgentRuntime.talkRuntime,
-    chatAgent: apiAgentRuntime.chatAgent
+    chatAgent: apiAgentRuntime.chatAgent,
+    agentRunIndicatorRuntime
   };
 }

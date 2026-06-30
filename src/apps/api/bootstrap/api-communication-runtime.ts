@@ -3,6 +3,8 @@ import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../contexts/capabilities/src/outfit-on-body-runtime.js";
+import { createFeishuDynamicCardAgentRunIndicator, createJsonFeishuAgentRunIndicatorCardStore } from "../../../contexts/agent-run-indicator/src/index.js";
+import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
 const path = await import("node:path");
@@ -53,6 +55,18 @@ export function createApiCommunicationRuntime(input: {
     asrPlugin: input.asrPlugin,
     getMessageRuntime: () => messageRuntime
   });
+  const agentRunIndicator = createFeishuDynamicCardAgentRunIndicator({
+    enabled: () => isFeishuConfigured(input.config.plugins.feishu),
+    client: feishu.agentRunCardClient,
+    pairingStore: input.apiContextRuntime.feishuPairingStore,
+    cardStore: createJsonFeishuAgentRunIndicatorCardStore(path.join(input.config.memoryFiles.root, "indexes", "feishu-agent-run-indicator-card.json")),
+    time: input.time,
+    getState: () => input.agentState.getSnapshot(),
+    log: input.appendLog
+  });
+  void agentRunIndicator.ensureReady?.().catch((error: unknown) => {
+    input.appendLog("warn", `agent run indicator ensure failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   const worldWandererRuntime = createWorldWandererRuntime({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles.root, "alice.sqlite"),
@@ -91,10 +105,11 @@ export function createApiCommunicationRuntime(input: {
     getCalendarReminderEvent: input.getCalendarReminderEvent,
     worldWandererRuntime,
     attemptDailyOutfitOnBodyGeneration: (daily) => attemptOutfitOnBodyGeneration(daily.outfit),
+    agentRunIndicator,
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
 
-  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime };
+  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime, agentRunIndicator };
 }

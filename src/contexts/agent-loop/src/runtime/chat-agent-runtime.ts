@@ -33,11 +33,16 @@ export function createChatAgentRuntime(input: {
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
+  agentRunIndicator?: any;
 }) {
   return createChatAgent({
     config: input.config,
     llm: input.activeLLM,
     llmRequestSender: input.llmRequests.send,
+    agentRunIndicator: input.agentRunIndicator,
+    onAgentRunIndicatorError(error) {
+      input.appendLog("error", `agent run indicator failed: ${error instanceof Error ? error.message : String(error)}`);
+    },
     appendLoopSessionContext: input.agentLoopRuntime
       ? (contextInput: any) => input.agentLoopRuntime.appendSessionContext(contextInput)
       : undefined,

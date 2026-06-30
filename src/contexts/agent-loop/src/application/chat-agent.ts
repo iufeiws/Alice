@@ -15,6 +15,7 @@ import type { MemorySnapshot } from "../../../memory/src/memory.js";
 import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import { deepSeekPriceForModel } from "../../../llm-gateway/src/token-pricing.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { AgentRunIndicator } from "../../../agent-run-indicator/src/index.js";
 import {
   agentInitiatedBehaviorPlanFromEvent,
   agentInitiatedTriggerEventFromRaw,
@@ -191,6 +192,8 @@ export type ChatAgentDeps = {
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   llmRequestSender?: LLMRequestSender;
+  agentRunIndicator?: AgentRunIndicator;
+  onAgentRunIndicatorError?(error: unknown): void;
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
   setActiveLoopSessionContext?<TSession>(input: AgentLoopSetActiveSessionContextInput<TSession>): void;
   clearActiveLoopSessionContext?<TSession>(input: AgentLoopClearActiveSessionContextInput<TSession>): boolean;
@@ -656,6 +659,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,
+            agentRunIndicator: deps.agentRunIndicator,
+            onAgentRunIndicatorError: deps.onAgentRunIndicatorError,
             onLLMLog: deps.onLLMLog
           });
           return preparedLoop.spec;

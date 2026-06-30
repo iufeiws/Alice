@@ -1,7 +1,13 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuDynamicCardClient, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+
+const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
+  state: "agent_run_state",
+  reasoning: "agent_run_reasoning",
+  content: "agent_run_content"
+};
 const fs = await import("node:fs");
 const path = await import("node:path");
 
@@ -14,7 +20,7 @@ export type FeishuClient = {
   sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
   sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
   downloadAudioResource(input: { messageId: string; fileKey: string }): Promise<FeishuStoredAudioAsset>;
-} & FeishuReactionClient;
+} & FeishuReactionClient & FeishuDynamicCardClient;
 
 export type FeishuClientDeps = {
   onMessage(data: unknown): Promise<void>;
@@ -39,6 +45,9 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
   let started = false;
 
   return {
+    isStarted() {
+      return started && Boolean(client);
+    },
     async start() {
       if (!config.enabled) return;
       if (started) {
@@ -233,6 +242,72 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         }
       });
       deps.log?.("info", `[feishu] removed reaction ${input.reactionId} from ${input.messageId}`);
+    },
+    async createAgentRunCard(input) {
+      assertStarted(client);
+      const card = await client.cardkit.v1.card.create({
+        data: {
+          type: "card_json",
+          data: JSON.stringify(buildAgentRunCard(input.blocks))
+        }
+      });
+      const cardId = card?.data?.card_id ?? card?.card_id;
+      if (!cardId) throw new Error("Feishu cardkit card create did not return card_id");
+      const message = await sendMessage(client, {
+        receiveIdType: input.receiveIdType,
+        receiveId: input.receiveId,
+        msgType: "interactive",
+        content: {
+          type: "card",
+          data: { card_id: cardId }
+        }
+      }, time);
+      if (!message.messageId) throw new Error("Feishu agent run card message create did not return message_id");
+      deps.log?.("info", `[feishu] created agent run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      return {
+        messageId: message.messageId,
+        cardId
+      };
+    },
+    async updateAgentRunCard(input) {
+      assertStarted(client);
+      await client.cardkit.v1.cardElement.content({
+        path: {
+          card_id: input.cardId,
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS[input.block]
+        },
+        data: {
+          content: cardMarkdownContent(input.content),
+          sequence: input.sequence,
+          uuid: `agent_run_${input.block}_${input.cardId}_${input.sequence}`
+        }
+      });
+      deps.log?.("info", `[feishu] updated agent run card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
+    },
+    async setAgentRunCardStreaming(input) {
+      assertStarted(client);
+      await client.cardkit.v1.card.settings({
+        path: {
+          card_id: input.cardId
+        },
+        data: {
+          settings: JSON.stringify({ config: { streaming_mode: input.enabled } }),
+          sequence: input.sequence,
+          uuid: `agent_run_streaming_${input.cardId}_${input.sequence}`
+        }
+      });
+      deps.log?.("info", `[feishu] set agent run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
+    },
+    async resolveAgentRunCardId(input) {
+      assertStarted(client);
+      const converted = await client.cardkit.v1.card.idConvert({
+        data: {
+          message_id: input.messageId
+        }
+      });
+      return {
+        cardId: converted?.data?.card_id ?? converted?.card_id
+      };
     }
   };
 }
@@ -320,6 +395,50 @@ function buildMarkdownCard(markdown: string): Record<string, unknown> {
       }
     ]
   };
+}
+
+function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unknown> {
+  return {
+    schema: "2.0",
+    config: {
+      streaming_mode: true,
+      streaming_config: {
+        print_frequency_ms: { default: 70 },
+        print_step: { default: 1 },
+        print_strategy: "fast"
+      }
+    },
+    body: {
+      elements: [
+        {
+          tag: "markdown",
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS.state,
+          text_align: "center",
+          content: cardMarkdownContent(blocks.state)
+        },
+        {
+          tag: "hr"
+        },
+        {
+          tag: "markdown",
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS.reasoning,
+          content: cardMarkdownContent(blocks.reasoning)
+        },
+        {
+          tag: "hr"
+        },
+        {
+          tag: "markdown",
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS.content,
+          content: cardMarkdownContent(blocks.content)
+        }
+      ]
+    }
+  };
+}
+
+function cardMarkdownContent(value: string): string {
+  return value.length > 0 ? value : " ";
 }
 
 function resolveAssetPath(assetId: string): string {

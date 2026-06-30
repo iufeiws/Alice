@@ -61,6 +61,7 @@ test("message runtime skips Feishu typing start when messaging config disables e
     feishuTypingEmojiEnabled: false
   })}\n`);
   const typingEvents: Array<{ sessionId?: string; typing: boolean }> = [];
+  const indicatorTypingEvents: boolean[] = [];
   const runtime = createMessageRuntimeRuntime({
     config: { core: { inboundDebounceMs: 0, heartbeatPaused: false } },
     time: {
@@ -93,6 +94,11 @@ test("message runtime skips Feishu typing start when messaging config disables e
       }
     },
     wechat: { async setTyping() {} },
+    agentRunIndicator: {
+      async setTyping(input: { typing: boolean }) {
+        indicatorTypingEvents.push(input.typing);
+      }
+    },
     dailyShellStore: { get: () => ({ outfit: { id: "o1" } }) },
     initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
     getAgentInitiatedBehaviorPlans: () => [],
@@ -111,6 +117,7 @@ test("message runtime skips Feishu typing start when messaging config disables e
   await waitFor(() => store.listMessagesForConversation("session-1", 10).some((entry) => entry.direction === "outbound"));
 
   assert.deepEqual(typingEvents, [{ sessionId: "session-1", typing: false }]);
+  assert.deepEqual(indicatorTypingEvents, [true, false]);
 });
 
 test("message runtime sends one LLM request for pending inbound logs and marks them processed", async () => {

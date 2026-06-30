@@ -148,6 +148,17 @@ export type FeishuReactionClient = {
   removeReaction(input: { messageId: string; reactionId: string }): Promise<void>;
 };
 
+export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content";
+export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
+
+export type FeishuDynamicCardClient = {
+  isStarted(): boolean;
+  createAgentRunCard(input: { receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
+  updateAgentRunCard(input: { cardId: string; block: FeishuAgentRunCardBlock; content: string; sequence: number }): Promise<void>;
+  setAgentRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
+  resolveAgentRunCardId(input: { messageId: string }): Promise<{ cardId?: string }>;
+};
+
 export type FeishuStoredAudioAsset = {
   assetId: string;
   filePath: string;

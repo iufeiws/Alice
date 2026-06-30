@@ -101,6 +101,7 @@ export function createApiRootRuntime() {
     calendarEventRuntime: apiControlRuntime.calendarEventRuntime,
     llmConfigRuntime: foundation.llmConfigRuntime,
     activeLLM: foundation.activeLLM,
+    agentRunIndicatorRuntime: apiAgentStackRuntime.agentRunIndicatorRuntime,
     appendLog: foundation.appendLog,
     appendMessageLog: foundation.appendMessageLog
   });

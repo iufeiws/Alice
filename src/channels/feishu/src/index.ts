@@ -5,7 +5,7 @@ import { isFeishuConfigured } from "./config.js";
 import { createFeishuMonitor } from "./monitor.js";
 import { checkFeishuEventPolicy } from "./policy.js";
 import { renderForFeishu } from "./renderer.js";
-import type { FeishuAudioMessageEvent, FeishuMessageLifecycleEvent, FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
+import type { FeishuAudioMessageEvent, FeishuDynamicCardClient, FeishuMessageLifecycleEvent, FeishuPluginDeps, FeishuTextMessageEvent } from "./types.js";
 import { textMessageEventToAgentEvent } from "./handlers/message.js";
 import { reactionEventToLifecycleEvent, readEventToLifecycleEvent, recalledEventToLifecycleEvent } from "./handlers/lifecycle.js";
 import { getPairingCommand, isPairingCommand } from "./pairing.js";
@@ -30,6 +30,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
   ingestAudioMessage(raw: FeishuAudioMessageEvent): Promise<void>;
   setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }): Promise<void>;
+  agentRunCardClient: FeishuDynamicCardClient;
 } {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const bindings = createInMemoryFeishuBindingStore();
@@ -131,7 +132,8 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     },
     async setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }) {
       await setTyping(input);
-    }
+    },
+    agentRunCardClient: monitor
   };
 
   async function receiveLifecycleEvent(

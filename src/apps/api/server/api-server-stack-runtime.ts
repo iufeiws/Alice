@@ -25,6 +25,7 @@ export function createApiServerStackRuntime(input: {
   calendarEventRuntime: any;
   llmConfigRuntime: any;
   activeLLM: any;
+  agentRunIndicatorRuntime?: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
 }) {
@@ -54,6 +55,7 @@ export function createApiServerStackRuntime(input: {
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
+  input.agentRunIndicatorRuntime?.setDelegate(apiCommunicationRuntime.agentRunIndicator);
   const apiAdminRuntime = createApiAdminRuntime({
     config: input.config,
     logs: input.logs,

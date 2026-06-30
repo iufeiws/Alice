@@ -102,6 +102,7 @@ export interface LLMClient {
 
 export type LLMStreamHandlers = {
   onContentDelta?(content: string): void | Promise<void>;
+  onReasoningDelta?(content: string): void | Promise<void>;
   onToolCallDelta?(delta: LLMToolCallDelta): void | Promise<void>;
 };
 
@@ -284,6 +285,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         const deltaReasoningContent = choice?.delta?.reasoning_content;
         if (deltaReasoningContent) {
           reasoningContent += deltaReasoningContent;
+          await handlers?.onReasoningDelta?.(deltaReasoningContent);
         }
         for (const rawCall of choice?.delta?.tool_calls ?? []) {
           const index = typeof rawCall.index === "number" ? rawCall.index : 0;

@@ -1,7 +1,8 @@
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMToolCall } from "../../../llm-gateway/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
@@ -59,6 +60,7 @@ export type ChatAgentLoopInput = {
     followupExtraParams?: Record<string, unknown>;
     presetName?: string;
     stream?: boolean;
+    streamHandlers?: LLMStreamHandlers;
     supportsImage?: boolean;
     supportsAudio?: boolean;
     toolNames: string[];
@@ -82,6 +84,8 @@ export type ChatAgentLoopInput = {
   agentLoopRunSeq?: number;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
+  agentRunIndicator?: AgentRunIndicator;
+  onAgentRunIndicatorError?(error: unknown): void;
   onLLMLog?(event: {
     kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error";
     round: number;
@@ -120,6 +124,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   });
   const visibleToolNames = input.llmInput.toolNames;
   let assistantContentSentMessage = false;
+  const baseSendRequest = input.llmRequestSender ?? createChatLoopRequestSender({
+    llm: input.llm,
+    toolPlugins: input.toolPlugins,
+    onLLMRequestPrepared: input.onLLMRequestPrepared,
+    onLLMResponseReceived: input.onLLMResponseReceived,
+    onLLMLog: input.onLLMLog
+  });
   const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
     async beforeRound({ round }) {
@@ -157,15 +168,15 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         presetName: input.llmInput.presetName,
         toolNames: visibleToolNames,
         toolVariables: input.buildTextVariables(input.event),
-        stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream)
+        stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream),
+        streamHandlers: input.llmInput.streamHandlers
       };
     },
-    sendRequest: input.llmRequestSender ?? createChatLoopRequestSender({
-      llm: input.llm,
-      toolPlugins: input.toolPlugins,
-      onLLMRequestPrepared: input.onLLMRequestPrepared,
-      onLLMResponseReceived: input.onLLMResponseReceived,
-      onLLMLog: input.onLLMLog
+    sendRequest: createAgentRunIndicatorRequestSender({
+      indicator: input.agentRunIndicator,
+      sendRequest: baseSendRequest,
+      isCancelled: input.isLLMRunCancelled,
+      onError: input.onAgentRunIndicatorError
     }),
     async afterRequest({ round, result }) {
       assistantContentSentMessage = await sendAssistantContentAsChat(round, result.message.content) || assistantContentSentMessage;
@@ -257,6 +268,121 @@ export {
   findToolPlugin,
   toolResultText
 } from "./chat-loop-session-context.js";
+
+function createAgentRunIndicatorRequestSender(input: {
+  indicator?: AgentRunIndicator;
+  sendRequest: LLMRequestSender;
+  isCancelled?(): boolean;
+  onError?(error: unknown): void;
+}): LLMRequestSender {
+  if (!input.indicator) return input.sendRequest;
+  const indicator = input.indicator;
+
+  return async (request) => {
+    let session = await beginIndicator(indicator, {
+      agentId: request.agentId,
+      round: request.round
+    }, input.onError);
+    const streamHandlers = withAgentRunIndicatorStreamHandlers(request.streamHandlers, {
+      getSession: () => session,
+      disableSession() {
+        session = undefined;
+      },
+      onError: input.onError
+    });
+
+    try {
+      const result = await input.sendRequest({
+        ...request,
+        streamHandlers
+      });
+      if (input.isCancelled?.()) {
+        await failIndicatorSession(session, new Error("llm_run_cancelled"), input.onError);
+      } else {
+        await finishIndicatorSession(session, input.onError);
+      }
+      return result;
+    } catch (error) {
+      await failIndicatorSession(session, error, input.onError);
+      throw error;
+    }
+  };
+}
+
+async function beginIndicator(
+  indicator: AgentRunIndicator,
+  beginInput: { agentId?: string; round: number },
+  onError: ((error: unknown) => void) | undefined
+): Promise<AgentRunIndicatorSession | undefined> {
+  try {
+    return await indicator.begin(beginInput);
+  } catch (error) {
+    onError?.(error);
+    return undefined;
+  }
+}
+
+function withAgentRunIndicatorStreamHandlers(
+  handlers: LLMStreamHandlers | undefined,
+  input: {
+    getSession(): AgentRunIndicatorSession | undefined;
+    disableSession(): void;
+    onError?(error: unknown): void;
+  }
+): LLMStreamHandlers {
+  return {
+    ...handlers,
+    async onReasoningDelta(delta) {
+      await handlers?.onReasoningDelta?.(delta);
+      const session = input.getSession();
+      if (!session) return;
+      try {
+        await session.appendReasoningDelta(delta);
+      } catch (error) {
+        input.onError?.(error);
+        input.disableSession();
+        await failIndicatorSession(session, error, input.onError);
+      }
+    },
+    async onContentDelta(delta) {
+      await handlers?.onContentDelta?.(delta);
+      const session = input.getSession();
+      if (!session) return;
+      try {
+        await session.appendContentDelta(delta);
+      } catch (error) {
+        input.onError?.(error);
+        input.disableSession();
+        await failIndicatorSession(session, error, input.onError);
+      }
+    }
+  };
+}
+
+async function finishIndicatorSession(
+  session: AgentRunIndicatorSession | undefined,
+  onError: ((error: unknown) => void) | undefined
+): Promise<void> {
+  if (!session) return;
+  try {
+    await session.finish();
+  } catch (error) {
+    onError?.(error);
+  }
+}
+
+async function failIndicatorSession(
+  session: AgentRunIndicatorSession | undefined,
+  error: unknown,
+  onError: ((error: unknown) => void) | undefined
+): Promise<void> {
+  if (!session) return;
+  try {
+    await session.fail(error);
+  } catch (failError) {
+    onError?.(failError);
+  }
+}
 
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
   return formatAgentLoopToolResultForLLM(result, variables);

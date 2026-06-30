@@ -25,6 +25,7 @@ export function createMessageRuntimeRuntime(input: {
   getCalendarReminderEvent(): any;
   worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
   attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
+  agentRunIndicator?: { setTyping?(input: { typing: boolean }): Promise<void> | void };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
@@ -51,6 +52,7 @@ export function createMessageRuntimeRuntime(input: {
     outputRouter: input.outputRouter,
     isLLMSessionActive: input.isLLMSessionActive,
     async setTypingIndicator(typingInput) {
+      await setAgentRunIndicatorTyping(typingInput.typing);
       if (typingInput.plugin === "feishu") {
         if (typingInput.typing && !isFeishuTypingEmojiEnabled(input.messagingConfigPath)) return;
         await input.feishu.setTyping({
@@ -99,6 +101,14 @@ export function createMessageRuntimeRuntime(input: {
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
+
+  async function setAgentRunIndicatorTyping(typing: boolean): Promise<void> {
+    try {
+      await input.agentRunIndicator?.setTyping?.({ typing });
+    } catch (error) {
+      input.appendLog("warn", `agent run indicator typing ${typing ? "start" : "stop"} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 function isFeishuTypingEmojiEnabled(configPath = defaultMessagingPluginConfigPath): boolean {

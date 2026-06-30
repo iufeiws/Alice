@@ -223,7 +223,7 @@ function formatWaitChatResumeOutput(
   }
   const duration = formatWaitChatDuration(time.now().epochMs - waitChatStartedAt);
   if (!duration) return result.output;
-  const timeMarker = "\n<time>";
+  const timeMarker = "\n<now ";
   const index = result.output.lastIndexOf(timeMarker);
   if (index === -1) return `${result.output}\n<wait-duration>${duration}</wait-duration>`;
   return `${result.output.slice(0, index)}\n<wait-duration>${duration}</wait-duration>${result.output.slice(index)}`;

@@ -544,7 +544,7 @@ test("chat agent resumes pending finish_and_wait with check_chat result on heart
   const secondMessages = requests[1].messages;
   const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "finish_and_wait");
   assert.equal(waitToolMessages.length, 1);
-  assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<time>2026-05-26T00:05:00.000<\\time>");
+  assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<now local=\"2026-05-26T00:05:00.000\"/>");
   const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "finish_and_wait");
   const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
   assert.equal(checkChatAfterWait, undefined);
@@ -2338,7 +2338,7 @@ test("chat agent sends final newline send_chat content into one tool message", a
         return {
           callId: call.id,
           ok: true,
-          output: `<chat-log>\n[today 22:48]\nAlice:${String(call.input.content)}\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>`
+          output: `<chat-log>\n[today 22:48]\nAlice:${String(call.input.content)}\n</chat-log>\n<now local="2026-05-27 22:48:53"/>`
         };
       }
     }]
@@ -2346,7 +2346,7 @@ test("chat agent sends final newline send_chat content into one tool message", a
 
   await runPreparedChatEvent(core, textEvent());
   const toolMessage = requests[1].messages.find((message) => message.role === "tool");
-  assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\ntwo\n</chat-log>\n<time>2026-05-27 22:48:53<\\time>");
+  assert.equal(toolMessage?.content, "<chat-log>\n[today 22:48]\nAlice:one\ntwo\n</chat-log>\n<now local=\"2026-05-27 22:48:53\"/>");
 });
 
 test("chat agent can disable LLM streaming from config", async () => {
@@ -3607,7 +3607,7 @@ function chatTestTools(onCall?: (call: ToolCall) => void) {
           callId: call.id,
           ok: true,
           messageCursorId: 7,
-          output: "<chat-log>\nnew chat\n</chat-log>\n<time>2026-05-26T00:05:00.000<\\time>"
+          output: "<chat-log>\nnew chat\n</chat-log>\n<now local=\"2026-05-26T00:05:00.000\"/>"
         };
       }
       if (call.toolName === "later_tool") {

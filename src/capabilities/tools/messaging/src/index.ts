@@ -212,13 +212,14 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     }
 
     const shellEvents = scope === "new" && messages.length === 0 ? [] : readShellSwitchContext(sinceDate);
+    const prefix = scope === "new" && messages.some(isUnreadUserMessage) ? messagingToolText.haveNewMessage : undefined;
     if (!options.readonly) markViewedMessages(messages);
     const body = formatCheckChatMessages(messages, { shellEvents, timeZone: time.timeZone, userName: userSpeakerPlaceholder });
     return {
       callId,
       ok: true,
       messageCursorId: cursorMessageId,
-      output: appendCurrentTime(body, time.now().iso)
+      output: appendCurrentTime(body, time.now().iso, prefix)
     };
   }
 
@@ -723,8 +724,12 @@ function formatContextEntryLine(entry: ChatContextEntry, userName: string): stri
   return formatMessageContentLine(entry.message, userName);
 }
 
-function appendCurrentTime(output: string, currentTime: string): string {
-  return messagingToolText.appendCurrentTime(output, currentTime);
+function appendCurrentTime(output: string, currentTime: string, prefix?: string): string {
+  return messagingToolText.appendCurrentTime(output, currentTime, prefix);
+}
+
+function isUnreadUserMessage(message: StoredConversationMessage): boolean {
+  return !message.isRead && message.direction === "inbound" && message.senderRole === "user";
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {

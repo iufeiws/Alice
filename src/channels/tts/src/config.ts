@@ -233,14 +233,18 @@ function ttsOpenAiApiConversionConfigValue(raw: Record<string, unknown>): TtsOpe
 
 function ttsTextFiltersValue(value: unknown): TtsTextFilter[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => parseJsonObject(entry))
-    .map((entry) => ({
-      pattern: stringValue(entry.pattern),
+  const filters: TtsTextFilter[] = [];
+  for (const valueEntry of value) {
+    const entry = parseJsonObject(valueEntry);
+    const pattern = stringValue(entry.pattern);
+    if (!pattern) continue;
+    filters.push({
+      pattern,
       flags: stringValue(entry.flags),
       replacement: stringValue(entry.replacement)
-    }))
-    .filter((entry) => entry.pattern);
+    });
+  }
+  return filters;
 }
 
 function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBailianConversionConfig {

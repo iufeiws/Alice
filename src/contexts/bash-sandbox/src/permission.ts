@@ -14,14 +14,13 @@ export type BashPermissionInput = {
 
 export function classifyBashCommand(input: BashPermissionInput): BashPermissionDecision {
   const command = input.command.trim();
-  if (!input.config.enabled) return deny("disabled", "bash sandbox is disabled", input.skillId);
   if (!command) return deny("empty_command", "command is required", input.skillId);
   if (!isAllowedCwd(input.config, input.cwd)) return deny("cwd_outside_sandbox", `cwd is outside configured sandbox paths: ${input.cwd}`, input.skillId);
 
   const globalDeny = classifyGlobalDeny(command, input);
   if (globalDeny) return globalDeny;
 
-  if (input.skillId && commandMentionsPath(command, input.config.skillsMount.containerPath)) {
+  if (input.skillId && input.config.skillMounts.some((mount) => commandMentionsPath(command, mount.containerPath))) {
     return { state: "allow", matchedRule: "skill_script", skillId: input.skillId };
   }
   if (isOrdinaryLocalCommand(command)) return { state: "allow", matchedRule: "local_work" };
@@ -46,7 +45,7 @@ function classifyGlobalDeny(command: string, input: BashPermissionInput): BashPe
   const writes = /^(?:rm|rmdir|mv|cp|touch|mkdir|tee|sed|perl|python|python3|node|npm|pnpm|yarn)$/.test(executable);
   const write = lower.match(/(?:^|\s)(?:rm|rmdir|mv|cp|touch|mkdir|tee|sed|perl|python|python3|node|npm|pnpm|yarn)\s+(.+)/);
   if (writes && isReadOnlyPath(input.config, input.cwd)) return deny("readonly_cwd", `read-only cwd cannot be modified: ${input.cwd}`, input.skillId);
-  if (write && commandMentionsPath(command, input.config.skillsMount.containerPath)) return deny("readonly_skills", "skills mount is read-only", input.skillId);
+  if (write && input.config.skillMounts.some((mount) => commandMentionsPath(command, mount.containerPath))) return deny("readonly_skills", "skills mounts are read-only", input.skillId);
   for (const token of command.split(/\s+/)) {
     const normalized = normalizeContainerPath(token, input.cwd);
     if (normalized && isReadOnlyPath(input.config, normalized) && /^(?:rm|rmdir|mv|cp|touch|mkdir|tee)$/.test(executable)) {

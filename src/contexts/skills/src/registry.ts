@@ -1,3 +1,5 @@
+import type { BashSandboxSkillMountConfig } from "../../bash-sandbox/src/index.js";
+
 const fs = await import("node:fs");
 const path = await import("node:path");
 
@@ -15,8 +17,8 @@ export type SkillRegistry = {
   get(idOrName: string): SkillMetadata | undefined;
 };
 
-export function createSkillRegistry(input: { root: string; containerRoot: string }): SkillRegistry {
-  const skills = scanSkills(input.root, input.containerRoot);
+export function createSkillRegistry(input: { mounts: BashSandboxSkillMountConfig[] }): SkillRegistry {
+  const skills = input.mounts.flatMap((mount) => scanSkillMount(mount));
   return {
     list: () => [...skills],
     get(idOrName) {
@@ -25,7 +27,8 @@ export function createSkillRegistry(input: { root: string; containerRoot: string
   };
 }
 
-function scanSkills(root: string, containerRoot: string): SkillMetadata[] {
+function scanSkillMount(mount: BashSandboxSkillMountConfig): SkillMetadata[] {
+  const root = mount.hostPath;
   if (!fs.existsSync(root)) return [];
   const found: SkillMetadata[] = [];
   for (const instructionPath of findSkillFiles(root)) {
@@ -33,13 +36,15 @@ function scanSkills(root: string, containerRoot: string): SkillMetadata[] {
     const relativeRoot = path.relative(root, hostRoot).split(path.sep).join("/");
     const frontmatter = parseFrontmatter(fs.readFileSync(instructionPath, "utf8"));
     const name = frontmatter.name || path.basename(hostRoot);
+    const id = relativeRoot ? `${mount.id}/${relativeRoot}` : mount.id;
+    const containerRoot = relativeRoot ? `${mount.containerPath.replace(/\/+$/, "")}/${relativeRoot}` : mount.containerPath;
     found.push({
-      id: relativeRoot || name,
+      id,
       name,
       description: frontmatter.description || "",
       hostRoot,
       instructionPath,
-      containerRoot: `${containerRoot.replace(/\/+$/, "")}/${relativeRoot}`.replace(/\/+$/, "")
+      containerRoot
     });
   }
   return found.sort((a, b) => a.id.localeCompare(b.id));

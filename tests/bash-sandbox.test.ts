@@ -13,15 +13,11 @@ const os = await import("node:os");
 const path = await import("node:path");
 const childProcess = await import("node:child_process");
 
-test("bash tool denies execution when sandbox is disabled", async () => {
-  let executed = false;
+test("bash tool executes through sandbox runtime by default", async () => {
   const tools = createBashTools({
     runtime: createBashSandboxRuntime({
-      config: testConfig({ enabled: false }),
-      executor: fakeExecutor(async () => {
-        executed = true;
-        return { stdout: "host", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false };
-      })
+      config: testConfig(),
+      executor: fakeExecutor(async () => ({ stdout: "sandbox\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
     })
   });
 
@@ -29,9 +25,8 @@ test("bash tool denies execution when sandbox is disabled", async () => {
   const output = JSON.parse(String(result.output));
 
   assert.equal(result.ok, true);
-  assert.equal(output.denied, true);
-  assert.equal(output.denyReason, "bash sandbox is disabled");
-  assert.equal(executed, false);
+  assert.equal(output.denied, false);
+  assert.equal(output.stdout, "sandbox\n");
 });
 
 test("bash tool returns docker result without throwing on non-zero exit", async () => {
@@ -84,25 +79,32 @@ test("permission gate denies unsafe, uncertain, and read-only skill writes", () 
 });
 
 test("config rejects writable mounts under skills and sensitive host paths", () => {
-  assert.equal(path.isAbsolute(loadConfig({}).bashSandbox.skillsMount.hostPath), true);
+  const config = loadConfig({});
+  assert.equal(config.bashSandbox.image, "cimg/python:3.13-browsers");
+  assert.equal(config.bashSandbox.hostWorkspaceDir.endsWith(path.join(".sandbox", "bash", "workspace")), true);
+  assert.equal(config.bashSandbox.hostCacheDir.endsWith(path.join(".sandbox", "bash", "cache")), true);
+  assert.equal(config.bashSandbox.auditLogPath, ".sandbox/bash/audit.jsonl");
+  assert.equal("enabled" in config.bashSandbox, false);
+  assert.equal(config.bashSandbox.skillMounts.some((mount) => mount.hostPath.includes(`${path.sep}external${path.sep}`)), false);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/skills/generated", readOnly: false }]) }), /skills mount/);
+  assert.throws(() => loadConfig({ BASH_SANDBOX_SKILL_MOUNTS: JSON.stringify([{ hostPath: "src/capabilities/skills/external/alice-selfie-fast", containerPath: "/skills/external/alice-selfie-fast" }]) }), /external skills/);
 });
 
 test("skills registry loads metadata and loader resolves container resource paths", () => {
   const root = tmpDir("skills");
-  const skillRoot = path.join(root, "external", "demo");
+  const skillRoot = path.join(root, "custom", "demo");
   fs.mkdirSync(path.join(skillRoot, "scripts"), { recursive: true });
   fs.writeFileSync(path.join(skillRoot, "SKILL.md"), "---\nname: demo\ndescription: >\n  Run demo script.\n---\n\nUse scripts/run.sh\n");
   fs.writeFileSync(path.join(skillRoot, "scripts", "run.sh"), "echo demo\n");
 
-  const registry = createSkillRegistry({ root, containerRoot: "/skills" });
+  const registry = createSkillRegistry({ mounts: [{ id: "custom/demo", hostPath: skillRoot, containerPath: "/skills/custom/demo", readOnly: true }] });
   const loader = createSkillLoader(registry);
   const loaded = loader.load("demo");
 
   assert.deepEqual(registry.list().map((skill) => skill.name), ["demo"]);
   assert.equal(loaded.instructions.includes("Use scripts/run.sh"), true);
-  assert.equal(loaded.resolveResource("scripts/run.sh"), "/skills/external/demo/scripts/run.sh");
+  assert.equal(loaded.resolveResource("scripts/run.sh"), "/skills/custom/demo/scripts/run.sh");
   assert.throws(() => loaded.resolveResource("../escape"), /escapes/);
 });
 
@@ -111,7 +113,7 @@ test("skills tools list metadata and load instructions without host paths", asyn
   const skillRoot = path.join(root, "demo");
   fs.mkdirSync(skillRoot, { recursive: true });
   fs.writeFileSync(path.join(skillRoot, "SKILL.md"), "---\nname: demo\ndescription: demo skill\n---\n\nRun /skills/demo/scripts/run.sh\n");
-  const registry = createSkillRegistry({ root, containerRoot: "/skills" });
+  const registry = createSkillRegistry({ mounts: [{ id: "demo", hostPath: skillRoot, containerPath: "/skills/demo", readOnly: true }] });
   const loader = createSkillLoader(registry);
   const tools = createSkillsTools({ registry, loader });
 
@@ -126,15 +128,47 @@ test("skills tools list metadata and load instructions without host paths", asyn
   assert.equal(String(loaded.output).includes(root), false);
 });
 
-test("Feishu bash run card puts the updatable output directly in the collapsible panel", () => {
+test("docker executor pulls the configured image before creating the container", async () => {
+  const root = tmpDir("fake-docker");
+  const bin = path.join(root, "bin");
+  const log = path.join(root, "docker.log");
+  fs.mkdirSync(bin, { recursive: true });
+  const docker = path.join(bin, "docker");
+  fs.writeFileSync(docker, `#!/bin/sh
+echo "$@" >> "${log}"
+if [ "$1 $2" = "image inspect" ]; then exit 1; fi
+if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "inspect" ]; then exit 1; fi
+if [ "$1" = "run" ]; then exit 0; fi
+if [ "$1" = "exec" ]; then echo docker-ok; exit 0; fi
+exit 64
+`);
+  fs.chmodSync(docker, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    const config = testConfig({ hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
+    const result = await createDockerBashExecutor(config).execute({ command: "echo ok", cwd: config.workspaceDir, timeoutMs: 1000, outputLimitBytes: 1024 });
+    const calls = fs.readFileSync(log, "utf8");
+    assert.equal(calls.includes("image inspect cimg/python:3.13-browsers"), true);
+    assert.equal(calls.includes("pull cimg/python:3.13-browsers"), true);
+    assert.match(calls, /run -d/);
+    assert.equal(result.stdout.trim(), "docker-ok");
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test("Feishu bash run card uses one collapsible panel titled with the command", () => {
   const card = buildBashRunCard("npm test", "actual output") as any;
   const body = card.body.elements;
-  const panel = body[1];
+  const panel = body[0];
   const output = panel.elements[0];
 
-  assert.equal(card.header.title.content, "npm test");
-  assert.equal(body[0].tag, "hr");
+  assert.equal(card.header, undefined);
+  assert.equal(body.length, 1);
   assert.equal(panel.tag, "collapsible_panel");
+  assert.equal(panel.header.title.content, "npm test");
   assert.equal(output.tag, "markdown");
   assert.equal(output.element_id, "bash_run_content");
   assert.equal(output.content, "actual output");
@@ -160,10 +194,11 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
     "update:card_bash:content:2",
     "stream:card_bash:false:3"
   ]);
-  assert.match(client.contents.at(-1) ?? "", /cwd: \/workspace/);
-  assert.match(client.contents.at(-1) ?? "", /status: exited 0/);
+  assert.doesNotMatch(client.contents.at(-1) ?? "", /cwd:/);
+  assert.doesNotMatch(client.contents.at(-1) ?? "", /status:/);
   assert.match(client.contents.at(-1) ?? "", /ok/);
   assert.match(client.contents.at(-1) ?? "", /\[stderr\] warn/);
+  assert.match(client.contents.at(-1) ?? "", /\[exit 0\]/);
 });
 
 test("docker executor runs in a fixed container when explicitly enabled", async (t) => {
@@ -172,12 +207,7 @@ test("docker executor runs in a fixed container when explicitly enabled", async 
     return;
   }
   const config = testConfig({ containerName: `alice-bash-sandbox-test-${process.pid}` });
-  fs.mkdirSync(config.skillsMount.hostPath, { recursive: true });
-  const image = childProcess.spawnSync("docker", ["image", "inspect", config.image], { stdio: "ignore" });
-  if (image.status !== 0) {
-    t.skip(`Docker image is not available locally: ${config.image}`);
-    return;
-  }
+  for (const mount of config.skillMounts) fs.mkdirSync(mount.hostPath, { recursive: true });
   try {
     const result = await createDockerBashExecutor(config).execute({ command: "echo docker-ok", cwd: config.workspaceDir, timeoutMs: 5000, outputLimitBytes: 1024 });
     assert.equal(result.stdout.trim(), "docker-ok");
@@ -190,13 +220,15 @@ test("docker executor runs in a fixed container when explicitly enabled", async 
 function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSandboxConfig {
   const root = tmpDir("bash-sandbox");
   return {
-    enabled: true,
     containerName: "test-bash-sandbox",
-    image: "node:22-bookworm-slim",
+    image: "cimg/python:3.13-browsers",
     defaultCwd: "/workspace",
+    hostWorkspaceDir: path.join(root, "workspace"),
     workspaceDir: "/workspace",
+    hostCacheDir: path.join(root, "cache"),
+    cacheDir: "/cache",
     tmpDir: "/tmp",
-    skillsMount: { hostPath: path.join(root, "skills"), containerPath: "/skills", readOnly: true },
+    skillMounts: [{ id: "demo", hostPath: path.join(root, "skills", "demo"), containerPath: "/skills/demo", readOnly: true }],
     mounts: [],
     network: "none",
     timeoutMs: 1000,

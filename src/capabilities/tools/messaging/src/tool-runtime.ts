@@ -177,8 +177,7 @@ export function createToolRuntime(input: {
     now: () => input.time.now().date
   });
   const skillsRegistry = createSkillRegistry({
-    root: input.config.skills?.root ?? "src/capabilities/skills",
-    containerRoot: input.config.bashSandbox.skillsMount.containerPath
+    mounts: input.config.bashSandbox.skillMounts
   });
   const skillsLoader = createSkillLoader(skillsRegistry);
   const skillsTools = createSkillsTools({ registry: skillsRegistry, loader: skillsLoader });
@@ -187,8 +186,7 @@ export function createToolRuntime(input: {
     runtime: bashRuntime
   });
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools];
-  if (input.config.bashSandbox.enabled) toolPlugins.push(skillsTools, bashTools);
+  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, skillsTools, bashTools];
 
   return {
     messagingTools,

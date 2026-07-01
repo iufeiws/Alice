@@ -1,6 +1,7 @@
 import type { BashSandboxConfig } from "./config.js";
 
 const childProcess = await import("node:child_process");
+const fs = await import("node:fs");
 
 export type DockerExecutorResult = {
   stdout: string;
@@ -28,6 +29,9 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
 }
 
 async function ensureContainer(config: BashSandboxConfig): Promise<void> {
+  await ensureImage(config);
+  fs.mkdirSync(config.hostWorkspaceDir, { recursive: true });
+  fs.mkdirSync(config.hostCacheDir, { recursive: true });
   const inspect = await execFile("docker", ["inspect", "-f", "{{.State.Running}}", config.containerName], 10_000, 4096);
   if (inspect.exitCode === 0 && inspect.stdout.trim() === "true") return;
   if (inspect.exitCode === 0) {
@@ -39,6 +43,13 @@ async function ensureContainer(config: BashSandboxConfig): Promise<void> {
   if (create.exitCode !== 0) throw new Error(create.stderr || "failed to create bash sandbox container");
 }
 
+async function ensureImage(config: BashSandboxConfig): Promise<void> {
+  const inspect = await execFile("docker", ["image", "inspect", config.image], 10_000, 4096);
+  if (inspect.exitCode === 0) return;
+  const pull = await execFile("docker", ["pull", config.image], 10 * 60_000, 64 * 1024);
+  if (pull.exitCode !== 0) throw new Error(pull.stderr || `failed to pull bash sandbox image: ${config.image}`);
+}
+
 function createContainerArgs(config: BashSandboxConfig): string[] {
   const args = [
     "run",
@@ -47,13 +58,18 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "--network", config.network === "none" ? "none" : "bridge",
     "--read-only",
     "--tmpfs", config.tmpDir,
-    "-v", `${config.skillsMount.hostPath}:${config.skillsMount.containerPath}:ro`,
+    "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+    "-e", `HOME=${config.workspaceDir}`,
+    "-e", `NPM_CONFIG_CACHE=${config.cacheDir}/npm`,
+    "-e", `PIP_CACHE_DIR=${config.cacheDir}/pip`,
+    "-v", `${config.hostWorkspaceDir}:${config.workspaceDir}:rw`,
+    "-v", `${config.hostCacheDir}:${config.cacheDir}:rw`,
     "-w", config.defaultCwd
   ];
   if (config.cpuLimit) args.push("--cpus", config.cpuLimit);
   if (config.memoryLimit) args.push("--memory", config.memoryLimit);
   if (config.pidsLimit) args.push("--pids-limit", String(config.pidsLimit));
-  args.push("--mount", `type=volume,src=${config.containerName}-workspace,dst=${config.workspaceDir}`);
+  for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:ro`);
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   args.push(config.image, "sleep", "infinity");
   return args;

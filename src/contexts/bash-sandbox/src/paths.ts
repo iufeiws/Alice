@@ -19,19 +19,20 @@ export function normalizeContainerPath(value: string, cwd: string): string | und
 export function isAllowedCwd(config: BashSandboxConfig, cwd: string): boolean {
   return [
     config.workspaceDir,
+    config.cacheDir,
     config.tmpDir,
-    config.skillsMount.containerPath,
+    ...config.skillMounts.map((mount) => mount.containerPath),
     ...config.mounts.map((mount) => mount.containerPath)
   ].some((root) => isSameOrInside(cwd, root));
 }
 
 export function isReadOnlyPath(config: BashSandboxConfig, value: string): boolean {
-  if (isSameOrInside(value, config.skillsMount.containerPath)) return true;
+  if (config.skillMounts.some((mount) => isSameOrInside(value, mount.containerPath))) return true;
   return config.mounts.some((mount) => mount.readOnly && isSameOrInside(value, mount.containerPath));
 }
 
 export function isWritablePath(config: BashSandboxConfig, value: string): boolean {
-  if (isSameOrInside(value, config.workspaceDir) || isSameOrInside(value, config.tmpDir)) return true;
+  if (isSameOrInside(value, config.workspaceDir) || isSameOrInside(value, config.cacheDir) || isSameOrInside(value, config.tmpDir)) return true;
   return config.mounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath));
 }
 

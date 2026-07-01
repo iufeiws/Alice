@@ -29,6 +29,7 @@ export type MessageRuntimeDeps = {
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
   getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;
+  beforeSleepCocoonWakeSession?: (event: AgentEvent) => Promise<void> | void;
   getCalendarReminderEvent?: () => AgentEvent | undefined;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
   getRandomInitiatedBehaviorTarget?: () => {
@@ -191,6 +192,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       },
       processPendingSession: handleDirtySession,
       getSleepCocoonWakeEvent: () => deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.(),
+      beforeSleepCocoonWakeSession: (event) => deps.beforeSleepCocoonWakeSession?.(event as AgentEvent),
       getSleepCocoonGoodnightEvent: deps.getSleepCocoonGoodnightEvent,
       getCalendarReminderEvent: deps.getCalendarReminderEvent,
       appendLog: deps.appendLog

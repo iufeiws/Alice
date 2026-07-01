@@ -10,6 +10,7 @@ export type AgentRunIndicatorTypingInput = {
 export type AgentRunIndicator = {
   begin(input: AgentRunIndicatorBeginInput): Promise<AgentRunIndicatorSession | undefined>;
   ensureReady?(): Promise<void>;
+  createFreshCard?(): Promise<void>;
   setTyping?(input: AgentRunIndicatorTypingInput): Promise<void>;
 };
 

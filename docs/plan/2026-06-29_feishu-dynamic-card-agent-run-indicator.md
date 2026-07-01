@@ -29,7 +29,7 @@ Reasoning:
 - Display three fixed-position blocks: state, reasoning, and content.
 - While project typing is active, the state block shows `正在输入中...`.
 - When the run finishes, the state block shows the current agent state label and the reasoning/content blocks show the final generated text for that run.
-- During streaming, each block replaces the previous rendered block by position: `newText + "___" + oldText.slice(newText.length + 3)`, and finish renders only the final `newText`.
+- During streaming, the first non-empty delta clears the previous rendered reasoning/content blocks; later updates render the current accumulated text directly.
 - Enable only when Feishu is available, not when the active conversation channel is Feishu.
 - Do not add any prompt content.
 - Do not special-case agent loop or function-call loop tool execution by tool name, requester, or channel.
@@ -308,7 +308,7 @@ Add focused tests:
 - Feishu adapter updates the persisted card when a card id exists.
 - Feishu adapter uses native `hr` elements between the three fixed-position blocks.
 - Feishu adapter renders active typing state as `正在输入中...`.
-- Feishu adapter advances each block's replacement marker from the previous rendered block.
+- Feishu adapter renders current accumulated reasoning/content directly during streaming.
 - Feishu adapter flushes final accumulated content on finish.
 - Feishu unavailable or no unique paired user means no indicator session.
 - Indicator storage is separate from conversation message storage.

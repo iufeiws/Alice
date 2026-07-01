@@ -17,6 +17,9 @@ export function createAgentRunIndicatorRuntime(): AgentRunIndicatorRuntime {
     ensureReady(): Promise<void> {
       return delegate?.ensureReady?.() ?? Promise.resolve();
     },
+    createFreshCard(): Promise<void> {
+      return delegate?.createFreshCard?.() ?? Promise.resolve();
+    },
     setTyping(input: AgentRunIndicatorTypingInput): Promise<void> {
       return delegate?.setTyping?.(input) ?? Promise.resolve();
     }

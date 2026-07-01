@@ -146,21 +146,19 @@ test("Feishu agent run indicator creates a card when no persisted card exists an
     "create:ou_user:正在输入中...||",
     "stream:card_new:true:1",
     "update:card_new:state:正在输入中...:2",
-    "update:card_new:reasoning::3",
-    "update:card_new:content::4",
-    "update:card_new:state:正在输入中...:5",
-    "update:card_new:reasoning:think:6",
-    "update:card_new:content:hello:7",
-    "update:card_new:state:working:8",
-    "update:card_new:reasoning:think:9",
-    "update:card_new:content:hello:10",
-    "stream:card_new:false:11"
+    "update:card_new:state:正在输入中...:3",
+    "update:card_new:reasoning:think:4",
+    "update:card_new:content:hello:5",
+    "update:card_new:state:working:6",
+    "update:card_new:reasoning:think:7",
+    "update:card_new:content:hello:8",
+    "stream:card_new:false:9"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_new",
     cardId: "card_new",
     layoutVersion: CARD_LAYOUT_VERSION,
-    nextSequence: 12,
+    nextSequence: 10,
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "working",
     reasoning: "think",
@@ -194,21 +192,19 @@ test("Feishu agent run indicator reuses persisted card and preserves empty block
   assert.deepEqual(client.calls, [
     "stream:card_old:true:7",
     "update:card_old:state:正在输入中...:8",
-    "update:card_old:reasoning::9",
-    "update:card_old:content::10",
-    "update:card_old:state:正在输入中...:11",
-    "update:card_old:reasoning::12",
-    "update:card_old:content::13",
-    "update:card_old:state:waiting:14",
-    "update:card_old:reasoning::15",
-    "update:card_old:content::16",
-    "stream:card_old:false:17"
+    "update:card_old:state:正在输入中...:9",
+    "update:card_old:reasoning::10",
+    "update:card_old:content::11",
+    "update:card_old:state:waiting:12",
+    "update:card_old:reasoning::13",
+    "update:card_old:content::14",
+    "stream:card_old:false:15"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_old",
     cardId: "card_old",
     layoutVersion: CARD_LAYOUT_VERSION,
-    nextSequence: 18,
+    nextSequence: 16,
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "",
@@ -216,7 +212,7 @@ test("Feishu agent run indicator reuses persisted card and preserves empty block
   });
 });
 
-test("Feishu agent run indicator replaces each persisted block by position", async () => {
+test("Feishu agent run indicator clears previous blocks on streamed content", async () => {
   const store = memoryCardStore({
     messageId: "om_old",
     cardId: "card_old",
@@ -247,21 +243,19 @@ test("Feishu agent run indicator replaces each persisted block by position", asy
   assert.deepEqual(client.calls, [
     "stream:card_old:true:7",
     "update:card_old:state:正在输入中...:8",
-    "update:card_old:reasoning:___soning:9",
-    "update:card_old:content:___tent:10",
-    "update:card_old:state:正在输入中...:11",
-    "update:card_old:reasoning:c___oning:12",
-    "update:card_old:content:co___nt:13",
-    "update:card_old:state:waiting:14",
-    "update:card_old:reasoning:c:15",
-    "update:card_old:content:co:16",
-    "stream:card_old:false:17"
+    "update:card_old:state:正在输入中...:9",
+    "update:card_old:reasoning:c:10",
+    "update:card_old:content:co:11",
+    "update:card_old:state:waiting:12",
+    "update:card_old:reasoning:c:13",
+    "update:card_old:content:co:14",
+    "stream:card_old:false:15"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_old",
     cardId: "card_old",
     layoutVersion: CARD_LAYOUT_VERSION,
-    nextSequence: 18,
+    nextSequence: 16,
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "c",
@@ -269,7 +263,7 @@ test("Feishu agent run indicator replaces each persisted block by position", asy
   });
 });
 
-test("Feishu agent run indicator advances replacement markers from the previous rendered block", async () => {
+test("Feishu agent run indicator streams current content while saving clean final blocks", async () => {
   const store = memoryCardStore({
     messageId: "om_old",
     cardId: "card_old",
@@ -300,7 +294,7 @@ test("Feishu agent run indicator advances replacement markers from the previous 
     messageId: "om_old",
     cardId: "card_old",
     layoutVersion: CARD_LAYOUT_VERSION,
-    nextSequence: 14,
+    nextSequence: 12,
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "正在输入中...",
     reasoning: "reasoning",
@@ -313,24 +307,22 @@ test("Feishu agent run indicator advances replacement markers from the previous 
   assert.deepEqual(client.calls, [
     "stream:card_old:true:7",
     "update:card_old:state:正在输入中...:8",
-    "update:card_old:reasoning:___soning:9",
-    "update:card_old:content:___tent:10",
-    "update:card_old:state:正在输入中...:11",
-    "update:card_old:reasoning:c___oning:12",
-    "update:card_old:content:c___ent:13",
-    "update:card_old:state:正在输入中...:14",
-    "update:card_old:reasoning:co___ning:15",
-    "update:card_old:content:co___nt:16",
-    "update:card_old:state:waiting:17",
-    "update:card_old:reasoning:co:18",
-    "update:card_old:content:co:19",
-    "stream:card_old:false:20"
+    "update:card_old:state:正在输入中...:9",
+    "update:card_old:reasoning:c:10",
+    "update:card_old:content:c:11",
+    "update:card_old:state:正在输入中...:12",
+    "update:card_old:reasoning:co:13",
+    "update:card_old:content:co:14",
+    "update:card_old:state:waiting:15",
+    "update:card_old:reasoning:co:16",
+    "update:card_old:content:co:17",
+    "stream:card_old:false:18"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_old",
     cardId: "card_old",
     layoutVersion: CARD_LAYOUT_VERSION,
-    nextSequence: 21,
+    nextSequence: 19,
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "co",
@@ -467,6 +459,44 @@ test("Feishu agent run indicator recreates old layout cards during startup ensur
   });
 
   await indicator.ensureReady?.();
+
+  assert.deepEqual(client.calls, [
+    "create:ou_user:waiting|old think|old answer"
+  ]);
+  assert.deepEqual(store.read(), {
+    messageId: "om_new",
+    cardId: "card_new",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 1,
+    updatedAt: "2026-06-29T00:00:00.000Z",
+    state: "waiting",
+    reasoning: "old think",
+    content: "old answer"
+  });
+});
+
+test("Feishu agent run indicator creates a fresh card on demand", async () => {
+  const store = memoryCardStore({
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 7,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+    state: "idle",
+    reasoning: "old think",
+    content: "old answer"
+  });
+  const client = fakeCardClient();
+  const indicator = createFeishuDynamicCardAgentRunIndicator({
+    enabled: () => true,
+    client,
+    pairingStore: pairedStore(),
+    cardStore: store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-29T00:00:00.000Z")),
+    getState: () => ({ state: "waiting" })
+  });
+
+  await indicator.createFreshCard?.();
 
   assert.deepEqual(client.calls, [
     "create:ou_user:waiting|old think|old answer"

@@ -89,6 +89,12 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       if (!receiveId) return;
       await ensureCard(receiveId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
     },
+    async createFreshCard() {
+      if (!input.enabled() || !input.client.isStarted()) return;
+      const receiveId = pairedFeishuUserId();
+      if (!receiveId) return;
+      await createCard(receiveId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
+    },
     async begin() {
       if (!input.enabled() || !input.client.isStarted()) return undefined;
       const receiveId = pairedFeishuUserId();
@@ -97,13 +103,13 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       let card = await ensureCard(receiveId);
       try {
         await updateStreaming(card, true);
-        await updateBlocks(card, renderBlocks(card.blocks, runningBlocks("", ""), false), { ...card.savedBlocks, state: TYPING_STATE_LABEL });
+        await updateState(card, TYPING_STATE_LABEL);
       } catch (error) {
         if (!isMissingCardError(error)) throw error;
         input.log?.("warn", "[agent-run-indicator] persisted Feishu card is unavailable; creating a new indicator card");
         card = await createCard(receiveId);
         await updateStreaming(card, true);
-        await updateBlocks(card, renderBlocks(card.blocks, runningBlocks("", ""), false), { ...card.savedBlocks, state: TYPING_STATE_LABEL });
+        await updateState(card, TYPING_STATE_LABEL);
       }
       return createSession(card);
     },
@@ -144,7 +150,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         flushPromise = flushPromise
-          .then(() => flushContent(card, renderBlocks(card.blocks, runningBlocks(reasoning, content), false)))
+          .then(() => flushContent(card, runningBlocks(reasoning, content)))
           .catch((error) => {
             failed = true;
             input.log?.("error", `[agent-run-indicator] Feishu indicator flush failed: ${errorMessage(error)}`);
@@ -155,7 +161,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     async function flushNow(): Promise<void> {
       clearFlushTimer();
       await flushPromise;
-      if (!failed) await flushContent(card, renderBlocks(card.blocks, runningBlocks(reasoning, content), false));
+      if (!failed) await flushContent(card, runningBlocks(reasoning, content));
     }
 
     return {
@@ -177,7 +183,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
           reasoning,
           content
         };
-        await updateBlocks(card, renderBlocks(card.blocks, finalBlocks, true), finalBlocks);
+        await updateBlocks(card, finalBlocks, finalBlocks);
         await updateStreaming(card, false);
       },
       async fail(error) {
@@ -347,19 +353,6 @@ function blocksFromRecord(record: Pick<FeishuAgentRunIndicatorCardRecord, "state
     reasoning: record.reasoning ?? "",
     content: record.content ?? ""
   };
-}
-
-function renderBlocks(oldBlocks: IndicatorBlocks, newBlocks: IndicatorBlocks, finished: boolean): IndicatorBlocks {
-  return {
-    state: renderBlock(oldBlocks.state, newBlocks.state, finished),
-    reasoning: renderBlock(oldBlocks.reasoning, newBlocks.reasoning, finished),
-    content: renderBlock(oldBlocks.content, newBlocks.content, finished)
-  };
-}
-
-function renderBlock(oldText: string, newText: string, finished: boolean): string {
-  if (finished || newText.length >= oldText.length) return newText;
-  return `${newText}___${oldText.slice(newText.length + 3)}`;
 }
 
 function stateLabel(value: unknown): string {

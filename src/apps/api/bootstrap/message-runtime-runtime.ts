@@ -23,7 +23,7 @@ export function createMessageRuntimeRuntime(input: {
   getSleepCocoonWakeEvent(): any;
   getCalendarReminderEvent(): any;
   worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
-  agentRunIndicator?: { setTyping?(input: { typing: boolean }): Promise<void> | void };
+  agentRunIndicator?: { createFreshCard?(): Promise<void> | void; setTyping?(input: { typing: boolean }): Promise<void> | void };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
@@ -80,6 +80,9 @@ export function createMessageRuntimeRuntime(input: {
     },
     getSleepCocoonGoodnightEvent: input.getSleepCocoonGoodnightEvent,
     getSleepCocoonWakeEvent: input.getSleepCocoonWakeEvent,
+    async beforeSleepCocoonWakeSession() {
+      await input.agentRunIndicator?.createFreshCard?.();
+    },
     getCalendarReminderEvent: input.getCalendarReminderEvent,
     onInboundUserMessage(messageInput) {
       const count = input.initiatedBehaviorRunStore.markRespondedWithin15m({

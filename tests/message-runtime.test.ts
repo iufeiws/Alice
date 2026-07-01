@@ -78,6 +78,14 @@ test("message runtime skips Feishu typing start when messaging config disables e
   assert.deepEqual(indicatorTypingEvents, [true, false]);
 });
 
+test("message runtime creates a fresh agent run card only before sleep cocoon wake", async () => {
+  const wakeEvents = await runMessageRuntimeWakeIndicator("sleep_cocoon.wake");
+  const forceWakeEvents = await runMessageRuntimeWakeIndicator("sleep_cocoon.force_wake");
+
+  assert.deepEqual(wakeEvents, ["fresh", "typing:true", "loop", "typing:false"]);
+  assert.deepEqual(forceWakeEvents, ["typing:true", "loop", "typing:false"]);
+});
+
 test("message runtime sends one LLM request for pending inbound logs and marks them processed", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -1595,6 +1603,89 @@ function memoryStore(initial?: string): AgentStateStore & { content?: string } {
 function randomQueue(values: number[]): () => number {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)] ?? 0;
+}
+
+async function runMessageRuntimeWakeIndicator(trigger: "sleep_cocoon.wake" | "sleep_cocoon.force_wake"): Promise<string[]> {
+  const root = makeTempDir(`runtime-wake-indicator-${trigger.replace(/\W/g, "-")}`);
+  const store = createAliceStore(path.join(root, "alice.sqlite"));
+  const messagingConfigPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  fs.mkdirSync(path.dirname(messagingConfigPath), { recursive: true });
+  fs.writeFileSync(messagingConfigPath, `${JSON.stringify({
+    splitMultilineSendChat: true,
+    limitConsecutiveSends: true,
+    feishuTypingEmojiEnabled: false
+  })}\n`);
+  const events: string[] = [];
+  let wakeEvent: AgentEvent | undefined = {
+    ...textEvent("session-1", `event_${trigger}`, "wake"),
+    type: "system.heartbeat",
+    meta: {
+      receivedAt: "2026-05-24T08:00:00.000Z",
+      raw: { agentInitiatedTriggerEvent: trigger }
+    }
+  };
+  const runtime = createMessageRuntimeRuntime({
+    config: { core: { inboundDebounceMs: 0, heartbeatPaused: false } },
+    time: {
+      timeZone: "UTC",
+      now: () => ({ iso: "2026-05-26T00:00:00.000Z", date: new Date("2026-05-26T00:00:00.000Z") })
+    },
+    store,
+    chatAgent: {
+      clearLLMSession() {},
+      async prepareEventRun() {
+        events.push("loop");
+        return [];
+      }
+    },
+    agentLoopRuntime: undefined,
+    talkRuntime: undefined,
+    agentState: {
+      tick() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
+      },
+      getSnapshot: () => ({ state: "waiting" }),
+      onChange: () => () => {},
+      canReplyToInbound: () => true,
+      canRunHeartbeat: () => true,
+      getInboundDelayMs: () => 0,
+      noteInboundMessage() {
+        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    isLLMSessionActive: () => false,
+    messagingConfigPath,
+    feishu: { async setTyping() {} },
+    wechat: { async setTyping() {} },
+    agentRunIndicator: {
+      async createFreshCard() {
+        events.push("fresh");
+      },
+      async setTyping(input: { typing: boolean }) {
+        events.push(`typing:${input.typing}`);
+      }
+    },
+    initiatedBehaviorRunStore: { finalizeExpiredResponses() {}, markRespondedWithin15m: () => 0 },
+    getAgentInitiatedBehaviorPlans: () => [],
+    getDefaultMessagingTarget: () => undefined,
+    getSleepCocoonGoodnightEvent: () => undefined,
+    getSleepCocoonWakeEvent: () => {
+      const event = wakeEvent;
+      wakeEvent = undefined;
+      return event;
+    },
+    getCalendarReminderEvent: () => undefined,
+    queueForceWakeEvent() {},
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await waitFor(() => events.includes("typing:false"));
+  await runtime.flushAll();
+  return events;
 }
 
 function idleTransitionState(

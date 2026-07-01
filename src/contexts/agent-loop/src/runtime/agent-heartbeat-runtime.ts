@@ -40,6 +40,7 @@ export type AgentHeartbeatRunTaskDeps = {
   markSessionNotPending(sessionId: string): void;
   processPendingSession(sessionId: string): Promise<void>;
   getSleepCocoonWakeEvent?(): unknown;
+  beforeSleepCocoonWakeSession?(event: unknown): Promise<void> | void;
   getSleepCocoonGoodnightEvent?(): unknown;
   getCalendarReminderEvent?(): unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -171,6 +172,7 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     ? tasks.getSleepCocoonWakeEvent?.()
     : undefined;
   if (sleepCocoonWakeEvent) {
+    if (isSleepCocoonWakeEvent(sleepCocoonWakeEvent)) await tasks.beforeSleepCocoonWakeSession?.(sleepCocoonWakeEvent);
     const handled = await tasks.runGeneratedSession(sleepCocoonWakeEvent, "sleep cocoon wake");
     if (handled) processed += 1;
   }
@@ -220,6 +222,18 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
   }
 
   return processed;
+}
+
+function isSleepCocoonWakeEvent(event: unknown): boolean {
+  return Boolean(event && typeof event === "object"
+    && "meta" in event
+    && typeof event.meta === "object"
+    && event.meta
+    && "raw" in event.meta
+    && typeof event.meta.raw === "object"
+    && event.meta.raw
+    && "agentInitiatedTriggerEvent" in event.meta.raw
+    && event.meta.raw.agentInitiatedTriggerEvent === "sleep_cocoon.wake");
 }
 
 function isHeartbeatCancellationError(error: unknown): boolean {

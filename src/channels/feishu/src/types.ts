@@ -150,7 +150,7 @@ export type FeishuReactionClient = {
 
 export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content";
 export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
-export type FeishuBashRunCardBlock = "content";
+export type FeishuBashRunCardBlock = "title" | "content";
 
 export type FeishuDynamicCardClient = {
   isStarted(): boolean;

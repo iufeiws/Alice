@@ -18,7 +18,7 @@ export function createFeishuBashRunReporter(input: {
       const receiveId = pairedFeishuUserId();
       if (!receiveId) return undefined;
       try {
-        const initialContent = renderContent(run.cwd, "running", "");
+        const initialContent = renderContent("");
         const card = await input.client.createBashRunCard({
           receiveIdType: "open_id",
           receiveId,
@@ -26,7 +26,7 @@ export function createFeishuBashRunReporter(input: {
           content: initialContent
         });
         await input.client.setBashRunCardStreaming({ cardId: card.cardId, enabled: true, sequence: 1 });
-        return createSession(card.cardId, run.cwd, 2);
+        return createSession(card.cardId, run.command, 2);
       } catch (error) {
         input.log?.("warn", `[bash-sandbox] Feishu bash card begin failed: ${errorMessage(error)}`);
         return undefined;
@@ -34,9 +34,8 @@ export function createFeishuBashRunReporter(input: {
     }
   };
 
-  function createSession(cardId: string, cwd: string, sequence: number): BashRunReportSession {
+  function createSession(cardId: string, command: string, sequence: number): BashRunReportSession {
     let output = "";
-    let status = "running";
     let nextSequence = sequence;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let flushPromise: Promise<void> = Promise.resolve();
@@ -69,7 +68,7 @@ export function createFeishuBashRunReporter(input: {
       await input.client.updateBashRunCard({
         cardId,
         block: "content",
-        content: renderContent(cwd, status, output),
+        content: renderContent(output),
         sequence: nextSequence
       });
       nextSequence += 1;
@@ -88,11 +87,11 @@ export function createFeishuBashRunReporter(input: {
         append("stderr", delta);
       },
       async finish(result) {
-        status = statusFromResult(result);
         output = trimOutput(`${output}${finalLine(result)}`);
         await flushNow();
         if (!failed) {
           try {
+            await updateTitle();
             await input.client.setBashRunCardStreaming({ cardId, enabled: false, sequence: nextSequence });
           } catch (error) {
             markFailed(error);
@@ -100,11 +99,11 @@ export function createFeishuBashRunReporter(input: {
         }
       },
       async fail(error) {
-        status = "failed";
         output = trimOutput(`${output}\n[error] ${errorMessage(error)}`);
         await flushNow();
         if (!failed) {
           try {
+            await updateTitle();
             await input.client.setBashRunCardStreaming({ cardId, enabled: false, sequence: nextSequence });
           } catch (finishError) {
             markFailed(finishError);
@@ -112,6 +111,16 @@ export function createFeishuBashRunReporter(input: {
         }
       }
     };
+
+    async function updateTitle(): Promise<void> {
+      await input.client.updateBashRunCard({
+        cardId,
+        block: "title",
+        content: `finish: ${command}`,
+        sequence: nextSequence
+      });
+      nextSequence += 1;
+    }
   }
 
   function pairedFeishuUserId(): string | undefined {
@@ -125,14 +134,8 @@ export function createFeishuBashRunReporter(input: {
   }
 }
 
-function renderContent(cwd: string, status: string, output: string): string {
-  return `cwd: ${cwd}\nstatus: ${status}\n\n\`\`\`text\n${output || " "}\n\`\`\``;
-}
-
-function statusFromResult(result: BashRuntimeResult): string {
-  if (result.denied) return "denied";
-  if (result.timedOut) return "timed out";
-  return `exited ${result.exitCode ?? "unknown"}`;
+function renderContent(output: string): string {
+  return `\`\`\`text\n${output || " "}\n\`\`\``;
 }
 
 function finalLine(result: BashRuntimeResult): string {

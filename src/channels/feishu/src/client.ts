@@ -9,6 +9,7 @@ const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   content: "agent_run_content"
 };
 const BASH_RUN_CARD_ELEMENT_IDS: Record<FeishuBashRunCardBlock, string> = {
+  title: "bash_run_title",
   content: "bash_run_content"
 };
 const fs = await import("node:fs");
@@ -505,24 +506,16 @@ export function buildBashRunCard(command: string, content: string): Record<strin
         print_strategy: "fast"
       }
     },
-    header: {
-      title: {
-        tag: "plain_text",
-        content: command
-      }
-    },
     body: {
       elements: [
         {
-          tag: "hr"
-        },
-        {
           tag: "collapsible_panel",
-          expanded: true,
+          element_id: BASH_RUN_CARD_ELEMENT_IDS.title,
+          expanded: false,
           header: {
             title: {
               tag: "plain_text",
-              content: "output"
+              content: `running: ${command}`
             }
           },
           elements: [

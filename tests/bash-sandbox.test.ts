@@ -159,7 +159,7 @@ exit 64
   }
 });
 
-test("Feishu bash run card uses one collapsible panel titled with the command", () => {
+test("Feishu bash run card uses one collapsed panel titled with running command", () => {
   const card = buildBashRunCard("npm test", "actual output") as any;
   const body = card.body.elements;
   const panel = body[0];
@@ -168,7 +168,9 @@ test("Feishu bash run card uses one collapsible panel titled with the command", 
   assert.equal(card.header, undefined);
   assert.equal(body.length, 1);
   assert.equal(panel.tag, "collapsible_panel");
-  assert.equal(panel.header.title.content, "npm test");
+  assert.equal(panel.element_id, "bash_run_title");
+  assert.equal(panel.expanded, false);
+  assert.equal(panel.header.title.content, "running: npm test");
   assert.equal(output.tag, "markdown");
   assert.equal(output.element_id, "bash_run_content");
   assert.equal(output.content, "actual output");
@@ -192,13 +194,15 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
     "create:ou_user:npm test",
     "stream:card_bash:true:1",
     "update:card_bash:content:2",
-    "stream:card_bash:false:3"
+    "update:card_bash:title:3",
+    "stream:card_bash:false:4"
   ]);
-  assert.doesNotMatch(client.contents.at(-1) ?? "", /cwd:/);
-  assert.doesNotMatch(client.contents.at(-1) ?? "", /status:/);
-  assert.match(client.contents.at(-1) ?? "", /ok/);
-  assert.match(client.contents.at(-1) ?? "", /\[stderr\] warn/);
-  assert.match(client.contents.at(-1) ?? "", /\[exit 0\]/);
+  const outputContent = client.contents.find((content) => content.includes("[exit 0]")) ?? "";
+  assert.doesNotMatch(outputContent, /cwd:/);
+  assert.doesNotMatch(outputContent, /status:/);
+  assert.match(outputContent, /ok/);
+  assert.match(outputContent, /\[stderr\] warn/);
+  assert.match(client.contents.at(-1) ?? "", /finish: npm test/);
 });
 
 test("docker executor runs in a fixed container when explicitly enabled", async (t) => {

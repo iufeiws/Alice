@@ -568,6 +568,57 @@ test("standalone agent function-call loop is exported for loop adapters", async 
   assert.equal(result.rounds, 2);
 });
 
+test("standalone agent function-call loop starts same-round tools before waiting for results", async () => {
+  const calls: string[] = [];
+  let releaseSlow: (() => void) | undefined;
+  const result = await Promise.race([
+    runAgentFunctionCallLoop({
+      initialMessages: [{ role: "user", content: "use tools" }],
+      buildRequest({ messages }) {
+        return {
+          agentId: "chat",
+          messages,
+          toolNames: ["slow_tool", "fast_tool"]
+        };
+      },
+      async sendRequest({ round }) {
+        if (round === 0) {
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [
+                { id: "call_slow", type: "function", function: { name: "slow_tool", arguments: "{}" } },
+                { id: "call_fast", type: "function", function: { name: "fast_tool", arguments: "{}" } }
+              ]
+            },
+            finishReason: "tool_calls"
+          };
+        }
+        return { message: { role: "assistant", content: "finished" }, finishReason: "stop" };
+      },
+      executeTool(call) {
+        calls.push(call.function.name);
+        if (call.function.name === "slow_tool") {
+          return new Promise((resolve) => {
+            releaseSlow = () => resolve({
+              message: { role: "tool", toolCallId: call.id, name: call.function.name, content: "slow ok" }
+            });
+          });
+        }
+        releaseSlow?.();
+        return {
+          message: { role: "tool", toolCallId: call.id, name: call.function.name, content: "fast ok" }
+        };
+      }
+    }),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("same-round tools did not start")), 100))
+  ]);
+
+  assert.deepEqual(calls, ["slow_tool", "fast_tool"]);
+  assert.equal(result.stopReason, "completed");
+});
+
 test("chat loop sends assistant chat blocks and exposes send_chat", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],

@@ -165,7 +165,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     let continueAfterReset = false;
     let yieldReturn = false;
     const executedCalls: LLMToolCall[] = [];
-    const toolMessages: LLMMessage[] = [];
+    const toolExecutions: Array<Promise<LLMToolLoopExecution>> = [];
     for (const [callIndex, call] of calls.entries()) {
       totalToolCallCount += 1;
       if (totalToolCallCount >= limits.maxTotalToolCalls) reachedToolCallLimit = true;
@@ -182,12 +182,22 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       await input.beforeTool?.({ round, call, callIndex });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       executedCalls.push(call);
-      const execution = await input.executeTool(call, {
+      const callReachedToolCallLimit = reachedToolCallLimit;
+      toolExecutions.push(Promise.resolve().then(() => input.executeTool(call, {
         round,
         result,
         callIndex,
-        reachedToolCallLimit
-      });
+        reachedToolCallLimit: callReachedToolCallLimit
+      })));
+    }
+
+    const toolMessages: LLMMessage[] = [];
+    const settledToolExecutions = await Promise.allSettled(toolExecutions);
+    const rejectedToolExecution = settledToolExecutions.find((execution) => execution.status === "rejected");
+    if (rejectedToolExecution?.status === "rejected") throw rejectedToolExecution.reason;
+    for (const settled of settledToolExecutions) {
+      if (settled.status !== "fulfilled") continue;
+      const execution = settled.value;
       if (execution.control?.yieldReturn !== true) {
         if (execution.message) toolMessages.push(execution.message);
         if (execution.messages) toolMessages.push(...cloneLLMMessages(execution.messages));

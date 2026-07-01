@@ -39,7 +39,7 @@ export function normalizePromptLayers(
       id: nonEmptyString(raw.id) ?? `layer_${index + 1}`,
       title: nonEmptyString(raw.title) ?? `Layer ${index + 1}`,
       role,
-      name: nonEmptyString(raw.name) ?? "{{user}}",
+      name: nonEmptyString(raw.name) ?? defaultPromptLayerName(role),
       enabled: raw.enabled !== false,
       content: typeof raw.content === "string" ? raw.content : "",
       order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : (index + 1) * 10,
@@ -56,9 +56,10 @@ export function promptLayerToMessage(
 ): LLMMessage {
   if (layer.role === "tool_request") {
     const prefix = options.toolCallIdPrefix ?? "prompt";
+    const name = renderPromptLayerName(layer, variables);
     return {
       role: "assistant",
-      name: renderLLMText(layer.name ?? "{{user}}", variables),
+      ...(name ? { name } : {}),
       content: renderLLMText(layer.content || "", variables),
       reasoningContent: renderLLMText(layer.thinking ?? layer.content ?? "", variables),
       toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
@@ -71,9 +72,10 @@ export function promptLayerToMessage(
       }))
     };
   }
+  const name = renderPromptLayerName(layer, variables);
   return {
     role: layer.role,
-    name: renderLLMText(layer.name ?? "{{user}}", variables),
+    ...(name ? { name } : {}),
     content: renderLLMText(layer.content, variables),
     reasoningContent: layer.role === "assistant" && layer.thinking ? renderLLMText(layer.thinking, variables) : undefined
   };
@@ -91,6 +93,14 @@ export function parsePromptToolArguments(raw: string): Record<string, unknown> {
 function normalizePromptLayerRole(value: unknown): PromptLayerRole {
   if (value === "user" || value === "assistant" || value === "tool_request") return value;
   return "system";
+}
+
+function defaultPromptLayerName(role: PromptLayerRole): string | undefined {
+  return role === "user" ? "{{user}}" : undefined;
+}
+
+function renderPromptLayerName(layer: PromptLayer, variables: LLMTextVariables): string | undefined {
+  return layer.name ? renderLLMText(layer.name, variables) : undefined;
 }
 
 function normalizePromptToolName(value: unknown, options: PromptLayerParserOptions): string {

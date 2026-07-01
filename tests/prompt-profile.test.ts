@@ -124,7 +124,10 @@ test("prompt layers render message name", () => {
     userName: "小王",
     layers: [
       { id: "default_name", title: "Default Name", role: "user", enabled: true, content: "hello", order: 1 },
-      { id: "named", title: "Named", role: "user", name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 }
+      { id: "named", title: "Named", role: "user", name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 },
+      { id: "assistant_default", title: "Assistant Default", role: "assistant", enabled: true, content: "", order: 3 },
+      { id: "assistant_named", title: "Assistant Named", role: "assistant", name: "Alice", enabled: true, content: "", order: 4 },
+      { id: "tool_request_default", title: "Tool Request Default", role: "tool_request", enabled: true, content: "", order: 5, toolCalls: [] }
     ]
   });
   const messages = buildPromptMessages(saved, {
@@ -133,8 +136,13 @@ test("prompt layers render message name", () => {
   });
 
   assert.equal(saved.layers[0].name, "{{user}}");
+  assert.equal(saved.layers[2].name, undefined);
+  assert.equal(saved.layers[4].name, undefined);
   assert.equal(messages[0].name, "小王");
   assert.equal(messages[1].name, "小王_speaker");
+  assert.equal(messages[2].name, undefined);
+  assert.equal(messages[3].name, "Alice");
+  assert.equal(messages[4].name, undefined);
 });
 
 test("prompt messages render memory variables", () => {

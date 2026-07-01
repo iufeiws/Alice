@@ -126,19 +126,18 @@ test("skills tools list metadata and load instructions without host paths", asyn
   assert.equal(String(loaded.output).includes(root), false);
 });
 
-test("Feishu bash run card uses command title, divider, collapsible panel, and scroll container", () => {
-  const card = buildBashRunCard("npm test", "running") as any;
+test("Feishu bash run card puts the updatable output directly in the collapsible panel", () => {
+  const card = buildBashRunCard("npm test", "actual output") as any;
   const body = card.body.elements;
   const panel = body[1];
-  const scroll = panel.elements[0];
+  const output = panel.elements[0];
 
   assert.equal(card.header.title.content, "npm test");
   assert.equal(body[0].tag, "hr");
   assert.equal(panel.tag, "collapsible_panel");
-  assert.equal(scroll.tag, "div");
-  assert.equal(scroll.style.max_height, "360px");
-  assert.equal(scroll.style.overflow, "auto");
-  assert.equal(scroll.elements[0].element_id, "bash_run_content");
+  assert.equal(output.tag, "markdown");
+  assert.equal(output.element_id, "bash_run_content");
+  assert.equal(output.content, "actual output");
 });
 
 test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", async () => {

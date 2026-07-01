@@ -527,18 +527,9 @@ export function buildBashRunCard(command: string, content: string): Record<strin
           },
           elements: [
             {
-              tag: "div",
-              style: {
-                max_height: "360px",
-                overflow: "auto"
-              },
-              elements: [
-                {
-                  tag: "markdown",
-                  element_id: BASH_RUN_CARD_ELEMENT_IDS.content,
-                  content: cardMarkdownContent(content)
-                }
-              ]
+              tag: "markdown",
+              element_id: BASH_RUN_CARD_ELEMENT_IDS.content,
+              content: cardMarkdownContent(content)
             }
           ]
         }

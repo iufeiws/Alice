@@ -150,6 +150,7 @@ export type FeishuReactionClient = {
 
 export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content";
 export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
+export type FeishuBashRunCardBlock = "content";
 
 export type FeishuDynamicCardClient = {
   isStarted(): boolean;
@@ -157,6 +158,9 @@ export type FeishuDynamicCardClient = {
   updateAgentRunCard(input: { cardId: string; block: FeishuAgentRunCardBlock; content: string; sequence: number }): Promise<void>;
   setAgentRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
   resolveAgentRunCardId(input: { messageId: string }): Promise<{ cardId?: string }>;
+  createBashRunCard(input: { receiveIdType: "open_id"; receiveId: string; command: string; content: string }): Promise<{ messageId: string; cardId: string }>;
+  updateBashRunCard(input: { cardId: string; block: FeishuBashRunCardBlock; content: string; sequence: number }): Promise<void>;
+  setBashRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
 };
 
 export type FeishuStoredAudioAsset = {

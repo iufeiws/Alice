@@ -2,6 +2,7 @@ import { envBool, envJsonObject, envNumber, trimTrailingSlashes, type Env } from
 import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts/memory-config.js";
 import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
+import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../../contexts/bash-sandbox/src/index.js";
 
 export type LLMConfig = {
   provider: "openai-compatible" | "stub";
@@ -43,6 +44,7 @@ export type AppConfig = {
   skills: {
     root: string;
   };
+  bashSandbox: BashSandboxConfig;
   photo: {
     selfieReferenceDir: string;
     selfieOutputDir: string;
@@ -126,6 +128,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const feishuAppId = env.FEISHU_APP_ID;
   const feishuAppSecret = env.FEISHU_APP_SECRET;
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
+  const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
 
   return {
     core: {
@@ -206,8 +209,29 @@ export function loadConfig(env: Env = process.env): AppConfig {
       root: "memory-files"
     },
     skills: {
-      root: "skills"
+      root: skillsRoot
     },
+    bashSandbox: validateBashSandboxConfig({
+      enabled: envBool(env.BASH_SANDBOX_ENABLED, false),
+      containerName: env.BASH_SANDBOX_CONTAINER_NAME ?? "alice-bash-sandbox",
+      image: env.BASH_SANDBOX_IMAGE ?? "node:22-bookworm-slim",
+      defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? "/workspace",
+      workspaceDir: env.BASH_SANDBOX_WORKSPACE_DIR ?? "/workspace",
+      tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
+      skillsMount: {
+        hostPath: env.BASH_SANDBOX_SKILLS_HOST_PATH ?? skillsRoot,
+        containerPath: env.BASH_SANDBOX_SKILLS_CONTAINER_PATH ?? "/skills",
+        readOnly: true
+      },
+      mounts: parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
+      network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
+      timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
+      outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 128 * 1024),
+      cpuLimit: env.BASH_SANDBOX_CPU_LIMIT,
+      memoryLimit: env.BASH_SANDBOX_MEMORY_LIMIT,
+      pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? undefined : envNumber(env.BASH_SANDBOX_PIDS_LIMIT, 256),
+      auditLogPath: env.BASH_SANDBOX_AUDIT_LOG_PATH ?? "memory-files/bash-sandbox/audit.jsonl"
+    }),
     photo: {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",

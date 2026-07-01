@@ -619,6 +619,16 @@ function fakeCardClient(): FeishuDynamicCardClient & { calls: string[] } {
     async resolveAgentRunCardId(input) {
       calls.push(`convert:${input.messageId}`);
       return { cardId: "card_converted" };
+    },
+    async createBashRunCard(input) {
+      calls.push(`bash-create:${input.receiveId}:${input.command}:${input.content}`);
+      return { messageId: "om_bash", cardId: "card_bash" };
+    },
+    async updateBashRunCard(input) {
+      calls.push(`bash-update:${input.cardId}:${input.block}:${input.content}:${input.sequence}`);
+    },
+    async setBashRunCardStreaming(input) {
+      calls.push(`bash-stream:${input.cardId}:${input.enabled}:${input.sequence}`);
     }
   };
 }

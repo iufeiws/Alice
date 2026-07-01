@@ -8,8 +8,12 @@ import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
+import { createBashTools } from "../../bash/src/index.js";
+import { createSkillsTools } from "../../skills/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
+import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
+import { createSkillLoader, createSkillRegistry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 
@@ -19,7 +23,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: { photo: any; tts?: any; memoryFiles?: { root?: string } };
+  config: { photo: any; tts?: any; memoryFiles?: { root?: string }; skills?: { root?: string }; bashSandbox: any };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;
@@ -172,6 +176,19 @@ export function createToolRuntime(input: {
     getGoogleStreetView: input.getGoogleStreetView,
     now: () => input.time.now().date
   });
+  const skillsRegistry = createSkillRegistry({
+    root: input.config.skills?.root ?? "src/capabilities/skills",
+    containerRoot: input.config.bashSandbox.skillsMount.containerPath
+  });
+  const skillsLoader = createSkillLoader(skillsRegistry);
+  const skillsTools = createSkillsTools({ registry: skillsRegistry, loader: skillsLoader });
+  const bashRuntime = createBashSandboxRuntime({ config: input.config.bashSandbox });
+  const bashTools = createBashTools({
+    runtime: bashRuntime
+  });
+
+  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools];
+  if (input.config.bashSandbox.enabled) toolPlugins.push(skillsTools, bashTools);
 
   return {
     messagingTools,
@@ -184,6 +201,11 @@ export function createToolRuntime(input: {
     finishAndWaitTools,
     diceTools,
     locationTools,
-    toolPlugins: [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools]
+    bashTools,
+    bashRuntime,
+    skillsTools,
+    skillsRegistry,
+    skillsLoader,
+    toolPlugins
   };
 }

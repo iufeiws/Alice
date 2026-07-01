@@ -1,12 +1,15 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuDynamicCardClient, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuDynamicCardClient, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
 
 const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   state: "agent_run_state",
   reasoning: "agent_run_reasoning",
   content: "agent_run_content"
+};
+const BASH_RUN_CARD_ELEMENT_IDS: Record<FeishuBashRunCardBlock, string> = {
+  content: "bash_run_content"
 };
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -308,6 +311,61 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       return {
         cardId: converted?.data?.card_id ?? converted?.card_id
       };
+    },
+    async createBashRunCard(input) {
+      assertStarted(client);
+      const card = await client.cardkit.v1.card.create({
+        data: {
+          type: "card_json",
+          data: JSON.stringify(buildBashRunCard(input.command, input.content))
+        }
+      });
+      const cardId = card?.data?.card_id ?? card?.card_id;
+      if (!cardId) throw new Error("Feishu cardkit bash card create did not return card_id");
+      const message = await sendMessage(client, {
+        receiveIdType: input.receiveIdType,
+        receiveId: input.receiveId,
+        msgType: "interactive",
+        content: {
+          type: "card",
+          data: { card_id: cardId }
+        }
+      }, time);
+      if (!message.messageId) throw new Error("Feishu bash card message create did not return message_id");
+      deps.log?.("info", `[feishu] created bash run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      return {
+        messageId: message.messageId,
+        cardId
+      };
+    },
+    async updateBashRunCard(input) {
+      assertStarted(client);
+      await client.cardkit.v1.cardElement.content({
+        path: {
+          card_id: input.cardId,
+          element_id: BASH_RUN_CARD_ELEMENT_IDS[input.block]
+        },
+        data: {
+          content: cardMarkdownContent(input.content),
+          sequence: input.sequence,
+          uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+        }
+      });
+      deps.log?.("info", `[feishu] updated bash run card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
+    },
+    async setBashRunCardStreaming(input) {
+      assertStarted(client);
+      await client.cardkit.v1.card.settings({
+        path: {
+          card_id: input.cardId
+        },
+        data: {
+          settings: JSON.stringify({ config: { streaming_mode: input.enabled } }),
+          sequence: input.sequence,
+          uuid: `bash_run_streaming_${input.cardId}_${input.sequence}`
+        }
+      });
+      deps.log?.("info", `[feishu] set bash run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     }
   };
 }
@@ -431,6 +489,59 @@ function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unk
           tag: "markdown",
           element_id: AGENT_RUN_CARD_ELEMENT_IDS.content,
           content: cardMarkdownContent(blocks.content)
+        }
+      ]
+    }
+  };
+}
+
+export function buildBashRunCard(command: string, content: string): Record<string, unknown> {
+  return {
+    schema: "2.0",
+    config: {
+      streaming_mode: true,
+      streaming_config: {
+        print_frequency_ms: { default: 70 },
+        print_step: { default: 1 },
+        print_strategy: "fast"
+      }
+    },
+    header: {
+      title: {
+        tag: "plain_text",
+        content: command
+      }
+    },
+    body: {
+      elements: [
+        {
+          tag: "hr"
+        },
+        {
+          tag: "collapsible_panel",
+          expanded: true,
+          header: {
+            title: {
+              tag: "plain_text",
+              content: "output"
+            }
+          },
+          elements: [
+            {
+              tag: "div",
+              style: {
+                max_height: "360px",
+                overflow: "auto"
+              },
+              elements: [
+                {
+                  tag: "markdown",
+                  element_id: BASH_RUN_CARD_ELEMENT_IDS.content,
+                  content: cardMarkdownContent(content)
+                }
+              ]
+            }
+          ]
         }
       ]
     }

@@ -285,7 +285,6 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           uuid: `agent_run_${input.block}_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] updated agent run card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
     },
     async setAgentRunCardStreaming(input) {
       assertStarted(client);

@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export const wardrobeTool: ToolDefinition = {
-  name: "wardrobe",
+  name: "Wardrobe",
   description: "查看或切换爱丽丝的服装。action=list 返回可用衣橱，可用 name 按服装 name/id/group/content 模糊过滤；action=mirror 照镜子,看看爱丽丝当前穿的是什么服装；action=switch 根据服装 name 切换服装。",
   inputSchema: {
     type: "object",

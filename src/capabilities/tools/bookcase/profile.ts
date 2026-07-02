@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export const bookcaseTool: ToolDefinition = {
-  name: "bookcase",
+  name: "Bookcase",
   description: [
     "里面装着用于讲故事的书",
     "action=draw 从书橱抽取一本书来讲故事",

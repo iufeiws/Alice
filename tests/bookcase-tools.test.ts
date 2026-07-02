@@ -12,7 +12,7 @@ test("bookcase tool draws a book and includes retelling instructions", async () 
 
   const result = await tools.execute({
     id: "call_bookcase",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "draw", genre: "Fantasy", seed: 7, minSummaryChars: 10 }
   });
 
@@ -41,7 +41,7 @@ test("bookcase tool reports no matching summaries", async () => {
 
   const result = await tools.execute({
     id: "call_bookcase_none",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "draw", title: "missing" }
   });
 
@@ -54,7 +54,7 @@ test("bookcase tool returns a book and clears fixed prefix", async () => {
 
   const result = await tools.execute({
     id: "call_bookcase_return",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "return" }
   });
 
@@ -100,13 +100,13 @@ test("bookcase tool sends system notices without persisting them as messages", a
   await tools.execute({
     ...baseCall,
     id: "call_bookcase_draw_notice",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "draw", seed: 1, minSummaryChars: 10 }
   });
   await tools.execute({
     ...baseCall,
     id: "call_bookcase_return_notice",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "return" }
   });
 
@@ -150,13 +150,13 @@ test("bookcase notice failures do not block draw or return transitions", async (
   const draw = await tools.execute({
     ...baseCall,
     id: "call_bookcase_draw_notice_failed",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "draw", seed: 1, minSummaryChars: 10 }
   });
   const returned = await tools.execute({
     ...baseCall,
     id: "call_bookcase_return_notice_failed",
-    toolName: "bookcase",
+    toolName: "Bookcase",
     input: { action: "return" }
   });
 

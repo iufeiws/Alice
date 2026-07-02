@@ -25,7 +25,7 @@ test("wardrobe lists current and available outfits", async () => {
     outputRouter: { async send() {} },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z"))
   });
-  const result = await tools.execute({ id: "call_list", toolName: "wardrobe", input: { action: "list" } });
+  const result = await tools.execute({ id: "call_list", toolName: "Wardrobe", input: { action: "list" } });
 
   assert.equal(result.ok, true);
   const output = JSON.parse(String(result.output));
@@ -33,13 +33,13 @@ test("wardrobe lists current and available outfits", async () => {
   assert.equal(output.outfits.length, 2);
   assert.equal(output.outfits.find((item: any) => item.id === "o2").current, true);
 
-  const filtered = await tools.execute({ id: "call_filter", toolName: "wardrobe", input: { action: "list", name: "Two" } });
+  const filtered = await tools.execute({ id: "call_filter", toolName: "Wardrobe", input: { action: "list", name: "Two" } });
   assert.equal(filtered.ok, true);
   const filteredOutput = JSON.parse(String(filtered.output));
   assert.equal(filteredOutput.query, "Two");
   assert.deepEqual(filteredOutput.outfits.map((item: any) => item.name), ["O Two"]);
 
-  const groupFiltered = await tools.execute({ id: "call_filter_group", toolName: "wardrobe", input: { action: "list", name: "formal" } });
+  const groupFiltered = await tools.execute({ id: "call_filter_group", toolName: "Wardrobe", input: { action: "list", name: "formal" } });
   assert.equal(groupFiltered.ok, true);
   const groupFilteredOutput = JSON.parse(String(groupFiltered.output));
   assert.equal(groupFilteredOutput.query, "formal");
@@ -69,7 +69,7 @@ test("wardrobe mirror returns the current outfit without messaging target", asyn
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z"))
   });
 
-  const result = await tools.execute({ id: "call_mirror", toolName: "wardrobe", input: { action: "mirror" } });
+  const result = await tools.execute({ id: "call_mirror", toolName: "Wardrobe", input: { action: "mirror" } });
 
   assert.equal(result.ok, true);
   assert.equal(result.output, "你看到镜子中的自己穿着: \n 服装：O Two\noutfit two");
@@ -104,7 +104,7 @@ test("wardrobe switches outfit without shell switch messages or logs", async () 
     }
   });
 
-  const result = await tools.execute({ id: "call_switch", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+  const result = await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, true);
   assert.equal(result.invalidateLLMSession, undefined);
@@ -143,7 +143,7 @@ test("wardrobe switch requires a current target and known outfit name", async ()
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z"))
   });
 
-  const noTarget = await tools.execute({ id: "call_no_target", toolName: "wardrobe", input: { action: "switch", name: "O One" } });
+  const noTarget = await tools.execute({ id: "call_no_target", toolName: "Wardrobe", input: { action: "switch", name: "O One" } });
   assert.equal(noTarget.ok, false);
   assert.match(noTarget.error ?? "", /No current messaging session/);
 
@@ -154,7 +154,7 @@ test("wardrobe switch requires a current target and known outfit name", async ()
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:30:00.000Z")),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const unknown = await withTarget.execute({ id: "call_unknown", toolName: "wardrobe", input: { action: "switch", name: "missing" } });
+  const unknown = await withTarget.execute({ id: "call_unknown", toolName: "Wardrobe", input: { action: "switch", name: "missing" } });
   assert.equal(unknown.ok, false);
   assert.match(unknown.error ?? "", /unknown outfit name/);
 });
@@ -183,7 +183,7 @@ test("wardrobe switch reports changing notice send failures", async () => {
     }
   });
 
-  const result = await tools.execute({ id: "call_send_failed", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+  const result = await tools.execute({ id: "call_send_failed", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, false);
   assert.match(result.error ?? "", /send unavailable/);
@@ -222,8 +222,8 @@ test("wardrobe switch attempts on-body generation once for unattempted outfits",
     }
   });
 
-  const first = await tools.execute({ id: "call_switch_attempt", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
-  const second = await tools.execute({ id: "call_switch_skip", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+  const first = await tools.execute({ id: "call_switch_attempt", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
+  const second = await tools.execute({ id: "call_switch_skip", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
@@ -250,7 +250,7 @@ test("wardrobe switch skips on-body generation for generated outfit images", asy
     }
   });
 
-  const result = await tools.execute({ id: "call_switch_generated_skip", toolName: "wardrobe", input: { action: "switch", name: "O Two" } });
+  const result = await tools.execute({ id: "call_switch_generated_skip", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, true);
   assert.deepEqual(attempted, []);
@@ -272,7 +272,7 @@ test("wardrobe switch returns candidates for ambiguous names", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_ambiguous", toolName: "wardrobe", input: { action: "switch", name: "女仆" } });
+  const result = await tools.execute({ id: "call_ambiguous", toolName: "Wardrobe", input: { action: "switch", name: "女仆" } });
   assert.equal(result.ok, false);
   assert.match(result.error ?? "", /ambiguous outfit name/);
   const output = JSON.parse(String(result.output));

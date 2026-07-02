@@ -66,7 +66,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
       return [bookcaseTool];
     },
     async execute(call) {
-      if (call.toolName === "bookcase") return bookcase(call);
+      if (call.toolName === bookcaseTool.name) return bookcase(call);
       return { callId: call.id, ok: false, error: bookcaseToolText.unknownTool(call.toolName) };
     }
   };

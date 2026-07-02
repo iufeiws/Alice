@@ -31,7 +31,7 @@ test("tool output target resolver maps non-message requester to default target",
 
   const target = resolver({
     id: "call_1",
-    toolName: "selfie",
+    toolName: "Selfie",
     input: {},
     requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
     externalSession: { scope: "dm", sessionId: "talk-session-1" }

@@ -21,7 +21,7 @@ test("bash tool executes through sandbox runtime by default", async () => {
     })
   });
 
-  const result = await tools.execute({ id: "bash_1", toolName: "bash", input: { command: "echo hello" } });
+  const result = await tools.execute({ id: "bash_1", toolName: "Bash", input: { command: "echo hello" } });
   const output = JSON.parse(String(result.output));
 
   assert.equal(result.ok, true);
@@ -37,7 +37,7 @@ test("bash tool returns docker result without throwing on non-zero exit", async 
     })
   });
 
-  const result = await tools.execute({ id: "bash_2", toolName: "bash", input: { command: "echo hello" } });
+  const result = await tools.execute({ id: "bash_2", toolName: "Bash", input: { command: "echo hello" } });
   const output = JSON.parse(String(result.output));
 
   assert.equal(result.ok, true);
@@ -53,8 +53,8 @@ test("bash runtime writes audit events for sandbox execution", async () => {
     executor: fakeExecutor(async () => ({ stdout: "abcdef", stderr: "", exitCode: 124, timedOut: true, durationMs: 9, truncated: true }))
   });
 
-  await runtime.run({ id: "deny", toolName: "bash", input: { command: "curl https://example.com" } });
-  await runtime.run({ id: "timeout", toolName: "bash", input: { command: "ls /mnt/data" } });
+  await runtime.run({ id: "deny", toolName: "Bash", input: { command: "curl https://example.com" } });
+  await runtime.run({ id: "timeout", toolName: "Bash", input: { command: "ls /mnt/data" } });
   const events = fs.readFileSync(config.auditLogPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
 
   assert.equal(events[0].permission.state, "allow");
@@ -90,6 +90,7 @@ test("skills registry formats first-party and third-party available skills only"
   const thirdParty = tmpDir("third-party-skills");
   writeSkill(firstParty, "demo", "name: demo\ndescription: Run demo script.", "Use scripts/run.sh\n");
   writeSkill(thirdParty, "third", "name: third\ndescription: Installed skill.", "Use it\n");
+  writeSkill(firstParty, "external/hidden", "name: external-hidden\ndescription: External first-party skill.", "Nope\n");
   writeSkill(firstParty, "disabled", "name: disabled\ndescription: Disabled skill.\ndisabled: true", "Nope\n");
   writeSkill(firstParty, "invalid", "name: invalid", "No description\n");
 
@@ -104,6 +105,7 @@ test("skills registry formats first-party and third-party available skills only"
   assert.deepEqual(registry.available().map((skill) => skill.name), ["demo", "third"]);
   assert.match(xml, /<name>demo<\/name>/);
   assert.match(xml, /<name>third<\/name>/);
+  assert.doesNotMatch(xml, /external-hidden/);
   assert.doesNotMatch(xml, /disabled/);
   assert.doesNotMatch(xml, /invalid/);
 });
@@ -129,7 +131,7 @@ test("Skill tool loads by exact name, renders args, and mounts read-write withou
   assert.deepEqual(listedNames, ["Skill"]);
   assert.equal(oldList.ok, false);
   assert.equal(loaded.ok, true);
-  assert.match(String(loaded.output), /<loaded_skill name="demo" dir="\/skills\/demo">/);
+  assert.match(String(loaded.output), /<demo>\n<dir>\/skills\/demo<\/dir>/);
   assert.match(String(loaded.output), /Run one arg then \$HOME/);
   assert.equal(String(loaded.output).includes(root), false);
   assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/skills/demo", readOnly: false }]);
@@ -230,7 +232,7 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
     pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
     throttleMs: 1000
   });
-  const session = await reporter.begin({ call: { id: "bash", toolName: "bash", input: {} }, command: "npm test", cwd: "/workspace" });
+  const session = await reporter.begin({ call: { id: "bash", toolName: "Bash", input: {} }, command: "npm test", cwd: "/workspace" });
 
   assert.ok(session);
   await session.appendStdout("ok\n");

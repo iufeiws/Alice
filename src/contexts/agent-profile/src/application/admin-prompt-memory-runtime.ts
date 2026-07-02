@@ -209,7 +209,7 @@ function unsafePreviewReason(toolName: string, input: Record<string, unknown>): 
   if (toolName === "Chat" && input.action === "send") {
     return "Chat send cannot run from tool preview";
   }
-  if (toolName === "selfie") return "selfie cannot run from tool preview";
-  if (toolName === "wardrobe" && input.action === "switch") return "wardrobe switch cannot run from tool preview";
+  if (toolName === "Selfie") return "Selfie cannot run from tool preview";
+  if (toolName === "Wardrobe" && input.action === "switch") return "Wardrobe switch cannot run from tool preview";
   return undefined;
 }

@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export const bashTool: ToolDefinition = {
-  name: "bash",
+  name: "Bash",
   description: "Execute a non-interactive Bash command inside the configured Docker sandbox.",
   inputSchema: {
     type: "object",

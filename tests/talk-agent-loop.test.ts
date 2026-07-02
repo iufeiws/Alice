@@ -473,11 +473,11 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
     updateActiveTalkLLMSessionTranscript: (session) => {
       activeSession = session;
     },
-    visibleToolNames: () => ["selfie"],
+    visibleToolNames: () => ["Selfie"],
     toolPlugins: [{
       id: "photo",
       listTools: () => [{
-        name: "selfie",
+        name: "Selfie",
         description: "selfie",
         inputSchema: { type: "object", properties: {} }
       }],
@@ -502,11 +502,11 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
             toolCalls: [{
               id: "call-selfie-1",
               type: "function",
-              function: { name: "selfie", arguments: "{\"pose\":\"first\"}" }
+              function: { name: "Selfie", arguments: "{\"pose\":\"first\"}" }
             }, {
               id: "call-selfie-2",
               type: "function",
-              function: { name: "selfie", arguments: "{\"pose\":\"second\"}" }
+              function: { name: "Selfie", arguments: "{\"pose\":\"second\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -529,7 +529,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
   ]);
   assert.equal((sentMessages[1]?.at(-2) as { content?: string }).content, "sent");
   assert.equal((sentMessages[1]?.at(-1) as { content?: string }).content, "sent");
-  assert.equal(activeSession.lastCompletedToolName, "selfie");
+  assert.equal(activeSession.lastCompletedToolName, "Selfie");
 });
 
 test("talk loop reuses active session prefix and replaces runtime transcript tail", async () => {

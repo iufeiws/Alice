@@ -258,5 +258,5 @@ function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables 
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {
-  return toolName === "finish_and_wait";
+  return toolName === "Yield";
 }

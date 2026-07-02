@@ -9,7 +9,7 @@ export function createBashTools(input: { runtime: BashSandboxRuntime }): ToolPlu
       return [bashTool];
     },
     async execute(call) {
-      if (call.toolName !== "bash") return { callId: call.id, ok: false, error: `Unknown bash tool: ${call.toolName}` };
+      if (call.toolName !== bashTool.name) return { callId: call.id, ok: false, error: `Unknown bash tool: ${call.toolName}` };
       return {
         callId: call.id,
         ok: true,

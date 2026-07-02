@@ -405,7 +405,7 @@ test("chat agent stops before another llm request when a tool invalidates the se
             id: "tool_return",
             type: "function",
             function: {
-              name: "bookcase",
+              name: "Bookcase",
               arguments: "{\"action\":\"return\"}"
             }
           }]
@@ -424,7 +424,7 @@ test("chat agent stops before another llm request when a tool invalidates the se
     tools: [{
       id: "bookcase",
       listTools() {
-        return [{ name: "bookcase", description: "bookcase", inputSchema: { type: "object" } }];
+        return [{ name: "Bookcase", description: "bookcase", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return {
@@ -457,7 +457,7 @@ test("chat agent stops before another llm request when a tool invalidates the se
   assert.equal(clearedReasons.at(-1), "prompt_static_changed");
   const latestMessages = sessionUpdates.at(-1) ?? [];
   assert.equal(latestMessages.at(-2)?.role, "assistant");
-  assert.equal(latestMessages.at(-2)?.toolCalls?.[0].function.name, "bookcase");
+  assert.equal(latestMessages.at(-2)?.toolCalls?.[0].function.name, "Bookcase");
   assert.equal(latestMessages.at(-1)?.role, "tool");
   assert.equal(latestMessages.at(-1)?.content, "{\"action\":\"return\"}");
 });
@@ -476,7 +476,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
           toolCalls: [{
             id: "tool_wait",
             type: "function",
-            function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
+            function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
           }]
         },
         finishReason: "tool_calls"
@@ -508,8 +508,8 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
   assert.equal(requests.length, 1);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, "2026-05-26T00:00:00.000Z");
   assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.role, "assistant");
-  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "finish_and_wait");
-  assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "finish_and_wait"), false);
+  assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "Yield");
+  assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "Yield"), false);
 });
 
 test("chat agent resumes pending finish_and_wait with Chat result on heartbeat", async () => {
@@ -529,7 +529,7 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -571,10 +571,10 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
   assert.equal(requests.length, 2);
   assert.deepEqual(checkInputs, [{ action: "poll" }]);
   const secondMessages = requests[1].messages;
-  const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "finish_and_wait");
+  const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "Yield");
   assert.equal(waitToolMessages.length, 1);
   assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<now local=\"2026-05-26T00:05:00.000\"/>");
-  const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "finish_and_wait");
+  const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Yield");
   const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.equal(checkChatAfterWait, undefined);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
@@ -603,7 +603,7 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
             },
             {
               id: "tool_later",
@@ -642,10 +642,10 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(calls, ["Chat", "finish_and_wait", "later_tool"]);
+  assert.deepEqual(calls, ["Chat", "Yield", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
-  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "finish_and_wait"));
-  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["Chat", "finish_and_wait", "later_tool"]);
+  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "Yield"));
+  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["Chat", "Yield", "later_tool"]);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
@@ -678,7 +678,7 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
               id: "tool_draw",
               type: "function",
               function: {
-                name: "bookcase",
+                name: "Bookcase",
                 arguments: "{\"action\":\"draw\"}"
               }
             }]
@@ -706,12 +706,12 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
       id: "test-tools",
       listTools() {
         return [
-          { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
+          { name: "Bookcase", description: "bookcase", inputSchema: { type: "object" } },
           { name: "Chat", description: "view", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
-        if (call.toolName === "bookcase") {
+        if (call.toolName === "Bookcase") {
           return {
             callId: call.id,
             ok: true,
@@ -749,7 +749,7 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   const secondMessages = requests[1].messages;
   assert.equal(secondMessages.filter((message) => message.content === "static prompt").length, 1);
   assert.equal(secondMessages.some((message) => message.content === "old context marker"), true);
-  const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase");
   const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
@@ -784,10 +784,10 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
       toolCalls: [{
         id: "tool_draw",
         type: "function",
-        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+        function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
       }]
     },
-    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
+    { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
   ];
   const requests: LLMChatInput[] = [];
   const core = createChatAgent({
@@ -837,7 +837,7 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
   const messages = requests[0].messages;
   assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
   assert.equal(messages.filter((message) => message.content === "<book>fixed story</book>").length, 1);
-  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase").length, 1);
+  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase").length, 1);
   assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").length, 1);
 });
 
@@ -970,10 +970,10 @@ test("chat agent injects fixed prefix cursor into model requested from_prefix ch
       toolCalls: [{
         id: "tool_draw",
         type: "function",
-        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+        function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
       }]
     },
-    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
+    { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>fixed story</book>" }
   ];
   const checkChatInputs: Array<{ id: string; input: Record<string, unknown> }> = [];
   const core = createChatAgent({
@@ -1316,10 +1316,10 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
       toolCalls: [{
         id: "tool_draw",
         type: "function",
-        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+        function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
       }]
     },
-    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>persistent story</book>" }
+    { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>persistent story</book>" }
   ];
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
@@ -1385,10 +1385,10 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
       toolCalls: [{
         id: "tool_draw",
         type: "function",
-        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+        function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
       }]
     },
-    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>restored story</book>" }
+    { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>restored story</book>" }
   ];
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
@@ -1453,7 +1453,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => message.content === "old live context"), true);
   assert.equal(messages.some((message) => message.content === "old static prompt"), true);
-  const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
+  const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase");
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
@@ -1472,10 +1472,10 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
       toolCalls: [{
         id: "tool_draw",
         type: "function",
-        function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+        function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
       }]
     },
-    { role: "tool", name: "bookcase", toolCallId: "tool_draw", content: "<book>expired story</book>" }
+    { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>expired story</book>" }
   ];
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
@@ -1539,7 +1539,7 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => message.content === "old live context"), false);
   assert.equal(messages.some((message) => message.content === "<book>expired story</book>"), false);
-  assert.equal(messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase"), false);
+  assert.equal(messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase"), false);
   assert.equal(messages.at(-1)?.content, "new static prompt");
   assert.equal(sessionUpdates.at(-1)?.mode, "normal");
   assert.equal(sessionUpdates.at(-1)?.modeStartedAt, undefined);
@@ -1561,12 +1561,12 @@ test("chat agent passes agent loop run context to exposed selfie tool calls", as
               {
                 id: "tool_selfie_1",
                 type: "function",
-                function: { name: "selfie", arguments: "{\"pose\":\"first\"}" }
+                function: { name: "Selfie", arguments: "{\"pose\":\"first\"}" }
               },
               {
                 id: "tool_selfie_2",
                 type: "function",
-                function: { name: "selfie", arguments: "{\"pose\":\"second\"}" }
+                function: { name: "Selfie", arguments: "{\"pose\":\"second\"}" }
               }
             ]
           }
@@ -1591,7 +1591,7 @@ test("chat agent passes agent loop run context to exposed selfie tool calls", as
     tools: [{
       id: "photo",
       listTools() {
-        return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
+        return [{ name: "Selfie", description: "selfie", inputSchema: { type: "object" } }];
       },
       async execute(call, context) {
         executed.push(String(call.input.pose));
@@ -1730,7 +1730,7 @@ test("chat agent filters photo tools when photo visibility is disabled", async (
     }, {
       id: "photo",
       listTools() {
-        return [{ name: "selfie", description: "selfie", inputSchema: { type: "object" } }];
+        return [{ name: "Selfie", description: "selfie", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "sent" };
@@ -2631,7 +2631,7 @@ test("chat agent skips fake append tool requests on first llm round", async () =
             toolCalls: [{
               id: "tool_mirror",
               type: "function",
-              function: { name: "wardrobe", arguments: "{\"action\":\"mirror\"}" }
+              function: { name: "Wardrobe", arguments: "{\"action\":\"mirror\"}" }
             }]
           }
         };
@@ -2661,7 +2661,7 @@ test("chat agent skips fake append tool requests on first llm round", async () =
       listTools() {
         return [
           { name: "Chat", description: "view", inputSchema: { type: "object" } },
-          { name: "wardrobe", description: "mirror", inputSchema: { type: "object" } }
+          { name: "Wardrobe", description: "mirror", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -2990,7 +2990,7 @@ test("chat agent uses fixed prefix check chat preview scope for token pressure b
             toolCalls: [{
               id: "tool_draw",
               type: "function",
-              function: { name: "bookcase", arguments: "{\"action\":\"draw\"}" }
+              function: { name: "Bookcase", arguments: "{\"action\":\"draw\"}" }
             }]
           },
           model: "deepseek-chat",
@@ -3021,12 +3021,12 @@ test("chat agent uses fixed prefix check chat preview scope for token pressure b
       id: "test-tools",
       listTools() {
         return [
-          { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
+          { name: "Bookcase", description: "bookcase", inputSchema: { type: "object" } },
           { name: "Chat", description: "view", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
-        if (call.toolName === "bookcase") {
+        if (call.toolName === "Bookcase") {
           return {
             callId: call.id,
             ok: true,
@@ -3190,7 +3190,7 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
               id: "tool_wardrobe",
               type: "function",
               function: {
-                name: "wardrobe",
+                name: "Wardrobe",
                 arguments: "{\"action\":\"switch\",\"name\":\"O Two\"}"
               }
             }]
@@ -3225,7 +3225,7 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
     tools: [{
       id: "shell",
       listTools() {
-        return [{ name: "wardrobe", description: "wardrobe", inputSchema: { type: "object" } }];
+        return [{ name: "Wardrobe", description: "wardrobe", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         dailyShell = "shell two";
@@ -3609,13 +3609,13 @@ function chatTestTools(onCall?: (call: ToolCall) => void) {
     listTools() {
       return [
         { name: "Chat", description: "view", inputSchema: { type: "object" } },
-        { name: "finish_and_wait", description: "wait", inputSchema: { type: "object" } },
+        { name: "Yield", description: "wait", inputSchema: { type: "object" } },
         { name: "later_tool", description: "later", inputSchema: { type: "object" } }
       ];
     },
     async execute(call: ToolCall) {
       onCall?.(call);
-      if (call.toolName === "finish_and_wait") {
+      if (call.toolName === "Yield") {
         return {
           callId: call.id,
           ok: true,

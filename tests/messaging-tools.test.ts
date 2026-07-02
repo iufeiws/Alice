@@ -39,7 +39,7 @@ test("messaging tools expose one Chat tool with poll and send actions", async ()
   assert.ok(!names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
-  assert.ok(!names.includes("finish_and_wait"));
+  assert.ok(!names.includes("Yield"));
   assert.ok(!names.includes("search_messages"));
   const chat = tools.listTools()[0];
   const properties = chat.inputSchema.properties as Record<string, unknown>;
@@ -49,13 +49,13 @@ test("messaging tools expose one Chat tool with poll and send actions", async ()
   assert.equal(chat.inputSchema.additionalProperties, false);
 });
 
-test("finish_and_wait is exposed by its own tool plugin", async () => {
+test("Yield is exposed by its own tool plugin", async () => {
   const tools = createFinishAndWaitTools();
-  const waitTool = tools.listTools().find((tool) => tool.name === "finish_and_wait");
+  const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
   assert.ok(waitTool);
   assert.deepEqual(waitTool?.inputSchema.properties, {});
   assert.equal(waitTool?.inputSchema.additionalProperties, false);
-  const result = await tools.execute({ id: "call_wait", toolName: "finish_and_wait", input: {} });
+  const result = await tools.execute({ id: "call_wait", toolName: "Yield", input: {} });
   assert.equal(result.ok, true);
   assert.equal(result.meta?.yieldReturn, true);
   assert.equal(result.output, undefined);

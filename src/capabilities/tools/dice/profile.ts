@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
-export const diceToolName = "dice";
+export const diceToolName = "Dice";
 
 export const diceTool: ToolDefinition = {
   name: diceToolName,

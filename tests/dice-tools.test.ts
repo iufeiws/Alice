@@ -6,7 +6,7 @@ test("dice defaults to 1d6 and returns xml", async () => {
   const tools = createDiceTools({ random: () => 0.5 });
   const tool = tools.listTools()[0];
 
-  assert.equal(tool.name, "dice");
+  assert.equal(tool.name, "Dice");
   assert.equal(tool.description, "投掷骰子。sides > 1, 默认 6；count > 0 默认 1；");
   assert.deepEqual(tool.inputSchema, {
     type: "object",
@@ -17,7 +17,7 @@ test("dice defaults to 1d6 and returns xml", async () => {
     additionalProperties: false
   });
 
-  const result = await tools.execute({ id: "call_default", toolName: "dice", input: {} });
+  const result = await tools.execute({ id: "call_default", toolName: "Dice", input: {} });
 
   assert.equal(result.ok, true);
   assert.equal(result.output, '<dice point="4"/>');
@@ -26,7 +26,7 @@ test("dice defaults to 1d6 and returns xml", async () => {
 test("dice returns roll expression for multiple dice", async () => {
   const rolls = [0, 0.5, 0.999];
   const tools = createDiceTools({ random: () => rolls.shift() ?? 0 });
-  const result = await tools.execute({ id: "call_multi", toolName: "dice", input: { sides: 10, count: 3 } });
+  const result = await tools.execute({ id: "call_multi", toolName: "Dice", input: { sides: 10, count: 3 } });
 
   assert.equal(result.ok, true);
   assert.equal(result.output, '<dice point="1+6+10 = 17"/>');
@@ -35,6 +35,6 @@ test("dice returns roll expression for multiple dice", async () => {
 test("dice rejects invalid sides and count", async () => {
   const tools = createDiceTools();
 
-  assert.equal((await tools.execute({ id: "bad_sides", toolName: "dice", input: { sides: 1 } })).ok, false);
-  assert.equal((await tools.execute({ id: "bad_count", toolName: "dice", input: { count: 0 } })).ok, false);
+  assert.equal((await tools.execute({ id: "bad_sides", toolName: "Dice", input: { sides: 1 } })).ok, false);
+  assert.equal((await tools.execute({ id: "bad_count", toolName: "Dice", input: { count: 0 } })).ok, false);
 });

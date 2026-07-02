@@ -46,7 +46,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
       return [wardrobeTool];
     },
     async execute(call) {
-      if (call.toolName === "wardrobe") return wardrobe(call);
+      if (call.toolName === wardrobeTool.name) return wardrobe(call);
       return { callId: call.id, ok: false, error: shellToolText.unknownTool(call.toolName) };
     }
   };

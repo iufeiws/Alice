@@ -8,7 +8,7 @@ export function createFinishAndWaitTools(): ToolPlugin {
       return [finishAndWaitTool];
     },
     async execute(call: ToolCall): Promise<ToolResult> {
-      if (call.toolName !== "finish_and_wait") {
+      if (call.toolName !== finishAndWaitTool.name) {
         return { callId: call.id, ok: false, error: `Unknown finish-and-wait tool: ${call.toolName}` };
       }
       return {

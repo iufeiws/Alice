@@ -27,7 +27,7 @@ test("selfie schema exposes pose only", () => {
   });
 
   const selfie = tools.listTools()[0];
-  assert.equal(selfie.name, "selfie");
+  assert.equal(selfie.name, "Selfie");
   assert.deepEqual((selfie.inputSchema.properties as Record<string, unknown>).description, undefined);
   assert.equal((selfie.inputSchema.properties as Record<string, unknown>).aspectRatio, undefined);
   assert.deepEqual(selfie.inputSchema.required, ["pose"]);
@@ -141,7 +141,7 @@ test("photo tool entry returns config errors to the agent", async () => {
 
   const result = await tools.execute({
     id: "call_selfie_bad_config",
-    toolName: "selfie",
+    toolName: "Selfie",
     input: { pose: "测试坏配置" }
   });
 
@@ -185,7 +185,7 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
 
     const result = await tools.execute({
       id: "call_selfie",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     }, { llmCapabilities: { supportsImage: true } });
 
@@ -251,7 +251,7 @@ test("selfie appends 2DinReal prompt and replaces character reference when enabl
 
     const result = await tools.execute({
       id: "call_selfie_2dinreal",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "看镜头" }
     });
 
@@ -295,7 +295,7 @@ test("selfie converts generated non-JPEG bytes to JPEG before sending", async ()
 
     const result = await tools.execute({
       id: "call_selfie_png_conversion",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "拍一张 PNG 结果的测试自拍" }
     }, { llmCapabilities: { supportsImage: true } });
 
@@ -341,7 +341,7 @@ test("selfie uses stored on-body reference with the standard selfie prompt", asy
 
     const result = await tools.execute({
       id: "call_selfie_on_body",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "看镜头" }
     });
 
@@ -387,7 +387,7 @@ test("selfie uses current outfit image as on-body reference when marked generate
 
     const result = await tools.execute({
       id: "call_selfie_generated_outfit",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "挥手" }
     });
 
@@ -444,7 +444,7 @@ test("selfie uses default output target for voice call requester", async () => {
 
     const result = await tools.execute({
       id: "call_selfie_voice",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "对镜头挥手" },
       requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
       externalSession: { scope: "dm", sessionId: "talk-session-1" }
@@ -488,19 +488,19 @@ test("selfie blocks retries in the same agent loop run after generation failure"
 
     const first = await tools.execute({
       id: "call_selfie_fail_1",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "失败自拍" }
     }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const sameRoundRetry = await tools.execute({
       id: "call_selfie_fail_2",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "同轮重试" }
     }, { llmSessionId: 123, agentLoopRunSeq: 4 });
 
     const nextRoundRetry = await tools.execute({
       id: "call_selfie_fail_3",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "下一轮重试" }
     }, { llmSessionId: 123, agentLoopRunSeq: 5 });
 
@@ -570,7 +570,7 @@ test("selfie default openai executor calls Image API directly", async () => {
 
     const result = await tools.execute({
       id: "call_selfie_openai_direct",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "靠近镜头" }
     });
 
@@ -657,7 +657,7 @@ test("selfie openai executor uses openai relay edits route with image field", as
 
     const result = await tools.execute({
       id: "call_selfie_api_relay",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "relay route" }
     });
 
@@ -713,7 +713,7 @@ test("selfie openai relay fetch failure logs url and cause details", async () =>
 
     const result = await tools.execute({
       id: "call_selfie_api_relay_fetch_failure",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "relay failure" }
     });
 
@@ -808,7 +808,7 @@ test("selfie codex mode calls alice-selfie-fast runner and copies new generated 
 
     const result = await tools.execute({
       id: "call_selfie_codex_mode",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "转头看镜头" }
     });
 
@@ -899,7 +899,7 @@ test("selfie codex mode logs codex stdout and stderr when runner fails", async (
 
     const result = await tools.execute({
       id: "call_selfie_codex_fail_log",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "fail and log codex output" }
     });
 
@@ -957,7 +957,7 @@ test("selfie falls back to text outfit when the outfit reference image is missin
 
     const result = await tools.execute({
       id: "call_selfie_missing_outfit",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "看镜头" }
     });
 
@@ -1008,7 +1008,7 @@ test("selfie uses world wanderer streetview as reference image 3 when outfit is 
 
     const result = await tools.execute({
       id: "call_selfie_world_wanderer",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "在当前位置自拍" }
     });
 
@@ -1054,7 +1054,7 @@ test("selfie does not keep streetview as image 3 when outfit reference is missin
 
     const result = await tools.execute({
       id: "call_selfie_world_wanderer_missing_outfit",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "服装图缺失时自拍" }
     });
 
@@ -1103,7 +1103,7 @@ test("selfie fails when world wanderer streetview lookup fails", async () => {
 
     const result = await tools.execute({
       id: "call_selfie_world_wanderer_fail",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "街景失败时自拍" }
     });
 
@@ -1149,7 +1149,7 @@ test("selfie sends start notice before required reference failures", async () =>
 
     const result = await tools.execute({
       id: "call_selfie_missing_character",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "看镜头" }
     });
 
@@ -1195,7 +1195,7 @@ test("selfie cleans up temporary directory when codex does not create the reques
 
     const result = await tools.execute({
       id: "call_selfie_missing",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "missing file" }
     });
 
@@ -1233,7 +1233,7 @@ test("selfie rejects output directories outside assets", async () => {
 
     const result = await tools.execute({
       id: "call_selfie_outside",
-      toolName: "selfie",
+      toolName: "Selfie",
       input: { pose: "outside assets" }
     });
 

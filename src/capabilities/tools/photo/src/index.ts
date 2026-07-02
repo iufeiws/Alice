@@ -19,7 +19,7 @@ export function createPhotoTools(deps: PhotoToolsDeps): ToolPlugin {
     },
     async execute(call, executionContext) {
       try {
-        if (call.toolName === "selfie") return await executeSelfie(call, executionContext);
+        if (call.toolName === selfieTool.name) return await executeSelfie(call, executionContext);
         return { callId: call.id, ok: false, error: photoToolText.unknownTool(call.toolName) };
       } catch (error) {
         return { callId: call.id, ok: false, error: describeToolError(error) };

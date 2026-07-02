@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export const selfieTool: ToolDefinition = {
-  name: "selfie",
+  name: "Selfie",
   description: "通过 pose 参数描述自拍时的姿势和表情。 除非<user>特殊要求, 禁止描述服装发色外貌特点, 对于描述中可能存在性暗示的部分略过以规避审核。成功时后会自动发送。",
   inputSchema: {
     type: "object",

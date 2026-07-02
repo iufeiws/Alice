@@ -11,14 +11,12 @@ import { renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-p
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 
 export type LLMRequestLogEvent = {
-  kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "retry";
+  kind: "call_start" | "stream_start" | "stream_end" | "response_received";
   agentId: string;
   round: number;
   stream: boolean;
   model?: string;
   attempt?: number;
-  error?: string;
-  delayMs?: number;
 };
 
 export type LLMRequestsDeps = {
@@ -28,8 +26,6 @@ export type LLMRequestsDeps = {
   onRequestSettled?(input: LLMRequestSenderInput): void;
   onLog?(event: LLMRequestLogEvent): void;
   messageSanitization?: LLMMessageSanitizationOptions;
-  retryDelayMs?: (attempt: number) => number;
-  sleep?: (ms: number) => Promise<void>;
 };
 
 export type LLMRequests = {
@@ -40,11 +36,7 @@ export type LLMRequests = {
   resetCancel(): void;
 };
 
-const maxLLMRetryAttempts = 3;
-
 export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
-  const retryDelayMs = deps.retryDelayMs ?? (() => 1_000);
-  const sleep = deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let activeController: AbortController | undefined;
   let cancelRequested = false;
 
@@ -95,50 +87,32 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       signal: requestController.signal
     };
     try {
-      deps.onRequestPrepared?.(input, request);
-      let lastError: unknown;
-      let result: LLMChatResult | undefined;
-      for (let attempt = 1; attempt <= maxLLMRetryAttempts; attempt += 1) {
+      try {
+        deps.onRequestPrepared?.(input, request);
         if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
-        deps.onLog?.({ kind: "call_start", agentId: input.agentId, round: input.round, stream: useStream, model: request.model, attempt });
-        try {
-          if (useStream && client.chatStream) {
-            deps.onLog?.({ kind: "stream_start", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt });
-            try {
-              result = sanitizeLLMChatResult(
-                await client.chatStream(request, sanitizeStreamHandlers(input.streamHandlers, deps.messageSanitization)),
-                deps.messageSanitization
-              );
-            } finally {
-              deps.onLog?.({ kind: "stream_end", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt });
-            }
-          } else {
-            result = sanitizeLLMChatResult(await client.chat(request), deps.messageSanitization);
-            deps.onLog?.({ kind: "response_received", agentId: input.agentId, round: input.round, stream: false, model: request.model, attempt });
+        deps.onLog?.({ kind: "call_start", agentId: input.agentId, round: input.round, stream: useStream, model: request.model, attempt: 1 });
+        let result: LLMChatResult;
+        if (useStream && client.chatStream) {
+          deps.onLog?.({ kind: "stream_start", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt: 1 });
+          try {
+            result = sanitizeLLMChatResult(
+              await client.chatStream(request, sanitizeStreamHandlers(input.streamHandlers, deps.messageSanitization)),
+              deps.messageSanitization
+            );
+          } finally {
+            deps.onLog?.({ kind: "stream_end", agentId: input.agentId, round: input.round, stream: true, model: request.model, attempt: 1 });
           }
-          break;
-        } catch (error) {
-          lastError = error;
-          if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
-          if (attempt >= maxLLMRetryAttempts || !isRetryableLLMError(error)) throw error;
-          const delayMs = retryDelayMs(attempt);
-          deps.onLog?.({
-            kind: "retry",
-            agentId: input.agentId,
-            round: input.round,
-            stream: useStream,
-            model: request.model,
-            attempt,
-            error: error instanceof Error ? error.message : String(error),
-            delayMs
-          });
-          await sleep(delayMs);
+        } else {
+          result = sanitizeLLMChatResult(await client.chat(request), deps.messageSanitization);
+          deps.onLog?.({ kind: "response_received", agentId: input.agentId, round: input.round, stream: false, model: request.model, attempt: 1 });
         }
+        if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
+        deps.onResponseReceived?.(input, request, result);
+        return result;
+      } catch (error) {
+        if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
+        throw error;
       }
-      if (!result) throw lastError;
-      if (cancelRequested || requestController.signal.aborted) throw new Error("llm_request_cancelled");
-      deps.onResponseReceived?.(input, request, result);
-      return result;
     } finally {
       input.signal?.removeEventListener("abort", abort);
       if (activeController === requestController) activeController = undefined;
@@ -199,10 +173,4 @@ function sanitizeStreamHandlers(
       if (sanitized) await handlers.onContentDelta?.(sanitized);
     }
   };
-}
-
-function isRetryableLLMError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\b(429|500|502|503|504)\b/.test(message)
-    || /service[_ ]unavailable|too busy|temporarily|timeout|timed out|fetch failed|ECONNRESET|ETIMEDOUT/i.test(message);
 }

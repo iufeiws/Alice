@@ -554,7 +554,7 @@ function loopInput(overrides: {
         return { message: { role: "assistant", content: "ok" } };
       }
     },
-    llmRequestSender: overrides.llmRequestSender,
+    llmRequestSender: overrides.llmRequestSender ?? (async () => ({ message: { role: "assistant", content: "ok" } })),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-29T00:00:00.000Z")),
     buildTextVariables: () => ({}),
     noteSessionUpdated() {},

@@ -151,7 +151,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
   }
 });
 
-test("openai stream client cancels failed streams before retry can continue", async () => {
+test("openai stream client cancels failed streams on parse failure", async () => {
   const originalFetch = globalThis.fetch;
   let cancelled = false;
   const stream = new ReadableStream({
@@ -172,6 +172,62 @@ test("openai stream client cancels failed streams before retry can continue", as
     assert.ok(client.chatStream);
     await assert.rejects(() => client.chatStream!({ messages: [] }));
     assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client retries fetch errors once", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "retry ok" }, finish_reason: "stop" }]
+    }), { headers: { "content-type": "application/json" } });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.message.content, "retry ok");
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client retries 503 once but not 500", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response("busy", { status: 503, statusText: "Service Unavailable" });
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "retry ok" }, finish_reason: "stop" }]
+    }), { headers: { "content-type": "application/json" } });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.message.content, "retry ok");
+    assert.equal(calls, 2);
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response("server error", { status: 500, statusText: "Internal Server Error" });
+    };
+    await assert.rejects(() => client.chat({ messages: [] }), /500 Internal Server Error/);
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -295,9 +351,7 @@ test("LLM request message sanitization removes empty assistant tool calls before
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -340,9 +394,7 @@ test("LLM request message sanitization merges consecutive assistant content", as
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -394,9 +446,7 @@ test("LLM request message sanitization settings can be disabled separately", asy
       removeEmptyAssistantToolCalls: false,
       removeAssistantReasoningWithoutToolCall: false,
       mergeConsecutiveAssistantContent: false
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -427,9 +477,7 @@ test("LLM request sender renders extra params and supports inline tools", async 
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -483,9 +531,7 @@ test("LLM request sender adds stream usage options when streaming is enabled", a
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -523,9 +569,7 @@ test("LLM request sender treats extra param stream true as streaming", async () 
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -622,9 +666,7 @@ test("LLM request response content sanitization setting can be disabled", async 
     },
     messageSanitization: {
       removeParenthesizedAssistantResponseContent: false
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   const result = await requests.send({
@@ -965,9 +1007,7 @@ test("LLMRequests records memorize token usage through response hook", async () 
         cacheHitTokens: result.usage?.cacheHitTokens,
         cacheMissTokens: result.usage?.cacheMissTokens
       });
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await requests.send({
@@ -1210,9 +1250,7 @@ test("LLMRequests does not retry a successful call when response hook fails", as
     },
     onResponseReceived() {
       throw new Error("503 observer failed after success");
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   await assert.rejects(() => requests.send({
@@ -1244,9 +1282,7 @@ test("LLMRequests cancels the active request signal", async () => {
     },
     onResponseReceived() {
       responseHookCalls += 1;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
 
   const pending = requests.send({
@@ -1281,9 +1317,7 @@ test("LLMRequests external abort targets the matching request controller", async
   const requests = createLLMRequests({
     getTool() {
       return undefined;
-    },
-    retryDelayMs: () => 0,
-    sleep: async () => {}
+    }
   });
   const firstController = new AbortController();
 

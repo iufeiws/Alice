@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTest, type ChatAgentDeps, type LLMSessionSnapshot } from "../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMRequestSenderInput } from "../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
@@ -17,14 +18,37 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-function createChatAgent(deps: ChatAgentDeps) {
+type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender"> & Partial<Pick<ChatAgentDeps, "llmRequestSender">>;
+
+function createChatAgent(deps: TestChatAgentDeps) {
   let persistedSession = deps.initialLLMSession;
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;
   const onLLMSessionCleared = deps.onLLMSessionCleared;
+  const requestLogs = new WeakMap<object, any>();
+  const llmRequestSender = deps.llmRequestSender ?? createLLMRequests({
+    getTool(name) {
+      for (const plugin of deps.tools ?? []) {
+        const tool = plugin.listTools().find((entry) => entry.name === name);
+        if (tool) return tool;
+      }
+      return undefined;
+    },
+    onRequestPrepared(input, request) {
+      const entry = deps.onLLMRequestPrepared?.(request);
+      if (entry) requestLogs.set(input, entry);
+    },
+    onResponseReceived(input, _request, result) {
+      deps.onLLMResponseReceived?.(result, requestLogs.get(input));
+    },
+    onLog(event) {
+      deps.onLLMLog?.({ ...event, round: event.round });
+    }
+  }).send;
   return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
+    llmRequestSender,
     loadLLMSession,
     onLLMSessionUpdated(session) {
       if (!deps.loadLLMSession) persistedSession = session;
@@ -68,6 +92,7 @@ test("chat agent requires an injected prompt profile", async () => {
   const core = createChatAgentUnderTest({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
+    llmRequestSender: async () => ({ message: { role: "assistant", content: "unused" } }),
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
@@ -1342,7 +1367,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
   assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
-  assert.equal(messages.some((message) => message.content === "old session marker"), true);
+  assert.equal(messages.some((message) => typeof message.content === "string" && message.content.includes("old session marker")), true);
   const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
   assert.ok(checkChatIndex >= 0);
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
@@ -2652,17 +2677,15 @@ test("chat agent skips fake append tool requests on first llm round", async () =
   assert.equal(senderInputs[1].messages.at(-1)?.content, "outfit");
 });
 
-test("chat agent retries transient llm failures", async () => {
+test("chat agent does not retry transient-looking sender failures", async () => {
   const attempts: string[] = [];
-  const retryLogs: Array<{ attempt?: number; delayMs?: number }> = [];
   const llm: LLMClient = {
     async chat() {
       throw new Error("chat should not be called");
     },
     async chatStream() {
       attempts.push("stream");
-      if (attempts.length < 3) throw new Error("LLM request failed: 503 Service Unavailable service is too busy");
-      return { message: { role: "assistant", content: "ok" } };
+      throw new Error("LLM request failed: 503 Service Unavailable service is too busy");
     }
   };
   const core = createChatAgent({
@@ -2671,19 +2694,12 @@ test("chat agent retries transient llm failures", async () => {
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
-    policy: createAllowAllPolicy(),
-    onLLMLog(event) {
-      if (event.kind === "retry") retryLogs.push({ attempt: event.attempt, delayMs: event.delayMs });
-    }
+    policy: createAllowAllPolicy()
   });
 
-  await runPreparedChatEvent(core, textEvent());
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /503 Service Unavailable/);
 
-  assert.equal(attempts.length, 3);
-  assert.deepEqual(retryLogs, [
-    { attempt: 1, delayMs: 1000 },
-    { attempt: 2, delayMs: 1000 }
-  ]);
+  assert.equal(attempts.length, 1);
 });
 
 test("chat agent does not retry non-transient llm failures", async () => {

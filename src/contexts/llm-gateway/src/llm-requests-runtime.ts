@@ -58,7 +58,6 @@ export function createLLMRequestsRuntime(input: {
       if (event.kind === "stream_start") input.appendLog("info", `llm stream start: agent=${event.agentId} round=${event.round} model=${event.model ?? fallbackModel}`);
       if (event.kind === "stream_end") input.appendLog("info", `llm stream end: agent=${event.agentId} round=${event.round} model=${event.model ?? fallbackModel}`);
       if (event.kind === "response_received") input.appendLog("info", `llm response received: agent=${event.agentId} round=${event.round} mode=${mode} model=${event.model ?? fallbackModel}`);
-      if (event.kind === "retry") input.appendLog("warn", `llm retry: agent=${event.agentId} round=${event.round} attempt=${event.attempt ?? "?"} delay=${event.delayMs ?? "?"}ms error=${event.error ?? ""}`);
     }
   });
 

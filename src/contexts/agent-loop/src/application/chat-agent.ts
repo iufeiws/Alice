@@ -191,7 +191,7 @@ export type ChatAgentDeps = {
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
-  llmRequestSender?: LLMRequestSender;
+  llmRequestSender: LLMRequestSender;
   agentRunIndicator?: AgentRunIndicator;
   onAgentRunIndicatorError?(error: unknown): void;
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
@@ -202,7 +202,7 @@ export type ChatAgentDeps = {
   ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   getLLMConfig?: () => ChatLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
-  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string; delayMs?: number }): void;
+  onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
   onLLMSessionCleared?(reason: LLMSessionClearReason): void;

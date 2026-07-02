@@ -8,7 +8,6 @@ import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
-import { createChatLoopRequestSender } from "./chat-loop-request-sender.js";
 import { checkChatCursorFromResult, fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
 import {
@@ -71,7 +70,7 @@ export type ChatAgentLoopInput = {
   ensureSession(): Promise<ChatAgentLoopSession>;
   appendSessionContext(session: ChatAgentLoopSession): Promise<void>;
   llm: LLMClient;
-  llmRequestSender?: LLMRequestSender;
+  llmRequestSender: LLMRequestSender;
   time: CurrentTimeProvider;
   buildTextVariables(event: AgentEvent): LLMTextVariables;
   noteSessionUpdated(): void;
@@ -87,13 +86,12 @@ export type ChatAgentLoopInput = {
   agentRunIndicator?: AgentRunIndicator;
   onAgentRunIndicatorError?(error: unknown): void;
   onLLMLog?(event: {
-    kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "retry" | "finish_and_wait_resume_error";
+    kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error";
     round: number;
     stream: boolean;
     model?: string;
     attempt?: number;
     error?: string;
-    delayMs?: number;
   }): void;
 };
 
@@ -124,13 +122,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   });
   const visibleToolNames = input.llmInput.toolNames;
   let assistantContentSentMessage = false;
-  const baseSendRequest = input.llmRequestSender ?? createChatLoopRequestSender({
-    llm: input.llm,
-    toolPlugins: input.toolPlugins,
-    onLLMRequestPrepared: input.onLLMRequestPrepared,
-    onLLMResponseReceived: input.onLLMResponseReceived,
-    onLLMLog: input.onLLMLog
-  });
+  const baseSendRequest = input.llmRequestSender;
   const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
     async beforeRound({ round }) {

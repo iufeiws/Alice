@@ -55,8 +55,8 @@
   - 统一 function-call loop spec 构筑入口和默认 loop limits；chat/talk adapter 只提供各自 request、tool、stream、writeback 回调。
 - `agent-loop/src/application/chat-loop-tool-control.ts`
   - 将 chat tool result 到 loop control / session rebuild mode 的转换从 `run-chat-loop.ts` 移出，降低 chat loop adapter 内部业务分支。
-- `agent-loop/src/application/chat-loop-request-sender.ts`
-  - 将 chat 本地 LLM request sender、tool schema rendering、retry/backoff 和 LLM lifecycle logging 从 `run-chat-loop.ts` 移出。
+- `llm-gateway/src/llm-requests.ts`
+  - 统一 LLM request sender、tool schema rendering、retry/backoff 和 LLM lifecycle logging。
 - `agent-loop/src/application/chat-loop-session-context.ts`
   - 将 chat fixed-prefix append、finish_and_wait resume、check_chat cursor、token estimate 和 session-context helpers 从 `run-chat-loop.ts` 移出。
 - `agent-loop/src/application/talk-loop-session-context.ts`
@@ -84,7 +84,7 @@
 16. [done] 将 chat 每分钟 LLM request timestamp 窗口维护抽入 `AgentLoopSessionInitializer.claimAgentLoopRequestWindow(...)`，`run-chat-loop` 不再手写 requestTimestamps 过滤和追加。
 17. [done] 抽出 `chat-loop-tool-control.ts`，`run-chat-loop` 不再直接展开 tool result reset/fixed-prefix mode 构筑逻辑，而是执行 tool 后调用 helper 生成 loop control 和待应用 mode state。
 18. [done] 抽出 `talk-loop-session-context.ts`，`run-talk-loop` 不再直接构建 talk prompt context、prompt variables、prompt tool runner 和 current transcript patch，只消费 prepared session context。
-19. [done] 抽出 `chat-loop-request-sender.ts`，`run-chat-loop` 不再拥有本地 LLM request sender、tool schema rendering、retry/backoff 和 lifecycle logging 实现。
+19. [done] LLM request sender 已统一到 `llm-gateway/src/llm-requests.ts`；`run-chat-loop` 不再拥有本地 sender fallback、tool schema rendering、retry/backoff 和 lifecycle logging 实现。
 20. [done] 抽出 `chat-loop-session-context.ts`，`run-chat-loop` 不再拥有 fixed-prefix append、finish_and_wait resume、check_chat cursor、token estimate 和 session-context helper 实现，仅保留兼容 re-export。
 
 ### 当前已知风险

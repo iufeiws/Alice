@@ -187,27 +187,61 @@ type OpenAIToolCall = NonNullable<
   NonNullable<NonNullable<OpenAIChatCompletionResponse["choices"]>[number]["message"]>["tool_calls"]
 >[number];
 
+const openAIRetryAttempts = 2;
+const openAIRetryDelayMs = 2_000;
+
 export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LLMClient {
   const baseURL = config.baseURL.replace(/\/+$/, "");
 
-  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    if (signal?.aborted) controller.abort();
-    signal?.addEventListener("abort", abort, { once: true });
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
+  async function fetchOpenAI(path: string, init: RequestInit, signal?: AbortSignal): Promise<{
+    response: Response;
+    cleanup(): void;
+    abort(): void;
+  }> {
+    for (let attempt = 1; attempt <= openAIRetryAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      if (signal?.aborted) controller.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        clearTimeout(timeout);
+      };
 
-    try {
-      const response = await fetch(`${baseURL}${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${config.apiKey}`,
-          ...(init.headers ?? {})
+      try {
+        const response = await fetch(`${baseURL}${path}`, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${config.apiKey}`,
+            ...(init.headers ?? {})
+          }
+        });
+        if (attempt < openAIRetryAttempts && isRetryableOpenAIStatus(response.status) && !signal?.aborted) {
+          cleanup();
+          try {
+            await response.body?.cancel();
+          } catch {
+            // Response body may already be closed by the runtime.
+          }
+          await sleep(openAIRetryDelayMs, signal);
+          continue;
         }
-      });
+        return { response, cleanup, abort: () => controller.abort() };
+      } catch (error) {
+        cleanup();
+        if (attempt >= openAIRetryAttempts || signal?.aborted) throw error;
+        await sleep(openAIRetryDelayMs, signal);
+      }
+    }
+    throw new Error("unreachable OpenAI fetch retry state");
+  }
 
+  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
+    const { response, cleanup } = await fetchOpenAI(path, init, signal);
+    try {
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${body}`);
@@ -215,8 +249,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
 
       return (await response.json()) as T;
     } finally {
-      signal?.removeEventListener("abort", abort);
-      clearTimeout(timeout);
+      cleanup();
     }
   }
 
@@ -226,24 +259,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     handlers: LLMStreamHandlers | undefined,
     signal?: AbortSignal
   ): Promise<LLMChatResult> {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    if (signal?.aborted) controller.abort();
-    signal?.addEventListener("abort", abort, { once: true });
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
+    const fetchAttempt = await fetchOpenAI(path, {
+      method: "POST",
+      body: JSON.stringify({ ...body, stream: true })
+    }, signal);
+    const { response } = fetchAttempt;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let completed = false;
     try {
-      const response = await fetch(`${baseURL}${path}`, {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${config.apiKey}`
-        },
-        body: JSON.stringify({ ...body, stream: true })
-      });
-
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${text}`);
@@ -344,15 +367,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         raw: rawUsage === undefined ? undefined : { usage: rawUsage }
       };
     } finally {
-      signal?.removeEventListener("abort", abort);
-      clearTimeout(timeout);
+      fetchAttempt.cleanup();
       if (!completed) {
         try {
           await reader?.cancel();
         } catch {
           // The stream may already be aborted or locked by the runtime.
         }
-        controller.abort();
+        fetchAttempt.abort();
       }
     }
   }
@@ -424,6 +446,29 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     return config.messageSanitization?.removeParenthesizedAssistantResponseContent
       ?? defaultLLMMessageSanitizationOptions.removeParenthesizedAssistantResponseContent;
   }
+}
+
+function isRetryableOpenAIStatus(status: number): boolean {
+  return status === 502 || status === 503;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("aborted", "AbortError"));
+      return;
+    }
+    const timeout = setTimeout(done, ms);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    function done() {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {

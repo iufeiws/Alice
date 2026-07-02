@@ -235,7 +235,15 @@ type BashRunPanelIds = {
 };
 
 function renderContent(output: string): string {
-  return `\`\`\`text\n${output || " "}\n\`\`\``;
+  const content = output || " ";
+  const fence = markdownFence(content);
+  return `${fence}text\n${content}\n${fence}`;
+}
+
+function markdownFence(content: string): string {
+  const runs = content.match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return "`".repeat(Math.max(3, longest + 1));
 }
 
 function finalLine(result: BashRuntimeResult): string {

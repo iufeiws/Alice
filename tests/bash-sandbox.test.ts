@@ -253,6 +253,24 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
   assert.match(client.contents.at(-1) ?? "", /finish: npm test/);
 });
 
+test("Feishu bash reporter keeps markdown fences inside command output", async () => {
+  const client = fakeFeishuCardClient();
+  const reporter = createFeishuBashRunReporter({
+    client,
+    pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
+    throttleMs: 1000
+  });
+  const session = await reporter.begin({ call: { id: "bash_ticks", toolName: "bash", input: {} }, command: "printf ticks", cwd: "/workspace" });
+
+  assert.ok(session);
+  await session.appendStdout("before\n```text\ninside\n```\nafter\n");
+  await session.finish({ command: "printf ticks", cwd: "/workspace", stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false });
+
+  const outputContent = client.contents.find((content) => content.includes("```text\ninside")) ?? "";
+  assert.match(outputContent, /^````text\n/);
+  assert.match(outputContent, /\n````$/);
+});
+
 test("Feishu bash reporter appends consecutive bash runs to one card", async () => {
   const client = fakeFeishuCardClient();
   const reporter = createFeishuBashRunReporter({

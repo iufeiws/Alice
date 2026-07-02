@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tool="${ALICE_BASH_WRAPPER_TOOL:-$(basename "$0")}"
+roots=(/workspace /skills /tmp /cache)
+
+real_command() {
+  local name="$1"
+  local candidates=("/usr/bin/$name" "/usr/local/bin/$name" "/bin/$name")
+  if [[ "$name" == "fd" ]]; then candidates+=("/usr/bin/fdfind" "/usr/local/bin/fdfind"); fi
+  if [[ "$name" == "ripgrep" ]]; then candidates=("/usr/bin/rg" "/usr/local/bin/rg" "/bin/rg"); fi
+  for candidate in "${candidates[@]}"; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return; }
+  done
+  return 1
+}
+
+has_root_arg() {
+  local arg
+  for arg in "$@"; do [[ "$arg" == "/" ]] && return 0; done
+  return 1
+}
+
+has_recursive_flag() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "--recursive" || "$arg" =~ ^-[^-]*[Rr] ]] && return 0
+  done
+  return 1
+}
+
+rewrite_root_args() {
+  rewritten=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "/" ]]; then rewritten+=("${roots[@]}"); else rewritten+=("$arg"); fi
+  done
+}
+
+rewrite_root_glob_args() {
+  rewritten=()
+  local arg count=0 added=0
+  for arg in "$@"; do [[ "$arg" =~ ^/[^/]+/?$ ]] && ((count += 1)); done
+  if (( count < 4 )); then rewritten=("$@"); return; fi
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^/[^/]+/?$ ]]; then
+      (( added == 0 )) && rewritten+=("${roots[@]}") && added=1
+    else
+      rewritten+=("$arg")
+    fi
+  done
+}
+
+case "$tool" in
+  find|rg|ripgrep|fd|tree)
+    rewrite_root_args "$@"
+    ;;
+  grep|ls)
+    if has_recursive_flag "$@" && has_root_arg "$@"; then rewrite_root_args "$@"; else rewritten=("$@"); fi
+    ;;
+  du)
+    if has_root_arg "$@"; then rewrite_root_args "$@"; else rewrite_root_glob_args "$@"; fi
+    ;;
+  *)
+    rewritten=("$@")
+    ;;
+esac
+
+real="$(real_command "$tool")" || { printf '%s: command not found\n' "$tool" >&2; exit 127; }
+exec "$real" "${rewritten[@]}"

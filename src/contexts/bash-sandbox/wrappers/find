@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+ALICE_BASH_WRAPPER_TOOL=find exec /sandbox/bin/root-scope-wrapper "$@"

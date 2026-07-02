@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+ALICE_BASH_WRAPPER_TOOL=rg exec /sandbox/bin/root-scope-wrapper "$@"

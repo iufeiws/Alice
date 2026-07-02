@@ -2,8 +2,11 @@ import type { BashSandboxConfig } from "./config.js";
 
 const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
+const path = await import("node:path");
 
 const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
+const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
+const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
 
 export type DockerExecutorResult = {
   stdout: string;
@@ -71,10 +74,12 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "-e", `HOME=${config.workspaceDir}`,
     "-e", `NPM_CONFIG_CACHE=${config.cacheDir}/npm`,
     "-e", `PIP_CACHE_DIR=${config.cacheDir}/pip`,
+    "-e", `PATH=${WRAPPER_CONTAINER_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
     "-v", `${config.hostWorkspaceDir}:${config.workspaceDir}:rw`,
     "-v", `${config.hostCacheDir}:${config.cacheDir}:rw`,
     "-w", config.defaultCwd
   ];
+  if (fs.existsSync(WRAPPER_HOST_DIR)) args.push("-v", `${WRAPPER_HOST_DIR}:${WRAPPER_CONTAINER_DIR}:ro`);
   if (config.network === "configured") {
     args.push("--add-host", "host.docker.internal:host-gateway");
     for (const name of PROXY_ENV_NAMES) {
@@ -92,7 +97,10 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
 }
 
 function skillMountKey(config: BashSandboxConfig): string {
-  return JSON.stringify(config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]));
+  return JSON.stringify({
+    skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
+    wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined
+  });
 }
 
 function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number, stream: Pick<Parameters<DockerExecutor["execute"]>[0], "onStdout" | "onStderr"> = {}): Promise<Omit<DockerExecutorResult, "durationMs">> {

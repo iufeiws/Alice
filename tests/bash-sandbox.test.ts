@@ -198,6 +198,8 @@ exit 64
     assert.match(calls, /--add-host host\.docker\.internal:host-gateway/);
     assert.match(calls, /-e HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
     assert.match(calls, /-e NO_PROXY=localhost,127\.0\.0\.1/);
+    assert.match(calls, /-e PATH=\/sandbox\/bin:/);
+    assert.match(calls, /-v .*src\/contexts\/bash-sandbox\/wrappers:\/sandbox\/bin:ro/);
     assert.equal(result.stdout.trim(), "docker-ok");
   } finally {
     process.env.PATH = previousPath;
@@ -310,6 +312,11 @@ test("docker executor runs in a fixed container when explicitly enabled", async 
     const result = await createDockerBashExecutor(config).execute({ command: "echo docker-ok", cwd: config.workspaceDir, timeoutMs: 5000, outputLimitBytes: 1024 });
     assert.equal(result.stdout.trim(), "docker-ok");
     assert.equal(result.exitCode, 0);
+
+    const findResult = await createDockerBashExecutor(config).execute({ command: "find / -maxdepth 1 -type d | sort", cwd: config.workspaceDir, timeoutMs: 5000, outputLimitBytes: 4096 });
+    assert.match(findResult.stdout, /\/workspace/);
+    assert.match(findResult.stdout, /\/skills/);
+    assert.doesNotMatch(findResult.stdout, /\/opt/);
   } finally {
     childProcess.spawnSync("docker", ["rm", "-f", config.containerName], { stdio: "ignore" });
   }

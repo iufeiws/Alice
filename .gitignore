@@ -31,3 +31,4 @@ prompt/*
 npm-debug.log*
 pnpm-debug.log*
 assets/generated/*
+.sandbox/*

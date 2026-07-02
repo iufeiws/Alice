@@ -71,6 +71,9 @@ export type AppConfig = {
     selfieImageApiRelayTimeoutMs: number;
     selfieMaxBytes: number;
     autoGenerateOutfitOnBody: boolean;
+    selfie2DinRealEnabled: boolean;
+    selfie2DinRealReferenceImage: string;
+    selfie2DinRealPrompt: string;
   };
   tts: {
     backend: "genie-tts" | "moss-onnx";
@@ -259,7 +262,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieImageApiRelayOutputCompression: envNumber(env.SELFIE_IMAGE_API_RELAY_OUTPUT_COMPRESSION, envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45)),
       selfieImageApiRelayTimeoutMs: envNumber(env.SELFIE_IMAGE_API_RELAY_TIMEOUT_MS, envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000)),
       selfieMaxBytes: envNumber(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024),
-      autoGenerateOutfitOnBody: envBool(env.PHOTO_AUTO_GENERATE_OUTFIT_ON_BODY, false)
+      autoGenerateOutfitOnBody: envBool(env.PHOTO_AUTO_GENERATE_OUTFIT_ON_BODY, false),
+      selfie2DinRealEnabled: envBool(env.SELFIE_2DINREAL_ENABLED, false),
+      selfie2DinRealReferenceImage: env.SELFIE_2DINREAL_REFERENCE_IMAGE ?? "assets/selfie/references/2dinreal-reference.jpg",
+      selfie2DinRealPrompt: env.SELFIE_2DINREAL_PROMPT ?? ""
     },
     tts: {
       backend: normalizeTTSBackend(env.TTS_BACKEND),

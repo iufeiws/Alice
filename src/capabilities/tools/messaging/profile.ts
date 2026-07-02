@@ -12,7 +12,7 @@ export const checkChatTool: ToolDefinition = {
 
 export const sendChatTool: ToolDefinition = {
   name: "send_chat",
-  description: "给{{user}}发送消息。需要先提供 type、alice, 再提供content。alice省略时为shell",
+  description: "给{{user}}发送消息, 发送后会自动返回最新的消息。需要先提供 type、alice, 再提供content。alice省略时为shell",
   inputSchema: {
     type: "object",
     properties: {

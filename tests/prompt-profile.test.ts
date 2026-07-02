@@ -25,6 +25,7 @@ test("prompt profile store creates defaults and persists edits", () => {
   assert.equal(initial.userName, "user");
   assert.deepEqual(initial.layers, []);
   assert.deepEqual(initial.appendLayers, []);
+  assert.equal(fs.existsSync(filePath), false);
 
   const saved = store.save({
     ...initial,
@@ -118,7 +119,8 @@ test("prompt messages render variables and preserve unknown placeholders", () =>
 });
 
 test("prompt layers render message name", () => {
-  const store = createPromptProfileStore(path.join(makeTempDir("prompt-layer-name"), "prompt-profile.json"));
+  const filePath = path.join(makeTempDir("prompt-layer-name"), "prompt-profile.json");
+  const store = createPromptProfileStore(filePath);
   const saved = store.save({
     ...defaultPromptProfile(),
     userName: "小王",
@@ -135,7 +137,7 @@ test("prompt layers render message name", () => {
     time: createCurrentTimeProvider("Asia/Shanghai")
   });
 
-  assert.equal(saved.layers[0].name, "{{user}}");
+  assert.equal(saved.layers[0].name, undefined);
   assert.equal(saved.layers[2].name, undefined);
   assert.equal(saved.layers[4].name, undefined);
   assert.equal(messages[0].name, "小王");
@@ -143,6 +145,7 @@ test("prompt layers render message name", () => {
   assert.equal(messages[2].name, undefined);
   assert.equal(messages[3].name, "Alice");
   assert.equal(messages[4].name, undefined);
+  assert.doesNotMatch(fs.readFileSync(filePath, "utf8"), /"name": "\{\{user\}\}"/);
 });
 
 test("prompt messages render memory variables", () => {

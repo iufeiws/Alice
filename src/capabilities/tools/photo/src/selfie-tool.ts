@@ -232,7 +232,10 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
-    return renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"), pose, context);
+    const prompt = renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"), pose, context);
+    return photoConfig.selfie2DinRealEnabled && photoConfig.selfie2DinRealPrompt
+      ? `${prompt}\n\n${photoConfig.selfie2DinRealPrompt}`
+      : prompt;
   }
 
   function renderSelfiePrompt(template: string, pose: string, context: SelfieContext): string {
@@ -274,10 +277,13 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
   }
 
   async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; usesOnBodyReference: boolean; worldWandererStreetViewImage?: string }> {
-    const referenceDir = runtimePhotoConfig().selfieReferenceDir;
+    const photoConfig = runtimePhotoConfig();
+    const referenceDir = photoConfig.selfieReferenceDir;
     const onBodyReference = resolveOnBodyReference(context);
     const worldWandererStreetViewImage = await resolveWorldWandererStreetViewReferenceImage();
-    const characterImage = requireFile(path.resolve(referenceDir, characterReferenceFileName), photoToolText.characterReferenceNotFound);
+    const characterImage = photoConfig.selfie2DinRealEnabled
+      ? requireFile(path.resolve(photoConfig.selfie2DinRealReferenceImage), "2DinReal reference image not found")
+      : requireFile(path.resolve(referenceDir, characterReferenceFileName), photoToolText.characterReferenceNotFound);
     const images = [characterImage];
     const outfitImage = onBodyReference ? undefined : optionalFile(resolveOutfitImage(context));
     if (onBodyReference) images.push(onBodyReference);

@@ -231,7 +231,7 @@ test("talk prompt profile saves independently from chat prompt profile", async (
   await handler(createRequest("PUT", "/admin/api/talk-prompt-profile", {
     userName: "talk-user",
     visibleTools: {},
-    layers: [{ id: "talk-role", role: "system", enabled: true, order: 10, content: "talk" }]
+    layers: [{ id: "talk-role", title: "Talk Role", role: "system", enabled: true, order: 10, content: "talk" }]
   }), response);
 
   assert.equal(response.statusCode, 200);
@@ -792,7 +792,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
 
   assert.equal(schemaResponse.statusCode, 200);
   assert.deepEqual(modeField.options.map((option: { value: string }) => option.value), ["openai", "openaiRelay", "codex"]);
-  assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage", "on_body"]);
+  assert.deepEqual(schemaBody.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai", "openai_relay", "codex", "storage", "on_body", "2dinreal"]);
   assert.equal(fieldGroups.get("selfieImageApiKeySet"), "openai");
   assert.equal(fieldGroups.get("selfieImageApiKey"), "openai");
   assert.equal(fieldGroups.get("selfieImageApiBaseURL"), "openai");
@@ -806,6 +806,9 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(fieldGroups.get("autoGenerateOutfitOnBody"), "on_body");
   assert.equal(fieldGroups.get("onBodyReferenceImage"), "on_body");
   assert.equal(fieldGroups.get("onBodyPrompt"), "on_body");
+  assert.equal(fieldGroups.get("selfie2DinRealEnabled"), "2dinreal");
+  assert.equal(fieldGroups.get("selfie2DinRealReferenceImage"), "2dinreal");
+  assert.equal(fieldGroups.get("selfie2DinRealPrompt"), "2dinreal");
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiRelayKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiKey, undefined);
@@ -840,7 +843,10 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     selfieMaxBytes: 10 * 1024 * 1024,
     autoGenerateOutfitOnBody: true,
     onBodyReferenceImage: "assets/selfie/references/full-body-reference.jpg",
-    onBodyPrompt: "configured-prompt"
+    onBodyPrompt: "configured-prompt",
+    selfie2DinRealEnabled: true,
+    selfie2DinRealReferenceImage: "assets/selfie/references/2dinreal-reference.jpg",
+    selfie2DinRealPrompt: "  2DinReal prompt\n"
   }), response);
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -861,6 +867,9 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(saved.autoGenerateOutfitOnBody, true);
   assert.equal(saved.onBodyReferenceImage, "assets/selfie/references/full-body-reference.jpg");
   assert.equal(saved.onBodyPrompt, "configured-prompt");
+  assert.equal(saved.selfie2DinRealEnabled, true);
+  assert.equal(saved.selfie2DinRealReferenceImage, "assets/selfie/references/2dinreal-reference.jpg");
+  assert.equal(saved.selfie2DinRealPrompt, "  2DinReal prompt\n");
   assert.equal(saved.selfieImageApiKeySet, undefined);
   assert.equal(saved.selfieImageApiRelayKeySet, undefined);
 });
@@ -2448,7 +2457,10 @@ function photoDefaults() {
     selfieImageApiRelayOutputCompression: 45,
     selfieImageApiRelayTimeoutMs: 120_000,
     selfieMaxBytes: 10 * 1024 * 1024,
-    autoGenerateOutfitOnBody: false
+    autoGenerateOutfitOnBody: false,
+    selfie2DinRealEnabled: false,
+    selfie2DinRealReferenceImage: "assets/selfie/references/2dinreal-reference.jpg",
+    selfie2DinRealPrompt: ""
   };
 }
 

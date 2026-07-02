@@ -55,7 +55,10 @@ test("photo config reads on-body generation settings", () => {
     autoGenerateOutfitOnBody: true,
     onBodyReferenceImage: "assets/ref/full-body.jpg",
     onBodyPrompt: "use image 1 as body reference and image 2 as outfit reference",
-    selfieOnBodyPrompt: "use image 1 as on-body reference and image 2 as scene reference"
+    selfieOnBodyPrompt: "use image 1 as on-body reference and image 2 as scene reference",
+    selfie2DinRealEnabled: true,
+    selfie2DinRealReferenceImage: "assets/ref/2dinreal.jpg",
+    selfie2DinRealPrompt: "  use 2DinReal\n"
   }));
 
   const config = readPhotoPluginConfig(configPath);
@@ -65,6 +68,9 @@ test("photo config reads on-body generation settings", () => {
   assert.equal(config.onBodyReferenceImage, "assets/ref/full-body.jpg");
   assert.equal(config.onBodyPrompt, "use image 1 as body reference and image 2 as outfit reference");
   assert.equal(config.selfieOnBodyPrompt, "use image 1 as on-body reference and image 2 as scene reference");
+  assert.equal(config.selfie2DinRealEnabled, true);
+  assert.equal(config.selfie2DinRealReferenceImage, "assets/ref/2dinreal.jpg");
+  assert.equal(config.selfie2DinRealPrompt, "  use 2DinReal\n");
 });
 
 test("photo provider limiter rejects duplicate content and third concurrent request", async () => {
@@ -211,6 +217,53 @@ test("selfie builds prompt and sends reference images in 1/2/3 order", async () 
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+  }
+});
+
+test("selfie appends 2DinReal prompt and replaces character reference when enabled", async () => {
+  const outputRoot = makeAssetTempDir("selfie-2dinreal");
+  const referenceRoot = makeTempDir("selfie-ref-2dinreal");
+  const ref2DinReal = path.join(referenceRoot, "2dinreal-reference.jpg");
+  const store = createAliceStore(path.join(makeTempDir("selfie-2dinreal-db"), "alice.sqlite"));
+  let executorInput: SelfieExecutorInput | undefined;
+  writeReferenceFiles(referenceRoot);
+  fs.writeFileSync(ref2DinReal, "2dinreal-image");
+
+  try {
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfie2DinRealEnabled: true,
+      selfie2DinRealReferenceImage: ref2DinReal,
+      selfie2DinRealPrompt: "  2DinReal prompt\n",
+      selfieExecutor: async (input) => {
+        executorInput = input;
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+        return { stdout: "ok" };
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: path.join(referenceRoot, "missing-outfit.jpg") }),
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({
+      id: "call_selfie_2dinreal",
+      toolName: "selfie",
+      input: { pose: "看镜头" }
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(executorInput?.referenceImages.map((image) => path.basename(image)), [
+      "2dinreal-reference.jpg",
+      "magic-library-reference.jpg"
+    ]);
+    assert.match(executorInput?.prompt ?? "", /黑色薄纱短袖高领上衣\n\n  2DinReal prompt\n$/);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
   }
 });
 

@@ -549,7 +549,8 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "openai_relay", label: "OpenAI Relay" },
         { key: "codex", label: "Codex" },
         { key: "storage", label: "Storage" },
-        { key: "on_body", label: "On Body" }
+        { key: "on_body", label: "On Body" },
+        { key: "2dinreal", label: "2DinReal" }
       ],
       fields: [
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable the selfie tool route." },
@@ -602,7 +603,10 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "autoGenerateOutfitOnBody", label: "Auto On-Body", type: "switch", group: "on_body", description: "Automatically attempts outfit on-body generation after outfit selection." },
         { key: "onBodyReferenceImage", label: "Full Body Ref", type: "fileUpload", group: "on_body", assetKey: "on-body-reference", accept: "image/*", description: "Generation image 1." },
         { key: "onBodyPrompt", label: "Prompt", type: "textarea", group: "on_body", description: "Used exactly as the on-body generation prompt." },
-        { key: "selfieOnBodyPrompt", label: "Selfie Prompt", type: "textarea", group: "on_body", description: "Used exactly when selfie uses an on-body reference." }
+        { key: "selfieOnBodyPrompt", label: "Selfie Prompt", type: "textarea", group: "on_body", description: "Used exactly when selfie uses an on-body reference." },
+        { key: "selfie2DinRealEnabled", label: "2DinReal", type: "switch", group: "2dinreal", description: "Use the extra 2DinReal reference image and append its prompt to selfie prompts." },
+        { key: "selfie2DinRealReferenceImage", label: "Character Ref", type: "fileUpload", group: "2dinreal", assetKey: "2dinreal-reference", accept: "image/*", description: "Character reference image used instead of alice-character-reference.jpg when 2DinReal is enabled." },
+        { key: "selfie2DinRealPrompt", label: "Prompt", type: "textarea", group: "2dinreal", description: "Appended exactly below the rendered selfie prompt when 2DinReal is enabled." }
       ]
     },
     routePreview: [
@@ -886,12 +890,14 @@ async function uploadPhotoPluginAsset(
   assetKey: string,
   request: any
 ): Promise<{ config: unknown; assetPath: string } | { error: string; statusCode?: number }> {
-  if (assetKey !== "character-reference" && assetKey !== "on-body-reference") return { error: "unsupported_photo_asset" };
+  if (assetKey !== "character-reference" && assetKey !== "on-body-reference" && assetKey !== "2dinreal-reference") return { error: "unsupported_photo_asset" };
   const body = await readRawBody(request, { maxBytes: 10 * 1024 * 1024 });
   if (body.length === 0) return { error: "empty_upload" };
   const config = readPhotoConfigForAdmin(context);
   const fullPath = assetKey === "on-body-reference"
     ? path.resolve(config.onBodyReferenceImage)
+    : assetKey === "2dinreal-reference"
+    ? path.resolve(config.selfie2DinRealReferenceImage)
     : path.resolve(config.selfieReferenceDir, "alice-character-reference.jpg");
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, body);
@@ -952,7 +958,10 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     autoGenerateOutfitOnBody: patch.autoGenerateOutfitOnBody === undefined ? current.autoGenerateOutfitOnBody : booleanFromUnknown(patch.autoGenerateOutfitOnBody),
     onBodyReferenceImage: patch.onBodyReferenceImage === undefined ? current.onBodyReferenceImage : requiredString(patch.onBodyReferenceImage).trim(),
     onBodyPrompt: patch.onBodyPrompt === undefined ? current.onBodyPrompt : requiredString(patch.onBodyPrompt),
-    selfieOnBodyPrompt: patch.selfieOnBodyPrompt === undefined ? current.selfieOnBodyPrompt : requiredString(patch.selfieOnBodyPrompt)
+    selfieOnBodyPrompt: patch.selfieOnBodyPrompt === undefined ? current.selfieOnBodyPrompt : requiredString(patch.selfieOnBodyPrompt),
+    selfie2DinRealEnabled: patch.selfie2DinRealEnabled === undefined ? current.selfie2DinRealEnabled : booleanFromUnknown(patch.selfie2DinRealEnabled),
+    selfie2DinRealReferenceImage: patch.selfie2DinRealReferenceImage === undefined ? current.selfie2DinRealReferenceImage : requiredString(patch.selfie2DinRealReferenceImage).trim(),
+    selfie2DinRealPrompt: patch.selfie2DinRealPrompt === undefined ? current.selfie2DinRealPrompt : requiredString(patch.selfie2DinRealPrompt)
   };
 
   const validationError = validatePhotoConfig(next);
@@ -985,6 +994,7 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (invalidNumber(config.selfieImageApiRelayTimeoutMs, 1000, 600_000)) return "invalid_selfie_api_relay_timeout";
   if (invalidNumber(config.selfieMaxBytes, 1024, 50 * 1024 * 1024)) return "invalid_selfie_max_bytes";
   if (!config.onBodyReferenceImage) return "missing_on_body_reference_image";
+  if (config.selfie2DinRealEnabled && !config.selfie2DinRealReferenceImage) return "missing_2dinreal_reference_image";
   return undefined;
 }
 
@@ -1030,7 +1040,10 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     autoGenerateOutfitOnBody: photo.autoGenerateOutfitOnBody,
     onBodyReferenceImage: photo.onBodyReferenceImage,
     onBodyPrompt: photo.onBodyPrompt,
-    selfieOnBodyPrompt: photo.selfieOnBodyPrompt
+    selfieOnBodyPrompt: photo.selfieOnBodyPrompt,
+    selfie2DinRealEnabled: photo.selfie2DinRealEnabled,
+    selfie2DinRealReferenceImage: photo.selfie2DinRealReferenceImage,
+    selfie2DinRealPrompt: photo.selfie2DinRealPrompt
   };
 }
 

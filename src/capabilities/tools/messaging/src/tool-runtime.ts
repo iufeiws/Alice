@@ -102,6 +102,9 @@ export function createToolRuntime(input: {
     selfieImageApiRelayOutputCompression: input.config.photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: input.config.photo.selfieImageApiRelayTimeoutMs,
     selfieMaxBytes: input.config.photo.selfieMaxBytes,
+    selfie2DinRealEnabled: input.config.photo.selfie2DinRealEnabled,
+    selfie2DinRealReferenceImage: input.config.photo.selfie2DinRealReferenceImage,
+    selfie2DinRealPrompt: input.config.photo.selfie2DinRealPrompt,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     getSelfieContext() {
       const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);

@@ -64,6 +64,13 @@ export type PromptProfileStore = {
   save(profile: PromptProfile): PromptProfile;
 };
 
+export class PromptProfileValidationError extends Error {
+  constructor(public readonly code: string) {
+    super(code);
+    this.name = "PromptProfileValidationError";
+  }
+}
+
 export const defaultPromptRegistry: PromptDefinition[] = [
   {
     id: "agent.profile.default",
@@ -84,14 +91,13 @@ export const defaultPromptRegistry: PromptDefinition[] = [
 
 export function createPromptProfileStore(filePath: string): PromptProfileStore {
   let current: PromptProfile = readPromptProfile(filePath) ?? defaultPromptProfile();
-  if (!fs.existsSync(filePath)) writePromptProfile(filePath, current);
 
   return {
     get() {
       return cloneProfile(current);
     },
     save(profile) {
-      current = normalizePromptProfile(profile);
+      current = validatePromptProfile(profile);
       writePromptProfile(filePath, current);
       return cloneProfile(current);
     }
@@ -273,16 +279,12 @@ export function getPromptContent(id: string): string {
 
 function readPromptProfile(filePath: string): PromptProfile | undefined {
   if (!fs.existsSync(filePath)) return undefined;
-  try {
-    return normalizePromptProfile(JSON.parse(fs.readFileSync(filePath, "utf8")) as PromptProfile);
-  } catch {
-    return undefined;
-  }
+  return validatePromptProfile(JSON.parse(fs.readFileSync(filePath, "utf8")));
 }
 
 function writePromptProfile(filePath: string, profile: PromptProfile): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(normalizePromptProfile(profile), null, 2)}\n`);
+  fs.writeFileSync(filePath, `${JSON.stringify(validatePromptProfile(profile), null, 2)}\n`);
 }
 
 function cloneProfile(profile: PromptProfile): PromptProfile {
@@ -291,4 +293,44 @@ function cloneProfile(profile: PromptProfile): PromptProfile {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function validatePromptProfile(value: unknown): PromptProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError("invalid_prompt_profile");
+  const profile = value as PromptProfile;
+  if (typeof profile.userName !== "string") throw new PromptProfileValidationError("invalid_prompt_profile_user_name");
+  if (!profile.visibleTools || typeof profile.visibleTools !== "object" || Array.isArray(profile.visibleTools)) throw new PromptProfileValidationError("invalid_prompt_profile_visible_tools");
+  validatePromptLayersForStorage(profile.layers, "layers");
+  if (profile.appendLayers !== undefined) validatePromptLayersForStorage(profile.appendLayers, "appendLayers");
+  return cloneProfile(profile);
+}
+
+function validatePromptLayersForStorage(value: unknown, key: string): void {
+  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_profile_${key}`);
+  value.forEach((entry, index) => validatePromptLayerForStorage(entry, `${key}_${index + 1}`));
+}
+
+function validatePromptLayerForStorage(value: unknown, key: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_layer_${key}`);
+  const layer = value as PromptLayer;
+  if (typeof layer.id !== "string" || !layer.id.trim()) throw new PromptProfileValidationError(`invalid_prompt_layer_id_${key}`);
+  if (typeof layer.title !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_title_${key}`);
+  if (!["system", "user", "assistant", "tool_request"].includes(String(layer.role))) throw new PromptProfileValidationError(`invalid_prompt_layer_role_${key}`);
+  if (layer.name !== undefined && typeof layer.name !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_name_${key}`);
+  if (typeof layer.enabled !== "boolean") throw new PromptProfileValidationError(`invalid_prompt_layer_enabled_${key}`);
+  if (typeof layer.content !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_content_${key}`);
+  if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) throw new PromptProfileValidationError(`invalid_prompt_layer_order_${key}`);
+  if (layer.thinking !== undefined && typeof layer.thinking !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_thinking_${key}`);
+  if (layer.toolCalls !== undefined) validatePromptToolCallsForStorage(layer.toolCalls, key);
+}
+
+function validatePromptToolCallsForStorage(value: unknown, key: string): void {
+  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_layer_tool_calls_${key}`);
+  value.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new PromptProfileValidationError(`invalid_prompt_layer_tool_call_${key}_${index + 1}`);
+    const call = entry as { toolName?: unknown; toolCallId?: unknown; toolArguments?: unknown };
+    if (typeof call.toolName !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_name_${key}_${index + 1}`);
+    if (call.toolCallId !== undefined && typeof call.toolCallId !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_call_id_${key}_${index + 1}`);
+    if (typeof call.toolArguments !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_arguments_${key}_${index + 1}`);
+  });
 }

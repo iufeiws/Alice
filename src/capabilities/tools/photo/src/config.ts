@@ -33,6 +33,9 @@ export type PhotoPluginConfig = {
   onBodyReferenceImage: string;
   onBodyPrompt: string;
   selfieOnBodyPrompt: string;
+  selfie2DinRealEnabled: boolean;
+  selfie2DinRealReferenceImage: string;
+  selfie2DinRealPrompt: string;
 };
 
 export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey"> & {
@@ -103,7 +106,10 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     autoGenerateOutfitOnBody: booleanValue(parsed.autoGenerateOutfitOnBody, defaults.autoGenerateOutfitOnBody ?? false, "autoGenerateOutfitOnBody"),
     onBodyReferenceImage: requiredStringValue(parsed.onBodyReferenceImage, defaults.onBodyReferenceImage ?? "assets/selfie/references/full-body-reference.jpg", "onBodyReferenceImage"),
     onBodyPrompt: optionalStringValue(parsed.onBodyPrompt, defaults.onBodyPrompt, "onBodyPrompt") ?? "",
-    selfieOnBodyPrompt: optionalStringValue(parsed.selfieOnBodyPrompt, defaults.selfieOnBodyPrompt, "selfieOnBodyPrompt") ?? ""
+    selfieOnBodyPrompt: optionalStringValue(parsed.selfieOnBodyPrompt, defaults.selfieOnBodyPrompt, "selfieOnBodyPrompt") ?? "",
+    selfie2DinRealEnabled: booleanValue(parsed.selfie2DinRealEnabled, defaults.selfie2DinRealEnabled ?? false, "selfie2DinRealEnabled"),
+    selfie2DinRealReferenceImage: requiredStringValue(parsed.selfie2DinRealReferenceImage, defaults.selfie2DinRealReferenceImage ?? "assets/selfie/references/2dinreal-reference.jpg", "selfie2DinRealReferenceImage"),
+    selfie2DinRealPrompt: optionalRawStringValue(parsed.selfie2DinRealPrompt, defaults.selfie2DinRealPrompt, "selfie2DinRealPrompt") ?? ""
   };
 }
 
@@ -174,6 +180,11 @@ function optionalStringValue(value: unknown, defaultValue: string | undefined, n
   if (value === undefined || value === null) return defaultValue;
   const text = stringValue(value, name).trim();
   return text || undefined;
+}
+
+function optionalRawStringValue(value: unknown, defaultValue: string | undefined, name: string): string | undefined {
+  if (value === undefined || value === null) return defaultValue;
+  return stringValue(value, name);
 }
 
 function outputFormatValue(value: unknown, defaultValue: string, name: string): string {

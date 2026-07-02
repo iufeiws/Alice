@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { promptVariables } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 
 test("renderLLMText resolves common variable placeholders", () => {
   assert.equal(renderLLMText("hello {{ user }} at {{date_time}}", {
@@ -74,6 +75,22 @@ test("buildLLMTextVariables exposes memory limit placeholders", () => {
 test("buildLLMTextVariables exposes library content", () => {
   const variables = buildLLMTextVariables({ librarySetting: "当前图书馆" });
   assert.equal(renderLLMText("{{library/content}}", variables), "当前图书馆");
+});
+
+test("promptVariables exposes available_skills without prompt text changes", () => {
+  const variables = promptVariables({ userName: "YY", layers: [], visibleTools: { feishu: true } }, {
+    event: {
+      id: "evt",
+      source: { plugin: "test", userId: "u" },
+      externalSession: { scope: "dm", sessionId: "s" },
+      type: "message.text",
+      payload: { kind: "text", text: "hi" },
+      meta: { receivedAt: "2026-01-01T00:00:00.000", receivedAtUtc: "2025-12-31T16:00:00.000Z" }
+    },
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+    availableSkills: "<available_skills>\n</available_skills>"
+  });
+  assert.equal(variables.available_skills, "<available_skills>\n</available_skills>");
 });
 
 test("formatToolResultForLLM renders placeholders in string tool output", () => {

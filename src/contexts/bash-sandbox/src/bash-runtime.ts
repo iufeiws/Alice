@@ -1,5 +1,6 @@
 import type { ToolCall } from "../../agent-loop/src/contracts/agent-contracts.js";
-import type { BashSandboxConfig } from "./config.js";
+import type { BashSandboxConfig, BashSandboxSkillMountConfig } from "./config.js";
+import { addBashSandboxSkillMount } from "./config.js";
 import type { DockerExecutor } from "./docker-executor.js";
 import { createDockerBashExecutor } from "./docker-executor.js";
 import { appendBashAuditEvent } from "./audit.js";
@@ -21,6 +22,7 @@ export type BashRuntimeResult = {
 
 export type BashSandboxRuntime = {
   setReporter(reporter: BashRunReporter | undefined): void;
+  mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig;
   run(call: ToolCall): Promise<BashRuntimeResult>;
 };
 
@@ -41,6 +43,9 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
   return {
     setReporter(nextReporter) {
       reporter = nextReporter;
+    },
+    mountSkill(mount) {
+      return addBashSandboxSkillMount(input.config, mount);
     },
     async run(call) {
       const command = stringValue(call.input.command);

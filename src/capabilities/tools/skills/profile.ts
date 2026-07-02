@@ -1,22 +1,13 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
-export const listSkillsTool: ToolDefinition = {
-  name: "list_skills",
-  description: "List available Skills metadata.",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false
-  }
-};
-
-export const loadSkillTool: ToolDefinition = {
-  name: "load_skill",
-  description: "Load one Skill's full instructions and container resource root.",
+export const skillTool: ToolDefinition = {
+  name: "Skill",
+  description: "Load one available Skill by exact name.",
   inputSchema: {
     type: "object",
     properties: {
-      skill: { type: "string" }
+      skill: { type: "string" },
+      args: { type: "string" }
     },
     required: ["skill"],
     additionalProperties: false

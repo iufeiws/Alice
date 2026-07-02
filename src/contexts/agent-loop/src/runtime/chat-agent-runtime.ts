@@ -17,6 +17,7 @@ export function createChatAgentRuntime(input: {
   time: any;
   coreProfileStore: any;
   getLibrarySetting?(): string;
+  getAvailableSkills?(): string;
   memoryStore: any;
   diaryStore: any;
   calendarStore?: any;
@@ -73,6 +74,7 @@ export function createChatAgentRuntime(input: {
     getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
+    getAvailableSkills: input.getAvailableSkills,
     getMemorySnapshot: () => input.memoryStore.read(),
     getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
     getCalendarContext: input.calendarStore

@@ -43,6 +43,7 @@ export type PromptRenderContext = {
   memory?: MemorySnapshot;
   wakeBoundary?: LLMTextWakeBoundary;
   calendarContext?: string;
+  availableSkills?: string;
   preview?: boolean;
 };
 
@@ -56,6 +57,7 @@ export type PromptContextDeps = {
   getMemorySnapshot?: () => MemorySnapshot | undefined;
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   getCalendarContext?: () => string | undefined;
+  getAvailableSkills?: () => string | undefined;
   preview?: boolean;
 };
 
@@ -206,7 +208,10 @@ export function promptVariables(profile: PromptProfile, context: PromptRenderCon
     librarySetting: context.librarySetting,
     memory: context.memory,
     wakeBoundary: context.wakeBoundary,
-    calendarContext: context.calendarContext
+    calendarContext: context.calendarContext,
+    extra: {
+      available_skills: context.availableSkills ?? ""
+    }
   });
 }
 
@@ -221,6 +226,7 @@ export function makePromptContext(input: PromptContextDeps): PromptRenderContext
     memory: input.getMemorySnapshot?.(),
     wakeBoundary: input.getWakeBoundary?.(),
     calendarContext: input.getCalendarContext?.(),
+    availableSkills: input.getAvailableSkills?.(),
     preview: input.preview
   };
 }

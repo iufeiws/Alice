@@ -14,6 +14,7 @@ export function createTalkRuntimeRuntime(input: {
   dailyShellStore: any;
   getAppearanceDescription(): string;
   getLibrarySetting?(): string;
+  getAvailableSkills?(): string;
   memoryStore: any;
   diaryStore: any;
   visibleToolNames(profile: any): string[];
@@ -47,6 +48,7 @@ export function createTalkRuntimeRuntime(input: {
     dailyShellStore: input.dailyShellStore,
     getAppearanceDescription: input.getAppearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
+    getAvailableSkills: input.getAvailableSkills,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     setLoopPrefixMessageCount(sessionId, count) {

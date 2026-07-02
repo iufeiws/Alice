@@ -15,6 +15,7 @@ export function createApiAgentRuntime(input: {
   time: any;
   coreProfileStore: any;
   getLibrarySetting?(): string;
+  getAvailableSkills?(): string;
   memoryStore: any;
   diaryStore: any;
   calendarStore?: any;
@@ -42,6 +43,7 @@ export function createApiAgentRuntime(input: {
     dailyShellStore: input.dailyShellStore,
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
+    getAvailableSkills: input.getAvailableSkills,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     visibleToolNames: input.visibleToolNames,

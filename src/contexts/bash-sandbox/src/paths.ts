@@ -27,12 +27,13 @@ export function isAllowedCwd(config: BashSandboxConfig, cwd: string): boolean {
 }
 
 export function isReadOnlyPath(config: BashSandboxConfig, value: string): boolean {
-  if (config.skillMounts.some((mount) => isSameOrInside(value, mount.containerPath))) return true;
+  if (config.skillMounts.some((mount) => mount.readOnly && isSameOrInside(value, mount.containerPath))) return true;
   return config.mounts.some((mount) => mount.readOnly && isSameOrInside(value, mount.containerPath));
 }
 
 export function isWritablePath(config: BashSandboxConfig, value: string): boolean {
   if (isSameOrInside(value, config.workspaceDir) || isSameOrInside(value, config.cacheDir) || isSameOrInside(value, config.tmpDir)) return true;
+  if (config.skillMounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath))) return true;
   return config.mounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath));
 }
 

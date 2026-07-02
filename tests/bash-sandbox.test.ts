@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createBashTools } from "../src/capabilities/tools/bash/src/index.js";
 import { createSkillsTools } from "../src/capabilities/tools/skills/src/index.js";
 import { createBashSandboxRuntime, classifyBashCommand, createDockerBashExecutor, createFeishuBashRunReporter, type BashSandboxConfig, type DockerExecutor } from "../src/contexts/bash-sandbox/src/index.js";
-import { createSkillLoader, createSkillRegistry } from "../src/contexts/skills/src/index.js";
+import { createSkillLoader, createSkillRegistry, formatAvailableSkillsXml } from "../src/contexts/skills/src/index.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 import { buildBashRunCard } from "../src/channels/feishu/src/client.js";
 import type { FeishuDynamicCardClient } from "../src/channels/feishu/src/types.js";
@@ -80,47 +80,88 @@ test("config rejects writable mounts under skills and sensitive host paths", () 
   assert.equal(config.bashSandbox.hostCacheDir.endsWith(path.join(".sandbox", "bash", "cache")), true);
   assert.equal(config.bashSandbox.auditLogPath, ".sandbox/bash/audit.jsonl");
   assert.equal("enabled" in config.bashSandbox, false);
-  assert.equal(config.bashSandbox.skillMounts.some((mount) => mount.hostPath.includes(`${path.sep}external${path.sep}`)), false);
+  assert.deepEqual(config.bashSandbox.skillMounts, []);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/skills/generated", readOnly: false }]) }), /skills mount/);
-  assert.throws(() => loadConfig({ BASH_SANDBOX_SKILL_MOUNTS: JSON.stringify([{ hostPath: "src/capabilities/skills/external/alice-selfie-fast", containerPath: "/skills/external/alice-selfie-fast" }]) }), /external skills/);
 });
 
-test("skills registry loads metadata and loader resolves container resource paths", () => {
-  const root = tmpDir("skills");
-  const skillRoot = path.join(root, "custom", "demo");
-  fs.mkdirSync(path.join(skillRoot, "scripts"), { recursive: true });
-  fs.writeFileSync(path.join(skillRoot, "SKILL.md"), "---\nname: demo\ndescription: >\n  Run demo script.\n---\n\nUse scripts/run.sh\n");
-  fs.writeFileSync(path.join(skillRoot, "scripts", "run.sh"), "echo demo\n");
+test("skills registry formats first-party and third-party available skills only", () => {
+  const firstParty = tmpDir("first-party-skills");
+  const thirdParty = tmpDir("third-party-skills");
+  writeSkill(firstParty, "demo", "name: demo\ndescription: Run demo script.", "Use scripts/run.sh\n");
+  writeSkill(thirdParty, "third", "name: third\ndescription: Installed skill.", "Use it\n");
+  writeSkill(firstParty, "disabled", "name: disabled\ndescription: Disabled skill.\ndisabled: true", "Nope\n");
+  writeSkill(firstParty, "invalid", "name: invalid", "No description\n");
 
-  const registry = createSkillRegistry({ mounts: [{ id: "custom/demo", hostPath: skillRoot, containerPath: "/skills/custom/demo", readOnly: true }] });
-  const loader = createSkillLoader(registry);
-  const loaded = loader.load("demo");
+  const registry = createSkillRegistry({
+    roots: [
+      { root: firstParty, source: "first-party" },
+      { root: thirdParty, source: "third-party" }
+    ]
+  });
+  const xml = formatAvailableSkillsXml(registry);
 
-  assert.deepEqual(registry.list().map((skill) => skill.name), ["demo"]);
-  assert.equal(loaded.instructions.includes("Use scripts/run.sh"), true);
-  assert.equal(loaded.resolveResource("scripts/run.sh"), "/skills/custom/demo/scripts/run.sh");
-  assert.throws(() => loaded.resolveResource("../escape"), /escapes/);
+  assert.deepEqual(registry.available().map((skill) => skill.name), ["demo", "third"]);
+  assert.match(xml, /<name>demo<\/name>/);
+  assert.match(xml, /<name>third<\/name>/);
+  assert.doesNotMatch(xml, /disabled/);
+  assert.doesNotMatch(xml, /invalid/);
 });
 
-test("skills tools list metadata and load instructions without host paths", async () => {
+test("Skill tool loads by exact name, renders args, and mounts read-write without host paths", async () => {
   const root = tmpDir("skills-tools");
-  const skillRoot = path.join(root, "demo");
-  fs.mkdirSync(skillRoot, { recursive: true });
-  fs.writeFileSync(path.join(skillRoot, "SKILL.md"), "---\nname: demo\ndescription: demo skill\n---\n\nRun /skills/demo/scripts/run.sh\n");
-  const registry = createSkillRegistry({ mounts: [{ id: "demo", hostPath: skillRoot, containerPath: "/skills/demo", readOnly: true }] });
-  const loader = createSkillLoader(registry);
-  const tools = createSkillsTools({ registry, loader });
+  const skillRoot = writeSkill(root, "demo", "name: demo\ndescription: demo skill", "Run $0 then $ARGUMENTS[1]\n");
+  fs.mkdirSync(path.join(skillRoot, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, "scripts", "run.sh"), "echo demo\n");
+  const config = testConfig({ skillMounts: [] });
+  const runtime = createBashSandboxRuntime({
+    config,
+    executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
+  });
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const loader = createSkillLoader(registry, runtime);
+  const tools = createSkillsTools({ loader });
 
-  const listed = await tools.execute({ id: "list", toolName: "list_skills", input: {} });
-  const loaded = await tools.execute({ id: "load", toolName: "load_skill", input: { skill: "demo" } });
+  const listedNames = tools.listTools().map((tool) => tool.name);
+  const oldList = await tools.execute({ id: "list", toolName: "list_skills", input: {} });
+  const loaded = await tools.execute({ id: "load", toolName: "Skill", input: { skill: "demo", args: "'one arg' $HOME" } });
 
-  assert.equal(listed.ok, true);
-  assert.equal(JSON.parse(String(listed.output))[0].containerRoot, "/skills/demo");
-  assert.equal(String(listed.output).includes(root), false);
+  assert.deepEqual(listedNames, ["Skill"]);
+  assert.equal(oldList.ok, false);
   assert.equal(loaded.ok, true);
-  assert.equal(JSON.parse(String(loaded.output)).instructions.includes("Run /skills/demo/scripts/run.sh"), true);
+  assert.match(String(loaded.output), /<loaded_skill name="demo" dir="\/skills\/demo">/);
+  assert.match(String(loaded.output), /Run one arg then \$HOME/);
   assert.equal(String(loaded.output).includes(root), false);
+  assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/skills/demo", readOnly: false }]);
+  assert.equal(loader.load("demo").resolveResource("scripts/run.sh"), "/skills/demo/scripts/run.sh");
+  assert.throws(() => loader.load("demo").resolveResource("../escape"), /escapes/);
+});
+
+test("Skill tool returns spec error codes and appends unused args", async () => {
+  const root = tmpDir("skill-errors");
+  writeSkill(root, "plain", "name: plain\ndescription: Plain skill.", "No placeholders\n");
+  writeSkill(root, "disabled", "name: disabled\ndescription: Disabled.\ndisabled: true", "Nope\n");
+  writeSkill(root, "hidden", "name: hidden\ndescription: Hidden.\ndisable-model-invocation: true", "Nope\n");
+  writeSkill(root, "forked", "name: forked\ndescription: Forked.\ncontext: fork", "Nope\n");
+  writeSkill(root, "dynamic", "name: dynamic\ndescription: Dynamic.\ndynamic-context: true", "Nope\n");
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const before = formatAvailableSkillsXml(registry);
+  const tools = createSkillsTools({ loader: createSkillLoader(registry, createBashSandboxRuntime({ config: testConfig({ skillMounts: [] }), executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false })) })) });
+
+  const loaded = await tools.execute({ id: "plain", toolName: "Skill", input: { skill: "plain", args: "alpha beta" } });
+  const unknown = await tools.execute({ id: "unknown", toolName: "Skill", input: { skill: "missing" } });
+  const disabled = await tools.execute({ id: "disabled", toolName: "Skill", input: { skill: "disabled" } });
+  const hidden = await tools.execute({ id: "hidden", toolName: "Skill", input: { skill: "hidden" } });
+  const forked = await tools.execute({ id: "forked", toolName: "Skill", input: { skill: "forked" } });
+  const dynamic = await tools.execute({ id: "dynamic", toolName: "Skill", input: { skill: "dynamic" } });
+
+  assert.match(String(loaded.output), /ARGUMENTS: alpha beta/);
+  assert.equal(unknown.error, "SKILL_NOT_FOUND");
+  assert.equal(disabled.error, "SKILL_DISABLED");
+  assert.equal(hidden.error, "SKILL_NOT_MODEL_INVOCABLE");
+  assert.equal(forked.error, "FORK_NOT_SUPPORTED");
+  assert.equal(dynamic.error, "DYNAMIC_CONTEXT_NOT_SUPPORTED");
+  assert.equal(formatAvailableSkillsXml(registry), before);
 });
 
 test("docker executor pulls the configured image before creating the container", async () => {
@@ -277,6 +318,13 @@ function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: string[]; co
 
 function denyReason(value: ReturnType<typeof classifyBashCommand>): string {
   return value.state === "deny" ? value.reason : "";
+}
+
+function writeSkill(root: string, relative: string, frontmatter: string, body: string): string {
+  const skillRoot = path.join(root, relative);
+  fs.mkdirSync(skillRoot, { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, "SKILL.md"), `---\n${frontmatter}\n---\n\n${body}`);
+  return skillRoot;
 }
 
 function tmpDir(name: string): string {

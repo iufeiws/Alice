@@ -20,6 +20,7 @@ export type TalkLoopSessionContextDeps = {
   };
   getAppearanceDescription(): string | undefined;
   getLibrarySetting?(): string | undefined;
+  getAvailableSkills?(): string | undefined;
   memoryStore: { read(): PromptRenderContext["memory"] };
   diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
@@ -98,6 +99,7 @@ export async function prepareTalkLoopSessionContext(input: {
     dailyShellRaw: deps.dailyShellStore.get(deps.time.now().date, deps.time.timeZone),
     appearanceDescription: deps.getAppearanceDescription(),
     librarySetting: deps.getLibrarySetting?.(),
+    availableSkills: deps.getAvailableSkills?.(),
     memory: deps.memoryStore.read(),
     wakeBoundary: deps.diaryStore.latestWakeBoundary()
   };

@@ -8,5 +8,5 @@ export function resolveSkillResourcePath(skill: SkillMetadata, relativePath: str
   if (hostPath !== skill.hostRoot && !hostPath.startsWith(`${skill.hostRoot}${path.sep}`)) {
     throw new Error(`skill resource escapes skill root: ${relativePath}`);
   }
-  return `${skill.containerRoot.replace(/\/+$/, "")}/${clean}`;
+  return `${skill.sandboxRoot.replace(/\/+$/, "")}/${clean}`;
 }

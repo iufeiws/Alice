@@ -3,6 +3,7 @@ import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
+import { formatAvailableSkillsXml } from "../../../contexts/skills/src/index.js";
 const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
@@ -78,6 +79,7 @@ export function createApiCapabilitiesRuntime(input: {
       const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
     },
+    getAvailableSkills: () => formatAvailableSkillsXml(toolRuntime.skillsRegistry),
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,

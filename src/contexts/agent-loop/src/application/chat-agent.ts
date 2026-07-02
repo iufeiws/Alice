@@ -187,6 +187,7 @@ export type ChatAgentDeps = {
   getMemorySnapshot?: () => MemorySnapshot;
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   getCalendarContext?: () => string | undefined;
+  getAvailableSkills?: () => string | undefined;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
@@ -361,7 +362,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         getLibrarySetting: deps.getLibrarySetting,
         getMemorySnapshot: deps.getMemorySnapshot,
         getWakeBoundary: deps.getWakeBoundary,
-        getCalendarContext: deps.getCalendarContext
+        getCalendarContext: deps.getCalendarContext,
+        getAvailableSkills: deps.getAvailableSkills
       });
       const initiatedBehaviorRunPlan = initiatedBehavior;
       let initiatedBehaviorExecution: Awaited<ReturnType<typeof executeAgentInitiatedBehaviorBackendSteps>> | undefined;
@@ -754,7 +756,10 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       librarySetting: deps.getLibrarySetting?.(),
       memory: deps.getMemorySnapshot?.(),
       wakeBoundary: deps.getWakeBoundary?.(),
-      calendarContext: deps.getCalendarContext?.()
+      calendarContext: deps.getCalendarContext?.(),
+      extra: {
+        available_skills: deps.getAvailableSkills?.() ?? ""
+      }
     });
   }
 

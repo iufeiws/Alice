@@ -2,8 +2,7 @@ import { envBool, envJsonObject, envNumber, trimTrailingSlashes, type Env } from
 import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts/memory-config.js";
 import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
-import { defaultBashSandboxSkillMounts, parseBashSandboxMounts, parseBashSandboxSkillMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../../contexts/bash-sandbox/src/index.js";
-const path = await import("node:path");
+import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../../contexts/bash-sandbox/src/index.js";
 
 export type LLMConfig = {
   provider: "openai-compatible" | "stub";
@@ -44,6 +43,7 @@ export type AppConfig = {
   };
   skills: {
     root: string;
+    installedRoot: string;
   };
   bashSandbox: BashSandboxConfig;
   photo: {
@@ -133,10 +133,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const feishuAppSecret = env.FEISHU_APP_SECRET;
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
   const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
-  const bashSkillMounts = env.BASH_SANDBOX_SKILL_MOUNTS
-    ? parseBashSandboxSkillMounts(JSON.parse(env.BASH_SANDBOX_SKILL_MOUNTS))
-    : defaultBashSandboxSkillMounts(skillsRoot);
-  rejectExternalSkillMounts(skillsRoot, bashSkillMounts.map((mount) => mount.hostPath));
+  const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".alice/skills";
 
   return {
     core: {
@@ -217,7 +214,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       root: "memory-files"
     },
     skills: {
-      root: skillsRoot
+      root: skillsRoot,
+      installedRoot: installedSkillsRoot
     },
     bashSandbox: validateBashSandboxConfig({
       containerName: env.BASH_SANDBOX_CONTAINER_NAME ?? "alice-bash-sandbox",
@@ -228,7 +226,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? ".sandbox/bash/cache",
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
-      skillMounts: bashSkillMounts,
+      skillMounts: [],
       mounts: parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
       network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
@@ -304,14 +302,4 @@ export function loadConfig(env: Env = process.env): AppConfig {
       generatedCleanupEnabled: envBool(env.TTS_GENERATED_CLEANUP_ENABLED, true)
     }
   };
-}
-
-function rejectExternalSkillMounts(skillsRoot: string, hostPaths: string[]): void {
-  const externalRoot = path.resolve(skillsRoot, "external");
-  for (const hostPath of hostPaths) {
-    const resolved = path.resolve(hostPath);
-    if (resolved === externalRoot || resolved.startsWith(`${externalRoot}${path.sep}`)) {
-      throw new Error(`external skills are not mounted in bashSandbox: ${hostPath}`);
-    }
-  }
 }

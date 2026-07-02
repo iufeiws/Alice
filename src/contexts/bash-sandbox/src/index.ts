@@ -1,5 +1,5 @@
 export type { BashSandboxConfig, BashSandboxMountConfig, BashSandboxSkillMountConfig } from "./config.js";
-export { defaultBashSandboxSkillMounts, parseBashSandboxMounts, parseBashSandboxSkillMounts, validateBashSandboxConfig } from "./config.js";
+export { addBashSandboxSkillMount, defaultBashSandboxSkillMounts, parseBashSandboxMounts, parseBashSandboxSkillMounts, validateBashSandboxConfig } from "./config.js";
 export type { BashRunReporter, BashSandboxRuntime, BashRuntimeResult } from "./bash-runtime.js";
 export { createBashSandboxRuntime } from "./bash-runtime.js";
 export { createFeishuBashRunReporter } from "./feishu-reporter.js";

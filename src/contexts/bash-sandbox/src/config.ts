@@ -12,7 +12,7 @@ export type BashSandboxSkillMountConfig = {
   id: string;
   hostPath: string;
   containerPath: string;
-  readOnly: true;
+  readOnly: boolean;
 };
 
 export type BashSandboxConfig = {
@@ -40,7 +40,7 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
     ...config,
     hostWorkspaceDir: path.resolve(config.hostWorkspaceDir),
     hostCacheDir: path.resolve(config.hostCacheDir),
-    skillMounts: config.skillMounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath), readOnly: true })),
+    skillMounts: config.skillMounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) })),
     mounts: config.mounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) }))
   };
   if (!normalized.workspaceDir.startsWith("/") || !normalized.cacheDir.startsWith("/") || !normalized.tmpDir.startsWith("/")) {
@@ -51,9 +51,6 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
   for (const entry of [...normalized.skillMounts, ...normalized.mounts]) {
     rejectSensitiveHostPath(entry.hostPath);
     if (!entry.containerPath.startsWith("/")) throw new Error(`bashSandbox mount ${entry.containerPath} must be absolute`);
-  }
-  for (const mount of normalized.skillMounts) {
-    if (!mount.readOnly) throw new Error("bashSandbox skill mounts must be read-only");
   }
   for (const mount of normalized.mounts) {
     if (!mount.readOnly && (isSameOrInside(mount.containerPath, "/skills") || normalized.skillMounts.some((skill) => isSameOrInside(mount.containerPath, skill.containerPath)))) {
@@ -86,9 +83,22 @@ export function parseBashSandboxSkillMounts(value: unknown): BashSandboxSkillMou
       id: stringValue(mount.id) || `skill_${index}`,
       hostPath: requiredString(mount.hostPath, `bashSandbox.skillMounts[${index}].hostPath`),
       containerPath: requiredString(mount.containerPath, `bashSandbox.skillMounts[${index}].containerPath`),
-      readOnly: true
+      readOnly: mount.readOnly !== false
     };
   });
+}
+
+export function addBashSandboxSkillMount(config: BashSandboxConfig, mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig {
+  const normalized = {
+    ...mount,
+    hostPath: path.resolve(mount.hostPath)
+  };
+  rejectSensitiveHostPath(normalized.hostPath);
+  if (!normalized.containerPath.startsWith("/skills/")) throw new Error(`skill mount must be under /skills: ${normalized.containerPath}`);
+  const existing = config.skillMounts.findIndex((entry) => entry.id === normalized.id || entry.containerPath === normalized.containerPath);
+  if (existing >= 0) config.skillMounts[existing] = normalized;
+  else config.skillMounts.push(normalized);
+  return normalized;
 }
 
 export function defaultBashSandboxSkillMounts(skillsRoot: string): BashSandboxSkillMountConfig[] {

@@ -15,6 +15,7 @@ export function createPromptToolPreviewRuntime(input: {
   dailyShellStore: any;
   coreProfileStore: any;
   getLibrarySetting?(): string;
+  getAvailableSkills?(): string;
   memoryStore: any;
   diaryStore: any;
   calendarStore: any;
@@ -103,6 +104,7 @@ export function createPromptToolPreviewRuntime(input: {
       getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
       getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
       getLibrarySetting: () => input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
+      getAvailableSkills: input.getAvailableSkills,
       getMemorySnapshot: () => input.memoryStore.read(),
       getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
       getCalendarContext: () => buildCalendarContext({

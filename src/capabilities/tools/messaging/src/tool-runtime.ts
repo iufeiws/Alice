@@ -23,7 +23,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: { photo: any; tts?: any; memoryFiles?: { root?: string }; skills?: { root?: string }; bashSandbox: any };
+  config: { photo: any; tts?: any; memoryFiles?: { root?: string }; skills?: { root?: string; installedRoot?: string }; bashSandbox: any };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;
@@ -179,12 +179,15 @@ export function createToolRuntime(input: {
     getGoogleStreetView: input.getGoogleStreetView,
     now: () => input.time.now().date
   });
-  const skillsRegistry = createSkillRegistry({
-    mounts: input.config.bashSandbox.skillMounts
-  });
-  const skillsLoader = createSkillLoader(skillsRegistry);
-  const skillsTools = createSkillsTools({ registry: skillsRegistry, loader: skillsLoader });
   const bashRuntime = createBashSandboxRuntime({ config: input.config.bashSandbox });
+  const skillsRegistry = createSkillRegistry({
+    roots: [
+      { root: input.config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
+      { root: input.config.skills?.installedRoot ?? ".alice/skills", source: "third-party" }
+    ]
+  });
+  const skillsLoader = createSkillLoader(skillsRegistry, bashRuntime);
+  const skillsTools = createSkillsTools({ loader: skillsLoader });
   const bashTools = createBashTools({
     runtime: bashRuntime
   });

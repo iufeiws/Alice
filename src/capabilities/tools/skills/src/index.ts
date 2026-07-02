@@ -1,45 +1,47 @@
-import type { SkillRegistry, LoadedSkill } from "../../../../contexts/skills/src/index.js";
+import type { LoadedSkill } from "../../../../contexts/skills/src/index.js";
+import { SkillLoadError } from "../../../../contexts/skills/src/index.js";
 import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { listSkillsTool, loadSkillTool } from "../profile.js";
+import { skillTool } from "../profile.js";
 
-export function createSkillsTools(input: { registry: SkillRegistry; loader: { load(idOrName: string): LoadedSkill } }): ToolPlugin {
+export function createSkillsTools(input: { loader: { load(name: string, args?: string): LoadedSkill } }): ToolPlugin {
   return {
     id: "skills",
     listTools() {
-      return [listSkillsTool, loadSkillTool];
+      return [skillTool];
     },
     async execute(call) {
-      if (call.toolName === "list_skills") {
+      if (call.toolName !== "Skill") return { callId: call.id, ok: false, error: `Unknown skills tool: ${call.toolName}` };
+      try {
+        const skill = input.loader.load(stringValue(call.input.skill), stringValue(call.input.args));
         return {
           callId: call.id,
           ok: true,
-          output: JSON.stringify(input.registry.list().map((skill) => ({
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            containerRoot: skill.containerRoot
-          })))
+          output: formatSkillResult(skill)
         };
+      } catch (error) {
+        if (error instanceof SkillLoadError) return { callId: call.id, ok: false, error: error.code };
+        throw error;
       }
-      if (call.toolName === "load_skill") {
-        const skill = input.loader.load(stringValue(call.input.skill));
-        return {
-          callId: call.id,
-          ok: true,
-          output: JSON.stringify({
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            instructions: skill.instructions,
-            containerRoot: skill.containerRoot
-          })
-        };
-      }
-      return { callId: call.id, ok: false, error: `Unknown skills tool: ${call.toolName}` };
     }
   };
 }
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function formatSkillResult(skill: LoadedSkill): string {
+  return [
+    `<loaded_skill name="${escapeXml(skill.name)}" dir="${escapeXml(skill.sandboxRoot)}">`,
+    escapeXml(skill.instructions),
+    "</loaded_skill>"
+  ].join("\n");
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }

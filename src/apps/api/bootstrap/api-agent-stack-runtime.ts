@@ -1,6 +1,7 @@
 import { createApiAgentRuntime } from "./api-agent-runtime.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
 import { createAgentRunIndicatorRuntime } from "../../../contexts/agent-run-indicator/src/index.js";
+import { formatAvailableSkillsXml } from "../../../contexts/skills/src/index.js";
 
 export function createApiAgentStackRuntime(input: {
   config: any;
@@ -36,6 +37,7 @@ export function createApiAgentStackRuntime(input: {
       const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.apiContextRuntime.coreProfileStore.get().librarySetting;
     },
+    getAvailableSkills: () => formatAvailableSkillsXml(input.apiToolingRuntime.skillsRegistry),
     memoryStore: input.apiContextRuntime.memoryStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,

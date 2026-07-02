@@ -195,7 +195,7 @@ export async function buildAgentInitiatedBehaviorMessages(
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMChatInput["messages"]> {
   if (!plan || !plan.enabled || plan.dryRun) return [];
-  const variables = promptVariables(promptProfile, context);
+  const variables = promptVariables(context);
   const messages: LLMChatInput["messages"] = [];
   for (const step of plan.steps) {
     if (step.kind !== "llm_instruction") continue;

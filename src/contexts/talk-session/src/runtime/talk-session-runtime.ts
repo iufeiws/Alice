@@ -3,6 +3,7 @@ import type { AliceStore } from "../../../conversation-hub/src/ports/conversatio
 import { createTalkStore } from "../adapters/sqlite-talk-session-store.js";
 import type { TalkSession } from "../adapters/sqlite-talk-session-store.js";
 import { createTalkRuntime } from "../application/talk-session-runtime.js";
+import type { LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
 
 const path = await import("node:path");
 
@@ -15,6 +16,7 @@ export function createTalkRuntimeRuntime(input: {
   getAppearanceDescription(): string;
   getLibrarySetting?(): string;
   getAvailableSkills?(): string;
+  getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
   visibleToolNames(profile: any): string[];
@@ -49,6 +51,7 @@ export function createTalkRuntimeRuntime(input: {
     getAppearanceDescription: input.getAppearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
     getAvailableSkills: input.getAvailableSkills,
+    getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     setLoopPrefixMessageCount(sessionId, count) {

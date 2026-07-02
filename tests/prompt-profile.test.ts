@@ -6,12 +6,14 @@ import {
   buildPromptMessagesWithToolResults,
   createPromptProfileStore,
   defaultPromptProfile,
+  type PromptRenderContext,
   staticPromptFingerprint
 } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createDailyShellStore, type DailyShellStore, type ShellCategory, type ShellOption } from "../src/contexts/agent-profile/src/domain/shell.js";
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import type { LLMMessageContent } from "../src/contexts/llm-gateway/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
+import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
@@ -103,18 +105,14 @@ test("prompt messages render variables and preserve unknown placeholders", () =>
     ...defaultPromptProfile(),
     userName: "小王",
     layers: [
-      { id: "one", title: "One", role: "system" as const, enabled: true, content: "{{user}} {{timezone}} {{session}} {{missing}}", order: 1 }
+      { id: "one", title: "One", role: "system" as const, enabled: true, content: "{{user}} {{timezone}} {{missing}}", order: 1 }
     ]
   };
-  const messages = buildPromptMessages(profile, {
-    event: textEvent(),
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
-  });
+  const messages = buildPromptMessages(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }));
 
   assert.equal(messages[0].role, "system");
   assert.match(messageContentText(messages[0].content), /小王/);
   assert.match(messageContentText(messages[0].content), /Asia\/Shanghai/);
-  assert.match(messageContentText(messages[0].content), /session-1/);
   assert.match(messageContentText(messages[0].content), /\{\{missing\}\}/);
 });
 
@@ -132,10 +130,7 @@ test("prompt layers render message name", () => {
       { id: "tool_request_default", title: "Tool Request Default", role: "tool_request", enabled: true, content: "", order: 5, toolCalls: [] }
     ]
   });
-  const messages = buildPromptMessages(saved, {
-    event: textEvent(),
-    time: createCurrentTimeProvider("Asia/Shanghai")
-  });
+  const messages = buildPromptMessages(saved, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }));
 
   assert.equal(saved.layers[0].name, undefined);
   assert.equal(saved.layers[2].name, undefined);
@@ -155,15 +150,14 @@ test("prompt messages render memory variables", () => {
       { id: "memory", title: "Memory", role: "system" as const, enabled: true, content: "{{memory/persistent/content}}\n{{memory/userPreferences/content}}\n{{memory/yesterdaySummary/content}}", order: 1 }
     ]
   };
-  const messages = buildPromptMessages(profile, {
-    event: textEvent(),
+  const messages = buildPromptMessages(profile, promptContext({
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")),
     memory: {
       persistent: "long fact",
       userPreferences: "likes short replies",
       yesterdaySummary: "yesterday was busy"
     }
-  });
+  }));
 
   assert.match(messageContentText(messages[0].content), /long fact/);
   assert.match(messageContentText(messages[0].content), /likes short replies/);
@@ -192,10 +186,7 @@ test("prompt messages pair tool request layers with actual tool results", async 
     ]
   };
 
-  const messages = await buildPromptMessagesWithToolResults(profile, {
-    event: textEvent(),
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
-  }, async (layer, call) => {
+  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (layer, call) => {
     assert.equal(layer.id, "request");
     assert.equal(call.toolName, "Chat");
     assert.deepEqual(call.input, { action: "poll" });
@@ -235,10 +226,7 @@ test("prompt messages pair multiple tool calls with results", async () => {
   };
 
   const calls: string[] = [];
-  const messages = await buildPromptMessagesWithToolResults(profile, {
-    event: textEvent(),
-    time: createCurrentTimeProvider("Asia/Shanghai")
-  }, async (_layer, call) => {
+  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }), async (_layer, call) => {
     calls.push(`${call.id}:${call.toolName}`);
     return { callId: call.id, ok: true, output: call.toolName };
   });
@@ -271,10 +259,7 @@ test("append prompt messages pair tool request layers with actual tool results",
     ]
   };
 
-  const messages = await buildAppendPromptMessagesWithToolResults(profile, {
-    event: textEvent(),
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
-  }, async (layer, call) => {
+  const messages = await buildAppendPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (layer, call) => {
     assert.equal(layer.id, "append_request");
     assert.equal(call.toolName, "Chat");
     return {
@@ -292,7 +277,7 @@ test("append prompt messages pair tool request layers with actual tool results",
 
 test("static prompt fingerprint ignores append layers but tracks initial layer changes", () => {
   const time = createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"));
-  const context = { event: textEvent(), time };
+  const context = promptContext({ time });
   const base = {
     ...defaultPromptProfile(),
     layers: [
@@ -613,6 +598,26 @@ function textEvent(): AgentEvent {
     meta: {
       receivedAt: "2026-05-26T00:00:00.000Z"
     }
+  };
+}
+
+function promptContext(input: {
+  time?: ReturnType<typeof createCurrentTimeProvider>;
+  memory?: {
+    persistent?: string;
+    userPreferences?: string;
+    yesterdaySummary?: string;
+  };
+} = {}): PromptRenderContext {
+  const time = input.time ?? createCurrentTimeProvider("UTC");
+  return {
+    variables: buildLLMTextVariables({
+      userName: "小王",
+      time,
+      memory: input.memory
+    }),
+    event: textEvent(),
+    time
   };
 }
 

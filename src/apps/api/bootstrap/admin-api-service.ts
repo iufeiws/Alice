@@ -11,7 +11,7 @@ import { handleAdminMessagingApi } from "../../../capabilities/tools/messaging/s
 import { generateTtsPreview, serveTtsAsset, uploadTtsReferenceAudio } from "../../../channels/tts/src/admin-runtime.js";
 import { deleteShellOption, getShellConfig, readShellUiOrder, saveShellOption, saveShellSettings, saveShellUiOrder, serveShellAsset, uploadShellOutfitImage } from "../../../contexts/agent-profile/src/application/shell-admin-runtime.js";
 import { AGENT_STATES, getAdminConfig, handleAdminRuntimeApi, saveAgentConfig, saveAgentState, saveCoreProfile } from "./admin-runtime.js";
-import { getAdminTools, getMemoryAdminRuntime, getPromptVariablePreview, getVisiblePromptTools, isMemoryTarget, previewToolResult, savePromptApiProfile, savePromptProfile, saveTalkPromptProfile, writeServiceResult } from "../../../contexts/agent-profile/src/application/admin-prompt-memory-runtime.js";
+import { getAdminTools, getMemoryAdminRuntime, getVisiblePromptTools, isMemoryTarget, previewToolResult, savePromptApiProfile, savePromptProfile, saveTalkPromptProfile, writeServiceResult } from "../../../contexts/agent-profile/src/application/admin-prompt-memory-runtime.js";
 import { createInitiatedBehavior, deleteInitiatedBehavior, patchInitiatedBehavior, writeInitiatedBehaviors } from "../../../contexts/initiative/src/application/admin-runtime.js";
 import type { AdminRouteServices, AdminRuntimeContext as AdminRoutesContext } from "./admin-route-context.js";
 
@@ -59,7 +59,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     writeJson(response, 200, {
       prompts: defaultPromptRegistry,
       profile: context.promptProfileStore.get(),
-      variables: getPromptVariablePreview(context)
+      variables: context.getPromptVariables()
     });
     return;
   }
@@ -68,7 +68,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     writeJson(response, 200, {
       profile: context.promptProfileStore.get(),
       birthday: context.calendarStore?.latestBirthday?.(),
-      variables: getPromptVariablePreview(context),
+      variables: context.getPromptVariables(),
       tools: getVisiblePromptTools(context)
     });
     return;
@@ -77,7 +77,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
   if (request.method === "GET" && request.url === "/admin/api/talk-prompt-profile") {
     writeJson(response, 200, {
       profile: context.talkPromptProfileStore.get(),
-      variables: getPromptVariablePreview(context, context.talkPromptProfileStore),
+      variables: context.getPromptVariables(),
       tools: getVisiblePromptTools(context, context.talkPromptProfileStore)
     });
     return;

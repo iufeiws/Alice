@@ -12,6 +12,8 @@ import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapt
 import { type MemoryInductionPromptStore, type MemoryRunSummary, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
 import type { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { PromptProfileStore } from "../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import type { PromptVariableRuntime } from "../../../contexts/agent-profile/src/application/prompt-variable-runtime.js";
+import type { LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import {
   type AgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorRunStore
@@ -75,6 +77,8 @@ export type AdminRuntimeContext = {
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTalkLLMRequestProfilePreview?(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
+  getPromptVariables(): LLMTextVariables;
+  promptVariableRuntime: PromptVariableRuntime;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
   clearLLMChainCache(): void;
   cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };

@@ -1,5 +1,6 @@
 import { createToolRuntime } from "../../../capabilities/tools/messaging/src/tool-runtime.js";
 import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
+import { createPromptVariableRuntime } from "../../../contexts/agent-profile/src/application/prompt-variable-runtime.js";
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
@@ -71,6 +72,21 @@ export function createApiCapabilitiesRuntime(input: {
     appendMessageLog: input.appendMessageLog
   });
 
+  const promptVariableRuntime = createPromptVariableRuntime({
+    time: input.time,
+    userName: input.promptProfileStore.get().userName,
+    dailyShellStore: input.dailyShellStore,
+    coreProfileStore: input.coreProfileStore,
+    getLibrarySetting: () => {
+      const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
+      return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
+    },
+    getAvailableSkills: () => formatAvailableSkillsXml(toolRuntime.skillsRegistry),
+    memoryStore: input.memoryStore,
+    diaryStore: input.diaryStore,
+    calendarStore: input.calendarStore
+  });
+
   const promptToolPreviewRuntime = createPromptToolPreviewRuntime({
     time: input.time,
     dailyShellStore: input.dailyShellStore,
@@ -80,6 +96,7 @@ export function createApiCapabilitiesRuntime(input: {
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
     },
     getAvailableSkills: () => formatAvailableSkillsXml(toolRuntime.skillsRegistry),
+    getPromptVariables: () => promptVariableRuntime.current(),
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,
@@ -106,6 +123,7 @@ export function createApiCapabilitiesRuntime(input: {
     skillsTools: toolRuntime.skillsTools,
     skillsRegistry: toolRuntime.skillsRegistry,
     skillsLoader: toolRuntime.skillsLoader,
+    promptVariableRuntime,
     toolPlugins: toolRuntime.toolPlugins,
     llmRequests,
     visibleToolSpecs: promptToolPreviewRuntime.visibleToolSpecs,

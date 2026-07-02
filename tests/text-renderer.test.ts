@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { promptVariables } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import { createPromptVariableRuntime } from "../src/contexts/agent-profile/src/application/prompt-variable-runtime.js";
 
 test("renderLLMText resolves common variable placeholders", () => {
   assert.equal(renderLLMText("hello {{ user }} at {{date_time}}", {
@@ -78,7 +79,12 @@ test("buildLLMTextVariables exposes library content", () => {
 });
 
 test("promptVariables exposes available_skills without prompt text changes", () => {
-  const variables = promptVariables({ userName: "YY", layers: [], visibleTools: { feishu: true } }, {
+  const variables = promptVariables({
+    variables: buildLLMTextVariables({
+      userName: "YY",
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+      extra: { available_skills: "<available_skills>\n</available_skills>" }
+    }),
     event: {
       id: "evt",
       source: { plugin: "test", userId: "u" },
@@ -87,10 +93,25 @@ test("promptVariables exposes available_skills without prompt text changes", () 
       payload: { kind: "text", text: "hi" },
       meta: { receivedAt: "2026-01-01T00:00:00.000", receivedAtUtc: "2025-12-31T16:00:00.000Z" }
     },
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
-    availableSkills: "<available_skills>\n</available_skills>"
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z"))
   });
   assert.equal(variables.available_skills, "<available_skills>\n</available_skills>");
+});
+
+test("prompt variable runtime exposes available_skills from the actual variable tree", () => {
+  const runtime = createPromptVariableRuntime({
+    userName: "YY",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+    dailyShellStore: { get: () => undefined },
+    coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
+    memoryStore: { read: () => ({}) },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    calendarStore: { listEntries: () => [] },
+    getAvailableSkills: () => "<available_skills>\n  <skill>\n    <name>weather</name>\n  </skill>\n</available_skills>"
+  } as any);
+
+  const variables = runtime.current();
+  assert.match(String(variables.available_skills), /<name>weather<\/name>/);
 });
 
 test("formatToolResultForLLM renders placeholders in string tool output", () => {

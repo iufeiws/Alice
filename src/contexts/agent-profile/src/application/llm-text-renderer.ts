@@ -67,8 +67,6 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
     weekday: "",
     weekday_utc: "",
     timezone: "",
-    session: "",
-    channel: "",
     dailyShell: {
       date: "",
       createdAt: "",
@@ -140,10 +138,6 @@ export function buildLLMTextVariables(input: LLMTextContextInput = {}): LLMTextV
       relationship: optionVariable(input.dailyShellRaw.relationship)
     };
     variables.outfit = optionVariable(input.dailyShellRaw.outfit);
-  }
-  if (input.event) {
-    variables.session = input.event.externalSession.sessionId;
-    variables.channel = input.event.source.channelId ?? input.event.source.userId ?? input.event.externalSession.sessionId;
   }
   if (input.wakeBoundary) {
     variables.wakeBoundary = wakeBoundaryVariable(input.wakeBoundary, input.time?.timeZone ?? "UTC");

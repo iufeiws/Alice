@@ -3,6 +3,7 @@ import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
 import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
+import type { LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
 
 export function createChatAgentRuntime(input: {
   config: any;
@@ -18,6 +19,7 @@ export function createChatAgentRuntime(input: {
   coreProfileStore: any;
   getLibrarySetting?(): string;
   getAvailableSkills?(): string;
+  getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
   calendarStore?: any;
@@ -75,6 +77,7 @@ export function createChatAgentRuntime(input: {
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
     getAvailableSkills: input.getAvailableSkills,
+    getPromptVariables: input.getPromptVariables,
     getMemorySnapshot: () => input.memoryStore.read(),
     getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
     getCalendarContext: input.calendarStore

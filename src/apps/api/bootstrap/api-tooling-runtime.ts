@@ -69,6 +69,7 @@ export function createApiToolingRuntime(input: {
     bashRuntime: apiCapabilitiesRuntime.bashRuntime,
     toolPlugins: apiCapabilitiesRuntime.toolPlugins,
     llmRequests: apiCapabilitiesRuntime.llmRequests,
+    promptVariableRuntime: apiCapabilitiesRuntime.promptVariableRuntime,
     visibleToolNames: apiCapabilitiesRuntime.visibleToolNames,
     adminLLMSessionRuntime: apiSupportRuntime.adminLLMSessionRuntime,
     sleepMemoryInductionRuntime: apiSupportRuntime.sleepMemoryInductionRuntime

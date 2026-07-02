@@ -1,5 +1,6 @@
 import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime/chat-agent-runtime.js";
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
+import type { LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
 export function createApiAgentRuntime(input: {
   config: any;
@@ -16,6 +17,7 @@ export function createApiAgentRuntime(input: {
   coreProfileStore: any;
   getLibrarySetting?(): string;
   getAvailableSkills?(): string;
+  getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
   calendarStore?: any;
@@ -44,6 +46,7 @@ export function createApiAgentRuntime(input: {
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
     getLibrarySetting: input.getLibrarySetting,
     getAvailableSkills: input.getAvailableSkills,
+    getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     visibleToolNames: input.visibleToolNames,
@@ -73,6 +76,7 @@ export function createApiAgentRuntime(input: {
     time: input.time,
     coreProfileStore: input.coreProfileStore,
     getLibrarySetting: input.getLibrarySetting,
+    getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,

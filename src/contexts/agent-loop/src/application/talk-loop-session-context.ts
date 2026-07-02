@@ -16,13 +16,14 @@ export type TalkLoopSessionContextDeps = {
   time: CurrentTimeProvider;
   dailyShellStore: {
     render(date: Date, timeZone: string): string;
-    get(date: Date, timeZone: string): PromptRenderContext["dailyShellRaw"];
+    get(date: Date, timeZone: string): unknown;
   };
   getAppearanceDescription(): string | undefined;
   getLibrarySetting?(): string | undefined;
   getAvailableSkills?(): string | undefined;
-  memoryStore: { read(): PromptRenderContext["memory"] };
-  diaryStore: { latestWakeBoundary(): PromptRenderContext["wakeBoundary"] };
+  getPromptVariables(): PromptRenderContext["variables"];
+  memoryStore: { read(): unknown };
+  diaryStore: { latestWakeBoundary(): unknown };
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
   buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
@@ -93,17 +94,11 @@ export async function prepareTalkLoopSessionContext(input: {
     }
   });
   const context = {
+    variables: requirePromptVariables(deps),
     event,
-    time: deps.time,
-    dailyShell: deps.dailyShellStore.render(deps.time.now().date, deps.time.timeZone),
-    dailyShellRaw: deps.dailyShellStore.get(deps.time.now().date, deps.time.timeZone),
-    appearanceDescription: deps.getAppearanceDescription(),
-    librarySetting: deps.getLibrarySetting?.(),
-    availableSkills: deps.getAvailableSkills?.(),
-    memory: deps.memoryStore.read(),
-    wakeBoundary: deps.diaryStore.latestWakeBoundary()
+    time: deps.time
   };
-  const variables = promptVariables(profile, context);
+  const variables = promptVariables(context);
   const runPromptTool = async (_layer: unknown, call: ToolCall) => toolExecutor.executeToolCall(call);
   const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
     kind: "talk",
@@ -135,6 +130,10 @@ export async function prepareTalkLoopSessionContext(input: {
     })
       .then(({ result }) => ({ result, content: formatAgentLoopToolResultForLLM(result) }))
   };
+}
+
+function requirePromptVariables(deps: TalkLoopSessionContextDeps): PromptRenderContext["variables"] {
+  return deps.getPromptVariables();
 }
 
 export function buildTalkAgentEvent(sessionId: number, time: CurrentTimeProvider): AgentEvent {

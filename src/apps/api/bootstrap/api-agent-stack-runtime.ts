@@ -38,6 +38,7 @@ export function createApiAgentStackRuntime(input: {
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.apiContextRuntime.coreProfileStore.get().librarySetting;
     },
     getAvailableSkills: () => formatAvailableSkillsXml(input.apiToolingRuntime.skillsRegistry),
+    getPromptVariables: () => input.apiToolingRuntime.promptVariableRuntime.current(),
     memoryStore: input.apiContextRuntime.memoryStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,

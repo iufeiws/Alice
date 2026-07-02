@@ -1,37 +1,37 @@
 import type { ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createAdminMemoryRuntime } from "../../../memory/src/application/admin-memory-runtime.js";
-import { defaultPromptRegistry, makePromptContext, PromptProfileValidationError, promptVariables, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
+import { defaultPromptRegistry, PromptProfileValidationError, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
 import { isToolVisibleInPromptProfile } from "../../../initiative/src/domain/initiated-behavior.js";
-import { buildLLMTextVariables, renderLLMValue, type LLMTextVariables } from "./llm-text-renderer.js";
+import { renderLLMValue } from "./llm-text-renderer.js";
 import { HttpJsonError, readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { normalizePromptApiProfile, readLLMApiPresets, resolveMemorizeApiPreset, writePromptApiProfile } from "../../../llm-gateway/src/admin-presets.js";
 import { formatToolResultForLLM, getAdminTextVariables, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
 import { optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
-import { resolveLibrarySetting } from "../../../world-wanderer/src/admin-library-setting.js";
-import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
 const path = await import("node:path");
 export async function savePromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.promptProfileStore, body as PromptProfile);
+  context.promptVariableRuntime.setUserName(profile.userName);
   context.appendLog("info", `prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
   writeJson(response, 200, {
     ok: true,
     profile,
-    variables: getPromptVariablePreview(context)
+    variables: context.getPromptVariables()
   });
 }
 
 export async function saveTalkPromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.talkPromptProfileStore, body as PromptProfile);
+  context.promptVariableRuntime.setUserName(profile.userName);
   context.appendLog("info", `talk prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
   writeJson(response, 200, {
     ok: true,
     profile,
-    variables: getPromptVariablePreview(context, context.talkPromptProfileStore)
+    variables: context.getPromptVariables()
   });
 }
 
@@ -83,45 +83,6 @@ export function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<t
 
 export function writeServiceResult(response: any, result: { status: number; body: unknown }): void {
   writeJson(response, result.status, result.body);
-}
-
-export function getPromptVariablePreview(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): LLMTextVariables {
-  const target = resolvePromptPreviewTarget(context);
-  const receivedTime = context.time.now();
-  const profile = store.get();
-  return promptVariables(profile, makePromptContext({
-    time: context.time,
-    getDailyShell: () => context.getDailyShell(),
-    getDailyShellRaw: () => context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
-    getAppearanceDescription: () => context.coreProfileStore.get().appearanceDescription,
-    getLibrarySetting: () => resolveLibrarySetting(context),
-    getMemorySnapshot: () => context.memoryStore.read(),
-    getWakeBoundary: () => context.diaryStore.latestWakeBoundary(),
-    getCalendarContext: () => buildCalendarContext({
-      calendarStore: context.calendarStore,
-      time: context.time,
-      userName: profile.userName
-    }),
-    event: {
-      id: "preview",
-      source: {
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId
-      },
-      externalSession: {
-        scope: "dm",
-        sessionId: target.sessionId
-      },
-      type: "message.text",
-      payload: { kind: "text", text: "" },
-      meta: {
-        receivedAt: receivedTime.iso,
-        receivedAtUtc: receivedTime.date.toISOString()
-      }
-    }
-  }));
 }
 
 export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string } {

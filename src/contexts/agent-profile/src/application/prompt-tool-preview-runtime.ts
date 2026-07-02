@@ -4,11 +4,10 @@ import type { ToolDefinition } from "../../../agent-loop/src/contracts/agent-con
 import {
   buildAppendPromptMessagesWithToolResults,
   buildPromptMessagesWithToolResults,
-  makePromptContext,
-  promptVariables
+  type PromptRenderContext
 } from "./build-system-prompt.js";
+import type { LLMTextVariables } from "./llm-text-renderer.js";
 import { memoryToolDefinitions } from "../../../memory/src/memory.js";
-import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
@@ -16,6 +15,7 @@ export function createPromptToolPreviewRuntime(input: {
   coreProfileStore: any;
   getLibrarySetting?(): string;
   getAvailableSkills?(): string;
+  getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
   calendarStore: any;
@@ -31,7 +31,7 @@ export function createPromptToolPreviewRuntime(input: {
   };
 
   function visibleToolSpecs(profile: any): LLMChatInput["tools"] {
-    const variables = promptVariables(profile, makePreviewPromptContext(profile, previewEvent()));
+    const variables = input.getPromptVariables();
     return input.llmRequests.buildTools(visibleToolNames(profile), variables);
   }
 
@@ -60,7 +60,7 @@ export function createPromptToolPreviewRuntime(input: {
     event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"],
     includeFakeCheckChat = false
   ): Promise<LLMChatInput["messages"]> {
-    const context = makePreviewPromptContext(profile, event);
+    const context = previewContext(event);
     const runPreviewTool = async (_layer: unknown, call: any) => {
       if (call.toolName === "Chat" && call.input?.action === "send") {
         return {
@@ -96,24 +96,13 @@ export function createPromptToolPreviewRuntime(input: {
     ];
   }
 
-  function makePreviewPromptContext(profile: any, event: Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"]) {
-    return makePromptContext({
+  function previewContext(event: PromptRenderContext["event"]): PromptRenderContext {
+    return {
+      variables: input.getPromptVariables(),
       event,
       time: input.time,
-      getDailyShell: () => input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
-      getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
-      getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
-      getLibrarySetting: () => input.getLibrarySetting?.() ?? input.coreProfileStore.get().librarySetting,
-      getAvailableSkills: input.getAvailableSkills,
-      getMemorySnapshot: () => input.memoryStore.read(),
-      getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
-      getCalendarContext: () => buildCalendarContext({
-        calendarStore: input.calendarStore,
-        time: input.time,
-        userName: profile.userName
-      }),
       preview: true
-    });
+    };
   }
 
   function previewEvent(): Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"] {

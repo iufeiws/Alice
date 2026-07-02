@@ -12,7 +12,7 @@ import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolRe
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { DailyShell } from "../../../agent-profile/src/domain/shell.js";
 import type { MemorySnapshot } from "../../../memory/src/memory.js";
-import { buildLLMTextVariables, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import { type LLMTextVariables, type LLMTextWakeBoundary } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import { deepSeekPriceForModel } from "../../../llm-gateway/src/token-pricing.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentRunIndicator } from "../../../agent-run-indicator/src/index.js";
@@ -188,6 +188,7 @@ export type ChatAgentDeps = {
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   getCalendarContext?: () => string | undefined;
   getAvailableSkills?: () => string | undefined;
+  getPromptVariables: () => LLMTextVariables;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
@@ -354,16 +355,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           : undefined);
       }
       const buildPromptContext = () => makePromptContext({
+        variables: requirePromptVariables(),
         event,
-        time,
-        getDailyShell: deps.getDailyShell,
-        getDailyShellRaw: deps.getDailyShellRaw,
-        getAppearanceDescription: deps.getAppearanceDescription,
-        getLibrarySetting: deps.getLibrarySetting,
-        getMemorySnapshot: deps.getMemorySnapshot,
-        getWakeBoundary: deps.getWakeBoundary,
-        getCalendarContext: deps.getCalendarContext,
-        getAvailableSkills: deps.getAvailableSkills
+        time
       });
       const initiatedBehaviorRunPlan = initiatedBehavior;
       let initiatedBehaviorExecution: Awaited<ReturnType<typeof executeAgentInitiatedBehaviorBackendSteps>> | undefined;
@@ -746,21 +740,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
   };
 
   function buildTurnTextVariables(event: AgentEvent): LLMTextVariables {
-    return buildLLMTextVariables({
-      userName: requirePromptProfile().userName,
-      time,
-      event,
-      dailyShell: deps.getDailyShell?.(),
-      dailyShellRaw: deps.getDailyShellRaw?.(),
-      appearanceDescription: deps.getAppearanceDescription?.(),
-      librarySetting: deps.getLibrarySetting?.(),
-      memory: deps.getMemorySnapshot?.(),
-      wakeBoundary: deps.getWakeBoundary?.(),
-      calendarContext: deps.getCalendarContext?.(),
-      extra: {
-        available_skills: deps.getAvailableSkills?.() ?? ""
-      }
-    });
+    return requirePromptVariables();
+  }
+
+  function requirePromptVariables(): LLMTextVariables {
+    return deps.getPromptVariables();
   }
 
   function requirePromptProfile(): PromptProfile {

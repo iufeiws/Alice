@@ -1,9 +1,7 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
-import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, type LLMTextVariables, type LLMTextWakeBoundary } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import type { DailyShell } from "../domain/shell.js";
-import type { MemorySnapshot } from "../../../memory/src/memory.js";
+import { formatToolResultForLLM, renderLLMText, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "../domain/prompt-layer.js";
 
 export type { PromptLayer, PromptLayerRole } from "../domain/prompt-layer.js";
@@ -34,30 +32,16 @@ export type PromptProfile = {
 };
 
 export type PromptRenderContext = {
+  variables: LLMTextVariables;
   event: AgentEvent;
   time: CurrentTimeProvider;
-  dailyShell?: string;
-  dailyShellRaw?: DailyShell;
-  appearanceDescription?: string;
-  librarySetting?: string;
-  memory?: MemorySnapshot;
-  wakeBoundary?: LLMTextWakeBoundary;
-  calendarContext?: string;
-  availableSkills?: string;
   preview?: boolean;
 };
 
 export type PromptContextDeps = {
+  variables: LLMTextVariables;
   event: AgentEvent;
   time: CurrentTimeProvider;
-  getDailyShell?: () => string | undefined;
-  getDailyShellRaw?: () => DailyShell | undefined;
-  getAppearanceDescription?: () => string | undefined;
-  getLibrarySetting?: () => string | undefined;
-  getMemorySnapshot?: () => MemorySnapshot | undefined;
-  getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
-  getCalendarContext?: () => string | undefined;
-  getAvailableSkills?: () => string | undefined;
   preview?: boolean;
 };
 
@@ -122,7 +106,7 @@ export function defaultPromptProfile(): PromptProfile {
 }
 
 export function buildPromptMessages(profile: PromptProfile, context: PromptRenderContext): LLMMessage[] {
-  const variables = promptVariables(profile, context);
+  const variables = promptVariables(context);
   return normalizePromptProfile(profile).layers
     .filter((layer) => layer.enabled)
     .sort((left, right) => left.order - right.order)
@@ -146,7 +130,7 @@ export async function buildPromptMessagesWithToolResults(
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const variables = promptVariables(profile, context);
+  const variables = promptVariables(context);
   return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, variables, context, runTool);
 }
 
@@ -155,7 +139,7 @@ export async function buildAppendPromptMessagesWithToolResults(
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const variables = promptVariables(profile, context);
+  const variables = promptVariables(context);
   return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], variables, context, runTool);
 }
 
@@ -197,36 +181,15 @@ export async function buildLayerMessagesWithToolResults(
   return messages;
 }
 
-export function promptVariables(profile: PromptProfile, context: PromptRenderContext): LLMTextVariables {
-  return buildLLMTextVariables({
-    userName: profile.userName,
-    time: context.time,
-    event: context.event,
-    dailyShell: context.dailyShell ?? "",
-    dailyShellRaw: context.dailyShellRaw,
-    appearanceDescription: context.appearanceDescription,
-    librarySetting: context.librarySetting,
-    memory: context.memory,
-    wakeBoundary: context.wakeBoundary,
-    calendarContext: context.calendarContext,
-    extra: {
-      available_skills: context.availableSkills ?? ""
-    }
-  });
+export function promptVariables(context: PromptRenderContext): LLMTextVariables {
+  return context.variables;
 }
 
 export function makePromptContext(input: PromptContextDeps): PromptRenderContext {
   return {
+    variables: input.variables,
     event: input.event,
     time: input.time,
-    dailyShell: input.getDailyShell?.(),
-    dailyShellRaw: input.getDailyShellRaw?.(),
-    appearanceDescription: input.getAppearanceDescription?.(),
-    librarySetting: input.getLibrarySetting?.(),
-    memory: input.getMemorySnapshot?.(),
-    wakeBoundary: input.getWakeBoundary?.(),
-    calendarContext: input.getCalendarContext?.(),
-    availableSkills: input.getAvailableSkills?.(),
     preview: input.preview
   };
 }

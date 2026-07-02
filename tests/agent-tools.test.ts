@@ -6,6 +6,7 @@ import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/in
 import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../src/contexts/agent-loop/src/ports/policy.js";
@@ -18,13 +19,14 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender"> & Partial<Pick<ChatAgentDeps, "llmRequestSender">>;
+type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptVariables"> & Partial<Pick<ChatAgentDeps, "llmRequestSender">>;
 
 function createChatAgent(deps: TestChatAgentDeps) {
   let persistedSession = deps.initialLLMSession;
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;
   const onLLMSessionCleared = deps.onLLMSessionCleared;
+  const getPromptProfile = deps.getPromptProfile ?? testPromptProfile;
   const requestLogs = new WeakMap<object, any>();
   const llmRequestSender = deps.llmRequestSender ?? createLLMRequests({
     getTool(name) {
@@ -48,6 +50,7 @@ function createChatAgent(deps: TestChatAgentDeps) {
   return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
+    getPromptVariables: () => buildLLMTextVariables({ userName: getPromptProfile().userName, time: deps.time ?? createCurrentTimeProvider("UTC") }),
     llmRequestSender,
     loadLLMSession,
     onLLMSessionUpdated(session) {
@@ -92,6 +95,7 @@ test("chat agent requires an injected prompt profile", async () => {
   const core = createChatAgentUnderTest({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
+    getPromptVariables: () => buildLLMTextVariables({ time: createCurrentTimeProvider("UTC") }),
     llmRequestSender: async () => ({ message: { role: "assistant", content: "unused" } }),
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -1785,7 +1789,7 @@ test("chat agent renders prompt profile layers before user message", async () =>
       visibleTools: { feishu: true },
       layers: [
         { id: "sys", title: "Sys", role: "system", enabled: true, content: "hello {{user}}", order: 1 },
-        { id: "usr", title: "Usr", role: "user", enabled: true, content: "session {{session}}", order: 2 }
+        { id: "usr", title: "Usr", role: "user", enabled: true, content: "timezone {{timezone}}", order: 2 }
       ]
     })
   });
@@ -1794,7 +1798,7 @@ test("chat agent renders prompt profile layers before user message", async () =>
   assert.equal(requests[0].messages[0].role, "system");
   assert.equal(requests[0].messages[0].content, "hello 小王");
   assert.equal(requests[0].messages[1].role, "user");
-  assert.equal(requests[0].messages[1].content, "session session-1");
+  assert.equal(requests[0].messages[1].content, "timezone UTC");
   assert.equal(requests[0].messages.length, 2);
 });
 

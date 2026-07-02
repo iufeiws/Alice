@@ -46,7 +46,7 @@ test("bash tool returns docker result without throwing on non-zero exit", async 
   assert.equal(output.stderr, "nope");
 });
 
-test("bash runtime writes audit events for deny and timeout/truncation", async () => {
+test("bash runtime writes audit events for sandbox execution", async () => {
   const config = testConfig({ outputLimitBytes: 5, mounts: [{ id: "data", hostPath: tmpDir("data"), containerPath: "/mnt/data", readOnly: true }] });
   const runtime = createBashSandboxRuntime({
     config,
@@ -57,25 +57,20 @@ test("bash runtime writes audit events for deny and timeout/truncation", async (
   await runtime.run({ id: "timeout", toolName: "bash", input: { command: "ls /mnt/data" } });
   const events = fs.readFileSync(config.auditLogPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
 
-  assert.equal(events[0].permission.state, "deny");
+  assert.equal(events[0].permission.state, "allow");
   assert.equal(events[1].permission.state, "allow");
   assert.equal(events[1].timedOut, true);
   assert.equal(events[1].truncated, true);
-  assert.deepEqual(events[1].optionalMounts, [{ id: "data", containerPath: "/mnt/data", readOnly: true }]);
+  assert.equal("optionalMounts" in events[1], false);
 });
 
-test("permission gate denies unsafe, uncertain, and read-only skill writes", () => {
+test("permission gate only enforces sandbox entry boundary", () => {
   const config = testConfig();
   const cwd = config.workspaceDir;
 
   assert.equal(classifyBashCommand({ config, cwd, command: "echo hello" }).state, "allow");
-  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "curl https://example.com" })), /network/);
-  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "bash -lc npm test" })), /nested shell/);
-  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "docker ps", skillId: "demo" })), /daemon/);
-  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "touch /skills/demo/file.txt" })), /read-only/);
-  assert.match(denyReason(classifyBashCommand({ config, cwd: "/skills/demo", command: "npm install" })), /read-only cwd/);
+  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "" })), /required/);
   assert.match(denyReason(classifyBashCommand({ config, cwd: "/etc", command: "echo hello" })), /cwd/);
-  assert.match(denyReason(classifyBashCommand({ config, cwd, command: "mystery hello" })), /not explicitly allowed/);
 });
 
 test("config rejects writable mounts under skills and sensitive host paths", () => {

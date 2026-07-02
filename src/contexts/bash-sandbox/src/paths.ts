@@ -36,10 +36,6 @@ export function isWritablePath(config: BashSandboxConfig, value: string): boolea
   return config.mounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath));
 }
 
-export function commandMentionsPath(command: string, containerPath: string): boolean {
-  return command === containerPath || command.includes(`${containerPath}/`) || command.includes(` ${containerPath}`);
-}
-
 function isSameOrInside(value: string, root: string): boolean {
   const cleanRoot = root.replace(/\/+$/, "") || "/";
   return value === cleanRoot || value.startsWith(`${cleanRoot}/`);

@@ -4,7 +4,7 @@ import type { DockerExecutor } from "./docker-executor.js";
 import { createDockerBashExecutor } from "./docker-executor.js";
 import { appendBashAuditEvent } from "./audit.js";
 import { classifyBashCommand } from "./permission.js";
-import { commandMentionsPath, normalizeContainerPath } from "./paths.js";
+import { normalizeContainerPath } from "./paths.js";
 
 export type BashRuntimeResult = {
   command: string;
@@ -87,9 +87,6 @@ function audit(call: ToolCall, output: BashRuntimeResult, permission: ReturnType
     toolCallId: call.id,
     permission,
     network: config.network,
-    optionalMounts: config.mounts
-      .filter((mount) => commandMentionsPath(output.command, mount.containerPath))
-      .map((mount) => ({ id: mount.id, containerPath: mount.containerPath, readOnly: mount.readOnly })),
     durationMs: output.durationMs,
     exitCode: output.exitCode,
     timedOut: output.timedOut,

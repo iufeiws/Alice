@@ -148,7 +148,7 @@ export type FeishuReactionClient = {
   removeReaction(input: { messageId: string; reactionId: string }): Promise<void>;
 };
 
-export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content";
+export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content" | "tools";
 export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
 export type FeishuBashRunCardBlock = "title" | "content";
 

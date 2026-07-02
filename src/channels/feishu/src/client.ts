@@ -6,7 +6,8 @@ import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCa
 const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   state: "agent_run_state",
   reasoning: "agent_run_reasoning",
-  content: "agent_run_content"
+  content: "agent_run_content",
+  tools: "agent_run_tools"
 };
 const BASH_RUN_CARD_ELEMENT_IDS: Record<FeishuBashRunCardBlock, string> = {
   title: "bash_run_title",
@@ -531,6 +532,14 @@ function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unk
           tag: "markdown",
           element_id: AGENT_RUN_CARD_ELEMENT_IDS.content,
           content: cardMarkdownContent(blocks.content)
+        },
+        {
+          tag: "hr"
+        },
+        {
+          tag: "markdown",
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS.tools,
+          content: cardMarkdownContent(blocks.tools)
         }
       ]
     }

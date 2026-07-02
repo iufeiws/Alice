@@ -293,6 +293,7 @@ function createAgentRunIndicatorRequestSender(input: {
       if (input.isCancelled?.()) {
         await failIndicatorSession(session, new Error("llm_run_cancelled"), input.onError);
       } else {
+        session = await appendIndicatorToolCalls(session, result.message.toolCalls ?? [], input.onError);
         await finishIndicatorSession(session, input.onError);
       }
       return result;
@@ -351,6 +352,24 @@ function withAgentRunIndicatorStreamHandlers(
       }
     }
   };
+}
+
+async function appendIndicatorToolCalls(
+  session: AgentRunIndicatorSession | undefined,
+  calls: LLMToolCall[],
+  onError: ((error: unknown) => void) | undefined
+): Promise<AgentRunIndicatorSession | undefined> {
+  for (const call of calls) {
+    if (!session) return undefined;
+    try {
+      await session.appendToolCall(parseAgentLoopToolArguments(call.function.arguments));
+    } catch (error) {
+      onError?.(error);
+      await failIndicatorSession(session, error, onError);
+      return undefined;
+    }
+  }
+  return session;
 }
 
 async function finishIndicatorSession(

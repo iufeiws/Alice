@@ -8,12 +8,12 @@ import {
   type FeishuAgentRunIndicatorCardRecord,
   type FeishuAgentRunIndicatorCardStore
 } from "../src/contexts/agent-run-indicator/src/index.js";
-import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolPlugin } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../src/contexts/agent-run-indicator/src/index.js";
 import type { FeishuDynamicCardClient } from "../src/channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../src/channels/feishu/src/pairing.js";
 
-const CARD_LAYOUT_VERSION = 4;
+const CARD_LAYOUT_VERSION = 5;
 
 test("chat loop behaves unchanged when no agent run indicator is configured", async () => {
   const sentRequests: string[] = [];
@@ -41,6 +41,9 @@ test("chat loop forwards stream content deltas to indicator and preserves existi
         },
         async appendContentDelta(delta) {
           calls.push(`indicator:${delta}`);
+        },
+        async appendToolCall(input) {
+          calls.push(`tool:${JSON.stringify(input)}`);
         },
         async finish() {
           calls.push("finish");
@@ -82,6 +85,58 @@ test("chat loop forwards stream content deltas to indicator and preserves existi
   ]);
 });
 
+test("chat loop forwards tool call argument values to indicator without dedupe", async () => {
+  const calls: string[] = [];
+  const indicator: AgentRunIndicator = {
+    async begin(input) {
+      calls.push(`begin:${input.round}`);
+      return {
+        async appendReasoningDelta() {},
+        async appendContentDelta() {},
+        async appendToolCall(input) {
+          calls.push(`tool:${JSON.stringify(input)}`);
+        },
+        async finish() {
+          calls.push("finish");
+        },
+        async fail(error) {
+          calls.push(`fail:${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+    }
+  };
+  let requestCount = 0;
+  const loop = buildChatAgentLoop(loopInput({
+    agentRunIndicator: indicator,
+    toolPlugins: [demoToolPlugin()],
+    llmInput: { toolNames: ["Demo"] },
+    llmRequestSender: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              { id: "call_1", type: "function", function: { name: "Demo", arguments: "{\"short\":\"abc\",\"long\":\"123456789\",\"n\":7}" } },
+              { id: "call_2", type: "function", function: { name: "Demo", arguments: "{\"short\":\"abc\"}" } }
+            ]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  }));
+
+  const result = await runAgentFunctionCallLoop(loop.spec);
+
+  assert.equal(result.finalMessage.content, "done");
+  assert.deepEqual(calls.filter((call) => call.startsWith("tool:")), [
+    "tool:{\"short\":\"abc\",\"long\":\"123456789\",\"n\":7}",
+    "tool:{\"short\":\"abc\"}"
+  ]);
+});
+
 test("chat loop disables current indicator session after indicator delta failure", async () => {
   const errors: string[] = [];
   const calls: string[] = [];
@@ -93,6 +148,7 @@ test("chat loop disables current indicator session after indicator delta failure
       calls.push(`delta:${delta}`);
       throw new Error("indicator_down");
     },
+    async appendToolCall() {},
     async finish() {
       calls.push("finish");
     },
@@ -143,7 +199,7 @@ test("Feishu agent run indicator creates a card when no persisted card exists an
   await session.finish();
 
   assert.deepEqual(client.calls, [
-    "create:ou_user:正在输入中...||",
+    "create:ou_user:正在输入中...|||",
     "stream:card_new:true:1",
     "update:card_new:state:正在输入中...:2",
     "update:card_new:state:正在输入中...:3",
@@ -162,7 +218,56 @@ test("Feishu agent run indicator creates a card when no persisted card exists an
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "working",
     reasoning: "think",
-    content: "hello"
+    content: "hello",
+    tools: ""
+  });
+});
+
+test("Feishu agent run indicator renders tool argument values below content", async () => {
+  const store = memoryCardStore();
+  const client = fakeCardClient();
+  const indicator = createFeishuDynamicCardAgentRunIndicator({
+    enabled: () => true,
+    client,
+    pairingStore: pairedStore(),
+    cardStore: store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-29T00:00:00.000Z")),
+    throttleMs: 10_000,
+    getState: () => ({ state: "working" })
+  });
+
+  const session = await indicator.begin({ round: 0 });
+  assert.ok(session);
+  await session.appendToolCall({ long: "123456789", short: "ok", n: 7, object: { x: 1 } });
+  await session.appendToolCall({ value: "repeat" });
+  await session.appendToolCall({ value: "repeat" });
+  await session.finish();
+
+  assert.deepEqual(client.calls, [
+    "create:ou_user:正在输入中...|||",
+    "stream:card_new:true:1",
+    "update:card_new:state:正在输入中...:2",
+    "update:card_new:tools:... ok 7 {\"x\":1}:3",
+    "update:card_new:tools:... ok 7 {\"x\":1}\nrepeat:4",
+    "update:card_new:tools:... ok 7 {\"x\":1}\nrepeat\nrepeat:5",
+    "update:card_new:state:正在输入中...:6",
+    "update:card_new:reasoning::7",
+    "update:card_new:content::8",
+    "update:card_new:state:working:9",
+    "update:card_new:reasoning::10",
+    "update:card_new:content::11",
+    "stream:card_new:false:12"
+  ]);
+  assert.deepEqual(store.read(), {
+    messageId: "om_new",
+    cardId: "card_new",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 13,
+    updatedAt: "2026-06-29T00:00:00.000Z",
+    state: "working",
+    reasoning: "",
+    content: "",
+    tools: "... ok 7 {\"x\":1}\nrepeat\nrepeat"
   });
 });
 
@@ -208,7 +313,8 @@ test("Feishu agent run indicator reuses persisted card and preserves empty block
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "",
-    content: ""
+    content: "",
+    tools: ""
   });
 });
 
@@ -259,7 +365,8 @@ test("Feishu agent run indicator clears previous blocks on streamed content", as
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "c",
-    content: "co"
+    content: "co",
+    tools: ""
   });
 });
 
@@ -298,7 +405,8 @@ test("Feishu agent run indicator streams current content while saving clean fina
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "正在输入中...",
     reasoning: "reasoning",
-    content: "content"
+    content: "content",
+    tools: ""
   });
   await session.appendReasoningDelta("o");
   await session.appendContentDelta("o");
@@ -326,7 +434,8 @@ test("Feishu agent run indicator streams current content while saving clean fina
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "co",
-    content: "co"
+    content: "co",
+    tools: ""
   });
 });
 
@@ -366,7 +475,8 @@ test("Feishu agent run indicator follows project typing state", async () => {
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "think",
-    content: "hello"
+    content: "hello",
+    tools: ""
   });
 });
 
@@ -385,7 +495,7 @@ test("Feishu agent run indicator creates a card on project typing start", async 
   await indicator.setTyping?.({ typing: true });
 
   assert.deepEqual(client.calls, [
-    "create:ou_user:正在输入中...||",
+    "create:ou_user:正在输入中...|||",
     "update:card_new:state:正在输入中...:1"
   ]);
   assert.deepEqual(store.read(), {
@@ -396,7 +506,8 @@ test("Feishu agent run indicator creates a card on project typing start", async 
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "正在输入中...",
     reasoning: "",
-    content: ""
+    content: "",
+    tools: ""
   });
 });
 
@@ -423,7 +534,7 @@ test("Feishu agent run indicator recreates old layout cards and keeps saved thin
   await indicator.setTyping?.({ typing: true });
 
   assert.deepEqual(client.calls, [
-    "create:ou_user:正在输入中...|old think|old answer",
+    "create:ou_user:正在输入中...|old think|old answer|",
     "update:card_new:state:正在输入中...:1"
   ]);
   assert.deepEqual(store.read(), {
@@ -434,7 +545,8 @@ test("Feishu agent run indicator recreates old layout cards and keeps saved thin
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "正在输入中...",
     reasoning: "old think",
-    content: "old answer"
+    content: "old answer",
+    tools: ""
   });
 });
 
@@ -461,7 +573,7 @@ test("Feishu agent run indicator recreates old layout cards during startup ensur
   await indicator.ensureReady?.();
 
   assert.deepEqual(client.calls, [
-    "create:ou_user:waiting|old think|old answer"
+    "create:ou_user:waiting|old think|old answer|"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_new",
@@ -471,7 +583,8 @@ test("Feishu agent run indicator recreates old layout cards during startup ensur
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "old think",
-    content: "old answer"
+    content: "old answer",
+    tools: ""
   });
 });
 
@@ -499,7 +612,7 @@ test("Feishu agent run indicator creates a fresh card on demand", async () => {
   await indicator.createFreshCard?.();
 
   assert.deepEqual(client.calls, [
-    "create:ou_user:waiting|old think|old answer"
+    "create:ou_user:waiting|old think|old answer|"
   ]);
   assert.deepEqual(store.read(), {
     messageId: "om_new",
@@ -509,7 +622,8 @@ test("Feishu agent run indicator creates a fresh card on demand", async () => {
     updatedAt: "2026-06-29T00:00:00.000Z",
     state: "waiting",
     reasoning: "old think",
-    content: "old answer"
+    content: "old answer",
+    tools: ""
   });
 });
 
@@ -531,6 +645,7 @@ function loopInput(overrides: {
   agentRunIndicator?: AgentRunIndicator;
   onAgentRunIndicatorError?: (error: unknown) => void;
   llmInput?: Partial<ChatAgentLoopInput["llmInput"]>;
+  toolPlugins?: ToolPlugin[];
 } = {}): ChatAgentLoopInput {
   const session: ChatAgentLoopSession = {
     messages: [{ role: "user", content: "hello" }],
@@ -545,7 +660,7 @@ function loopInput(overrides: {
       ...overrides.llmInput
     },
     event: textEvent(),
-    toolPlugins: [],
+    toolPlugins: overrides.toolPlugins ?? [],
     session,
     ensureSession: async () => session,
     appendSessionContext: async () => {},
@@ -588,6 +703,16 @@ function textEvent(): AgentEvent {
   };
 }
 
+function demoToolPlugin(): ToolPlugin {
+  return {
+    id: "demo",
+    listTools: () => [{ name: "Demo", description: "demo", inputSchema: { type: "object" } }],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "ok" };
+    }
+  };
+}
+
 function memoryCardStore(initial?: FeishuAgentRunIndicatorCardRecord): FeishuAgentRunIndicatorCardStore {
   let record = initial;
   return {
@@ -607,7 +732,7 @@ function fakeCardClient(): FeishuDynamicCardClient & { calls: string[] } {
     calls,
     isStarted: () => true,
     async createAgentRunCard(input) {
-      calls.push(`create:${input.receiveId}:${input.blocks.state}|${input.blocks.reasoning}|${input.blocks.content}`);
+      calls.push(`create:${input.receiveId}:${input.blocks.state}|${input.blocks.reasoning}|${input.blocks.content}|${input.blocks.tools}`);
       return { messageId: "om_new", cardId: "card_new" };
     },
     async updateAgentRunCard(input) {

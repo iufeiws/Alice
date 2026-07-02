@@ -6,7 +6,7 @@ import type { AgentRunIndicator, AgentRunIndicatorSession } from "../ports.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
-const CARD_LAYOUT_VERSION = 4;
+const CARD_LAYOUT_VERSION = 5;
 const TYPING_STATE_LABEL = "正在输入中...";
 
 export type FeishuAgentRunIndicatorCardRecord = {
@@ -18,6 +18,7 @@ export type FeishuAgentRunIndicatorCardRecord = {
   state?: string;
   reasoning?: string;
   content?: string;
+  tools?: string;
 };
 
 export type FeishuAgentRunIndicatorCardStore = {
@@ -49,6 +50,7 @@ type IndicatorBlocks = {
   state: string;
   reasoning: string;
   content: string;
+  tools: string;
 };
 
 export function createJsonFeishuAgentRunIndicatorCardStore(filePath: string): FeishuAgentRunIndicatorCardStore {
@@ -65,7 +67,8 @@ export function createJsonFeishuAgentRunIndicatorCardStore(filePath: string): Fe
         updatedAt: parsed.updatedAt,
         state: parsed.state ?? "",
         reasoning: parsed.reasoning ?? "",
-        content: parsed.content ?? ""
+        content: parsed.content ?? "",
+        tools: parsed.tools ?? ""
       };
     },
     write(record) {
@@ -135,6 +138,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   function createSession(card: ActiveCard): AgentRunIndicatorSession {
     let reasoning = "";
     let content = "";
+    let tools = "";
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
     let flushPromise: Promise<void> = Promise.resolve();
     let failed = false;
@@ -150,7 +154,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         flushPromise = flushPromise
-          .then(() => flushContent(card, runningBlocks(reasoning, content)))
+          .then(() => flushContent(card, runningBlocks(reasoning, content, tools)))
           .catch((error) => {
             failed = true;
             input.log?.("error", `[agent-run-indicator] Feishu indicator flush failed: ${errorMessage(error)}`);
@@ -161,7 +165,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     async function flushNow(): Promise<void> {
       clearFlushTimer();
       await flushPromise;
-      if (!failed) await flushContent(card, runningBlocks(reasoning, content));
+      if (!failed) await flushContent(card, runningBlocks(reasoning, content, tools));
     }
 
     return {
@@ -175,13 +179,20 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         content += delta;
         queueFlush();
       },
+      async appendToolCall(input) {
+        if (failed) return;
+        const line = formatToolCallInput(input);
+        tools = tools ? `${tools}\n${line}` : line;
+        await updateBlock(card, "tools", tools, { ...card.blocks, tools });
+      },
       async finish() {
         if (failed) return;
         await flushNow();
         const finalBlocks = {
           state: stateLabel(input.getState?.()),
           reasoning,
-          content
+          content,
+          tools
         };
         await updateBlocks(card, finalBlocks, finalBlocks);
         await updateStreaming(card, false);
@@ -331,11 +342,12 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   }
 }
 
-function runningBlocks(reasoning: string, content: string): IndicatorBlocks {
+function runningBlocks(reasoning: string, content: string, tools = ""): IndicatorBlocks {
   return {
     state: TYPING_STATE_LABEL,
     reasoning,
-    content
+    content,
+    tools
   };
 }
 
@@ -343,16 +355,28 @@ function emptyBlocks(): IndicatorBlocks {
   return {
     state: "",
     reasoning: "",
-    content: ""
+    content: "",
+    tools: ""
   };
 }
 
-function blocksFromRecord(record: Pick<FeishuAgentRunIndicatorCardRecord, "state" | "reasoning" | "content">): IndicatorBlocks {
+function blocksFromRecord(record: Pick<FeishuAgentRunIndicatorCardRecord, "state" | "reasoning" | "content" | "tools">): IndicatorBlocks {
   return {
     state: record.state ?? "",
     reasoning: record.reasoning ?? "",
-    content: record.content ?? ""
+    content: record.content ?? "",
+    tools: record.tools ?? ""
   };
+}
+
+function formatToolCallInput(input: Record<string, unknown>): string {
+  return Object.values(input).map(formatToolCallInputValue).join(" ");
+}
+
+function formatToolCallInputValue(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const rendered = text ?? String(value);
+  return rendered.length > 8 ? "..." : rendered;
 }
 
 function stateLabel(value: unknown): string {

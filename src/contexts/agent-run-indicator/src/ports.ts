@@ -17,6 +17,7 @@ export type AgentRunIndicator = {
 export type AgentRunIndicatorSession = {
   appendReasoningDelta(delta: string): Promise<void>;
   appendContentDelta(delta: string): Promise<void>;
+  appendToolCall(input: Record<string, unknown>): Promise<void>;
   finish(): Promise<void>;
   fail(error: unknown): Promise<void>;
 };

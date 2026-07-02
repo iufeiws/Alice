@@ -193,7 +193,7 @@ export function renderInitiatedBehaviorsScript(): string {
           order: nextIndex * 10
         };
         if (normalizedRole === "tool_request") {
-          behaviorConfigLayers.push({ ...layer, content: "", thinking: "", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }] });
+          behaviorConfigLayers.push({ ...layer, content: "", thinking: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }] });
         } else {
           behaviorConfigLayers.push({ ...layer, content: "" });
         }
@@ -232,7 +232,7 @@ export function renderInitiatedBehaviorsScript(): string {
             delete layer.toolCalls;
           } else {
             layer.toolCalls = cloneToolCalls(layer.toolCalls);
-            if (!layer.toolCalls.length) layer.toolCalls = [{ toolName: "check_chat", toolArguments: "{}" }];
+            if (!layer.toolCalls.length) layer.toolCalls = [{ toolName: "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }];
           }
           if (layer.role !== "assistant" && layer.role !== "tool_request") delete layer.thinking;
           renderBehaviorLayerEditor();

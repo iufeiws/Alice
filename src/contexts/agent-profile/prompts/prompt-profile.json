@@ -53,22 +53,22 @@
     },
     {
       "id": "layer_1781852359659",
-      "title": "Fake check_chat_inital",
+      "title": "Fake Chat poll inital",
       "role": "tool_request",
       "enabled": true,
       "content": "{scope= today}",
       "order": 120,
       "toolCalls": [
         {
-          "toolName": "check_chat",
-          "toolArguments": "{\"scope\": \"today\"}"
+          "toolName": "Chat",
+          "toolArguments": "{\"action\": \"poll\", \"scope\": \"today\"}"
         },
         {
           "toolName": "calendar",
           "toolArguments": "{\"action\": \"list\"}"
         }
       ],
-      "thinking": "<shell>\n看看有什么新消息吧\n<shell/>\n<core>\n查看消息……是用check_chat这个tool\n此外再看一下日程\n<core/>"
+      "thinking": "<shell>\n看看有什么新消息吧\n<shell/>\n<core>\n查看消息……是用Chat action=poll这个tool\n此外再看一下日程\n<core/>"
     },
     {
       "id": "layer_1782718363814",
@@ -109,18 +109,18 @@
   "appendLayers": [
     {
       "id": "append_check_chat",
-      "title": "Fake check_chat",
+      "title": "Fake Chat poll",
       "role": "tool_request",
       "enabled": true,
       "content": "",
       "order": 20,
       "toolCalls": [
         {
-          "toolName": "check_chat",
-          "toolArguments": "{}"
+          "toolName": "Chat",
+          "toolArguments": "{\"action\": \"poll\"}"
         }
       ],
-      "thinking": "<shell>\n看看有什么新消息吧\n<shell/>\n<core>\n我来调用check_chat\n<core/>"
+      "thinking": "<shell>\n看看有什么新消息吧\n<shell/>\n<core>\n我来调用Chat action=poll\n<core/>"
     }
   ]
 }

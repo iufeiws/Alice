@@ -117,8 +117,8 @@ test("chat agent exposes platform-neutral tools and resolves tool calls before f
               id: "tool_1",
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             }]
           }
@@ -138,7 +138,7 @@ test("chat agent exposes platform-neutral tools and resolves tool calls before f
       id: "test-tools",
       listTools() {
         return [{
-          name: "check_chat",
+          name: "Chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -152,8 +152,8 @@ test("chat agent exposes platform-neutral tools and resolves tool calls before f
 
   const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
-  assert.equal(requests[0].tools?.[0].function.name, "check_chat");
-  assert.equal(toolCalls[0].toolName, "check_chat");
+  assert.equal(requests[0].tools?.[0].function.name, "Chat");
+  assert.equal(toolCalls[0].toolName, "Chat");
   assert.equal(toolCalls[0].externalSession?.sessionId, "session-1");
   assert.equal(requests[1].messages.at(-1)?.role, "tool");
   assert.equal(requests[1].messages.at(-1)?.content, "history");
@@ -273,7 +273,7 @@ test("chat agent sends tool names to injected LLM sender without rendering schem
       id: "test-tools",
       listTools() {
         return [{
-          name: "check_chat",
+          name: "Chat",
           get description(): string {
             throw new Error("tool description should be rendered by LLMRequests");
           },
@@ -290,7 +290,7 @@ test("chat agent sends tool names to injected LLM sender without rendering schem
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(senderInputs[0].toolNames, ["check_chat"]);
+  assert.deepEqual(senderInputs[0].toolNames, ["Chat"]);
 });
 
 test("chat agent ordinary chat does not enter deprecated working state", async () => {
@@ -336,8 +336,8 @@ test("chat agent appends assistant tool call and tool result before the next llm
               id: "tool_1",
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             }]
           },
@@ -358,7 +358,7 @@ test("chat agent appends assistant tool call and tool result before the next llm
       id: "test-tools",
       listTools() {
         return [{
-          name: "check_chat",
+          name: "Chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -376,7 +376,7 @@ test("chat agent appends assistant tool call and tool result before the next llm
   assert.ok(toolCallIndex >= 0);
   assert.equal(requests[1].messages[toolCallIndex]?.content, "checking history");
   assert.equal(requests[1].messages[toolCallIndex]?.reasoningContent, "I should inspect messages first.");
-  assert.equal(requests[1].messages[toolCallIndex]?.toolCalls?.[0].function.name, "check_chat");
+  assert.equal(requests[1].messages[toolCallIndex]?.toolCalls?.[0].function.name, "Chat");
   assert.equal(requests[1].messages[toolCallIndex + 1]?.role, "tool");
   assert.equal(requests[1].messages[toolCallIndex + 1]?.toolCallId, "tool_1");
   assert.equal(requests[1].messages[toolCallIndex + 1]?.content, "history result");
@@ -472,7 +472,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
           toolCalls: [{
             id: "tool_wait",
             type: "function",
-            function: { name: "finish_and_wait", arguments: "{}" }
+            function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
           }]
         },
         finishReason: "tool_calls"
@@ -508,7 +508,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
   assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "finish_and_wait"), false);
 });
 
-test("chat agent resumes pending finish_and_wait with check_chat result on heartbeat", async () => {
+test("chat agent resumes pending finish_and_wait with Chat result on heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   const checkInputs: Record<string, unknown>[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -525,7 +525,7 @@ test("chat agent resumes pending finish_and_wait with check_chat result on heart
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "finish_and_wait", arguments: "{}" }
+              function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -546,10 +546,10 @@ test("chat agent resumes pending finish_and_wait with check_chat result on heart
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Fake check_chat", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Fake Chat", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     tools: [chatTestTools((call) => {
-      if (call.toolName === "check_chat") checkInputs.push(call.input);
+      if (call.toolName === "Chat") checkInputs.push(call.input);
     })],
     onLLMSessionUpdated(session) {
       persistedSession = session;
@@ -565,13 +565,13 @@ test("chat agent resumes pending finish_and_wait with check_chat result on heart
   await runPreparedChatEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
 
   assert.equal(requests.length, 2);
-  assert.deepEqual(checkInputs, [{}]);
+  assert.deepEqual(checkInputs, [{ action: "poll" }]);
   const secondMessages = requests[1].messages;
   const waitToolMessages = secondMessages.filter((message) => message.role === "tool" && message.name === "finish_and_wait");
   assert.equal(waitToolMessages.length, 1);
   assert.equal(waitToolMessages.at(-1)?.content, "<chat-log>\nnew chat\n</chat-log>\n<wait-duration>5m</wait-duration>\n<now local=\"2026-05-26T00:05:00.000\"/>");
   const waitIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "finish_and_wait");
-  const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  const checkChatAfterWait = secondMessages.slice(waitIndex + 1).find((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.equal(checkChatAfterWait, undefined);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
@@ -594,17 +594,17 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
             {
               id: "tool_check",
               type: "function",
-              function: { name: "check_chat", arguments: "{}" }
+              function: { name: "Chat", arguments: "{\"action\":\"poll\"}" }
             },
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "finish_and_wait", arguments: "{}" }
+              function: { name: "finish_and_wait", arguments: "{\"action\":\"poll\"}" }
             },
             {
               id: "tool_later",
               type: "function",
-              function: { name: "later_tool", arguments: "{}" }
+              function: { name: "later_tool", arguments: "{\"action\":\"poll\"}" }
             }
           ]
         },
@@ -638,10 +638,10 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(calls, ["check_chat", "finish_and_wait", "later_tool"]);
+  assert.deepEqual(calls, ["Chat", "finish_and_wait", "later_tool"]);
   const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
   const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "finish_and_wait"));
-  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["check_chat", "finish_and_wait", "later_tool"]);
+  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["Chat", "finish_and_wait", "later_tool"]);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
@@ -696,14 +696,14 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     tools: [{
       id: "test-tools",
       listTools() {
         return [
           { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } }
+          { name: "Chat", description: "view", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -719,7 +719,7 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
         if (call.input.__scope === "recent") {
           return { callId: call.id, ok: true, output: "recent chat" };
         }
-        if (call.toolName === "check_chat") checkChatInputs.push(call.input);
+        if (call.toolName === "Chat") checkChatInputs.push(call.input);
         checkChatCallsInSession += 1;
         return {
           callId: call.id,
@@ -746,11 +746,11 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   assert.equal(secondMessages.filter((message) => message.content === "static prompt").length, 1);
   assert.equal(secondMessages.some((message) => message.content === "old context marker"), true);
   const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
-  const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
+  const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
-  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
+  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
   assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
   assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 0);
   assert.equal(checkChatCallsInSession, 1);
@@ -762,9 +762,9 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
 
   assert.equal(requests.length, 3);
   const thirdMessages = requests[2].messages;
-  const thirdCheckChatIndex = thirdMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").lastIndexOf(true);
+  const thirdCheckChatIndex = thirdMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.ok(thirdCheckChatIndex > bookcaseIndex);
-  assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{}");
+  assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
   assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
   const fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
   assert.equal(fromPrefixInputs.length, 2);
@@ -820,7 +820,7 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "fresh chat" };
@@ -834,7 +834,7 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
   assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
   assert.equal(messages.filter((message) => message.content === "<book>fixed story</book>").length, 1);
   assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase").length, 1);
-  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat").length, 1);
+  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").length, 1);
 });
 
 for (const scenario of [
@@ -860,7 +860,7 @@ for (const scenario of [
         toolCalls: [{
           id: scenario.enterCallId,
           type: "function",
-          function: { name: scenario.fixedPrefixKind, arguments: "{}" }
+          function: { name: scenario.fixedPrefixKind, arguments: "{\"action\":\"poll\"}" }
         }]
       },
       { role: "tool", name: scenario.fixedPrefixKind, toolCallId: scenario.enterCallId, content: "success" }
@@ -915,12 +915,12 @@ for (const scenario of [
         id: scenario.fixedPrefixKind,
         listTools() {
           return [
-            { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+            { name: "Chat", description: "view", inputSchema: { type: "object" } },
             { name: scenario.fixedPrefixKind, description: scenario.fixedPrefixKind, inputSchema: { type: "object" } }
           ];
         },
         async execute(call) {
-          if (call.toolName === "check_chat") return { callId: call.id, ok: true, output: "nothing new" };
+          if (call.toolName === "Chat") return { callId: call.id, ok: true, output: "nothing new" };
           return {
             callId: call.id,
             ok: true,
@@ -987,7 +987,7 @@ test("chat agent injects fixed prefix cursor into model requested from_prefix ch
             toolCalls: [{
               id: "tool_check",
               type: "function",
-              function: { name: "check_chat", arguments: "{\"scope\":\"from_prefix\"}" }
+              function: { name: "Chat", arguments: "{\"action\":\"poll\",\"scope\":\"from_prefix\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -1019,7 +1019,7 @@ test("chat agent injects fixed prefix cursor into model requested from_prefix ch
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         checkChatInputs.push({ id: call.id, input: call.input });
@@ -1279,7 +1279,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
     userName: "user",
     visibleTools: { feishu: true },
     layers: [{ id: "static", title: "Static", role: "system" as const, enabled: true, content: "static prompt", order: 1 }],
-    appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+    appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request" as const, enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
   };
   const primerCore = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
@@ -1292,7 +1292,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "recent" };
@@ -1351,7 +1351,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "recent" };
@@ -1368,7 +1368,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => typeof message.content === "string" && message.content.includes("old session marker")), true);
-  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.ok(checkChatIndex >= 0);
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
 });
@@ -1407,7 +1407,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     initialLLMSession: {
       messages: [
@@ -1428,7 +1428,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "fresh chat after restore" };
@@ -1450,7 +1450,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
   assert.equal(messages.some((message) => message.content === "old live context"), true);
   assert.equal(messages.some((message) => message.content === "old static prompt"), true);
   const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "bookcase");
-  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat");
+  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.ok(bookcaseIndex >= 0);
   assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(messages[bookcaseIndex + 1]?.content, "<book>restored story</book>");
@@ -1493,7 +1493,7 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     initialLLMSession: {
       messages: [
@@ -1514,7 +1514,7 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "fresh normal chat" };
@@ -1622,8 +1622,8 @@ test("chat agent uses empty reasoning content for tool requests when missing", a
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             }]
           }
@@ -1642,7 +1642,7 @@ test("chat agent uses empty reasoning content for tool requests when missing", a
     tools: [{
       id: "test-tools",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history result" };
@@ -1680,7 +1680,7 @@ test("chat agent filters messaging tools when feishu visibility is disabled", as
       id: "messaging",
       listTools() {
         return [{
-          name: "check_chat",
+          name: "Chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -1718,7 +1718,7 @@ test("chat agent filters photo tools when photo visibility is disabled", async (
     tools: [{
       id: "messaging",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history" };
@@ -1735,7 +1735,7 @@ test("chat agent filters photo tools when photo visibility is disabled", async (
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["check_chat"]);
+  assert.deepEqual(requests[0].tools?.map((tool) => tool.function.name), ["Chat"]);
 });
 
 test("chat agent skips llm calls when prompt profile has no enabled messages", async () => {
@@ -1825,9 +1825,9 @@ test("chat agent runs prompt tool request layers and appends actual tool result"
         content: "",
         thinking: "need history",
         toolCalls: [{
-          toolName: "check_chat",
+          toolName: "Chat",
           toolCallId: "call_prompt_history",
-          toolArguments: "{}"
+          toolArguments: "{\"action\":\"poll\"}"
         }],
         order: 1
       }]
@@ -1836,7 +1836,7 @@ test("chat agent runs prompt tool request layers and appends actual tool result"
       id: "messaging",
       listTools() {
         return [{
-          name: "check_chat",
+          name: "Chat",
           description: "view",
           inputSchema: { type: "object" }
         }];
@@ -1852,15 +1852,15 @@ test("chat agent runs prompt tool request layers and appends actual tool result"
 
   assert.equal(toolCalls.length, 1);
   assert.equal(toolCalls[0].id, "call_prompt_history");
-  assert.equal(toolCalls[0].toolName, "check_chat");
-  assert.deepEqual(toolCalls[0].input, {});
+  assert.equal(toolCalls[0].toolName, "Chat");
+  assert.deepEqual(toolCalls[0].input, { action: "poll" });
   assert.equal(requests[0].messages[0].role, "assistant");
   assert.equal(requests[0].messages[0].toolCalls?.[0].id, "call_prompt_history");
   assert.equal(requests[0].messages[1].role, "tool");
   assert.equal(requests[0].messages[1].content, "actual history");
 });
 
-test("chat agent waits for final send_chat JSON and sends newline message content once", async () => {
+test("chat agent waits for final Chat JSON and sends newline message content once", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const completed: Array<{ sentMessage: boolean }> = [];
@@ -1876,8 +1876,8 @@ test("chat agent waits for final send_chat JSON and sends newline message conten
           id: "tool_send",
           type: "function",
           function: {
-            name: "send_chat",
-            arguments: "{\"type\":\"message\",\"content\":\"one\\n"
+            name: "Chat",
+            arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"one\\n"
           }
         });
         assert.deepEqual(sentLines, []);
@@ -1896,8 +1896,8 @@ test("chat agent waits for final send_chat JSON and sends newline message conten
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_chat",
-                arguments: "{\"type\":\"message\",\"content\":\"one\\ntwo\\nthree\"}"
+                name: "Chat",
+                arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"one\\ntwo\\nthree\"}"
               }
             }]
           }
@@ -1920,7 +1920,7 @@ test("chat agent waits for final send_chat JSON and sends newline message conten
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -1939,7 +1939,7 @@ test("chat agent waits for final send_chat JSON and sends newline message conten
   assert.deepEqual(completed, [{ sentMessage: true }]);
 });
 
-test("chat agent waits for final send_chat JSON before sending duplicated-content arguments", async () => {
+test("chat agent waits for final Chat JSON before sending duplicated-content arguments", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
   const llm: LLMClient = {
@@ -1954,8 +1954,8 @@ test("chat agent waits for final send_chat JSON before sending duplicated-conten
           id: "tool_bad",
           type: "function",
           function: {
-            name: "send_chat",
-            arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n"
+            name: "Chat",
+            arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n"
           }
         });
         assert.deepEqual(sentLines, []);
@@ -1974,8 +1974,8 @@ test("chat agent waits for final send_chat JSON before sending duplicated-conten
               id: "tool_bad",
               type: "function",
               function: {
-                name: "send_chat",
-                arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n\\n<｜｜DSML｜｜parameter name=\\\"type\\\" string=\\\"true\\\">message\", \"content\":\"算是通过了吗,父皇？\"}"
+                name: "Chat",
+                arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"原来如此。那这个测试,\\n\\n<｜｜DSML｜｜parameter name=\\\"type\\\" string=\\\"true\\\">message\", \"content\":\"算是通过了吗,父皇？\"}"
               }
             }]
           }
@@ -1992,8 +1992,8 @@ test("chat agent waits for final send_chat JSON before sending duplicated-conten
               id: "tool_good",
               type: "function",
               function: {
-                name: "send_chat",
-                arguments: "{\"type\":\"message\",\"content\":\"原来如此。那这个测试算是通过了吗,父皇？\"}"
+                name: "Chat",
+                arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"原来如此。那这个测试算是通过了吗,父皇？\"}"
               }
             }]
           }
@@ -2012,11 +2012,11 @@ test("chat agent waits for final send_chat JSON before sending duplicated-conten
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         if (typeof call.input.content !== "string") {
-          return { callId: call.id, ok: false, error: "invalid send_chat arguments" };
+          return { callId: call.id, ok: false, error: "invalid Chat arguments" };
         }
         sentLines.push(String(call.input.content));
         return { callId: call.id, ok: true, output: `sent: ${call.input.content}` };
@@ -2028,7 +2028,7 @@ test("chat agent waits for final send_chat JSON before sending duplicated-conten
   assert.deepEqual(sentLines, ["算是通过了吗,父皇？", "原来如此。那这个测试算是通过了吗,父皇？"]);
 });
 
-test("chat agent waits for final send_chat JSON and sends newline voice content once", async () => {
+test("chat agent waits for final Chat JSON and sends newline voice content once", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2043,8 +2043,8 @@ test("chat agent waits for final send_chat JSON and sends newline voice content 
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat",
-          arguments: "{\"type\":\"voice\",\"content\":\"第一句\\\\n"
+          name: "Chat",
+          arguments: "{\"action\":\"send\",\"type\":\"voice\",\"content\":\"第一句\\\\n"
         }
       });
       assert.deepEqual(sentLines, []);
@@ -2063,8 +2063,8 @@ test("chat agent waits for final send_chat JSON and sends newline voice content 
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"type\":\"voice\",\"content\":\"第一句\\\\n第二句\\\\n第三句\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"type\":\"voice\",\"content\":\"第一句\\\\n第二句\\\\n第三句\"}"
             }
           }]
         }
@@ -2082,7 +2082,7 @@ test("chat agent waits for final send_chat JSON and sends newline voice content 
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -2098,7 +2098,7 @@ test("chat agent waits for final send_chat JSON and sends newline voice content 
   assert.deepEqual(sentLines, ["voice:第一句\\n第二句\\n第三句"]);
 });
 
-test("chat agent waits for final send_chat JSON when type is omitted", async () => {
+test("chat agent waits for final Chat JSON when type is omitted", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2113,8 +2113,8 @@ test("chat agent waits for final send_chat JSON when type is omitted", async () 
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat",
-          arguments: "{\"content\":\"one\\n"
+          name: "Chat",
+          arguments: "{\"action\":\"send\",\"content\":\"one\\n"
         }
       });
       assert.deepEqual(sentLines, []);
@@ -2132,8 +2132,8 @@ test("chat agent waits for final send_chat JSON when type is omitted", async () 
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"content\":\"one\\ntwo\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"content\":\"one\\ntwo\"}"
             }
           }]
         }
@@ -2151,7 +2151,7 @@ test("chat agent waits for final send_chat JSON when type is omitted", async () 
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -2167,7 +2167,7 @@ test("chat agent waits for final send_chat JSON when type is omitted", async () 
   assert.deepEqual(sentLines, ["one\ntwo"]);
 });
 
-test("chat agent sends one final send_chat message when tool metadata arrives after arguments", async () => {
+test("chat agent sends one final Chat message when tool metadata arrives after arguments", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2180,7 +2180,7 @@ test("chat agent sends one final send_chat message when tool metadata arrives af
       await handlers?.onToolCallDelta?.({
         index: 0,
         function: {
-          arguments: "{\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
+          arguments: "{\"action\":\"send\",\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
         }
       });
       assert.deepEqual(sentLines, []);
@@ -2189,7 +2189,7 @@ test("chat agent sends one final send_chat message when tool metadata arrives af
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat"
+          name: "Chat"
         }
       });
       return {
@@ -2200,8 +2200,8 @@ test("chat agent sends one final send_chat message when tool metadata arrives af
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"content\":\"对、对不起……主人不是在凶您。\\n只是上次您熬到凌晨五点，\\n主人有点担心……\",\"type\":\"message\"}"
             }
           }]
         }
@@ -2219,7 +2219,7 @@ test("chat agent sends one final send_chat message when tool metadata arrives af
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -2235,7 +2235,7 @@ test("chat agent sends one final send_chat message when tool metadata arrives af
   assert.deepEqual(sentLines, ["对、对不起……主人不是在凶您。\n只是上次您熬到凌晨五点，\n主人有点担心……"]);
 });
 
-test("chat agent does not stream send_chat before type is known", async () => {
+test("chat agent does not stream Chat before type is known", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2250,8 +2250,8 @@ test("chat agent does not stream send_chat before type is known", async () => {
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat",
-          arguments: "{\"content\":\"should not stream\\n"
+          name: "Chat",
+          arguments: "{\"action\":\"send\",\"content\":\"should not stream\\n"
         }
       });
       assert.deepEqual(sentLines, []);
@@ -2270,8 +2270,8 @@ test("chat agent does not stream send_chat before type is known", async () => {
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"content\":\"should not stream\\n\",\"type\":\"markdown\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"content\":\"should not stream\\n\",\"type\":\"markdown\"}"
             }
           }]
         }
@@ -2289,7 +2289,7 @@ test("chat agent does not stream send_chat before type is known", async () => {
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -2305,7 +2305,7 @@ test("chat agent does not stream send_chat before type is known", async () => {
   assert.deepEqual(sentLines, ["markdown:should not stream\n"]);
 });
 
-test("chat agent sends final newline send_chat content into one tool message", async () => {
+test("chat agent sends final newline Chat content into one tool message", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -2321,8 +2321,8 @@ test("chat agent sends final newline send_chat content into one tool message", a
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat",
-          arguments: "{\"content\":\"one\\n"
+          name: "Chat",
+          arguments: "{\"action\":\"send\",\"content\":\"one\\n"
         }
       });
       await handlers?.onToolCallDelta?.({
@@ -2339,8 +2339,8 @@ test("chat agent sends final newline send_chat content into one tool message", a
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"content\":\"one\\ntwo\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"content\":\"one\\ntwo\"}"
             }
           }]
         }
@@ -2357,7 +2357,7 @@ test("chat agent sends final newline send_chat content into one tool message", a
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return {
@@ -2391,8 +2391,8 @@ test("chat agent can disable LLM streaming from config", async () => {
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"type\":\"message\",\"content\":\"one\\ntwo\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"one\\ntwo\"}"
             }
           }]
         }
@@ -2413,7 +2413,7 @@ test("chat agent can disable LLM streaming from config", async () => {
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -2478,7 +2478,7 @@ test("chat agent emits llm lifecycle logs for streaming and non-streaming calls"
   assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
 });
 
-test("chat agent continues after send_chat until the next response has no tool calls", async () => {
+test("chat agent continues after Chat until the next response has no tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -2493,8 +2493,8 @@ test("chat agent continues after send_chat until the next response has no tool c
               id: `tool_view_${requests.length}`,
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             }]
           }
@@ -2509,8 +2509,8 @@ test("chat agent continues after send_chat until the next response has no tool c
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_chat",
-                arguments: "{\"type\":\"message\",\"content\":\"final\"}"
+                name: "Chat",
+                arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"final\"}"
               }
             }]
           }
@@ -2535,13 +2535,13 @@ test("chat agent continues after send_chat until the next response has no tool c
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
-          { name: "send_chat", description: "send", inputSchema: { type: "object" } }
+          { name: "Chat", description: "view", inputSchema: { type: "object" } },
+          { name: "Chat", description: "send", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
-        if (call.toolName === "send_chat") sent.push(String(call.input.content));
-        return { callId: call.id, ok: true, output: call.toolName === "send_chat" ? "sent" : "history" };
+        if (call.toolName === "Chat" && call.input.action === "send") sent.push(String(call.input.content));
+        return { callId: call.id, ok: true, output: call.input.action === "send" ? "sent" : "history" };
       }
     }]
   });
@@ -2565,8 +2565,8 @@ test("chat agent uses first-call and follow-up extra params", async () => {
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             }]
           }
@@ -2589,7 +2589,7 @@ test("chat agent uses first-call and follow-up extra params", async () => {
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history" };
@@ -2609,7 +2609,7 @@ test("chat agent skips fake append tool requests on first llm round", async () =
   const core = createChatAgent({
     config: loadConfig({
       LLM_MODEL: "test-model",
-      LLM_EXTRA_PARAMS: "{\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"send_chat\"}}}",
+      LLM_EXTRA_PARAMS: "{\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"Chat\"}}}",
       LLM_FOLLOWUP_EXTRA_PARAMS: "{\"tool_choice\":\"auto\"}"
     }),
     llm: {
@@ -2648,7 +2648,7 @@ test("chat agent skips fake append tool requests on first llm round", async () =
         role: "tool_request",
         enabled: true,
         content: "",
-        toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }],
+        toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }],
         order: 1
       }]
     }),
@@ -2656,12 +2656,12 @@ test("chat agent skips fake append tool requests on first llm round", async () =
       id: "test-tools",
       listTools() {
         return [
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+          { name: "Chat", description: "view", inputSchema: { type: "object" } },
           { name: "wardrobe", description: "mirror", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
-        return { callId: call.id, ok: true, output: call.toolName === "check_chat" ? "history" : "outfit" };
+        return { callId: call.id, ok: true, output: call.toolName === "Chat" ? "history" : "outfit" };
       }
     }]
   });
@@ -2670,8 +2670,8 @@ test("chat agent skips fake append tool requests on first llm round", async () =
 
   assert.equal(senderInputs.length, 2);
   assert.equal(senderInputs[0].round, 0);
-  assert.deepEqual(senderInputs[0].extraParams, { tool_choice: { type: "function", function: { name: "send_chat" } } });
-  assert.equal(senderInputs[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), false);
+  assert.deepEqual(senderInputs[0].extraParams, { tool_choice: { type: "function", function: { name: "Chat" } } });
+  assert.equal(senderInputs[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat"), false);
   assert.equal(senderInputs[1].round, 1);
   assert.deepEqual(senderInputs[1].extraParams, { tool_choice: "auto" });
   assert.equal(senderInputs[1].messages.at(-1)?.content, "outfit");
@@ -2723,7 +2723,7 @@ test("chat agent does not retry non-transient llm failures", async () => {
   assert.equal(attempts, 1);
 });
 
-test("chat agent keeps an active transcript and appends fake check_chat on the next heartbeat", async () => {
+test("chat agent keeps an active transcript and appends fake Chat on the next heartbeat", async () => {
   const requests: LLMChatInput[] = [];
   let appendCheckCount = 0;
   let appendContextCalls = 0;
@@ -2756,12 +2756,12 @@ test("chat agent keeps an active transcript and appends fake check_chat on the n
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "fake reason", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "fake reason", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         appendCheckCount += 1;
@@ -2774,9 +2774,9 @@ test("chat agent keeps an active transcript and appends fake check_chat on the n
   await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "check_chat"), false);
+  assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat"), false);
   assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
-  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "check_chat");
+  assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "Chat");
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "fake reason");
   assert.equal(requests[1].messages.at(-1)?.content, "recent");
   assert.equal(appendContextCalls, 1);
@@ -2800,7 +2800,7 @@ test("chat agent clears session before the next request when cached input cost e
             toolCalls: [{
               id: "tool_check",
               type: "function",
-              function: { name: "check_chat", arguments: "{}" }
+              function: { name: "Chat", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           usage: { inputTokens: 4000, totalTokens: 4000 }
@@ -2854,7 +2854,7 @@ test("chat agent clears session before the next request when cached input cost e
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         if (call.input.__preview === true) {
@@ -2870,23 +2870,23 @@ test("chat agent clears session before the next request when cached input cost e
 
   await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(events, ["completed"]);
-  assert.deepEqual(normalCheckCalls, [{}]);
+  assert.deepEqual(normalCheckCalls, [{ action: "poll" }]);
   assert.deepEqual(previewCalls, []);
 
   await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(events, ["completed", "completed"]);
   assert.deepEqual(previewCalls, [
-    { __preview: true, __scope: "today" },
-    { __preview: true, __scope: "today" }
+    { action: "poll", __preview: true, __scope: "today" },
+    { action: "poll", __preview: true, __scope: "today" }
   ]);
 
   await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(events, ["completed", "completed", "cleared:token_pressure", "completed"]);
   assert.deepEqual(previewCalls, [
-    { __preview: true, __scope: "today" },
-    { __preview: true, __scope: "today" },
-    { __preview: true, __scope: "today" }
+    { action: "poll", __preview: true, __scope: "today" },
+    { action: "poll", __preview: true, __scope: "today" },
+    { action: "poll", __preview: true, __scope: "today" }
   ]);
   assert.equal(requests.length, 4);
   assert.equal(requests[3].messages.some((message) => message.content === "final 2"), false);
@@ -2944,7 +2944,7 @@ test("chat agent restores token pressure baseline from persisted session snapsho
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call: ToolCall) {
         if (call.input.__preview === true) previewCalls.push(call.input);
@@ -2966,7 +2966,7 @@ test("chat agent restores token pressure baseline from persisted session snapsho
   const restartedCore = createChatAgent(baseDeps);
   await runPreparedChatEvent(restartedCore, textEvent());
 
-  assert.deepEqual(previewCalls, [{ __preview: true, __scope: "today" }]);
+  assert.deepEqual(previewCalls, [{ action: "poll", __preview: true, __scope: "today" }]);
   assert.deepEqual(events, ["cleared:token_pressure"]);
   assert.equal(requests.length, 2);
   assert.equal(requests[1].messages.some((message) => message.content === "final 1"), false);
@@ -3011,14 +3011,14 @@ test("chat agent uses fixed prefix check chat preview scope for token pressure b
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }]
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
     }),
     tools: [{
       id: "test-tools",
       listTools() {
         return [
           { name: "bookcase", description: "bookcase", inputSchema: { type: "object" } },
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } }
+          { name: "Chat", description: "view", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -3041,7 +3041,7 @@ test("chat agent uses fixed prefix check chat preview scope for token pressure b
   await runPreparedChatEvent(core, textEvent());
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(previewCalls.at(0), { __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
+  assert.deepEqual(previewCalls.at(0), { action: "poll", __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
 });
 
 test("chat agent token pressure comparison uses model-specific prices", async () => {
@@ -3091,7 +3091,7 @@ test("chat agent token pressure comparison uses model-specific prices", async ()
       tools: [{
         id: "messaging-test",
         listTools() {
-          return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+          return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
         },
         async execute(call) {
           return { callId: call.id, ok: true, output: "abcdef" };
@@ -3142,7 +3142,7 @@ test("chat agent clears only when static prompt fingerprint changes", async () =
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         return { callId: call.id, ok: true, output: "history" };
@@ -3259,8 +3259,8 @@ test("chat agent stops after three consecutive identical tool calls", async () =
             id: `tool_view_${requests.length}`,
             type: "function",
             function: {
-              name: "check_chat",
-              arguments: "{}"
+              name: "Chat",
+              arguments: "{\"action\":\"poll\"}"
             }
           }]
         }
@@ -3277,7 +3277,7 @@ test("chat agent stops after three consecutive identical tool calls", async () =
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "check_chat", description: "view", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         calls.push(call.id);
@@ -3288,7 +3288,7 @@ test("chat agent stops after three consecutive identical tool calls", async () =
 
   await runPreparedChatEvent(core, textEvent());
   assert.equal(requests.length, 3);
-  assert.deepEqual(calls.filter((id) => id !== "append_append_check_chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
+  assert.deepEqual(calls.filter((id) => id !== "append_append_Chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
 });
 
 test("chat agent falls back after max llm requests when tool calls alternate", async () => {
@@ -3306,7 +3306,7 @@ test("chat agent falls back after max llm requests when tool calls alternate", a
             id: `tool_${requests.length}`,
             type: "function",
             function: {
-              name: useSearch ? "search_messages" : "check_chat",
+              name: useSearch ? "Chat" : "Chat",
               arguments: useSearch ? "{\"content\":\"loop\"}" : "{}"
             }
           }]
@@ -3325,8 +3325,8 @@ test("chat agent falls back after max llm requests when tool calls alternate", a
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
-          { name: "search_messages", description: "search", inputSchema: { type: "object" } }
+          { name: "Chat", description: "view", inputSchema: { type: "object" } },
+          { name: "Chat", description: "search", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -3341,7 +3341,7 @@ test("chat agent falls back after max llm requests when tool calls alternate", a
   assert.equal(calls.length, 10);
 });
 
-test("chat agent stops after three consecutive identical send_chat calls", async () => {
+test("chat agent stops after three consecutive identical Chat calls", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -3355,8 +3355,8 @@ test("chat agent stops after three consecutive identical send_chat calls", async
             id: `tool_send_${requests.length}`,
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"type\":\"message\",\"content\":\"same\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"same\"}"
             }
           }]
         }
@@ -3373,7 +3373,7 @@ test("chat agent stops after three consecutive identical send_chat calls", async
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         sent.push(`${call.id}:${String(call.input.content)}`);
@@ -3408,8 +3408,8 @@ test("chat agent stops after the generic total tool call limit", async () => {
             id: `tool_send_${requests.length}`,
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: `{"type":"message","content":"${content}"}`
+              name: "Chat",
+              arguments: `{"action":"send","type":"message","content":"${content}"}`
             }
           }]
         }
@@ -3427,7 +3427,7 @@ test("chat agent stops after the generic total tool call limit", async () => {
     tools: [{
       id: "messaging-test",
       listTools() {
-        return [{ name: "send_chat", description: "send", inputSchema: { type: "object" } }];
+        return [{ name: "Chat", description: "send", inputSchema: { type: "object" } }];
       },
       async execute(call) {
         sent.push(`${call.id}:${String(call.input.content)}`);
@@ -3449,7 +3449,7 @@ test("chat agent stops after the generic total tool call limit", async () => {
   assert.equal(sent.at(-1), "tool_send_20:even");
 });
 
-test("chat agent executes all exposed tools when send_chat appears in the same round", async () => {
+test("chat agent executes all exposed tools when Chat appears in the same round", async () => {
   const calls: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -3465,16 +3465,16 @@ test("chat agent executes all exposed tools when send_chat appears in the same r
               id: "tool_view",
               type: "function",
               function: {
-                name: "check_chat",
-                arguments: "{}"
+                name: "Chat",
+                arguments: "{\"action\":\"poll\"}"
               }
             },
             {
               id: "tool_send",
               type: "function",
               function: {
-                name: "send_chat",
-                arguments: "{\"type\":\"message\",\"content\":\"done\"}"
+                name: "Chat",
+                arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"done\"}"
               }
             }
           ]
@@ -3493,8 +3493,8 @@ test("chat agent executes all exposed tools when send_chat appears in the same r
       id: "messaging-test",
       listTools() {
         return [
-          { name: "check_chat", description: "view", inputSchema: { type: "object" } },
-          { name: "send_chat", description: "send", inputSchema: { type: "object" } }
+          { name: "Chat", description: "view", inputSchema: { type: "object" } },
+          { name: "Chat", description: "send", inputSchema: { type: "object" } }
         ];
       },
       async execute(call) {
@@ -3505,10 +3505,10 @@ test("chat agent executes all exposed tools when send_chat appears in the same r
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(calls, ["check_chat", "send_chat"]);
+  assert.deepEqual(calls, ["Chat", "Chat"]);
 });
 
-test("chat agent does not stream send_chat when non-message type is explicit", async () => {
+test("chat agent does not stream Chat when non-message type is explicit", async () => {
   const sentLines: string[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -3523,8 +3523,8 @@ test("chat agent does not stream send_chat when non-message type is explicit", a
         id: "tool_send",
         type: "function",
         function: {
-          name: "send_chat",
-          arguments: "{\"type\":\"markdown\",\"content\":\"should not send\\n"
+          name: "Chat",
+          arguments: "{\"action\":\"send\",\"type\":\"markdown\",\"content\":\"should not send\\n"
         }
       });
       assert.deepEqual(sentLines, []);
@@ -3542,8 +3542,8 @@ test("chat agent does not stream send_chat when non-message type is explicit", a
             id: "tool_send",
             type: "function",
             function: {
-              name: "send_chat",
-              arguments: "{\"type\":\"markdown\",\"content\":\"should not send\\n\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"type\":\"markdown\",\"content\":\"should not send\\n\"}"
             }
           }]
         }
@@ -3561,7 +3561,7 @@ test("chat agent does not stream send_chat when non-message type is explicit", a
       id: "messaging-test",
       listTools() {
         return [{
-          name: "send_chat",
+          name: "Chat",
           description: "send",
           inputSchema: { type: "object" }
         }];
@@ -3604,7 +3604,7 @@ function chatTestTools(onCall?: (call: ToolCall) => void) {
     id: "messaging",
     listTools() {
       return [
-        { name: "check_chat", description: "view", inputSchema: { type: "object" } },
+        { name: "Chat", description: "view", inputSchema: { type: "object" } },
         { name: "finish_and_wait", description: "wait", inputSchema: { type: "object" } },
         { name: "later_tool", description: "later", inputSchema: { type: "object" } }
       ];
@@ -3618,7 +3618,7 @@ function chatTestTools(onCall?: (call: ToolCall) => void) {
           meta: { yieldReturn: true }
         };
       }
-      if (call.toolName === "check_chat") {
+      if (call.toolName === "Chat") {
         return {
           callId: call.id,
           ok: true,

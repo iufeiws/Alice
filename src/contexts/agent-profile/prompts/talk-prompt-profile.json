@@ -56,19 +56,19 @@
       "title": "New Layer",
       "role": "tool_request",
       "enabled": true,
-      "content": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用check_chat这个工具. 想要回复的话我会用send_chat回复{{user}})",
+      "content": "({{user}}不在图书馆, 我需要用聊天工具来和他说话)\n(让我看看怎么使用tool call来查看消息……是用Chat action=poll这个工具. 想要回复的话我会用Chat action=send回复{{user}})",
       "order": 100,
       "toolCalls": [
         {
-          "toolName": "check_chat",
-          "toolArguments": "{\"scope\": \"today\"}"
+          "toolName": "Chat",
+          "toolArguments": "{\"action\": \"poll\", \"scope\": \"today\"}"
         },
         {
           "toolName": "calendar",
           "toolArguments": "{\"action\": \"list\"}"
         }
       ],
-      "thinking": "<c>查看消息……是用check_chat这个tool<c/>\n<c>此外再看一下日程<c/>"
+      "thinking": "<c>查看消息……是用Chat action=poll这个tool<c/>\n<c>此外再看一下日程<c/>"
     },
     {
       "id": "layer_1780766095981",

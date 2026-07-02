@@ -62,11 +62,11 @@ export function createPromptToolPreviewRuntime(input: {
   ): Promise<LLMChatInput["messages"]> {
     const context = makePreviewPromptContext(profile, event);
     const runPreviewTool = async (_layer: unknown, call: any) => {
-      if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat") {
+      if (call.toolName === "Chat" && call.input?.action === "send") {
         return {
           callId: call.id,
           ok: false,
-          error: "send_chat cannot run from request preview"
+          error: "Chat send cannot run from request preview"
         };
       }
       const plugin = input.toolPlugins.find((candidate) => candidate.listTools().some((tool: ToolDefinition) => tool.name === call.toolName));

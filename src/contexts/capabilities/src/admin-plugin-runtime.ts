@@ -265,7 +265,7 @@ function messagingPluginEntry(): AdminPluginRegistryEntry {
         kind: "tool",
         status: "enabled",
         health: "healthy",
-        description: "Shared check_chat and send_chat tool behavior.",
+        description: "Shared Chat poll/send tool behavior.",
         configurable: true,
         switchable: false,
         configSource: messagingConfigPath(context),
@@ -288,13 +288,13 @@ function messagingPluginEntry(): AdminPluginRegistryEntry {
         { key: "feishu", label: "Feishu" }
       ],
       fields: [
-        { key: "splitMultilineSendChat", label: "Split Multiline Send Chat", type: "switch", group: "general", description: "Split send_chat message content on newlines. Voice, markdown, image, and Feishu core markdown sends are never split." },
-        { key: "limitConsecutiveSends", label: "Limit Consecutive Sends", type: "switch", group: "general", description: "Block send_chat after 10 recent outbound messages until the user replies." },
+        { key: "splitMultilineSendChat", label: "Split Multiline Chat Send", type: "switch", group: "general", description: "Split Chat action=send message content on newlines. Voice, markdown, image, and Feishu core markdown sends are never split." },
+        { key: "limitConsecutiveSends", label: "Limit Consecutive Sends", type: "switch", group: "general", description: "Block Chat action=send after 10 recent outbound messages until the user replies." },
         { key: "feishuTypingEmojiEnabled", label: "Typing Emoji Indicator", type: "switch", group: "feishu", description: "Use the Feishu reaction-based typing indicator while Alice is preparing a reply." }
       ]
     },
     routePreview: [
-      "send_chat tool call",
+      "Chat action=send tool call",
       "messaging plugin config",
       "conversation store",
       "channel send"

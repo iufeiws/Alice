@@ -9,7 +9,7 @@ test("tool output target resolver keeps chat requester target", () => {
 
   const target = resolver({
     id: "call_1",
-    toolName: "send_chat",
+    toolName: "Chat",
     input: {},
     requester: { plugin: "feishu", accountId: "account-1", channelId: "chat-1", userId: "user-1" },
     externalSession: { scope: "dm", sessionId: "session-1" }

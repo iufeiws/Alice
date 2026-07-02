@@ -13,7 +13,7 @@ import type {
   InsertOutboundMessageInput,
   StoredConversationMessage
 } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import { checkChatTool, messagingSystemPromptMessages, messagingToolText, sendChatTool } from "../profile.js";
+import { chatTool, messagingSystemPromptMessages, messagingToolText } from "../profile.js";
 
 const fsp = await import("node:fs/promises");
 const fs = await import("node:fs");
@@ -138,12 +138,12 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     noteLLMSessionCompleted() {
     },
     listTools() {
-      return [checkChatTool, sendChatTool];
+      return [chatTool];
     },
     async execute(call) {
-      if (call.toolName === "check_chat" || call.toolName === "check_feishu" || call.toolName === "check_wechat" || call.toolName === "view_messages") return viewMessages(call);
-      if (call.toolName === "send_chat" || call.toolName === "send_feishu" || call.toolName === "send_wechat" || call.toolName === "send_message") return sendMessage(call);
-      if (call.toolName === "search_messages") return searchMessages(call);
+      if (call.toolName === "Chat" && call.input.action === "poll") return viewMessages(call);
+      if (call.toolName === "Chat" && call.input.action === "send") return sendMessage(call);
+      if (call.toolName === "Chat") return toolError(call, messagingToolText.unsupportedAction);
       return { callId: call.id, ok: false, error: messagingToolText.unknownTool(call.toolName) };
     }
   };

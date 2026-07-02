@@ -346,7 +346,7 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
         order: 10,
         thinking: "check first",
         toolCalls: [{
-          toolName: "check_chat",
+          toolName: "Chat",
           toolCallId: "call_check",
           toolArguments: "{\"target\":\"dm\"}"
         }]
@@ -367,7 +367,7 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
         order: 10,
         thinking: "check first",
         toolCalls: [{
-          toolName: "check_chat",
+          toolName: "Chat",
           toolCallId: "call_check",
           toolArguments: "{\"target\":\"dm\"}"
         }]

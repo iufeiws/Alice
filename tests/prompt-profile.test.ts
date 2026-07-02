@@ -88,7 +88,7 @@ test("prompt profile persists append layers", () => {
   const saved = store.save({
     ...initial,
     appendLayers: [
-      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 1 }
+      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }
     ]
   });
 
@@ -183,9 +183,9 @@ test("prompt messages pair tool request layers with actual tool results", async 
         content: "",
         thinking: "thinking for {{user}}",
         toolCalls: [{
-          toolName: "check_chat",
+          toolName: "Chat",
           toolCallId: "call_prompt_1",
-          toolArguments: "{}"
+          toolArguments: "{\"action\":\"poll\"}"
         }],
         order: 1
       }
@@ -197,8 +197,8 @@ test("prompt messages pair tool request layers with actual tool results", async 
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
   }, async (layer, call) => {
     assert.equal(layer.id, "request");
-    assert.equal(call.toolName, "check_chat");
-    assert.deepEqual(call.input, {});
+    assert.equal(call.toolName, "Chat");
+    assert.deepEqual(call.input, { action: "poll" });
     return {
       callId: call.id,
       ok: true,
@@ -210,10 +210,10 @@ test("prompt messages pair tool request layers with actual tool results", async 
   assert.equal(messages[0].content, "");
   assert.equal(messages[0].reasoningContent, "thinking for 小王");
   assert.equal(messages[0].toolCalls?.[0].id, "call_prompt_1");
-  assert.equal(messages[0].toolCalls?.[0].function.name, "check_chat");
+  assert.equal(messages[0].toolCalls?.[0].function.name, "Chat");
   assert.equal(messages[1].role, "tool");
   assert.equal(messages[1].toolCallId, "call_prompt_1");
-  assert.equal(messages[1].name, "check_chat");
+  assert.equal(messages[1].name, "Chat");
   assert.match(messageContentText(messages[1].content), /小王:hello/);
 });
 
@@ -227,8 +227,8 @@ test("prompt messages pair multiple tool calls with results", async () => {
       enabled: true,
       content: "",
       toolCalls: [
-        { toolName: "check_chat", toolCallId: "call_prompt_1", toolArguments: "{}" },
-        { toolName: "search_messages", toolCallId: "call_prompt_2", toolArguments: "{\"query\":\"hi\"}" }
+        { toolName: "Chat", toolCallId: "call_prompt_1", toolArguments: "{\"action\":\"poll\"}" },
+        { toolName: "Chat", toolCallId: "call_prompt_2", toolArguments: "{\"query\":\"hi\"}" }
       ],
       order: 1
     }]
@@ -243,7 +243,7 @@ test("prompt messages pair multiple tool calls with results", async () => {
     return { callId: call.id, ok: true, output: call.toolName };
   });
 
-  assert.deepEqual(calls, ["call_prompt_1:check_chat", "call_prompt_2:search_messages"]);
+  assert.deepEqual(calls, ["call_prompt_1:Chat", "call_prompt_2:Chat"]);
   assert.deepEqual(messages[0].toolCalls?.map((call) => call.id), ["call_prompt_1", "call_prompt_2"]);
   assert.deepEqual(messages.slice(1).map((message) => message.toolCallId), ["call_prompt_1", "call_prompt_2"]);
 });
@@ -262,9 +262,9 @@ test("append prompt messages pair tool request layers with actual tool results",
         content: "",
         thinking: "append thinking for {{user}}",
         toolCalls: [{
-          toolName: "check_chat",
+          toolName: "Chat",
           toolCallId: "call_append_1",
-          toolArguments: "{}"
+          toolArguments: "{\"action\":\"poll\"}"
         }],
         order: 1
       }
@@ -276,7 +276,7 @@ test("append prompt messages pair tool request layers with actual tool results",
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"))
   }, async (layer, call) => {
     assert.equal(layer.id, "append_request");
-    assert.equal(call.toolName, "check_chat");
+    assert.equal(call.toolName, "Chat");
     return {
       callId: call.id,
       ok: true,

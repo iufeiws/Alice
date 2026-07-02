@@ -6,7 +6,7 @@ import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent
 import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
-import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
+import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, parseAgentLoopToolArguments } from "./agent-loop-tool-executor.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { checkChatCursorFromResult, fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
@@ -17,7 +17,7 @@ import {
   type AgentFunctionCallToolExecution
 } from "../runtime/agent-loop-runtime.js";
 
-const sendChatToolName = "send_chat";
+const chatToolName = "Chat";
 const maxLLMRequestsPerMinute = 10;
 
 type ChatAgentTokenPressurePreviewBaseline = {
@@ -178,6 +178,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     },
     async executeTool(call, { round, result }): Promise<AgentFunctionCallToolExecution> {
       const textVariables = input.buildTextVariables(input.event);
+      const toolInput = parseAgentLoopToolArguments(call.function.arguments);
       const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
         variables: textVariables,
         agentLoopRunSeq: input.agentLoopRunSeq,
@@ -197,6 +198,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       input.setLastCompletedToolName(call.function.name);
       const execution = resolveChatLoopToolControl({
         call,
+        toolInput,
         toolResult,
         toolMessage,
         session,
@@ -234,13 +236,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
 
   async function sendAssistantContentAsChat(round: number, content: LLMChatInput["messages"][number]["content"]): Promise<boolean> {
     const parts = parseAssistantChatBlocks(messageContentText(content));
-    if (parts.length === 0 || !toolExecutor.toolMap.has(sendChatToolName)) return false;
+    if (parts.length === 0 || !toolExecutor.toolMap.has(chatToolName)) return false;
     let sent = false;
     for (const [index, part] of parts.entries()) {
       const result = await toolExecutor.executeToolCall({
         id: `assistant_content_send_${round}_${index + 1}`,
-        toolName: sendChatToolName,
-        input: { type: part.type, alice: part.alice, content: part.content }
+        toolName: chatToolName,
+        input: { action: "send", type: part.type, alice: part.alice, content: part.content }
       });
       sent = sent || result.ok;
     }
@@ -378,10 +380,6 @@ async function failIndicatorSession(
 
 function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
   return formatAgentLoopToolResultForLLM(result, variables);
-}
-
-function isSendChatToolName(toolName: string | undefined): boolean {
-  return toolName === sendChatToolName || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message";
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {

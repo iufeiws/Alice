@@ -116,7 +116,7 @@ test("openai stream client processes a final SSE frame without trailing newline"
         [
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"think "}}]}',
           'data: {"id":"chat_1","model":"test","choices":[{"delta":{"reasoning_content":"more"}}]}',
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"check_chat","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Chat","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
         ].join("\n\n")
       ));
       controller.close();
@@ -137,12 +137,12 @@ test("openai stream client processes a final SSE frame without trailing newline"
       tools: [{
         type: "function",
         function: {
-          name: "check_chat",
+          name: "Chat",
           parameters: { type: "object" }
         }
       }]
     });
-    assert.equal(result?.message.toolCalls?.[0].function.name, "check_chat");
+    assert.equal(result?.message.toolCalls?.[0].function.name, "Chat");
     assert.equal(result?.message.toolCalls?.[0].function.arguments, "{}");
     assert.equal(result?.message.reasoningContent, "think more");
     assert.equal(requestBody.messages[0].reasoning_content, undefined);
@@ -313,8 +313,8 @@ test("openai-compatible client sends empty reasoning content for tool request me
             id: "call_missing",
             type: "function",
             function: {
-              name: "check_chat",
-              arguments: "{}"
+              name: "Chat",
+              arguments: "{\"action\":\"poll\"}"
             }
           }]
         },
@@ -326,8 +326,8 @@ test("openai-compatible client sends empty reasoning content for tool request me
             id: "call_original",
             type: "function",
             function: {
-              name: "search_messages",
-              arguments: "{\"content\":\"x\"}"
+              name: "Chat",
+              arguments: "{\"action\":\"send\",\"content\":\"x\"}"
             }
           }]
         }
@@ -367,7 +367,7 @@ test("LLM request message sanitization removes empty assistant tool calls before
         toolCalls: [{
           id: "call_1",
           type: "function",
-          function: { name: "check_chat", arguments: "{}" }
+          function: { name: "Chat", arguments: "{\"action\":\"poll\"}" }
         }]
       }
     ],
@@ -411,7 +411,7 @@ test("LLM request message sanitization merges consecutive assistant content", as
         toolCalls: [{
           id: "call_1",
           type: "function",
-          function: { name: "check_chat", arguments: "{}" }
+          function: { name: "Chat", arguments: "{\"action\":\"poll\"}" }
         }]
       },
       { role: "assistant", content: "four" }
@@ -620,8 +620,8 @@ test("openai stream client removes parenthesized response content across chunks"
     start(controller) {
       controller.enqueue(new TextEncoder().encode(
         [
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"喂（电话那头"}}]}',
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"沉默了一会儿，只有细微的呼吸声）我在。"}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"action":"send","content":"喂（电话那头"}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"action":"send","content":"沉默了一会儿，只有细微的呼吸声）我在。"}}]}',
           "data: [DONE]"
         ].join("\n\n")
       ));
@@ -688,7 +688,7 @@ test("openai stream client preserves include_usage final usage chunk", async () 
     start(controller) {
       controller.enqueue(new TextEncoder().encode(
         [
-          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"content":"answer"}}],"usage":null}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"action":"send","content":"answer"}}],"usage":null}',
           'data: {"id":"chat_1","model":"test","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"prompt_cache_hit_tokens":6,"prompt_cache_miss_tokens":4}}',
           "data: [DONE]"
         ].join("\n\n")
@@ -1053,7 +1053,7 @@ test("LLM log runtime binds responses to the request session instead of current 
     messages: [{ role: "user", content: "hello" }],
     model: "chat-model",
     presetName: "chat-flash",
-    extraParams: { tool_choice: { type: "function", function: { name: "send_chat" } } }
+    extraParams: { tool_choice: { type: "function", function: { name: "Chat" } } }
   }, "chat");
   activeSession = { id: 200, requestIds: [99] };
 
@@ -1187,7 +1187,7 @@ test("LLM requests runtime writes non-main requests to subagent sessions", async
           toolCalls: [{
             id: "call_1",
             type: "function",
-            function: { name: "submit_audio_context", arguments: "{}" }
+            function: { name: "submit_audio_context", arguments: "{\"action\":\"poll\"}" }
           }]
         },
         finishReason: "tool_calls"

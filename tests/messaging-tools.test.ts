@@ -23,7 +23,7 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
-test("messaging tools expose merged check_chat and send_chat tools", async () => {
+test("messaging tools expose one Chat tool with poll and send actions", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-tools"), "alice.sqlite"));
   const tools = createMessagingTools({
     store,
@@ -32,21 +32,21 @@ test("messaging tools expose merged check_chat and send_chat tools", async () =>
   });
 
   const names = tools.listTools().map((tool) => tool.name);
-  assert.ok(names.includes("check_chat"));
+  assert.deepEqual(names, ["Chat"]);
+  assert.ok(!names.includes("check_chat"));
   assert.ok(!names.includes("check_feishu"));
   assert.ok(!names.includes("check_wechat"));
-  assert.ok(names.includes("send_chat"));
+  assert.ok(!names.includes("send_chat"));
   assert.ok(!names.includes("send_feishu"));
   assert.ok(!names.includes("send_wechat"));
   assert.ok(!names.includes("finish_and_wait"));
   assert.ok(!names.includes("search_messages"));
-  const checkChat = tools.listTools().find((tool) => tool.name === "check_chat");
-  const properties = checkChat?.inputSchema.properties as Record<string, unknown>;
-  assert.deepEqual(properties, {});
-  assert.equal(checkChat?.inputSchema.additionalProperties, false);
-  const sendChat = tools.listTools().find((tool) => tool.name === "send_chat");
-  assert.deepEqual((sendChat?.inputSchema.properties as Record<string, unknown>).alice, { type: "string", enum: ["core", "shell"] });
-  assert.deepEqual(sendChat?.inputSchema.required, ["type", "content"]);
+  const chat = tools.listTools()[0];
+  const properties = chat.inputSchema.properties as Record<string, unknown>;
+  assert.deepEqual(properties.action, { type: "string", enum: ["poll", "send"], default: "poll" });
+  assert.deepEqual(properties.alice, { type: "string", enum: ["core", "shell"] });
+  assert.deepEqual(chat.inputSchema.required, ["action"]);
+  assert.equal(chat.inputSchema.additionalProperties, false);
 });
 
 test("finish_and_wait is exposed by its own tool plugin", async () => {
@@ -102,8 +102,7 @@ test("check_chat range scope filters with from and to", async () => {
 
   const result = await tools.execute({
     id: "call_range",
-    toolName: "check_chat",
-    input: { scope: "range", from: "2026-05-24T01:00:00.000Z", to: "2026-05-24T02:00:00.000Z" }
+    toolName: "Chat", input: { action: "poll",  scope: "range", from: "2026-05-24T01:00:00.000Z", to: "2026-05-24T02:00:00.000Z" }
   });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<chat-log>\n\[2026-05-24 09:00:00\]\n\{\{user\}\}:inside range\n<\/chat-log>/);
@@ -157,7 +156,7 @@ test("check_chat defaults to unread new messages", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const recent = await tools.execute({ id: "call_1", toolName: "check_chat", input: {} });
+  const recent = await tools.execute({ id: "call_1", toolName: "Chat", input: { action: "poll" } });
   assert.equal(recent.ok, true);
   assert.match(String(recent.output), /hello today/);
   assert.match(String(recent.output), /hello from old session/);
@@ -188,7 +187,7 @@ test("check_chat defaults to unread new messages", async () => {
     createdAt: new Date(baseTime + 7 * 60 * 1000).toISOString()
   });
 
-  const recentAgain = await tools.execute({ id: "call_2", toolName: "check_chat", input: {} });
+  const recentAgain = await tools.execute({ id: "call_2", toolName: "Chat", input: { action: "poll" } });
   assert.equal(recentAgain.ok, true);
   assert.doesNotMatch(String(recentAgain.output), /hello today/);
   assert.match(String(recentAgain.output), /after today check/);
@@ -229,7 +228,7 @@ test("check_chat formats multiline text messages with speaker on its own line", 
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_multiline_format", toolName: "check_chat", input: { scope: "today" } });
+  const result = await tools.execute({ id: "call_multiline_format", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /\{\{user\}\}:\nuser first\nuser second/);
   assert.match(String(result.output), /Alice:\nalice first\nalice second/);
@@ -259,14 +258,14 @@ test("check_chat default scope ignores active main llm session generation", asyn
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const first = await tools.execute({ id: "call_generation_1_first", toolName: "check_chat", input: {} });
+  const first = await tools.execute({ id: "call_generation_1_first", toolName: "Chat", input: { action: "poll" } });
   assert.match(String(first.output), /first generation history/);
 
-  const second = await tools.execute({ id: "call_generation_1_second", toolName: "check_chat", input: {} });
+  const second = await tools.execute({ id: "call_generation_1_second", toolName: "Chat", input: { action: "poll" } });
   assert.doesNotMatch(String(second.output), /first generation history/);
   assert.match(String(second.output), /nothing new/);
 
-  const afterSwitch = await tools.execute({ id: "call_generation_2_first", toolName: "check_chat", input: {} });
+  const afterSwitch = await tools.execute({ id: "call_generation_2_first", toolName: "Chat", input: { action: "poll" } });
   assert.doesNotMatch(String(afterSwitch.output), /first generation history/);
   assert.match(String(afterSwitch.output), /nothing new/);
 });
@@ -305,7 +304,7 @@ test("check_chat new starts at any unread message and marks outbound read", asyn
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_new_unread_any", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_new_unread_any", toolName: "Chat", input: { action: "poll" } });
 
   assert.match(String(result.output), /^<have-new-message\/>\n<chat-log>\n/);
   assert.match(String(result.output), /Alice:assistant sent/);
@@ -326,7 +325,7 @@ test("check_chat returns current time from configured timezone provider", async 
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_current_time", toolName: "check_chat", input: { scope: "new" } });
+  const result = await tools.execute({ id: "call_current_time", toolName: "Chat", input: { action: "poll",  scope: "new" } });
 
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<now local="2026-05-26T12:34:56\.789"\/>$/);
@@ -373,13 +372,13 @@ test("check_chat today starts ten messages before sleep cocoon pointer and today
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const today = await tools.execute({ id: "call_today", toolName: "check_chat", input: { scope: "today" } });
+  const today = await tools.execute({ id: "call_today", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.doesNotMatch(String(today.output), /after old today anchor/);
   assert.match(String(today.output), /pre sleep context 1/);
   assert.match(String(today.output), /pre sleep context 10/);
   assert.match(String(today.output), /after sleep cocoon/);
 
-  const todayOld = await tools.execute({ id: "call_todayold", toolName: "check_chat", input: { scope: "todayold" } });
+  const todayOld = await tools.execute({ id: "call_todayold", toolName: "Chat", input: { action: "poll",  scope: "todayold" } });
   assert.match(String(todayOld.output), /after old today anchor/);
   assert.match(String(todayOld.output), /after sleep cocoon/);
 
@@ -389,7 +388,7 @@ test("check_chat today starts ten messages before sleep cocoon pointer and today
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const todayWithoutSleepPointer = await toolsWithoutSleepPointer.execute({ id: "call_today_no_sleep", toolName: "check_chat", input: { scope: "today" } });
+  const todayWithoutSleepPointer = await toolsWithoutSleepPointer.execute({ id: "call_today_no_sleep", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.match(String(todayWithoutSleepPointer.output), /after old today anchor/);
   assert.match(String(todayWithoutSleepPointer.output), /after sleep cocoon/);
 });
@@ -416,7 +415,7 @@ test("check_chat today is not truncated by the recent message window", async () 
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const today = await tools.execute({ id: "call_today_full_range", toolName: "check_chat", input: { scope: "today" } });
+  const today = await tools.execute({ id: "call_today_full_range", toolName: "Chat", input: { action: "poll",  scope: "today" } });
 
   assert.match(String(today.output), /first after sleep should remain visible/);
   assert.match(String(today.output), /after sleep 519/);
@@ -452,8 +451,7 @@ test("check_chat from_prefix reads messages after injected cursor", async () => 
 
   const result = await tools.execute({
     id: "call_from_prefix",
-    toolName: "check_chat",
-    input: { scope: "from_prefix", __fromPrefixAfterMessageId: cursorMessageId }
+    toolName: "Chat", input: { action: "poll",  scope: "from_prefix", __fromPrefixAfterMessageId: cursorMessageId }
   });
 
   assert.equal(result.ok, true);
@@ -482,7 +480,7 @@ test("check_chat defaults to new across repeated calls", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const first = await tools.execute({ id: "call_1", toolName: "check_chat", input: {} });
+  const first = await tools.execute({ id: "call_1", toolName: "Chat", input: { action: "poll" } });
   assert.equal(first.ok, true);
   assert.match(String(first.output), /initial today/);
 
@@ -505,17 +503,17 @@ test("check_chat defaults to new across repeated calls", async () => {
     createdAt: "2026-05-26T12:02:00.000Z"
   });
 
-  const second = await tools.execute({ id: "call_2", toolName: "check_chat", input: {} });
+  const second = await tools.execute({ id: "call_2", toolName: "Chat", input: { action: "poll" } });
   assert.equal(second.ok, true);
   assert.doesNotMatch(String(second.output), /initial today/);
   assert.match(String(second.output), /after first default check/);
   assert.match(String(second.output), /wechat after first check/);
 
-  const third = await tools.execute({ id: "call_3", toolName: "check_chat", input: {} });
+  const third = await tools.execute({ id: "call_3", toolName: "Chat", input: { action: "poll" } });
   assert.equal(third.ok, true);
   assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
 
-  const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "check_chat", input: {} });
+  const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "Chat", input: { action: "poll" } });
   assert.equal(nextSessionFirst.ok, true);
   assert.doesNotMatch(String(nextSessionFirst.output), /initial today/);
   assert.match(String(nextSessionFirst.output), /nothing new/);
@@ -547,7 +545,7 @@ test("check_chat renders system prompts as system messages", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_system_prompt", toolName: "check_chat", input: { scope: "today" } });
+  const result = await tools.execute({ id: "call_system_prompt", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /\n-少女拍照中-\n/);
   assert.doesNotMatch(String(result.output), /-少女拍照中-\[发送中\]/);
@@ -593,7 +591,7 @@ test("check_chat simplifies outbound media records", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_media_records", toolName: "check_chat", input: { scope: "today" } });
+  const result = await tools.execute({ id: "call_media_records", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /Alice发送了一张图片/);
   assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
@@ -668,7 +666,7 @@ test("check_chat renders voicecalltranscript as an embedded transcript block", a
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "check_chat", input: { scope: "today" } });
+  const result = await tools.execute({ id: "call_voicecalltranscript", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<chat-log>\n<voice-call-transcript>\n\[2026-06-07 00:00:00\]\n-已接通-/);
   assert.match(String(result.output), /\{\{user\}\}:\n喂，爱丽丝，能听到吗？\n我刚到车站，想确认一下今晚的安排。\nAlice:\n听得到。\n今晚先去吃饭，然后回去把明天要用的东西收好。/);
@@ -698,7 +696,7 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const recent = await tools.execute({ id: "call_recent", toolName: "check_chat", input: { scope: "recent" } });
+  const recent = await tools.execute({ id: "call_recent", toolName: "Chat", input: { action: "poll",  scope: "recent" } });
   assert.equal(recent.ok, true);
   assert.doesNotMatch(String(recent.output), /msg 60\b/);
   assert.doesNotMatch(String(recent.output), /msg 510\b/);
@@ -729,8 +727,7 @@ test("check_chat preview does not mark messages read or advance cursor", async (
 
   const preview = await tools.execute({
     id: "call_preview",
-    toolName: "check_chat",
-    input: { __preview: true }
+    toolName: "Chat", input: { action: "poll",  __preview: true }
   });
   assert.equal(preview.ok, true);
   assert.match(String(preview.output), /preview should not consume/);
@@ -741,15 +738,14 @@ test("check_chat preview does not mark messages read or advance cursor", async (
   assert.equal(stored.coreProcessedAt ?? undefined, undefined);
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "session-1");
 
-  await tools.execute({ id: "call_first", toolName: "check_chat", input: {} });
+  await tools.execute({ id: "call_first", toolName: "Chat", input: { action: "poll" } });
   const recentPreview = await tools.execute({
     id: "call_recent_preview",
-    toolName: "check_chat",
-    input: { __preview: true, __scope: "recent" }
+    toolName: "Chat", input: { action: "poll",  __preview: true, __scope: "recent" }
   });
   assert.equal(recentPreview.ok, true);
   assert.match(String(recentPreview.output), /preview should not consume/);
-  const next = await tools.execute({ id: "call_next", toolName: "check_chat", input: {} });
+  const next = await tools.execute({ id: "call_next", toolName: "Chat", input: { action: "poll" } });
   assert.equal(next.ok, true);
   assert.doesNotMatch(String(next.output), /preview should not consume/);
 });
@@ -777,7 +773,7 @@ test("check_chat recent is independent of the 6am today anchor", async () => {
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "check_chat", input: { scope: "recent" } });
+  const beforeResult = await beforeSix.execute({ id: "call_before", toolName: "Chat", input: { action: "poll",  scope: "recent" } });
   assert.match(String(beforeResult.output), /prev evening/);
   assert.match(String(beforeResult.output), /today early/);
 
@@ -787,7 +783,7 @@ test("check_chat recent is independent of the 6am today anchor", async () => {
     outputRouter: { async send() {} },
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
-  const afterResult = await afterSix.execute({ id: "call_after", toolName: "check_chat", input: { scope: "recent" } });
+  const afterResult = await afterSix.execute({ id: "call_after", toolName: "Chat", input: { action: "poll",  scope: "recent" } });
   assert.match(String(afterResult.output), /prev evening/);
   assert.match(String(afterResult.output), /today early/);
 });
@@ -814,7 +810,7 @@ test("check_chat chat labels use absolute local time", async () => {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
-  const result = await tools.execute({ id: "call_time_label", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_time_label", toolName: "Chat", input: { action: "poll" } });
   assert.match(String(result.output), /\[2026-05-25 23:30:00\]\n\{\{user\}\}:late yesterday/);
   assert.doesNotMatch(String(result.output), /\[(?:today|yesterday) /);
 });
@@ -847,7 +843,7 @@ test("check_chat merges shell switch logs into chat context", async () => {
     }]
   });
 
-  const result = await tools.execute({ id: "call_shell_switch", toolName: "check_chat", input: {} });
+  const result = await tools.execute({ id: "call_shell_switch", toolName: "Chat", input: { action: "poll" } });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /\{\{user\}\}:hello\n-壳切换:切换为冷淡的同桌爱丽丝-/);
   assert.doesNotMatch(String(result.output), /制服|服装/);
@@ -881,15 +877,15 @@ test("check_chat new scope does not return shell logs without unread messages", 
     ]
   });
 
-  await tools.execute({ id: "call_recent", toolName: "check_chat", input: {} });
-  const result = await tools.execute({ id: "call_new", toolName: "check_chat", input: {} });
+  await tools.execute({ id: "call_recent", toolName: "Chat", input: { action: "poll" } });
+  const result = await tools.execute({ id: "call_new", toolName: "Chat", input: { action: "poll" } });
 
   assert.equal(result.ok, true);
   assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
   assert.doesNotMatch(String(result.output), /壳切换/);
 });
 
-test("search_messages uses persisted message FTS with default limits and context", async () => {
+test("store searchMessages keeps persisted message FTS available", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-search"), "alice.sqlite"));
   for (const [index, text] of ["before", "project alpha decision", "after"].entries()) {
     store.upsertInboundMessage({
@@ -903,19 +899,10 @@ test("search_messages uses persisted message FTS with default limits and context
     });
   }
 
-  const tools = createMessagingTools({
-    store,
-    outputRouter: { async send() {} },
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
-  const result = await tools.execute({
-    id: "call_search",
-    toolName: "search_messages",
-    input: { content: "project alpha" }
-  });
+  const hits = store.searchMessages({ plugin: "feishu", query: "project alpha", direction: "backward", limit: 3 });
 
-  assert.equal(result.ok, true);
-  assert.match(String(result.output), /project alpha decision/);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].contentText, "project alpha decision");
 });
 
 test("send_chat defaults to message and splits newline text into multiple sends", async () => {
@@ -944,11 +931,10 @@ test("send_chat defaults to message and splits newline text into multiple sends"
     getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
   });
 
-  await tools.execute({ id: "call_check_today", toolName: "check_chat", input: {} });
+  await tools.execute({ id: "call_check_today", toolName: "Chat", input: { action: "poll" } });
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_chat",
-    input: { content: "one\n\ntwo", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  content: "one\n\ntwo", alice: "shell" }
   });
 
   assert.equal(result.ok, true);
@@ -963,7 +949,7 @@ test("send_chat defaults to message and splits newline text into multiple sends"
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["shell", "shell"]);
 
-  const noNew = await tools.execute({ id: "call_check_new", toolName: "check_chat", input: {} });
+  const noNew = await tools.execute({ id: "call_check_new", toolName: "Chat", input: { action: "poll" } });
   assert.equal(noNew.ok, true);
   assert.match(String(noNew.output), /Alice\(shell\):one/);
   assert.match(String(noNew.output), /Alice\(shell\):two/);
@@ -988,8 +974,7 @@ test("send_chat can keep newline text in one send from messaging config", async 
 
   const result = await tools.execute({
     id: "call_send_no_split",
-    toolName: "send_chat",
-    input: { type: "message", content: "one\n\ntwo", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "one\n\ntwo", alice: "shell" }
   });
 
   assert.equal(result.ok, true);
@@ -1016,8 +1001,7 @@ test("send_chat sends feishu core message as markdown without storing render mar
 
   const result = await tools.execute({
     id: "call_send_core",
-    toolName: "send_chat",
-    input: { content: "core text\nsecond", alice: "core" }
+    toolName: "Chat", input: { action: "send",  content: "core text\nsecond", alice: "core" }
   });
 
   assert.equal(result.ok, true);
@@ -1054,12 +1038,11 @@ test("send_chat blocks when the user has not replied recently", async () => {
 
   const result = await tools.execute({
     id: "call_send_wait_user",
-    toolName: "send_chat",
-    input: { type: "message", content: "should wait" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "should wait" }
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.error, "send_chat blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。");
+  assert.equal(result.error, "Chat action=send blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。");
   assert.equal(sendCalls, 0);
   assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 20).filter((message) => message.direction === "outbound").length, 10);
 });
@@ -1089,8 +1072,7 @@ test("send_chat can disable consecutive-send limit from messaging config", async
 
   const result = await tools.execute({
     id: "call_send_no_wait_user",
-    toolName: "send_chat",
-    input: { type: "message", content: "should send", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "should send", alice: "shell" }
   });
 
   assert.equal(result.ok, true);
@@ -1115,13 +1097,11 @@ test("send_chat filters parenthetical text before sending and storing", async ()
 
   const result = await tools.execute({
     id: "call_send_filter_parentheses",
-    toolName: "send_chat",
-    input: { type: "message", content: "one(不发送)\n(整行不发送)\ntwo（也不发送）" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "one(不发送)\n(整行不发送)\ntwo（也不发送）" }
   });
   const emptyResult = await tools.execute({
     id: "call_send_filter_parentheses_empty",
-    toolName: "send_chat",
-    input: { type: "message", content: "(只是一段旁白)" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "(只是一段旁白)" }
   });
 
   assert.equal(result.ok, true);
@@ -1150,8 +1130,7 @@ test("send_chat filters DSML markup lines before sending and storing", async () 
 
   const result = await tools.execute({
     id: "call_send_filter_dsml",
-    toolName: "send_chat",
-    input: { type: "message", content: "one\n<｜｜DSML｜｜parameter name=\"type\" string=\"true\">message\ntwo" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "one\n<｜｜DSML｜｜parameter name=\"type\" string=\"true\">message\ntwo" }
   });
 
   assert.equal(result.ok, true);
@@ -1209,8 +1188,7 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
 
   const result = await tools.execute({
     id: "call_send_voice",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -1260,8 +1238,7 @@ test("send_chat voice falls back to text for wechat without calling tts", async 
 
   const result = await tools.execute({
     id: "call_send_wechat_voice_text",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -1302,8 +1279,7 @@ test("send_chat voice can keep audio synthesis for wechat when compatibility fal
 
   const result = await tools.execute({
     id: "call_send_wechat_voice_audio",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -1368,8 +1344,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
 
   const result = await tools.execute({
     id: "call_send_voice_japanese",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -2529,8 +2504,7 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
 
   const result = await tools.execute({
     id: "call_send_voice_feishu_transcript",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -2572,8 +2546,7 @@ test("send_chat voice sends plain markdown transcript for feishu core before cha
 
   const result = await tools.execute({
     id: "call_send_voice_feishu_core_transcript",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见", alice: "core" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", alice: "core" }
   });
 
   assert.equal(result.ok, true);
@@ -2625,8 +2598,7 @@ test("send_chat voice retries feishu transcript without storing it", async () =>
 
   const result = await tools.execute({
     id: "call_send_voice_feishu_transcript_retry",
-    toolName: "send_chat",
-    input: { type: "voice", content: "晚点见" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
   assert.equal(result.ok, true);
@@ -3651,8 +3623,7 @@ test("send_chat voice keeps newline and escaped newline text in one audio messag
 
   const result = await tools.execute({
     id: "call_send_voice_newline",
-    toolName: "send_chat",
-    input: { type: "voice", content: "第一句\n第二句\\n第三句" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "第一句\n第二句\\n第三句" }
   });
 
   assert.equal(result.ok, true);
@@ -3688,8 +3659,7 @@ test("send_chat voice returns tts failure without sending fallback text", async 
 
   const result = await tools.execute({
     id: "call_send_voice_failed",
-    toolName: "send_chat",
-    input: { type: "voice", content: "不要发文字" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "不要发文字" }
   });
 
   assert.equal(result.ok, false);
@@ -3732,8 +3702,7 @@ test("send_chat voice send failure marks failed and removes generated file witho
 
   const result = await tools.execute({
     id: "call_send_voice_send_failed",
-    toolName: "send_chat",
-    input: { type: "voice", content: "语音内容" }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "语音内容" }
   });
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -3778,8 +3747,7 @@ test("send_chat normalizes prefixed feishu chat ids before sending", async () =>
 
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_chat",
-    input: { content: "test" }
+    toolName: "Chat", input: { action: "send",  content: "test" }
   });
 
   assert.equal(result.ok, true);
@@ -3818,8 +3786,7 @@ test("send_chat returns failed outbound messages as chat records", async () => {
 
   const result = await tools.execute({
     id: "call_send",
-    toolName: "send_chat",
-    input: { content: "test" }
+    toolName: "Chat", input: { action: "send",  content: "test" }
   });
 
   await new Promise((resolve) => setImmediate(resolve));
@@ -3851,8 +3818,7 @@ test("send_chat returns one failed tag per failed part", async () => {
 
   const result = await tools.execute({
     id: "call_send_failed_parts",
-    toolName: "send_chat",
-    input: { content: "one\n\ntwo" }
+    toolName: "Chat", input: { action: "send",  content: "one\n\ntwo" }
   });
 
   assert.equal(result.ok, false);
@@ -3886,8 +3852,7 @@ test("send_message waits from llm start using content length based delay", async
   tools.noteLLMRequestStarted();
   const result = await tools.execute({
     id: "call_send_delay",
-    toolName: "send_message",
-    input: { content: "hello\nworldwide" }
+    toolName: "Chat", input: { action: "send",  content: "hello\nworldwide" }
   });
 
   assert.equal(result.ok, true);
@@ -3923,13 +3888,11 @@ test("send_message updates delay timestamp before send attempt completes", async
 
   const first = await tools.execute({
     id: "call_send_attempt_delay_1",
-    toolName: "send_message",
-    input: { content: "hello" }
+    toolName: "Chat", input: { action: "send",  content: "hello" }
   });
   const second = await tools.execute({
     id: "call_send_attempt_delay_2",
-    toolName: "send_message",
-    input: { content: "hello" }
+    toolName: "Chat", input: { action: "send",  content: "hello" }
   });
 
   assert.equal(first.ok, true);
@@ -3970,8 +3933,7 @@ test("send_message failed attempt occupies delay window and retries queued send"
 
   const result = await tools.execute({
     id: "call_send_retry",
-    toolName: "send_message",
-    input: { content: "hello" }
+    toolName: "Chat", input: { action: "send",  content: "hello" }
   });
   await eventually(() => attemptsAt.length >= 2);
 
@@ -4013,8 +3975,7 @@ test("send_message sends immediately when llm work already exceeded the content 
   nowMs += 1_000;
   const result = await tools.execute({
     id: "call_send_elapsed",
-    toolName: "send_message",
-    input: { content: "hi" }
+    toolName: "Chat", input: { action: "send",  content: "hi" }
   });
 
   assert.equal(result.ok, true);

@@ -7,27 +7,19 @@ import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps
 
 export async function handleAdminMessagingApi(context: AdminRoutesContext, request: any, response: any): Promise<boolean> {
   if (request.method === "POST" && request.url === "/admin/api/tools/messaging/view") {
-    await executeMessagingTool(context, request, response, "check_chat", "feishu");
-    return true;
-  }
-  if (request.method === "POST" && request.url === "/admin/api/tools/messaging/search") {
-    await executeMessagingTool(context, request, response, "search_messages", "feishu");
+    await executeMessagingTool(context, request, response, "poll", "feishu");
     return true;
   }
   if (request.method === "POST" && request.url === "/admin/api/tools/messaging/send") {
-    await executeMessagingTool(context, request, response, "send_chat", "feishu");
+    await executeMessagingTool(context, request, response, "send", "feishu");
     return true;
   }
   if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-view") {
-    await executeMessagingTool(context, request, response, "check_chat", "wechat");
-    return true;
-  }
-  if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-search") {
-    await executeMessagingTool(context, request, response, "search_messages", "wechat");
+    await executeMessagingTool(context, request, response, "poll", "wechat");
     return true;
   }
   if (request.method === "POST" && request.url === "/admin/api/tools/messaging/wechat-send") {
-    await executeMessagingTool(context, request, response, "send_chat", "wechat");
+    await executeMessagingTool(context, request, response, "send", "wechat");
     return true;
   }
   if (request.method === "POST" && request.url === "/admin/api/plugins/feishu/test-markdown") {
@@ -49,7 +41,7 @@ export async function executeMessagingTool(
   context: AdminRoutesContext,
   request: any,
   response: any,
-  toolName: "check_chat" | "search_messages" | "send_chat",
+  action: "poll" | "send",
   plugin?: "feishu" | "wechat"
 ): Promise<void> {
   const body = await readJsonBody(request);
@@ -59,9 +51,9 @@ export async function executeMessagingTool(
     return;
   }
   const result = await context.messagingTools.execute({
-    id: `admin_${toolName}_${Date.now()}`,
-    toolName,
-    input: body,
+    id: `admin_chat_${action}_${Date.now()}`,
+    toolName: "Chat",
+    input: { ...body, action },
     requester: target ? {
       plugin: target.plugin,
       accountId: target.accountId,
@@ -73,7 +65,7 @@ export async function executeMessagingTool(
       sessionId: target.sessionId
     } : undefined
   });
-  context.appendLog(result.ok ? "info" : "warn", `messaging tool ${toolName}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+  context.appendLog(result.ok ? "info" : "warn", `messaging tool Chat/${action}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
   writeJson(response, result.ok ? 200 : 400, {
     ok: result.ok,
     content: formatToolResultForLLM(result, target ? getAdminTextVariables(context, target) : undefined),

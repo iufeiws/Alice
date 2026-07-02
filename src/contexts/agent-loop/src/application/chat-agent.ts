@@ -439,7 +439,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           shouldClearForInitiatedBehavior: () => Boolean(initiatedBehavior),
           isModeExpired,
           isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
-          shouldResetForTokenPressure: (session) => shouldResetSessionForTokenPressure(session, event, findToolPlugin(toolPlugins, "check_chat")),
+          shouldResetForTokenPressure: (session) => shouldResetSessionForTokenPressure(session, event, findToolPlugin(toolPlugins, "Chat")),
           modeFromSession: modeStateFromSession,
           clearSession(reason) {
             return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
@@ -530,10 +530,10 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             mode: modeStateFromSession(session),
             event,
             toolPlugins,
-            nextToolCallId: () => "append_fixed_prefix_check_chat",
+            nextToolCallId: () => "append_fixed_prefix_chat_poll",
             buildTextVariables: buildTurnTextVariables,
             onCheckChatResult(result) {
-              const cursor = checkChatCursorFromResult("check_chat", result);
+              const cursor = checkChatCursorFromResult("Chat", result);
               session.lastCheckChatCursorMessageId = cursor ?? session.lastCheckChatCursorMessageId;
               session.fixedPrefixCursorMessageId = cursor ?? session.fixedPrefixCursorMessageId;
             }
@@ -780,8 +780,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     const previewInput = tokenPressurePreviewInput(session);
     const preview = await plugin.execute({
       id: createId("token_pressure_preview"),
-      toolName: "check_chat",
-      input: previewInput,
+      toolName: "Chat",
+      input: { action: "poll", ...previewInput },
       requester: event.source,
       externalSession: event.externalSession
     });

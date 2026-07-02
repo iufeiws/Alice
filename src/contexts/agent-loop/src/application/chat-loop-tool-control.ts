@@ -7,6 +7,7 @@ const fixedPrefixDefaultTtlMs = 2 * 60 * 60 * 1000;
 
 export type ChatLoopToolControlInput = {
   call: LLMToolCall;
+  toolInput: Record<string, unknown>;
   toolResult: ToolResult;
   toolMessage: NonNullable<AgentFunctionCallToolExecution["message"]>;
   session: ChatAgentLoopSession;
@@ -22,7 +23,7 @@ export type ChatLoopToolControlResult = AgentFunctionCallToolExecution & {
 
 export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): ChatLoopToolControlResult {
   const control = {
-    sentMessage: isSendChatToolName(input.call.function.name) && input.toolResult.ok,
+    sentMessage: isSendChatToolCall(input.call.function.name, input.toolInput) && input.toolResult.ok,
     invalidateSession: input.toolResult.invalidateLLMSession === true,
     yieldReturn: input.toolResult.meta?.yieldReturn === true,
     resetSession: false,
@@ -157,6 +158,6 @@ function estimateTextTokens(text: string): number {
   return Math.round(tokens);
 }
 
-function isSendChatToolName(toolName: string): boolean {
-  return toolName === "send_chat" || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message";
+function isSendChatToolCall(toolName: string, input: Record<string, unknown>): boolean {
+  return toolName === "Chat" && input.action === "send";
 }

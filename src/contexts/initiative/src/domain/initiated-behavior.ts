@@ -277,7 +277,7 @@ export function resolveAgentInitiatedBehaviorAvailability(
 
 export function isToolVisibleInPromptProfile(promptProfile: PromptProfile, toolName: string): boolean {
   const visibleTools = promptProfile.visibleTools as Record<string, unknown>;
-  if (toolName === "messaging" || toolName === "check_chat" || toolName === "send_chat" || toolName === "finish_and_wait") {
+  if (toolName === "messaging" || toolName === "Chat" || toolName === "finish_and_wait") {
     return visibleTools.feishu !== false && visibleTools[toolName] !== false;
   }
   if (toolName === "photo" || toolName === "media") {

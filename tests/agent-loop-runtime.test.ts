@@ -542,7 +542,7 @@ test("standalone agent function-call loop is exported for loop adapters", async 
             toolCalls: [{
               id: "call_1",
               type: "function",
-              function: { name: "test_tool", arguments: "{}" }
+              function: { name: "test_tool", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -588,8 +588,8 @@ test("standalone agent function-call loop starts same-round tools before waiting
               role: "assistant",
               content: "",
               toolCalls: [
-                { id: "call_slow", type: "function", function: { name: "slow_tool", arguments: "{}" } },
-                { id: "call_fast", type: "function", function: { name: "fast_tool", arguments: "{}" } }
+                { id: "call_slow", type: "function", function: { name: "slow_tool", arguments: "{\"action\":\"poll\"}" } },
+                { id: "call_fast", type: "function", function: { name: "fast_tool", arguments: "{\"action\":\"poll\"}" } }
               ]
             },
             finishReason: "tool_calls"
@@ -619,7 +619,7 @@ test("standalone agent function-call loop starts same-round tools before waiting
   assert.equal(result.stopReason, "completed");
 });
 
-test("chat loop sends assistant chat blocks and exposes send_chat", async () => {
+test("chat loop sends assistant chat blocks and exposes Chat", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],
     requestTimestamps: [],
@@ -630,18 +630,18 @@ test("chat loop sends assistant chat blocks and exposes send_chat", async () => 
     id: "messaging",
     listTools() {
       return [
-        { name: "send_chat", description: "send", inputSchema: {} },
+        { name: "Chat", description: "send", inputSchema: {} },
         { name: "test_tool", description: "test", inputSchema: {} }
       ];
     },
     async execute(call) {
-      if (call.toolName === "send_chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
+      if (call.toolName === "Chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];
   const exposedToolNames: string[][] = [];
   const loop = buildChatAgentLoop({
-    llmInput: { messages: session.messages, toolNames: ["send_chat", "test_tool"] },
+    llmInput: { messages: session.messages, toolNames: ["Chat", "test_tool"] },
     event: textEvent("session-content-send"),
     toolPlugins: tools,
     session,
@@ -663,7 +663,7 @@ test("chat loop sends assistant chat blocks and exposes send_chat", async () => 
             toolCalls: [{
               id: "call_test",
               type: "function",
-              function: { name: "test_tool", arguments: "{}" }
+              function: { name: "test_tool", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -686,7 +686,7 @@ test("chat loop sends assistant chat blocks and exposes send_chat", async () => 
   const result = loop.complete(await runAgentFunctionCallLoop(loop.spec));
 
   assert.equal(result.sentMessage, true);
-  assert.deepEqual(exposedToolNames, [["send_chat", "test_tool"], ["send_chat", "test_tool"]]);
+  assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
   assert.deepEqual(sent, ["core:voice:prefix", "shell:message:done"]);
 });
 

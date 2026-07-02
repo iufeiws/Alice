@@ -341,7 +341,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
             toolCalls: [{
               id: "call-1",
               type: "function",
-              function: { name: "test_tool", arguments: "{}" }
+              function: { name: "test_tool", arguments: "{\"action\":\"poll\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -360,7 +360,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
   assert.equal((sentMessages[1]?.at(-1) as { role?: string }).role, "tool");
 });
 
-test("talk send_chat tool-call executes through the common tool plugin path", async () => {
+test("talk Chat tool-call executes through the common tool plugin path", async () => {
   let sendCalls = 0;
   let activeSession: any;
   const executedCalls: unknown[] = [];
@@ -386,11 +386,11 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
     updateActiveTalkLLMSessionTranscript: (session) => {
       activeSession = session;
     },
-    visibleToolNames: () => ["send_chat"],
+    visibleToolNames: () => ["Chat"],
     toolPlugins: [{
       id: "messaging",
       listTools: () => [{
-        name: "send_chat",
+        name: "Chat",
         description: "send",
         inputSchema: { type: "object", properties: {} }
       }],
@@ -414,7 +414,7 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
             toolCalls: [{
               id: "call-send",
               type: "function",
-              function: { name: "send_chat", arguments: "{\"type\":\"message\",\"content\":\"hello\"}" }
+              function: { name: "Chat", arguments: "{\"action\":\"send\",\"type\":\"message\",\"content\":\"hello\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -431,11 +431,11 @@ test("talk send_chat tool-call executes through the common tool plugin path", as
 
   assert.equal(sendCalls, 2);
   assert.equal(executedCalls.length, 1);
-  assert.equal((executedCalls[0] as { toolName?: string }).toolName, "send_chat");
+  assert.equal((executedCalls[0] as { toolName?: string }).toolName, "Chat");
   assert.equal((executedCalls[0] as { requester?: { plugin?: string } }).requester?.plugin, "webrtc_voice");
   assert.equal((executedCalls[0] as { externalSession?: { sessionId?: string } }).externalSession?.sessionId, "107");
   assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).role, "tool");
-  assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "send_chat");
+  assert.equal((sentMessages[1]?.at(-1) as { role?: string; name?: string }).name, "Chat");
 });
 
 test("talk exposed selfie tool calls receive agent loop run context", async () => {

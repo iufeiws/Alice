@@ -245,8 +245,8 @@ export function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
 }
 
 function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {
-  if (toolName === "send_chat" || toolName === "send_feishu" || toolName === "send_wechat" || toolName === "send_message") {
-    return "send_chat cannot run from tool preview";
+  if (toolName === "Chat" && input.action === "send") {
+    return "Chat send cannot run from tool preview";
   }
   if (toolName === "selfie") return "selfie cannot run from tool preview";
   if (toolName === "wardrobe" && input.action === "switch") return "wardrobe switch cannot run from tool preview";

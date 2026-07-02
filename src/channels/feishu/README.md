@@ -84,14 +84,11 @@ memory-files/indexes/feishu-paired-contacts.json
 
 ChatAgent 向 LLM 暴露平台无关的聊天工具名：
 
-- `check_chat`
-  - 参数：无。
-  - 同一 LLM session 中第一次调用返回全局最近 50 条消息。
-  - 同一 LLM session 中后续调用返回全局第一条未读用户消息之后的上下文，并把读到的用户消息标记为已读。
-  - 输出是给 LLM 的纯文本。相邻消息按类微信时间合并：小于 5 分钟间隔的消息共享一个 `[local time]` header，后面跟 `user/Alice:{content}[reaction][已撤回]` 行。
+- `Chat`
+  - `action: "poll"`：查看聊天记录。默认返回新增消息，并把读到的用户消息标记为已读。
+  - `action: "send"`：发送消息。参数：`type: "message" | "markdown" | "image" | "voice"` 与 `content`；应先提供 `type`，再提供 `content`。
+  - poll 输出是给 LLM 的纯文本。相邻消息按类微信时间合并：小于 5 分钟间隔的消息共享一个 `[local time]` header，后面跟 `user/Alice:{content}[reaction][已撤回]` 行。
   - 没有新消息时返回 `nothing new`。
-- `send_chat`
-  - 参数：`type: "message" | "markdown" | "image" | "voice"` 与 `content`；应先提供 `type`，再提供 `content`。
   - `message` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条文本消息。
   - `voice` 模式会把真实换行以及字面量 `\n`/`\r\n` 分隔内容拆成多条语音消息，每段通过默认 TTS 后端合成为一条 opus 音频消息。
   - 拆分文本会按内容长度节流；第一次发送也会计入 LLM 调用开始后已经经过的时间。

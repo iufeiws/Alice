@@ -59,7 +59,7 @@ export function renderPromptsScript(): string {
               <label><input id="toolFeishuVisible" type="checkbox" \${activeProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
               <label><input id="toolPhotoVisible" type="checkbox" \${activeProfile.visibleTools?.photo === false || activeProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
               <label><input id="toolShellVisible" type="checkbox" \${activeProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
-              <p class="muted">check_chat · send_chat · wardrobe · selfie</p>
+              <p class="muted">Chat · wardrobe · selfie</p>
               <h2>Initial Layers</h2>
               <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
               <button type="button" id="prompt-add">Add Initial Layer</button>
@@ -91,7 +91,7 @@ export function renderPromptsScript(): string {
         });
         $("prompt-append-add").addEventListener("click", () => {
           const order = Math.max(0, ...activeProfile.appendLayers.map((layer) => Number(layer.order) || 0)) + 10;
-          activeProfile.appendLayers.push({ id: "append_layer_" + Date.now(), title: "New Append Layer", role: "tool_request", enabled: true, content: "", order, toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }] });
+          activeProfile.appendLayers.push({ id: "append_layer_" + Date.now(), title: "New Append Layer", role: "tool_request", enabled: true, content: "", order, toolCalls: [{ toolName: "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }] });
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);
@@ -339,7 +339,7 @@ export function renderPromptsScript(): string {
       }
       function renderToolOptions(selected) {
         const names = promptTools.map((tool) => tool.name);
-        const current = selected || names[0] || "check_chat";
+        const current = selected || names[0] || "Chat";
         const allNames = names.includes(current) ? names : [current, ...names];
         return allNames.map((name) => \`<option value="\${escapeAttr(name)}" \${current === name ? "selected" : ""}>\${escapeHtml(name)}</option>\`).join("");
       }
@@ -356,7 +356,7 @@ export function renderPromptsScript(): string {
             delete layer.toolCalls;
           } else {
             layer.toolCalls = cloneToolCalls(layer.toolCalls);
-            if (!layer.toolCalls.length) layer.toolCalls = [{ toolName: promptTools[0]?.name || "check_chat", toolArguments: "{}" }];
+            if (!layer.toolCalls.length) layer.toolCalls = [{ toolName: promptTools[0]?.name || "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }];
           }
           if (layer.role !== "assistant" && layer.role !== "tool_request") delete layer.thinking;
           renderPromptProfile();

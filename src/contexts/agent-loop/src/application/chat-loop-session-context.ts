@@ -14,16 +14,16 @@ export async function buildFixedPrefixAppendMessages(input: {
   onCheckChatResult?(result: ToolResult): void;
 }): Promise<LLMChatInput["messages"]> {
   const messages: LLMChatInput["messages"] = [];
-  const plugin = findToolPlugin(input.toolPlugins, "check_chat");
+  const plugin = findToolPlugin(input.toolPlugins, "Chat");
   if (!plugin) return messages;
   const callId = input.nextToolCallId();
-  const publicArguments = {};
+  const publicArguments = { action: "poll" };
   const result = await executePromptToolRequest(
-    { id: "fixed_prefix_check_chat", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: JSON.stringify(publicArguments) }], order: 0 },
+    { id: "fixed_prefix_chat_poll", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: JSON.stringify(publicArguments) }], order: 0 },
     {
       id: callId,
-      toolName: "check_chat",
-      input: { scope: "from_prefix", __fromPrefixAfterMessageId: input.mode.fixedPrefixCursorMessageId ?? 0 },
+      toolName: "Chat",
+      input: { action: "poll", scope: "from_prefix", __fromPrefixAfterMessageId: input.mode.fixedPrefixCursorMessageId ?? 0 },
       requester: input.event.source,
       externalSession: input.event.externalSession
     },
@@ -38,7 +38,7 @@ export async function buildFixedPrefixAppendMessages(input: {
       id: callId,
       type: "function",
       function: {
-        name: "check_chat",
+        name: "Chat",
         arguments: JSON.stringify(publicArguments)
       }
     }]
@@ -46,7 +46,7 @@ export async function buildFixedPrefixAppendMessages(input: {
   messages.push({
     role: "tool",
     toolCallId: callId,
-    name: "check_chat",
+    name: "Chat",
     content: formatToolResultForLLM(result, input.buildTextVariables(input.event))
   });
   return messages;
@@ -153,6 +153,7 @@ export function fixedPrefixToolInput(toolName: string, input: Record<string, unk
   if (
     session.mode !== "fixed_prefix"
     || !isCheckChatToolName(toolName)
+    || input.action !== "poll"
     || input.scope !== "from_prefix"
     || typeof input.__fromPrefixAfterMessageId === "number"
   ) {
@@ -188,20 +189,20 @@ async function runWaitChatResumeCheck(
   toolPlugins: ToolPlugin[]
 ): Promise<ToolResult> {
   const checkInput = session.mode === "fixed_prefix"
-    ? { scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
-    : {};
+    ? { action: "poll", scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
+    : { action: "poll" };
   const result = await executePromptToolRequest(
-    { id: "finish_and_wait_resume_check_chat", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "check_chat", toolArguments: "{}" }], order: 0 },
+    { id: "finish_and_wait_resume_chat_poll", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 0 },
     {
       id: callId,
-      toolName: "check_chat",
+      toolName: "Chat",
       input: checkInput,
       requester: event.source,
       externalSession: event.externalSession
     },
     toolPlugins
   );
-  session.lastCheckChatCursorMessageId = checkChatCursorFromResult("check_chat", result) ?? session.lastCheckChatCursorMessageId;
+  session.lastCheckChatCursorMessageId = checkChatCursorFromResult("Chat", result) ?? session.lastCheckChatCursorMessageId;
   return result;
 }
 
@@ -240,7 +241,7 @@ function formatWaitChatDuration(durationMs: number): string | undefined {
 }
 
 function isCheckChatToolName(toolName: string): boolean {
-  return toolName === "check_chat" || toolName === "check_feishu" || toolName === "check_wechat" || toolName === "view_messages";
+  return toolName === "Chat";
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {

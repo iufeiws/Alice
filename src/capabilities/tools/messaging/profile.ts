@@ -1,55 +1,27 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
-export const checkChatTool: ToolDefinition = {
-  name: "check_chat",
-  description: "查看聊天记录。默认返回新增消息",
-  inputSchema: {
-    type: "object",
-    properties: {},
-    additionalProperties: false
-  }
-};
-
-export const sendChatTool: ToolDefinition = {
-  name: "send_chat",
-  description: "给{{user}}发送消息, 发送后会自动返回最新的消息。需要先提供 type、alice, 再提供content。alice省略时为shell",
+export const chatTool: ToolDefinition = {
+  name: "Chat",
+  description: "聊天工具。action=poll 查看新增聊天记录；action=send 给{{user}}发送消息。send 需要 type、alice、content，alice 省略时为 shell",
   inputSchema: {
     type: "object",
     properties: {
+      action: { type: "string", enum: ["poll", "send"], default: "poll" },
       type: { type: "string", enum: ["message", "markdown", "image", "voice"] },
       alice: { type: "string", enum: ["core", "shell"] },
       content: { type: "string" }
     },
-    required: ["type", "content"],
-    additionalProperties: false
-  }
-};
-
-export const searchMessagesTool: ToolDefinition = {
-  name: "search_messages",
-  description: "Search persisted messages in the current conversation and return contextual message blocks.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      content: { type: "string" },
-      direction: {
-        type: "string",
-        enum: ["backward", "forward"],
-        default: "backward"
-      },
-      limit: { type: "integer", minimum: 1, maximum: 20, default: 3 },
-      contextCount: { type: "integer", minimum: 1, maximum: 50, default: 10 }
-    },
-    required: ["content"],
+    required: ["action"],
     additionalProperties: false
   }
 };
 
 export const messagingToolText = {
   unknownTool: (toolName: string) => `Unknown messaging tool: ${toolName}`,
+  unsupportedAction: "unsupported Chat action",
   noCurrentSession: "No current messaging session is available",
   contentRequired: "content is required",
-  waitForUserReplyBeforeSending: "send_chat blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。",
+  waitForUserReplyBeforeSending: "Chat action=send blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。",
   unsupportedMessageType: "unsupported message type",
   nothingNew: "nothing new",
   nothingFound: "nothing found",

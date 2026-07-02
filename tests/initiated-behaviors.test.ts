@@ -68,8 +68,8 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
         content: "",
         thinking: "checking chat for {{user}}",
         toolCalls: [{
-          toolName: "check_chat",
-          toolCallId: "call_check_chat",
+          toolName: "Chat",
+          toolCallId: "call_Chat",
           toolArguments: "{\"target\":\"{{user}}\"}"
         }],
         order: 10
@@ -98,22 +98,22 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
   });
 
   assert.equal(toolCalls.length, 1);
-  assert.equal(toolCalls[0].id, "call_check_chat");
-  assert.equal(toolCalls[0].toolName, "check_chat");
+  assert.equal(toolCalls[0].id, "call_Chat");
+  assert.equal(toolCalls[0].toolName, "Chat");
   assert.deepEqual(toolCalls[0].input, { target: "YY" });
   assert.equal(messages.length, 2);
   assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].reasoningContent, "checking chat for YY");
   assert.deepEqual(messages[0].toolCalls, [{
-    id: "call_check_chat",
+    id: "call_Chat",
     type: "function",
     function: {
-      name: "check_chat",
+      name: "Chat",
       arguments: "{\"target\":\"YY\"}"
     }
   }]);
   assert.equal(messages[1].role, "tool");
-  assert.equal(messages[1].toolCallId, "call_check_chat");
+  assert.equal(messages[1].toolCallId, "call_Chat");
   assert.equal(messages[1].content, "history for YY");
 });
 
@@ -128,8 +128,8 @@ test("initiated behavior prompt layers execute multiple assistant tool calls", a
       enabled: true,
       content: "",
       toolCalls: [
-        { toolName: "check_chat", toolCallId: "call_one", toolArguments: "{\"target\":\"{{user}}\"}" },
-        { toolName: "search_messages", toolCallId: "call_two", toolArguments: "{\"query\":\"{{user}}\"}" }
+        { toolName: "Chat", toolCallId: "call_one", toolArguments: "{\"target\":\"{{user}}\"}" },
+        { toolName: "Chat", toolCallId: "call_two", toolArguments: "{\"query\":\"{{user}}\"}" }
       ],
       order: 10
     }]
@@ -156,7 +156,7 @@ test("initiated behavior prompt layers execute multiple assistant tool calls", a
   });
 
   assert.deepEqual(toolCalls.map((call) => call.id), ["call_one", "call_two"]);
-  assert.deepEqual(messages[0].toolCalls?.map((call) => call.function.name), ["check_chat", "search_messages"]);
+  assert.deepEqual(messages[0].toolCalls?.map((call) => call.function.name), ["Chat", "Chat"]);
   assert.deepEqual(messages.slice(1).map((message) => message.toolCallId), ["call_one", "call_two"]);
 });
 

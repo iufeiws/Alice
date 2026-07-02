@@ -119,14 +119,6 @@ export function buildAgentLoopToolMap(toolPlugins: ToolPlugin[]): Map<string, To
     for (const tool of plugin.listTools()) {
       toolMap.set(tool.name, plugin);
     }
-    if (plugin.id === "messaging" && toolMap.has("send_chat")) {
-      toolMap.set("check_feishu", plugin);
-      toolMap.set("check_wechat", plugin);
-      toolMap.set("view_messages", plugin);
-      toolMap.set("send_feishu", plugin);
-      toolMap.set("send_wechat", plugin);
-      toolMap.set("send_message", plugin);
-    }
   }
   return toolMap;
 }

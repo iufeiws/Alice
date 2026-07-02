@@ -82,7 +82,7 @@
 关键模块：
 
 - `application/chat-agent.ts`: ChatAgent facade。接收 AgentEvent，解析 intent，运行 chat loop，处理 LLM session、固定前缀、token pressure、主动行为事件。
-- `application/run-chat-loop.ts`: Chat loop 的核心执行器。负责 prompt 构建、tool-call round、finish_and_wait yield、streaming send_chat 处理、tool result 追加。
+- `application/run-chat-loop.ts`: Chat loop 的核心执行器。负责 prompt 构建、tool-call round、finish_and_wait yield、`Chat` action=send 流式处理、tool result 追加。
 - `application/run-talk-loop.ts`: Talk loop 执行器。面向实时对话 session，和 chat loop 分离 agent id 与消息构造。
 - `application/intent-router.ts`: 默认 intent router。把文本事件分成 chat、codex 或 unsupported。
 - `application/session-resolver.ts`: 默认 session id 解析。根据 plugin、scope、thread/channel/user/raw message 生成 session key。
@@ -113,7 +113,7 @@
 - `domain/shell.ts`: shell、outfit、daily shell 的领域类型和 store contract。
 - `application/build-system-prompt.ts`: PromptProfile normalization、visible tools 判断、LLM messages 构建。
 - `application/llm-text-renderer.ts`: `{{variable}}` 渲染、LLMTextVariables 构建、tool result 文本化。
-- `application/prompt-tool-preview-runtime.ts`: prompt preview 和 tool preview 应用服务。负责构造 preview context、渲染 visible tool specs、保护 preview 中的 send_chat。
+- `application/prompt-tool-preview-runtime.ts`: prompt preview 和 tool preview 应用服务。负责构造 preview context、渲染 visible tool specs、保护 preview 中的 `Chat` action=send。
 - `adapters/json-prompt-profile-store.ts`: prompt/profile JSON 存储路径和读写 adapter。
 - `adapters/json-core-profile-store.ts`: core profile JSON store，例如 appearanceDescription。
 - `ports/prompt-rendering.ts`: prompt rendering 端口。
@@ -291,7 +291,7 @@
 
 ## `capabilities/tools/messaging/`
 
-职责：LLM chat 工具能力。提供 check_chat、send_chat/search 等 messaging tools。`wait_chat` 待删除；等待能力已独立为 `finish_and_wait` control tool。
+职责：LLM chat 工具能力。提供 `Chat` 单工具，使用 `action=poll` 查看消息、`action=send` 发送消息；底层保留消息搜索存储能力。等待能力已独立为 `finish_and_wait` control tool。
 
 关键模块：
 

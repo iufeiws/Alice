@@ -184,7 +184,7 @@ exit 64
   const previousHttpsProxy = process.env.HTTPS_PROXY;
   const previousNoProxy = process.env.NO_PROXY;
   process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
-  process.env.HTTPS_PROXY = "http://host.docker.internal:7890";
+  process.env.HTTPS_PROXY = "http://127.0.0.1:7890";
   process.env.NO_PROXY = "localhost,127.0.0.1";
   try {
     const config = testConfig({ network: "configured", hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
@@ -193,8 +193,9 @@ exit 64
     assert.equal(calls.includes("image inspect cimg/python:3.13-browsers"), true);
     assert.equal(calls.includes("pull cimg/python:3.13-browsers"), true);
     assert.match(calls, /run -d .*--network bridge/);
-    assert.match(calls, /-e HTTPS_PROXY/);
-    assert.match(calls, /-e NO_PROXY/);
+    assert.match(calls, /--add-host host\.docker\.internal:host-gateway/);
+    assert.match(calls, /-e HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
+    assert.match(calls, /-e NO_PROXY=localhost,127\.0\.0\.1/);
     assert.equal(result.stdout.trim(), "docker-ok");
   } finally {
     process.env.PATH = previousPath;

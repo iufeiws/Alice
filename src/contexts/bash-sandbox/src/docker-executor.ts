@@ -76,7 +76,11 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "-w", config.defaultCwd
   ];
   if (config.network === "configured") {
-    for (const name of PROXY_ENV_NAMES) args.push("-e", name);
+    args.push("--add-host", "host.docker.internal:host-gateway");
+    for (const name of PROXY_ENV_NAMES) {
+      const value = process.env[name];
+      if (value !== undefined) args.push("-e", `${name}=${containerProxyEnvValue(value)}`);
+    }
   }
   if (config.cpuLimit) args.push("--cpus", config.cpuLimit);
   if (config.memoryLimit) args.push("--memory", config.memoryLimit);
@@ -133,4 +137,10 @@ function dockerProcessEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH };
   for (const name of PROXY_ENV_NAMES) env[name] = process.env[name];
   return env;
+}
+
+function containerProxyEnvValue(value: string): string {
+  return value
+    .replace(/(^|\/\/)(127\.0\.0\.1|localhost)(?=[:/]|$)/g, "$1host.docker.internal")
+    .replace(/^(127\.0\.0\.1|localhost)(?=[:/]|$)/, "host.docker.internal");
 }

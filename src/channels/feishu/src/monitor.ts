@@ -21,6 +21,7 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     setAgentRunCardStreaming: client.setAgentRunCardStreaming,
     resolveAgentRunCardId: client.resolveAgentRunCardId,
     createBashRunCard: client.createBashRunCard,
+    appendBashRunCardPanel: client.appendBashRunCardPanel,
     updateBashRunCard: client.updateBashRunCard,
     setBashRunCardStreaming: client.setBashRunCardStreaming
   };

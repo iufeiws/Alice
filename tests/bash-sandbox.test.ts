@@ -243,8 +243,7 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
     "create:ou_user:npm test",
     "stream:card_bash:true:1",
     "update:card_bash:content:2",
-    "update:card_bash:title:3",
-    "stream:card_bash:false:4"
+    "update:card_bash:title:3"
   ]);
   const outputContent = client.contents.find((content) => content.includes("[exit 0]")) ?? "";
   assert.doesNotMatch(outputContent, /cwd:/);
@@ -252,6 +251,34 @@ test("Feishu bash reporter streams stdout and stderr to a dedicated bash card", 
   assert.match(outputContent, /ok/);
   assert.match(outputContent, /\[stderr\] warn/);
   assert.match(client.contents.at(-1) ?? "", /finish: npm test/);
+});
+
+test("Feishu bash reporter appends consecutive bash runs to one card", async () => {
+  const client = fakeFeishuCardClient();
+  const reporter = createFeishuBashRunReporter({
+    client,
+    pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
+    throttleMs: 1000
+  });
+
+  const first = await reporter.begin({ call: { id: "bash_1", toolName: "bash", input: {} }, command: "echo one", cwd: "/workspace" });
+  assert.ok(first);
+  await first.finish({ command: "echo one", cwd: "/workspace", stdout: "one\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false });
+
+  const second = await reporter.begin({ call: { id: "bash_2", toolName: "bash", input: {} }, command: "echo two", cwd: "/workspace" });
+  assert.ok(second);
+  await second.finish({ command: "echo two", cwd: "/workspace", stdout: "two\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false });
+
+  assert.deepEqual(client.calls, [
+    "create:ou_user:echo one",
+    "stream:card_bash:true:1",
+    "update:card_bash:content:2",
+    "update:card_bash:title:3",
+    "append:card_bash:echo two:4",
+    "stream:card_bash:true:5",
+    "update:card_bash:content:6",
+    "update:card_bash:title:7"
+  ]);
 });
 
 test("docker executor runs in a fixed container when explicitly enabled", async (t) => {
@@ -318,6 +345,10 @@ function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: string[]; co
       calls.push(`create:${input.receiveId}:${input.command}`);
       contents.push(input.content);
       return { messageId: "om_bash", cardId: "card_bash" };
+    },
+    async appendBashRunCardPanel(input) {
+      calls.push(`append:${input.cardId}:${input.command}:${input.sequence}`);
+      contents.push(input.content);
     },
     async updateBashRunCard(input) {
       calls.push(`update:${input.cardId}:${input.block}:${input.sequence}`);

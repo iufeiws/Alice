@@ -11,6 +11,8 @@ export function createFeishuBashRunReporter(input: {
 }): BashRunReporter {
   const throttleMs = input.throttleMs ?? 500;
   const outputLimitChars = input.outputLimitChars ?? 12_000;
+  const cardIdleMs = 5_000;
+  let currentCard: BashRunCardState | undefined;
 
   return {
     async begin(run) {
@@ -19,14 +21,8 @@ export function createFeishuBashRunReporter(input: {
       if (!receiveId) return undefined;
       try {
         const initialContent = renderContent("");
-        const card = await input.client.createBashRunCard({
-          receiveIdType: "open_id",
-          receiveId,
-          command: run.command,
-          content: initialContent
-        });
-        await input.client.setBashRunCardStreaming({ cardId: card.cardId, enabled: true, sequence: 1 });
-        return createSession(card.cardId, run.command, 2);
+        const panel = await ensureCard(receiveId, run.command, initialContent);
+        return createSession(panel.card, panel.ids, run.command);
       } catch (error) {
         input.log?.("warn", `[bash-sandbox] Feishu bash card begin failed: ${errorMessage(error)}`);
         return undefined;
@@ -34,9 +30,43 @@ export function createFeishuBashRunReporter(input: {
     }
   };
 
-  function createSession(cardId: string, command: string, sequence: number): BashRunReportSession {
+  async function ensureCard(receiveId: string, command: string, content: string): Promise<{ card: BashRunCardState; ids: BashRunPanelIds }> {
+    if (currentCard?.idleTimer) {
+      clearTimeout(currentCard.idleTimer);
+      currentCard.idleTimer = undefined;
+    }
+    if (!currentCard) {
+      const ids = firstPanelIds();
+      const created = await input.client.createBashRunCard({
+        receiveIdType: "open_id",
+        receiveId,
+        command,
+        content,
+        titleElementId: ids.titleElementId,
+        contentElementId: ids.contentElementId
+      });
+      currentCard = {
+        cardId: created.cardId,
+        nextPanelIndex: 2,
+        nextSequence: 1,
+        activeSessions: 0,
+        queue: Promise.resolve()
+      };
+      await setStreaming(currentCard, true);
+      currentCard.activeSessions += 1;
+      return { card: currentCard, ids };
+    }
+
+    const card = currentCard;
+    const ids = nextPanelIds(card);
+    await appendPanel(card, command, content, ids);
+    await setStreaming(card, true);
+    card.activeSessions += 1;
+    return { card, ids };
+  }
+
+  function createSession(card: BashRunCardState, ids: BashRunPanelIds, command: string): BashRunReportSession {
     let output = "";
-    let nextSequence = sequence;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let flushPromise: Promise<void> = Promise.resolve();
     let failed = false;
@@ -65,13 +95,13 @@ export function createFeishuBashRunReporter(input: {
     };
 
     const update = async (): Promise<void> => {
-      await input.client.updateBashRunCard({
-        cardId,
+      await enqueue(card, () => input.client.updateBashRunCard({
+        cardId: card.cardId,
         block: "content",
+        elementId: ids.contentElementId,
         content: renderContent(output),
-        sequence: nextSequence
-      });
-      nextSequence += 1;
+        sequence: takeSequence(card)
+      }));
     };
 
     const markFailed = (error: unknown): void => {
@@ -92,9 +122,10 @@ export function createFeishuBashRunReporter(input: {
         if (!failed) {
           try {
             await updateTitle();
-            await input.client.setBashRunCardStreaming({ cardId, enabled: false, sequence: nextSequence });
           } catch (error) {
             markFailed(error);
+          } finally {
+            releaseCard(card);
           }
         }
       },
@@ -104,23 +135,78 @@ export function createFeishuBashRunReporter(input: {
         if (!failed) {
           try {
             await updateTitle();
-            await input.client.setBashRunCardStreaming({ cardId, enabled: false, sequence: nextSequence });
           } catch (finishError) {
             markFailed(finishError);
+          } finally {
+            releaseCard(card);
           }
         }
       }
     };
 
     async function updateTitle(): Promise<void> {
-      await input.client.updateBashRunCard({
-        cardId,
+      await enqueue(card, () => input.client.updateBashRunCard({
+        cardId: card.cardId,
         block: "title",
+        elementId: ids.titleElementId,
         content: `finish: ${command}`,
-        sequence: nextSequence
-      });
-      nextSequence += 1;
+        sequence: takeSequence(card)
+      }));
     }
+  }
+
+  async function appendPanel(card: BashRunCardState, command: string, content: string, ids: BashRunPanelIds): Promise<void> {
+    await enqueue(card, () => input.client.appendBashRunCardPanel({
+      cardId: card.cardId,
+      command,
+      content,
+      titleElementId: ids.titleElementId,
+      contentElementId: ids.contentElementId,
+      sequence: takeSequence(card)
+    }));
+  }
+
+  async function setStreaming(card: BashRunCardState, enabled: boolean): Promise<void> {
+    await enqueue(card, () => input.client.setBashRunCardStreaming({
+      cardId: card.cardId,
+      enabled,
+      sequence: takeSequence(card)
+    }));
+  }
+
+  async function enqueue(card: BashRunCardState, run: () => Promise<void>): Promise<void> {
+    const next = card.queue.then(run);
+    card.queue = next.catch(() => undefined);
+    await next;
+  }
+
+  function takeSequence(card: BashRunCardState): number {
+    const sequence = card.nextSequence;
+    card.nextSequence += 1;
+    return sequence;
+  }
+
+  function firstPanelIds(): BashRunPanelIds {
+    return { titleElementId: "bash_1_title", contentElementId: "bash_1_out" };
+  }
+
+  function nextPanelIds(card: BashRunCardState): BashRunPanelIds {
+    const index = card.nextPanelIndex;
+    card.nextPanelIndex += 1;
+    return { titleElementId: `bash_${index}_title`, contentElementId: `bash_${index}_out` };
+  }
+
+  function releaseCard(card: BashRunCardState): void {
+    card.activeSessions -= 1;
+    if (card.activeSessions > 0) return;
+    card.idleTimer = setTimeout(() => {
+      if (currentCard !== card || card.activeSessions !== 0) return;
+      currentCard = undefined;
+      void setStreaming(card, false).catch((error) => {
+        input.log?.("warn", `[bash-sandbox] Feishu bash card finalize failed: ${errorMessage(error)}`);
+      });
+    }, cardIdleMs);
+    card.idleTimer.unref?.();
   }
 
   function pairedFeishuUserId(): string | undefined {
@@ -133,6 +219,20 @@ export function createFeishuBashRunReporter(input: {
     return value.length <= outputLimitChars ? value : value.slice(value.length - outputLimitChars);
   }
 }
+
+type BashRunCardState = {
+  cardId: string;
+  nextPanelIndex: number;
+  nextSequence: number;
+  activeSessions: number;
+  queue: Promise<void>;
+  idleTimer?: ReturnType<typeof setTimeout>;
+};
+
+type BashRunPanelIds = {
+  titleElementId: string;
+  contentElementId: string;
+};
 
 function renderContent(output: string): string {
   return `\`\`\`text\n${output || " "}\n\`\`\``;

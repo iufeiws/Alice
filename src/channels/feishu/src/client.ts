@@ -317,7 +317,10 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       const card = await client.cardkit.v1.card.create({
         data: {
           type: "card_json",
-          data: JSON.stringify(buildBashRunCard(input.command, input.content))
+          data: JSON.stringify(buildBashRunCard(input.command, input.content, {
+            titleElementId: input.titleElementId ?? BASH_RUN_CARD_ELEMENT_IDS.title,
+            contentElementId: input.contentElementId ?? BASH_RUN_CARD_ELEMENT_IDS.content
+          }))
         }
       });
       const cardId = card?.data?.card_id ?? card?.card_id;
@@ -338,19 +341,58 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         cardId
       };
     },
-    async updateBashRunCard(input) {
+    async appendBashRunCardPanel(input) {
       assertStarted(client);
-      await client.cardkit.v1.cardElement.content({
+      await client.cardkit.v1.cardElement.create({
         path: {
-          card_id: input.cardId,
-          element_id: BASH_RUN_CARD_ELEMENT_IDS[input.block]
+          card_id: input.cardId
         },
         data: {
-          content: cardMarkdownContent(input.content),
+          type: "append",
+          elements: JSON.stringify([buildBashRunPanel(input.command, input.content, {
+            titleElementId: input.titleElementId,
+            contentElementId: input.contentElementId
+          })]),
           sequence: input.sequence,
-          uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+          uuid: `bash_run_append_${input.cardId}_${input.sequence}`
         }
       });
+      deps.log?.("info", `[feishu] appended bash run panel ${input.cardId} sequence=${input.sequence}`);
+    },
+    async updateBashRunCard(input) {
+      assertStarted(client);
+      if (input.block === "title") {
+        await client.cardkit.v1.cardElement.patch({
+          path: {
+            card_id: input.cardId,
+            element_id: input.elementId
+          },
+          data: {
+            partial_element: JSON.stringify({
+              header: {
+                title: {
+                  tag: "plain_text",
+                  content: input.content
+                }
+              }
+            }),
+            sequence: input.sequence,
+            uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+          }
+        });
+      } else {
+        await client.cardkit.v1.cardElement.content({
+          path: {
+            card_id: input.cardId,
+            element_id: input.elementId
+          },
+          data: {
+            content: cardMarkdownContent(input.content),
+            sequence: input.sequence,
+            uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+          }
+        });
+      }
       deps.log?.("info", `[feishu] updated bash run card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
     },
     async setBashRunCardStreaming(input) {
@@ -495,7 +537,10 @@ function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unk
   };
 }
 
-export function buildBashRunCard(command: string, content: string): Record<string, unknown> {
+export function buildBashRunCard(command: string, content: string, ids = {
+  titleElementId: BASH_RUN_CARD_ELEMENT_IDS.title,
+  contentElementId: BASH_RUN_CARD_ELEMENT_IDS.content
+}): Record<string, unknown> {
   return {
     schema: "2.0",
     config: {
@@ -508,26 +553,30 @@ export function buildBashRunCard(command: string, content: string): Record<strin
     },
     body: {
       elements: [
-        {
-          tag: "collapsible_panel",
-          element_id: BASH_RUN_CARD_ELEMENT_IDS.title,
-          expanded: false,
-          header: {
-            title: {
-              tag: "plain_text",
-              content: `running: ${command}`
-            }
-          },
-          elements: [
-            {
-              tag: "markdown",
-              element_id: BASH_RUN_CARD_ELEMENT_IDS.content,
-              content: cardMarkdownContent(content)
-            }
-          ]
-        }
+        buildBashRunPanel(command, content, ids)
       ]
     }
+  };
+}
+
+function buildBashRunPanel(command: string, content: string, ids: { titleElementId: string; contentElementId: string }): Record<string, unknown> {
+  return {
+    tag: "collapsible_panel",
+    element_id: ids.titleElementId,
+    expanded: false,
+    header: {
+      title: {
+        tag: "plain_text",
+        content: `running: ${command}`
+      }
+    },
+    elements: [
+      {
+        tag: "markdown",
+        element_id: ids.contentElementId,
+        content: cardMarkdownContent(content)
+      }
+    ]
   };
 }
 

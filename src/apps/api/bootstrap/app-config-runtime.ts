@@ -230,7 +230,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       mounts: parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
       network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
-      outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 128 * 1024),
+      outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 30_000),
       cpuLimit: env.BASH_SANDBOX_CPU_LIMIT,
       memoryLimit: env.BASH_SANDBOX_MEMORY_LIMIT,
       pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? undefined : envNumber(env.BASH_SANDBOX_PIDS_LIMIT, 256),

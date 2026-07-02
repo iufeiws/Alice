@@ -50,7 +50,7 @@ test("bash runtime writes audit events for sandbox execution", async () => {
   const config = testConfig({ outputLimitBytes: 5, mounts: [{ id: "data", hostPath: tmpDir("data"), containerPath: "/mnt/data", readOnly: true }] });
   const runtime = createBashSandboxRuntime({
     config,
-    executor: fakeExecutor(async () => ({ stdout: "abcdef", stderr: "", exitCode: 124, timedOut: true, durationMs: 9, truncated: true }))
+    executor: fakeExecutor(async () => ({ stdout: "abcdef", stderr: "", outputFiles: { stdout: { path: "/tmp/full.out", bytes: 6 } }, exitCode: 124, timedOut: true, durationMs: 9, truncated: true }))
   });
 
   await runtime.run({ id: "deny", toolName: "Bash", input: { command: "curl https://example.com" } });
@@ -79,6 +79,7 @@ test("config rejects writable mounts under skills and sensitive host paths", () 
   assert.equal(config.bashSandbox.hostWorkspaceDir.endsWith(path.join(".sandbox", "bash", "workspace")), true);
   assert.equal(config.bashSandbox.hostCacheDir.endsWith(path.join(".sandbox", "bash", "cache")), true);
   assert.equal(config.bashSandbox.auditLogPath, ".sandbox/bash/audit.jsonl");
+  assert.equal(config.bashSandbox.outputLimitBytes, 30_000);
   assert.equal("enabled" in config.bashSandbox, false);
   assert.deepEqual(config.bashSandbox.skillMounts, []);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
@@ -178,7 +179,25 @@ if [ "$1 $2" = "image inspect" ]; then exit 1; fi
 if [ "$1" = "pull" ]; then exit 0; fi
 if [ "$1" = "inspect" ]; then exit 1; fi
 if [ "$1" = "run" ]; then exit 0; fi
-if [ "$1" = "exec" ]; then echo docker-ok; exit 0; fi
+if [ "$1" = "exec" ]; then
+  shift
+  if [ "$1" = "-w" ]; then shift 3; else shift; fi
+  if [ "$1" = "bash" ]; then
+    state=0
+    for arg in "$@"; do
+      if [ "$state" = "1" ]; then state=2; continue; fi
+      if [ "$state" = "2" ]; then stdout_file="$arg"; state=3; continue; fi
+      if [ "$state" = "3" ]; then stderr_file="$arg"; state=4; continue; fi
+      if [ "$arg" = "alice-bash-capture" ]; then state=1; fi
+    done
+    printf docker-ok > "$stdout_file"
+    : > "$stderr_file"
+    exit 0
+  fi
+  if [ "$1" = "sh" ]; then wc -c < "$5"; exit 0; fi
+  if [ "$1" = "head" ]; then head -c "$3" "$4"; exit 0; fi
+  if [ "$1" = "rm" ]; then rm -f "$3" "$4"; exit 0; fi
+fi
 exit 64
 `);
   fs.chmodSync(docker, 0o755);
@@ -207,6 +226,25 @@ exit 64
     else process.env.HTTPS_PROXY = previousHttpsProxy;
     if (previousNoProxy === undefined) delete process.env.NO_PROXY;
     else process.env.NO_PROXY = previousNoProxy;
+  }
+});
+
+test("docker executor saves full output in container tmp when preview limit is exceeded", async (t) => {
+  if (process.env.BASH_SANDBOX_DOCKER_TEST !== "1") {
+    t.skip("set BASH_SANDBOX_DOCKER_TEST=1 to run Docker integration");
+    return;
+  }
+  const config = testConfig({ containerName: `alice-bash-sandbox-truncate-test-${process.pid}` });
+  try {
+    const result = await createDockerBashExecutor(config).execute({ command: "printf 1234567890", cwd: config.workspaceDir, timeoutMs: 5000, outputLimitBytes: 5 });
+    assert.equal(result.truncated, true);
+    assert.match(result.stdout, /full output saved to \/tmp\/alice-bash-output-/);
+    assert.match(result.stdout, /12345/);
+    assert.equal(result.outputFiles?.stdout?.bytes, 10);
+    const saved = childProcess.spawnSync("docker", ["exec", config.containerName, "cat", result.outputFiles!.stdout!.path], { encoding: "utf8" });
+    assert.equal(saved.stdout, "1234567890");
+  } finally {
+    childProcess.spawnSync("docker", ["rm", "-f", config.containerName], { stdio: "ignore" });
   }
 });
 
@@ -337,7 +375,7 @@ function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSandboxConf
     mounts: [],
     network: "none",
     timeoutMs: 1000,
-    outputLimitBytes: 4096,
+    outputLimitBytes: 30_000,
     auditLogPath: path.join(root, "audit.jsonl"),
     ...overrides
   };

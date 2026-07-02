@@ -12,6 +12,10 @@ export type BashRuntimeResult = {
   cwd: string;
   stdout: string;
   stderr: string;
+  outputFiles?: {
+    stdout?: { path: string; bytes: number };
+    stderr?: { path: string; bytes: number };
+  };
   exitCode: number | null;
   timedOut: boolean;
   durationMs: number;
@@ -68,7 +72,7 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
           onStdout: (delta) => void report?.appendStdout(delta),
           onStderr: (delta) => void report?.appendStderr(delta)
         });
-        const output = result(command, cwd, executed.stdout, executed.stderr, executed.exitCode, executed.timedOut, executed.durationMs, executed.truncated, false);
+        const output = result(command, cwd, executed.stdout, executed.stderr, executed.exitCode, executed.timedOut, executed.durationMs, executed.truncated, false, undefined, executed.outputFiles);
         appendBashAuditEvent(input.config, audit(call, output, permission, input.config));
         await report?.finish(output);
         return output;
@@ -80,8 +84,8 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
   };
 }
 
-function result(command: string, cwd: string, stdout: string, stderr: string, exitCode: number | null, timedOut: boolean, durationMs: number, truncated: boolean, denied: boolean, denyReason?: string): BashRuntimeResult {
-  return { command, cwd, stdout, stderr, exitCode, timedOut, durationMs, truncated, denied, denyReason };
+function result(command: string, cwd: string, stdout: string, stderr: string, exitCode: number | null, timedOut: boolean, durationMs: number, truncated: boolean, denied: boolean, denyReason?: string, outputFiles?: BashRuntimeResult["outputFiles"]): BashRuntimeResult {
+  return { command, cwd, stdout, stderr, outputFiles, exitCode, timedOut, durationMs, truncated, denied, denyReason };
 }
 
 function audit(call: ToolCall, output: BashRuntimeResult, permission: ReturnType<typeof classifyBashCommand>, config: BashSandboxConfig) {

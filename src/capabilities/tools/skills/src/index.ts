@@ -32,9 +32,10 @@ function stringValue(value: unknown): string {
 
 function formatSkillResult(skill: LoadedSkill): string {
   return [
-    `<loaded_skill name="${escapeXml(skill.name)}" dir="${escapeXml(skill.sandboxRoot)}">`,
+    `<${skill.name}>`,
+    `<path>${escapeXml(skill.sandboxRoot)}</path>`,
     escapeXml(skill.instructions),
-    "</loaded_skill>"
+    `</${skill.name}>`
   ].join("\n");
 }
 

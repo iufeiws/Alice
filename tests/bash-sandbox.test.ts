@@ -131,7 +131,7 @@ test("Skill tool loads by exact name, renders args, and mounts read-write withou
   assert.deepEqual(listedNames, ["Skill"]);
   assert.equal(oldList.ok, false);
   assert.equal(loaded.ok, true);
-  assert.match(String(loaded.output), /<demo>\n<dir>\/skills\/demo<\/dir>/);
+  assert.match(String(loaded.output), /<demo>\n<path>\/skills\/demo<\/path>/);
   assert.match(String(loaded.output), /Run one arg then \$HOME/);
   assert.equal(String(loaded.output).includes(root), false);
   assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/skills/demo", readOnly: false }]);

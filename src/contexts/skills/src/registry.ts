@@ -68,6 +68,7 @@ function scanSkillRoot(config: SkillRootConfig): SkillMetadata[] {
     const hostRoot = path.dirname(instructionPath);
     if (!isInside(hostRoot, root)) continue;
     const relativeRoot = path.relative(root, hostRoot).split(path.sep).join("/");
+    if (config.source === "first-party" && relativeRoot.split("/")[0] === "external") continue;
     const frontmatter = parseFrontmatter(fs.readFileSync(instructionPath, "utf8"));
     if (!frontmatter.name || !frontmatter.description) continue;
     const sandboxRoot = `/skills/${frontmatter.name}`;

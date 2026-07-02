@@ -148,6 +148,9 @@ export type AdminRuntimeContext = {
     worldWanderer?: {
       configPath?: string;
     };
+    bashSandbox?: {
+      envPath?: string;
+    };
   };
   messageRuntime: {
     pauseHeartbeat(): void;

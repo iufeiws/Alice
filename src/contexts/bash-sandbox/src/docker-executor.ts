@@ -3,6 +3,8 @@ import type { BashSandboxConfig } from "./config.js";
 const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
 
+const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
+
 export type DockerExecutorResult = {
   stdout: string;
   stderr: string;
@@ -73,6 +75,9 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "-v", `${config.hostCacheDir}:${config.cacheDir}:rw`,
     "-w", config.defaultCwd
   ];
+  if (config.network === "configured") {
+    for (const name of PROXY_ENV_NAMES) args.push("-e", name);
+  }
   if (config.cpuLimit) args.push("--cpus", config.cpuLimit);
   if (config.memoryLimit) args.push("--memory", config.memoryLimit);
   if (config.pidsLimit) args.push("--pids-limit", String(config.pidsLimit));
@@ -88,7 +93,7 @@ function skillMountKey(config: BashSandboxConfig): string {
 
 function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number, stream: Pick<Parameters<DockerExecutor["execute"]>[0], "onStdout" | "onStderr"> = {}): Promise<Omit<DockerExecutorResult, "durationMs">> {
   return new Promise((resolve, reject) => {
-    const child = childProcess.spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH } });
+    const child = childProcess.spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: dockerProcessEnv() });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let truncated = false;
@@ -122,4 +127,10 @@ function execFile(command: string, args: string[], timeoutMs: number, outputLimi
       });
     });
   });
+}
+
+function dockerProcessEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH };
+  for (const name of PROXY_ENV_NAMES) env[name] = process.env[name];
+  return env;
 }

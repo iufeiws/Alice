@@ -591,6 +591,64 @@ test("admin plugin config exposes and writes messaging config", async () => {
   assert.deepEqual(saved, patchBody.configValue);
 });
 
+test("admin plugin config exposes and writes bash sandbox env settings for restart", async () => {
+  const root = makeTempDir("admin-bash-sandbox-plugin");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath } }
+  };
+  const handler = createAdminHandler(context);
+
+  const listResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins", {}), listResponse);
+  const listBody = JSON.parse(listResponse.body);
+  const plugin = listBody.plugins.find((entry: { id: string }) => entry.id === "bash_sandbox");
+
+  assert.equal(plugin.status, "enabled");
+  assert.equal(plugin.kind, "tool");
+  assert.equal(plugin.configurable, true);
+  assert.equal(plugin.switchable, false);
+  assert.equal(plugin.configSource, envPath);
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/bash_sandbox/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(configBody.configValue.network, "none");
+  assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "mounts"));
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/bash_sandbox/config", {
+    network: "configured",
+    image: "node:22-bookworm",
+    timeoutMs: 120_000,
+    outputLimitBytes: 262_144,
+    pidsLimit: "",
+    mounts: JSON.stringify([{ id: "data", hostPath: path.join(root, "data"), containerPath: "/mnt/data", readOnly: true }])
+  }), patchResponse);
+  const patchBody = JSON.parse(patchResponse.body);
+  const saved = fs.readFileSync(envPath, "utf8");
+
+  assert.equal(patchResponse.statusCode, 200);
+  assert.equal(patchBody.restartRequired, true);
+  assert.equal(patchBody.configValue.network, "configured");
+  assert.equal(patchBody.configValue.image, "node:22-bookworm");
+  assert.equal(context.config.bashSandbox.network, "none");
+  assert.match(saved, /^BASH_SANDBOX_NETWORK=configured$/m);
+  assert.match(saved, /^BASH_SANDBOX_IMAGE=node:22-bookworm$/m);
+  assert.doesNotMatch(saved, /^BASH_SANDBOX_PIDS_LIMIT=/m);
+
+  const savedConfigResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/bash_sandbox/config", {}), savedConfigResponse);
+  const savedConfigBody = JSON.parse(savedConfigResponse.body);
+  assert.equal(savedConfigBody.configValue.network, "configured");
+  assert.equal(savedConfigBody.configValue.image, "node:22-bookworm");
+});
+
 test("admin plugin config exposes and writes world wanderer config", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
@@ -1404,6 +1462,7 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   const asrConfigPath = path.join(root, "config", "plugin", "asr", "config.json");
   const worldConfigPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const ttsConfigPath = path.join(root, "config", "plugin", "tts", "config.json");
+  const bashSandboxEnvPath = path.join(root, ".env");
   fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
   fs.mkdirSync(path.dirname(asrConfigPath), { recursive: true });
   fs.mkdirSync(path.dirname(worldConfigPath), { recursive: true });
@@ -1434,7 +1493,8 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
       photo: { configPath: photoConfigPath },
       asr: { configPath: asrConfigPath },
       worldWanderer: { configPath: worldConfigPath },
-      tts: { configPath: ttsConfigPath }
+      tts: { configPath: ttsConfigPath },
+      bashSandbox: { envPath: bashSandboxEnvPath }
     }
   });
 
@@ -1443,6 +1503,8 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
   await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
   await assertPatchError(handler, "/admin/api/plugins/tts/config", { conversion: { bailian: { service: "bad" } } }, "invalid_bailian_service");
+  await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { network: "bad" }, "invalid_bash_sandbox_network");
+  await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { mounts: "{}" }, "invalid_bash_sandbox_mounts");
 });
 
 test("admin ASR plugin config schema groups general and provider settings", async () => {
@@ -2341,6 +2403,23 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
         followupExtraParams: {}
       },
       plugins: { wechat: { enabled: false }, feishu: { enabled: false } },
+      bashSandbox: {
+        containerName: "alice-bash-sandbox",
+        image: "cimg/python:3.13-browsers",
+        defaultCwd: "/workspace",
+        hostWorkspaceDir: path.join(root, "sandbox", "workspace"),
+        workspaceDir: "/workspace",
+        hostCacheDir: path.join(root, "sandbox", "cache"),
+        cacheDir: "/cache",
+        tmpDir: "/tmp",
+        skillMounts: [],
+        mounts: [],
+        network: "none",
+        timeoutMs: 60_000,
+        outputLimitBytes: 128 * 1024,
+        pidsLimit: 256,
+        auditLogPath: path.join(root, "sandbox", "audit.jsonl")
+      },
       core: { timezone: "Asia/Shanghai" }
     },
     logs: [],

@@ -127,7 +127,7 @@ test("plugin config save bypasses native hidden-field validation and reports fai
   assert.match(html, /\$\("plugin-status"\)\.textContent = "Saving plugin config\.\.\."/);
   assert.match(html, /catch \(error\) \{/);
   assert.match(html, /\$\("plugin-status"\)\.textContent = "Save failed: " \+ message;/);
-  assert.match(html, /await openPluginConfig\(pluginId\);\s+\$\("plugin-status"\)\.textContent = pluginId \+ " config saved\."/);
+  assert.match(html, /result\.restartRequired \? " config saved\. Restart required\." : " config saved\."/);
 });
 
 test("plugin config save skips readonly and empty password fields", () => {

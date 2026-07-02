@@ -14,9 +14,11 @@ import { runPhotoProvider } from "../../../capabilities/tools/photo/src/photo-pr
 import { HttpJsonError, readJsonBody, readRawBody } from "../../../apps/api/middleware/http-utils.js";
 import { publicLLMApiPresets, readLLMApiPresets, resolvePromptApiPreset } from "../../llm-gateway/src/admin-presets.js";
 import { writeJson } from "../../../apps/api/routes/admin-http.js";
+import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import { resolveLibrarySetting } from "../../world-wanderer/src/admin-library-setting.js";
 import { booleanFromUnknown, isValidHttpUrl, numberFromUnknown, optionalString, parseJsonObject, requiredString } from "../../../shared/admin-input/src/index.js";
 import { convertReferenceAudio, decodeHeaderFileName, maxTtsReferenceUploadBytes, readMossCodecConfig, ttsAudioUrl } from "../../../channels/tts/src/admin-assets.js";
+import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../bash-sandbox/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../apps/api/bootstrap/admin-route-context.js";
 
 const fs = await import("node:fs");
@@ -157,7 +159,7 @@ type AdminPluginConfigField = {
 type AdminPluginRegistryEntry = {
   summary(context: AdminRoutesContext): AdminPluginSummary;
   config?(context: AdminRoutesContext): unknown;
-  patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown } | { error: string };
+  patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown; restartRequired?: boolean } | { error: string };
   setEnabled?(context: AdminRoutesContext, enabled: boolean): { config: unknown } | { error: string };
   reload?(context: AdminRoutesContext): { config: unknown } | { error: string };
   runtimeState?(context: AdminRoutesContext): unknown;
@@ -247,6 +249,7 @@ function findAdminPluginEntry(context: AdminRoutesContext, pluginId: string): Ad
 function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryEntry[] {
   return [
     messagingPluginEntry(),
+    bashSandboxPluginEntry(),
     asrPluginEntry(),
     ttsPluginEntry(),
     photoPluginEntry(),
@@ -337,6 +340,219 @@ function messagingConfigMtime(context: AdminRoutesContext): string | undefined {
   return fs.existsSync(filePath) ? fs.statSync(filePath).mtime.toISOString() : undefined;
 }
 
+function bashSandboxPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      return {
+        id: "bash_sandbox",
+        name: "Bash Sandbox",
+        kind: "tool",
+        status: "enabled",
+        health: "healthy",
+        description: "Docker-backed bash tool sandbox.",
+        configurable: true,
+        switchable: false,
+        configSource: bashSandboxEnvPath(context)
+      };
+    },
+    config(context) {
+      return publicBashSandboxConfig(readBashSandboxConfigForAdmin(context));
+    },
+    patch(context, patch) {
+      const result = updateBashSandboxConfig(context, patch);
+      return "error" in result ? result : { config: publicBashSandboxConfig(result.config), restartRequired: true };
+    },
+    reload(context) {
+      return { config: publicBashSandboxConfig(readBashSandboxConfigForAdmin(context)) };
+    },
+    configSchema: {
+      groups: [
+        { key: "runtime", label: "Runtime" },
+        { key: "paths", label: "Paths" },
+        { key: "limits", label: "Limits" },
+        { key: "mounts", label: "Mounts" }
+      ],
+      fields: [
+        { key: "network", label: "Network", type: "select", group: "runtime", options: [
+          { value: "none", label: "none" },
+          { value: "configured", label: "configured" }
+        ], description: "Takes effect after Alice restarts. configured enables Docker bridge networking and inherited proxy env." },
+        { key: "containerName", label: "Container Name", type: "text", group: "runtime" },
+        { key: "image", label: "Image", type: "text", group: "runtime" },
+        { key: "defaultCwd", label: "Default CWD", type: "text", group: "runtime" },
+        { key: "hostWorkspaceDir", label: "Host Workspace Dir", type: "text", group: "paths" },
+        { key: "workspaceDir", label: "Container Workspace Dir", type: "text", group: "paths" },
+        { key: "hostCacheDir", label: "Host Cache Dir", type: "text", group: "paths" },
+        { key: "cacheDir", label: "Container Cache Dir", type: "text", group: "paths" },
+        { key: "tmpDir", label: "Container Tmp Dir", type: "text", group: "paths" },
+        { key: "auditLogPath", label: "Audit Log Path", type: "text", group: "paths" },
+        { key: "timeoutMs", label: "Timeout Ms", type: "number", group: "limits", min: 1000, max: 3600000, step: 1000 },
+        { key: "outputLimitBytes", label: "Output Limit Bytes", type: "number", group: "limits", min: 1024, max: 10485760, step: 1024 },
+        { key: "cpuLimit", label: "CPU Limit", type: "text", group: "limits", description: "Docker --cpus value. Blank removes the env override." },
+        { key: "memoryLimit", label: "Memory Limit", type: "text", group: "limits", description: "Docker --memory value. Blank removes the env override." },
+        { key: "pidsLimit", label: "PIDs Limit", type: "number", group: "limits", min: 1, max: 100000, step: 1 },
+        { key: "mounts", label: "Mounts JSON", type: "textarea", group: "mounts", description: "JSON array of { id, hostPath, containerPath, readOnly }. Takes effect after restart." }
+      ]
+    },
+    routePreview: [
+      "bash tool call",
+      "bash sandbox permission check",
+      "Docker container",
+      "stdout/stderr result"
+    ],
+    runtimeAccess: [
+      "start or exec in the configured Docker container",
+      "read/write configured workspace and cache mounts",
+      "read optional mounts according to their readOnly flag",
+      "network access only when BASH_SANDBOX_NETWORK=configured after restart"
+    ]
+  };
+}
+
+type BashSandboxPublicConfig = Omit<BashSandboxConfig, "skillMounts">;
+
+function publicBashSandboxConfig(config: BashSandboxConfig): BashSandboxPublicConfig {
+  const { skillMounts: _skillMounts, ...publicConfig } = config;
+  return publicConfig;
+}
+
+function updateBashSandboxConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: BashSandboxConfig } | { error: string } {
+  const current = readBashSandboxConfigForAdmin(context);
+  const mounts = parseBashSandboxMountPatch(patch.mounts, current.mounts);
+  if ("error" in mounts) return mounts;
+  const networkValue = patch.network === undefined ? current.network : String(patch.network);
+  if (networkValue !== "none" && networkValue !== "configured") return { error: "invalid_bash_sandbox_network" };
+  const network: BashSandboxConfig["network"] = networkValue;
+  const nextInput = {
+    ...current,
+    containerName: bashSandboxStringField(patch, "containerName", current.containerName),
+    image: bashSandboxStringField(patch, "image", current.image),
+    defaultCwd: bashSandboxStringField(patch, "defaultCwd", current.defaultCwd),
+    hostWorkspaceDir: bashSandboxStringField(patch, "hostWorkspaceDir", current.hostWorkspaceDir),
+    workspaceDir: bashSandboxStringField(patch, "workspaceDir", current.workspaceDir),
+    hostCacheDir: bashSandboxStringField(patch, "hostCacheDir", current.hostCacheDir),
+    cacheDir: bashSandboxStringField(patch, "cacheDir", current.cacheDir),
+    tmpDir: bashSandboxStringField(patch, "tmpDir", current.tmpDir),
+    auditLogPath: bashSandboxStringField(patch, "auditLogPath", current.auditLogPath),
+    network,
+    timeoutMs: bashSandboxNumberField(patch, "timeoutMs", current.timeoutMs, 1000, 3_600_000),
+    outputLimitBytes: bashSandboxNumberField(patch, "outputLimitBytes", current.outputLimitBytes, 1024, 10 * 1024 * 1024),
+    cpuLimit: bashSandboxOptionalStringField(patch, "cpuLimit", current.cpuLimit),
+    memoryLimit: bashSandboxOptionalStringField(patch, "memoryLimit", current.memoryLimit),
+    pidsLimit: bashSandboxOptionalNumberField(patch, "pidsLimit", current.pidsLimit, 1, 100_000),
+    mounts: mounts.value
+  };
+  if (Object.values(nextInput).some((value) => value === "" || Number.isNaN(value))) return { error: "invalid_bash_sandbox_config" };
+  try {
+    const next = validateBashSandboxConfig(nextInput);
+    writeBashSandboxEnv(context, next);
+    return { config: next };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "invalid_bash_sandbox_config" };
+  }
+}
+
+function readBashSandboxConfigForAdmin(context: AdminRoutesContext): BashSandboxConfig {
+  const env = readEnvFile(bashSandboxEnvPath(context));
+  const current = context.config.bashSandbox;
+  return validateBashSandboxConfig({
+    ...current,
+    containerName: env.BASH_SANDBOX_CONTAINER_NAME ?? current.containerName,
+    image: env.BASH_SANDBOX_IMAGE ?? current.image,
+    defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? current.defaultCwd,
+    hostWorkspaceDir: env.BASH_SANDBOX_HOST_WORKSPACE_DIR ?? current.hostWorkspaceDir,
+    workspaceDir: env.BASH_SANDBOX_WORKSPACE_DIR ?? current.workspaceDir,
+    hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? current.hostCacheDir,
+    cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? current.cacheDir,
+    tmpDir: env.BASH_SANDBOX_TMP_DIR ?? current.tmpDir,
+    mounts: env.BASH_SANDBOX_MOUNTS === undefined ? current.mounts : parseBashSandboxMounts(JSON.parse(env.BASH_SANDBOX_MOUNTS)),
+    network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
+    timeoutMs: env.BASH_SANDBOX_TIMEOUT_MS === undefined ? current.timeoutMs : Number(env.BASH_SANDBOX_TIMEOUT_MS),
+    outputLimitBytes: env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES === undefined ? current.outputLimitBytes : Number(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES),
+    cpuLimit: env.BASH_SANDBOX_CPU_LIMIT ?? current.cpuLimit,
+    memoryLimit: env.BASH_SANDBOX_MEMORY_LIMIT ?? current.memoryLimit,
+    pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? current.pidsLimit : Number(env.BASH_SANDBOX_PIDS_LIMIT),
+    auditLogPath: env.BASH_SANDBOX_AUDIT_LOG_PATH ?? current.auditLogPath
+  });
+}
+
+function writeBashSandboxEnv(context: AdminRoutesContext, config: BashSandboxConfig): void {
+  updateEnvFile(bashSandboxEnvPath(context), {
+    BASH_SANDBOX_CONTAINER_NAME: config.containerName,
+    BASH_SANDBOX_IMAGE: config.image,
+    BASH_SANDBOX_DEFAULT_CWD: config.defaultCwd,
+    BASH_SANDBOX_HOST_WORKSPACE_DIR: config.hostWorkspaceDir,
+    BASH_SANDBOX_WORKSPACE_DIR: config.workspaceDir,
+    BASH_SANDBOX_HOST_CACHE_DIR: config.hostCacheDir,
+    BASH_SANDBOX_CACHE_DIR: config.cacheDir,
+    BASH_SANDBOX_TMP_DIR: config.tmpDir,
+    BASH_SANDBOX_MOUNTS: JSON.stringify(config.mounts),
+    BASH_SANDBOX_NETWORK: config.network,
+    BASH_SANDBOX_TIMEOUT_MS: String(config.timeoutMs),
+    BASH_SANDBOX_OUTPUT_LIMIT_BYTES: String(config.outputLimitBytes),
+    BASH_SANDBOX_CPU_LIMIT: config.cpuLimit ?? null,
+    BASH_SANDBOX_MEMORY_LIMIT: config.memoryLimit ?? null,
+    BASH_SANDBOX_PIDS_LIMIT: config.pidsLimit === undefined ? null : String(config.pidsLimit),
+    BASH_SANDBOX_AUDIT_LOG_PATH: config.auditLogPath
+  });
+}
+
+function parseBashSandboxMountPatch(value: unknown, fallback: BashSandboxConfig["mounts"]): { value: BashSandboxConfig["mounts"] } | { error: string } {
+  if (value === undefined) return { value: fallback };
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value;
+    if (!Array.isArray(parsed)) return { error: "invalid_bash_sandbox_mounts" };
+    return { value: parseBashSandboxMounts(parsed) };
+  } catch {
+    return { error: "invalid_bash_sandbox_mounts" };
+  }
+}
+
+function bashSandboxStringField(patch: Record<string, unknown>, key: string, fallback: string): string {
+  return patch[key] === undefined ? fallback : requiredString(patch[key]).trim();
+}
+
+function bashSandboxOptionalStringField(patch: Record<string, unknown>, key: string, fallback: string | undefined): string | undefined {
+  if (patch[key] === undefined) return fallback;
+  return optionalString(patch[key]);
+}
+
+function bashSandboxNumberField(patch: Record<string, unknown>, key: string, fallback: number, min: number, max: number): number {
+  const value = numberFromUnknown(patch[key], fallback);
+  return Number.isFinite(value) && value >= min && value <= max ? value : Number.NaN;
+}
+
+function bashSandboxOptionalNumberField(patch: Record<string, unknown>, key: string, fallback: number | undefined, min: number, max: number): number | undefined {
+  if (patch[key] === undefined) return fallback;
+  if (patch[key] === "") return undefined;
+  const value = Number(patch[key]);
+  return Number.isFinite(value) && value >= min && value <= max ? value : Number.NaN;
+}
+
+function bashSandboxEnvPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.bashSandbox?.envPath ?? ".env";
+}
+
+function readEnvFile(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) return {};
+  const env: Record<string, string> = {};
+  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator === -1) continue;
+    env[trimmed.slice(0, separator).trim()] = unquoteEnvValue(trimmed.slice(separator + 1).trim());
+  }
+  return env;
+}
+
+function unquoteEnvValue(value: string): string {
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 function writeAdminPluginConfig(context: AdminRoutesContext, response: any, pluginId: string): void {
   const entry = findAdminPluginEntry(context, pluginId);
   const plugin = entry?.summary(context);
@@ -371,6 +587,7 @@ async function patchAdminPluginConfig(context: AdminRoutesContext, request: any,
   context.appendLog("info", `plugin ${plugin.id} config saved`);
   writeJson(response, 200, {
     ok: true,
+    restartRequired: Boolean(result.restartRequired),
     plugin: entry.summary(context),
     configValue: result.config
   });

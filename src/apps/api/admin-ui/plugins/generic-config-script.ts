@@ -151,7 +151,7 @@ export function renderGenericPluginConfigScript(): string {
           }).then((res) => res.json());
           if (result.ok) {
             await openPluginConfig(pluginId);
-            $("plugin-status").textContent = pluginId + " config saved.";
+            $("plugin-status").textContent = pluginId + (result.restartRequired ? " config saved. Restart required." : " config saved.");
             return;
           }
           $("plugin-status").textContent = "Save failed: " + (result.error || "unknown error");
@@ -173,7 +173,7 @@ export function renderGenericPluginConfigScript(): string {
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body)
         }).then((res) => res.json());
-        $("plugin-status").textContent = result.ok ? sectionName + " saved." : "Save failed: " + (result.error || "unknown error");
+        $("plugin-status").textContent = result.ok ? sectionName + (result.restartRequired ? " saved. Restart required." : " saved.") : "Save failed: " + (result.error || "unknown error");
         if (result.ok) await openPluginConfig(pluginId);
       }
 

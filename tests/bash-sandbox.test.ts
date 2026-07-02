@@ -181,17 +181,27 @@ exit 64
 `);
   fs.chmodSync(docker, 0o755);
   const previousPath = process.env.PATH;
+  const previousHttpsProxy = process.env.HTTPS_PROXY;
+  const previousNoProxy = process.env.NO_PROXY;
   process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+  process.env.HTTPS_PROXY = "http://host.docker.internal:7890";
+  process.env.NO_PROXY = "localhost,127.0.0.1";
   try {
-    const config = testConfig({ hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
+    const config = testConfig({ network: "configured", hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
     const result = await createDockerBashExecutor(config).execute({ command: "echo ok", cwd: config.workspaceDir, timeoutMs: 1000, outputLimitBytes: 1024 });
     const calls = fs.readFileSync(log, "utf8");
     assert.equal(calls.includes("image inspect cimg/python:3.13-browsers"), true);
     assert.equal(calls.includes("pull cimg/python:3.13-browsers"), true);
-    assert.match(calls, /run -d/);
+    assert.match(calls, /run -d .*--network bridge/);
+    assert.match(calls, /-e HTTPS_PROXY/);
+    assert.match(calls, /-e NO_PROXY/);
     assert.equal(result.stdout.trim(), "docker-ok");
   } finally {
     process.env.PATH = previousPath;
+    if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = previousHttpsProxy;
+    if (previousNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = previousNoProxy;
   }
 });
 

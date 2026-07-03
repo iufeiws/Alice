@@ -14,8 +14,6 @@ export function createTalkRuntimeRuntime(input: {
   time: any;
   dailyShellStore: any;
   getAppearanceDescription(): string;
-  getLibrarySetting?(): string;
-  getAvailableSkills?(): string;
   getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
@@ -49,8 +47,6 @@ export function createTalkRuntimeRuntime(input: {
     time: input.time,
     dailyShellStore: input.dailyShellStore,
     getAppearanceDescription: input.getAppearanceDescription,
-    getLibrarySetting: input.getLibrarySetting,
-    getAvailableSkills: input.getAvailableSkills,
     getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,

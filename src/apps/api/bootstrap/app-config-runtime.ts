@@ -18,6 +18,9 @@ export type LLMConfig = {
 };
 
 export type AppConfig = {
+  project: {
+    username: string;
+  };
   core: {
     timezone: string;
     defaultAgentProfile: string;
@@ -136,6 +139,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".alice/skills";
 
   return {
+    project: {
+      username: env.PROJECT_USERNAME ?? "user"
+    },
     core: {
       timezone: env.AGENT_TIMEZONE ?? "Asia/Singapore",
       defaultAgentProfile: "main",

@@ -39,7 +39,6 @@ test("initiated behavior prompt layers are rendered by enabled order", async () 
   };
   const event = textEvent();
   const messages = await buildAgentInitiatedBehaviorMessages(plan, {
-    userName: "YY",
     visibleTools: { feishu: true },
     layers: [],
     appendLayers: []
@@ -87,7 +86,6 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
   };
   const toolCalls: ToolCall[] = [];
   const messages = await buildAgentInitiatedBehaviorMessages(plan, {
-    userName: "YY",
     visibleTools: { feishu: true },
     layers: [],
     appendLayers: []
@@ -146,7 +144,6 @@ test("initiated behavior prompt layers execute multiple assistant tool calls", a
   };
   const toolCalls: ToolCall[] = [];
   const messages = await buildAgentInitiatedBehaviorMessages(plan, {
-    userName: "YY",
     visibleTools: { feishu: true },
     layers: [],
     appendLayers: []
@@ -316,7 +313,6 @@ test("initiated behavior run store marks expired responses as missed", () => {
 test("initiated behavior availability is unavailable when sleep_cocoon is hidden", () => {
   const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "sleep_goodnight")!;
   const availability = resolveAgentInitiatedBehaviorAvailability(plan, {
-    userName: "YY",
     visibleTools: { feishu: true, sleep_cocoon: false },
     layers: [],
     appendLayers: []

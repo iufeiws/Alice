@@ -14,8 +14,7 @@ const path = await import("node:path");
 export async function savePromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.promptProfileStore, body as PromptProfile);
-  context.promptVariableRuntime.setUserName(profile.userName);
-  context.appendLog("info", `prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
+  context.appendLog("info", `prompt profile saved: layers=${profile.layers.length}`);
   writeJson(response, 200, {
     ok: true,
     profile,
@@ -26,8 +25,7 @@ export async function savePromptProfile(context: AdminRoutesContext, request: an
 export async function saveTalkPromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.talkPromptProfileStore, body as PromptProfile);
-  context.promptVariableRuntime.setUserName(profile.userName);
-  context.appendLog("info", `talk prompt profile saved: layers=${profile.layers.length} user=${profile.userName}`);
+  context.appendLog("info", `talk prompt profile saved: layers=${profile.layers.length}`);
   writeJson(response, 200, {
     ok: true,
     profile,
@@ -67,7 +65,6 @@ export function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<t
     memoryStore: context.memoryStore,
     diaryStore: context.diaryStore,
     memoryInductionPromptStore: context.memoryInductionPromptStore,
-    promptProfileStore: context.promptProfileStore,
     agentState: context.agentState,
     isHeartbeatPaused: () => Boolean((context.messageRuntime.getStatus() as { heartbeatPaused?: unknown })?.heartbeatPaused),
     time: context.time,

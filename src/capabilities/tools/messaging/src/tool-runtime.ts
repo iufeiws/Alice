@@ -23,7 +23,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 type AppendMessageLog = (input: any) => unknown;
 
 export function createToolRuntime(input: {
-  config: { photo: any; tts?: any; memoryFiles?: { root?: string }; skills?: { root?: string; installedRoot?: string }; bashSandbox: any };
+  config: { project: { username: string }; photo: any; tts?: any; memoryFiles?: { root?: string }; skills?: { root?: string; installedRoot?: string }; bashSandbox: any };
   store: any;
   outputRouter: any;
   time: CurrentTimeProvider;
@@ -54,7 +54,7 @@ export function createToolRuntime(input: {
     voiceMessageTtsTrainingOutputDir: input.config.tts?.voiceMessageTrainingOutputDir,
     wechatVoiceFallbackToText: input.config.tts?.wechatVoiceFallbackToText,
     config: () => readMessagingPluginConfig(defaultMessagingPluginConfigPath),
-    getUserName: () => input.promptProfileStore.get().userName,
+    getUserName: () => input.config.project.username,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
     getDefaultTarget() {
@@ -123,7 +123,7 @@ export function createToolRuntime(input: {
         onBodyGenerationAttempted: daily.outfit.onBodyGenerationAttempted
       };
     },
-    getUserName: () => input.promptProfileStore.get().userName,
+    getUserName: () => input.config.project.username,
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
     getDefaultTarget() {
       return input.getDefaultTarget();
@@ -147,7 +147,7 @@ export function createToolRuntime(input: {
   });
 
   const bookcaseTools = createBookcaseTools({
-    getUserName: () => input.promptProfileStore.get().userName,
+    getUserName: () => input.config.project.username,
     time: input.time,
     store: input.store,
     outputRouter: input.outputRouter,

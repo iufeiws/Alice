@@ -17,8 +17,6 @@ export function createChatAgentRuntime(input: {
   dailyShellStore: any;
   time: any;
   coreProfileStore: any;
-  getLibrarySetting?(): string;
-  getAvailableSkills?(): string;
   getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
@@ -78,8 +76,6 @@ export function createChatAgentRuntime(input: {
     getDailyShell: () => input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
     getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
-    getLibrarySetting: input.getLibrarySetting,
-    getAvailableSkills: input.getAvailableSkills,
     getPromptVariables: input.getPromptVariables,
     getMemorySnapshot: () => input.memoryStore.read(),
     getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
@@ -87,7 +83,7 @@ export function createChatAgentRuntime(input: {
       ? () => buildCalendarContext({
         calendarStore: input.calendarStore,
         time: input.time,
-        userName: input.promptProfileStore.get().userName
+        userName: input.config.project.username
       })
       : undefined,
     state: input.agentState,

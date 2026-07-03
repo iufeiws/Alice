@@ -43,6 +43,7 @@ type MemoryRunProgress = {
 
 type MemoryAdminRuntimeInput = {
   config: {
+    project: { username: string };
     memoryFiles: { root: string };
     memorySummary: MemorySummaryConfig;
   };
@@ -53,7 +54,6 @@ type MemoryAdminRuntimeInput = {
   memoryStore: MemoryStore;
   diaryStore: any;
   memoryInductionPromptStore: MemoryInductionPromptStore;
-  promptProfileStore: { get(): { userName?: string } };
   agentState: { getSnapshot(): { state: string } };
   isHeartbeatPaused?: () => boolean;
   time: { timeZone: string; now(): { iso: string; date: Date } };
@@ -108,7 +108,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
     const messages = input.store.listMessagesByCreatedAtRange(startAt, endAt, 10_000);
     const content = formatCheckChatMessages(messages, {
       timeZone: input.time.timeZone,
-      userName: input.promptProfileStore.get().userName || "user"
+      userName: input.config.project.username
     });
     return {
       status: 200,
@@ -193,7 +193,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
       windowStartAt: window.startAt,
       windowEndAt: window.endAt,
       timezone: input.time.timeZone,
-      userName: input.promptProfileStore.get().userName,
+      userName: input.config.project.username,
       config: memorySummaryConfigForPreset(apiPreset ?? input.resolveMemorizeApiPreset()),
       generatedAt: input.time.now().iso
     }, target);
@@ -257,7 +257,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
       config: memoryConfig,
       nowIso: () => input.time.now().iso,
       timezone: input.time.timeZone,
-      userName: input.promptProfileStore.get().userName,
+      userName: input.config.project.username,
       sessionRoot: input.llmSessionRoot(),
       memorySession,
       onRound,

@@ -10,7 +10,9 @@ import {
 } from "../src/contexts/memory/src/memory.js";
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createPromptProfileStore } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createDailyShellStore } from "../src/contexts/agent-profile/src/domain/shell.js";
+import { readWorldWandererConfig } from "../src/contexts/world-wanderer/src/index.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
 import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
@@ -229,15 +231,13 @@ test("talk prompt profile saves independently from chat prompt profile", async (
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/talk-prompt-profile", {
-    userName: "talk-user",
     visibleTools: {},
     layers: [{ id: "talk-role", title: "Talk Role", role: "system", enabled: true, order: 10, content: "talk" }]
   }), response);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(context.talkPromptProfileStore.get().userName, "talk-user");
   assert.equal(context.talkPromptProfileStore.get().layers[0]?.id, "talk-role");
-  assert.notEqual(context.promptProfileStore.get().userName, "talk-user");
+  assert.equal(context.promptProfileStore.get().layers[0]?.id, undefined);
 });
 
 test("agent state admin route exposes and accepts calling state", async () => {
@@ -2378,6 +2378,7 @@ function git(cwd: string, ...args: string[]): string {
 function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdownMemoryStore>, promptStore: ReturnType<typeof createMemoryInductionPromptStore>) {
   return {
     config: {
+      project: { username: "user" },
       memoryFiles: { root },
       memorySummary: {
         enabled: true,
@@ -2433,6 +2434,20 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     store: undefined,
     getLLMRequestPreview: () => undefined,
     getLLMRequestProfilePreview: () => undefined,
+    getPromptVariables() {
+      const coreProfile = this.coreProfileStore.get();
+      const worldWanderer = readWorldWandererConfig(this.pluginConfigs?.worldWanderer?.configPath);
+      const now = this.time.now();
+      return buildLLMTextVariables({
+        userName: this.config.project.username,
+        time: this.time,
+        dailyShellRaw: this.dailyShellStore.get(now.date, this.time.timeZone),
+        appearanceDescription: coreProfile.appearanceDescription,
+        librarySetting: worldWanderer.enabled ? worldWanderer.libraryPrompt : coreProfile.librarySetting,
+        memory: this.memoryStore.read(),
+        wakeBoundary: this.diaryStore.latestWakeBoundary()
+      });
+    },
     getTokenUsageReport: () => ({}),
     clearLLMChainCache() {},
     cancelActiveLLMRun: () => ({ ok: true, hadActiveRequest: false }),
@@ -2440,8 +2455,8 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     outputRouter: { listChannels: () => [] },
     feishuPairingStore: { list: () => [] },
     coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
-    promptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
-    talkPromptProfileStore: { get: () => ({ userName: "user", layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
+    promptProfileStore: { get: () => ({ layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
+    talkPromptProfileStore: { get: () => ({ layers: [], visibleTools: {} }), save: (profile: unknown) => profile },
     memoryStore,
     diaryStore: {
       listSleepBoundaries: () => [

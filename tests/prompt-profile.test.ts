@@ -24,7 +24,6 @@ test("prompt profile store creates defaults and persists edits", () => {
   const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
   const store = createPromptProfileStore(filePath);
   const initial = store.get();
-  assert.equal(initial.userName, "user");
   assert.deepEqual(initial.layers, []);
   assert.deepEqual(initial.appendLayers, []);
   assert.equal(initial.interruptLayer?.id, "interrupt");
@@ -34,17 +33,14 @@ test("prompt profile store creates defaults and persists edits", () => {
 
   const saved = store.save({
     ...initial,
-    userName: "AliceUser",
     visibleTools: { feishu: false },
     layers: [
       { id: "custom", title: "Custom", role: "system", enabled: true, content: "Hi {{user}} at {{date_time}}", order: 1 }
     ]
   });
-  assert.equal(saved.userName, "AliceUser");
   assert.equal(saved.visibleTools.feishu, false);
 
   const reopened = createPromptProfileStore(filePath).get();
-  assert.equal(reopened.userName, "AliceUser");
   assert.equal(reopened.layers[0].content, "Hi {{user}} at {{date_time}}");
   assert.equal(reopened.interruptLayer?.id, "interrupt");
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json")), true);
@@ -77,19 +73,27 @@ test("prompt profile persists interrupt layer", () => {
   assert.equal(reopened.interruptLayer?.enabled, true);
 });
 
+test("prompt profile rejects username because username is project config", () => {
+  const filePath = path.join(makeTempDir("prompt-store-no-username"), "prompt-profile.json");
+  const store = createPromptProfileStore(filePath);
+  assert.throws(() => store.save({
+    ...defaultPromptProfile(),
+    userName: "AliceUser"
+  } as any), /invalid_prompt_profile_user_name/);
+});
+
 test("prompt profile storage migrates legacy config file to agent-profile prompts folder", () => {
   const root = makeTempDir("prompt-store-migrate");
   const legacyPath = path.join(root, "config", "prompt-profile.json");
   fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
   fs.writeFileSync(legacyPath, `${JSON.stringify({
-    ...defaultPromptProfile(),
-    userName: "LegacyUser"
+    ...defaultPromptProfile()
   }, null, 2)}\n`);
 
   const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
   const store = createPromptProfileStore(filePath);
 
-  assert.equal(store.get().userName, "LegacyUser");
+  assert.deepEqual(store.get().layers, []);
   assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
   assert.equal(fs.existsSync(filePath), true);
   assert.equal(fs.existsSync(legacyPath), false);
@@ -100,14 +104,13 @@ test("prompt profile storage migrates previous root prompt file to agent-profile
   const previousPath = path.join(root, "prompt", "prompt-profile.json");
   fs.mkdirSync(path.dirname(previousPath), { recursive: true });
   fs.writeFileSync(previousPath, `${JSON.stringify({
-    ...defaultPromptProfile(),
-    userName: "PreviousRootUser"
+    ...defaultPromptProfile()
   }, null, 2)}\n`);
 
   const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
   const store = createPromptProfileStore(filePath);
 
-  assert.equal(store.get().userName, "PreviousRootUser");
+  assert.deepEqual(store.get().layers, []);
   assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
   assert.equal(fs.existsSync(filePath), true);
   assert.equal(fs.existsSync(previousPath), false);
@@ -133,7 +136,6 @@ test("prompt profile persists append layers", () => {
 test("prompt messages render variables and preserve unknown placeholders", () => {
   const profile = {
     ...defaultPromptProfile(),
-    userName: "小王",
     layers: [
       { id: "one", title: "One", role: "system" as const, enabled: true, content: "{{user}} {{timezone}} {{missing}}", order: 1 }
     ]
@@ -151,7 +153,6 @@ test("prompt layers render message name", () => {
   const store = createPromptProfileStore(filePath);
   const saved = store.save({
     ...defaultPromptProfile(),
-    userName: "小王",
     layers: [
       { id: "default_name", title: "Default Name", role: "user", enabled: true, content: "hello", order: 1 },
       { id: "named", title: "Named", role: "user", name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 },
@@ -197,7 +198,6 @@ test("prompt messages render memory variables", () => {
 test("prompt messages pair tool request layers with actual tool results", async () => {
   const profile = {
     ...defaultPromptProfile(),
-    userName: "小王",
     layers: [
       {
         id: "request",
@@ -269,7 +269,6 @@ test("prompt messages pair multiple tool calls with results", async () => {
 test("append prompt messages pair tool request layers with actual tool results", async () => {
   const profile = {
     ...defaultPromptProfile(),
-    userName: "小王",
     layers: [],
     appendLayers: [
       {

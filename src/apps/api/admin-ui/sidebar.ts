@@ -99,6 +99,8 @@ ${renderWechatPluginPanel()}
           <div id="left-agent" class="pane">
             <h2>Agent</h2>
             <form id="agent-form">
+              <label for="projectUsername">Username</label>
+              <input id="projectUsername" name="username" autocomplete="off" />
               <label for="inboundDebounceMs">Message Wait Ms</label>
               <input id="inboundDebounceMs" name="inboundDebounceMs" inputmode="numeric" />
               <label for="timezone">Timezone</label>

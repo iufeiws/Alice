@@ -15,8 +15,6 @@ export function createApiAgentRuntime(input: {
   dailyShellStore: any;
   time: any;
   coreProfileStore: any;
-  getLibrarySetting?(): string;
-  getAvailableSkills?(): string;
   getPromptVariables(): LLMTextVariables;
   memoryStore: any;
   diaryStore: any;
@@ -44,8 +42,6 @@ export function createApiAgentRuntime(input: {
     time: input.time,
     dailyShellStore: input.dailyShellStore,
     getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
-    getLibrarySetting: input.getLibrarySetting,
-    getAvailableSkills: input.getAvailableSkills,
     getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
@@ -75,7 +71,6 @@ export function createApiAgentRuntime(input: {
     dailyShellStore: input.dailyShellStore,
     time: input.time,
     coreProfileStore: input.coreProfileStore,
-    getLibrarySetting: input.getLibrarySetting,
     getPromptVariables: input.getPromptVariables,
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,

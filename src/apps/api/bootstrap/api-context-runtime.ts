@@ -6,6 +6,7 @@ import { createDefaultTargetResolver } from "./default-target-runtime.js";
 import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile-memory-runtime.js";
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
+import { createPromptContextRuntime } from "./prompt-context-runtime.js";
 
 const path = await import("node:path");
 
@@ -46,6 +47,16 @@ export function createApiContextRuntime(input: {
       { root: input.config.skills?.installedRoot ?? ".alice/skills", source: "third-party" }
     ]
   });
+  const promptContextRuntime = createPromptContextRuntime({
+    username: input.config.project.username,
+    time: input.time,
+    dailyShellStore: profileMemoryRuntime.dailyShellStore,
+    coreProfileStore: profileMemoryRuntime.coreProfileStore,
+    memoryStore: profileMemoryRuntime.memoryStore,
+    diaryStore: profileMemoryRuntime.diaryStore,
+    calendarStore,
+    skillsRegistry
+  });
 
   return {
     feishuPairingStore,
@@ -61,6 +72,7 @@ export function createApiContextRuntime(input: {
     sleepMemoryStateStore: profileMemoryRuntime.sleepMemoryStateStore,
     dailyShellStore: profileMemoryRuntime.dailyShellStore,
     skillsRegistry,
+    promptContextRuntime,
     getAgentInitiatedBehaviorPlans: initiatedBehaviorRuntime.getPlans,
     createAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.createCustom,
     deleteAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.deleteCustom,

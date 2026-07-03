@@ -145,8 +145,13 @@ export async function saveWeChatConfig(context: AdminRoutesContext, request: any
 
 export async function saveAgentConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
+  const username = requiredString(body.username);
   const inboundDebounceMs = numberFromUnknown(body.inboundDebounceMs, context.config.core.inboundDebounceMs);
   const timezone = requiredString(body.timezone);
+  if (!username) {
+    writeJson(response, 400, { ok: false, error: "missing_username" });
+    return;
+  }
   if (!timezone) {
     writeJson(response, 400, { ok: false, error: "missing_timezone" });
     return;
@@ -161,15 +166,17 @@ export async function saveAgentConfig(context: AdminRoutesContext, request: any,
     return;
   }
   updateEnvFile(".env", {
+    PROJECT_USERNAME: username,
     AGENT_INBOUND_DEBOUNCE_MS: String(inboundDebounceMs),
     AGENT_TIMEZONE: timezone,
     AGENT_DEFAULT_TARGET_PLUGIN: defaultTargetPlugin
   });
+  context.config.project.username = username;
   context.config.core.inboundDebounceMs = inboundDebounceMs;
   context.config.core.timezone = timezone;
   context.config.core.defaultTargetPlugin = defaultTargetPlugin;
   context.setTimeZone(timezone);
-  context.appendLog("info", `agent config saved: inboundDebounceMs=${inboundDebounceMs} timezone=${timezone} defaultTargetPlugin=${defaultTargetPlugin}`);
+  context.appendLog("info", `agent config saved: username=${username} inboundDebounceMs=${inboundDebounceMs} timezone=${timezone} defaultTargetPlugin=${defaultTargetPlugin}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
@@ -328,6 +335,7 @@ export async function stopWeChat(context: AdminRoutesContext, response: any): Pr
 export function getAdminConfig(context: AdminRoutesContext): unknown {
   const apiProfile = readPromptApiProfile(context);
   return {
+    project: context.config.project,
     core: context.config.core,
     coreProfile: context.coreProfileStore.get(),
     coreVariables: {

@@ -47,8 +47,7 @@ export function createApiAdminRuntime(input: {
     getLLMRequestPreview: input.adminLLMSessionRuntime.getLLMRequestPreview,
     getLLMRequestProfilePreview: input.adminLLMSessionRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.adminLLMSessionRuntime.getTalkLLMRequestProfilePreview,
-    getPromptVariables: () => input.apiCapabilitiesRuntime.promptVariableRuntime.current(),
-    promptVariableRuntime: input.apiCapabilitiesRuntime.promptVariableRuntime,
+    getPromptVariables: () => input.apiContextRuntime.promptContextRuntime.getPromptVariables(),
     getTokenUsageReport: input.getTokenUsageReport,
     clearLLMChainCache: () => input.chatAgent.clearLLMSession("admin_clear"),
     cancelActiveLLMRun: () => {

@@ -91,6 +91,7 @@ ${renderPromptsScript()}
         $("config").textContent = JSON.stringify(config, null, 2);
         await refreshLLMApiPresets();
         if (!currentLLMApiPreset) clearLLMApiForm();
+        $("projectUsername").value = (config.project && config.project.username) || "user";
         $("inboundDebounceMs").value = String(config.core.inboundDebounceMs ?? 1000);
         $("timezone").value = config.core.timezone || "Asia/Singapore";
         $("defaultTargetPlugin").value = config.core.defaultTargetPlugin || "auto";

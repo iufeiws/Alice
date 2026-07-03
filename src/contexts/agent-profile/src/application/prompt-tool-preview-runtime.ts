@@ -11,14 +11,7 @@ import { memoryToolDefinitions } from "../../../memory/src/memory.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
-  dailyShellStore: any;
-  coreProfileStore: any;
-  getLibrarySetting?(): string;
-  getAvailableSkills?(): string;
   getPromptVariables(): LLMTextVariables;
-  memoryStore: any;
-  diaryStore: any;
-  calendarStore: any;
   toolPlugins: any[];
   llmRequests: { buildTools(names: string[], variables: unknown): LLMChatInput["tools"] };
   messagingTools: { execute(call: any): Promise<unknown> | unknown };

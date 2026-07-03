@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { promptVariables } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
-import { createPromptVariableRuntime } from "../src/contexts/agent-profile/src/application/prompt-variable-runtime.js";
+import { createPromptContextRuntime } from "../src/apps/api/bootstrap/prompt-context-runtime.js";
 
 test("renderLLMText resolves common variable placeholders", () => {
   assert.equal(renderLLMText("hello {{ user }} at {{date_time}}", {
@@ -98,19 +98,24 @@ test("promptVariables exposes available_skills without prompt text changes", () 
   assert.equal(variables.available_skills, "<available_skills>\n</available_skills>");
 });
 
-test("prompt variable runtime exposes available_skills from the actual variable tree", () => {
-  const runtime = createPromptVariableRuntime({
-    userName: "YY",
+test("prompt context runtime exposes available_skills from the actual variable tree", () => {
+  const runtime = createPromptContextRuntime({
+    username: "YY",
     time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
     dailyShellStore: { get: () => undefined },
     coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    getAvailableSkills: () => "<available_skills>\n  <skill>\n    <name>weather</name>\n  </skill>\n</available_skills>"
+    skillsRegistry: {
+      available: () => [{
+        name: "weather",
+        description: "天气查询"
+      }]
+    }
   } as any);
 
-  const variables = runtime.current();
+  const variables = runtime.getPromptVariables();
   assert.match(String(variables.available_skills), /<name>weather<\/name>/);
 });
 

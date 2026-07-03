@@ -12,7 +12,7 @@ const path = await import("node:path");
 export function getShellConfig(context: AdminRoutesContext): unknown {
   const config = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
   const variables = buildLLMTextVariables({
-    userName: context.promptProfileStore.get().userName,
+    userName: context.config.project.username,
     time: context.time,
     dailyShellRaw: config.daily,
     appearanceDescription: context.coreProfileStore.get().appearanceDescription,

@@ -10,7 +10,7 @@ export function getAdminTextVariables(
 ): LLMTextVariables {
   const receivedTime = context.time.now();
   return buildLLMTextVariables({
-    userName: context.promptProfileStore.get().userName,
+    userName: context.config.project.username,
     time: context.time,
     dailyShell: context.getDailyShell(),
     dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
@@ -19,7 +19,7 @@ export function getAdminTextVariables(
     calendarContext: buildCalendarContext({
       calendarStore: context.calendarStore,
       time: context.time,
-      userName: context.promptProfileStore.get().userName
+      userName: context.config.project.username
     }),
     event: {
       id: "admin_tool_preview",

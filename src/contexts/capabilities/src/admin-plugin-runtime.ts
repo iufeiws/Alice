@@ -1440,7 +1440,7 @@ function renderPhotoOnBodyPrompt(context: AdminRoutesContext, template: string, 
 }): string {
   const daily = context.dailyShellStore.get(context.time.now().date, context.time.timeZone);
   return renderLLMText(template, buildLLMTextVariables({
-    userName: context.promptProfileStore.get().userName,
+    userName: context.config.project.username,
     time: context.time,
     dailyShellRaw: {
       date: daily.date,
@@ -2176,7 +2176,7 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
       promptVariables: () => buildLLMTextVariables({
-        userName: context.promptProfileStore.get().userName,
+        userName: context.config.project.username,
         time: context.time,
         librarySetting: resolveLibrarySetting(context)
       }),

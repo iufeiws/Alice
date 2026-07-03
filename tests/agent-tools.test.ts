@@ -19,7 +19,7 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptVariables"> & Partial<Pick<ChatAgentDeps, "llmRequestSender">>;
+type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptVariables"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptVariables">>;
 
 function createChatAgent(deps: TestChatAgentDeps) {
   let persistedSession = deps.initialLLMSession;
@@ -50,7 +50,15 @@ function createChatAgent(deps: TestChatAgentDeps) {
   return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
-    getPromptVariables: () => buildLLMTextVariables({ userName: getPromptProfile().userName, time: deps.time ?? createCurrentTimeProvider("UTC") }),
+    getPromptVariables: deps.getPromptVariables ?? (() => buildLLMTextVariables({
+      userName: (deps.config as any).project?.username ?? "user",
+      time: deps.time ?? createCurrentTimeProvider("UTC"),
+      dailyShellRaw: deps.getDailyShellRaw?.(),
+      appearanceDescription: deps.getAppearanceDescription?.(),
+      memory: deps.getMemorySnapshot?.(),
+      wakeBoundary: deps.getWakeBoundary?.(),
+      calendarContext: deps.getCalendarContext?.()
+    })),
     llmRequestSender,
     loadLLMSession,
     onLLMSessionUpdated(session) {
@@ -1778,14 +1786,13 @@ test("chat agent renders prompt profile layers before user message", async () =>
     }
   };
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
+    config: loadConfig({ LLM_MODEL: "test-model", PROJECT_USERNAME: "小王" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
     getPromptProfile: () => ({
-      userName: "小王",
       visibleTools: { feishu: true },
       layers: [
         { id: "sys", title: "Sys", role: "system", enabled: true, content: "hello {{user}}", order: 1 },

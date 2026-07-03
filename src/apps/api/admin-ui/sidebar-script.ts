@@ -80,7 +80,7 @@ export function renderAdminSidebarScript(): string {
       $("agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const body = { inboundDebounceMs: form.get("inboundDebounceMs"), timezone: form.get("timezone"), defaultTargetPlugin: form.get("defaultTargetPlugin") };
+        const body = { username: form.get("username"), inboundDebounceMs: form.get("inboundDebounceMs"), timezone: form.get("timezone"), defaultTargetPlugin: form.get("defaultTargetPlugin") };
         const result = await fetch("/admin/api/config/agent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) => res.json());
         $("agent-status").textContent = result.ok ? "Agent config saved." : "Failed to save agent config.";
         await refresh();

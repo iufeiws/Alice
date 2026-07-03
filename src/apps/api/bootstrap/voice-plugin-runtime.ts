@@ -9,9 +9,8 @@ import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-pro
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createVoicePluginRuntime(input: {
-  config: { tts: TTSConfig };
+  config: { project: { username: string }; tts: TTSConfig };
   time: CurrentTimeProvider;
-  promptProfileStore: any;
   sendLLMRequest(request: any): Promise<any>;
   readLLMApiPresets(): LLMApiPreset[];
   recordTokenUsageEvent(event: any): void;
@@ -33,7 +32,7 @@ export function createVoicePluginRuntime(input: {
     createLlmClientFromPreset: createTtsLlmClientFromPreset,
     recordTokenUsageEvent: input.recordTokenUsageEvent,
     promptVariables: () => buildLLMTextVariables({
-      userName: input.promptProfileStore.get().userName,
+      userName: input.config.project.username,
       time: input.time
     }),
     appendLog: input.appendLog

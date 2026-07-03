@@ -50,10 +50,8 @@ export function renderPromptsScript(): string {
               <button class="tab" id="prompt-mode-memory" type="button">Memorize</button>
             </div>
             <div class="prompt-api-cell">\${renderPromptApiPresetPicker(isTalk ? "talk" : "chat")}</div>
-            <div class="prompt-edit-cell">
+              <div class="prompt-edit-cell">
               <h2>\${isTalk ? "Talk Prompt Profile" : "Prompt Profile"}</h2>
-              <label for="promptUserName">User Name</label>
-              <input id="promptUserName" autocomplete="off" value="\${escapeAttr(activeProfile.userName || "user")}" />
               \${isTalk ? "" : renderBirthdayEditor()}
               <h2>Visible Tools</h2>
               <label><input id="toolFeishuVisible" type="checkbox" \${activeProfile.visibleTools?.feishu === false ? "" : "checked"} /> tool: chat</label>
@@ -82,7 +80,6 @@ export function renderPromptsScript(): string {
         $("prompt-mode-memory").addEventListener("click", () => { promptEditorMode = "memory"; renderPromptProfile(); });
         bindPromptSideToggle(isTalk ? "talk" : "chat");
         bindPromptApiPresetPicker(isTalk ? "talk" : "chat");
-        $("promptUserName").addEventListener("input", () => { activeProfile.userName = $("promptUserName").value; });
         if (!isTalk) bindBirthdayEditor();
         $("toolFeishuVisible").addEventListener("change", () => { activeProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });

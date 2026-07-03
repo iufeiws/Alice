@@ -19,7 +19,6 @@ export type PromptDefinition = {
 };
 
 export type PromptProfile = {
-  userName: string;
   layers: PromptLayer[];
   appendLayers?: PromptLayer[];
   interruptLayer?: PromptLayer;
@@ -93,7 +92,6 @@ export function createPromptProfileStore(filePath: string): PromptProfileStore {
 
 export function defaultPromptProfile(): PromptProfile {
   return {
-    userName: "user",
     visibleTools: {
       feishu: true,
       photo: true,
@@ -229,7 +227,6 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     shell: profile.visibleTools?.shell !== false
   };
   return {
-    userName: nonEmptyString(profile.userName) ?? fallback.userName,
     visibleTools,
     layers: normalizePromptLayers(layers),
     appendLayers: normalizePromptLayers(appendLayers ?? []),
@@ -275,20 +272,18 @@ function cloneProfile(profile: PromptProfile): PromptProfile {
   return JSON.parse(JSON.stringify(profile)) as PromptProfile;
 }
 
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
 function validatePromptProfile(value: unknown): PromptProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError("invalid_prompt_profile");
   const profile = value as PromptProfile;
-  if (typeof profile.userName !== "string") throw new PromptProfileValidationError("invalid_prompt_profile_user_name");
+  if ("userName" in profile) throw new PromptProfileValidationError("invalid_prompt_profile_user_name");
   if (!profile.visibleTools || typeof profile.visibleTools !== "object" || Array.isArray(profile.visibleTools)) throw new PromptProfileValidationError("invalid_prompt_profile_visible_tools");
   validatePromptLayersForStorage(profile.layers, "layers");
   if (profile.appendLayers !== undefined) validatePromptLayersForStorage(profile.appendLayers, "appendLayers");
   if (profile.interruptLayer !== undefined) validateInterruptLayerForStorage(profile.interruptLayer);
   return cloneProfile({
-    ...profile,
+    visibleTools: profile.visibleTools,
+    layers: profile.layers,
+    appendLayers: profile.appendLayers,
     interruptLayer: profile.interruptLayer ?? defaultInterruptLayer()
   });
 }

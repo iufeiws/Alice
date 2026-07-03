@@ -183,11 +183,9 @@ export type ChatAgentDeps = {
   getDailyShell?: () => string;
   getDailyShellRaw?: () => DailyShell;
   getAppearanceDescription?: () => string;
-  getLibrarySetting?: () => string;
   getMemorySnapshot?: () => MemorySnapshot;
   getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
   getCalendarContext?: () => string | undefined;
-  getAvailableSkills?: () => string | undefined;
   getPromptVariables: () => LLMTextVariables;
   state?: AgentStateController;
   time?: CurrentTimeProvider;

@@ -19,8 +19,6 @@ export type TalkLoopSessionContextDeps = {
     get(date: Date, timeZone: string): unknown;
   };
   getAppearanceDescription(): string | undefined;
-  getLibrarySetting?(): string | undefined;
-  getAvailableSkills?(): string | undefined;
   getPromptVariables(): PromptRenderContext["variables"];
   memoryStore: { read(): unknown };
   diaryStore: { latestWakeBoundary(): unknown };

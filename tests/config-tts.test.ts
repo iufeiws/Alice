@@ -5,6 +5,7 @@ import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 test("tts config defaults to genie tts backend with moss fallback settings", () => {
   const config = loadConfig({});
 
+  assert.equal(config.project.username, "user");
   assert.equal(config.core.heartbeatPaused, true);
   assert.equal(config.tts.backend, "genie-tts");
   assert.equal(config.tts.genieBaseURL, "http://127.0.0.1:8767");
@@ -23,6 +24,14 @@ test("tts config defaults to genie tts backend with moss fallback settings", () 
   assert.equal(config.tts.mossReferenceAudio, "assets/tts/references/alice/reference.wav");
   assert.equal(config.tts.mossIdleShutdownMs, 15 * 60 * 1000);
   assert.equal(config.tts.mossFfmpegCommand, "ffmpeg-static");
+});
+
+test("project username comes from project env", () => {
+  const config = loadConfig({
+    PROJECT_USERNAME: "Y"
+  });
+
+  assert.equal(config.project.username, "Y");
 });
 
 test("core config can enable heartbeat auto start", () => {

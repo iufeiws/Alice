@@ -96,6 +96,12 @@ test("photoProvider_duplicateAndOverLimitRequests_rejectsUntilRelease", async ()
   assert.deepEqual(afterRelease, { stdout: "released" });
 });
 
+test("codexSelfieRunner_explicitlyEnablesImageGeneration", () => {
+  const runner = fs.readFileSync("src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs", "utf8");
+
+  assert.match(runner, /"--enable",\s*"image_generation"/);
+});
+
 test("outfitOnBodyAutoGeneration_defaultConfig_doesNotFetch", async () => {
   const previousFetch = globalThis.fetch;
   let fetchCount = 0;

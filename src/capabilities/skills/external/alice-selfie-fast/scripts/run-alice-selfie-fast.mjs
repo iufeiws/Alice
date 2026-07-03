@@ -43,6 +43,8 @@ const codexArgs = [
   "plugins",
   "--disable",
   "apps",
+  "--enable",
+  "image_generation",
   "-m",
   "gpt-5.4-mini",
   "-c",

@@ -37,6 +37,7 @@ export function summarizeLLMSession(session: LLMSessionRecord): unknown {
     fixedPrefixKind: session.fixedPrefixKind,
     fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
     waitChatStartedAt: session.waitChatStartedAt,
+    skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined,
     clearedAt: session.clearedAt,
     reason: session.reason,
     archiveFilePath: session.archiveFilePath

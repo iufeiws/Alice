@@ -178,6 +178,7 @@ export function createLLMSessionRuntime(input: {
     const nextFixedPrefixKind = nextMode === "fixed_prefix" ? sessionInput.fixedPrefixKind : undefined;
     const nextFixedPrefixCursorMessageId = nextMode === "fixed_prefix" ? sessionInput.fixedPrefixCursorMessageId : undefined;
     const nextWaitChatStartedAt = sessionInput.waitChatStartedAt;
+    const nextSkipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
     const nextTokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines);
     const tokenUsageChanged = session.lastTotalTokens !== sessionInput.lastTotalTokens
       || session.lastInputTokens !== sessionInput.lastInputTokens
@@ -191,6 +192,7 @@ export function createLLMSessionRuntime(input: {
       || session.fixedPrefixKind !== nextFixedPrefixKind
       || session.fixedPrefixCursorMessageId !== nextFixedPrefixCursorMessageId
       || session.waitChatStartedAt !== nextWaitChatStartedAt
+      || session.skipNextAppendLayers !== nextSkipNextAppendLayers
       || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
     if (!isAppend) {
       session.clearedAt = now;
@@ -218,6 +220,7 @@ export function createLLMSessionRuntime(input: {
     session.fixedPrefixKind = nextFixedPrefixKind;
     session.fixedPrefixCursorMessageId = nextFixedPrefixCursorMessageId;
     session.waitChatStartedAt = nextWaitChatStartedAt;
+    session.skipNextAppendLayers = nextSkipNextAppendLayers;
     if (delta.length > 0) input.archive.appendMessages(session, delta);
     if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
     input.archive.writeCurrentPointer(session);
@@ -248,6 +251,7 @@ export function createLLMSessionRuntime(input: {
     session.fixedPrefixKind = sessionInput.fixedPrefixKind;
     session.fixedPrefixCursorMessageId = sessionInput.fixedPrefixCursorMessageId;
     session.waitChatStartedAt = sessionInput.waitChatStartedAt;
+    session.skipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
     if (commonMessagePrefixLength(previousMessages, session.messages) === previousMessages.length) {
       const delta = session.messages.slice(previousMessages.length);
       if (delta.length > 0) input.archive.appendMessages(session, delta);
@@ -307,7 +311,8 @@ export function createLLMSessionRuntime(input: {
       modeExpiresAt: latest.modeExpiresAt,
       fixedPrefixKind: latest.fixedPrefixKind,
       fixedPrefixCursorMessageId: latest.fixedPrefixCursorMessageId,
-      waitChatStartedAt: latest.waitChatStartedAt
+      waitChatStartedAt: latest.waitChatStartedAt,
+      skipNextAppendLayers: latest.skipNextAppendLayers === true ? true : undefined
     };
   }
 

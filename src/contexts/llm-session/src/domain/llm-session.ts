@@ -22,6 +22,7 @@ export type LLMSessionSnapshot = {
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: string;
+  skipNextAppendLayers?: boolean;
 };
 
 export type TokenPressurePreviewBaseline = {
@@ -101,6 +102,7 @@ export type LLMSessionRecord = {
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: string;
+  skipNextAppendLayers?: boolean;
   currentRound?: LLMSessionRoundInfo;
   latestRequestInfo?: LLMSessionRequestInfo;
   latestResponseInfo?: LLMSessionResponseInfo;

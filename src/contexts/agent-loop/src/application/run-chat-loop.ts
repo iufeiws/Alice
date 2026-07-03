@@ -46,6 +46,7 @@ export type ChatAgentLoopSession = {
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: number;
   lastCheckChatCursorMessageId?: number;
+  skipNextAppendLayers?: boolean;
 };
 
 export type ChatAgentLoopInput = {
@@ -126,6 +127,12 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   const visibleToolNames = input.llmInput.toolNames;
   let assistantContentSentMessage = false;
   const baseSendRequest = input.llmRequestSender;
+  const sendRequest = createAgentRunIndicatorRequestSender({
+    indicator: input.agentRunIndicator,
+    sendRequest: baseSendRequest,
+    isCancelled: input.isLLMRunCancelled,
+    onError: input.onAgentRunIndicatorError
+  });
   const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
     async beforeRound({ round }) {
@@ -167,13 +174,19 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         streamHandlers: input.llmInput.streamHandlers
       };
     },
-    sendRequest: createAgentRunIndicatorRequestSender({
-      indicator: input.agentRunIndicator,
-      sendRequest: baseSendRequest,
-      isCancelled: input.isLLMRunCancelled,
-      onError: input.onAgentRunIndicatorError
-    }),
+    async sendRequest(request) {
+      try {
+        return await sendRequest(request);
+      } catch (error) {
+        session.skipNextAppendLayers = true;
+        input.noteSessionUpdated();
+        throw error;
+      }
+    },
     async afterRequest({ round, result }) {
+      if (session.skipNextAppendLayers) {
+        session.skipNextAppendLayers = undefined;
+      }
       assistantContentSentMessage = await sendAssistantContentAsChat(round, result.message.content) || assistantContentSentMessage;
     },
     shouldCancel() {

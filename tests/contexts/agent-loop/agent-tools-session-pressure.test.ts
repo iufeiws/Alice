@@ -24,7 +24,7 @@ test("chat agent continues after Chat until the next response has no tool calls"
         return {
           message: {
             role: "assistant",
-            content: "need more",
+            content: `need more ${requests.length}`,
             toolCalls: [{
               id: `tool_view_${requests.length}`,
               type: "function",
@@ -316,6 +316,51 @@ test("chat agent keeps an active transcript and appends fake Chat on the next he
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "fake reason");
   assert.equal(requests[1].messages.at(-1)?.content, "recent");
   assert.equal(appendContextCalls, 1);
+});
+
+test("chat agent reuses appended context after llm request failures", async () => {
+  const requests: LLMChatInput[] = [];
+  let appendCheckCount = 0;
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length === 1) return { message: { role: "assistant", content: "first" } };
+      throw new Error("LLM request failed: 503 Service Unavailable service is too busy");
+    }
+  };
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "one", title: "One", role: "system", enabled: true, content: "system", order: 1 }],
+      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
+    }),
+    tools: [{
+      id: "messaging-test",
+      listTools() {
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        appendCheckCount += 1;
+        return { callId: call.id, ok: true, output: `recent ${appendCheckCount}` };
+      }
+    }]
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /503 Service Unavailable/);
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /503 Service Unavailable/);
+
+  assert.equal(requests.length, 3);
+  assert.equal(appendCheckCount, 1);
+  assert.deepEqual(requests[2].messages, requests[1].messages);
+  assert.equal(requests[2].messages.at(-1)?.content, "recent 1");
 });
 
 test("chat agent clears session before the next request when cached input cost exceeds check chat miss cost", async () => {

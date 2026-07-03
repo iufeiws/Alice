@@ -81,6 +81,7 @@ export type LLMSessionSnapshot = {
   fixedPrefixKind?: string;
   fixedPrefixCursorMessageId?: number;
   waitChatStartedAt?: string;
+  skipNextAppendLayers?: boolean;
 };
 
 export type TokenPressurePreviewBaseline = {
@@ -241,6 +242,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     fixedPrefixCursorMessageId?: number;
     waitChatStartedAt?: number;
     lastCheckChatCursorMessageId?: number;
+    skipNextAppendLayers?: boolean;
   };
   const setActiveLoopSessionContext = deps.setActiveLoopSessionContext ?? ((input: AgentLoopSetActiveSessionContextInput<LLMSessionRecord>) => {
     setAgentLoopActiveSessionContext(input);
@@ -492,6 +494,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
       const appendLoopSessionContext = deps.appendLoopSessionContext ?? appendAgentLoopSessionContext;
       const appendSessionContext = async (session: LLMSessionRecord): Promise<void> => {
+        if (session.skipNextAppendLayers) return;
         const waitChatResumeMessages = await buildWaitChatResumeMessages({
           session,
           event,
@@ -502,11 +505,15 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         });
         if (waitChatResumeMessages.length > 0) {
           session.waitChatStartedAt = undefined;
-          appendLoopSessionContext({
+          const result = appendLoopSessionContext({
             session,
             messages: waitChatResumeMessages,
             updateSession: noteLLMSessionUpdated
           });
+          if (result.appended) {
+            result.session.skipNextAppendLayers = true;
+            noteLLMSessionUpdated(result.session);
+          }
           return;
         }
         const promptContext = buildPromptContext();
@@ -540,11 +547,15 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           });
         });
         if (appendMessages.length === 0) return;
-        appendLoopSessionContext({
+        const result = appendLoopSessionContext({
           session,
           messages: appendMessages,
           updateSession: noteLLMSessionUpdated
         });
+        if (result.appended) {
+          result.session.skipNextAppendLayers = true;
+          noteLLMSessionUpdated(result.session);
+        }
       };
       return {
         async prepare() {
@@ -840,7 +851,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         : undefined,
       lastCheckChatCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
         ? snapshot.fixedPrefixCursorMessageId
-        : undefined
+        : undefined,
+      skipNextAppendLayers: snapshot.skipNextAppendLayers === true ? true : undefined
     };
   }
 
@@ -896,7 +908,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       modeExpiresAt: typeof session.modeExpiresAt === "number" ? new Date(session.modeExpiresAt).toISOString() : undefined,
       fixedPrefixKind: session.fixedPrefixKind,
       fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
-      waitChatStartedAt: typeof session.waitChatStartedAt === "number" ? new Date(session.waitChatStartedAt).toISOString() : undefined
+      waitChatStartedAt: typeof session.waitChatStartedAt === "number" ? new Date(session.waitChatStartedAt).toISOString() : undefined,
+      skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined
     });
   }
 }

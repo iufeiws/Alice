@@ -18,6 +18,7 @@ export function createApiCapabilitiesRuntime(input: {
   diaryStore: any;
   calendarStore: any;
   coreProfileStore: any;
+  skillsRegistry: any;
   agentState: any;
   getDefaultTarget(): any;
   getGoogleStreetView(): any;
@@ -64,6 +65,7 @@ export function createApiCapabilitiesRuntime(input: {
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,
     coreProfileStore: input.coreProfileStore,
+    skillsRegistry: input.skillsRegistry,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,
@@ -81,7 +83,7 @@ export function createApiCapabilitiesRuntime(input: {
       const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
     },
-    getAvailableSkills: () => formatAvailableSkillsXml(toolRuntime.skillsRegistry),
+    getAvailableSkills: () => formatAvailableSkillsXml(input.skillsRegistry),
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore
@@ -95,7 +97,7 @@ export function createApiCapabilitiesRuntime(input: {
       const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.coreProfileStore.get().librarySetting;
     },
-    getAvailableSkills: () => formatAvailableSkillsXml(toolRuntime.skillsRegistry),
+    getAvailableSkills: () => formatAvailableSkillsXml(input.skillsRegistry),
     getPromptVariables: () => promptVariableRuntime.current(),
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,

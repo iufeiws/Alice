@@ -13,7 +13,7 @@ import { createSkillsTools } from "../../skills/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
-import { createSkillLoader, createSkillRegistry } from "../../../../contexts/skills/src/index.js";
+import { createSkillLoader, type SkillRegistry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 
@@ -37,6 +37,7 @@ export function createToolRuntime(input: {
   getDefaultTarget(): any;
   getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
+  skillsRegistry: SkillRegistry;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
 }) {
@@ -180,13 +181,7 @@ export function createToolRuntime(input: {
     now: () => input.time.now().date
   });
   const bashRuntime = createBashSandboxRuntime({ config: input.config.bashSandbox });
-  const skillsRegistry = createSkillRegistry({
-    roots: [
-      { root: input.config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
-      { root: input.config.skills?.installedRoot ?? ".alice/skills", source: "third-party" }
-    ]
-  });
-  const skillsLoader = createSkillLoader(skillsRegistry, bashRuntime);
+  const skillsLoader = createSkillLoader(input.skillsRegistry, bashRuntime);
   const skillsTools = createSkillsTools({ loader: skillsLoader });
   const bashTools = createBashTools({
     runtime: bashRuntime
@@ -208,7 +203,7 @@ export function createToolRuntime(input: {
     bashTools,
     bashRuntime,
     skillsTools,
-    skillsRegistry,
+    skillsRegistry: input.skillsRegistry,
     skillsLoader,
     toolPlugins
   };

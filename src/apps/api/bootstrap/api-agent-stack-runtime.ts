@@ -37,7 +37,7 @@ export function createApiAgentStackRuntime(input: {
       const worldWanderer = readWorldWandererConfig(defaultWorldWandererPluginConfigPath);
       return worldWanderer.enabled ? worldWanderer.libraryPrompt : input.apiContextRuntime.coreProfileStore.get().librarySetting;
     },
-    getAvailableSkills: () => formatAvailableSkillsXml(input.apiToolingRuntime.skillsRegistry),
+    getAvailableSkills: () => formatAvailableSkillsXml(input.apiContextRuntime.skillsRegistry),
     getPromptVariables: () => input.apiToolingRuntime.promptVariableRuntime.current(),
     memoryStore: input.apiContextRuntime.memoryStore,
     diaryStore: input.apiContextRuntime.diaryStore,

@@ -5,6 +5,7 @@ import { createChannelStateRuntime } from "./channel-state-runtime.js";
 import { createDefaultTargetResolver } from "./default-target-runtime.js";
 import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile-memory-runtime.js";
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
+import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
 
 const path = await import("node:path");
 
@@ -39,6 +40,12 @@ export function createApiContextRuntime(input: {
     dbPath: path.join(input.config.memoryFiles.root, "state", "initiated-behavior-runs.sqlite")
   });
   const calendarStore = createCalendarStore(path.join(input.config.memoryFiles.root, "alice.sqlite"));
+  const skillsRegistry = createSkillRegistry({
+    roots: [
+      { root: input.config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
+      { root: input.config.skills?.installedRoot ?? ".alice/skills", source: "third-party" }
+    ]
+  });
 
   return {
     feishuPairingStore,
@@ -53,6 +60,7 @@ export function createApiContextRuntime(input: {
     memoryInductionPromptStore: profileMemoryRuntime.memoryInductionPromptStore,
     sleepMemoryStateStore: profileMemoryRuntime.sleepMemoryStateStore,
     dailyShellStore: profileMemoryRuntime.dailyShellStore,
+    skillsRegistry,
     getAgentInitiatedBehaviorPlans: initiatedBehaviorRuntime.getPlans,
     createAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.createCustom,
     deleteAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.deleteCustom,

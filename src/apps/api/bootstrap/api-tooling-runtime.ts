@@ -31,6 +31,7 @@ export function createApiToolingRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
+    skillsRegistry: input.apiContextRuntime.skillsRegistry,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,
@@ -70,6 +71,7 @@ export function createApiToolingRuntime(input: {
     toolPlugins: apiCapabilitiesRuntime.toolPlugins,
     llmRequests: apiCapabilitiesRuntime.llmRequests,
     promptVariableRuntime: apiCapabilitiesRuntime.promptVariableRuntime,
+    skillsRegistry: input.apiContextRuntime.skillsRegistry,
     visibleToolNames: apiCapabilitiesRuntime.visibleToolNames,
     adminLLMSessionRuntime: apiSupportRuntime.adminLLMSessionRuntime,
     sleepMemoryInductionRuntime: apiSupportRuntime.sleepMemoryInductionRuntime

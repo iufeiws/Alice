@@ -14,7 +14,7 @@ import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.
 import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore, messageContentText } from "./agent-tools-helpers.js";
 
-test("chat agent stops after three consecutive identical tool calls", async () => {
+test("chat agent throws on repeated assistant tool-call responses", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const llm: LLMClient = {
@@ -55,9 +55,9 @@ test("chat agent stops after three consecutive identical tool calls", async () =
     }]
   });
 
-  await runPreparedChatEvent(core, textEvent());
-  assert.equal(requests.length, 3);
-  assert.deepEqual(calls.filter((id) => id !== "append_append_Chat"), ["tool_view_1", "tool_view_2", "tool_view_3"]);
+  await assert.rejects(runPreparedChatEvent(core, textEvent()), /llm_tool_loop_repeated_assistant_message/);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(calls.filter((id) => id !== "append_append_Chat"), ["tool_view_1"]);
 });
 
 test("chat agent falls back after max llm requests when tool calls alternate", async () => {
@@ -110,7 +110,7 @@ test("chat agent falls back after max llm requests when tool calls alternate", a
   assert.equal(calls.length, 10);
 });
 
-test("chat agent stops after three consecutive identical Chat calls", async () => {
+test("chat agent throws on repeated assistant Chat send responses", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];
   const llm: LLMClient = {
@@ -151,13 +151,9 @@ test("chat agent stops after three consecutive identical Chat calls", async () =
     }]
   });
 
-  await runPreparedChatEvent(core, textEvent());
-  assert.equal(requests.length, 3);
-  assert.deepEqual(sent, [
-    "tool_send_1:same",
-    "tool_send_2:same",
-    "tool_send_3:same"
-  ]);
+  await assert.rejects(runPreparedChatEvent(core, textEvent()), /llm_tool_loop_repeated_assistant_message/);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(sent.filter((entry) => entry.startsWith("tool_send_")), ["tool_send_1:same"]);
 });
 
 test("chat agent stops after the generic total tool call limit", async () => {

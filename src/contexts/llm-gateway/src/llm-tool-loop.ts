@@ -91,6 +91,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
   const limits = { ...defaultLLMToolLoopLimits, ...(input.limits ?? {}) };
   let messages = cloneLLMMessages(input.initialMessages);
   let previousToolCallSignature: string | undefined;
+  let previousAssistantMessageSignature: string | undefined;
   let repeatedToolCallCount = 0;
   let totalToolCallCount = 0;
   let sentMessage = false;
@@ -135,6 +136,11 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       if (input.shouldCancel?.()) return cancelledResult(round + 1);
       throw error;
     }
+    const assistantMessageSignature = assistantLoopMessageSignature(result.message);
+    if (assistantMessageSignature === previousAssistantMessageSignature) {
+      throw new Error("llm_tool_loop_repeated_assistant_message");
+    }
+    previousAssistantMessageSignature = assistantMessageSignature;
     await input.afterRequest?.({ round, result, messages });
     if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
 
@@ -293,12 +299,24 @@ function toolCallSignature(call: LLMToolCall): string {
   return `${call.function.name}:${stableJson(parseToolArguments(call.function.arguments))}`;
 }
 
-function parseToolArguments(raw: string): Record<string, unknown> {
+function assistantLoopMessageSignature(message: LLMMessage): string {
+  return stableJson({
+    role: message.role,
+    content: message.content,
+    reasoningContent: message.reasoningContent ?? "",
+    toolCalls: message.toolCalls?.map((call) => ({
+      name: call.function.name,
+      arguments: parseToolArguments(call.function.arguments)
+    })) ?? []
+  });
+}
+
+function parseToolArguments(raw: string): unknown {
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : raw;
   } catch {
-    return {};
+    return raw;
   }
 }
 

@@ -71,15 +71,15 @@ test("chat loop forwards stream deltas to indicator and preserves existing strea
   assert.ok(calls.includes("finish"));
 });
 
-test("chat loop forwards tool call argument values to indicator without dedupe", async () => {
+test("chat loop forwards raw LLM tool calls to indicator", async () => {
   const toolPayloads: string[] = [];
   const indicator: AgentRunIndicator = {
     async begin() {
       return {
         async appendReasoningDelta() {},
         async appendContentDelta() {},
-        async appendToolCall(input) {
-          toolPayloads.push(JSON.stringify(input));
+        async appendToolCall(call) {
+          toolPayloads.push(`${call.name}:${call.arguments}`);
         },
         async finish() {},
         async fail() {}
@@ -113,8 +113,8 @@ test("chat loop forwards tool call argument values to indicator without dedupe",
 
   assert.equal(result.finalMessage.content, "done");
   assert.deepEqual(toolPayloads, [
-    "{\"short\":\"abc\",\"long\":\"123456789\",\"n\":7}",
-    "{\"short\":\"abc\"}"
+    "Demo:{\"short\":\"abc\",\"long\":\"123456789\",\"n\":7}",
+    "Demo:{\"short\":\"abc\"}"
   ]);
 });
 

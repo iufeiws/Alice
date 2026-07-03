@@ -2,7 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { FeishuAgentRunCardBlock, FeishuDynamicCardClient } from "../../../../channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../../channels/feishu/src/pairing.js";
-import type { AgentRunIndicator, AgentRunIndicatorSession } from "../ports.js";
+import type { AgentRunIndicator, AgentRunIndicatorSession, AgentRunIndicatorToolCall } from "../ports.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -179,9 +179,9 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         content += delta;
         queueFlush();
       },
-      async appendToolCall(input) {
+      async appendToolCall(call) {
         if (failed) return;
-        const line = formatToolCallInput(input);
+        const line = formatToolCall(call);
         tools = tools ? `${tools}\n${line}` : line;
         await updateBlock(card, "tools", tools, { ...card.blocks, tools });
       },
@@ -369,14 +369,8 @@ function blocksFromRecord(record: Pick<FeishuAgentRunIndicatorCardRecord, "state
   };
 }
 
-function formatToolCallInput(input: Record<string, unknown>): string {
-  return Object.values(input).map(formatToolCallInputValue).join(" ");
-}
-
-function formatToolCallInputValue(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  const rendered = text ?? String(value);
-  return rendered.length > 8 ? "..." : rendered;
+function formatToolCall(call: AgentRunIndicatorToolCall): string {
+  return `${call.name} ${call.arguments}`;
 }
 
 function stateLabel(value: unknown): string {

@@ -369,7 +369,10 @@ async function appendIndicatorToolCalls(
   for (const call of calls) {
     if (!session) return undefined;
     try {
-      await session.appendToolCall(parseAgentLoopToolArguments(call.function.arguments));
+      await session.appendToolCall({
+        name: call.function.name,
+        arguments: call.function.arguments
+      });
     } catch (error) {
       onError?.(error);
       await failIndicatorSession(session, error, onError);

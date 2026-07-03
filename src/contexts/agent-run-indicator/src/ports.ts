@@ -7,6 +7,11 @@ export type AgentRunIndicatorTypingInput = {
   typing: boolean;
 };
 
+export type AgentRunIndicatorToolCall = {
+  name: string;
+  arguments: string;
+};
+
 export type AgentRunIndicator = {
   begin(input: AgentRunIndicatorBeginInput): Promise<AgentRunIndicatorSession | undefined>;
   ensureReady?(): Promise<void>;
@@ -17,7 +22,7 @@ export type AgentRunIndicator = {
 export type AgentRunIndicatorSession = {
   appendReasoningDelta(delta: string): Promise<void>;
   appendContentDelta(delta: string): Promise<void>;
-  appendToolCall(input: Record<string, unknown>): Promise<void>;
+  appendToolCall(call: AgentRunIndicatorToolCall): Promise<void>;
   finish(): Promise<void>;
   fail(error: unknown): Promise<void>;
 };

@@ -49,7 +49,7 @@ test("Feishu agent run indicator creates a card and flushes final content", asyn
   });
 });
 
-test("Feishu agent run indicator renders tool argument values below content", async () => {
+test("Feishu agent run indicator renders raw LLM tool calls below content", async () => {
   const store = memoryCardStore();
   const client = fakeCardClient();
   const indicator = createTestFeishuIndicator({
@@ -61,12 +61,12 @@ test("Feishu agent run indicator renders tool argument values below content", as
 
   const session = await indicator.begin({ round: 0 });
   assert.ok(session);
-  await session.appendToolCall({ long: "123456789", short: "ok", n: 7, object: { x: 1 } });
-  await session.appendToolCall({ value: "repeat" });
-  await session.appendToolCall({ value: "repeat" });
+  await session.appendToolCall({ name: "Search", arguments: "{\"query\":\"alice\"}" });
+  await session.appendToolCall({ name: "Demo", arguments: "{\"short\":\"abc\"}" });
+  await session.appendToolCall({ name: "Demo", arguments: "{\"short\":\"abc\"}" });
   await session.finish();
 
-  const tools = "... ok 7 {\"x\":1}\nrepeat\nrepeat";
+  const tools = "Search {\"query\":\"alice\"}\nDemo {\"short\":\"abc\"}\nDemo {\"short\":\"abc\"}";
   assertUpdateIncludes(client, "tools", tools);
   assertCardRecord(store, {
     messageId: "om_new",

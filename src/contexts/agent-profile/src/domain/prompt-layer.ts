@@ -1,5 +1,5 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
-import { renderLLMText, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
 export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
 
@@ -51,33 +51,33 @@ export function normalizePromptLayers(
 
 export function promptLayerToMessage(
   layer: PromptLayer,
-  variables: LLMTextVariables,
+  renderer: LLMTextRenderer,
   options: PromptLayerParserOptions = {}
 ): LLMMessage {
   if (layer.role === "tool_request") {
     const prefix = options.toolCallIdPrefix ?? "prompt";
-    const name = renderPromptLayerName(layer, variables);
+    const name = renderPromptLayerName(layer, renderer);
     return {
       role: "assistant",
       ...(name ? { name } : {}),
-      content: renderLLMText(layer.content || "", variables),
-      reasoningContent: renderLLMText(layer.thinking ?? layer.content ?? "", variables),
+      content: renderer.renderText(layer.content || ""),
+      reasoningContent: renderer.renderText(layer.thinking ?? layer.content ?? ""),
       toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
         id: call.toolCallId || `${prefix}_${layer.id}_${index + 1}`,
         type: "function",
         function: {
           name: normalizePromptToolName(call.toolName, options),
-          arguments: renderLLMText(call.toolArguments, variables)
+          arguments: renderer.renderText(call.toolArguments)
         }
       }))
     };
   }
-  const name = renderPromptLayerName(layer, variables);
+  const name = renderPromptLayerName(layer, renderer);
   return {
     role: layer.role,
     ...(name ? { name } : {}),
-    content: renderLLMText(layer.content, variables),
-    reasoningContent: layer.role === "assistant" && layer.thinking ? renderLLMText(layer.thinking, variables) : undefined
+    content: renderer.renderText(layer.content),
+    reasoningContent: layer.role === "assistant" && layer.thinking ? renderer.renderText(layer.thinking) : undefined
   };
 }
 
@@ -99,8 +99,8 @@ function defaultPromptLayerName(role: PromptLayerRole): string | undefined {
   return role === "user" ? "{{user}}" : undefined;
 }
 
-function renderPromptLayerName(layer: PromptLayer, variables: LLMTextVariables): string | undefined {
-  return layer.name ? renderLLMText(layer.name, variables) : undefined;
+function renderPromptLayerName(layer: PromptLayer, renderer: LLMTextRenderer): string | undefined {
+  return layer.name ? renderer.renderText(layer.name) : undefined;
 }
 
 function normalizePromptToolName(value: unknown, options: PromptLayerParserOptions): string {

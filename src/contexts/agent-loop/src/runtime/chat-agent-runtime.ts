@@ -2,8 +2,7 @@ import { createChatAgent } from "../application/chat-agent.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
-import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
-import type { LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
 
 export function createChatAgentRuntime(input: {
   config: any;
@@ -14,13 +13,8 @@ export function createChatAgentRuntime(input: {
   outputRouter: any;
   toolPlugins: any[];
   promptProfileStore: any;
-  dailyShellStore: any;
   time: any;
-  coreProfileStore: any;
-  getPromptVariables(): LLMTextVariables;
-  memoryStore: any;
-  diaryStore: any;
-  calendarStore?: any;
+  getPromptRenderer(): LLMTextRenderer;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
@@ -73,19 +67,7 @@ export function createChatAgentRuntime(input: {
     policy: createAllowAllPolicy(),
     tools: input.toolPlugins,
     getPromptProfile: () => input.promptProfileStore.get(),
-    getDailyShell: () => input.dailyShellStore.render(input.time.now().date, input.time.timeZone),
-    getDailyShellRaw: () => input.dailyShellStore.get(input.time.now().date, input.time.timeZone),
-    getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
-    getPromptVariables: input.getPromptVariables,
-    getMemorySnapshot: () => input.memoryStore.read(),
-    getWakeBoundary: () => input.diaryStore.latestWakeBoundary(),
-    getCalendarContext: input.calendarStore
-      ? () => buildCalendarContext({
-        calendarStore: input.calendarStore,
-        time: input.time,
-        userName: input.config.project.username
-      })
-      : undefined,
+    getPromptRenderer: input.getPromptRenderer,
     state: input.agentState,
     time: input.time,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,

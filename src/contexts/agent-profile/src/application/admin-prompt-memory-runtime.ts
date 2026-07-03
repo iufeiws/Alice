@@ -6,7 +6,7 @@ import { renderLLMValue } from "./llm-text-renderer.js";
 import { HttpJsonError, readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { normalizePromptApiProfile, readLLMApiPresets, resolveMemorizeApiPreset, writePromptApiProfile } from "../../../llm-gateway/src/admin-presets.js";
-import { formatToolResultForLLM, getAdminTextVariables, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
+import { formatToolResultForLLM, getAdminTextRenderer, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
 import { optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
@@ -18,7 +18,7 @@ export async function savePromptProfile(context: AdminRoutesContext, request: an
   writeJson(response, 200, {
     ok: true,
     profile,
-    variables: context.getPromptVariables()
+    variables: context.getPromptVariableTree()
   });
 }
 
@@ -29,7 +29,7 @@ export async function saveTalkPromptProfile(context: AdminRoutesContext, request
   writeJson(response, 200, {
     ok: true,
     profile,
-    variables: context.getPromptVariables()
+    variables: context.getPromptVariableTree()
   });
 }
 
@@ -123,12 +123,12 @@ export function getAdminTools(context: AdminRoutesContext): Array<{
   description: string;
   inputSchema: Record<string, unknown>;
 }> {
-  const variables = getAdminTextVariables(context, resolvePromptPreviewTarget(context));
+  const renderer = getAdminTextRenderer(context);
   return getAdminToolPlugins(context).flatMap((plugin) => plugin.listTools().map((tool) => ({
     pluginId: plugin.id,
     name: tool.name,
-    description: String(renderLLMValue(tool.description, variables)),
-    inputSchema: renderLLMValue(tool.inputSchema, variables) as Record<string, unknown>
+    description: String(renderLLMValue(tool.description, renderer)),
+    inputSchema: renderLLMValue(tool.inputSchema, renderer) as Record<string, unknown>
   })));
 }
 
@@ -182,7 +182,7 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
       pluginId: plugin.id,
       toolName,
       targetPlugin: target.plugin,
-      content: formatToolResultForLLM(result, getAdminTextVariables(context, target)),
+      content: formatToolResultForLLM(result, getAdminTextRenderer(context)),
       result
     });
   } catch (error) {

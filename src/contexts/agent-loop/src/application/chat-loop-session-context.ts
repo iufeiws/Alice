@@ -1,63 +1,16 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput, LLMToolCall } from "../../../llm-gateway/src/index.js";
-import type { LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer, LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import type { ChatAgentLoopInput, ChatAgentLoopSession, ChatAgentModeState } from "./run-chat-loop.js";
-
-export async function buildFixedPrefixAppendMessages(input: {
-  mode: Pick<ChatAgentModeState, "fixedPrefixCursorMessageId">;
-  event: AgentEvent;
-  toolPlugins: ToolPlugin[];
-  nextToolCallId(): string;
-  buildTextVariables(event: AgentEvent): LLMTextVariables;
-  onCheckChatResult?(result: ToolResult): void;
-}): Promise<LLMChatInput["messages"]> {
-  const messages: LLMChatInput["messages"] = [];
-  const plugin = findToolPlugin(input.toolPlugins, "Chat");
-  if (!plugin) return messages;
-  const callId = input.nextToolCallId();
-  const publicArguments = { action: "poll" };
-  const result = await executePromptToolRequest(
-    { id: "fixed_prefix_chat_poll", title: "Fixed prefix check", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: JSON.stringify(publicArguments) }], order: 0 },
-    {
-      id: callId,
-      toolName: "Chat",
-      input: { action: "poll", scope: "from_prefix", __fromPrefixAfterMessageId: input.mode.fixedPrefixCursorMessageId ?? 0 },
-      requester: input.event.source,
-      externalSession: input.event.externalSession
-    },
-    input.toolPlugins
-  );
-  input.onCheckChatResult?.(result);
-  messages.push({
-    role: "assistant",
-    content: "",
-    reasoningContent: "Check messages after the fixed prefix cursor.",
-    toolCalls: [{
-      id: callId,
-      type: "function",
-      function: {
-        name: "Chat",
-        arguments: JSON.stringify(publicArguments)
-      }
-    }]
-  });
-  messages.push({
-    role: "tool",
-    toolCallId: callId,
-    name: "Chat",
-    content: formatToolResultForLLM(result, input.buildTextVariables(input.event))
-  });
-  return messages;
-}
 
 export async function buildWaitChatResumeMessages(input: {
   session: ChatAgentLoopSession;
   event: AgentEvent;
   toolPlugins: ToolPlugin[];
   time: CurrentTimeProvider;
-  buildTextVariables(event: AgentEvent): LLMTextVariables;
+  buildTextVariables(event: AgentEvent): LLMTextRenderer;
   onLLMLog?: ChatAgentLoopInput["onLLMLog"];
 }): Promise<LLMChatInput["messages"]> {
   const pending = pendingWaitChatToolCalls(input.session.messages);
@@ -154,13 +107,12 @@ export function fixedPrefixToolInput(toolName: string, input: Record<string, unk
     session.mode !== "fixed_prefix"
     || !isCheckChatToolName(toolName)
     || input.action !== "poll"
-    || input.scope !== "from_prefix"
-    || typeof input.__fromPrefixAfterMessageId === "number"
   ) {
     return input;
   }
   return {
     ...input,
+    scope: "from_prefix",
     __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0
   };
 }
@@ -253,7 +205,7 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
+function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables | LLMTextRenderer = {}): string {
   return formatAgentLoopToolResultForLLM(result, variables);
 }
 

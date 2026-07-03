@@ -1,7 +1,7 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
-import { formatToolResultForLLM, renderLLMText, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { formatToolResultForLLM, type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "../domain/prompt-layer.js";
 
 export type { PromptLayer, PromptLayerRole } from "../domain/prompt-layer.js";
@@ -32,14 +32,14 @@ export type PromptProfile = {
 };
 
 export type PromptRenderContext = {
-  variables: LLMTextVariables;
+  renderer: LLMTextRenderer;
   event: AgentEvent;
   time: CurrentTimeProvider;
   preview?: boolean;
 };
 
 export type PromptContextDeps = {
-  variables: LLMTextVariables;
+  renderer: LLMTextRenderer;
   event: AgentEvent;
   time: CurrentTimeProvider;
   preview?: boolean;
@@ -118,11 +118,11 @@ export function defaultInterruptLayer(): PromptLayer {
 }
 
 export function buildPromptMessages(profile: PromptProfile, context: PromptRenderContext): LLMMessage[] {
-  const variables = promptVariables(context);
+  const renderer = promptRenderer(context);
   return normalizePromptProfile(profile).layers
     .filter((layer) => layer.enabled)
     .sort((left, right) => left.order - right.order)
-    .map((layer) => promptLayerToMessage(layer, variables));
+    .map((layer) => promptLayerToMessage(layer, renderer));
 }
 
 export function staticPromptFingerprint(profile: PromptProfile, context: PromptRenderContext): string {
@@ -142,8 +142,8 @@ export async function buildPromptMessagesWithToolResults(
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const variables = promptVariables(context);
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, variables, context, runTool);
+  const renderer = promptRenderer(context);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, renderer, context, runTool);
 }
 
 export async function buildAppendPromptMessagesWithToolResults(
@@ -151,13 +151,13 @@ export async function buildAppendPromptMessagesWithToolResults(
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const variables = promptVariables(context);
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], variables, context, runTool);
+  const renderer = promptRenderer(context);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], renderer, context, runTool);
 }
 
 export async function buildLayerMessagesWithToolResults(
   inputLayers: PromptLayer[],
-  variables: LLMTextVariables,
+  renderer: LLMTextRenderer,
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>,
   options: { toolCallIdPrefix?: string } = {}
@@ -168,7 +168,7 @@ export async function buildLayerMessagesWithToolResults(
     .sort((left, right) => left.order - right.order);
 
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, variables, options);
+    const message = promptLayerToMessage(layer, renderer, options);
     messages.push(message);
     if (layer.role !== "tool_request") continue;
 
@@ -185,7 +185,7 @@ export async function buildLayerMessagesWithToolResults(
         role: "tool",
         name: toolCall.function.name,
         toolCallId: toolCall.id,
-        content: formatPromptToolResult(result, variables)
+        content: formatPromptToolResult(result, renderer)
       });
     }
   }
@@ -193,21 +193,21 @@ export async function buildLayerMessagesWithToolResults(
   return messages;
 }
 
-export function promptVariables(context: PromptRenderContext): LLMTextVariables {
-  return context.variables;
+export function promptRenderer(context: PromptRenderContext): LLMTextRenderer {
+  return context.renderer;
 }
 
 export function makePromptContext(input: PromptContextDeps): PromptRenderContext {
   return {
-    variables: input.variables,
+    renderer: input.renderer,
     event: input.event,
     time: input.time,
     preview: input.preview
   };
 }
 
-export function renderTemplate(content: string, variables: LLMTextVariables): string {
-  return renderLLMText(content, variables);
+export function renderTemplate(content: string, renderer: LLMTextRenderer): string {
+  return renderer.renderText(content);
 }
 
 export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
@@ -245,8 +245,8 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function formatPromptToolResult(result: ToolResult, variables: LLMTextVariables): string {
-  return formatToolResultForLLM(result, variables);
+function formatPromptToolResult(result: ToolResult, renderer: LLMTextRenderer): string {
+  return formatToolResultForLLM(result, renderer);
 }
 
 export function getPromptContent(id: string): string {

@@ -6,6 +6,12 @@ export type LLMTextValue = LLMTextPrimitive | LLMTextValue[] | { [key: string]: 
 
 export type LLMTextVariables = { [key: string]: LLMTextValue };
 
+export type LLMTextRenderer = {
+  renderText(content: string): string;
+  getVariable(name: string): LLMTextValue;
+  listVariables(): string[];
+};
+
 export type LLMTextShellOption = {
   id: string;
   name: string;
@@ -153,18 +159,49 @@ function formatWeekday(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("zh-CN", { timeZone, weekday: "long" }).format(date);
 }
 
-export function renderLLMText(content: string, variables: LLMTextVariables = {}): string {
+export function createLLMTextRenderer(input: {
+  getVariable(name: string): LLMTextValue;
+  listVariables(): string[];
+}): LLMTextRenderer {
+  return {
+    renderText(content) {
+      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
+        const resolved = input.getVariable(key);
+        return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
+      });
+    },
+    getVariable: input.getVariable,
+    listVariables: input.listVariables
+  };
+}
+
+export function createLLMTextVariableRenderer(input: {
+  variables(): LLMTextVariables;
+  listVariables?(): string[];
+}): LLMTextRenderer {
+  return createLLMTextRenderer({
+    getVariable(name) {
+      return resolveVariablePath(input.variables(), name);
+    },
+    listVariables() {
+      return input.listVariables?.() ?? flattenVariableNames(input.variables());
+    }
+  });
+}
+
+export function renderLLMText(content: string, variables: LLMTextVariables | LLMTextRenderer = {}): string {
+  if (isLLMTextRenderer(variables)) return variables.renderText(content);
   return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
     const resolved = resolveVariablePath(variables, key);
     return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
   });
 }
 
-export function renderLLMValue<T>(value: T, variables: LLMTextVariables = {}): T {
+export function renderLLMValue<T>(value: T, variables: LLMTextVariables | LLMTextRenderer = {}): T {
   return renderLLMValueInner(value, variables, new WeakSet<object>());
 }
 
-function renderLLMValueInner<T>(value: T, variables: LLMTextVariables, seen: WeakSet<object>): T {
+function renderLLMValueInner<T>(value: T, variables: LLMTextVariables | LLMTextRenderer, seen: WeakSet<object>): T {
   if (typeof value === "string") return renderLLMText(value, variables) as T;
   if (Array.isArray(value)) {
     if (seen.has(value)) return "[Circular]" as T;
@@ -179,11 +216,11 @@ function renderLLMValueInner<T>(value: T, variables: LLMTextVariables, seen: Wea
   return value;
 }
 
-export function formatToolResultForLLM(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables = {}): string {
+export function formatToolResultForLLM(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables | LLMTextRenderer = {}): string {
   return stringifyToolResult(result, variables);
 }
 
-function stringifyToolResult(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables): string {
+function stringifyToolResult(result: Pick<ToolResult, "ok" | "output" | "error">, variables: LLMTextVariables | LLMTextRenderer): string {
   if (!result.ok && typeof result.output === "string") return renderLLMText(result.output, variables);
   if (!result.ok) return result.error ? `error: ${renderLLMText(result.error, variables)}` : "error";
   if (typeof result.output === "string") return renderLLMText(result.output, variables);
@@ -238,9 +275,31 @@ function formatLocalDate(date: Date, timeZone: string): string {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+function isLLMTextRenderer(value: LLMTextVariables | LLMTextRenderer): value is LLMTextRenderer {
+  return typeof (value as LLMTextRenderer).renderText === "function"
+    && typeof (value as LLMTextRenderer).getVariable === "function"
+    && typeof (value as LLMTextRenderer).listVariables === "function";
+}
+
 function resolveVariablePath(variables: LLMTextVariables, path: string): LLMTextValue {
   return path.split("/").reduce<LLMTextValue>((current, segment) => {
     if (!segment || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
     return current[segment];
   }, variables);
+}
+
+function flattenVariableNames(variables: LLMTextVariables): string[] {
+  const names: string[] = [];
+  collectVariableNames(variables, "", names);
+  return names;
+}
+
+function collectVariableNames(value: LLMTextValue, prefix: string, names: string[]): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (prefix) names.push(prefix);
+    return;
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 0 && prefix) names.push(prefix);
+  for (const [key, child] of entries) collectVariableNames(child, prefix ? `${prefix}/${key}` : key, names);
 }

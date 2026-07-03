@@ -44,7 +44,7 @@ export function createApiContextRuntime(input: {
   const skillsRegistry = createSkillRegistry({
     roots: [
       { root: input.config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
-      { root: input.config.skills?.installedRoot ?? ".alice/skills", source: "third-party" }
+      { root: input.config.skills?.installedRoot ?? ".agents/skills", source: "third-party" }
     ]
   });
   const promptContextRuntime = createPromptContextRuntime({

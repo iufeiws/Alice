@@ -14,7 +14,7 @@ import {
 } from "../src/contexts/initiative/src/domain/initiated-behavior.js";
 import { createInitiatedBehaviorRuntime } from "../src/contexts/initiative/src/application/evaluate-triggers.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 test("initiated behavior prompt layers are rendered by enabled order", async () => {
@@ -43,7 +43,7 @@ test("initiated behavior prompt layers are rendered by enabled order", async () 
     layers: [],
     appendLayers: []
   }, {
-    variables: buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }),
+    renderer: createLLMTextVariableRenderer({ variables: () => buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }) }),
     event,
     time: createCurrentTimeProvider("UTC")
   }, async (_layer, call) => {
@@ -90,7 +90,7 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
     layers: [],
     appendLayers: []
   }, {
-    variables: buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }),
+    renderer: createLLMTextVariableRenderer({ variables: () => buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }) }),
     event: textEvent(),
     time: createCurrentTimeProvider("UTC")
   }, async (_layer, call) => {
@@ -148,7 +148,7 @@ test("initiated behavior prompt layers execute multiple assistant tool calls", a
     layers: [],
     appendLayers: []
   }, {
-    variables: buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }),
+    renderer: createLLMTextVariableRenderer({ variables: () => buildLLMTextVariables({ userName: "YY", time: createCurrentTimeProvider("UTC") }) }),
     event: textEvent(),
     time: createCurrentTimeProvider("UTC")
   }, async (_layer, call) => {

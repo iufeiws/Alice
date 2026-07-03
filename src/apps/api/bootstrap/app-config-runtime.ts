@@ -136,7 +136,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const feishuAppSecret = env.FEISHU_APP_SECRET;
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
   const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
-  const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".alice/skills";
+  const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".agents/skills";
 
   return {
     project: {

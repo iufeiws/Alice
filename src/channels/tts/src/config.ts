@@ -1,4 +1,3 @@
-import { renderLLMText } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 import type {
@@ -105,8 +104,9 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
 
 export function renderTtsPrompt(config: TtsPluginConfig, deps: TtsPluginDeps): string {
   if (!config.prompt.trim()) throw new Error("tts translation prompt is required");
-  const variables = typeof deps.promptVariables === "function" ? deps.promptVariables() : deps.promptVariables;
-  return renderLLMText(config.prompt.trim(), variables ?? {});
+  if (!deps.promptRenderer) throw new Error("tts prompt renderer is required");
+  const renderer = typeof deps.promptRenderer === "function" ? deps.promptRenderer() : deps.promptRenderer;
+  return renderer.renderText(config.prompt.trim());
 }
 
 export function ttsGenieOverrides(config: TtsPluginConfig): NonNullable<Parameters<VoiceSynthesizer>[0]["genie"]> {

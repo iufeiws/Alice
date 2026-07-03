@@ -1,5 +1,5 @@
 import type { LLMToolCall } from "../../../llm-gateway/src/index.js";
-import { formatToolResultForLLM as renderToolResultForLLM, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { formatToolResultForLLM as renderToolResultForLLM, type LLMTextRenderer, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent, ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 
 export type AgentLoopToolExecutor = {
@@ -10,7 +10,7 @@ export type AgentLoopToolExecutor = {
 };
 
 export type AgentLoopToolExecutionOptions = {
-  variables?: LLMTextVariables;
+  variables?: LLMTextVariables | LLMTextRenderer;
   agentLoopRunSeq?: number;
   llmSessionId?: number;
   llmCapabilities?: ToolExecutionContext["llmCapabilities"];
@@ -140,7 +140,7 @@ export function parseAgentLoopToolArguments(raw: string): Record<string, unknown
   }
 }
 
-export function formatAgentLoopToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
+export function formatAgentLoopToolResultForLLM(result: ToolResult, variables: LLMTextVariables | LLMTextRenderer = {}): string {
   return renderToolResultForLLM(result, variables);
 }
 
@@ -148,7 +148,7 @@ export function formatAgentLoopToolMessage(
   callId: string,
   toolName: string,
   result: ToolResult,
-  variables: LLMTextVariables = {}
+  variables: LLMTextVariables | LLMTextRenderer = {}
 ): AgentLoopExecutedToolCall["message"] {
   return {
     role: "tool",

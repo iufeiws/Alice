@@ -1,5 +1,6 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { LLMTextRenderer } from "../../agent-profile/src/application/llm-text-renderer.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
 
@@ -14,7 +15,7 @@ export type LLMRequestSenderInput = {
   presetName?: string;
   toolNames: string[];
   inlineTools?: ToolDefinition[];
-  toolVariables?: Record<string, unknown>;
+  toolVariables?: Record<string, unknown> | LLMTextRenderer;
   round: number;
   stream?: boolean;
   streamHandlers?: LLMStreamHandlers;

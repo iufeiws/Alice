@@ -6,7 +6,7 @@ import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contra
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabilities/tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
-import { buildLLMTextVariables, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "../../llm-session/src/adapters/jsonl-llm-session-log.js";
 import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
@@ -992,12 +992,14 @@ function buildWorkspaceMemoryPromptMessages(
   targets: MemoryTarget[],
   options?: { includeCommonLayers?: boolean }
 ): LLMMessage[] {
-  const variables = memoryPromptVariables(deps, targets[0] ?? "persistent", deps.draft);
+  const renderer = createLLMTextVariableRenderer({
+    variables: () => memoryPromptVariables(deps, targets[0] ?? "persistent", deps.draft)
+  });
   const prompts = deps.promptStore.get();
   const layers = memoryPromptLayersForTargets(prompts, options);
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, variables, {
+    const message = promptLayerToMessage(layer, renderer, {
       defaultToolName: "Read",
       toolCallIdPrefix: "memory_prompt",
       allowedToolNames: ["Read", "self_talk"]
@@ -1351,11 +1353,13 @@ function buildMemoryPromptMessages(
   target: MemoryTarget,
   options?: { includeCommonLayers?: boolean }
 ): LLMMessage[] {
-  const variables = memoryPromptVariables(deps, target);
+  const renderer = createLLMTextVariableRenderer({
+    variables: () => memoryPromptVariables(deps, target)
+  });
   const layers = memoryPromptLayers(deps.promptStore.get(), target, options);
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, variables, {
+    const message = promptLayerToMessage(layer, renderer, {
       defaultToolName: "Read",
       toolCallIdPrefix: "memory_prompt",
       allowedToolNames: ["Read", "self_talk"]

@@ -2,7 +2,7 @@ import { readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { resolveAdminAssetPath } from "../../../../platform/storage/src/admin-asset-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { requiredString } from "../../../../shared/admin-input/src/index.js";
-import { formatToolResultForLLM, getAdminTextVariables, resolveAdminMessagingTarget, resolveFeishuTestTarget } from "./admin-shared.js";
+import { formatToolResultForLLM, getAdminTextRenderer, resolveAdminMessagingTarget, resolveFeishuTestTarget } from "./admin-shared.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
 export async function handleAdminMessagingApi(context: AdminRoutesContext, request: any, response: any): Promise<boolean> {
@@ -68,7 +68,7 @@ export async function executeMessagingTool(
   context.appendLog(result.ok ? "info" : "warn", `messaging tool Chat/${action}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
   writeJson(response, result.ok ? 200 : 400, {
     ok: result.ok,
-    content: formatToolResultForLLM(result, target ? getAdminTextVariables(context, target) : undefined),
+    content: formatToolResultForLLM(result, getAdminTextRenderer(context)),
     error: result.error
   });
 }

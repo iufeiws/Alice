@@ -1,43 +1,9 @@
-import { buildLLMTextVariables, formatToolResultForLLM as renderToolResultForLLM, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { formatToolResultForLLM as renderToolResultForLLM, type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { optionalString } from "../../../../shared/admin-input/src/index.js";
-import { resolveLibrarySetting } from "../../../../contexts/world-wanderer/src/admin-library-setting.js";
-import { buildCalendarContext } from "../../calendar/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
-export function getAdminTextVariables(
-  context: AdminRoutesContext,
-  target: { plugin: string; accountId?: string; channelId?: string; userId?: string; sessionId: string }
-): LLMTextVariables {
-  const receivedTime = context.time.now();
-  return buildLLMTextVariables({
-    userName: context.config.project.username,
-    time: context.time,
-    dailyShell: context.getDailyShell(),
-    dailyShellRaw: context.dailyShellStore.get(context.time.now().date, context.time.timeZone),
-    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
-    librarySetting: resolveLibrarySetting(context),
-    calendarContext: buildCalendarContext({
-      calendarStore: context.calendarStore,
-      time: context.time,
-      userName: context.config.project.username
-    }),
-    event: {
-      id: "admin_tool_preview",
-      source: {
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId
-      },
-      externalSession: {
-        scope: "dm",
-        sessionId: target.sessionId
-      },
-      type: "message.text",
-      payload: { kind: "text", text: "" },
-      meta: { receivedAt: receivedTime.iso, receivedAtUtc: receivedTime.date.toISOString() }
-    }
-  });
+export function getAdminTextRenderer(context: AdminRoutesContext): LLMTextRenderer {
+  return context.getPromptRenderer();
 }
 
 export function resolveAdminMessagingTarget(context: AdminRoutesContext, plugin: "feishu" | "wechat") {
@@ -66,6 +32,6 @@ export function resolveFeishuTestTarget(context: AdminRoutesContext, body: Recor
   return { plugin: "feishu", accountId: "main", channelId: receiveChannelId, userId: receiveUserId, sessionId };
 }
 
-export function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }, variables: LLMTextVariables = {}): string {
-  return renderToolResultForLLM(result, variables);
+export function formatToolResultForLLM(result: { ok: boolean; output?: unknown; error?: string }, renderer: LLMTextRenderer): string {
+  return renderToolResultForLLM(result, renderer);
 }

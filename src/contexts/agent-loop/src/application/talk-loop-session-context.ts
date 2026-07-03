@@ -1,9 +1,10 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js";
+import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult, ToolExecutionContext } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
 import { createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
-import { buildPromptMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "./prompts.js";
+import { buildPromptMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 
 export type TalkLoopMessagePatch = AgentLoopMessagePatch;
 
@@ -14,14 +15,7 @@ export type TalkLoopRuntimeState = {
 export type TalkLoopSessionContextDeps = {
   getTalkPromptProfile(): PromptProfile;
   time: CurrentTimeProvider;
-  dailyShellStore: {
-    render(date: Date, timeZone: string): string;
-    get(date: Date, timeZone: string): unknown;
-  };
-  getAppearanceDescription(): string | undefined;
-  getPromptVariables(): PromptRenderContext["variables"];
-  memoryStore: { read(): unknown };
-  diaryStore: { latestWakeBoundary(): unknown };
+  getPromptRenderer(): LLMTextRenderer;
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
   buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
@@ -58,7 +52,7 @@ export type TalkLoopSessionContextDeps = {
 export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
   toolNames: string[];
-  toolVariables: Record<string, unknown> | undefined;
+  toolVariables: LLMTextRenderer | undefined;
   executeToolCall(call: LLMToolCall, input: {
     agentLoopRunSeq?: number;
     capabilities?: ToolExecutionContext["llmCapabilities"];
@@ -92,11 +86,11 @@ export async function prepareTalkLoopSessionContext(input: {
     }
   });
   const context = {
-    variables: requirePromptVariables(deps),
+    renderer: requirePromptRenderer(deps),
     event,
     time: deps.time
   };
-  const variables = promptVariables(context);
+  const renderer = promptRenderer(context);
   const runPromptTool = async (_layer: unknown, call: ToolCall) => toolExecutor.executeToolCall(call);
   const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
     kind: "talk",
@@ -120,7 +114,7 @@ export async function prepareTalkLoopSessionContext(input: {
   return {
     session: preparedSession.session,
     toolNames: deps.visibleToolNames(profile),
-    toolVariables: variables,
+    toolVariables: renderer,
     executeToolCall: (call: LLMToolCall, toolInput: { agentLoopRunSeq?: number; capabilities?: ToolExecutionContext["llmCapabilities"] }) => toolExecutor.executeLLMToolCall(call, {
       agentLoopRunSeq: toolInput.agentLoopRunSeq,
       llmSessionId: session?.id ?? sessionId,
@@ -130,8 +124,8 @@ export async function prepareTalkLoopSessionContext(input: {
   };
 }
 
-function requirePromptVariables(deps: TalkLoopSessionContextDeps): PromptRenderContext["variables"] {
-  return deps.getPromptVariables();
+function requirePromptRenderer(deps: TalkLoopSessionContextDeps): LLMTextRenderer {
+  return deps.getPromptRenderer();
 }
 
 export function buildTalkAgentEvent(sessionId: number, time: CurrentTimeProvider): AgentEvent {

@@ -3,9 +3,9 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
-import type { LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createAdminRouteServices } from "./admin-api-service.js";
-import type { AdminRuntimeContext } from "./admin-route-context.js";
+import type { AdminRuntimeContext, PromptVariableTree } from "./admin-route-context.js";
 import { createApiRequestHandler } from "../routes/admin-routes.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
@@ -49,7 +49,8 @@ export function createAdminRequestHandlerRuntime(input: {
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTalkLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
-  getPromptVariables(): LLMTextVariables;
+  getPromptRenderer(): LLMTextRenderer;
+  getPromptVariableTree(): PromptVariableTree;
   getTokenUsageReport(query: any): unknown;
   clearLLMChainCache(): void;
   cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
@@ -127,7 +128,8 @@ export function createAdminRequestHandlerRuntime(input: {
     getLLMRequestPreview: input.getLLMRequestPreview,
     getLLMRequestProfilePreview: input.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.getTalkLLMRequestProfilePreview,
-    getPromptVariables: input.getPromptVariables,
+    getPromptRenderer: input.getPromptRenderer,
+    getPromptVariableTree: input.getPromptVariableTree,
     getTokenUsageReport: input.getTokenUsageReport,
     clearLLMChainCache: input.clearLLMChainCache,
     cancelActiveLLMRun: input.cancelActiveLLMRun,

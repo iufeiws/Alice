@@ -4,6 +4,9 @@ import { createAgentHeartbeatRuntime } from "../src/contexts/agent-loop/src/runt
 import { claimAgentLoopRequestWindow, createAgentLoopRuntime, runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { buildChatAgentLoop } from "../src/contexts/agent-loop/src/application/run-chat-loop.js";
 import type { AgentEvent, ToolPlugin } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+
+const emptyPromptRenderer = () => createLLMTextVariableRenderer({ variables: () => ({}) });
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
   const runtime = createAgentLoopRuntime();
@@ -706,7 +709,7 @@ test("chat loop inserts interrupt user message after next tool result", async ()
       return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
     },
     time: fakeTime(),
-    buildTextVariables: () => ({}),
+    buildTextVariables: emptyPromptRenderer,
     noteSessionUpdated: () => {},
     getLastCompletedToolName: () => undefined,
     setLastCompletedToolName: () => {},
@@ -789,7 +792,7 @@ test("chat loop sends assistant chat blocks and exposes Chat", async () => {
       return { message: { role: "assistant", content: "<chat type=\"bad\" alice=\"bad\">done" }, finishReason: "stop" };
     },
     time: fakeTime(),
-    buildTextVariables: () => ({}),
+    buildTextVariables: emptyPromptRenderer,
     noteSessionUpdated: () => {},
     getLastCompletedToolName: () => undefined,
     setLastCompletedToolName: () => {},

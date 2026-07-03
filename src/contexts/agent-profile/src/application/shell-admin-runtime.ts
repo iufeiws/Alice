@@ -1,23 +1,15 @@
-import { buildLLMTextVariables } from "./llm-text-renderer.js";
 import type { ShellCategory, ShellOption } from "../domain/shell.js";
 import { readJsonBody, readRawBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { numberFromUnknown, optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
 import { decodeHeaderFileName } from "../../../../channels/tts/src/admin-assets.js";
-import { resolveLibrarySetting } from "../../../world-wanderer/src/admin-library-setting.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 export function getShellConfig(context: AdminRoutesContext): unknown {
   const config = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
-  const variables = buildLLMTextVariables({
-    userName: context.config.project.username,
-    time: context.time,
-    dailyShellRaw: config.daily,
-    appearanceDescription: context.coreProfileStore.get().appearanceDescription,
-    librarySetting: resolveLibrarySetting(context)
-  });
+  const variables = context.getPromptVariableTree();
   return {
     ...config,
     todayVariables: {

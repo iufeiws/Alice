@@ -6,14 +6,14 @@ import {
   buildPromptMessagesWithToolResults,
   type PromptRenderContext
 } from "./build-system-prompt.js";
-import type { LLMTextVariables } from "./llm-text-renderer.js";
+import type { LLMTextRenderer } from "./llm-text-renderer.js";
 import { memoryToolDefinitions } from "../../../memory/src/memory.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
-  getPromptVariables(): LLMTextVariables;
+  getPromptRenderer(): LLMTextRenderer;
   toolPlugins: any[];
-  llmRequests: { buildTools(names: string[], variables: unknown): LLMChatInput["tools"] };
+  llmRequests: { buildTools(names: string[], renderer: LLMTextRenderer): LLMChatInput["tools"] };
   messagingTools: { execute(call: any): Promise<unknown> | unknown };
 }) {
   return {
@@ -24,8 +24,7 @@ export function createPromptToolPreviewRuntime(input: {
   };
 
   function visibleToolSpecs(profile: any): LLMChatInput["tools"] {
-    const variables = input.getPromptVariables();
-    return input.llmRequests.buildTools(visibleToolNames(profile), variables);
+    return input.llmRequests.buildTools(visibleToolNames(profile), input.getPromptRenderer());
   }
 
   function visibleToolNames(profile: any): string[] {
@@ -91,7 +90,7 @@ export function createPromptToolPreviewRuntime(input: {
 
   function previewContext(event: PromptRenderContext["event"]): PromptRenderContext {
     return {
-      variables: input.getPromptVariables(),
+      renderer: input.getPromptRenderer(),
       event,
       time: input.time,
       preview: true

@@ -12,8 +12,10 @@ import type { AgentEvent, ToolPlugin } from "../src/contexts/agent-loop/src/cont
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../src/contexts/agent-run-indicator/src/index.js";
 import type { FeishuDynamicCardClient } from "../src/channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../src/channels/feishu/src/pairing.js";
+import { createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 
 const CARD_LAYOUT_VERSION = 5;
+const emptyPromptRenderer = () => createLLMTextVariableRenderer({ variables: () => ({}) });
 
 test("chat loop behaves unchanged when no agent run indicator is configured", async () => {
   const sentRequests: string[] = [];
@@ -671,7 +673,7 @@ function loopInput(overrides: {
     },
     llmRequestSender: overrides.llmRequestSender ?? (async () => ({ message: { role: "assistant", content: "ok" } })),
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-29T00:00:00.000Z")),
-    buildTextVariables: () => ({}),
+    buildTextVariables: emptyPromptRenderer,
     noteSessionUpdated() {},
     getLastCompletedToolName: () => undefined,
     setLastCompletedToolName() {},

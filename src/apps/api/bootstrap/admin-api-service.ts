@@ -59,7 +59,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     writeJson(response, 200, {
       prompts: defaultPromptRegistry,
       profile: context.promptProfileStore.get(),
-      variables: context.getPromptVariables()
+      variables: context.getPromptVariableTree()
     });
     return;
   }
@@ -68,7 +68,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     writeJson(response, 200, {
       profile: context.promptProfileStore.get(),
       birthday: context.calendarStore?.latestBirthday?.(),
-      variables: context.getPromptVariables(),
+      variables: context.getPromptVariableTree(),
       tools: getVisiblePromptTools(context)
     });
     return;
@@ -77,7 +77,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
   if (request.method === "GET" && request.url === "/admin/api/talk-prompt-profile") {
     writeJson(response, 200, {
       profile: context.talkPromptProfileStore.get(),
-      variables: context.getPromptVariables(),
+      variables: context.getPromptVariableTree(),
       tools: getVisiblePromptTools(context, context.talkPromptProfileStore)
     });
     return;

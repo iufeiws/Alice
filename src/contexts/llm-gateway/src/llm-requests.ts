@@ -7,7 +7,7 @@ import {
   sanitizeLLMResponseMessage,
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
-import { renderLLMValue, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { renderLLMValue, type LLMTextRenderer, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
 
 export type LLMRequestLogEvent = {
@@ -30,7 +30,7 @@ export type LLMRequestsDeps = {
 
 export type LLMRequests = {
   send: LLMRequestSender;
-  buildTools(toolNames: string[], variables?: Record<string, unknown>): LLMToolSpec[];
+  buildTools(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer): LLMToolSpec[];
   cancelActive(reason?: string): boolean;
   isCancelRequested(): boolean;
   resetCancel(): void;
@@ -40,11 +40,11 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
   let activeController: AbortController | undefined;
   let cancelRequested = false;
 
-  function buildTools(toolNames: string[], variables?: Record<string, unknown>): LLMToolSpec[] {
+  function buildTools(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer): LLMToolSpec[] {
     return buildToolsFromDefinitions(toolNames, variables);
   }
 
-  function buildToolsFromDefinitions(toolNames: string[], variables?: Record<string, unknown>, inlineTools: ToolDefinition[] = []): LLMToolSpec[] {
+  function buildToolsFromDefinitions(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer, inlineTools: ToolDefinition[] = []): LLMToolSpec[] {
     const seen = new Set<string>();
     const inlineToolMap = new Map(inlineTools.map((tool) => [tool.name, tool]));
     const tools: LLMToolSpec[] = [];
@@ -57,8 +57,8 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
         type: "function",
         function: {
           name: tool.name,
-          description: String(renderLLMValue(tool.description, variables as LLMTextVariables | undefined)),
-          parameters: renderLLMValue(tool.inputSchema, variables as LLMTextVariables | undefined) as Record<string, unknown>
+          description: String(renderLLMValue(tool.description, variables as LLMTextVariables | LLMTextRenderer | undefined)),
+          parameters: renderLLMValue(tool.inputSchema, variables as LLMTextVariables | LLMTextRenderer | undefined) as Record<string, unknown>
         }
       });
     }
@@ -74,7 +74,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     const abort = () => requestController.abort();
     if (input.signal?.aborted) requestController.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
-    const renderedExtraParams = renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | undefined);
+    const renderedExtraParams = renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | LLMTextRenderer | undefined);
     const useStream = (input.stream === true || renderedExtraParams?.stream === true) && Boolean(client.chatStream);
     const request: LLMChatInput = {
       messages: sanitizeLLMRequestMessages(input.messages, deps.messageSanitization),

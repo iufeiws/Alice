@@ -1,5 +1,6 @@
 import type { LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
@@ -39,7 +40,7 @@ type TalkAgentLoopLLMConfig = {
 
 type TalkAgentLoopState = {
   toolNames: string[];
-  toolVariables: Record<string, unknown> | undefined;
+  toolVariables: LLMTextRenderer | undefined;
   executeToolCall(call: LLMToolCall, input: {
     agentLoopRunSeq?: number;
     capabilities?: LLMCapabilityFlags;
@@ -128,7 +129,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     sessionId: number;
     session: AgentLoopTranscriptSession;
     toolNames: string[];
-    toolVariables: Record<string, unknown> | undefined;
+    toolVariables: LLMTextRenderer | undefined;
     executeToolCall(call: LLMToolCall, input: {
       agentLoopRunSeq?: number;
       capabilities?: LLMCapabilityFlags;

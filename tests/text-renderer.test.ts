@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { buildLLMTextVariables, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
-import { promptVariables } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer, formatToolResultForLLM, renderLLMText, renderLLMValue } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createPromptContextRuntime } from "../src/apps/api/bootstrap/prompt-context-runtime.js";
 
 test("renderLLMText resolves common variable placeholders", () => {
@@ -78,24 +77,17 @@ test("buildLLMTextVariables exposes library content", () => {
   assert.equal(renderLLMText("{{library/content}}", variables), "当前图书馆");
 });
 
-test("promptVariables exposes available_skills without prompt text changes", () => {
-  const variables = promptVariables({
-    variables: buildLLMTextVariables({
+test("LLMTextRenderer exposes available_skills without prompt text changes", () => {
+  const renderer = createLLMTextVariableRenderer({
+    variables: () => buildLLMTextVariables({
       userName: "YY",
       time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
       extra: { available_skills: "<available_skills>\n</available_skills>" }
-    }),
-    event: {
-      id: "evt",
-      source: { plugin: "test", userId: "u" },
-      externalSession: { scope: "dm", sessionId: "s" },
-      type: "message.text",
-      payload: { kind: "text", text: "hi" },
-      meta: { receivedAt: "2026-01-01T00:00:00.000", receivedAtUtc: "2025-12-31T16:00:00.000Z" }
-    },
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z"))
+    })
   });
-  assert.equal(variables.available_skills, "<available_skills>\n</available_skills>");
+  assert.equal(renderer.getVariable("available_skills"), "<available_skills>\n</available_skills>");
+  assert.equal(renderer.renderText("{{available_skills}}"), "<available_skills>\n</available_skills>");
+  assert.equal(renderer.listVariables().includes("available_skills"), true);
 });
 
 test("prompt context runtime exposes available_skills from the actual variable tree", () => {
@@ -115,8 +107,8 @@ test("prompt context runtime exposes available_skills from the actual variable t
     }
   } as any);
 
-  const variables = runtime.getPromptVariables();
-  assert.match(String(variables.available_skills), /<name>weather<\/name>/);
+  assert.match(String(runtime.getVariable("available_skills")), /<name>weather<\/name>/);
+  assert.equal(runtime.listVariables().includes("available_skills"), true);
 });
 
 test("formatToolResultForLLM renders placeholders in string tool output", () => {

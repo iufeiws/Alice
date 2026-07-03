@@ -5,8 +5,14 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 import { defaultTalkOutputReadyChars } from "../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { LLMClient } from "../src/contexts/llm-gateway/src/index.js";
+
+function testPromptRenderer() {
+  return createLLMTextVariableRenderer({
+    variables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") })
+  });
+}
 
 async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalkAgentLoopForSession>, sessionId: number): Promise<void> {
   const prepared = await controller.prepareTalkAgentLoopForSession(sessionId);
@@ -36,15 +42,8 @@ test("talk loop returns no prepared run while voice output backpressure is activ
     pendingVoiceOutputCharCount: () => pendingChars,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -100,15 +99,8 @@ test("talk loop prepares spec for external function-call runtime execution", asy
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -163,15 +155,8 @@ test("talk loop delegates transcript preparation to injected session context run
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => {
       throw new Error("talk loop should delegate patching to injected session context runtime");
@@ -246,15 +231,8 @@ test("talk loop returns no prepared run until foreground playback is idle", asyn
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => foregroundIdle,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -305,15 +283,8 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -378,15 +349,8 @@ test("talk Chat tool-call executes through the common tool plugin path", async (
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "send a message" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -458,15 +422,8 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "take selfies" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,
@@ -556,15 +513,8 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
       promptBuildCalls += 1;
       return ({ ...defaultPromptProfile(), layers: [{ id: "unused", role: "system", content: "rebuilt" }], appendLayers: [] }) as any;
     },
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: (_sessionId, count) => {
       prefixCount = count;
     },
@@ -616,15 +566,8 @@ test("talk loop logs llm cancellation without error severity", async () => {
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
-    getPromptVariables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
-    dailyShellStore: {
-      render: () => "",
-      get: () => undefined
-    },
-    getAppearanceDescription: () => undefined,
-    memoryStore: { read: () => undefined },
-    diaryStore: { latestWakeBoundary: () => undefined },
     setLoopPrefixMessageCount: () => {},
     buildNextLoopMessagePatch: () => ({ replaceFrom: 0, messages: [{ role: "user", content: "hello" }] }),
     loadActiveTalkLLMSessionTranscript: () => activeSession,

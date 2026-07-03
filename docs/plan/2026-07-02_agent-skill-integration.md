@@ -9,7 +9,7 @@ The model sees lightweight `<available_skills>` metadata from variables. It load
 ## Confirmed Decisions
 
 - First-party skills live under `src/capabilities/skills`.
-- Installed third-party skills live under `.alice/skills`.
+- Installed third-party skills live under `.agents/skills`.
 - This phase only provides the `available_skills` variable. It does not add prompt/profile text.
 - The tool name is exactly `Skill`.
 - Existing `list_skills` and `load_skill` were introduced by mistake and should be removed, with no compatibility fallback.
@@ -44,7 +44,7 @@ The model sees lightweight `<available_skills>` metadata from variables. It load
 ## Design
 
 ```text
-src/capabilities/skills + .alice/skills
+src/capabilities/skills + .agents/skills
   -> SkillRegistry
   -> available_skills variable
 
@@ -65,7 +65,7 @@ The implementation should reuse `src/contexts/skills` and replace the current tw
 Registry inputs:
 
 - `src/capabilities/skills`: first-party skills.
-- `.alice/skills`: installed third-party skills.
+- `.agents/skills`: installed third-party skills.
 
 Both sources use the same package contract:
 
@@ -232,7 +232,7 @@ Rules:
 ## Implementation Steps
 
 1. Skill source config
-   - Add `.alice/skills` as third-party skill root.
+   - Add `.agents/skills` as third-party skill root.
    - Keep `src/capabilities/skills` as first-party skill root.
    - Build one registry from both roots.
 
@@ -269,7 +269,7 @@ Rules:
 Add focused tests only:
 
 - first-party skill appears in `available_skills`.
-- third-party `.alice/skills` skill appears in `available_skills`.
+- third-party `.agents/skills` skill appears in `available_skills`.
 - invalid or disabled skill does not appear.
 - `Skill` exact-name lookup succeeds.
 - old `list_skills` and `load_skill` are no longer exposed.

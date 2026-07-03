@@ -44,7 +44,7 @@ export function createApiCapabilitiesRuntime(input: {
 
   const voicePluginRuntime = createVoicePluginRuntime({
     config: input.config,
-    time: input.time,
+    promptContextRuntime: input.promptContextRuntime,
     sendLLMRequest: (request) => llmRequests.send(request),
     readLLMApiPresets: input.readLLMApiPresets,
     recordTokenUsageEvent: input.recordTokenUsageEvent,
@@ -73,7 +73,7 @@ export function createApiCapabilitiesRuntime(input: {
 
   const promptToolPreviewRuntime = createPromptToolPreviewRuntime({
     time: input.time,
-    getPromptVariables: () => input.promptContextRuntime.getPromptVariables(),
+    getPromptRenderer: () => input.promptContextRuntime,
     toolPlugins: toolRuntime.toolPlugins,
     llmRequests,
     messagingTools: toolRuntime.messagingTools

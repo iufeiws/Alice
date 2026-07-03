@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
 export type TTSConfig = {
   backend?: "genie-tts" | "moss-onnx";
@@ -239,7 +239,7 @@ export type TtsPluginDeps = {
   createLlmClientFromPreset?(preset: TtsApiPreset, env: Record<string, string | undefined>): TtsLlmClient | undefined;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   recordTokenUsageEvent?: TtsTokenUsageRecorder;
-  promptVariables?: LLMTextVariables | (() => LLMTextVariables);
+  promptRenderer?: LLMTextRenderer | (() => LLMTextRenderer);
 };
 
 export type TtsPlugin = {

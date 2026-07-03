@@ -13,7 +13,7 @@ import { createDailyShellStore, type DailyShellStore, type ShellCategory, type S
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import type { LLMMessageContent } from "../src/contexts/llm-gateway/src/index.js";
 import { createCurrentTimeProvider } from "../src/platform/time/src/index.js";
-import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { AgentEvent } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const fs = await import("node:fs");
@@ -640,10 +640,12 @@ function promptContext(input: {
 } = {}): PromptRenderContext {
   const time = input.time ?? createCurrentTimeProvider("UTC");
   return {
-    variables: buildLLMTextVariables({
-      userName: "小王",
-      time,
-      memory: input.memory
+    renderer: createLLMTextVariableRenderer({
+      variables: () => buildLLMTextVariables({
+        userName: "小王",
+        time,
+        memory: input.memory
+      })
     }),
     event: textEvent(),
     time

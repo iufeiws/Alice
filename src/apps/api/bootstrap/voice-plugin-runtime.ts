@@ -1,7 +1,6 @@
 import type { TTSConfig, TtsApiPreset, TtsLlmClient } from "../../../channels/tts/src/index.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import { buildLLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { createAsrPlugin } from "../../../channels/asr/src/index.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
@@ -10,7 +9,7 @@ type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
 export function createVoicePluginRuntime(input: {
   config: { project: { username: string }; tts: TTSConfig };
-  time: CurrentTimeProvider;
+  promptContextRuntime: LLMTextRenderer;
   sendLLMRequest(request: any): Promise<any>;
   readLLMApiPresets(): LLMApiPreset[];
   recordTokenUsageEvent(event: any): void;
@@ -31,10 +30,7 @@ export function createVoicePluginRuntime(input: {
     },
     createLlmClientFromPreset: createTtsLlmClientFromPreset,
     recordTokenUsageEvent: input.recordTokenUsageEvent,
-    promptVariables: () => buildLLMTextVariables({
-      userName: input.config.project.username,
-      time: input.time
-    }),
+    promptRenderer: () => input.promptContextRuntime,
     appendLog: input.appendLog
   });
   const asrPlugin = createAsrPlugin({

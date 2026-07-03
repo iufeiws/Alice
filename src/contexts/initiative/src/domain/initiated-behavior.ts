@@ -1,7 +1,7 @@
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { PromptLayer } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLayerMessagesWithToolResults, promptVariables, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { buildLayerMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { normalizePromptLayers } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
@@ -195,7 +195,7 @@ export async function buildAgentInitiatedBehaviorMessages(
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMChatInput["messages"]> {
   if (!plan || !plan.enabled || plan.dryRun) return [];
-  const variables = promptVariables(context);
+  const renderer = promptRenderer(context);
   const messages: LLMChatInput["messages"] = [];
   for (const step of plan.steps) {
     if (step.kind !== "llm_instruction") continue;
@@ -203,7 +203,7 @@ export async function buildAgentInitiatedBehaviorMessages(
     const layers = normalizePromptLayers(profile.layers)
       .filter((layer) => layer.enabled)
       .sort((left, right) => left.order - right.order);
-    messages.push(...await buildLayerMessagesWithToolResults(layers, variables, context, runTool, { toolCallIdPrefix: `initiated_${plan.id}` }));
+    messages.push(...await buildLayerMessagesWithToolResults(layers, renderer, context, runTool, { toolCallIdPrefix: `initiated_${plan.id}` }));
   }
   return messages;
 }

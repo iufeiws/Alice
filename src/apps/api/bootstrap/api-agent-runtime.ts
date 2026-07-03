@@ -1,6 +1,6 @@
 import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime/chat-agent-runtime.js";
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
-import type { LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 
 export function createApiAgentRuntime(input: {
   config: any;
@@ -12,13 +12,8 @@ export function createApiAgentRuntime(input: {
   toolPlugins: any[];
   promptProfileStore: any;
   talkPromptProfileStore: any;
-  dailyShellStore: any;
   time: any;
-  coreProfileStore: any;
-  getPromptVariables(): LLMTextVariables;
-  memoryStore: any;
-  diaryStore: any;
-  calendarStore?: any;
+  getPromptRenderer(): LLMTextRenderer;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;
@@ -40,11 +35,7 @@ export function createApiAgentRuntime(input: {
     },
     getTalkPromptProfile: () => input.talkPromptProfileStore.get(),
     time: input.time,
-    dailyShellStore: input.dailyShellStore,
-    getAppearanceDescription: () => input.coreProfileStore.get().appearanceDescription,
-    getPromptVariables: input.getPromptVariables,
-    memoryStore: input.memoryStore,
-    diaryStore: input.diaryStore,
+    getPromptRenderer: input.getPromptRenderer,
     visibleToolNames: input.visibleToolNames,
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.currentTalkLLMConfig,
@@ -68,13 +59,8 @@ export function createApiAgentRuntime(input: {
     outputRouter: input.outputRouter,
     toolPlugins: input.toolPlugins,
     promptProfileStore: input.promptProfileStore,
-    dailyShellStore: input.dailyShellStore,
     time: input.time,
-    coreProfileStore: input.coreProfileStore,
-    getPromptVariables: input.getPromptVariables,
-    memoryStore: input.memoryStore,
-    diaryStore: input.diaryStore,
-    calendarStore: input.calendarStore,
+    getPromptRenderer: input.getPromptRenderer,
     agentState: input.agentState,
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,

@@ -10,9 +10,8 @@ import {
 } from "../src/contexts/memory/src/memory.js";
 import { promptStoragePath } from "../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createPromptProfileStore } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createDailyShellStore } from "../src/contexts/agent-profile/src/domain/shell.js";
-import { readWorldWandererConfig } from "../src/contexts/world-wanderer/src/index.js";
+import { createPromptContextRuntime, promptVariableTree } from "../src/apps/api/bootstrap/prompt-context-runtime.js";
 import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
 import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
@@ -2434,19 +2433,21 @@ function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdown
     store: undefined,
     getLLMRequestPreview: () => undefined,
     getLLMRequestProfilePreview: () => undefined,
-    getPromptVariables() {
-      const coreProfile = this.coreProfileStore.get();
-      const worldWanderer = readWorldWandererConfig(this.pluginConfigs?.worldWanderer?.configPath);
-      const now = this.time.now();
-      return buildLLMTextVariables({
-        userName: this.config.project.username,
+    getPromptRenderer() {
+      return createPromptContextRuntime({
+        username: this.config.project.username,
         time: this.time,
-        dailyShellRaw: this.dailyShellStore.get(now.date, this.time.timeZone),
-        appearanceDescription: coreProfile.appearanceDescription,
-        librarySetting: worldWanderer.enabled ? worldWanderer.libraryPrompt : coreProfile.librarySetting,
-        memory: this.memoryStore.read(),
-        wakeBoundary: this.diaryStore.latestWakeBoundary()
+        dailyShellStore: this.dailyShellStore,
+        coreProfileStore: this.coreProfileStore,
+        memoryStore: this.memoryStore,
+        diaryStore: this.diaryStore,
+        calendarStore: this.calendarStore,
+        skillsRegistry: { available: () => [] },
+        worldWandererConfigPath: this.pluginConfigs?.worldWanderer?.configPath
       });
+    },
+    getPromptVariableTree() {
+      return promptVariableTree(this.getPromptRenderer());
     },
     getTokenUsageReport: () => ({}),
     clearLLMChainCache() {},

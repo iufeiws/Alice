@@ -1,4 +1,5 @@
 import { createAdminRequestHandlerRuntime } from "./admin-context-runtime.js";
+import { promptVariableTree } from "./prompt-context-runtime.js";
 import type { ApiRuntimeState } from "../server/api-lifecycle-runtime.js";
 
 export function createApiAdminRuntime(input: {
@@ -47,7 +48,8 @@ export function createApiAdminRuntime(input: {
     getLLMRequestPreview: input.adminLLMSessionRuntime.getLLMRequestPreview,
     getLLMRequestProfilePreview: input.adminLLMSessionRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.adminLLMSessionRuntime.getTalkLLMRequestProfilePreview,
-    getPromptVariables: () => input.apiContextRuntime.promptContextRuntime.getPromptVariables(),
+    getPromptRenderer: () => input.apiContextRuntime.promptContextRuntime,
+    getPromptVariableTree: () => promptVariableTree(input.apiContextRuntime.promptContextRuntime),
     getTokenUsageReport: input.getTokenUsageReport,
     clearLLMChainCache: () => input.chatAgent.clearLLMSession("admin_clear"),
     cancelActiveLLMRun: () => {

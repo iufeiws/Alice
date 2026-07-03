@@ -3,7 +3,7 @@ import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMTool
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
-import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { promptLayerToMessage, type PromptLayer } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
@@ -73,7 +73,7 @@ export type ChatAgentLoopInput = {
   llm: LLMClient;
   llmRequestSender: LLMRequestSender;
   time: CurrentTimeProvider;
-  buildTextVariables(event: AgentEvent): LLMTextVariables;
+  buildTextVariables(event: AgentEvent): LLMTextRenderer;
   noteSessionUpdated(): void;
   getLastCompletedToolName(): string | undefined;
   setLastCompletedToolName(name: string): void;
@@ -259,13 +259,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
 
 export { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 export {
-  buildFixedPrefixAppendMessages,
   buildWaitChatResumeMessages,
   checkChatCursorFromResult,
   cloneLLMMessages,
   defaultChatAgentModeState,
   estimateMessagesTokens,
   estimateTextTokens,
+  fixedPrefixToolInput,
   findToolPlugin,
   toolResultText
 } from "./chat-loop-session-context.js";
@@ -402,10 +402,6 @@ async function failIndicatorSession(
   } catch (failError) {
     onError?.(failError);
   }
-}
-
-function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables = {}): string {
-  return formatAgentLoopToolResultForLLM(result, variables);
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {

@@ -80,6 +80,7 @@ test("config rejects writable mounts under skills and sensitive host paths", () 
   assert.equal(config.bashSandbox.hostCacheDir.endsWith(path.join(".sandbox", "bash", "cache")), true);
   assert.equal(config.bashSandbox.auditLogPath, ".sandbox/bash/audit.jsonl");
   assert.equal(config.bashSandbox.outputLimitBytes, 30_000);
+  assert.equal(config.skills.installedRoot, ".agents/skills");
   assert.equal("enabled" in config.bashSandbox, false);
   assert.deepEqual(config.bashSandbox.skillMounts, []);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);

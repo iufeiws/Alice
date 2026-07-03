@@ -6,7 +6,7 @@ import type { LLMChatInput, LLMClient } from "../src/contexts/llm-gateway/src/in
 import { createLLMRequests } from "../src/contexts/llm-gateway/src/llm-requests.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile } from "../src/contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLLMTextVariables } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../src/contexts/agent-loop/src/ports/policy.js";
@@ -19,7 +19,7 @@ import { runAgentFunctionCallLoop } from "../src/contexts/agent-loop/src/runtime
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptVariables"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptVariables">>;
+type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer">>;
 
 function createChatAgent(deps: TestChatAgentDeps) {
   let persistedSession = deps.initialLLMSession;
@@ -50,14 +50,11 @@ function createChatAgent(deps: TestChatAgentDeps) {
   return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
-    getPromptVariables: deps.getPromptVariables ?? (() => buildLLMTextVariables({
-      userName: (deps.config as any).project?.username ?? "user",
-      time: deps.time ?? createCurrentTimeProvider("UTC"),
-      dailyShellRaw: deps.getDailyShellRaw?.(),
-      appearanceDescription: deps.getAppearanceDescription?.(),
-      memory: deps.getMemorySnapshot?.(),
-      wakeBoundary: deps.getWakeBoundary?.(),
-      calendarContext: deps.getCalendarContext?.()
+    getPromptRenderer: deps.getPromptRenderer ?? (() => createLLMTextVariableRenderer({
+      variables: () => buildLLMTextVariables({
+        userName: (deps.config as any).project?.username ?? "user",
+        time: deps.time ?? createCurrentTimeProvider("UTC")
+      })
     })),
     llmRequestSender,
     loadLLMSession,
@@ -103,7 +100,7 @@ test("chat agent requires an injected prompt profile", async () => {
   const core = createChatAgentUnderTest({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
-    getPromptVariables: () => buildLLMTextVariables({ time: createCurrentTimeProvider("UTC") }),
+    getPromptRenderer: () => createLLMTextVariableRenderer({ variables: () => buildLLMTextVariables({ time: createCurrentTimeProvider("UTC") }) }),
     llmRequestSender: async () => ({ message: { role: "assistant", content: "unused" } }),
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -760,12 +757,10 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   const bookcaseIndex = secondMessages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase");
   const checkChatIndex = secondMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.ok(bookcaseIndex >= 0);
-  assert.ok(checkChatIndex > bookcaseIndex);
+  assert.equal(checkChatIndex, -1);
   assert.equal(secondMessages[bookcaseIndex + 1]?.content, "<book>static story</book>");
-  assert.equal(secondMessages[checkChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
-  assert.equal(secondMessages[checkChatIndex + 1]?.content, "recent chat");
-  assert.equal(checkChatInputs.at(-1)?.__fromPrefixAfterMessageId, 0);
-  assert.equal(checkChatCallsInSession, 1);
+  assert.equal(checkChatInputs.length, 0);
+  assert.equal(checkChatCallsInSession, 0);
   assert.deepEqual([...new Set(sessionUpdates.map((update) => update.id))], [1, 2]);
   assert.equal(sessionUpdates.at(-1)?.id, 2);
   assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
@@ -777,8 +772,19 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   const thirdCheckChatIndex = thirdMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.ok(thirdCheckChatIndex > bookcaseIndex);
   assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
-  assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
-  const fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
+  assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "recent chat");
+  let fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
+  assert.equal(fromPrefixInputs.length, 1);
+  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0]);
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.equal(requests.length, 4);
+  const fourthMessages = requests[3].messages;
+  const fourthCheckChatIndex = fourthMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
+  assert.equal(fourthMessages[fourthCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
+  assert.equal(fourthMessages[fourthCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
+  fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
   assert.equal(fromPrefixInputs.length, 2);
   assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0, 42]);
 });
@@ -842,11 +848,12 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
 
   await runPreparedChatEvent(core, textEvent());
 
+  assert.equal(requests.length, 1);
   const messages = requests[0].messages;
   assert.equal(messages.filter((message) => message.content === "fixed static prompt").length, 1);
   assert.equal(messages.filter((message) => message.content === "<book>fixed story</book>").length, 1);
   assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase").length, 1);
-  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").length, 1);
+  assert.equal(messages.filter((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").length, 0);
 });
 
 for (const scenario of [
@@ -3052,7 +3059,7 @@ test("chat agent uses fixed prefix check chat preview scope for token pressure b
   await runPreparedChatEvent(core, textEvent());
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(previewCalls.at(0), { action: "poll", __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 42 });
+  assert.deepEqual(previewCalls.at(0), { action: "poll", __preview: true, __scope: "from_prefix", __fromPrefixAfterMessageId: 0 });
 });
 
 test("chat agent token pressure comparison uses model-specific prices", async () => {
@@ -3177,7 +3184,6 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
   const requests: LLMChatInput[] = [];
   const clears: string[] = [];
   const sessionUpdates: LLMChatInput["messages"][] = [];
-  let dailyShell = "shell one";
   let dailyShellRaw = {
     date: "2026-05-29",
     createdAt: "2026-05-29T12:00:00.000",
@@ -3221,8 +3227,13 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
         { id: "static", title: "Static", role: "system", enabled: true, content: "{{dailyShell/persona/content}}", order: 1 }
       ]
     }),
-    getDailyShell: () => dailyShell,
-    getDailyShellRaw: () => dailyShellRaw,
+    getPromptRenderer: () => createLLMTextVariableRenderer({
+      variables: () => buildLLMTextVariables({
+        userName: "user",
+        time: createCurrentTimeProvider("UTC"),
+        dailyShellRaw
+      })
+    }),
     onLLMSessionCleared(reason) {
       clears.push(reason);
     },
@@ -3235,7 +3246,6 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
         return [{ name: "Wardrobe", description: "wardrobe", inputSchema: { type: "object" } }];
       },
       async execute(call) {
-        dailyShell = "shell two";
         dailyShellRaw = {
           ...dailyShellRaw,
           personality: { ...dailyShellRaw.personality, content: "shell two" }

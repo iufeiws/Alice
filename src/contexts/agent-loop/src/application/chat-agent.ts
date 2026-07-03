@@ -10,9 +10,7 @@ import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } f
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, normalizePromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
-import type { DailyShell } from "../../../agent-profile/src/domain/shell.js";
-import type { MemorySnapshot } from "../../../memory/src/memory.js";
-import { type LLMTextVariables, type LLMTextWakeBoundary } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import { type LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
 import { deepSeekPriceForModel } from "../../../llm-gateway/src/token-pricing.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentRunIndicator } from "../../../agent-run-indicator/src/index.js";
@@ -28,13 +26,13 @@ import {
   type AgentInitiatedBehaviorRun
 } from "../../../initiative/src/domain/initiated-behavior.js";
 import {
-  buildFixedPrefixAppendMessages,
   buildWaitChatResumeMessages,
   checkChatCursorFromResult,
   cloneLLMMessages,
   defaultChatAgentModeState,
   estimateMessagesTokens,
   estimateTextTokens,
+  fixedPrefixToolInput,
   findToolPlugin,
   buildChatAgentLoop,
   runPromptToolRequest,
@@ -180,13 +178,7 @@ export type ChatAgentDeps = {
   outputRouter: OutputRouter;
   tools?: ToolPlugin[];
   getPromptProfile?: () => PromptProfile;
-  getDailyShell?: () => string;
-  getDailyShellRaw?: () => DailyShell;
-  getAppearanceDescription?: () => string;
-  getMemorySnapshot?: () => MemorySnapshot;
-  getWakeBoundary?: () => LLMTextWakeBoundary | undefined;
-  getCalendarContext?: () => string | undefined;
-  getPromptVariables: () => LLMTextVariables;
+  getPromptRenderer: () => LLMTextRenderer;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
@@ -354,7 +346,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           : undefined);
       }
       const buildPromptContext = () => makePromptContext({
-        variables: requirePromptVariables(),
+        renderer: requirePromptRenderer(),
         event,
         time
       });
@@ -518,27 +510,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           return;
         }
         const promptContext = buildPromptContext();
-        if (session.mode === "fixed_prefix") {
-          const appendMessages = await buildFixedPrefixAppendMessages({
-            mode: modeStateFromSession(session),
-            event,
-            toolPlugins,
-            nextToolCallId: () => "append_fixed_prefix_chat_poll",
-            buildTextVariables: buildTurnTextVariables,
-            onCheckChatResult(result) {
-              const cursor = checkChatCursorFromResult("Chat", result);
-              session.lastCheckChatCursorMessageId = cursor ?? session.lastCheckChatCursorMessageId;
-              session.fixedPrefixCursorMessageId = cursor ?? session.fixedPrefixCursorMessageId;
-            }
-          });
-          if (appendMessages.length === 0) return;
-          appendLoopSessionContext({
-            session,
-            messages: appendMessages,
-            updateSession: noteLLMSessionUpdated
-          });
-          return;
-        }
         if (createdSessionThisRun) return;
         const appendProfile = {
           ...promptProfile,
@@ -556,8 +527,15 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           })
         };
         const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
-          return runPromptToolRequest(layer, call, toolPlugins).then((result) => {
+          const preparedCall = {
+            ...call,
+            input: fixedPrefixToolInput(call.toolName, call.input, session)
+          };
+          return runPromptToolRequest(layer, preparedCall, toolPlugins).then((result) => {
             session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
+            if (session.mode === "fixed_prefix" && call.toolName === "Chat") {
+              session.fixedPrefixCursorMessageId = session.lastCheckChatCursorMessageId ?? session.fixedPrefixCursorMessageId;
+            }
             return result;
           });
         });
@@ -740,12 +718,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     }
   };
 
-  function buildTurnTextVariables(event: AgentEvent): LLMTextVariables {
-    return requirePromptVariables();
+  function buildTurnTextVariables(event: AgentEvent): LLMTextRenderer {
+    return requirePromptRenderer();
   }
 
-  function requirePromptVariables(): LLMTextVariables {
-    return deps.getPromptVariables();
+  function requirePromptRenderer(): LLMTextRenderer {
+    return deps.getPromptRenderer();
   }
 
   function requirePromptProfile(): PromptProfile {

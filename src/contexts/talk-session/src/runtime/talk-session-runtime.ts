@@ -3,7 +3,7 @@ import type { AliceStore } from "../../../conversation-hub/src/ports/conversatio
 import { createTalkStore } from "../adapters/sqlite-talk-session-store.js";
 import type { TalkSession } from "../adapters/sqlite-talk-session-store.js";
 import { createTalkRuntime } from "../application/talk-session-runtime.js";
-import type { LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
 
 const path = await import("node:path");
 
@@ -12,11 +12,7 @@ export function createTalkRuntimeRuntime(input: {
   getCurrentTalkLLMSessionId(): number | undefined;
   getTalkPromptProfile(): any;
   time: any;
-  dailyShellStore: any;
-  getAppearanceDescription(): string;
-  getPromptVariables(): LLMTextVariables;
-  memoryStore: any;
-  diaryStore: any;
+  getPromptRenderer(): LLMTextRenderer;
   visibleToolNames(profile: any): string[];
   toolPlugins: any[];
   getLLMConfig(): any;
@@ -45,11 +41,7 @@ export function createTalkRuntimeRuntime(input: {
     },
     getTalkPromptProfile: input.getTalkPromptProfile,
     time: input.time,
-    dailyShellStore: input.dailyShellStore,
-    getAppearanceDescription: input.getAppearanceDescription,
-    getPromptVariables: input.getPromptVariables,
-    memoryStore: input.memoryStore,
-    diaryStore: input.diaryStore,
+    getPromptRenderer: input.getPromptRenderer,
     setLoopPrefixMessageCount(sessionId, count) {
       talkRuntime.setLoopPrefixMessageCount(sessionId, count);
     },

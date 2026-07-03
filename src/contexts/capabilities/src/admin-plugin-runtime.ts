@@ -1,6 +1,6 @@
 import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/src/index.js";
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
-import { buildLLMTextVariables, renderLLMText } from "../../agent-profile/src/application/llm-text-renderer.js";
+import { createLLMTextRenderer, type LLMTextValue } from "../../agent-profile/src/application/llm-text-renderer.js";
 import { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsConversionProvider, type TtsLlmClient, type TtsPluginConfig, type TtsTextFilter, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
@@ -15,7 +15,6 @@ import { HttpJsonError, readJsonBody, readRawBody } from "../../../apps/api/midd
 import { publicLLMApiPresets, readLLMApiPresets, resolvePromptApiPreset } from "../../llm-gateway/src/admin-presets.js";
 import { writeJson } from "../../../apps/api/routes/admin-http.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
-import { resolveLibrarySetting } from "../../world-wanderer/src/admin-library-setting.js";
 import { booleanFromUnknown, isValidHttpUrl, numberFromUnknown, optionalString, parseJsonObject, requiredString } from "../../../shared/admin-input/src/index.js";
 import { convertReferenceAudio, decodeHeaderFileName, maxTtsReferenceUploadBytes, readMossCodecConfig, ttsAudioUrl } from "../../../channels/tts/src/admin-assets.js";
 import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../bash-sandbox/src/index.js";
@@ -1438,19 +1437,32 @@ function renderPhotoOnBodyPrompt(context: AdminRoutesContext, template: string, 
   outfitImageGenerated?: boolean;
   onBodyGenerationAttempted?: boolean;
 }): string {
-  const daily = context.dailyShellStore.get(context.time.now().date, context.time.timeZone);
-  return renderLLMText(template, buildLLMTextVariables({
-    userName: context.config.project.username,
-    time: context.time,
-    dailyShellRaw: {
-      date: daily.date,
-      createdAt: daily.createdAt,
-      personality: daily.personality,
-      relationship: daily.relationship,
-      outfit
+  const base = context.getPromptRenderer();
+  const renderer = createLLMTextRenderer({
+    getVariable(name) {
+      return name.startsWith("outfit/") ? outfitVariable(outfit, name.slice("outfit/".length)) : base.getVariable(name);
     },
-    appearanceDescription: context.coreProfileStore.get().appearanceDescription
-  }));
+    listVariables() {
+      return base.listVariables();
+    }
+  });
+  return renderer.renderText(template);
+}
+
+function outfitVariable(outfit: {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
+}, field: string): LLMTextValue {
+  if (!["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"].includes(field)) return undefined;
+  const value = outfit[field as keyof typeof outfit];
+  if (typeof value === "boolean") return value;
+  return value ?? "";
 }
 
 function savePhotoOnBodyAttempt(context: AdminRoutesContext, outfit: {
@@ -2175,11 +2187,7 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
-      promptVariables: () => buildLLMTextVariables({
-        userName: context.config.project.username,
-        time: context.time,
-        librarySetting: resolveLibrarySetting(context)
-      }),
+      promptRenderer: () => context.getPromptRenderer(),
       appendLog: context.appendLog
     });
     translationMs = Date.now() - translationStartedAt;

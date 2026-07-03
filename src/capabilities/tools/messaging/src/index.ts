@@ -765,7 +765,7 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
 }
 
 function formatAssistantSpeaker(value: string | undefined): string {
-  return value === "core" || value === "shell" ? `Alice(${value})` : "Alice";
+  return value === "core" || value === "shell" ? `Alice(${messagingToolText.assistantSpeakerLabels[value]})` : "Alice";
 }
 
 function formatMessageContent(message: StoredConversationMessage): string {

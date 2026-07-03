@@ -33,6 +33,7 @@ export const messagingToolText = {
   fileMessage: (filePath: string) => `发送了文件[${filePath}]`,
   voiceCallStarted: "-已接通-",
   voiceCallEnded: "-已挂断-",
+  assistantSpeakerLabels: { core: "里", shell: "壳" },
   shellSwitch: (personalityName: string, relationshipName: string) => `-壳切换:切换为${personalityName}的${relationshipName}爱丽丝-`,
   haveNewMessage: "<have-new-message/>",
   sendChatFailed: (reason: string) => `<send-chat-failed reason="${reason}"/>`,

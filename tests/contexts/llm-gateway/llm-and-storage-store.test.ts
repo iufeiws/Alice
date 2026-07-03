@@ -1,0 +1,329 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createTokenUsageStore } from "../../../src/platform/storage/src/token-usage-store.js";
+import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
+import * as sqlite from "../../../src/platform/storage/src/sqlite-compat.js";
+import { path, makeTempDir } from "./llm-and-storage-helpers.js";
+
+test("token usage store records events and aggregates cache hit rate by hour", () => {
+  const dir = makeTempDir("token-usage");
+  const store = createTokenUsageStore(path.join(dir, "logs", "token_usage", "token-usage.sqlite"));
+  store.insert({
+    createdAt: "2026-05-30T10:05:00.000",
+    agentId: "chat",
+    model: "deepseek-chat",
+    sessionId: 1,
+    requestId: 1,
+    responseId: 1,
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 120,
+    cacheHitTokens: 60,
+    cacheMissTokens: 40,
+    rawUsageJson: "{\"prompt_tokens\":100}"
+  });
+  store.insert({
+    createdAt: "2026-05-30T10:35:00.000",
+    agentId: "chat",
+    model: "deepseek-chat",
+    inputTokens: 50,
+    outputTokens: 10,
+    totalTokens: 60,
+    cacheHitTokens: 25
+  });
+  store.insert({
+    createdAt: "2026-05-30T11:00:00.000",
+    agentId: "side",
+    model: "other",
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15
+  });
+
+  const report = store.report({
+    since: "2026-05-30T10:00:00.000",
+    bucket: "hour",
+    agentId: "chat",
+    model: "deepseek-chat"
+  });
+  assert.equal(report.summary.requests, 2);
+  assert.equal(report.summary.totalTokens, 180);
+  assert.equal(report.summary.cacheHitTokens, 85);
+  assert.equal(report.summary.cacheMissTokens, 40);
+  assert.equal(Math.round((report.summary.cacheHitRate ?? 0) * 1000) / 1000, 0.68);
+  assert.deepEqual(report.buckets.map((bucket) => bucket.bucket), ["2026-05-30T10:00"]);
+  assert.equal(report.byModel[0].model, "deepseek-chat");
+  assert.equal(report.latest.length, 2);
+});
+
+test("token usage store aggregates by day and keeps unknown usage rows", () => {
+  const dir = makeTempDir("token-usage-empty");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.insert({
+    createdAt: "2026-05-29T23:59:00.000",
+    agentId: "chat",
+    model: "unknown-usage",
+    finishReason: "stop"
+  });
+  store.insert({
+    createdAt: "2026-05-30T00:01:00.000",
+    agentId: "chat",
+    model: "unknown-usage",
+    outputTokens: 3
+  });
+
+  const report = store.report({ bucket: "day" });
+  assert.deepEqual(report.buckets.map((bucket) => bucket.bucket), ["2026-05-29", "2026-05-30"]);
+  assert.equal(report.summary.requests, 2);
+  assert.equal(report.summary.outputTokens, 3);
+  assert.equal(report.summary.cacheHitRate, undefined);
+  assert.equal(report.latest[0].model, "unknown-usage");
+});
+
+test("sqlite store initializes schema version without losing existing logs", () => {
+  const dir = makeTempDir("db");
+  const dbPath = path.join(dir, "alice.sqlite");
+  const store = createAliceStore(dbPath);
+  store.insertMessageLog({
+    time: "2026-05-24T00:00:00.000Z",
+    direction: "inbound",
+    plugin: "feishu",
+    kind: "text",
+    target: "chat",
+    sessionId: "session-1",
+    rawMessageId: "om_1",
+    summary: "hello"
+  });
+
+  const reopened = createAliceStore(dbPath);
+  assert.equal(reopened.listMessageLogs(10).length, 1);
+  assert.equal(reopened.listMessageLogsForSession("session-1", 10)[0].summary, "hello");
+  assert.equal(reopened.listUnprocessedInboundForSession("session-1", 10).length, 1);
+  const pending = reopened.listPendingInboundSessions();
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].sessionId, "session-1");
+  reopened.markMessageLogsProcessed([reopened.listMessageLogsForSession("session-1", 10)[0].id], "2026-05-24T00:01:00.000Z", "batch_1");
+  assert.equal(reopened.listUnprocessedInboundForSession("session-1", 10).length, 0);
+
+  const db: any = new sqlite.DatabaseSync(dbPath);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
+});
+
+test("sqlite migration marks legacy inbound logs processed", () => {
+  const dir = makeTempDir("legacy-db");
+  const dbPath = path.join(dir, "alice.sqlite");
+  const db: any = new sqlite.DatabaseSync(dbPath);
+  db.exec(`
+    PRAGMA user_version = 2;
+    CREATE TABLE message_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      time TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      plugin TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      target TEXT,
+      session_id TEXT,
+      summary TEXT NOT NULL
+    );
+    INSERT INTO message_logs(time, direction, plugin, kind, target, session_id, summary)
+    VALUES ('2026-05-24T00:00:00.000Z', 'inbound', 'feishu', 'text', 'chat', 'session-legacy', 'old');
+  `);
+
+  const store = createAliceStore(dbPath);
+  assert.equal(store.listUnprocessedInboundForSession("session-legacy", 10).length, 0);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
+});
+
+test("sqlite migration backfills message event logs into core-facing messages", () => {
+  const dir = makeTempDir("backfill-db");
+  const dbPath = path.join(dir, "alice.sqlite");
+  const db: any = new sqlite.DatabaseSync(dbPath);
+  db.exec(`
+    PRAGMA user_version = 4;
+    CREATE TABLE message_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      time TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      plugin TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      target TEXT,
+      session_id TEXT,
+      raw_message_id TEXT,
+      processed_at TEXT,
+      processed_batch_id TEXT,
+      summary TEXT NOT NULL,
+      external_event_id TEXT,
+      parent_raw_message_id TEXT,
+      actor_id TEXT,
+      status TEXT,
+      raw_json TEXT,
+      error TEXT
+    );
+    CREATE TABLE messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plugin TEXT NOT NULL,
+      external_message_id TEXT,
+      conversation_id TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      sender_id TEXT,
+      sender_role TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      content_text TEXT NOT NULL,
+      content_json TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      read_at TEXT,
+      is_recalled INTEGER NOT NULL DEFAULT 0,
+      recalled_at TEXT,
+      reactions_json TEXT NOT NULL DEFAULT '{}',
+      last_event_at TEXT NOT NULL,
+      core_processed_at TEXT,
+      core_batch_id TEXT,
+      send_failure_reason TEXT
+    );
+    INSERT INTO message_logs(time, direction, plugin, kind, target, session_id, raw_message_id, processed_at, processed_batch_id, summary, status)
+    VALUES ('2026-05-24T00:00:00.000Z', 'inbound', 'feishu', 'text', 'chat', 'session-backfill', 'om_old', '2026-05-24T00:01:00.000Z', 'legacy', 'old text', 'received');
+    INSERT INTO message_logs(time, direction, plugin, kind, raw_message_id, parent_raw_message_id, actor_id, summary, status)
+    VALUES ('2026-05-24T00:02:00.000Z', 'inbound', 'feishu', 'reaction.created', 'om_old', 'om_old', 'ou_other', 'reaction.created thumbsup on om_old', 'received');
+    INSERT INTO message_logs(time, direction, plugin, kind, raw_message_id, parent_raw_message_id, summary, status)
+    VALUES ('2026-05-24T00:03:00.000Z', 'inbound', 'feishu', 'message.read', 'om_old', 'om_old', 'message.read om_old', 'received');
+  `);
+
+  const store = createAliceStore(dbPath);
+  const message = store.listMessagesForConversation("session-backfill", 10)[0];
+  assert.equal(message.externalMessageId, "om_old");
+  assert.equal(message.contentText, "old text");
+  assert.equal(Boolean(message.isRead), true);
+  assert.deepEqual(JSON.parse(message.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
+});
+
+test("sqlite store keeps core-facing message state separate from event logs", () => {
+  const dir = makeTempDir("messages");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  const message = store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "feishu:dm:ou_user",
+    senderId: "ou_user",
+    contentType: "text",
+    contentText: "hello",
+    contentJson: JSON.stringify({ text: "hello" }),
+    createdAt: "2026-05-24T00:00:00.000Z"
+  });
+
+  assert.equal(message.contentText, "hello");
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "feishu:dm:ou_user",
+    senderName: "shell",
+    contentType: "text",
+    contentText: "from shell",
+    createdAt: "2026-05-24T00:01:00.000Z"
+  });
+  assert.equal(outbound.senderName, "shell");
+  assert.equal(store.listPendingCoreConversations()[0].conversationId, "feishu:dm:ou_user");
+  assert.equal(store.updateMessageReaction({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    emoji: "thumbsup",
+    actorId: "ou_other",
+    op: "add",
+    at: "2026-05-24T00:01:00.000Z"
+  }), true);
+  assert.equal(store.markMessageRead("feishu", "om_1", "2026-05-24T00:02:00.000Z"), true);
+  assert.deepEqual(store.listPendingCoreConversations(), []);
+  assert.deepEqual(store.listUnprocessedCoreMessagesForConversation("feishu:dm:ou_user", 10), []);
+  store.markMessagesReadAndCoreProcessed([message.id], "2026-05-24T00:04:00.000Z", "check_read_later");
+  assert.equal(store.markMessageRecalled("feishu", "om_1", "2026-05-24T00:03:00.000Z"), true);
+
+  const updated = store.listMessagesForConversation("feishu:dm:ou_user", 10)[0];
+  assert.equal(Boolean(updated.isRead), true);
+  assert.equal(updated.readAt, "2026-05-24T00:02:00.000");
+  assert.equal(Boolean(updated.isRecalled), true);
+  assert.deepEqual(JSON.parse(updated.reactionsJson), { thumbsup: { count: 1, users: ["ou_other"] } });
+});
+
+test("sqlite store lists messages chronologically and by created range", () => {
+  const dir = makeTempDir("message-range");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "one",
+    createdAt: "2026-05-24T00:00:00.000Z"
+  });
+  store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "two",
+    createdAt: "2026-05-24T01:00:00.000Z"
+  });
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_3",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "three",
+    createdAt: "2026-05-24T07:00:00.000Z"
+  });
+
+  assert.deepEqual(store.listMessagesChronological().map((message) => message.contentText), ["one", "two", "three"]);
+  assert.deepEqual(
+    store.listMessagesByCreatedAtRange("2026-05-24T00:30:00.000Z", "2026-05-24T07:00:00.000Z").map((message) => message.contentText),
+    ["two"]
+  );
+  assert.deepEqual(
+    store.listMessagesByCreatedAtRange("2026-05-24T00:00:00.000Z", "2026-05-24T01:00:00.000Z").map((message) => message.contentText),
+    ["one"]
+  );
+});
+
+test("sqlite store writes UTC source times and derives configured timezone fields", () => {
+  const dir = makeTempDir("message-utc-source");
+  const store = createAliceStore(path.join(dir, "alice.sqlite"), {
+    time: createCurrentTimeProvider("Asia/Shanghai")
+  });
+  const log = store.insertMessageLog({
+    time: "ignored-local",
+    timeUtc: "2026-06-02T15:26:34.819Z",
+    direction: "inbound",
+    plugin: "feishu",
+    kind: "text",
+    summary: "hello"
+  });
+  assert.equal(log.timeUtc, "2026-06-02T15:26:34.819Z");
+  assert.equal(log.time, "2026-06-02T23:26:34.819");
+
+  const inbound = store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_utc",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "one",
+    createdAt: "ignored-local",
+    createdAtUtc: "2026-06-02T15:26:34.819Z"
+  });
+  assert.equal(inbound.createdAtUtc, "2026-06-02T15:26:34.819Z");
+  assert.equal(inbound.createdAt, "2026-06-02T23:26:34.819");
+
+  const outbound = store.insertOutboundMessage({
+    plugin: "feishu",
+    conversationId: "session",
+    contentType: "text",
+    contentText: "two",
+    createdAt: "ignored-local",
+    createdAtUtc: "2026-06-02T15:29:58.129Z"
+  });
+  store.markOutboundMessageSent(outbound.id, "om_sent", "2026-06-02T15:29:59.326Z", "2026-06-02T15:29:58.129Z");
+  const sent = store.listMessagesForConversation("session", 10).find((message) => message.id === outbound.id);
+  assert.equal(sent?.createdAtUtc, "2026-06-02T15:29:58.129Z");
+  assert.equal(sent?.createdAt, "2026-06-02T23:29:58.129");
+  assert.equal(sent?.lastEventAtUtc, "2026-06-02T15:29:59.326Z");
+  assert.equal(sent?.lastEventAt, "2026-06-02T23:29:59.326");
+});

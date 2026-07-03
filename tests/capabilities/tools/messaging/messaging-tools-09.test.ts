@@ -1,0 +1,475 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
+import { formatToolResultForLLM } from "../../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { createMessagingTools } from "../../../../src/capabilities/tools/messaging/src/index.js";
+import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/finish-and-wait/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
+import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+
+const fs = await import("node:fs");
+const fsp = await import("node:fs/promises");
+const path = await import("node:path");
+const os = await import("node:os");
+const events = await import("node:events");
+
+const genieRequiredModelFiles = [
+  "t2s_encoder_fp32.bin",
+  "t2s_encoder_fp32.onnx",
+  "t2s_first_stage_decoder_fp32.onnx",
+  "t2s_shared_fp16.bin",
+  "t2s_stage_decoder_fp32.onnx",
+  "vits_fp16.bin",
+  "vits_fp32.onnx"
+];
+
+test("genie remote stream uploads missing model and retries original stream-input request", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-upload");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const calls: string[] = [];
+  const streamQueries: Array<Record<string, string>> = [];
+  const streamBodies: string[] = [];
+  const uploadBodies: Uint8Array[] = [];
+  let streamAttempts = 0;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamAttempts += 1;
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      streamBodies.push(String(init?.body));
+      if (streamAttempts === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "MODEL_NOT_UPLOADED",
+          modelDir: path.resolve("assets", fixture.modelDir),
+          uploadUrl: `/models/upload?modelDir=${encodeURIComponent(path.resolve("assets", fixture.modelDir))}`
+        }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([7, 8]));
+          controller.close();
+        }
+      }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+    }
+    if (parsed.pathname === "/models/upload") {
+      assert.equal(init?.headers && (init.headers as Record<string, string>)["content-type"], "application/zip");
+      uploadBodies.push(init?.body as Uint8Array);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudio!({
+      text: "第一段。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "zh",
+        modelDir: fixture.modelDir,
+        referenceText: "参照テキスト",
+        splitText: false
+      }
+    })) {
+      chunks.push(Array.from(chunk));
+    }
+
+    assert.deepEqual(calls, ["GET /health", "POST /stream-input", "POST /models/upload", "POST /stream-input"]);
+    assert.equal(streamQueries.length, 2);
+    assert.equal(streamQueries[0].language, "zh");
+    assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.equal(streamQueries[0].splitText, "false");
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
+    assert.deepEqual(streamQueries[1], streamQueries[0]);
+    assert.deepEqual(streamBodies, [
+      `${JSON.stringify({ text: "第一段。", referenceText: "参照テキスト" })}\n`,
+      `${JSON.stringify({ text: "第一段。", referenceText: "参照テキスト" })}\n`
+    ]);
+    assert.equal(uploadBodies.length, 1);
+    assert.deepEqual(Array.from(uploadBodies[0].slice(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+    const zipText = new TextDecoder().decode(uploadBodies[0]);
+    assert.equal(zipText.includes("model/t2s_encoder_fp32.onnx"), true);
+    assert.equal(zipText.includes("reference.wav"), true);
+    assert.equal(zipText.includes("reference.txt"), true);
+    assert.deepEqual(chunks, [[7, 8]]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("genie remote text stream decodes ndjson audio text chunks", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-ndjson");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const streamQueries: Array<Record<string, string>> = [];
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      const body = [
+        JSON.stringify({
+          type: "audio",
+          text: "これは一文目です。",
+          format: "s16le",
+          sampleRate: 32000,
+          channels: 1,
+          audioBase64: "AQI="
+        }),
+        JSON.stringify({
+          type: "audio",
+          text: "二文目です。",
+          format: "s16le",
+          sampleRate: 32000,
+          channels: 1,
+          audioBase64: "AwQ="
+        }),
+        JSON.stringify({ type: "done" })
+      ].join("\n") + "\n";
+      return new Response(body, { status: 200, headers: { "content-type": "application/x-ndjson" } });
+    }
+    throw new Error("unexpected request");
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudioWithText!({
+      text: "これは一文目です。二文目です。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "jp",
+        modelDir: fixture.modelDir,
+        referenceText: "参照テキスト"
+      }
+    })) {
+      chunks.push([chunk.text, Array.from(chunk.chunk)]);
+    }
+
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
+    assert.deepEqual(chunks, [
+      ["これは一文目です。", [1, 2]],
+      ["二文目です。", [3, 4]]
+    ]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("genie remote stream uploads missing reference files and retries original stream-input request", async () => {
+  const fixture = makeTtsAssetFixture("tts-genie-remote-reference-missing");
+  fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
+  const calls: string[] = [];
+  const streamQueries: Array<Record<string, string>> = [];
+  const uploadBodies: Uint8Array[] = [];
+  let streamAttempts = 0;
+  const fakeFetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const parsed = new URL(String(url));
+    calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+    if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (parsed.pathname === "/stream-input") {
+      streamAttempts += 1;
+      streamQueries.push(Object.fromEntries(parsed.searchParams.entries()));
+      if (streamAttempts === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "REFERENCE_NOT_UPLOADED",
+          error: "reference files are missing"
+        }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([9, 10]));
+          controller.close();
+        }
+      }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+    }
+    if (parsed.pathname === "/models/upload") {
+      assert.equal(parsed.searchParams.get("modelDir"), path.resolve("assets", fixture.modelDir));
+      assert.equal(init?.headers && (init.headers as Record<string, string>)["content-type"], "application/zip");
+      uploadBodies.push(init?.body as Uint8Array);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    throw new Error("unexpected request");
+  };
+  const synthesize = createGenieTtsVoiceSynthesizer({
+    backend: "genie-tts",
+    genieBaseURL: "http://127.0.0.1:8767",
+    genieBaseURLExplicit: true,
+    genieOutputDir: "generated/tts",
+    assetRoot: fixture.assetRoot,
+    genieIdleShutdownMs: 0
+  }, { fetch: fakeFetch as typeof fetch, spawn: fakeFfmpegSpawn() });
+
+  try {
+    const chunks = [];
+    for await (const chunk of synthesize.streamAudio!({
+      text: "第一段。",
+      time: createCurrentTimeProvider("UTC"),
+      genie: {
+        language: "zh",
+        modelDir: fixture.modelDir
+      }
+    })) {
+      chunks.push(Array.from(chunk));
+    }
+    assert.deepEqual(calls, ["GET /health", "POST /stream-input", "POST /models/upload", "POST /stream-input"]);
+    assert.equal(streamQueries.length, 2);
+    assert.equal(streamQueries[0].modelDir, path.resolve("assets", fixture.modelDir));
+    assert.equal(streamQueries[0].responseFormat, "ndjson");
+    assert.deepEqual(streamQueries[1], streamQueries[0]);
+    assert.equal(uploadBodies.length, 1);
+    const zipText = new TextDecoder().decode(uploadBodies[0]);
+    assert.equal(zipText.includes("model/t2s_encoder_fp32.onnx"), true);
+    assert.equal(zipText.includes("reference.wav"), true);
+    assert.equal(zipText.includes("reference.txt"), true);
+    assert.deepEqual(chunks, [[9, 10]]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("fallback voice synthesizer uses local synthesis when remote synthesis fails", async () => {
+  const logs: string[] = [];
+  const calls: string[] = [];
+  const remote = Object.assign(async () => {
+    calls.push("remote");
+    throw new Error("remote offline");
+  }, {}) as any;
+  const local = Object.assign(async () => {
+    calls.push("local");
+    return { assetId: "generated/tts/local.opus", filePath: path.join(makeTempDir("fallback-local-tts"), "assets", "generated", "tts", "local.opus") };
+  }, {}) as any;
+  const synthesize = createFallbackVoiceSynthesizer(remote, local, {
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  const result = await synthesize({ text: "また後で", time: createCurrentTimeProvider("UTC") });
+
+  assert.deepEqual(calls, ["remote", "local"]);
+  assert.equal(result.assetId, "generated/tts/local.opus");
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), true);
+});
+
+test("remote-aware tts does not prepare local Genie when API provider is selected", async () => {
+  const dir = makeTempDir("tts-remote-aware-api");
+  const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: { provider: "openai-api" },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103",
+    localFallbackEnabled: false
+  }));
+  fs.writeFileSync(path.join(providersDir, "openai-api.json"), JSON.stringify({
+    baseURL: "https://tts.example.test/v1",
+    model: "voice-model",
+    voice: "voice"
+  }));
+  const calls: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response("", { status: 503 });
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any
+  });
+
+  await synthesize.prepare?.();
+  synthesize.noteActivity?.();
+
+  assert.deepEqual(calls, []);
+});
+
+test("remote-aware tts disabled local fallback does not start local Genie after remote failure", async () => {
+  const dir = makeTempDir("tts-remote-aware-no-local-fallback");
+  const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: { provider: "genie" },
+    translationEnabled: false,
+    prompt: "Read aloud."
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "192.168.0.103",
+    localFallbackEnabled: false
+  }));
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response("", { status: 503 });
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any,
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  await assert.rejects(
+    () => synthesize({ text: "また後で", time: createCurrentTimeProvider("UTC") }),
+    /Genie TTS service is not healthy/
+  );
+
+  assert.equal(calls.some((url) => url.includes("192.168.0.103:8767/health")), true);
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), false);
+});
+
+test("remote-aware tts retries fetch failed stream before audio", async () => {
+  const dir = makeTempDir("tts-remote-aware-stream-retry");
+  const configPath = path.join(dir, "config.json");
+  const providersDir = path.join(dir, "providers");
+  fs.mkdirSync(providersDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    conversion: { provider: "genie" },
+    translationEnabled: false,
+    prompt: ""
+  }));
+  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+    enabled: true,
+    baseURL: "remote.test",
+    localFallbackEnabled: false
+  }));
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
+    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+      if (parsed.pathname === "/health") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (parsed.pathname === "/stream") {
+        if (calls.filter((call) => call === "POST /stream").length < 3) throw new Error("fetch failed");
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2]));
+            controller.close();
+          }
+        }), { status: 200, headers: { "content-type": "audio/L16; rate=32000; channels=1" } });
+      }
+      throw new Error(`unexpected request: ${parsed.pathname}`);
+    }) as typeof fetch,
+    spawn: (() => {
+      throw new Error("local Genie should not start");
+    }) as any,
+    appendLog: (_level, message) => logs.push(message)
+  });
+
+  const chunks = [];
+  for await (const chunk of synthesize.streamAudioWithText!({ text: "第一段。", time: createCurrentTimeProvider("UTC") })) {
+    chunks.push(Array.from(chunk.chunk));
+  }
+
+  assert.deepEqual(calls, ["GET /health", "POST /stream", "GET /health", "POST /stream", "GET /health", "POST /stream"]);
+  assert.deepEqual(chunks, [[1, 2]]);
+  assert.equal(logs.filter((message) => message.includes("fetch failed before audio; retry")).length, 2);
+  assert.equal(logs.some((message) => message.includes("falling back to local Genie")), false);
+});
+
+async function eventually(condition: () => boolean, timeoutMs = 500): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("condition was not met before timeout");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+function makeTempDir(name: string): string {
+  const dir = path.join(os.tmpdir(), "alice-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+let seedInboundCounter = 0;
+
+function seedUserInbound(store: ReturnType<typeof createAliceStore>, conversationId: string, plugin: string): void {
+  seedInboundCounter += 1;
+  store.upsertInboundMessage({
+    plugin,
+    externalMessageId: `seed_user_inbound_${seedInboundCounter}`,
+    conversationId,
+    senderId: "user-1",
+    senderRole: "user",
+    contentType: "text",
+    contentText: "user reply",
+    createdAt: new Date(Date.parse("2026-05-25T00:00:00.000Z") + seedInboundCounter).toISOString()
+  });
+}
+
+function makeTtsAssetFixture(prefix: string): { root: string; assetRoot: string; modelDir: string; referenceAudio: string; cleanup(): void } {
+  const assetRoot = path.join(makeTempDir(`${prefix}-asset-root`), "assets");
+  const root = path.join(assetRoot, "generated", `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const modelDir = path.join(root, "model");
+  const referenceAudio = path.join(root, "reference.wav");
+  fs.mkdirSync(modelDir, { recursive: true });
+  for (const fileName of genieRequiredModelFiles) {
+    fs.writeFileSync(path.join(modelDir, fileName), "model");
+  }
+  fs.writeFileSync(referenceAudio, "wav");
+  return {
+    root,
+    assetRoot,
+    modelDir,
+    referenceAudio,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+}
+
+function fakeFfmpegSpawn(): any {
+  return ((command: string, args: readonly string[]) => {
+    const child = new events.EventEmitter() as any;
+    child.stdout = new events.EventEmitter();
+    child.stderr = new events.EventEmitter();
+    child.exitCode = null;
+    process.nextTick(() => {
+      if (command === "ffmpeg") {
+        if (args.includes("-f") && args.includes("s16le") && String(args[args.length - 1]) === "-") {
+          const pcm = new Uint8Array(2000);
+          for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+            pcm[offset] = 0xff;
+            pcm[offset + 1] = 0x3f;
+          }
+          child.stdout.emit("data", pcm);
+        } else {
+          fs.writeFileSync(String(args[args.length - 1]), "opus");
+        }
+      }
+      child.emit("exit", 0, null);
+    });
+    return child;
+  }) as any;
+}

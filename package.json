@@ -16,7 +16,7 @@
     "calendar:seed-holidays": "node --import tsx scripts/seed-calendar-holidays.ts",
     "test:selfie-api": "node scripts/test-selfie-image-api.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
-    "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js"
+    "test": "find tests -name '*.test.ts' -print | sort | while IFS= read -r test_file; do node --import tsx --test --test-concurrency=1 \"$test_file\" || exit 1; done && python3 -B -m unittest tests/scripts/genie_tts/genie_tts_service_test.py"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

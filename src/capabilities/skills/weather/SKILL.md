@@ -59,3 +59,4 @@ curl --fail --silent --show-error --max-time 20 "https://wttr.in/London?format=%
 - For severe alerts, aviation, marine, or official decisions, use official local weather services.
 - For historical climate/weather, use an archive/API, not wttr.in.
 - For hyper-local microclimates, prefer local sensors.
+- For token efficiency, avoid `?format=j1`; use simpler formats like `?format=3` or custom format strings instead.

@@ -64,6 +64,9 @@ export function createChatAgentRuntime(input: {
     ensureChatLoopSessionContext: input.agentLoopRuntime
       ? (contextInput: any) => input.agentLoopRuntime.ensureChatSessionContext(contextInput)
       : undefined,
+    consumePendingUserMessageInterrupt: input.agentLoopRuntime
+      ? (sessionId: string) => input.agentLoopRuntime.consumePendingUserMessageInterrupt(sessionId)
+      : undefined,
     getLLMConfig: input.currentChatLLMConfig,
     isLLMRunCancelled: () => input.llmRequests.isCancelRequested(),
     outputRouter: input.outputRouter,

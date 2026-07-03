@@ -861,10 +861,10 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(fieldGroups.get("selfieImageApiRelayBaseURL"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayModel"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayTimeoutMs"), "openai_relay");
-  assert.equal(fieldGroups.get("autoGenerateOutfitOnBody"), "on_body");
+  assert.equal(fieldGroups.get("autoGenerateOutfitOnBody"), "general");
   assert.equal(fieldGroups.get("onBodyReferenceImage"), "on_body");
   assert.equal(fieldGroups.get("onBodyPrompt"), "on_body");
-  assert.equal(fieldGroups.get("selfie2DinRealEnabled"), "2dinreal");
+  assert.equal(fieldGroups.get("selfie2DinRealEnabled"), "general");
   assert.equal(fieldGroups.get("selfie2DinRealReferenceImage"), "2dinreal");
   assert.equal(fieldGroups.get("selfie2DinRealPrompt"), "2dinreal");
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);

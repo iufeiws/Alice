@@ -4,6 +4,7 @@ import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import { type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import { promptLayerToMessage, type PromptLayer } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, parseAgentLoopToolArguments } from "./agent-loop-tool-executor.js";
@@ -80,6 +81,8 @@ export type ChatAgentLoopInput = {
   onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
   onSessionRebuilt?(): void;
   isLLMRunCancelled?(): boolean;
+  consumePendingUserMessageInterrupt?(): boolean;
+  interruptLayer?: PromptLayer;
   agentLoopRunSeq?: number;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
@@ -209,8 +212,12 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       if (execution.sessionRebuilt) input.onSessionRebuilt?.();
-      return followup.messages.length > 0
-        ? { ...execution, messages: followup.messages }
+      const interruptMessages = input.consumePendingUserMessageInterrupt?.() && input.interruptLayer?.enabled
+        ? [promptLayerToMessage(input.interruptLayer, textVariables)]
+        : [];
+      const messages = [...interruptMessages, ...followup.messages];
+      return messages.length > 0
+        ? { ...execution, messages }
         : execution;
     },
     async onMessagesChanged({ messages }) {

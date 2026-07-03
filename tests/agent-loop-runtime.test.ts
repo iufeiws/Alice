@@ -58,6 +58,100 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(await first, { started: true, outputs: [] });
 });
 
+test("agent loop runtime tracks pending user message interrupt for active chat session only", async () => {
+  let releaseRun: (() => void) | undefined;
+  let startedRun: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    startedRun = resolve;
+  });
+  let runs = 0;
+  const runtime = createAgentLoopRuntime({
+    prepareChat() {
+      runs += 1;
+      if (runs > 1) {
+        return {
+          prepare: () => [],
+          complete: () => []
+        };
+      }
+      startedRun?.();
+      return new Promise((resolve) => {
+        releaseRun = () => resolve({
+          prepare: () => [],
+          complete: () => []
+        });
+      });
+    }
+  });
+
+  const run = runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-1",
+    reason: "test",
+    event: textEvent("session-1")
+  });
+  await started;
+
+  runtime.noteInboundUserMessageInterrupt("other-session");
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+  runtime.noteInboundUserMessageInterrupt("session-1");
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), true);
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+
+  releaseRun?.();
+  await run;
+  runtime.noteInboundUserMessageInterrupt("session-1");
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+});
+
+test("agent loop runtime drops unconsumed user message interrupt when chat run exits", async () => {
+  let releaseRun: (() => void) | undefined;
+  let startedRun: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    startedRun = resolve;
+  });
+  let runs = 0;
+  const runtime = createAgentLoopRuntime({
+    prepareChat() {
+      runs += 1;
+      if (runs > 1) {
+        return {
+          prepare: () => [],
+          complete: () => []
+        };
+      }
+      startedRun?.();
+      return new Promise((resolve) => {
+        releaseRun = () => resolve({
+          prepare: () => [],
+          complete: () => []
+        });
+      });
+    }
+  });
+
+  const first = runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-1",
+    reason: "test",
+    event: textEvent("session-1")
+  });
+  await started;
+  runtime.noteInboundUserMessageInterrupt("session-1");
+  releaseRun?.();
+  await first;
+
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+  const second = await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-1",
+    reason: "next",
+    event: textEvent("session-1")
+  });
+  assert.equal(second.started, true);
+  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+});
+
 test("agent heartbeat forced run owns manual session fallback", async () => {
   let pendingSessionIds = ["session-pending"];
   let pendingProcessed = 0;
@@ -568,6 +662,80 @@ test("standalone agent function-call loop is exported for loop adapters", async 
   assert.equal(result.rounds, 2);
 });
 
+test("chat loop inserts interrupt user message after next tool result", async () => {
+  const session = {
+    messages: [{ role: "user" as const, content: "go" }],
+    requestTimestamps: [],
+    mode: "normal"
+  };
+  let consumeInterrupt = true;
+  const requests: any[] = [];
+  const tools: ToolPlugin[] = [{
+    id: "tools",
+    listTools() {
+      return [{ name: "test_tool", description: "test", inputSchema: {} }];
+    },
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "tool ok" };
+    }
+  }];
+  const loop = buildChatAgentLoop({
+    llmInput: { messages: session.messages, toolNames: ["test_tool"] },
+    event: textEvent("session-interrupt"),
+    toolPlugins: tools,
+    session,
+    ensureSession: async () => session,
+    appendSessionContext: async () => {},
+    llm: { async chat() { throw new Error("unused"); } },
+    async llmRequestSender({ round, messages }) {
+      requests.push(messages);
+      if (round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "call_test",
+              type: "function",
+              function: { name: "test_tool", arguments: "{}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    },
+    time: fakeTime(),
+    buildTextVariables: () => ({}),
+    noteSessionUpdated: () => {},
+    getLastCompletedToolName: () => undefined,
+    setLastCompletedToolName: () => {},
+    applyModeStateToNewSession: () => {},
+    interruptLayer: {
+      id: "interrupt",
+      title: "Interrupt Layer",
+      role: "user",
+      name: "ConfiguredInterrupt",
+      enabled: true,
+      content: "configured interrupt content",
+      order: 0
+    },
+    consumePendingUserMessageInterrupt: () => {
+      const current = consumeInterrupt;
+      consumeInterrupt = false;
+      return current;
+    }
+  });
+
+  const result = loop.complete(await runAgentFunctionCallLoop(loop.spec));
+
+  assert.equal(result.finalResult?.message.content, "done");
+  assert.equal(requests[1].at(-2).role, "tool");
+  assert.equal(requests[1].at(-2).toolCallId, "call_test");
+  assert.equal(requests[1].at(-2).content, "tool ok");
+  assert.equal(requests[1].at(-1).role, "user");
+});
+
 test("chat loop sends assistant chat blocks and exposes Chat", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],
@@ -620,11 +788,7 @@ test("chat loop sends assistant chat blocks and exposes Chat", async () => {
       }
       return { message: { role: "assistant", content: "<chat type=\"bad\" alice=\"bad\">done" }, finishReason: "stop" };
     },
-    time: {
-      timeZone: "UTC",
-      now: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" }),
-      addMs: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" })
-    },
+    time: fakeTime(),
     buildTextVariables: () => ({}),
     noteSessionUpdated: () => {},
     getLastCompletedToolName: () => undefined,
@@ -638,6 +802,14 @@ test("chat loop sends assistant chat blocks and exposes Chat", async () => {
   assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
   assert.deepEqual(sent, ["core:voice:prefix", "shell:message:done"]);
 });
+
+function fakeTime() {
+  return {
+    timeZone: "UTC",
+    now: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" }),
+    addMs: () => ({ date: new Date("2026-06-12T00:00:00.000Z"), iso: "2026-06-12T00:00:00.000", epochMs: 1, timeZone: "UTC" })
+  };
+}
 
 function textEvent(sessionId: string): AgentEvent {
   return {

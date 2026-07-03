@@ -60,6 +60,11 @@ export function renderPromptsScript(): string {
               <label><input id="toolPhotoVisible" type="checkbox" \${activeProfile.visibleTools?.photo === false || activeProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
               <label><input id="toolShellVisible" type="checkbox" \${activeProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
               <p class="muted">Chat · wardrobe · selfie</p>
+              \${isTalk || !activeProfile.interruptLayer ? "" : \`
+              <h2>Interrupt Layer</h2>
+              <p class="muted">Inserted after the next tool result when a new user message arrives during a running Chat loop.</p>
+              <div id="promptInterruptLayer">\${renderInterruptLayer(activeProfile.interruptLayer)}</div>
+              \`}
               <h2>Initial Layers</h2>
               <div id="promptLayers">\${layers.map((layer, index) => renderPromptLayer(layer, index, layers.length, "layers")).join("")}</div>
               <button type="button" id="prompt-add">Add Initial Layer</button>
@@ -82,6 +87,7 @@ export function renderPromptsScript(): string {
         $("toolFeishuVisible").addEventListener("change", () => { activeProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
         $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
+        if (!isTalk && activeProfile.interruptLayer) bindInterruptLayer(activeProfile.interruptLayer);
         layers.forEach((layer, index) => bindPromptLayer(layer, index, "layers"));
         appendLayers.forEach((layer, index) => bindPromptLayer(layer, index, "appendLayers"));
         $("prompt-add").addEventListener("click", () => {
@@ -337,6 +343,39 @@ export function renderPromptsScript(): string {
           count
         });
       }
+
+      function renderInterruptLayer(layer) {
+        const role = ["system", "user", "assistant"].includes(layer.role) ? layer.role : "user";
+        return renderPromptLayerDetails({
+          attributes: 'data-interrupt-layer="true"',
+          title: layer.title,
+          role,
+          roleOptions: ["system", "user", "assistant"],
+          name: layer.name,
+          enabled: layer.enabled,
+          thinking: layer.thinking,
+          content: layer.content,
+          index: 0,
+          count: 1,
+          showActions: false
+        });
+      }
+
+      function bindInterruptLayer(layer) {
+        const root = document.querySelector('[data-interrupt-layer="true"]');
+        if (!root) return;
+        root.querySelector('[data-field="title"]').addEventListener("input", (event) => { layer.title = event.target.value; });
+        root.querySelector('[data-field="name"]').addEventListener("input", (event) => { layer.name = event.target.value; });
+        root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
+          layer.role = ["system", "user", "assistant"].includes(event.target.value) ? event.target.value : "user";
+          if (layer.role !== "assistant") delete layer.thinking;
+          renderPromptProfile();
+        });
+        root.querySelector('[data-field="enabled"]').addEventListener("change", (event) => { layer.enabled = event.target.checked; });
+        root.querySelector('[data-field="thinking"]')?.addEventListener("input", (event) => { layer.thinking = event.target.value; });
+        root.querySelector('[data-field="content"]')?.addEventListener("input", (event) => { layer.content = event.target.value; });
+      }
+
       function renderToolOptions(selected) {
         const names = promptTools.map((tool) => tool.name);
         const current = selected || names[0] || "Chat";

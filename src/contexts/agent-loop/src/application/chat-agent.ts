@@ -8,7 +8,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, normalizePromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { DailyShell } from "../../../agent-profile/src/domain/shell.js";
 import type { MemorySnapshot } from "../../../memory/src/memory.js";
@@ -204,6 +204,7 @@ export type ChatAgentDeps = {
   ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   getLLMConfig?: () => ChatLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
+  consumePendingUserMessageInterrupt?(sessionId: string): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
@@ -652,6 +653,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             },
             onSessionRebuilt: deps.onLLMSessionRebuilt,
             isLLMRunCancelled: deps.isLLMRunCancelled,
+            consumePendingUserMessageInterrupt: () => deps.consumePendingUserMessageInterrupt?.(event.externalSession.sessionId) ?? false,
+            interruptLayer: normalizePromptProfile(promptProfile).interruptLayer,
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,

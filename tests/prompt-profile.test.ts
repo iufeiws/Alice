@@ -27,6 +27,9 @@ test("prompt profile store creates defaults and persists edits", () => {
   assert.equal(initial.userName, "user");
   assert.deepEqual(initial.layers, []);
   assert.deepEqual(initial.appendLayers, []);
+  assert.equal(initial.interruptLayer?.id, "interrupt");
+  assert.equal(initial.interruptLayer?.role, "user");
+  assert.equal(initial.interruptLayer?.enabled, true);
   assert.equal(fs.existsSync(filePath), false);
 
   const saved = store.save({
@@ -43,8 +46,35 @@ test("prompt profile store creates defaults and persists edits", () => {
   const reopened = createPromptProfileStore(filePath).get();
   assert.equal(reopened.userName, "AliceUser");
   assert.equal(reopened.layers[0].content, "Hi {{user}} at {{date_time}}");
+  assert.equal(reopened.interruptLayer?.id, "interrupt");
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json")), true);
   assert.equal(fs.existsSync(path.join(root, "config", "prompt-profile.json")), false);
+});
+
+test("prompt profile persists interrupt layer", () => {
+  const filePath = path.join(makeTempDir("prompt-store-interrupt"), "prompt-profile.json");
+  const store = createPromptProfileStore(filePath);
+  const initial = store.get();
+  const saved = store.save({
+    ...initial,
+    interruptLayer: {
+      id: "interrupt_custom",
+      title: "Interrupt",
+      role: "user",
+      name: "CustomName",
+      enabled: true,
+      content: "custom interrupt content",
+      order: 0
+    }
+  });
+
+  assert.equal(saved.interruptLayer?.id, "interrupt_custom");
+  assert.equal(saved.interruptLayer?.role, "user");
+  assert.equal(saved.interruptLayer?.enabled, true);
+  const reopened = createPromptProfileStore(filePath).get();
+  assert.equal(reopened.interruptLayer?.id, "interrupt_custom");
+  assert.equal(reopened.interruptLayer?.role, "user");
+  assert.equal(reopened.interruptLayer?.enabled, true);
 });
 
 test("prompt profile storage migrates legacy config file to agent-profile prompts folder", () => {

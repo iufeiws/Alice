@@ -257,6 +257,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         receivedAt,
         receivedAtUtc
       });
+      if (shouldProcessInboundWithCore(event)) {
+        agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId);
+      }
       latestSessionEvents.set(event.externalSession.sessionId, event);
       markPending(event.externalSession.sessionId);
     },

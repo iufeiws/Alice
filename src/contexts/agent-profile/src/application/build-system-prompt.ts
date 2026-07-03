@@ -22,6 +22,7 @@ export type PromptProfile = {
   userName: string;
   layers: PromptLayer[];
   appendLayers?: PromptLayer[];
+  interruptLayer?: PromptLayer;
   visibleTools: {
     feishu: boolean;
     photo?: boolean;
@@ -101,7 +102,20 @@ export function defaultPromptProfile(): PromptProfile {
     layers: [
     ],
     appendLayers: [
-    ]
+    ],
+    interruptLayer: defaultInterruptLayer()
+  };
+}
+
+export function defaultInterruptLayer(): PromptLayer {
+  return {
+    id: "interrupt",
+    title: "Interrupt Layer",
+    role: "user",
+    name: "Alert",
+    enabled: true,
+    content: "<Alert info=\"have a new message\" />",
+    order: 0
   };
 }
 
@@ -218,7 +232,8 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     userName: nonEmptyString(profile.userName) ?? fallback.userName,
     visibleTools,
     layers: normalizePromptLayers(layers),
-    appendLayers: normalizePromptLayers(appendLayers ?? [])
+    appendLayers: normalizePromptLayers(appendLayers ?? []),
+    interruptLayer: normalizeInterruptLayer(profile.interruptLayer, fallback.interruptLayer)
   };
 }
 
@@ -271,7 +286,24 @@ function validatePromptProfile(value: unknown): PromptProfile {
   if (!profile.visibleTools || typeof profile.visibleTools !== "object" || Array.isArray(profile.visibleTools)) throw new PromptProfileValidationError("invalid_prompt_profile_visible_tools");
   validatePromptLayersForStorage(profile.layers, "layers");
   if (profile.appendLayers !== undefined) validatePromptLayersForStorage(profile.appendLayers, "appendLayers");
-  return cloneProfile(profile);
+  if (profile.interruptLayer !== undefined) validateInterruptLayerForStorage(profile.interruptLayer);
+  return cloneProfile({
+    ...profile,
+    interruptLayer: profile.interruptLayer ?? defaultInterruptLayer()
+  });
+}
+
+function normalizeInterruptLayer(value: unknown, fallback: PromptLayer | undefined): PromptLayer | undefined {
+  if (value === undefined) return fallback;
+  const layer = normalizePromptLayers([value], fallback ? [fallback] : [])[0];
+  if (!layer || layer.role === "tool_request") return fallback;
+  return layer;
+}
+
+function validateInterruptLayerForStorage(value: unknown): void {
+  validatePromptLayerForStorage(value, "interruptLayer");
+  const layer = value as PromptLayer;
+  if (layer.role === "tool_request") throw new PromptProfileValidationError("invalid_prompt_interrupt_layer_role");
 }
 
 function validatePromptLayersForStorage(value: unknown, key: string): void {

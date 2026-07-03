@@ -95,6 +95,8 @@ export type AgentLoopRunSpec = {
 
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
+  noteInboundUserMessageInterrupt(sessionId: string): void;
+  consumePendingUserMessageInterrupt(sessionId: string): boolean;
   setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
@@ -131,10 +133,20 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
   let llmSessionRuntime: LLMSessionRuntimePort | undefined;
+  const pendingUserMessageInterrupts = new Set<string>();
 
   return {
     getActiveMainLLMSession() {
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
+    },
+    noteInboundUserMessageInterrupt(sessionId) {
+      if (activeMainLLMSession?.agentId !== "chat") return;
+      if (activeMainLLMSession.phase !== "running") return;
+      if (activeMainLLMSession.id !== sessionId) return;
+      pendingUserMessageInterrupts.add(sessionId);
+    },
+    consumePendingUserMessageInterrupt(sessionId) {
+      return pendingUserMessageInterrupts.delete(sessionId);
     },
     setLLMSessionRuntime(runtime) {
       llmSessionRuntime = runtime;
@@ -231,6 +243,7 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
             phase: "idle"
           };
         }
+        pendingUserMessageInterrupts.delete(String(request.sessionId));
       }
     },
     interrupt() {

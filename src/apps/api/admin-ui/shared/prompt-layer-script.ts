@@ -5,6 +5,7 @@ export function renderPromptLayerScript(): string {
         const showsThinking = options.showsThinking ?? (role === "assistant" || isToolRequest);
         const showsContent = options.showsContent ?? !isToolRequest;
         const roleOptions = options.roleOptions || ["system", "user", "assistant", "tool_request"];
+        const showActions = options.showActions !== false;
         return \`
           <details class="prompt-layer" \${options.attributes} open>
             <summary>\${escapeHtml(options.title || "Untitled Layer")}<span>[\${escapeHtml(role)}]\${options.enabled ? "" : " disabled"}</span></summary>
@@ -33,11 +34,11 @@ export function renderPromptLayerScript(): string {
             <textarea data-field="thinking" rows="3">\${escapeHtml(options.thinking || "")}</textarea>\` : ""}
             \${showsContent ? \`<label>Content</label>
             <textarea data-field="content" rows="7">\${escapeHtml(options.content || "")}</textarea>\` : ""}
-            <div class="prompt-actions">
+            \${showActions ? \`<div class="prompt-actions">
               <button type="button" data-action="up" \${options.index === 0 ? "disabled" : ""}>Up</button>
               <button type="button" data-action="down" \${options.index === options.count - 1 ? "disabled" : ""}>Down</button>
               <button type="button" data-action="delete" class="secondary">Delete</button>
-            </div>
+            </div>\` : ""}
           </details>
         \`;
       }

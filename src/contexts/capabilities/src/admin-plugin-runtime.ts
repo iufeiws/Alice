@@ -817,11 +817,11 @@ function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "selfieCharacterReferenceImage", label: "Character Ref", type: "fileUpload", group: "storage", assetKey: "character-reference", accept: "image/*", description: "Uploaded as alice-character-reference.jpg." },
         { key: "selfieOutputDir", label: "Output Folder", type: "text", group: "storage", description: "Must stay under assets/ so generated images can be routed as assets." },
         { key: "selfieMaxBytes", label: "Max Image Bytes", type: "number", group: "storage", min: 1024, max: 52428800, step: 1024 },
-        { key: "autoGenerateOutfitOnBody", label: "Auto On-Body", type: "switch", group: "on_body", description: "Automatically attempts outfit on-body generation after outfit selection." },
+        { key: "autoGenerateOutfitOnBody", label: "Auto On-Body", type: "switch", group: "general", description: "Automatically attempts outfit on-body generation after outfit selection." },
         { key: "onBodyReferenceImage", label: "Full Body Ref", type: "fileUpload", group: "on_body", assetKey: "on-body-reference", accept: "image/*", description: "Generation image 1." },
         { key: "onBodyPrompt", label: "Prompt", type: "textarea", group: "on_body", description: "Used exactly as the on-body generation prompt." },
         { key: "selfieOnBodyPrompt", label: "Selfie Prompt", type: "textarea", group: "on_body", description: "Used exactly when selfie uses an on-body reference." },
-        { key: "selfie2DinRealEnabled", label: "2DinReal", type: "switch", group: "2dinreal", description: "Use the extra 2DinReal reference image and append its prompt to selfie prompts." },
+        { key: "selfie2DinRealEnabled", label: "2DinReal", type: "switch", group: "general", description: "Use the extra 2DinReal reference image and append its prompt to selfie prompts." },
         { key: "selfie2DinRealReferenceImage", label: "Character Ref", type: "fileUpload", group: "2dinreal", assetKey: "2dinreal-reference", accept: "image/*", description: "Character reference image used instead of alice-character-reference.jpg when 2DinReal is enabled." },
         { key: "selfie2DinRealPrompt", label: "Prompt", type: "textarea", group: "2dinreal", description: "Appended exactly below the rendered selfie prompt when 2DinReal is enabled." }
       ]

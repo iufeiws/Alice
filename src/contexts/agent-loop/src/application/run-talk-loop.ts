@@ -12,6 +12,7 @@ import {
 } from "../runtime/agent-loop-runtime.js";
 import {
   prepareTalkLoopSessionContext,
+  type TalkLoopPreparedSessionContext,
   type TalkLoopSessionContextDeps,
   type TalkLoopRuntimeState
 } from "./talk-loop-session-context.js";
@@ -37,6 +38,7 @@ type TalkAgentLoopLLMConfig = {
 };
 
 type TalkAgentLoopState = {
+  promptProfile: TalkLoopPreparedSessionContext["promptProfile"];
   toolNames: string[];
   toolVariables: LLMTextRenderer | undefined;
   event: AgentEvent;
@@ -83,13 +85,14 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
       const config = deps.getLLMConfig();
-      const { session, toolNames, toolVariables, event } = await buildTalkAgentLoopState(sessionId, config);
+      const { session, promptProfile, toolNames, toolVariables, event } = await buildTalkAgentLoopState(sessionId, config);
       session.agentLoopRunSeq = options.agentLoopRunSeq ?? session.agentLoopRunSeq ?? 1;
       deps.updateActiveTalkLLMSessionTranscript(session);
       if (!canStartTalkLoop(sessionId, options.signal)) return;
       const prepared = buildTalkAgentLoopSpec({
         sessionId,
         session,
+        promptProfile,
         toolNames,
         toolVariables,
         event,
@@ -123,6 +126,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
   function buildTalkAgentLoopSpec(input: {
     sessionId: number;
     session: AgentLoopTranscriptSession;
+    promptProfile: TalkLoopPreparedSessionContext["promptProfile"];
     toolNames: string[];
     toolVariables: LLMTextRenderer | undefined;
     event: AgentEvent;
@@ -132,6 +136,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
     const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
       initialMessages: input.session.messages,
+      promptProfile: input.promptProfile,
       buildRequest({ round, messages }) {
         const outputId = `talk:${input.sessionId}:${Date.now()}:${round}`;
         roundOutputs.set(round, { outputId, streamedContent: "" });

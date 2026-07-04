@@ -58,9 +58,9 @@ export function renderPromptsScript(): string {
               <label><input id="toolPhotoVisible" type="checkbox" \${activeProfile.visibleTools?.photo === false || activeProfile.visibleTools?.media === false ? "" : "checked"} /> tool: photo</label>
               <label><input id="toolShellVisible" type="checkbox" \${activeProfile.visibleTools?.shell === false ? "" : "checked"} /> tool: shell</label>
               <p class="muted">Chat · wardrobe · selfie</p>
-              \${isTalk || !activeProfile.interruptLayer ? "" : \`
+              \${!activeProfile.interruptLayer ? "" : \`
               <h2>Interrupt Layer</h2>
-              <p class="muted">Inserted after the next tool result when a new user message arrives during a running Chat loop.</p>
+              <p class="muted">Inserted after the next completed tool-result batch when a new user message arrives during a running loop.</p>
               <div id="promptInterruptLayer">\${renderInterruptLayer(activeProfile.interruptLayer)}</div>
               \`}
               <h2>Initial Layers</h2>
@@ -84,7 +84,7 @@ export function renderPromptsScript(): string {
         $("toolFeishuVisible").addEventListener("change", () => { activeProfile.visibleTools.feishu = $("toolFeishuVisible").checked; });
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
         $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
-        if (!isTalk && activeProfile.interruptLayer) bindInterruptLayer(activeProfile.interruptLayer);
+        if (activeProfile.interruptLayer) bindInterruptLayer(activeProfile.interruptLayer);
         layers.forEach((layer, index) => bindPromptLayer(layer, index, "layers"));
         appendLayers.forEach((layer, index) => bindPromptLayer(layer, index, "appendLayers"));
         $("prompt-add").addEventListener("click", () => {

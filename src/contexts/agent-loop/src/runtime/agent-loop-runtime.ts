@@ -96,7 +96,6 @@ export type AgentLoopRunSpec = {
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
   noteInboundUserMessageInterrupt(sessionId: string): void;
-  consumePendingUserMessageInterrupt(sessionId: string): boolean;
   setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
@@ -140,13 +139,9 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
     },
     noteInboundUserMessageInterrupt(sessionId) {
-      if (activeMainLLMSession?.agentId !== "chat") return;
-      if (activeMainLLMSession.phase !== "running") return;
-      if (activeMainLLMSession.id !== sessionId) return;
+      if (!activeMainLLMSession || activeMainLLMSession.phase !== "running") return;
+      if (String(activeMainLLMSession.id) !== sessionId) return;
       pendingUserMessageInterrupts.add(sessionId);
-    },
-    consumePendingUserMessageInterrupt(sessionId) {
-      return pendingUserMessageInterrupts.delete(sessionId);
     },
     setLLMSessionRuntime(runtime) {
       llmSessionRuntime = runtime;
@@ -266,7 +261,7 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
         reason: request.reason,
         signal,
         agentLoopRunSeq
-      }));
+      }), request);
     }
     if (!runners.prepareTalk) throw new Error("agent_loop_talk_runner_unavailable");
     const prepared = await runners.prepareTalk({
@@ -276,16 +271,31 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
       agentLoopRunSeq
     });
     if (!prepared) return [];
-    return await executePreparedOrOutputs(prepared);
+    return await executePreparedOrOutputs(prepared, request);
   }
 
-  async function executePreparedOrOutputs(prepared: PreparedAgentLoopRun | AgentOutput[]): Promise<AgentOutput[]> {
+  async function executePreparedOrOutputs(prepared: PreparedAgentLoopRun | AgentOutput[], request: AgentLoopRunRequest): Promise<AgentOutput[]> {
     if (Array.isArray(prepared)) return prepared;
     try {
       const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
       if (!spec) return [];
       if (Array.isArray(spec)) return spec;
-      const result = await runAgentFunctionCallLoop(spec);
+      const result = await runAgentFunctionCallLoop({
+        ...spec,
+        runtimeInterrupts: {
+          ...spec.runtimeInterrupts,
+          hasPendingUserMessage() {
+            const sessionId = String(request.sessionId);
+            return pendingUserMessageInterrupts.has(sessionId)
+              || spec.runtimeInterrupts?.hasPendingUserMessage() === true;
+          },
+          consumePendingUserMessage() {
+            const sessionId = String(request.sessionId);
+            return pendingUserMessageInterrupts.delete(sessionId)
+              || spec.runtimeInterrupts?.consumePendingUserMessage() === true;
+          }
+        }
+      });
       return await Promise.resolve(prepared.complete(result)) ?? [];
     } catch (error) {
       await prepared.onError?.(error);

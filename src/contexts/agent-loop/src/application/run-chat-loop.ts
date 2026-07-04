@@ -4,7 +4,7 @@ import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import { type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { promptLayerToMessage, type PromptLayer } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
+import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { runPromptToolRequest } from "./agent-loop-tool-executor.js";
@@ -81,8 +81,8 @@ export type ChatAgentLoopInput = {
   onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
   onSessionRebuilt?(): void;
   isLLMRunCancelled?(): boolean;
-  consumePendingUserMessageInterrupt?(): boolean;
-  interruptLayer?: PromptLayer;
+  promptProfile?: PromptProfile;
+  buildYieldResumeMessages?(session: ChatAgentLoopSession): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
   agentLoopRunSeq?: number;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
@@ -126,6 +126,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   });
   const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
     initialMessages: session.messages,
+    promptProfile: input.promptProfile,
     async beforeRound({ round }) {
       if (input.isLLMRunCancelled?.()) return { stop: true, messages: session.messages };
       const ensuredSession = await input.ensureSession();
@@ -183,6 +184,10 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
+    async buildYieldResumeMessages({ messages }) {
+      session.messages = messages;
+      return await Promise.resolve(input.buildYieldResumeMessages?.(session) ?? []);
+    },
     toolCallSource: {
       requester: input.event.source,
       externalSession: input.event.externalSession
@@ -197,7 +202,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     },
     transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
     async afterToolResult({ call, round, result, toolInput, toolResult, toolMessage }): Promise<AgentFunctionCallToolExecution> {
-      const textVariables = input.buildTextVariables(input.event);
       const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
       if (followup.toolNotices.length > 0) {
         toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");
@@ -219,12 +223,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       if (execution.sessionRebuilt) input.onSessionRebuilt?.();
-      const interruptMessages = input.consumePendingUserMessageInterrupt?.() && input.interruptLayer?.enabled
-        ? [promptLayerToMessage(input.interruptLayer, textVariables)]
-        : [];
-      const messages = [...interruptMessages, ...followup.messages];
-      return messages.length > 0
-        ? { ...execution, messages }
+      return followup.messages.length > 0
+        ? { ...execution, messages: followup.messages }
         : execution;
     },
     async onMessagesChanged({ messages }) {

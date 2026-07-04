@@ -1,6 +1,8 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
 import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { formatToolResultForLLM, type LLMTextRenderer } from "../../agent-profile/src/application/llm-text-renderer.js";
+import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
+import { promptLayerToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
 
@@ -90,6 +92,16 @@ export type LLMToolLoopInput = {
   beforeTool?(input: { round: number; call: LLMToolCall; callIndex: number }): Promise<void> | void;
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
   shouldCancel?(): boolean;
+  promptProfile?: PromptProfile;
+  runtimeInterrupts?: {
+    hasPendingUserMessage(): boolean;
+    consumePendingUserMessage(): boolean;
+  };
+  buildYieldResumeMessages?(input: {
+    round: number;
+    messages: LLMMessage[];
+    result: LLMChatResult;
+  }): Promise<LLMMessage[]> | LLMMessage[];
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
   limits?: LLMToolLoopLimits;
 };
@@ -236,6 +248,11 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     }
 
     if (!resetSession) {
+      const willContinueAfterTools = !yieldReturn
+        && !reachedToolCallLimit
+        && round + 1 < limits.maxRounds
+        && !invalidateSession;
+      const interruptMessages = willContinueAfterTools ? consumePendingUserMessageInterruptMessages(input, request) : [];
       messages = [
         ...messages,
         {
@@ -244,7 +261,8 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
           reasoningContent: result.message.reasoningContent ?? "",
           toolCalls: executedCalls
         },
-        ...toolMessages
+        ...toolMessages,
+        ...interruptMessages
       ];
       await input.onMessagesChanged?.({
         round,
@@ -266,6 +284,30 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       };
     }
     if (yieldReturn) {
+      const resumeMessages = input.runtimeInterrupts?.hasPendingUserMessage() === true
+        ? await Promise.resolve(input.buildYieldResumeMessages?.({ round, messages, result }) ?? [])
+        : [];
+      if (resumeMessages.length > 0 && input.runtimeInterrupts?.consumePendingUserMessage() === true) {
+        messages = [
+          ...messages,
+          ...cloneLLMMessages(resumeMessages)
+        ];
+        await input.onMessagesChanged?.({
+          round,
+          messages,
+          reason: reachedToolCallLimit || round + 1 >= limits.maxRounds ? "limit" : "tools"
+        });
+        if (!reachedToolCallLimit && round + 1 < limits.maxRounds && !invalidateSession) continue;
+        return {
+          messages,
+          rounds: round + 1,
+          finalResult: result,
+          finalMessage: result.message,
+          stopReason: invalidateSession ? "invalidated" : "tool_limit",
+          invalidateSession,
+          toolCallCount: totalToolCallCount
+        };
+      }
       return {
         messages,
         rounds: round + 1,
@@ -308,6 +350,23 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     invalidateSession,
     toolCallCount: totalToolCallCount
   };
+}
+
+function consumePendingUserMessageInterruptMessages(input: LLMToolLoopInput, request: LLMToolLoopRoundRequest): LLMMessage[] {
+  if (!input.promptProfile) return [];
+  const layer = normalizePromptProfile(input.promptProfile).interruptLayer;
+  if (!layer?.enabled) return [];
+  const renderer = llmTextRenderer(request.toolVariables);
+  if (!renderer) return [];
+  if (input.runtimeInterrupts?.hasPendingUserMessage() !== true) return [];
+  if (input.runtimeInterrupts.consumePendingUserMessage() !== true) return [];
+  return [promptLayerToMessage(layer, renderer)];
+}
+
+function llmTextRenderer(value: LLMToolLoopRoundRequest["toolVariables"]): LLMTextRenderer | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const renderer = value as Partial<LLMTextRenderer>;
+  return typeof renderer.renderText === "function" ? renderer as LLMTextRenderer : undefined;
 }
 
 async function executeTool(

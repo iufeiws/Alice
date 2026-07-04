@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentLoopRuntime, runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
-import { textEvent } from "./agent-loop-runtime-helpers.js";
+import { emptyPromptRenderer, textEvent } from "./agent-loop-runtime-helpers.js";
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
   const runtime = createAgentLoopRuntime();
@@ -57,29 +57,34 @@ test("agent loop runtime rejects overlapping runs", async () => {
   assert.deepEqual(await first, { started: true, outputs: [] });
 });
 
-test("agent loop runtime tracks pending user message interrupt for active chat session only", async () => {
-  let releaseRun: (() => void) | undefined;
-  let startedRun: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    startedRun = resolve;
+test("agent loop runtime appends pending interrupt after completed tool result batch", async () => {
+  const runtime = createAgentLoopRuntime();
+  const requests: any[][] = [];
+  let releaseTool: (() => void) | undefined;
+  let markToolStarted: (() => void) | undefined;
+  const toolStarted = new Promise<void>((resolve) => {
+    markToolStarted = resolve;
   });
-  let runs = 0;
-  const runtime = createAgentLoopRuntime({
+  const toolReleased = new Promise<void>((resolve) => {
+    releaseTool = resolve;
+  });
+  registerLLMToolLoopTools("agent-loop-runtime-interrupt", [{
+    id: "interrupt-test",
+    listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
+    async execute(call) {
+      markToolStarted?.();
+      await toolReleased;
+      return { callId: call.id, ok: true, output: "tool ok" };
+    }
+  }]);
+  runtime.setRunners({
     prepareChat() {
-      runs += 1;
-      if (runs > 1) {
-        return {
-          prepare: () => [],
-          complete: () => []
-        };
-      }
-      startedRun?.();
-      return new Promise((resolve) => {
-        releaseRun = () => resolve({
-          prepare: () => [],
-          complete: () => []
-        });
-      });
+      return {
+        prepare() {
+          return interruptTestSpec(requests, "agent-loop-runtime-interrupt", false);
+        },
+        complete: () => []
+      };
     }
   });
 
@@ -89,66 +94,65 @@ test("agent loop runtime tracks pending user message interrupt for active chat s
     reason: "test",
     event: textEvent("session-1")
   });
-  await started;
-
+  await toolStarted;
   runtime.noteInboundUserMessageInterrupt("other-session");
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
   runtime.noteInboundUserMessageInterrupt("session-1");
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), true);
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+  releaseTool?.();
+  const result = await run;
 
-  releaseRun?.();
-  await run;
-  runtime.noteInboundUserMessageInterrupt("session-1");
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+  assert.equal(result.started, true);
+  assert.equal(requests[1].at(-2).role, "tool");
+  assert.equal(requests[1].at(-2).toolCallId, "call_1");
+  assert.equal(requests[1].at(-1).role, "user");
 });
 
-test("agent loop runtime drops unconsumed user message interrupt when chat run exits", async () => {
-  let releaseRun: (() => void) | undefined;
-  let startedRun: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    startedRun = resolve;
-  });
-  let runs = 0;
-  const runtime = createAgentLoopRuntime({
+test("agent loop runtime resumes yield directly when a user message arrives during yield", async () => {
+  const runtime = createAgentLoopRuntime();
+  const requests: any[][] = [];
+  let loopStopReason: string | undefined;
+  let resumeCalls = 0;
+  registerLLMToolLoopTools("agent-loop-runtime-yield-interrupt", [{
+    id: "yield-test",
+    listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
+    async execute(call) {
+      runtime.noteInboundUserMessageInterrupt("session-yield");
+      return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
+    }
+  }]);
+  runtime.setRunners({
     prepareChat() {
-      runs += 1;
-      if (runs > 1) {
-        return {
-          prepare: () => [],
-          complete: () => []
-        };
-      }
-      startedRun?.();
-      return new Promise((resolve) => {
-        releaseRun = () => resolve({
-          prepare: () => [],
-          complete: () => []
-        });
-      });
+      return {
+        prepare() {
+          return {
+            ...interruptTestSpec(requests, "agent-loop-runtime-yield-interrupt", true),
+            buildYieldResumeMessages() {
+              resumeCalls += 1;
+              return [{ role: "tool" as const, name: "Yield", toolCallId: "call_1", content: "resume" }];
+            }
+          };
+        },
+        complete(result) {
+          loopStopReason = result.stopReason;
+          return [];
+        }
+      };
     }
   });
 
-  const first = runtime.requestRun({
+  const result = await runtime.requestRun({
     kind: "chat",
-    sessionId: "session-1",
+    sessionId: "session-yield",
     reason: "test",
-    event: textEvent("session-1")
+    event: textEvent("session-yield")
   });
-  await started;
-  runtime.noteInboundUserMessageInterrupt("session-1");
-  releaseRun?.();
-  await first;
 
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
-  const second = await runtime.requestRun({
-    kind: "chat",
-    sessionId: "session-1",
-    reason: "next",
-    event: textEvent("session-1")
-  });
-  assert.equal(second.started, true);
-  assert.equal(runtime.consumePendingUserMessageInterrupt("session-1"), false);
+  assert.equal(result.started, true);
+  assert.equal(loopStopReason, "completed");
+  assert.equal(resumeCalls, 1);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].at(-1).role, "tool");
+  assert.equal(requests[1].at(-1).toolCallId, "call_1");
+  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
 });
 
 test("agent loop runtime executes prepared chat runs through the function-call loop", async () => {
@@ -246,3 +250,49 @@ test("standalone agent function-call loop writes tool result back into the next 
   assert.equal((requests[1].at(-1) as { role?: string; toolCallId?: string; content?: string }).toolCallId, "call_1");
   assert.equal((requests[1].at(-1) as { role?: string; toolCallId?: string; content?: string }).content, "tool ok");
 });
+
+function interruptTestSpec(requests: any[][], toolRegistryName: string, yieldReturn: boolean) {
+  return {
+    initialMessages: [{ role: "user" as const, content: "use tool" }],
+    promptProfile: {
+      visibleTools: { feishu: true },
+      layers: [],
+      interruptLayer: {
+        id: "interrupt",
+        title: "Interrupt Layer",
+        role: "user" as const,
+        name: "Alert",
+        enabled: true,
+        content: "<Alert info=\"have a new message\" />",
+        order: 0
+      }
+    },
+    buildRequest({ messages }: { messages: any[] }) {
+      requests.push(messages);
+      return {
+        agentId: "chat",
+        messages,
+        toolNames: [yieldReturn ? "Yield" : "test_tool"],
+        toolVariables: emptyPromptRenderer()
+      };
+    },
+    async sendRequest({ round }: { round: number }) {
+      if (round === 0) {
+        return {
+          message: {
+            role: "assistant" as const,
+            content: "",
+            toolCalls: [{
+              id: "call_1",
+              type: "function" as const,
+              function: { name: yieldReturn ? "Yield" : "test_tool", arguments: yieldReturn ? "{\"action\":\"poll\"}" : "{}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+      return { message: { role: "assistant" as const, content: "finished" }, finishReason: "stop" };
+    },
+    toolRegistryName
+  };
+}

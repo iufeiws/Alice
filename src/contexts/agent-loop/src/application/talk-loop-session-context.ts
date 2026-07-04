@@ -51,6 +51,7 @@ export type TalkLoopSessionContextDeps = {
 
 export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
+  promptProfile: PromptProfile;
   toolNames: string[];
   toolVariables: LLMTextRenderer | undefined;
   event: AgentEvent;
@@ -105,6 +106,7 @@ export async function prepareTalkLoopSessionContext(input: {
   session = preparedSession.session;
   return {
     session: preparedSession.session,
+    promptProfile: profile,
     toolNames: deps.visibleToolNames(profile),
     toolVariables: renderer,
     event

@@ -195,7 +195,6 @@ export type ChatAgentDeps = {
   ensureChatLoopSessionContext?<TSession, TMode>(input: AgentLoopEnsureChatSessionContextInput<TSession, TMode>): Promise<TSession>;
   getLLMConfig?: () => ChatLLMRuntimeConfig;
   isLLMRunCancelled?(): boolean;
-  consumePendingUserMessageInterrupt?(sessionId: string): boolean;
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
@@ -489,16 +488,17 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       let llmInput: ChatAgentLoopInput["llmInput"] | undefined;
       let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
       const appendLoopSessionContext = deps.appendLoopSessionContext ?? appendAgentLoopSessionContext;
+      const buildWaitResumeMessages = (session: LLMSessionRecord) => buildWaitChatResumeMessages({
+        session,
+        event,
+        toolPlugins,
+        time,
+        buildTextVariables: buildTurnTextVariables,
+        onLLMLog: deps.onLLMLog
+      });
       const appendSessionContext = async (session: LLMSessionRecord): Promise<void> => {
         if (session.skipNextAppendLayers) return;
-        const waitChatResumeMessages = await buildWaitChatResumeMessages({
-          session,
-          event,
-          toolPlugins,
-          time,
-          buildTextVariables: buildTurnTextVariables,
-          onLLMLog: deps.onLLMLog
-        });
+        const waitChatResumeMessages = await buildWaitResumeMessages(session);
         if (waitChatResumeMessages.length > 0) {
           session.waitChatStartedAt = undefined;
           const result = appendLoopSessionContext({
@@ -632,8 +632,16 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             },
             onSessionRebuilt: deps.onLLMSessionRebuilt,
             isLLMRunCancelled: deps.isLLMRunCancelled,
-            consumePendingUserMessageInterrupt: () => deps.consumePendingUserMessageInterrupt?.(event.externalSession.sessionId) ?? false,
-            interruptLayer: normalizePromptProfile(promptProfile).interruptLayer,
+            promptProfile,
+            async buildYieldResumeMessages(session) {
+              const waitChatResumeMessages = await buildWaitResumeMessages(session as LLMSessionRecord);
+              if (waitChatResumeMessages.length > 0) {
+                session.waitChatStartedAt = undefined;
+                session.skipNextAppendLayers = true;
+                noteLLMSessionUpdated(session as LLMSessionRecord);
+              }
+              return waitChatResumeMessages;
+            },
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,

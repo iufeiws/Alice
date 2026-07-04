@@ -301,18 +301,28 @@
 
 ## `capabilities/tools/photo/`
 
-职责：自拍/photo tool。生成图片 prompt、调用 selfie executor、发送生成图片。
+职责：自拍/photo tool。生成自拍 prompt、调用 image-generation channel、发送生成图片。
 
 关键模块：
 
 - `src/index.ts`: photo tool plugin 壳和 tool name 分发。
 - `src/selfie-tool.ts`: `selfieTool` 定义、selfie 执行流程、目标解析、prompt 模板渲染、引用图收集。
-- `src/config.ts`: photo config、admin public config、模式到 Image API 设置的选择。
+- `src/config.ts`: image-generation config 的兼容 re-export。
 - `src/send-output.ts`: outbound 存储、发送、消息日志。
-- `src/openai-api-selfie.ts`: `openai` / `openaiRelay` executor。
-- `src/codex-selfie.ts`: `codex` executor。
+
+## `channels/image-generation/`
+
+职责：图片生成 channel。持有 photo/image generation 配置、provider 选择、并发控制、OpenAI API/Codex provider 调用、生成图校验和 JPEG 归一化。
+
+关键模块：
+
+- `src/index.ts`: channel 公共出口。
+- `src/config.ts`: image-generation config、admin public config、模式到 Image API 设置的选择。
+- `src/gateway.ts`: 统一图片生成入口、provider 选择和并发控制。
+- `src/openai-api-provider.ts`: `openai` / `openaiRelay` provider。
+- `src/codex-provider.ts`: `codex` provider。
 - `src/image-files.ts`: 生成图校验、JPEG 归一化、mime 检测。
-- `src/process-exec.ts`: 子进程执行 helper，供 codex executor 和图像转换复用。
+- `src/process-exec.ts`: 子进程执行 helper，供 codex provider 和图像转换复用。
 
 ## `capabilities/tools/shell/`
 

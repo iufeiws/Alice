@@ -2,9 +2,8 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
-import { extensionForOutputFormat, normalizePhotoPluginConfig, readPhotoPluginConfig, selectedImageApiSettings, type PhotoPluginConfig } from "./config.js";
-import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, validateGeneratedImage } from "./image-files.js";
-import { photoProviderExecutorForMode, runPhotoProvider } from "./photo-provider.js";
+import { normalizePhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig } from "./config.js";
+import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, runPhotoGateway, validateGeneratedImage, type ImageGenerationProvider, type ImageGenerationProviderInput, type ImageGenerationProviderResult } from "../../../../channels/image-generation/src/index.js";
 import { extractSentMessageId, sendImage, sendSelfieFailureNotice, sendText, type PhotoSendDeps } from "./send-output.js";
 import { photoToolText, selfieTool } from "../profile.js";
 
@@ -35,37 +34,9 @@ export type SelfieContext = {
   onBodyGenerationAttempted?: boolean;
 };
 
-export type SelfieExecutorInput = {
-  command: string;
-  workDir: string;
-  codexWorkDir?: string;
-  fileName: string;
-  prompt: string;
-  codexExtraPrompt: string;
-  referenceImages: string[];
-  referenceImagePrompt: string;
-  timeoutMs: number;
-  apiKey?: string;
-  apiBaseURL: string;
-  apiEndpoint: "edits" | "relayEdits";
-  apiModel: string;
-  apiSize: string;
-  apiQuality: string;
-  apiModeration: string;
-  apiOutputFormat: string;
-  apiOutputCompression: number;
-  apiTimeoutMs: number;
-  proxyUrl?: string;
-};
-
-export type SelfieExecutorResult = {
-  stdout?: string;
-  stderr?: string;
-  lastMessage?: string;
-  events?: string;
-};
-
-export type SelfieExecutor = (input: SelfieExecutorInput) => Promise<SelfieExecutorResult | void>;
+export type SelfieExecutorInput = ImageGenerationProviderInput;
+export type SelfieExecutorResult = ImageGenerationProviderResult;
+export type SelfieExecutor = ImageGenerationProvider;
 
 export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
   time?: CurrentTimeProvider;
@@ -106,7 +77,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     const context = deps.getSelfieContext?.();
     if (!context) return toolError(call, photoToolText.contextUnavailable);
 
-    const imageApiSettings = selectedImageApiSettings(photoConfig);
     const fullOutputDir = path.resolve(photoConfig.selfieOutputDir);
     const assetRoot = path.resolve(deps.selfieAssetRoot ?? "assets");
     const relativeDir = path.relative(assetRoot, fullOutputDir);
@@ -124,10 +94,11 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       codexWorkDir = path.join(fullOutputDir, `.codex_tmp_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}`);
       fs.mkdirSync(codexWorkDir, { recursive: true });
 
-      let fileName = `selfie_${formatFileDateTime(time.now().iso)}.${extensionForOutputFormat(imageApiSettings.outputFormat)}`;
-      let tempFilePath = path.resolve(tempDir, fileName);
-      let finalFilePath = path.resolve(fullOutputDir, fileName);
-      let assetId = path.join(relativeDir, fileName);
+      const fileBaseName = `selfie_${formatFileDateTime(time.now().iso)}`;
+      let fileName = "";
+      let tempFilePath = "";
+      let finalFilePath = "";
+      let assetId = "";
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const references = await resolveReferenceImages(context);
@@ -136,7 +107,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         "selfie generation start:",
         `workDir=${tempDir}`,
         `codexWorkDir=${codexWorkDir}`,
-        `file=${fileName}`,
+        `file=${fileBaseName}`,
         `mode=${photoConfig.selfieMode}`,
         `promptLength=${prompt.length}`,
         `images=${references.images.map((image) => path.basename(image)).join(",")}`,
@@ -144,30 +115,22 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         references.missingOutfitImage ? "missingOutfitImage=true" : "",
         references.worldWandererStreetViewImage ? `worldWandererStreetView=${path.basename(references.worldWandererStreetViewImage)}` : ""
       ].join(" "));
-      const executor = deps.selfieExecutor ?? photoProviderExecutorForMode(photoConfig.selfieMode);
-      const executorResult = await runPhotoProvider({
-        command: photoConfig.selfieCodexCommand,
+      const executorResult = await runPhotoGateway({
+        config: photoConfig,
         workDir: tempDir,
         codexWorkDir,
-        fileName,
+        fileBaseName,
         prompt,
-        codexExtraPrompt: photoConfig.selfieCodexExtraPrompt,
         referenceImages: references.images,
         referenceImagePrompt: references.prompt,
-        timeoutMs: photoConfig.selfieCodexTimeoutMs,
-        apiKey: imageApiSettings.key,
-        apiBaseURL: imageApiSettings.baseURL,
-        apiEndpoint: imageApiSettings.endpoint,
-        apiModel: imageApiSettings.model,
-        apiSize: imageApiSettings.size,
-        apiQuality: imageApiSettings.quality,
-        apiModeration: imageApiSettings.moderation,
-        apiOutputFormat: imageApiSettings.outputFormat,
-        apiOutputCompression: imageApiSettings.outputCompression,
-        apiTimeoutMs: imageApiSettings.timeoutMs,
-        proxyUrl
-      }, executor);
-      if (executorResult) codexResult = executorResult;
+        proxyUrl,
+        executor: deps.selfieExecutor
+      });
+      fileName = executorResult.fileName;
+      tempFilePath = path.resolve(tempDir, fileName);
+      finalFilePath = path.resolve(fullOutputDir, fileName);
+      assetId = path.join(relativeDir, fileName);
+      codexResult = executorResult;
       deps.appendLog?.("info", [
         "selfie generator finished:",
         `workDir=${tempDir}`,
@@ -184,7 +147,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         fileName,
         tempDir,
         maxBytes: photoConfig.selfieMaxBytes,
-        timeoutMs: imageApiSettings.timeoutMs
+        timeoutMs: executorResult.timeoutMs
       });
       fileName = normalizedImage.fileName;
       tempFilePath = normalizedImage.tempFilePath;

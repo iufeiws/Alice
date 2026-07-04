@@ -1,5 +1,4 @@
 import { execFile } from "./process-exec.js";
-import { photoToolText } from "../profile.js";
 
 const fs = await import("node:fs");
 const moduleApi = await import("node:module");
@@ -7,23 +6,33 @@ const path = await import("node:path");
 const require = moduleApi.createRequire(import.meta.url);
 
 const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const imageGenerationText = {
+  generatedPathOutsideOutput: "generated image path is outside output directory",
+  generatedExtensionNotAllowed: "generated image extension is not allowed",
+  generatedFileNotFound: (fileName: string, files: string) => `generated image file was not found at expected name ${fileName}; workdir files: ${files}`,
+  generatedPathNotFile: "generated image path is not a file",
+  generatedFileTooLarge: "generated image file is too large",
+  jpegConversionFailed: "generated image JPEG conversion did not produce JPEG bytes",
+  emptyDirectory: "(empty)",
+  unreadableDirectory: "(unreadable)"
+};
 
 export function validateGeneratedImage(filePath: string, outputDir: string, maxBytes: number): void {
   const relative = path.relative(outputDir, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(photoToolText.generatedPathOutsideOutput);
+    throw new Error(imageGenerationText.generatedPathOutsideOutput);
   }
   if (!allowedExtensions.has(path.extname(filePath).toLowerCase())) {
-    throw new Error(photoToolText.generatedExtensionNotAllowed);
+    throw new Error(imageGenerationText.generatedExtensionNotAllowed);
   }
   let stat: { isFile(): boolean; size: number };
   try {
     stat = fs.statSync(filePath);
   } catch {
-    throw new Error(photoToolText.generatedFileNotFound(path.basename(filePath), listDirForLog(outputDir)));
+    throw new Error(imageGenerationText.generatedFileNotFound(path.basename(filePath), listDirForLog(outputDir)));
   }
-  if (!stat.isFile()) throw new Error(photoToolText.generatedPathNotFile);
-  if (stat.size > maxBytes) throw new Error(photoToolText.generatedFileTooLarge);
+  if (!stat.isFile()) throw new Error(imageGenerationText.generatedPathNotFile);
+  if (stat.size > maxBytes) throw new Error(imageGenerationText.generatedFileTooLarge);
 }
 
 export async function normalizeGeneratedSelfieJpeg(input: {
@@ -51,7 +60,7 @@ export async function normalizeGeneratedSelfieJpeg(input: {
   await convertImageToJpeg(input.tempFilePath, outputFilePath, input.timeoutMs);
   validateGeneratedImage(outputFilePath, input.tempDir, input.maxBytes);
   const convertedMime = detectImageMime(fs.readFileSync(outputFilePath));
-  if (convertedMime !== "image/jpeg") throw new Error(photoToolText.jpegConversionFailed);
+  if (convertedMime !== "image/jpeg") throw new Error(imageGenerationText.jpegConversionFailed);
   fs.rmSync(input.tempFilePath, { force: true });
   return { tempFilePath: outputFilePath, fileName: jpegFileName };
 }
@@ -84,9 +93,9 @@ export function detectImageMime(bytes: Buffer): string | undefined {
 export function listDirForLog(dirPath: string): string {
   try {
     const files = fs.readdirSync(dirPath);
-    return files.length > 0 ? files.slice(0, 20).join(",") : photoToolText.emptyDirectory;
+    return files.length > 0 ? files.slice(0, 20).join(",") : imageGenerationText.emptyDirectory;
   } catch {
-    return photoToolText.unreadableDirectory;
+    return imageGenerationText.unreadableDirectory;
   }
 }
 

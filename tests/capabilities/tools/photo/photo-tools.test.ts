@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPhotoTools, readPhotoPluginConfig, type SelfieExecutorInput } from "../../../../src/capabilities/tools/photo/src/index.js";
-import { runPhotoProvider } from "../../../../src/capabilities/tools/photo/src/photo-provider.js";
+import { runImageGenerationProvider } from "../../../../src/channels/image-generation/src/index.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../src/contexts/capabilities/src/outfit-on-body-runtime.js";
 import {
   createTestStore,
@@ -70,7 +70,7 @@ test("photoConfig_onBodySettings_readsPersistedValues", () => {
   assert.equal(config.selfie2DinRealPrompt, "  use 2DinReal\n");
 });
 
-test("photoProvider_duplicateAndOverLimitRequests_rejectsUntilRelease", async () => {
+test("imageGenerationGateway_duplicateAndOverLimitRequests_rejectsUntilRelease", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -81,19 +81,19 @@ test("photoProvider_duplicateAndOverLimitRequests_rejectsUntilRelease", async ()
     await gate;
     return { stdout: input.prompt };
   };
-  const first = runPhotoProvider(providerInput("same", ["a.jpg"]), executor);
-  const duplicate = await runPhotoProvider(providerInput("same", ["a.jpg"]), executor)
+  const first = runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor);
+  const duplicate = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor)
     .then(() => "", (error) => error instanceof Error ? error.message : String(error));
-  const second = runPhotoProvider(providerInput("other", ["b.jpg"]), executor);
-  const third = await runPhotoProvider(providerInput("third", ["c.jpg"]), executor)
+  const second = runImageGenerationProvider(providerInput("other", ["b.jpg"]), executor);
+  const third = await runImageGenerationProvider(providerInput("third", ["c.jpg"]), executor)
     .then(() => "", (error) => error instanceof Error ? error.message : String(error));
 
   release();
   await Promise.all([first, second]);
-  const afterRelease = await runPhotoProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "released" }));
+  const afterRelease = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "released" }));
 
-  assert.equal(duplicate, "photo provider duplicate request is already running");
-  assert.equal(third, "photo provider concurrency limit reached");
+  assert.equal(duplicate, "image generation duplicate request is already running");
+  assert.equal(third, "image generation concurrency limit reached");
   assert.deepEqual(started, ["same", "other"]);
   assert.deepEqual(afterRelease, { stdout: "released" });
 });

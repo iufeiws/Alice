@@ -1,11 +1,11 @@
-import type { SelfieExecutorInput, SelfieExecutorResult } from "./selfie-tool.js";
+import type { ImageGenerationProviderInput, ImageGenerationProviderResult } from "./gateway.js";
 
 const fs = await import("node:fs");
 const moduleApi = await import("node:module");
 const path = await import("node:path");
 const require = moduleApi.createRequire(import.meta.url);
 
-export async function runOpenAIAPISelfie(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
+export async function runOpenAIAPISelfie(input: ImageGenerationProviderInput): Promise<ImageGenerationProviderResult> {
   if (!input.apiKey) throw new Error("selfie Image API key is not configured; set OPENAI_API_KEY or SELFIE_IMAGE_API_KEY");
   const form = new FormData();
   form.append("model", input.apiModel);

@@ -1,4 +1,4 @@
-import type { SelfieExecutorInput, SelfieExecutorResult } from "./selfie-tool.js";
+import type { ImageGenerationProviderInput, ImageGenerationProviderResult } from "./gateway.js";
 import { execFile } from "./process-exec.js";
 
 const fs = await import("node:fs");
@@ -6,7 +6,7 @@ const path = await import("node:path");
 
 const defaultFastSelfieRunner = path.resolve("src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs");
 
-export async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promise<SelfieExecutorResult> {
+export async function runAliceSelfieFastSkill(input: ImageGenerationProviderInput): Promise<ImageGenerationProviderResult> {
   const runnerPath = process.env.ALICE_SELFIE_FAST_RUNNER ?? defaultFastSelfieRunner;
   const configPath = path.join(input.workDir, "alice-selfie-fast-input.json");
   const runnerTimeoutMs = Math.max(1_000, input.timeoutMs - 2_000);

@@ -21,7 +21,6 @@ export function createChatAgentRuntime(input: {
   loadCurrentLLMSessionTranscript(): any;
   appendLLMRequestLog(input: any, agentId?: "chat" | "talk"): any;
   appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: any): void;
-  setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
   updateCurrentLLMSessionTranscript(session: any): void;
   clearCurrentLLMSession(reason: any): void;
@@ -79,14 +78,12 @@ export function createChatAgentRuntime(input: {
     onLLMResponseReceived: (result, request) => input.appendLLMResponseLog(result, "chat", request),
     onLLMHeartbeatStarted() {
       input.llmRequests.resetCancel();
-      input.setLLMSessionBusy(true);
       input.messagingTools.noteLLMRequestStarted();
     },
     onLLMSessionUpdated(session) {
       input.updateCurrentLLMSessionTranscript(session);
     },
     onLLMSessionCleared(reason) {
-      input.setLLMSessionBusy(false);
       input.messagingTools.noteLLMSessionCompleted();
       input.clearCurrentLLMSession(reason);
     },
@@ -108,7 +105,6 @@ export function createChatAgentRuntime(input: {
       if (event.kind === "response_received") input.appendLog("info", `llm response received: round=${event.round} mode=${mode} model=${event.model ?? fallbackModel ?? "(no preset)"}`);
     },
     onLLMSessionCompleted() {
-      input.setLLMSessionBusy(false);
       input.llmRequests.resetCancel();
     },
     initialLLMSession: input.initialLLMSession

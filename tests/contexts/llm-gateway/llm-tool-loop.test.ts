@@ -1,11 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerLLMToolLoopTools, runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatResult } from "../../../src/contexts/llm-gateway/src/index.js";
 
 test("LLM tool loop throws on repeated assistant messages ignoring tool call id", async () => {
   let requests = 0;
   let toolExecutions = 0;
+  registerLLMToolLoopTools("llm-tool-loop-test", [{
+    id: "test",
+    listTools: () => [{ name: "Chat", description: "chat", inputSchema: { type: "object" } }],
+    async execute(call) {
+      toolExecutions += 1;
+      return { callId: call.id, ok: true, output: `tool result ${toolExecutions}` };
+    }
+  }]);
   const repeated = (): LLMChatResult => ({
     message: {
       role: "assistant",
@@ -31,17 +39,7 @@ test("LLM tool loop throws on repeated assistant messages ignoring tool call id"
         requests += 1;
         return repeated();
       },
-      async executeTool(call) {
-        toolExecutions += 1;
-        return {
-          message: {
-            role: "tool",
-            toolCallId: call.id,
-            name: call.function.name,
-            content: `tool result ${toolExecutions}`
-          }
-        };
-      }
+      toolRegistryName: "llm-tool-loop-test"
     }),
     /llm_tool_loop_repeated_assistant_message/
   );

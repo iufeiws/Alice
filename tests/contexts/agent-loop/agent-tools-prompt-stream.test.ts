@@ -220,7 +220,7 @@ test("chat agent runs prompt tool request layers and appends actual tool result"
 test("chat agent waits for final Chat JSON and sends newline message content once", async () => {
   const requests: LLMChatInput[] = [];
   const sentLines: string[] = [];
-  const completed: Array<{ sentMessage: boolean }> = [];
+  let completed = 0;
   const llm: LLMClient = {
     async chat(input) {
       return this.chatStream ? this.chatStream(input) : { message: { role: "assistant", content: "fallback" } };
@@ -270,8 +270,8 @@ test("chat agent waits for final Chat JSON and sends newline message content onc
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
-    onLLMSessionCompleted(result) {
-      completed.push(result);
+    onLLMSessionCompleted() {
+      completed += 1;
     },
     tools: [{
       id: "messaging-test",
@@ -293,7 +293,7 @@ test("chat agent waits for final Chat JSON and sends newline message content onc
   assert.deepEqual(outputs, []);
   assert.deepEqual(sentLines, ["one\ntwo\nthree"]);
   assert.equal(requests.length, 2);
-  assert.deepEqual(completed, [{ sentMessage: true }]);
+  assert.equal(completed, 1);
 });
 
 test("chat agent waits for final Chat JSON before sending duplicated-content arguments", async () => {

@@ -1,9 +1,9 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { LLMMessage, LLMToolCall } from "../../../llm-gateway/src/index.js";
+import type { LLMMessage } from "../../../llm-gateway/src/index.js";
 import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
-import type { AgentEvent, ToolCall, ToolPlugin, ToolResult, ToolExecutionContext } from "../contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolPlugin } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
-import { createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM } from "./agent-loop-tool-executor.js";
+import { createAgentLoopToolExecutor } from "./agent-loop-tool-executor.js";
 import { buildPromptMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 
 export type TalkLoopMessagePatch = AgentLoopMessagePatch;
@@ -53,15 +53,7 @@ export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
   toolNames: string[];
   toolVariables: LLMTextRenderer | undefined;
-  executeToolCall(call: LLMToolCall, input: {
-    agentLoopRunSeq?: number;
-    capabilities?: ToolExecutionContext["llmCapabilities"];
-  }): Promise<TalkLoopExecutedToolCall>;
-};
-
-export type TalkLoopExecutedToolCall = {
-  result: ToolResult;
-  content: string;
+  event: AgentEvent;
 };
 
 export async function prepareTalkLoopSessionContext(input: {
@@ -115,12 +107,7 @@ export async function prepareTalkLoopSessionContext(input: {
     session: preparedSession.session,
     toolNames: deps.visibleToolNames(profile),
     toolVariables: renderer,
-    executeToolCall: (call: LLMToolCall, toolInput: { agentLoopRunSeq?: number; capabilities?: ToolExecutionContext["llmCapabilities"] }) => toolExecutor.executeLLMToolCall(call, {
-      agentLoopRunSeq: toolInput.agentLoopRunSeq,
-      llmSessionId: session?.id ?? sessionId,
-      llmCapabilities: toolInput.capabilities
-    })
-      .then(({ result }) => ({ result, content: formatAgentLoopToolResultForLLM(result) }))
+    event
   };
 }
 

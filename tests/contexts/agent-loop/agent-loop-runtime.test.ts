@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentLoopRuntime, runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import { textEvent } from "./agent-loop-runtime-helpers.js";
 
 test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
@@ -172,9 +173,6 @@ test("agent loop runtime executes prepared chat runs through the function-call l
             },
             async sendRequest() {
               return { message: { role: "assistant", content: "prepared" }, finishReason: "stop" };
-            },
-            executeTool() {
-              throw new Error("unexpected tool call");
             }
           };
         },
@@ -205,6 +203,13 @@ test("agent loop runtime executes prepared chat runs through the function-call l
 
 test("standalone agent function-call loop writes tool result back into the next request", async () => {
   const requests: unknown[][] = [];
+  registerLLMToolLoopTools("agent-loop-runtime-test", [{
+    id: "test",
+    listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "tool ok" };
+    }
+  }]);
   const result = await runAgentFunctionCallLoop({
     initialMessages: [{ role: "user", content: "use tool" }],
     buildRequest({ messages }) {
@@ -232,16 +237,7 @@ test("standalone agent function-call loop writes tool result back into the next 
       }
       return { message: { role: "assistant", content: "finished" }, finishReason: "stop" };
     },
-    executeTool(call) {
-      return {
-        message: {
-          role: "tool",
-          toolCallId: call.id,
-          name: call.function.name,
-          content: "tool ok"
-        }
-      };
-    }
+    toolRegistryName: "agent-loop-runtime-test"
   });
 
   assert.equal(result.stopReason, "completed");

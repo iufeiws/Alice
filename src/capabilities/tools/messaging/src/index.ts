@@ -153,7 +153,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     if (!target) return toolError(call, messagingToolText.noCurrentSession);
     return viewMessagesForScope(call.id, target, resolveViewScope(call.input.scope ?? call.input.__scope), {
       readonly: call.input.__preview === true,
-      fromPrefixAfterMessageId: integerValue(call.input.__fromPrefixAfterMessageId),
       from: optionalStringValue(call.input.from),
       to: optionalStringValue(call.input.to)
     });
@@ -162,21 +161,15 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   function viewMessagesForScope(
     callId: string,
     target: MessagingToolTarget,
-    scope: "recent" | "today" | "todayold" | "new" | "from_prefix" | "range",
-    options: { readonly?: boolean; fromPrefixAfterMessageId?: number; from?: string; to?: string } = {}
+    scope: "recent" | "today" | "todayold" | "new" | "range",
+    options: { readonly?: boolean; from?: string; to?: string } = {}
   ): ToolResult {
-    const cursorMessageId = latestMessageCursorId();
     let messages: StoredConversationMessage[];
     let sinceDate: Date;
     if (scope === "recent") {
       const all = deps.store.listMessages(checkChatMessageLimit);
       messages = all.slice(-recentCheckChatMessageCount);
       sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : new Date(0);
-    } else if (scope === "from_prefix") {
-      const all = deps.store.listMessages(checkChatMessageLimit);
-      const afterId = options.fromPrefixAfterMessageId ?? 0;
-      messages = all.filter((message) => message.id > afterId);
-      sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : time.now().date;
     } else if (scope === "range") {
       messages = deps.store.listMessagesByCreatedAtRange(options.from, options.to ?? maxRangeEndTime);
       sinceDate = options.from
@@ -218,21 +211,15 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return {
       callId,
       ok: true,
-      messageCursorId: cursorMessageId,
       output: appendCurrentTime(body, time.now().iso, prefix)
     };
   }
 
-  function latestMessageCursorId(): number {
-    return deps.store.listMessages(1).reduce((max, message) => Math.max(max, message.id), 0);
-  }
-
-  function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "from_prefix" | "range" {
+  function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "range" {
     if (scopeHint === "recent") return "recent";
     if (scopeHint === "today") return "today";
     if (scopeHint === "todayold") return "todayold";
     if (scopeHint === "new") return "new";
-    if (scopeHint === "from_prefix") return "from_prefix";
     if (scopeHint === "range") return "range";
     return "new";
   }

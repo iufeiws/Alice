@@ -1,19 +1,17 @@
-import type { LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
 import {
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
-  type AgentFunctionCallToolExecution,
   type AgentLoopTranscriptSession,
   type PreparedAgentLoopRun
 } from "../runtime/agent-loop-runtime.js";
 import {
   prepareTalkLoopSessionContext,
-  type TalkLoopExecutedToolCall,
   type TalkLoopSessionContextDeps,
   type TalkLoopRuntimeState
 } from "./talk-loop-session-context.js";
@@ -41,10 +39,7 @@ type TalkAgentLoopLLMConfig = {
 type TalkAgentLoopState = {
   toolNames: string[];
   toolVariables: LLMTextRenderer | undefined;
-  executeToolCall(call: LLMToolCall, input: {
-    agentLoopRunSeq?: number;
-    capabilities?: LLMCapabilityFlags;
-  }): Promise<TalkLoopExecutedToolCall>;
+  event: AgentEvent;
 };
 
 type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
@@ -88,7 +83,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     try {
       deps.log("info", `talk loop start: session=${sessionId}`);
       const config = deps.getLLMConfig();
-      const { session, toolNames, toolVariables, executeToolCall } = await buildTalkAgentLoopState(sessionId, config);
+      const { session, toolNames, toolVariables, event } = await buildTalkAgentLoopState(sessionId, config);
       session.agentLoopRunSeq = options.agentLoopRunSeq ?? session.agentLoopRunSeq ?? 1;
       deps.updateActiveTalkLLMSessionTranscript(session);
       if (!canStartTalkLoop(sessionId, options.signal)) return;
@@ -97,7 +92,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         session,
         toolNames,
         toolVariables,
-        executeToolCall,
+        event,
         config,
         signal: options.signal
       });
@@ -130,10 +125,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     session: AgentLoopTranscriptSession;
     toolNames: string[];
     toolVariables: LLMTextRenderer | undefined;
-    executeToolCall(call: LLMToolCall, input: {
-      agentLoopRunSeq?: number;
-      capabilities?: LLMCapabilityFlags;
-    }): Promise<TalkLoopExecutedToolCall>;
+    event: AgentEvent;
     config: TalkAgentLoopLLMConfig;
     signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
@@ -165,19 +157,33 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         };
       },
       sendRequest: deps.sendRequest,
-      async executeTool(call, { round }): Promise<AgentFunctionCallToolExecution> {
+      toolCallSource: {
+        requester: input.event.source,
+        externalSession: input.event.externalSession
+      },
+      buildToolExecutionContext() {
         const capabilities: LLMCapabilityFlags = {
           supportsImage: input.config.supportsImage,
           supportsAudio: input.config.supportsAudio
         };
-        const executed = await input.executeToolCall(call, {
+        return {
+          lastCompletedToolName: input.session.lastCompletedToolName,
           agentLoopRunSeq: input.session.agentLoopRunSeq,
-          capabilities
-        });
-        const followup = buildToolFollowupLLMMessages(executed.result, capabilities);
+          llmSessionId: input.session.id ?? input.sessionId,
+          llmCapabilities: capabilities
+        };
+      },
+      async afterToolResult({ call, toolResult, toolMessage }) {
+        input.session.lastCompletedToolName = call.function.name;
+        deps.updateActiveTalkLLMSessionTranscript(input.session);
+        const capabilities: LLMCapabilityFlags = {
+          supportsImage: input.config.supportsImage,
+          supportsAudio: input.config.supportsAudio
+        };
+        const followup = buildToolFollowupLLMMessages(toolResult, capabilities);
         const content = followup.toolNotices.length > 0
-          ? [executed.content, ...followup.toolNotices].filter(Boolean).join("\n")
-          : executed.content;
+          ? [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n")
+          : toolMessage.content;
         return {
           message: {
             role: "tool" as const,

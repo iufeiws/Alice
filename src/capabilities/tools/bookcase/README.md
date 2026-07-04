@@ -12,11 +12,11 @@
 `draw` 会触发 ChatAgent 进入 `fixed_prefix` LLM session mode。进入时会固定当前会话前缀，后续重建为：
 
 ```text
-[modeStaticMessages][Chat({ action: "poll", scope: "from_prefix" })]
+[modeStaticMessages][Chat({ action: "poll", scope: "range", from: fixedPrefixStartedAt })]
 ```
 
 其中固定内容包括 draw 前已有会话、draw tool call 和 result；draw 前已经执行过的 fake `Chat` poll 也会保持不变。`return` 会清空固定前缀并重开会话。
 
-进入固定前缀时会记录 `modeStartedAt`、`modeExpiresAt`、`fixedPrefixKind` 和 `fixedPrefixCursorMessageId`，重启后继续保留。默认 2 小时后过期并回到 `normal` mode。
+进入固定前缀时会记录 `modeStartedAt`、`modeExpiresAt`、`fixedPrefixKind` 和 `fixedPrefixStartedAt`，重启后继续保留。默认 2 小时后过期并回到 `normal` mode。
 
 `fixed_prefix` mode 是全局 main LLM session 级别；当前不按聊天 sessionId 分开。

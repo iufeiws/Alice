@@ -202,7 +202,6 @@ export type ToolResult = {
   fixedPrefixKind?: string;
   fixedPrefixTtlMs?: number;
   clearFixedPrefix?: boolean;
-  messageCursorId?: number;
 };
 
 export type ToolResultLLMAttachment = {

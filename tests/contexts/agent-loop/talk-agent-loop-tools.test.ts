@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createTalkAgentLoopForSession } from "../../../src/contexts/agent-loop/src/application/run-talk-loop.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
 test("talk exposed selfie tool calls receive agent loop run context", async () => {
@@ -11,6 +13,20 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
   const executedPoses: string[] = [];
   const observedContexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
   const sentMessages: unknown[][] = [];
+  const tools: ToolPlugin[] = [{
+    id: "photo",
+    listTools: () => [{
+      name: "Selfie",
+      description: "selfie",
+      inputSchema: { type: "object", properties: {} }
+    }],
+    async execute(call, context) {
+      executedPoses.push(String(call.input.pose));
+      observedContexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
+      return { callId: call.id, ok: true, output: "sent" };
+    }
+  }];
+  registerLLMToolLoopTools("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 108,
@@ -27,19 +43,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
       activeSession = session;
     },
     visibleToolNames: () => ["Selfie"],
-    toolPlugins: [{
-      id: "photo",
-      listTools: () => [{
-        name: "Selfie",
-        description: "selfie",
-        inputSchema: { type: "object", properties: {} }
-      }],
-      async execute(call, context) {
-        executedPoses.push(String(call.input.pose));
-        observedContexts.push({ agentLoopRunSeq: context?.agentLoopRunSeq, llmSessionId: context?.llmSessionId });
-        return { callId: call.id, ok: true, output: "sent" };
-      }
-    }],
+    toolPlugins: tools,
     getLLMConfig: () => ({
       client: noopClient,
       stream: false

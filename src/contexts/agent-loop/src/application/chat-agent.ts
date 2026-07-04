@@ -27,7 +27,6 @@ import {
 } from "../../../initiative/src/domain/initiated-behavior.js";
 import {
   buildWaitChatResumeMessages,
-  checkChatCursorFromResult,
   cloneLLMMessages,
   defaultChatAgentModeState,
   estimateMessagesTokens,
@@ -79,7 +78,8 @@ export type LLMSessionSnapshot = {
   modeStartedAt?: string;
   modeExpiresAt?: string;
   fixedPrefixKind?: string;
-  fixedPrefixCursorMessageId?: number;
+  fixedPrefixStartedAt?: string;
+  loopStartedAt?: string;
   waitChatStartedAt?: string;
   skipNextAppendLayers?: boolean;
 };
@@ -201,7 +201,7 @@ export type ChatAgentDeps = {
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
   onLLMSessionCleared?(reason: LLMSessionClearReason): void;
   onLLMSessionRebuilt?(): void;
-  onLLMSessionCompleted?(result: { sentMessage: boolean }): void;
+  onLLMSessionCompleted?(): void;
   initialLLMSession?: LLMSessionSnapshot;
   loadLLMSession?(): LLMSessionSnapshot | undefined;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
@@ -239,9 +239,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     modeStartedAt?: number;
     modeExpiresAt?: number;
     fixedPrefixKind?: string;
-    fixedPrefixCursorMessageId?: number;
+    fixedPrefixStartedAt?: string;
+    loopStartedAt?: string;
     waitChatStartedAt?: number;
-    lastCheckChatCursorMessageId?: number;
     skipNextAppendLayers?: boolean;
   };
   const setActiveLoopSessionContext = deps.setActiveLoopSessionContext ?? ((input: AgentLoopSetActiveSessionContextInput<LLMSessionRecord>) => {
@@ -409,6 +409,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       }
       let createdSessionThisRun = false;
       let initiatedBehaviorMessageCount = 0;
+      let currentLoopStartedAt: string | undefined;
       const alignSessionStaticPromptFingerprint = (session: { staticPromptFingerprint: string }): void => {
         session.staticPromptFingerprint = staticPromptFingerprint(promptProfile, buildPromptContext());
       };
@@ -432,22 +433,18 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
           },
           async prepareSession(mode) {
-            let promptCheckChatCursor: number | undefined;
             const preparedSession = await prepareChatLoopSessionContext({
               buildMessages: async () => {
                 if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
                 const initiatedMessages = await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
                   const result = await runPromptToolRequest(layer, call, toolPlugins);
-                  promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
                   initiatedBehaviorPromptToolResult = result;
                   return result;
                 });
                 initiatedBehaviorMessageCount = initiatedMessages.length;
                 return [
                   ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                    const result = await runPromptToolRequest(layer, call, toolPlugins);
-                    promptCheckChatCursor = checkChatCursorFromResult(call.toolName, result) ?? promptCheckChatCursor;
-                    return result;
+                    return runPromptToolRequest(layer, call, toolPlugins);
                   }),
                   ...initiatedMessages,
                   ...mode.modeStaticMessages
@@ -467,9 +464,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
                   modeStartedAt: mode.modeStartedAt,
                   modeExpiresAt: mode.modeExpiresAt,
                   fixedPrefixKind: mode.fixedPrefixKind,
-                  fixedPrefixCursorMessageId: mode.fixedPrefixCursorMessageId,
-                  waitChatStartedAt: undefined,
-                  lastCheckChatCursorMessageId: mode.fixedPrefixCursorMessageId ?? promptCheckChatCursor
+                  fixedPrefixStartedAt: mode.fixedPrefixStartedAt,
+                  loopStartedAt: currentLoopStartedAt ?? failMissingLoopStartedAt(),
+                  waitChatStartedAt: undefined
                 };
               },
               setLocalSession(session) {
@@ -488,7 +485,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         if (!loopSession) throw new Error("llm_session_unavailable");
         return loopSession;
       };
-      let sentMessage = false;
       let sessionRunStarted = false;
       let llmInput: ChatAgentLoopInput["llmInput"] | undefined;
       let preparedLoop: ReturnType<typeof buildChatAgentLoop> | undefined;
@@ -538,13 +534,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             ...call,
             input: fixedPrefixToolInput(call.toolName, call.input, session)
           };
-          return runPromptToolRequest(layer, preparedCall, toolPlugins).then((result) => {
-            session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.toolName, result) ?? session.lastCheckChatCursorMessageId;
-            if (session.mode === "fixed_prefix" && call.toolName === "Chat") {
-              session.fixedPrefixCursorMessageId = session.lastCheckChatCursorMessageId ?? session.fixedPrefixCursorMessageId;
-            }
-            return result;
-          });
+          return runPromptToolRequest(layer, preparedCall, toolPlugins);
         });
         if (appendMessages.length === 0) return;
         const result = appendLoopSessionContext({
@@ -559,6 +549,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       };
       return {
         async prepare() {
+          currentLoopStartedAt = time.now().iso;
+          if (loopSession) loopSession.loopStartedAt = currentLoopStartedAt;
           await ensureLoopSession();
           if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed" && initiatedBehaviorRunPlan.steps.some((step) => step.kind === "llm_instruction") && initiatedBehaviorMessageCount === 0) {
             recordInitiatedBehaviorRun({
@@ -587,6 +579,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           deps.onLLMHeartbeatStarted?.();
           sessionRunStarted = true;
           loopSession.agentLoopRunSeq = options.agentLoopRunSeq ?? loopSession.agentLoopRunSeq ?? 1;
+          loopSession.loopStartedAt = currentLoopStartedAt;
           noteLLMSessionUpdated(loopSession);
           await appendSessionContext(loopSession);
           const llmConfig = deps.getLLMConfig?.() ?? {
@@ -616,7 +609,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           preparedLoop = buildChatAgentLoop({
             llmInput,
             event,
-            toolPlugins,
             session: loopSession,
             ensureSession: ensureLoopSession,
             appendSessionContext,
@@ -665,12 +657,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           }
         },
         dispose() {
-          if (sessionRunStarted) deps.onLLMSessionCompleted?.({ sentMessage });
+          if (sessionRunStarted) deps.onLLMSessionCompleted?.();
         },
         complete(loopResult) {
           if (!preparedLoop) return [];
           const llmResult = preparedLoop.complete(loopResult);
-          sentMessage = llmResult.sentMessage;
           if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
             if (llmResult.cancelled) {
               recordInitiatedBehaviorRun({
@@ -791,23 +782,23 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     return comparison.shouldReset;
   }
 
-  function tokenPressurePreviewInput(session: LLMSessionRecord): { __preview: true; __scope: "today" | "from_prefix"; __fromPrefixAfterMessageId?: number } {
-    if (session.mode === "fixed_prefix") {
+  function tokenPressurePreviewInput(session: LLMSessionRecord): { __preview: true; __scope: "today" | "range"; from?: string } {
+    if (session.mode === "fixed_prefix" && session.fixedPrefixStartedAt) {
       return {
         __preview: true,
-        __scope: "from_prefix",
-        __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0
+        __scope: "range",
+        from: session.fixedPrefixStartedAt
       };
     }
     return { __preview: true, __scope: "today" };
   }
 
-  function tokenPressureBaselineKey(session: LLMSessionRecord, scope: "today" | "from_prefix"): string {
+  function tokenPressureBaselineKey(session: LLMSessionRecord, scope: "today" | "range"): string {
     return [
       session.lastUsageModel ?? deps.config.llm.model ?? "",
       session.mode || "normal",
       scope,
-      scope === "from_prefix" ? String(session.fixedPrefixCursorMessageId ?? 0) : ""
+      scope === "range" ? session.fixedPrefixStartedAt ?? "" : ""
     ].join("|");
   }
 
@@ -843,14 +834,10 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           : time.now().epochMs,
       modeExpiresAt: Number.isFinite(parsedModeExpiresAt) ? parsedModeExpiresAt : undefined,
       fixedPrefixKind: typeof snapshot.fixedPrefixKind === "string" ? snapshot.fixedPrefixKind : undefined,
-      fixedPrefixCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
-        ? snapshot.fixedPrefixCursorMessageId
-        : undefined,
+      fixedPrefixStartedAt: typeof snapshot.fixedPrefixStartedAt === "string" ? snapshot.fixedPrefixStartedAt : undefined,
+      loopStartedAt: typeof snapshot.loopStartedAt === "string" ? snapshot.loopStartedAt : undefined,
       waitChatStartedAt: typeof snapshot.waitChatStartedAt === "string" && Number.isFinite(Date.parse(snapshot.waitChatStartedAt))
         ? Date.parse(snapshot.waitChatStartedAt)
-        : undefined,
-      lastCheckChatCursorMessageId: typeof snapshot.fixedPrefixCursorMessageId === "number" && Number.isFinite(snapshot.fixedPrefixCursorMessageId)
-        ? snapshot.fixedPrefixCursorMessageId
         : undefined,
       skipNextAppendLayers: snapshot.skipNextAppendLayers === true ? true : undefined
     };
@@ -869,7 +856,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       modeStartedAt: session.modeStartedAt,
       modeExpiresAt: session.modeExpiresAt,
       fixedPrefixKind: session.fixedPrefixKind,
-      fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId
+      fixedPrefixStartedAt: session.fixedPrefixStartedAt
     };
   }
 
@@ -907,7 +894,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       modeStartedAt: typeof session.modeStartedAt === "number" ? new Date(session.modeStartedAt).toISOString() : undefined,
       modeExpiresAt: typeof session.modeExpiresAt === "number" ? new Date(session.modeExpiresAt).toISOString() : undefined,
       fixedPrefixKind: session.fixedPrefixKind,
-      fixedPrefixCursorMessageId: session.fixedPrefixCursorMessageId,
+      fixedPrefixStartedAt: session.fixedPrefixStartedAt,
+      loopStartedAt: session.loopStartedAt,
       waitChatStartedAt: typeof session.waitChatStartedAt === "number" ? new Date(session.waitChatStartedAt).toISOString() : undefined,
       skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined
     });
@@ -988,8 +976,8 @@ function applyBackendToolSessionControlToActiveSession(
     modeStartedAt?: number;
     modeExpiresAt?: number;
     fixedPrefixKind?: string;
-    fixedPrefixCursorMessageId?: number;
-    lastCheckChatCursorMessageId?: number;
+    fixedPrefixStartedAt?: string;
+    loopStartedAt?: string;
   },
   toolResult: ToolResult,
   nowMs: number,
@@ -1005,7 +993,7 @@ function applyBackendToolSessionControlToActiveSession(
     session.modeStartedAt = undefined;
     session.modeExpiresAt = undefined;
     session.fixedPrefixKind = undefined;
-    session.fixedPrefixCursorMessageId = undefined;
+    session.fixedPrefixStartedAt = undefined;
     alignStaticPromptFingerprint(session);
     return;
   }
@@ -1027,7 +1015,8 @@ function applyBackendToolSessionControlToActiveSession(
   session.modeStartedAt = modeStartedAt;
   session.modeExpiresAt = mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined;
   session.fixedPrefixKind = fixedPrefixKind;
-  session.fixedPrefixCursorMessageId = mode === "fixed_prefix" ? session.lastCheckChatCursorMessageId : undefined;
+  if (mode === "fixed_prefix" && !session.loopStartedAt) throw new Error("fixed_prefix_loop_started_at_missing");
+  session.fixedPrefixStartedAt = mode === "fixed_prefix" ? session.loopStartedAt : undefined;
 }
 
 function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPlugin[] {
@@ -1041,6 +1030,10 @@ function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile): ToolPl
 
 function finiteTokenCount(value: number | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function failMissingLoopStartedAt(): never {
+  throw new Error("llm_loop_started_at_missing");
 }
 
 function isTokenPressurePreviewBaseline(value: unknown): value is TokenPressurePreviewBaseline {

@@ -40,7 +40,6 @@ export async function buildWaitChatResumeMessages(input: {
         },
         input.toolPlugins
       );
-      input.session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, result) ?? input.session.lastCheckChatCursorMessageId;
       if (isCheckChatToolName(call.function.name)) waitChatCheckResult ??= result;
     }
     messages.push({
@@ -55,11 +54,6 @@ export async function buildWaitChatResumeMessages(input: {
 
 export function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {
   return tools.find((plugin) => plugin.listTools().some((tool) => tool.name === toolName));
-}
-
-export function checkChatCursorFromResult(toolName: string, result: ToolResult): number | undefined {
-  if (!isCheckChatToolName(toolName)) return undefined;
-  return typeof result.messageCursorId === "number" && Number.isFinite(result.messageCursorId) ? result.messageCursorId : undefined;
 }
 
 export function defaultChatAgentModeState(): ChatAgentModeState {
@@ -110,10 +104,11 @@ export function fixedPrefixToolInput(toolName: string, input: Record<string, unk
   ) {
     return input;
   }
+  if (!session.fixedPrefixStartedAt) throw new Error("fixed_prefix_started_at_missing");
   return {
     ...input,
-    scope: "from_prefix",
-    __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0
+    scope: "range",
+    from: session.fixedPrefixStartedAt
   };
 }
 
@@ -141,9 +136,9 @@ async function runWaitChatResumeCheck(
   toolPlugins: ToolPlugin[]
 ): Promise<ToolResult> {
   const checkInput = session.mode === "fixed_prefix"
-    ? { action: "poll", scope: "from_prefix", __fromPrefixAfterMessageId: session.fixedPrefixCursorMessageId ?? 0 }
+    ? fixedPrefixToolInput("Chat", { action: "poll" }, session)
     : { action: "poll" };
-  const result = await executePromptToolRequest(
+  return await executePromptToolRequest(
     { id: "finish_and_wait_resume_chat_poll", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 0 },
     {
       id: callId,
@@ -154,8 +149,6 @@ async function runWaitChatResumeCheck(
     },
     toolPlugins
   );
-  session.lastCheckChatCursorMessageId = checkChatCursorFromResult("Chat", result) ?? session.lastCheckChatCursorMessageId;
-  return result;
 }
 
 function formatWaitChatResumeOutput(

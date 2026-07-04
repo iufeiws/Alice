@@ -1,6 +1,7 @@
 import { createChatAgent as createChatAgentUnderTest, type ChatAgentDeps } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMChatInput } from "../../../src/contexts/llm-gateway/src/index.js";
 import { createLLMRequests } from "../../../src/contexts/llm-gateway/src/llm-requests.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
@@ -14,6 +15,7 @@ const path = await import("node:path");
 export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer">>;
 
 export function createChatAgent(deps: TestChatAgentDeps) {
+  registerLLMToolLoopTools("default", deps.tools ?? []);
   let persistedSession = deps.initialLLMSession;
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;
@@ -133,7 +135,6 @@ export function chatTestTools(onCall?: (call: ToolCall) => void) {
         return {
           callId: call.id,
           ok: true,
-          messageCursorId: 7,
           output: "<chat-log>\nnew chat\n</chat-log>\n<now local=\"2026-05-26T00:05:00.000\"/>"
         };
       }

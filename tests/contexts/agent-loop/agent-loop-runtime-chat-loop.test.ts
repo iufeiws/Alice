@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildChatAgentLoop } from "../../../src/contexts/agent-loop/src/application/run-chat-loop.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { emptyPromptRenderer, fakeTime, textEvent } from "./agent-loop-runtime-helpers.js";
 
@@ -24,10 +25,10 @@ test("chat loop inserts interrupt user message after next tool result", async ()
       return { callId: call.id, ok: true, output: "tool ok" };
     }
   }];
+  registerLLMToolLoopTools("default", tools);
   const loop = buildChatAgentLoop({
     llmInput: { messages: session.messages, toolNames: ["test_tool"] },
     event: textEvent("session-interrupt"),
-    toolPlugins: tools,
     session,
     ensureSession: async () => session,
     appendSessionContext: async () => {},
@@ -104,11 +105,11 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];
+  registerLLMToolLoopTools("default", tools);
   const exposedToolNames: string[][] = [];
   const loop = buildChatAgentLoop({
     llmInput: { messages: session.messages, toolNames: ["Chat", "test_tool"] },
     event: textEvent("session-content-send"),
-    toolPlugins: tools,
     session,
     ensureSession: async () => session,
     appendSessionContext: async () => {},
@@ -144,9 +145,8 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
     applyModeStateToNewSession: () => {}
   });
 
-  const result = loop.complete(await runAgentFunctionCallLoop(loop.spec));
+  loop.complete(await runAgentFunctionCallLoop(loop.spec));
 
-  assert.equal(result.sentMessage, true);
   assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
   assert.deepEqual(executedTools, ["Chat", "test_tool", "Chat"]);
   assert.deepEqual(sent, ["core:voice:prefix", "shell:message:done"]);

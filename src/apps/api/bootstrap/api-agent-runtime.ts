@@ -19,7 +19,6 @@ export function createApiAgentRuntime(input: {
   initiatedBehaviorRunStore: any;
   agentLoopRuntime: any;
   conversationStore: any;
-  setLLMSessionBusy(busy: boolean): void;
   messagingTools: any;
   llmLogRuntime: any;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
@@ -67,7 +66,6 @@ export function createApiAgentRuntime(input: {
     loadCurrentLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     appendLLMRequestLog: (requestInput, agentId = "chat") => input.llmLogRuntime.appendRequestLog(requestInput, agentId),
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
-    setLLMSessionBusy: input.setLLMSessionBusy,
     messagingTools: input.messagingTools,
     updateCurrentLLMSessionTranscript: (session) => input.agentLoopRuntime.updateCurrentLLMSessionTranscript(session),
     clearCurrentLLMSession: (reason) => input.agentLoopRuntime.clearCurrentLLMSession(reason),

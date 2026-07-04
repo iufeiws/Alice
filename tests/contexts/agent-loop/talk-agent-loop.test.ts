@@ -5,6 +5,8 @@ import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/r
 import { defaultTalkOutputReadyChars } from "../../../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
 test("talk loop returns no prepared run while voice output backpressure is active", async () => {
@@ -115,7 +117,6 @@ test("talk loop prepares spec for external function-call runtime execution", asy
     finalResult: { message: finalMessage },
     finalMessage,
     stopReason: "completed",
-    sentMessage: false,
     invalidateSession: false,
     toolCallCount: 0
   });
@@ -188,7 +189,6 @@ test("talk loop delegates transcript preparation to injected session context run
     finalResult: { message: finalMessage },
     finalMessage,
     stopReason: "completed",
-    sentMessage: false,
     invalidateSession: false,
     toolCallCount: 0
   });
@@ -255,6 +255,18 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
   let sendCalls = 0;
   let activeSession: any;
   const sentMessages: unknown[][] = [];
+  const tools: ToolPlugin[] = [{
+    id: "test",
+    listTools: () => [{
+      name: "test_tool",
+      description: "test",
+      inputSchema: { type: "object", properties: {} }
+    }],
+    async execute() {
+      return { callId: "call-1", ok: true, output: "tool result" };
+    }
+  }];
+  registerLLMToolLoopTools("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 106,
@@ -271,17 +283,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
       activeSession = session;
     },
     visibleToolNames: () => ["test_tool"],
-    toolPlugins: [{
-      id: "test",
-      listTools: () => [{
-        name: "test_tool",
-        description: "test",
-        inputSchema: { type: "object", properties: {} }
-      }],
-      async execute() {
-        return { callId: "call-1", ok: true, output: "tool result" };
-      }
-    }],
+    toolPlugins: tools,
     getLLMConfig: () => ({
       client: noopClient,
       stream: false
@@ -321,6 +323,19 @@ test("talk Chat tool-call executes through the common tool plugin path", async (
   let activeSession: any;
   const executedCalls: unknown[] = [];
   const sentMessages: unknown[][] = [];
+  const tools: ToolPlugin[] = [{
+    id: "messaging",
+    listTools: () => [{
+      name: "Chat",
+      description: "send",
+      inputSchema: { type: "object", properties: {} }
+    }],
+    async execute(call) {
+      executedCalls.push(call);
+      return { callId: call.id, ok: true, output: "sent" };
+    }
+  }];
+  registerLLMToolLoopTools("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 107,
@@ -337,18 +352,7 @@ test("talk Chat tool-call executes through the common tool plugin path", async (
       activeSession = session;
     },
     visibleToolNames: () => ["Chat"],
-    toolPlugins: [{
-      id: "messaging",
-      listTools: () => [{
-        name: "Chat",
-        description: "send",
-        inputSchema: { type: "object", properties: {} }
-      }],
-      async execute(call) {
-        executedCalls.push(call);
-        return { callId: call.id, ok: true, output: "sent" };
-      }
-    }],
+    toolPlugins: tools,
     getLLMConfig: () => ({
       client: noopClient,
       stream: false

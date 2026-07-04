@@ -2,19 +2,20 @@ import type { MemorySummaryConfig } from "./contracts/memory-config.js";
 import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../platform/storage/src/diary-store.js";
 import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabilities/tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
 import { buildLLMTextVariables, createLLMTextVariableRenderer, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "../../llm-session/src/adapters/jsonl-llm-session-log.js";
-import { runLLMToolLoop, type LLMRequestSender, type LLMToolLoopExecution } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerLLMToolLoopTools, runLLMToolLoop, type LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 const childProcess = await import("node:child_process");
+let memoryToolRegistrySeq = 0;
 
 export type MemoryTarget = "persistent" | "userPreferences" | "yesterdaySummary";
 
@@ -825,6 +826,16 @@ async function runWorkspaceMemoryInduction(
   const workspaceTools = createWorkspaceFilesTools({ root: draft.root });
   const toolCalls: MemoryRunResult["toolCalls"] = [];
   let edited = false;
+  const toolRegistryName = `memory_workspace_${memoryToolRegistrySeq += 1}`;
+  const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
+    workspaceTools,
+    createSingleToolPlugin(memoryToolDefinitions().find((tool) => tool.name === "self_talk")!, async (call) => {
+      const content = typeof call.input.content === "string" ? call.input.content : "";
+      const output = `爱丽丝听到自己说:\n${content}`;
+      toolCalls.push({ name: "self_talk", file: resultFileForToolInput(call.input, draft), input: call.input, ok: true, output });
+      return { callId: call.id, ok: true, output };
+    })
+  ]);
   session.activeTarget = targets[0];
   const promptMessages = buildWorkspaceMemoryPromptMessages({ ...deps, draft }, targets, {
     includeCommonLayers: session.messages.length === 0
@@ -836,6 +847,7 @@ async function runWorkspaceMemoryInduction(
   try {
     const loopResult = await runLLMToolLoop({
       initialMessages: messages,
+      toolRegistryName,
       limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
       buildRequest({ round, messages }) {
         const request = {
@@ -868,25 +880,15 @@ async function runWorkspaceMemoryInduction(
       beforeTool({ round, call }) {
         deps.onRound?.(targets[0], round + 1, call.function.name);
       },
-      async executeTool(call): Promise<LLMToolLoopExecution> {
-        const input = parsePromptToolArguments(call.function.arguments);
-        if (call.function.name === "self_talk") {
-          const content = typeof input.content === "string" ? input.content : "";
-          const output = `爱丽丝听到自己说:\n${content}`;
-          toolCalls.push({ name: "self_talk", file: resultFileForToolInput(input, draft), input, ok: true, output });
-          return { message: { role: "tool", name: "self_talk", toolCallId: call.id, content: output } };
-        }
+      async afterToolResult({ call, toolInput, toolResult }) {
         if (isWorkspaceFileTool(call.function.name)) {
-          const result = await workspaceTools.execute({ id: call.id, toolName: call.function.name, input });
+          const result = toolResult;
           const output = result.ok ? stringifyToolOutput(result.output) : `error: ${result.error ?? "unknown tool error"}`;
-          const file = resultFileForToolInput(input, draft);
-          toolCalls.push({ name: call.function.name, file, input, ok: result.ok, output: result.ok ? output : undefined, error: result.ok ? undefined : result.error });
+          const file = resultFileForToolInput(toolInput, draft);
+          toolCalls.push({ name: call.function.name, file, input: toolInput, ok: result.ok, output: result.ok ? output : undefined, error: result.ok ? undefined : result.error });
           if (result.ok && call.function.name === "Edit") edited = true;
-          return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: output } };
         }
-        const error = `unknown tool: ${call.function.name}`;
-        toolCalls.push({ name: call.function.name, file: "persistent-memory", input, ok: false, error });
-        return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: `error: ${error}` } };
+        return undefined;
       },
       onMessagesChanged({ messages }) {
         session.messages = messages;
@@ -940,6 +942,7 @@ async function runWorkspaceMemoryInduction(
       response: loopResult.finalResult?.message
     }));
   } finally {
+    unregisterTools();
     draft.cleanup();
   }
 }
@@ -1216,84 +1219,67 @@ async function runSingleMemoryInduction(
       diaryDraftPath
     });
   };
-
-  const loopResult = await runLLMToolLoop({
-    initialMessages: messages,
-    limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
-    buildRequest({ round, messages }) {
-      const request = {
-        model: deps.config.model,
-        temperature: deps.config.temperature,
-        maxTokens: 8192,
-        extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-        tools: memoryTools(),
-        messages
-      };
-      deps.onRound?.(target, round + 1);
-      session.append?.({ type: "request", round: session.roundOffset + round, request });
-      return {
-        agentId: "memorize",
-        client: deps.llm,
-        messages,
-        model: deps.config.model,
-        temperature: deps.config.temperature,
-        maxTokens: 8192,
-        extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-        toolNames: [...memoryToolNames],
-        stream: deps.config.stream === true,
-        metadata: { target }
-      };
-    },
-    sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
-    afterRequest({ round, result }) {
-      session.append?.({ type: "response", round: session.roundOffset + round, response: result });
-    },
-    beforeTool({ round, call }) {
-      deps.onRound?.(target, round + 1, call.function.name);
-    },
-    executeTool(call): LLMToolLoopExecution {
-      const input = parsePromptToolArguments(call.function.arguments);
-      if (call.function.name === "read_memory") {
-        const output = formatReadMemoryResult(target, readCurrentMemoryContent());
-        toolCalls.push({ name: "read_memory", file: targetResultFiles[target], input, ok: true, output });
-        return { message: { role: "tool", name: "read_memory", toolCallId: call.id, content: output } };
-      }
-      if (call.function.name === "self_talk") {
-        const content = typeof input.content === "string" ? input.content : "";
-        const output = `爱丽丝听到自己说:\n${content}`;
-        toolCalls.push({ name: "self_talk", file: targetResultFiles[target], input, ok: true, output });
-        return { message: { role: "tool", name: "self_talk", toolCallId: call.id, content: output } };
-      }
-      if (call.function.name === "apply_patch") {
-        const patch = typeof input.patch === "string" ? input.patch : undefined;
-        if (patch === undefined) {
-          toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input, ok: false, error: "patch must be a string" });
-          return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: "error: patch must be a string" } };
-        }
-        let nextContent: string;
-        try {
-          nextContent = applyMemoryPatch(readCurrentMemoryContent(), patch);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "invalid patch";
-          toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input: { patch }, ok: false, error: message });
-          return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: `error: ${message}` } };
-        }
-        const written = writeMemoryContentForRun(nextContent);
-        const writeMode = stageLongTerm ? "staged" : "wrote";
-        const output = `ok: ${writeMode} ${targetResultFiles[target]}${diaryDraftPath ? " draft" : ""}, ${lineCount(written)} line(s), ${utf8ByteLength(written)} byte(s)`;
-        toolCalls.push({ name: "apply_patch", file: targetResultFiles[target], input: { patch }, ok: true, output });
+  const toolRegistryName = `memory_single_${memoryToolRegistrySeq += 1}_${target}`;
+  const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
+    createMemorySingleTargetToolPlugin({
+      target,
+      readCurrentMemoryContent,
+      writeMemoryContentForRun,
+      diaryDraftPath,
+      stageLongTerm,
+      toolCalls,
+      setEdited() {
         edited = true;
-        return { message: { role: "tool", name: "apply_patch", toolCallId: call.id, content: output } };
       }
-      const error = `unknown tool: ${call.function.name}`;
-      toolCalls.push({ name: call.function.name, file: targetResultFiles[target], input, ok: false, error });
-      return { message: { role: "tool", name: call.function.name, toolCallId: call.id, content: `error: ${error}` } };
-    },
-    onMessagesChanged({ messages }) {
-      session.messages = messages;
-      session.append?.({ type: "final_messages", messages });
+    })
+  ]);
+
+  const loopResult = await (async () => {
+    try {
+      return await runLLMToolLoop({
+        initialMessages: messages,
+        toolRegistryName,
+        limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
+        buildRequest({ round, messages }) {
+          const request = {
+            model: deps.config.model,
+            temperature: deps.config.temperature,
+            maxTokens: 8192,
+            extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+            tools: memoryTools(),
+            messages
+          };
+          deps.onRound?.(target, round + 1);
+          session.append?.({ type: "request", round: session.roundOffset + round, request });
+          return {
+            agentId: "memorize",
+            client: deps.llm,
+            messages,
+            model: deps.config.model,
+            temperature: deps.config.temperature,
+            maxTokens: 8192,
+            extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+            toolNames: [...memoryToolNames],
+            stream: deps.config.stream === true,
+            metadata: { target }
+          };
+        },
+        sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
+        afterRequest({ round, result }) {
+          session.append?.({ type: "response", round: session.roundOffset + round, response: result });
+        },
+        beforeTool({ round, call }) {
+          deps.onRound?.(target, round + 1, call.function.name);
+        },
+        onMessagesChanged({ messages }) {
+          session.messages = messages;
+          session.append?.({ type: "final_messages", messages });
+        }
+      });
+    } finally {
+      unregisterTools();
     }
-  });
+  })();
   session.roundOffset += loopResult.rounds;
   if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
   session.activeTarget = undefined;
@@ -1631,6 +1617,88 @@ export function memoryToolDefinitions(): ToolDefinition[] {
         additionalProperties: false
       }
     }
+  ];
+}
+
+function createSingleToolPlugin(definition: ToolDefinition, execute: (call: ToolCall) => Promise<ToolResult> | ToolResult): ToolPlugin {
+  return {
+    id: definition.name,
+    listTools: () => [definition],
+    execute: async (call) => execute(call)
+  };
+}
+
+function createMemorySingleTargetToolPlugin(input: {
+  target: MemoryTarget;
+  readCurrentMemoryContent(): string;
+  writeMemoryContentForRun(content: string): string;
+  diaryDraftPath?: string;
+  stageLongTerm: boolean;
+  toolCalls: MemoryRunResult["toolCalls"];
+  setEdited(): void;
+}): ToolPlugin {
+  return {
+    id: `memory_${input.target}`,
+    listTools: () => memorySingleTargetToolDefinitions(),
+    async execute(call) {
+      if (call.toolName === "read_memory") {
+        const output = formatReadMemoryResult(input.target, input.readCurrentMemoryContent());
+        input.toolCalls.push({ name: "read_memory", file: targetResultFiles[input.target], input: call.input, ok: true, output });
+        return { callId: call.id, ok: true, output };
+      }
+      if (call.toolName === "self_talk") {
+        const content = typeof call.input.content === "string" ? call.input.content : "";
+        const output = `爱丽丝听到自己说:\n${content}`;
+        input.toolCalls.push({ name: "self_talk", file: targetResultFiles[input.target], input: call.input, ok: true, output });
+        return { callId: call.id, ok: true, output };
+      }
+      if (call.toolName === "apply_patch") {
+        const patch = typeof call.input.patch === "string" ? call.input.patch : undefined;
+        if (patch === undefined) {
+          const error = "patch must be a string";
+          input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: call.input, ok: false, error });
+          return { callId: call.id, ok: false, error };
+        }
+        let nextContent: string;
+        try {
+          nextContent = applyMemoryPatch(input.readCurrentMemoryContent(), patch);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "invalid patch";
+          input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: { patch }, ok: false, error: message });
+          return { callId: call.id, ok: false, error: message };
+        }
+        const written = input.writeMemoryContentForRun(nextContent);
+        const writeMode = input.stageLongTerm ? "staged" : "wrote";
+        const output = `ok: ${writeMode} ${targetResultFiles[input.target]}${input.diaryDraftPath ? " draft" : ""}, ${lineCount(written)} line(s), ${utf8ByteLength(written)} byte(s)`;
+        input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: { patch }, ok: true, output });
+        input.setEdited();
+        return { callId: call.id, ok: true, output };
+      }
+      throw new Error(`unknown tool: ${call.toolName}`);
+    }
+  };
+}
+
+function memorySingleTargetToolDefinitions(): ToolDefinition[] {
+  return [
+    {
+      name: "read_memory",
+      description: "Read the current memory file.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false }
+    },
+    {
+      name: "apply_patch",
+      description: currentMemoryApplyPatchInstructions(),
+      inputSchema: {
+        type: "object",
+        properties: {
+          patch: { type: "string" }
+        },
+        required: ["patch"],
+        additionalProperties: false
+      }
+    },
+    memoryToolDefinitions().find((tool) => tool.name === "self_talk")!
   ];
 }
 

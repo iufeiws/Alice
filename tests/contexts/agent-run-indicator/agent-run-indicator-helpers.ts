@@ -11,6 +11,7 @@ import {
 import type { FeishuDynamicCardClient } from "../../../src/channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../src/channels/feishu/src/pairing.js";
 import { createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 
 export const CARD_LAYOUT_VERSION = 5;
 export const fixedNow = "2026-06-29T00:00:00.000Z";
@@ -39,6 +40,7 @@ export function loopInput(overrides: {
   llmInput?: Partial<ChatAgentLoopInput["llmInput"]>;
   toolPlugins?: ToolPlugin[];
 } = {}): ChatAgentLoopInput {
+  registerLLMToolLoopTools("default", overrides.toolPlugins ?? []);
   const session: ChatAgentLoopSession = {
     messages: [{ role: "user", content: "hello" }],
     requestTimestamps: [],
@@ -52,7 +54,6 @@ export function loopInput(overrides: {
       ...overrides.llmInput
     },
     event: textEvent(),
-    toolPlugins: overrides.toolPlugins ?? [],
     session,
     ensureSession: async () => session,
     appendSessionContext: async () => {},

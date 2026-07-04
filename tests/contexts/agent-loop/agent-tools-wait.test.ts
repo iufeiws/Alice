@@ -230,7 +230,6 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
         return {
           callId: call.id,
           ok: true,
-          messageCursorId: 42,
           output: checkChatCallsInSession === 1 ? "recent chat" : "fresh chat after fixed prefix"
         };
       }
@@ -270,9 +269,7 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   assert.ok(thirdCheckChatIndex > bookcaseIndex);
   assert.equal(thirdMessages[thirdCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
   assert.equal(thirdMessages[thirdCheckChatIndex + 1]?.content, "recent chat");
-  let fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
-  assert.equal(fromPrefixInputs.length, 1);
-  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0]);
+  assert.equal(checkChatInputs.length, 1);
 
   await runPreparedChatEvent(core, textEvent());
 
@@ -281,9 +278,7 @@ test("chat agent rebuilds fixed prefix session immediately after bookcase draw",
   const fourthCheckChatIndex = fourthMessages.map((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat").lastIndexOf(true);
   assert.equal(fourthMessages[fourthCheckChatIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"poll\"}");
   assert.equal(fourthMessages[fourthCheckChatIndex + 1]?.content, "fresh chat after fixed prefix");
-  fromPrefixInputs = checkChatInputs.filter((input) => input.scope === "from_prefix");
-  assert.equal(fromPrefixInputs.length, 2);
-  assert.deepEqual(fromPrefixInputs.map((input) => input.__fromPrefixAfterMessageId), [0, 42]);
+  assert.equal(checkChatInputs.length, 2);
 });
 
 test("chat agent does not duplicate fixed prefix messages when appending fixed prefix context", async () => {
@@ -330,7 +325,7 @@ test("chat agent does not duplicate fixed prefix messages when appending fixed p
       modeStartedAt: "2026-05-30T00:00:00.000Z",
       modeExpiresAt: "2026-05-30T03:00:00.000Z",
       fixedPrefixKind: "bookcase",
-      fixedPrefixCursorMessageId: 12
+      fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
     },
     tools: [{
       id: "messaging",
@@ -425,7 +420,7 @@ for (const scenario of [
         modeStartedAt: "2026-05-30T00:00:00.000Z",
         modeExpiresAt: "2026-05-30T03:00:00.000Z",
         fixedPrefixKind: scenario.fixedPrefixKind,
-        fixedPrefixCursorMessageId: 12
+        fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
       },
       tools: [{
         id: scenario.fixedPrefixKind,
@@ -466,7 +461,6 @@ for (const scenario of [
     const latest = sessionUpdates.at(-1);
     assert.equal(latest?.mode, "normal");
     assert.equal(latest?.fixedPrefixKind, undefined);
-    assert.equal(latest?.fixedPrefixCursorMessageId, undefined);
     const clearIndex = latest?.messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === scenario.clearCallId) ?? -1;
     assert.ok(clearIndex >= 0);
     assert.equal(latest?.messages[clearIndex + 1]?.role, "tool");

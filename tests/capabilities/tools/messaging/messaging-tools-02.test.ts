@@ -24,45 +24,6 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
-test("check_chat from_prefix reads messages after injected cursor", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-from-prefix"), "alice.sqlite"));
-  store.upsertInboundMessage({
-    plugin: "feishu",
-    externalMessageId: "m_1",
-    conversationId: "session-1",
-    senderId: "user-1",
-    contentType: "text",
-    contentText: "before fixed prefix",
-    createdAt: "2026-05-25T00:00:00.000Z"
-  });
-  const cursorMessageId = store.listMessages(10).at(-1)?.id ?? 0;
-  store.upsertInboundMessage({
-    plugin: "feishu",
-    externalMessageId: "m_2",
-    conversationId: "session-1",
-    senderId: "user-1",
-    contentType: "text",
-    contentText: "after fixed prefix",
-    createdAt: "2026-05-25T00:01:00.000Z"
-  });
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T00:02:00.000Z")),
-    outputRouter: { async send() {} },
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
-
-  const result = await tools.execute({
-    id: "call_from_prefix",
-    toolName: "Chat", input: { action: "poll",  scope: "from_prefix", __fromPrefixAfterMessageId: cursorMessageId }
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.messageCursorId, cursorMessageId + 1);
-  assert.doesNotMatch(String(result.output), /before fixed prefix/);
-  assert.match(String(result.output), /after fixed prefix/);
-});
-
 test("check_chat defaults to new across repeated calls", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-view-llm-session"), "alice.sqlite"));
   store.upsertInboundMessage({

@@ -3,14 +3,9 @@ import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/
 export function createApiRuntimeState() {
   const llmRequestLogs: LLMRequestLogEntry[] = [];
   const llmResponseLogs: LLMResponseLogEntry[] = [];
-  let llmSessionBusy = false;
 
   return {
     llmRequestLogs,
-    llmResponseLogs,
-    isLLMSessionBusy: () => llmSessionBusy,
-    setLLMSessionBusy: (busy: boolean) => {
-      llmSessionBusy = busy;
-    }
+    llmResponseLogs
   };
 }

@@ -1,6 +1,6 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
-import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
-import type { LLMTextRenderer } from "../../agent-profile/src/application/llm-text-renderer.js";
+import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
+import { formatToolResultForLLM, type LLMTextRenderer } from "../../agent-profile/src/application/llm-text-renderer.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
 
@@ -32,7 +32,6 @@ export type LLMToolLoopLimits = {
 };
 
 export type LLMToolLoopControl = {
-  sentMessage?: boolean;
   invalidateSession?: boolean;
   resetSession?: boolean;
   continueAfterReset?: boolean;
@@ -58,7 +57,6 @@ export type LLMToolLoopResult = {
   finalResult?: LLMChatResult;
   finalMessage: LLMMessage;
   stopReason: LLMToolLoopStopReason;
-  sentMessage: boolean;
   invalidateSession: boolean;
   toolCallCount: number;
 };
@@ -67,12 +65,27 @@ export type LLMToolLoopInput = {
   initialMessages: LLMMessage[];
   buildRequest(input: { round: number; messages: LLMMessage[] }): Promise<LLMToolLoopRoundRequest> | LLMToolLoopRoundRequest;
   sendRequest: LLMRequestSender;
-  executeTool(call: LLMToolCall, context: {
+  toolRegistryName?: string;
+  toolCallSource?: {
+    requester?: AgentEvent["source"];
+    externalSession?: AgentEvent["externalSession"];
+  };
+  buildToolExecutionContext?(input: {
+    round: number;
+    call: LLMToolCall;
+    callIndex: number;
+  }): ToolExecutionContext;
+  transformToolInput?(toolName: string, input: Record<string, unknown>): Record<string, unknown>;
+  afterToolResult?(input: {
     round: number;
     result: LLMChatResult;
+    call: LLMToolCall;
     callIndex: number;
     reachedToolCallLimit: boolean;
-  }): Promise<LLMToolLoopExecution> | LLMToolLoopExecution;
+    toolInput: Record<string, unknown>;
+    toolResult: ToolResult;
+    toolMessage: NonNullable<LLMToolLoopExecution["message"]>;
+  }): Promise<LLMToolLoopExecution | undefined> | LLMToolLoopExecution | undefined;
   beforeRound?(input: { round: number; messages: LLMMessage[] }): Promise<{ messages?: LLMMessage[]; stop?: boolean }> | { messages?: LLMMessage[]; stop?: boolean };
   beforeTool?(input: { round: number; call: LLMToolCall; callIndex: number }): Promise<void> | void;
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
@@ -80,6 +93,25 @@ export type LLMToolLoopInput = {
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
   limits?: LLMToolLoopLimits;
 };
+
+const defaultToolRegistryName = "default";
+const toolRegistries = new Map<string, Map<string, ToolPlugin>>();
+
+export function registerLLMToolLoopTools(name: string, plugins: readonly ToolPlugin[]): () => void {
+  const registry = buildToolPluginMap(plugins);
+  toolRegistries.set(name, registry);
+  return () => {
+    if (toolRegistries.get(name) === registry) toolRegistries.delete(name);
+  };
+}
+
+export function executeRegisteredLLMTool(
+  registryName: string,
+  call: ToolCall,
+  context?: ToolExecutionContext
+): Promise<ToolResult> {
+  return toolPluginForCall(registryName, call.toolName).execute(call, context);
+}
 
 export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
   maxRounds: 20,
@@ -94,7 +126,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
   let previousAssistantMessageSignature: string | undefined;
   let repeatedToolCallCount = 0;
   let totalToolCallCount = 0;
-  let sentMessage = false;
   let invalidateSession = false;
 
   const cancelledResult = (rounds: number, finalResult?: LLMChatResult): LLMToolLoopResult => ({
@@ -103,7 +134,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     finalResult,
     finalMessage: finalResult?.message ?? messages.at(-1) ?? { role: "assistant", content: "" },
     stopReason: "cancelled",
-    sentMessage,
     invalidateSession,
     toolCallCount: totalToolCallCount
   });
@@ -118,7 +148,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         rounds: round,
         finalMessage: messages.at(-1) ?? { role: "assistant", content: "" },
         stopReason: "empty_messages",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -161,7 +190,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "completed",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -189,7 +217,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       await input.beforeTool?.({ round, call, callIndex });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       executedCalls.push(call);
-      const execution = await input.executeTool(call, {
+      const execution = await executeTool(input, call, request, {
         round,
         result,
         callIndex,
@@ -199,7 +227,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         if (execution.message) toolMessages.push(execution.message);
         if (execution.messages) toolMessages.push(...cloneLLMMessages(execution.messages));
       }
-      sentMessage = sentMessage || execution.control?.sentMessage === true;
       invalidateSession = invalidateSession || execution.control?.invalidateSession === true;
       resetSession = resetSession || execution.control?.resetSession === true;
       continueAfterReset = continueAfterReset || execution.control?.continueAfterReset === true;
@@ -234,7 +261,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "reset",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -246,7 +272,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "yield_return",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -258,7 +283,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "tool_limit",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -270,7 +294,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         finalResult: result,
         finalMessage: result.message,
         stopReason: "invalidated",
-        sentMessage,
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -282,10 +305,66 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     rounds: limits.maxRounds,
     finalMessage: messages.at(-1) ?? { role: "assistant", content: "" },
     stopReason: "tool_limit",
-    sentMessage,
     invalidateSession,
     toolCallCount: totalToolCallCount
   };
+}
+
+async function executeTool(
+  input: LLMToolLoopInput,
+  call: LLMToolCall,
+  request: LLMToolLoopRoundRequest,
+  context: {
+    round: number;
+    result: LLMChatResult;
+    callIndex: number;
+    reachedToolCallLimit: boolean;
+  }
+): Promise<LLMToolLoopExecution> {
+  const plugin = toolPluginForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
+  const parsedInput = parseToolInput(call.function.arguments);
+  const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
+  const toolResult = await plugin.execute({
+    id: call.id,
+    toolName: call.function.name,
+    input: toolInput,
+    requester: input.toolCallSource?.requester,
+    externalSession: input.toolCallSource?.externalSession
+  }, input.buildToolExecutionContext?.({
+    round: context.round,
+    call,
+    callIndex: context.callIndex
+  }));
+  const toolMessage = {
+    role: "tool" as const,
+    toolCallId: call.id,
+    name: call.function.name,
+    content: formatToolResultForLLM(toolResult, request.toolVariables as Parameters<typeof formatToolResultForLLM>[1])
+  };
+  return await input.afterToolResult?.({
+    ...context,
+    call,
+    toolInput,
+    toolResult,
+    toolMessage
+  }) ?? {
+    message: toolMessage,
+    control: toolControlFromResult(toolResult)
+  };
+}
+
+function toolPluginForCall(registryName: string, toolName: string): ToolPlugin {
+  const plugin = toolRegistries.get(registryName)?.get(toolName);
+  if (!plugin) throw new Error(`llm_tool_unavailable:${toolName}`);
+  return plugin;
+}
+
+function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, ToolPlugin> {
+  const map = new Map<string, ToolPlugin>();
+  for (const plugin of plugins) {
+    for (const tool of plugin.listTools()) map.set(tool.name, plugin);
+  }
+  return map;
 }
 
 export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {
@@ -318,6 +397,19 @@ function parseToolArguments(raw: string): unknown {
   } catch {
     return raw;
   }
+}
+
+function parseToolInput(raw: string): Record<string, unknown> {
+  const parsed = parseToolArguments(raw || "{}");
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+}
+
+function toolControlFromResult(result: ToolResult): LLMToolLoopControl {
+  return {
+    invalidateSession: result.invalidateLLMSession === true,
+    resetSession: result.resetLLMSession === true,
+    yieldReturn: result.meta?.yieldReturn === true
+  };
 }
 
 function stableJson(value: unknown): string {

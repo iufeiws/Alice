@@ -87,7 +87,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
       modeStartedAt: "2026-05-30T00:00:00.000Z",
       modeExpiresAt: "2026-05-30T03:00:00.000Z",
       fixedPrefixKind: "bookcase",
-      fixedPrefixCursorMessageId: 12
+      fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
     },
     tools: [{
       id: "messaging",
@@ -164,7 +164,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
       modeStartedAt,
       modeExpiresAt: "2026-05-30T03:00:00.000Z",
       fixedPrefixKind: "bookcase",
-      fixedPrefixCursorMessageId: 12
+      fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
     },
     tools: [{
       id: "messaging",
@@ -250,7 +250,7 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
       modeStartedAt: "2026-05-30T00:00:00.000Z",
       modeExpiresAt: "2026-05-30T02:00:00.000Z",
       fixedPrefixKind: "bookcase",
-      fixedPrefixCursorMessageId: 12
+      fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
     },
     tools: [{
       id: "messaging",

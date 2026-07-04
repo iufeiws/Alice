@@ -17,7 +17,6 @@ export function createApiAdminRuntime(input: {
   getTokenUsageReport(query: any): unknown;
   chatAgent: any;
   cancelLLMRequest(): boolean;
-  setLLMSessionBusy(busy: boolean): void;
   outputRouter: any;
   sleepMemoryInductionRuntime: { isActive(): boolean };
   llmSessionRoot(): string;
@@ -55,7 +54,6 @@ export function createApiAdminRuntime(input: {
     cancelActiveLLMRun: () => {
       const hadActiveRequest = input.cancelLLMRequest();
       input.chatAgent.clearLLMSession("admin_cancel");
-      input.setLLMSessionBusy(false);
       input.apiCapabilitiesRuntime.messagingTools.noteLLMSessionCompleted();
       return { ok: true, hadActiveRequest };
     },

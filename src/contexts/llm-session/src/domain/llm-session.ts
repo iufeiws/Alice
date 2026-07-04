@@ -20,7 +20,8 @@ export type LLMSessionSnapshot = {
   modeStartedAt?: string;
   modeExpiresAt?: string;
   fixedPrefixKind?: string;
-  fixedPrefixCursorMessageId?: number;
+  fixedPrefixStartedAt?: string;
+  loopStartedAt?: string;
   waitChatStartedAt?: string;
   skipNextAppendLayers?: boolean;
 };
@@ -100,7 +101,8 @@ export type LLMSessionRecord = {
   modeStartedAt?: string;
   modeExpiresAt?: string;
   fixedPrefixKind?: string;
-  fixedPrefixCursorMessageId?: number;
+  fixedPrefixStartedAt?: string;
+  loopStartedAt?: string;
   waitChatStartedAt?: string;
   skipNextAppendLayers?: boolean;
   currentRound?: LLMSessionRoundInfo;

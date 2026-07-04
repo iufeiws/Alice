@@ -13,7 +13,6 @@ export type ChatLoopToolControlInput = {
   session: ChatAgentLoopSession;
   llmResult: LLMChatResult;
   nowMs: number;
-  lastCheckChatCursorMessageId?: number;
 };
 
 export type ChatLoopToolControlResult = AgentFunctionCallToolExecution & {
@@ -23,7 +22,6 @@ export type ChatLoopToolControlResult = AgentFunctionCallToolExecution & {
 
 export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): ChatLoopToolControlResult {
   const control = {
-    sentMessage: isSendChatToolCall(input.call.function.name, input.toolInput) && input.toolResult.ok,
     invalidateSession: input.toolResult.invalidateLLMSession === true,
     yieldReturn: input.toolResult.meta?.yieldReturn === true,
     resetSession: false,
@@ -63,6 +61,7 @@ export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): Cha
     ? Number(input.toolResult.fixedPrefixTtlMs)
     : fixedPrefixDefaultTtlMs;
   const shouldContinueAfterReset = mode === "fixed_prefix" || mode !== "normal";
+  if (mode === "fixed_prefix" && !input.session.loopStartedAt) throw new Error("fixed_prefix_loop_started_at_missing");
   return {
     message: input.toolMessage,
     control: {
@@ -79,7 +78,7 @@ export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): Cha
       modeStartedAt,
       modeExpiresAt: mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined,
       fixedPrefixKind,
-      fixedPrefixCursorMessageId: mode === "fixed_prefix" ? input.lastCheckChatCursorMessageId : undefined
+      fixedPrefixStartedAt: mode === "fixed_prefix" ? input.session.loopStartedAt : undefined
     },
     sessionRebuilt: shouldContinueAfterReset
   };
@@ -129,7 +128,7 @@ function clearFixedPrefixState(session: ChatAgentLoopSession & Partial<ChatAgent
   session.modeStartedAt = undefined;
   session.modeExpiresAt = undefined;
   session.fixedPrefixKind = undefined;
-  session.fixedPrefixCursorMessageId = undefined;
+  session.fixedPrefixStartedAt = undefined;
 }
 
 function cloneLLMMessages(messages: LLMChatInput["messages"]): LLMChatInput["messages"] {
@@ -156,8 +155,4 @@ function estimateTextTokens(text: string): number {
     tokens += /[\u4e00-\u9fff]/.test(char) ? 0.6 : 0.3;
   }
   return Math.round(tokens);
-}
-
-function isSendChatToolCall(toolName: string, input: Record<string, unknown>): boolean {
-  return toolName === "Chat" && input.action === "send";
 }

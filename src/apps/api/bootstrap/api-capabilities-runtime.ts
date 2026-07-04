@@ -2,6 +2,7 @@ import { createToolRuntime } from "../../../capabilities/tools/messaging/src/too
 import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
+import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
@@ -70,6 +71,7 @@ export function createApiCapabilitiesRuntime(input: {
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
+  registerLLMToolLoopTools("default", toolRuntime.toolPlugins);
 
   const promptToolPreviewRuntime = createPromptToolPreviewRuntime({
     time: input.time,

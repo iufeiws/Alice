@@ -139,7 +139,6 @@ test("chat agent prepares chat loop execution for external function-call runtime
     finalResult: { message: finalMessage },
     finalMessage,
     stopReason: "completed",
-    sentMessage: false,
     invalidateSession: false,
     toolCallCount: 0
   });

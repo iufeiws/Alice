@@ -1,15 +1,15 @@
-import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import { type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import { promptLayerToMessage, type PromptLayer } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
-import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
-import { buildAgentLoopToolMap, createAgentLoopToolExecutor, formatAgentLoopToolResultForLLM, parseAgentLoopToolArguments } from "./agent-loop-tool-executor.js";
+import { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
-import { checkChatCursorFromResult, fixedPrefixToolInput } from "./chat-loop-session-context.js";
+import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
 import {
   claimAgentLoopRequestWindow,
@@ -34,7 +34,7 @@ export type ChatAgentModeState = {
   modeStartedAt?: number;
   modeExpiresAt?: number;
   fixedPrefixKind?: string;
-  fixedPrefixCursorMessageId?: number;
+  fixedPrefixStartedAt?: string;
 };
 
 export type ChatAgentLoopSession = {
@@ -43,9 +43,9 @@ export type ChatAgentLoopSession = {
   requestTimestamps: number[];
   agentLoopRunSeq?: number;
   mode: string;
-  fixedPrefixCursorMessageId?: number;
+  fixedPrefixStartedAt?: string;
+  loopStartedAt?: string;
   waitChatStartedAt?: number;
-  lastCheckChatCursorMessageId?: number;
   skipNextAppendLayers?: boolean;
 };
 
@@ -67,7 +67,6 @@ export type ChatAgentLoopInput = {
     toolNames: string[];
   };
   event: AgentEvent;
-  toolPlugins: ToolPlugin[];
   session: ChatAgentLoopSession;
   ensureSession(): Promise<ChatAgentLoopSession>;
   appendSessionContext(session: ChatAgentLoopSession): Promise<void>;
@@ -101,7 +100,6 @@ export type ChatAgentLoopInput = {
 
 export type ChatAgentLoopResult = {
   message: LLMChatInput["messages"][number];
-  sentMessage: boolean;
   invalidateSession?: boolean;
   cancelled?: boolean;
   finalResult?: LLMChatResult;
@@ -118,14 +116,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     supportsImage: input.llmInput.supportsImage,
     supportsAudio: input.llmInput.supportsAudio
   };
-  const toolExecutor = createAgentLoopToolExecutor({
-    event: input.event,
-    toolPlugins: input.toolPlugins,
-    getLastCompletedToolName: input.getLastCompletedToolName,
-    setLastCompletedToolName: input.setLastCompletedToolName
-  });
   const visibleToolNames = input.llmInput.toolNames;
-  let assistantContentSentMessage = false;
   const baseSendRequest = input.llmRequestSender;
   const sendRequest = createAgentRunIndicatorRequestSender({
     indicator: input.agentRunIndicator,
@@ -187,27 +178,31 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       if (session.skipNextAppendLayers) {
         session.skipNextAppendLayers = undefined;
       }
-      assistantContentSentMessage = await sendAssistantContentAsChat(round, result.message.content) || assistantContentSentMessage;
+      await sendAssistantContentAsChat(round, result.message.content);
     },
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
     },
-    async executeTool(call, { round, result }): Promise<AgentFunctionCallToolExecution> {
-      const textVariables = input.buildTextVariables(input.event);
-      const toolInput = parseAgentLoopToolArguments(call.function.arguments);
-      const { result: toolResult, message: toolMessage } = await toolExecutor.executeLLMToolCall(call, {
-        variables: textVariables,
+    toolCallSource: {
+      requester: input.event.source,
+      externalSession: input.event.externalSession
+    },
+    buildToolExecutionContext() {
+      return {
+        lastCompletedToolName: input.getLastCompletedToolName(),
         agentLoopRunSeq: input.agentLoopRunSeq,
         llmSessionId: session.id,
-        llmCapabilities,
-        transformInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session)
-      });
+        llmCapabilities
+      };
+    },
+    transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
+    async afterToolResult({ call, round, result, toolInput, toolResult, toolMessage }): Promise<AgentFunctionCallToolExecution> {
+      const textVariables = input.buildTextVariables(input.event);
       const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
       if (followup.toolNotices.length > 0) {
         toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");
       }
 
-      session.lastCheckChatCursorMessageId = checkChatCursorFromResult(call.function.name, toolResult) ?? session.lastCheckChatCursorMessageId;
       if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
         session.waitChatStartedAt = input.time.now().epochMs;
       }
@@ -219,8 +214,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         toolMessage,
         session,
         llmResult: result,
-        nowMs: input.time.now().epochMs,
-        lastCheckChatCursorMessageId: session.lastCheckChatCursorMessageId
+        nowMs: input.time.now().epochMs
       });
       if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
@@ -246,7 +240,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
       return {
         message: loopResult.finalMessage,
-        sentMessage: loopResult.sentMessage || assistantContentSentMessage,
         invalidateSession: loopResult.invalidateSession,
         cancelled: loopResult.stopReason === "cancelled",
         finalResult: loopResult.finalResult
@@ -256,13 +249,20 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
 
   async function sendAssistantContentAsChat(round: number, content: LLMChatInput["messages"][number]["content"]): Promise<boolean> {
     const parts = parseAssistantChatBlocks(messageContentText(content));
-    if (parts.length === 0 || !toolExecutor.toolMap.has(chatToolName)) return false;
+    if (parts.length === 0 || !visibleToolNames.includes(chatToolName)) return false;
     let sent = false;
     for (const [index, part] of parts.entries()) {
-      const result = await toolExecutor.executeToolCall({
+      const result = await executeRegisteredLLMTool("default", {
         id: `assistant_content_send_${round}_${index + 1}`,
         toolName: chatToolName,
-        input: { action: "send", type: part.type, alice: part.alice, content: part.content }
+        input: { action: "send", type: part.type, alice: part.alice, content: part.content },
+        requester: input.event.source,
+        externalSession: input.event.externalSession
+      }, {
+        lastCompletedToolName: input.getLastCompletedToolName(),
+        agentLoopRunSeq: input.agentLoopRunSeq,
+        llmSessionId: session.id,
+        llmCapabilities
       });
       sent = sent || result.ok;
     }
@@ -273,7 +273,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
 export { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 export {
   buildWaitChatResumeMessages,
-  checkChatCursorFromResult,
   cloneLLMMessages,
   defaultChatAgentModeState,
   estimateMessagesTokens,

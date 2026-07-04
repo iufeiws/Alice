@@ -3,11 +3,6 @@
 import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const skillRoot = path.resolve(__dirname, "..");
-
 if (process.argv[2] !== "--tool-input" || !process.argv[3]) {
   console.error("usage: run-alice-selfie-fast.mjs --tool-input <config.json>");
   process.exit(64);
@@ -18,20 +13,17 @@ const workDir = requireString(input.workDir, "workDir");
 const codexWorkDir = stringValue(input.codexWorkDir) || workDir;
 const fileName = requireString(input.fileName, "fileName");
 const prompt = requireString(input.prompt, "prompt");
+const extraPrompt = stringValue(input.extraPrompt);
 const referenceImages = requireStringArray(input.referenceImages, "referenceImages");
 const codexCommand = stringValue(input.codexCommand) || process.env.SELFIE_CODEX_COMMAND || "codex";
 const timeoutMs = positiveNumber(input.timeoutMs, 60_000);
 const outputPath = path.join(workDir, fileName);
-const skillInstructions = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
 const codexReferenceImages = copyReferenceImagesToCodexWorkDir(referenceImages, codexWorkDir);
 const imageArgs = codexReferenceImages.map((image) => `--image=${image}`);
 const beforeImages = snapshotGeneratedImages();
 const started = Date.now();
 
-const codexPrompt = [
-  skillInstructions.trim(),
-  prompt
-].join("\n\n");
+const codexPrompt = [extraPrompt.trim(), prompt].filter(Boolean).join("\n\n");
 
 const codexArgs = [
   "exec",
@@ -53,6 +45,7 @@ const codexArgs = [
   "workspace-write",
   "--json",
   ...imageArgs,
+  "--",
   codexPrompt
 ];
 

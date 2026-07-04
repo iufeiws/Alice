@@ -9,6 +9,7 @@ export type PhotoPluginConfig = {
   selfieReferenceDir: string;
   selfieOutputDir: string;
   selfieCodexCommand: string;
+  selfieCodexExtraPrompt: string;
   selfieCodexTimeoutMs: number;
   selfieImageApiKey?: string;
   selfieImageApiBaseURL: string;
@@ -83,6 +84,7 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     selfieReferenceDir: requiredStringValue(parsed.selfieReferenceDir, defaults.selfieReferenceDir ?? "assets/selfie/references", "selfieReferenceDir"),
     selfieOutputDir: requiredStringValue(parsed.selfieOutputDir, defaults.selfieOutputDir ?? "assets/generated/selfies", "selfieOutputDir"),
     selfieCodexCommand: requiredStringValue(parsed.selfieCodexCommand, defaults.selfieCodexCommand ?? "codex", "selfieCodexCommand"),
+    selfieCodexExtraPrompt: optionalRawStringValue(parsed.selfieCodexExtraPrompt, defaults.selfieCodexExtraPrompt, "selfieCodexExtraPrompt") ?? "",
     selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 300_000, "selfieCodexTimeoutMs"),
     selfieImageApiKey: optionalStringValue(parsed.selfieImageApiKey, defaults.selfieImageApiKey, "selfieImageApiKey"),
     selfieImageApiBaseURL: requiredStringValue(parsed.selfieImageApiBaseURL, defaults.selfieImageApiBaseURL ?? "https://api.openai.com/v1", "selfieImageApiBaseURL").replace(/\/+$/, ""),

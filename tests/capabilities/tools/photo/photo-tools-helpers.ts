@@ -22,6 +22,7 @@ export function providerInput(prompt: string, referenceImages: string[]): Selfie
     workDir: "",
     fileName: "image.jpg",
     prompt,
+    codexExtraPrompt: "",
     referenceImages,
     referenceImagePrompt: "",
     timeoutMs: 1000,

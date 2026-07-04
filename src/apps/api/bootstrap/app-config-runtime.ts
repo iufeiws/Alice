@@ -53,6 +53,7 @@ export type AppConfig = {
     selfieReferenceDir: string;
     selfieOutputDir: string;
     selfieCodexCommand: string;
+    selfieCodexExtraPrompt: string;
     selfieCodexTimeoutMs: number;
     selfieImageApiKey?: string;
     selfieImageApiBaseURL: string;
@@ -246,6 +247,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",
       selfieCodexCommand: env.SELFIE_CODEX_COMMAND ?? "codex",
+      selfieCodexExtraPrompt: env.SELFIE_CODEX_EXTRA_PROMPT ?? "",
       selfieCodexTimeoutMs: envNumber(env.SELFIE_CODEX_TIMEOUT_MS, 300_000),
       selfieImageApiKey: env.SELFIE_IMAGE_API_KEY ?? env.OPENAI_API_KEY,
       selfieImageApiBaseURL: (env.SELFIE_IMAGE_API_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, ""),

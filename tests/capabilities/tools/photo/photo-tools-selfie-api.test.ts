@@ -262,13 +262,13 @@ test("selfie_codexMode_copiesGeneratedImage", async () => {
     "if (!args.includes('--ephemeral')) process.exit(3);",
     "if (!args.includes('--ignore-user-config')) process.exit(15);",
     "if (!args.includes('--disable') || !args.includes('plugins') || !args.includes('apps')) process.exit(16);",
+    "if (!args.includes('--enable') || !args.includes('image_generation')) process.exit(19);",
     "if (!args.includes('-m') || !args.includes('gpt-5.4-mini')) process.exit(17);",
     "if (!args.includes('-c') || !args.includes('model_reasoning_effort=\"low\"')) process.exit(18);",
     "if (args.includes('--output-last-message')) process.exit(4);",
     "if (prompt.includes('Apply these skill instructions exactly:')) process.exit(5);",
     "if (prompt.includes('Task prompt:')) process.exit(6);",
     "if (prompt.includes('Task metadata:')) process.exit(7);",
-    "if (!prompt.includes('1024x1536')) process.exit(9);",
     "if (process.env.SELFIE_IMAGE_API_KEY === 'test-key') process.exit(10);",
     "if (process.env.OPENAI_API_KEY) process.exit(11);",
     `fs.mkdirSync(${JSON.stringify(path.dirname(generatedPath))}, { recursive: true });`,
@@ -280,7 +280,8 @@ test("selfie_codexMode_copiesGeneratedImage", async () => {
   fs.writeFileSync(configPath, `${JSON.stringify({
     enabled: true,
     selfieMode: "codex",
-    selfieCodexCommand: codexPath
+    selfieCodexCommand: codexPath,
+    selfieCodexExtraPrompt: "configured codex extra prompt"
   })}\n`);
   process.env.CODEX_HOME = codexHome;
 
@@ -319,10 +320,14 @@ test("selfie_codexMode_copiesGeneratedImage", async () => {
     assert.equal(codexArgs.includes("apps"), true);
     assert.equal(codexArgs.includes("gpt-5.4-mini"), true);
     assert.equal(codexArgs.includes('model_reasoning_effort="low"'), true);
+    assert.equal(codexArgs.at(-2), "--");
     assert.equal(codexArgs.includes("--output-last-message"), false);
     const imageArgs = codexArgs.filter((arg) => arg.startsWith("--image="));
     assert.equal(imageArgs.length, 3);
     assert.deepEqual(imageArgs.map((arg) => path.basename(arg.slice("--image=".length))), ["reference-1.jpg", "reference-2.jpg", "reference-3.jpg"]);
+    const prompt = codexArgs.at(-1) ?? "";
+    assert.match(prompt, /^configured codex extra prompt\n\n/);
+    assert.doesNotMatch(prompt, /Alice 快速自拍|只调用一次内置 `image_gen`/);
     assert.equal(sent[1].content.kind, "image");
     const sentAssetId = sent[1].content.kind === "image" ? sent[1].content.assetId : "";
     const finalBytes = fs.readFileSync(path.join(assetRootFromOutputDir(outputRoot), sentAssetId));

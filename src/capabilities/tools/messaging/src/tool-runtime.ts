@@ -83,6 +83,7 @@ export function createToolRuntime(input: {
     selfieReferenceDir: input.config.photo.selfieReferenceDir,
     selfieOutputDir: input.config.photo.selfieOutputDir,
     selfieCodexCommand: input.config.photo.selfieCodexCommand,
+    selfieCodexExtraPrompt: input.config.photo.selfieCodexExtraPrompt,
     selfieCodexTimeoutMs: input.config.photo.selfieCodexTimeoutMs,
     selfieImageApiKey: input.config.photo.selfieImageApiKey,
     selfieImageApiBaseURL: input.config.photo.selfieImageApiBaseURL,

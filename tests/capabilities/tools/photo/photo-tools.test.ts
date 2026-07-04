@@ -51,6 +51,7 @@ test("photoConfig_onBodySettings_readsPersistedValues", () => {
     onBodyReferenceImage: "assets/ref/full-body.jpg",
     onBodyPrompt: "use image 1 as body reference and image 2 as outfit reference",
     selfieOnBodyPrompt: "use image 1 as on-body reference and image 2 as scene reference",
+    selfieCodexExtraPrompt: "  codex extra prompt\n",
     selfie2DinRealEnabled: true,
     selfie2DinRealReferenceImage: "assets/ref/2dinreal.jpg",
     selfie2DinRealPrompt: "  use 2DinReal\n"
@@ -63,6 +64,7 @@ test("photoConfig_onBodySettings_readsPersistedValues", () => {
   assert.equal(config.onBodyReferenceImage, "assets/ref/full-body.jpg");
   assert.equal(config.onBodyPrompt, "use image 1 as body reference and image 2 as outfit reference");
   assert.equal(config.selfieOnBodyPrompt, "use image 1 as on-body reference and image 2 as scene reference");
+  assert.equal(config.selfieCodexExtraPrompt, "  codex extra prompt\n");
   assert.equal(config.selfie2DinRealEnabled, true);
   assert.equal(config.selfie2DinRealReferenceImage, "assets/ref/2dinreal.jpg");
   assert.equal(config.selfie2DinRealPrompt, "  use 2DinReal\n");
@@ -100,6 +102,8 @@ test("codexSelfieRunner_explicitlyEnablesImageGeneration", () => {
   const runner = fs.readFileSync("src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs", "utf8");
 
   assert.match(runner, /"--enable",\s*"image_generation"/);
+  assert.match(runner, /\.\.\.imageArgs,\s*"--",\s*codexPrompt/);
+  assert.doesNotMatch(runner, /SKILL\.md|skillInstructions/);
 });
 
 test("outfitOnBodyAutoGeneration_defaultConfig_doesNotFetch", async () => {

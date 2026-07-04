@@ -70,6 +70,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(fieldGroups.get("selfieImageApiRelayBaseURL"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayModel"), "openai_relay");
   assert.equal(fieldGroups.get("selfieImageApiRelayTimeoutMs"), "openai_relay");
+  assert.equal(fieldGroups.get("selfieCodexExtraPrompt"), "codex");
   assert.equal(fieldGroups.get("autoGenerateOutfitOnBody"), "general");
   assert.equal(fieldGroups.get("onBodyReferenceImage"), "on_body");
   assert.equal(fieldGroups.get("onBodyPrompt"), "on_body");
@@ -86,6 +87,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
     enabled: true,
     selfieMode: "openaiRelay",
     selfieCodexCommand: "codex",
+    selfieCodexExtraPrompt: "configured extra prompt",
     selfieCodexTimeoutMs: 240000,
     selfieOutputDir: "assets/generated/selfies",
     selfieReferenceDir: "assets/selfie/references",
@@ -124,6 +126,7 @@ test("admin plugin config patch writes photo selfie mode without storing api key
   assert.equal(body.configValue.selfieImageApiKeySet, true);
   assert.equal(body.configValue.selfieImageApiRelayKeySet, true);
   assert.equal(saved.selfieMode, "openaiRelay");
+  assert.equal(saved.selfieCodexExtraPrompt, "configured extra prompt");
   assert.equal(saved.selfieCodexTimeoutMs, 240000);
   assert.equal(saved.selfieImageApiKey, "new-openai-key");
   assert.equal(saved.selfieImageApiRelayKey, "new-relay-key");

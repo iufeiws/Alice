@@ -202,6 +202,7 @@ export function photoDefaults() {
     selfieReferenceDir: "assets/selfie/references",
     selfieOutputDir: "assets/generated/selfies",
     selfieCodexCommand: "codex",
+    selfieCodexExtraPrompt: "",
     selfieCodexTimeoutMs: 180_000,
     selfieImageApiBaseURL: "https://api.openai.com/v1",
     selfieImageApiRelayBaseURL: "https://api.openai.com/v1",

@@ -41,6 +41,7 @@ export type SelfieExecutorInput = {
   codexWorkDir?: string;
   fileName: string;
   prompt: string;
+  codexExtraPrompt: string;
   referenceImages: string[];
   referenceImagePrompt: string;
   timeoutMs: number;
@@ -150,6 +151,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         codexWorkDir,
         fileName,
         prompt,
+        codexExtraPrompt: photoConfig.selfieCodexExtraPrompt,
         referenceImages: references.images,
         referenceImagePrompt: references.prompt,
         timeoutMs: photoConfig.selfieCodexTimeoutMs,

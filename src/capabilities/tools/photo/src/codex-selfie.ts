@@ -15,6 +15,7 @@ export async function runAliceSelfieFastSkill(input: SelfieExecutorInput): Promi
     codexWorkDir: input.codexWorkDir,
     fileName: input.fileName,
     prompt: input.prompt,
+    extraPrompt: input.codexExtraPrompt,
     referenceImages: input.referenceImages,
     referenceImagePrompt: input.referenceImagePrompt,
     codexCommand: input.command,

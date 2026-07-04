@@ -133,13 +133,16 @@ Heartbeat 由 message runtime 管理，是驱动状态 tick、generated event �
 
 单次 heartbeat 的执行顺序必须保持如下：
 
-1. 调用 `agentState.tick()`，先推进状态计时器。
-2. 如果不是 force 模式，并且当前不能运行 heartbeat，则重新调度下一次 heartbeat 后退出。
-3. 如果可以运行 heartbeat，调用 `onHeartbeatTick()`；当前 API 进程用它执行每轮轻量维护。
-4. 检查并处理 sleep cocoon morning generated event。
-5. 在不存在未处理消息且没有正在处理的用户消息时，检查并处理 sleep cocoon goodnight generated event。
-6. 遍历有未处理消息的会话，按条件一次性处理该会话当前全部未处理入站文本消息。
-7. 非 force 模式下，结束后重新调度下一次 heartbeat。
+1. 非 force 模式下，先检查 idle 计时器是否到期；到期且 gate 允许时执行 idle transition hook。
+2. 如果 idle 到期、gate 允许且没有 pending 用户消息，先尝试随机主动行为；触发成功后本轮结束。
+3. 调用 `agentState.tick()`，推进普通状态计时器。
+4. 如果不是 force 模式，并且当前不能运行 heartbeat，则重新调度下一次 heartbeat 后退出。
+5. 如果可以运行 heartbeat，调用 `onHeartbeatTick()`；当前 API 进程用它执行每轮轻量维护。
+6. 检查 ready talk session，并尝试运行 Talk loop。
+7. 检查并处理 sleep cocoon morning generated event。
+8. 在不存在未处理消息且没有正在处理的用户消息时，检查并处理 sleep cocoon goodnight generated event。
+9. 遍历有未处理消息的会话，按条件一次性处理该会话当前全部未处理入站文本消息。
+10. 非 force 模式下，结束后重新调度下一次 heartbeat。
 
 ### Heartbeat gate
 
@@ -224,7 +227,7 @@ Message runtime 测试：
 - `going_to_sleep` 处理用户消息后仍保持 `going_to_sleep`。
 - `serious` 处理用户消息后仍保持 `serious`。
 - `test` 处理用户消息后仍保持 `test`。
-- heartbeat 每轮先调用 `agentState.tick()`，再判断是否继续处理。
+- 普通 heartbeat 会先处理 idle 到期的随机主动行为机会，再调用 `agentState.tick()`。
 - `waiting -> idle` 的无消息降级会触发 LLM session 清理。
 - heartbeat 在 LLM session 活跃或 `canRunHeartbeat()` 为假时不处理用户消息，并重新调度。
 - 新入站消息和状态变化都会唤醒 heartbeat。

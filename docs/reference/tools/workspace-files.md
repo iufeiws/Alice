@@ -1,6 +1,6 @@
 # Workspace Files 工具
 
-`tools/workspace-files` 提供一组面向本地 workspace 文件的 LLM 工具。它原先位于 `plugins/workspace-files`，现在放在根目录 `tools/` 下，表示它是核心可复用工具能力，而不是面向外部业务接入的 plugin。
+Workspace Files 提供一组面向本地 workspace 文件的 LLM 工具。当前实现位于 `src/capabilities/tools/workspace-files`，属于核心可复用工具能力，而不是外部业务 channel。
 
 ## 入口
 

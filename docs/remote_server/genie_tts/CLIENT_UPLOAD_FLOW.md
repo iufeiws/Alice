@@ -1,12 +1,12 @@
-# Client Upload Flow
+# Genie TTS 客户端上传流程
 
-This document describes the client-side behavior for using a local client model with the LAN Genie TTS server.
+本文档描述局域网 Genie TTS 服务在客户端本地模型未上传时的客户端行为。
 
-The normal TTS generation request does not change. The client still sends its local model path as `modelDir`. The only new behavior is: when the server reports that this model has not been uploaded, the client zips that same local model directory, uploads it, then retries the original generation request.
+## 正常生成请求
 
-## 1. Normal Generation Request
+客户端仍然在生成请求中传本地 `modelDir`。服务端如果已经有该模型缓存，就正常返回音频。
 
-For streaming text input, keep sending the same request shape:
+流式文本输入示例：
 
 ```powershell
 $server = "http://SERVER_LAN_IP:8767"
@@ -22,11 +22,9 @@ $encodedModelDir = [uri]::EscapeDataString($modelDir)
   --output out.pcm
 ```
 
-If the server already has the uploaded cache for that `modelDir`, it streams PCM audio normally.
+## 模型缺失响应
 
-## 2. Missing Model Response
-
-If the server does not have the model cache, it returns HTTP `409` with JSON:
+服务端没有该 `modelDir` 对应缓存时，返回 HTTP `409`：
 
 ```json
 {
@@ -37,13 +35,13 @@ If the server does not have the model cache, it returns HTTP `409` with JSON:
 }
 ```
 
-The `modelDir` in this response is the same model path from the original generation request. The `uploadUrl` is the endpoint the client should use to upload that exact model.
+客户端必须上传响应里同一个 `modelDir` 对应的模型 preset，然后重试原始生成请求。
 
-## 3. Upload The Preset
+## 上传 preset
 
-Zip the model together with its matching reference files, then POST the zip to `uploadUrl`.
+客户端把模型和匹配的参考文件打包成 zip，并 POST 到 `uploadUrl`。
 
-The server accepts either of these zip layouts:
+服务端接受两种 zip 结构：
 
 ```text
 model/
@@ -52,7 +50,7 @@ reference.wav
 reference.txt
 ```
 
-or:
+或：
 
 ```text
 *.onnx
@@ -60,7 +58,9 @@ reference.wav
 reference.txt
 ```
 
-Do not upload a model that belongs to one preset and rely on the server's default reference. Explicit `modelDir` requests require the matching `reference.wav` and `reference.txt` from the same uploaded preset, unless the generation request explicitly passes `referenceAudioPath` and `referenceText`.
+显式 `modelDir` 请求必须使用同一 preset 的 `reference.wav` 和 `reference.txt`，除非生成请求显式传入 `referenceAudioPath` 和 `referenceText`。
+
+上传示例：
 
 ```powershell
 $server = "http://SERVER_LAN_IP:8767"
@@ -80,166 +80,20 @@ curl.exe -X POST "$server/models/upload?modelDir=$encodedModelDir" `
   --data-binary "@$zip"
 ```
 
-Successful response:
+上传成功后，客户端重试原始 `/stream-input` 或 `/synthesize` 请求。
 
-```json
-{
-  "ok": true,
-  "modelDir": "D:\\client\\models\\alice",
-  "cacheKey": "...",
-  "serverModelDir": "D:\\_Project\\PA\\genie-tts-cuda-server\\models\\cache\\...\\model",
-  "zipSha256": "..."
-}
-```
+## 可选校验
 
-After this succeeds, retry the original generation request unchanged.
+客户端可以先计算 zip SHA256，并在上传时附带校验信息。服务端实现如果返回校验错误，客户端应重新打包同一 preset，而不是换用其它模型。
 
-## 4. Optional SHA256 Check
+## 客户端要求
 
-The client can calculate the zip hash and send it as `X-Model-Sha256`.
+- 不要把一个 preset 的模型和另一个 preset 的参考音频混用。
+- 不要依赖服务端默认 reference 来满足显式 `modelDir` 请求。
+- `MODEL_NOT_UPLOADED` 后只上传响应中指定的模型。
+- 上传后重试原请求，不改变文本、语言和模型参数。
 
-```powershell
-$hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+## 非流式合成
 
-curl.exe -X POST "$server/models/upload?modelDir=$encodedModelDir" `
-  -H "content-type: application/zip" `
-  -H "X-Model-Sha256: $hash" `
-  --data-binary "@$zip"
-```
+非流式合成同样使用 `modelDir`。远端服务合成时不需要客户端传 `outputPath`；客户端只接收服务端返回的音频或元数据。
 
-If the hash does not match, the server rejects the upload.
-
-## 5. Required Client Logic
-
-Client pseudocode:
-
-```text
-send original TTS request with modelDir
-if response is 409 and code is MODEL_NOT_UPLOADED:
-  zip the preset directory that contains response.modelDir and its reference files
-  POST zip to server + response.uploadUrl
-  if upload succeeds:
-    retry original TTS request without changing modelDir
-```
-
-Important details:
-
-- The upload request must include the same `modelDir` string used by generation.
-- The generation request does not need a `modelId`.
-- The zip must contain at least one `.onnx` file.
-- The zip should contain the matching `reference.wav` and `reference.txt` for that model.
-- If the upload lacks reference files, generation returns `REFERENCE_NOT_UPLOADED` instead of using another preset's reference.
-- If the local model changes but the path stays the same, upload again to replace the server cache.
-
-## 6. Python Example
-
-```python
-from __future__ import annotations
-
-import io
-import json
-import zipfile
-from pathlib import Path
-from urllib.parse import quote
-
-import requests
-
-
-SERVER = "http://SERVER_LAN_IP:8767"
-MODEL_DIR = r"D:\client\models\alice"
-
-
-def zip_preset_for_model(model_dir: str) -> bytes:
-    model_path = Path(model_dir)
-    root = model_path.parent
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in root.rglob("*"):
-            if path.is_file():
-                archive.write(path, path.relative_to(root).as_posix())
-    return buffer.getvalue()
-
-
-def upload_model(model_dir: str) -> None:
-    payload = zip_preset_for_model(model_dir)
-    upload_url = f"{SERVER}/models/upload?modelDir={quote(model_dir, safe='')}"
-    response = requests.post(
-        upload_url,
-        data=payload,
-        headers={"content-type": "application/zip"},
-        timeout=300,
-    )
-    response.raise_for_status()
-
-
-def stream_tts(model_dir: str, texts: list[str]) -> bytes:
-    url = f"{SERVER}/stream-input?language=zh&modelDir={quote(model_dir, safe='')}"
-    payload = b"".join(
-        json.dumps({"text": text}, ensure_ascii=False).encode("utf-8") + b"\n"
-        for text in texts
-    )
-    response = requests.post(
-        url,
-        data=payload,
-        headers={"content-type": "application/x-ndjson"},
-        timeout=300,
-    )
-    if response.status_code == 409:
-        body = response.json()
-        if body.get("code") == "MODEL_NOT_UPLOADED":
-            upload_model(body["modelDir"])
-            response = requests.post(
-                url,
-                data=payload,
-                headers={"content-type": "application/x-ndjson"},
-                timeout=300,
-            )
-    response.raise_for_status()
-    return response.content
-
-
-audio = stream_tts(MODEL_DIR, ["第一段。", "第二段。"])
-Path("out.pcm").write_bytes(audio)
-```
-
-## 7. Receiving Text With Each Audio Chunk
-
-The default streaming response is raw PCM, so it cannot include text metadata. To receive text with every returned audio chunk, request NDJSON:
-
-```powershell
-$url = "$server/stream-input?language=jp&modelDir=$encodedModelDir&responseFormat=ndjson"
-```
-
-Each response line is a JSON object:
-
-```json
-{
-  "type": "audio",
-  "text": "これは疑似ストリーミング音声のテストです。",
-  "format": "s16le",
-  "sampleRate": 32000,
-  "channels": 1,
-  "audioBase64": "..."
-}
-```
-
-The final line is:
-
-```json
-{"type":"done"}
-```
-
-`audioBase64` is the same PCM data that the default `audio/L16` response would return, base64 encoded so it can share the stream with text metadata.
-
-## 8. Non-Streaming Remote Synthesis
-
-For remote clients, do not send `outputPath`. Without `outputPath`, `/synthesize` returns the WAV bytes directly:
-
-```powershell
-curl.exe -X POST "$server/synthesize" `
-  -H "content-type: application/json" `
-  --data "{`"text`":`"これは疑似ストリーミング音声のテストです。`",`"language`":`"jp`",`"modelDir`":`"$modelDir`",`"splitText`":false}" `
-  --output out.wav
-```
-
-`outputPath` is only for server-local debugging, because it writes to a path on the server machine.

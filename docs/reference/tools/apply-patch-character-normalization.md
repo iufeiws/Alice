@@ -1,27 +1,22 @@
-# apply_patch Character Normalization
+# apply_patch 字符归一化
 
-The memory `apply_patch` tool normalizes a small set of common fullwidth
-characters to halfwidth characters after a patch is applied. The same
-normalization is also used when checking patch context lines, so a patch that
-uses halfwidth text can match existing memory content that uses these fullwidth
-variants.
+memory 的 `apply_patch` 工具在应用补丁后，会把一小组常见全角字符归一化为半角字符。检查补丁上下文行时也使用同一套归一化，因此使用半角文本的补丁可以匹配已有 memory 内容中的这些全角变体。
 
-Normalization is intentionally limited to the reusable
-`commonHalfwidthNormalizationMap` in `core/agent/src/memory.ts`.
+归一化范围刻意保持很小，只使用 memory 模块里的公共 halfwidth normalization map。
 
-## Character Map
+## 字符表
 
-Fullwidth ASCII letters and digits are normalized:
+全角 ASCII 字母和数字会被归一化：
 
 - `Ａ-Ｚ` -> `A-Z`
 - `ａ-ｚ` -> `a-z`
 - `０-９` -> `0-9`
 
-Additional characters:
+额外字符：
 
-| Source | Target |
+| 原字符 | 目标字符 |
 | --- | --- |
-| `　` | space |
+| `　` | 空格 |
 | `，` | `,` |
 | `。` | `.` |
 | `．` | `.` |
@@ -55,3 +50,4 @@ Additional characters:
 | `＝` | `=` |
 | `＜` | `<` |
 | `＞` | `>` |
+

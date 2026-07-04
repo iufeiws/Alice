@@ -1,32 +1,37 @@
-# Agent Loops
+# Agent Loop 运行边界
 
-ChatAgent has separate loop modules for LLM session policy. Runtime ingress stays outside these modules.
+本文档只描述当前 loop 边界。平台入站、消息存储、TalkRuntime、ASR、TTS 和后台页面不属于 loop 模块。
 
-## ChatAgentLoop
+## Chat Loop
 
-`core/agent/src/chat-loop.ts` owns the delayed chat LLM loop:
+Chat loop 的实现入口在 `src/contexts/agent-loop/src/application/run-chat-loop.ts`，运行时装配在 `src/contexts/agent-loop/src/runtime/chat-agent-runtime.ts`。
 
-- uses `agentId: "chat"` when sending LLM requests
-- keeps chat session state, rate limits, fixed-prefix append layers, and `finish_and_wait` resume behavior
-- filters tool calls so `send_chat` and `finish_and_wait` keep their existing control semantics
-- streams partial `send_chat` tool arguments when the model and tool sender support it
+当前职责：
 
-The chat prompt profile is stored in `src/core/prompt/prompt-profile.json` and is editable from the admin Prompt page under `Chat`.
+- 使用 `agentId: "chat"` 发起 LLM 请求。
+- 维护聊天 LLM session 策略、token 压力处理、fixed-prefix append、`Yield` 恢复。
+- 只执行请求构筑阶段暴露给模型的 tool call。
+- 处理 `Chat` 工具的发送流式参数和 loop 终止语义。
 
-## TalkAgentLoop
+Chat prompt profile 位于 `src/contexts/agent-profile/prompts/prompt-profile.json`，由后台 Prompt 页面编辑。
 
-`core/agent/src/talk-loop.ts` is the realtime-dialogue sibling loop. It currently reuses the same LLM/tool-loop control skeleton as ChatAgentLoop, but sends requests with `agentId: "talk"` so logs, request metadata, and future runtime policy can distinguish realtime talk from delayed chat.
+## Talk Loop
 
-The talk prompt profile is stored in `src/core/prompt/talk-prompt-profile.json` and is editable from the admin Prompt page under `Talk`. It was initialized as a copy of the chat prompt profile so Talk starts with the same persona, prompt layers, append layers, and visible-tool switches, then can diverge without changing Chat.
+Talk loop 的实现入口在 `src/contexts/agent-loop/src/application/run-talk-loop.ts`。
 
-`src/core/prompt/prompt-api-profile.json` binds Talk to its own `talkPresetName`. If unset, Talk has no explicit API preset binding; setting it does not change Chat or Memorize bindings.
+当前职责：
+
+- 使用 `agentId: "talk"` 发起 LLM 请求。
+- 使用 Talk prompt profile 构筑实时对话请求。
+- 从 TalkRuntime 构筑当前会话消息补丁。
+- 复用统一 function-call loop 执行已暴露工具。
+
+Talk prompt profile 位于 `src/contexts/agent-profile/prompts/talk-prompt-profile.json`，后台 Prompt 页面可独立编辑 Chat 和 Talk。
 
 ## Memorize
 
-Memorize remains a separate memory-induction path rather than an ChatAgent chat/talk loop. Its prompts live in `src/core/prompt/memorize-prompts.json`, and its API binding remains `memorizePresetName`.
+Memorize 不是 Chat/Talk loop 的一种。记忆归纳使用独立 prompt 与 API preset，入口在 memory 相关 context 中维护。
 
-## Boundary
+## 边界
 
-Loop modules should own LLM session policy and tool-call control only. They should not own channel ingress, TalkRuntime storage, ASR, TTS, or admin form rendering.
-
-TalkRuntime remains the realtime state/runtime layer documented in `docs/core/talk-runtime.md`. A future TalkRuntime integration should feed talk events into TalkAgentLoop and persist realtime truth in the TalkRuntime tables instead of widening the chat message store.
+Loop 只负责 LLM session 策略和 tool-call 执行流程。Tool 是否可用由 request 构筑阶段的可见工具决定；loop 执行期不按 loop kind、requester、channel 或 tool name 做二次拦截。

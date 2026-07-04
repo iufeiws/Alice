@@ -1,4 +1,4 @@
-# Voice Call 浏览器前端界面设计
+# Voice Call 浏览器前端界面
 
 本文档定义 voice call 的浏览器通话界面。视觉参考见同目录示例图：`273c30ea-63cb-49b0-b618-73817df566f4.png`。
 
@@ -339,11 +339,11 @@ UI 不应把 ASR partial 或内部 debug 状态直接展示给用户。需要调
 
 ## 实现边界
 
-- 主音频必须通过 WebRTC track，不通过 WebSocket chunk 或 HTTP 音频 URL。
+- 默认通话音频通过 WebRTC track；hold-to-talk 路径允许通过 signaling WebSocket 发送 `audio-chunk`。
 - 页面不保存原始音频。
 - 页面不直接写 `messages`、`message_logs` 或其他持久消息表。
 - 通话 session id、call id 和连接状态由 voice call plugin 或 API 返回。
-- 浏览器页面只发送控制事件：`hello`、`offer`、`ice`、`input-mode`、`hold-to-talk`、`mute`、`wait`、`text-input`、`interrupt`、`hold`、`hangup` 和必要的 UI 状态；不通过 WebSocket 发送主音频。
+- 浏览器页面通过 signaling WebSocket 发送 `hello`、`offer`、`ice`、`input-mode`、`hold-to-talk`、`audio-chunk`、`mute`、`wait`、`text-input`、`interrupt`、`hold`、`hangup` 和必要的 UI 状态。
 
 ## 首版验收
 

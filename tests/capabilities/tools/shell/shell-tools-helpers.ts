@@ -33,10 +33,6 @@ export function makeShellTools(
   });
 }
 
-export function parseToolOutput(result: { output?: unknown }): any {
-  return JSON.parse(String(result.output));
-}
-
 export function makeTempDir(name: string): string {
   const dir = path.join(os.tmpdir(), "alice-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });

@@ -1,27 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeShellStore, makeShellTools, parseToolOutput } from "./shell-tools-helpers.js";
+import { makeShellStore, makeShellTools } from "./shell-tools-helpers.js";
 
-test("wardrobe list returns current outfit and searchable outfits", async () => {
+test("wardrobe list returns groups or searchable outfits", async () => {
   const store = makeShellStore("wardrobe-list", [
     { id: "o1", name: "O One", content: "outfit one" },
-    { id: "o2", name: "O Two", content: "outfit two", group: "formal" }
+    { id: "o2", name: "O Two", content: "outfit two", group: "formal" },
+    { id: "o3", name: "O Three", content: "outfit three", group: "formal" },
+    { id: "o4", name: "O Four", content: "outfit four", group: "casual" }
   ]);
   store.switchOutfit(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai", "o2");
   const tools = makeShellTools("wardrobe-list", store);
 
   const result = await tools.execute({ id: "call_list", toolName: "Wardrobe", input: { action: "list" } });
-  const output = parseToolOutput(result);
 
   assert.equal(result.ok, true);
-  assert.equal(output.current.id, "o2");
-  assert.deepEqual(output.outfits.map((item: any) => [item.id, item.current]), [["o1", false], ["o2", true]]);
+  assert.equal(result.output, "<groups>\nroot\ncasual\nformal\n</groups>");
 
   const nameFiltered = await tools.execute({ id: "call_filter", toolName: "Wardrobe", input: { action: "list", name: "Two" } });
-  assert.deepEqual(parseToolOutput(nameFiltered).outfits.map((item: any) => item.name), ["O Two"]);
+  assert.equal(nameFiltered.output, "<O Two group=\"formal\">\noutfit two\n</O Two>");
 
   const groupFiltered = await tools.execute({ id: "call_filter_group", toolName: "Wardrobe", input: { action: "list", name: "formal" } });
-  assert.deepEqual(parseToolOutput(groupFiltered).outfits.map((item: any) => item.name), ["O Two"]);
+  assert.equal(groupFiltered.output, "<O Three group=\"formal\">\noutfit three\n</O Three>\n<O Two group=\"formal\">\noutfit two\n</O Two>");
+
+  const compact = await tools.execute({ id: "call_filter_compact", toolName: "Wardrobe", input: { action: "list", name: "O" } });
+  assert.equal(compact.output, "<O One group=\"root\" />\n<O Four group=\"casual\" />\n<O Three group=\"formal\" />\n<O Two group=\"formal\" />");
 });
 
 test("wardrobe mirror returns the current outfit without sending a message", async () => {
@@ -42,7 +45,7 @@ test("wardrobe mirror returns the current outfit without sending a message", asy
   const result = await tools.execute({ id: "call_mirror", toolName: "Wardrobe", input: { action: "mirror" } });
 
   assert.equal(result.ok, true);
-  assert.equal(result.output, "你看到镜子中的自己穿着: \n 服装：O Two\noutfit two");
+  assert.equal(result.output, "<O Two group=\"root\">\noutfit two\n</O Two>");
   assert.deepEqual(sent, []);
 });
 
@@ -56,11 +59,10 @@ test("wardrobe switch returns changed outfit message", async () => {
   });
 
   const result = await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
-  const output = parseToolOutput(result);
 
   assert.equal(result.ok, true);
-  assert.equal(output.message, "服装已切换为O Two");
-  assert.equal(output.current.id, "o2");
+  assert.equal(result.output, "success");
+  assert.equal(store.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });
 
 test("wardrobe switch requires a current target and known outfit name", async () => {
@@ -69,14 +71,14 @@ test("wardrobe switch requires a current target and known outfit name", async ()
 
   const noTarget = await tools.execute({ id: "call_no_target", toolName: "Wardrobe", input: { action: "switch", name: "O One" } });
   assert.equal(noTarget.ok, false);
-  assert.match(noTarget.error ?? "", /No current messaging session/);
+  assert.equal(noTarget.error, "<error>No current messaging session is available</error>");
 
   const withTarget = makeShellTools("wardrobe-errors-target", store, {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
   const unknown = await withTarget.execute({ id: "call_unknown", toolName: "Wardrobe", input: { action: "switch", name: "missing" } });
   assert.equal(unknown.ok, false);
-  assert.match(unknown.error ?? "", /unknown outfit name/);
+  assert.equal(unknown.error, "<error>unknown outfit name</error>");
 });
 
 test("wardrobe switch returns candidates for ambiguous names", async () => {
@@ -90,6 +92,32 @@ test("wardrobe switch returns candidates for ambiguous names", async () => {
 
   const result = await tools.execute({ id: "call_ambiguous", toolName: "Wardrobe", input: { action: "switch", name: "女仆" } });
   assert.equal(result.ok, false);
-  assert.match(result.error ?? "", /ambiguous outfit name/);
-  assert.deepEqual(parseToolOutput(result).candidates.map((item: any) => item.name).sort(), ["白色女仆装", "黑色女仆装"].sort());
+  assert.equal(result.error, "<error>ambiguous outfit name: 女仆</error>");
+  assert.equal(result.output, [
+    "<error>ambiguous outfit name: 女仆</error>",
+    "<candidates>",
+    "<白色女仆装 group=\"root\">",
+    "white maid outfit",
+    "</白色女仆装>",
+    "<黑色女仆装 group=\"root\">",
+    "black maid outfit",
+    "</黑色女仆装>",
+    "</candidates>"
+  ].join("\n"));
+});
+
+test("wardrobe random switches a matching outfit", async () => {
+  const store = makeShellStore("wardrobe-random", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two" }
+  ]);
+  const tools = makeShellTools("wardrobe-random", store, {
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({ id: "call_random", toolName: "Wardrobe", input: { action: "random", name: "Two" } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "success");
+  assert.equal(store.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });

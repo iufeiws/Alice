@@ -2,11 +2,11 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const wardrobeTool: ToolDefinition = {
   name: "Wardrobe",
-  description: "查看或切换爱丽丝的服装。action=list 返回可用衣橱，可用 name 按服装 name/id/group/content 模糊过滤；action=mirror 照镜子,看看爱丽丝当前穿的是什么服装；action=switch 根据服装 name 切换服装。",
+  description: "查看或切换爱丽丝的服装。action=list: name 为空返回 groups, name 非空按服装 name/id/group/content 模糊过滤；action=mirror 返回当前服装；action=switch 根据服装 name 切换服装；action=random 随机切换匹配到的服装, name 为空则从全部服装随机。",
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["list", "mirror", "switch"] },
+      action: { type: "string", enum: ["list", "mirror", "switch", "random"] },
       name: { type: "string" }
     },
     required: ["action"],
@@ -21,7 +21,6 @@ export const shellToolText = {
   nameRequired: "name is required",
   unknownOutfitName: "unknown outfit name",
   ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`,
-  mirror: (name: string, content: string) => `你看到镜子中的自己穿着: \n 服装：${name}\n${content}`,
-  switched: (name: string) => `服装已切换为${name}`,
+  switched: "success",
   changingNotice: "-少女已更衣-"
 };

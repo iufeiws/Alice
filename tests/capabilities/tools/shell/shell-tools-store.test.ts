@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import { makeShellStore, makeShellTools, makeTempDir, parseToolOutput } from "./shell-tools-helpers.js";
+import { makeShellStore, makeShellTools, makeTempDir } from "./shell-tools-helpers.js";
 
 const path = await import("node:path");
 
@@ -109,7 +109,7 @@ test("wardrobe switch attempts on-body generation once for unattempted outfits",
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.deepEqual(attempted, ["o2"]);
-  assert.equal(parseToolOutput(first).current.onBodyGenerationAttempted, true);
+  assert.equal(shellStore.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.onBodyGenerationAttempted, true);
 });
 
 test("wardrobe switch skips on-body generation for generated outfit images", async () => {
@@ -129,5 +129,5 @@ test("wardrobe switch skips on-body generation for generated outfit images", asy
 
   assert.equal(result.ok, true);
   assert.deepEqual(attempted, []);
-  assert.equal(parseToolOutput(result).current.onBodyGenerationAttempted, true);
+  assert.equal(shellStore.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.onBodyGenerationAttempted, true);
 });

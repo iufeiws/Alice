@@ -1,142 +1,64 @@
-# TTS Plugin
+# TTS 插件
 
-`src/channels/tts` is the canonical outbound voice synthesis plugin.
+`src/channels/tts` 是出站语音合成插件的实现位置。
 
-It owns translation-before-TTS, Genie/MOSS synthesizer creation, streaming audio events, and the preset settings used by `send_chat` voice output and WebRTC voice playback. `tools/messaging` should only call an injected `VoiceSynthesizer`.
+它负责 TTS 前翻译、Genie/MOSS 合成器创建、流式音频事件，以及 `send_chat` 语音输出和 WebRTC 语音播放使用的配置。`tools/messaging` 只应依赖注入进来的 `VoiceSynthesizer`。
 
-## Runtime Boundary
+## 运行边界
 
-- Plugin id: `tts`
-- Admin id: `tts`
-- Display name: `TTS`
-- Config path: `config/plugin/tts/config.json`
-- Provider config paths: `config/plugin/tts/providers/{genie,openai-api,bailian,mimo}.json`
-- Canonical asset root: `assets/tts/preset/`
-- Legacy config fallback: `src/channels/tts/config.json`
+- Plugin id：`tts`
+- Admin id：`tts`
+- Display name：`TTS`
+- 主配置路径：`config/plugin/tts/config.json`
+- 预设配置路径：`config/plugin/tts/presets/{preset}.json`
+- 资源根目录：`assets/tts/preset/`
 
-The original outgoing text remains the `send_chat` transcript and persisted message content. Translation output is transient and is used only for synthesis.
+`send_chat` 的原始出站文本仍然是会话 transcript 和持久化消息内容。翻译结果只用于语音合成，不写回消息历史。
 
-## Config Shape
+## 配置结构
+
+主配置只保存全局开关、运行时选中的 TTS 预设、当前编辑的 TTS 预设，以及翻译预设：
 
 ```json
 {
   "enabled": true,
-  "conversion": { "provider": "genie" },
+  "activePresetName": "mimo",
+  "editPresetName": "mimo",
   "translationPresetName": "default",
   "translationPresets": {
     "default": {
       "translationEnabled": true,
-      "apiPresetName": "voice",
-      "prompt": "Translate for TTS: {{text}}"
-    }
-  },
-  "voice": {
-    "modelConfigName": "jp",
-    "modelConfigs": {
-      "jp": {
-        "language": "jp",
-        "speed": 1.15,
-        "partSilenceSeconds": 0.25,
-        "splitText": false
-      }
+      "apiPresetName": "voice"
     }
   }
 }
 ```
 
-Provider-specific settings live in separate JSON files under `config/plugin/tts/providers/`.
-For example, `providers/mimo.json` stores MiMo `mode`, auth, voice settings, and uploaded voice-clone data URLs. The MiMo request `model` is derived from `mode`.
+每个 TTS 预设是独立的扁平 JSON 文件，位于 `config/plugin/tts/presets/`。预设名必须能安全作为文件名使用。
 
-Translation preset fields:
+示例：
 
-- `providers/genie.json.enabled`: whether to try the LAN Genie TTS service before local Genie fallback.
-- `providers/genie.json.baseURL`: LAN Genie TTS IP or base URL, for example `192.168.0.103` or `http://192.168.0.103:8767`. Bare IP/host values default to port `8767`.
-- `providers/genie.json.localFallbackEnabled`: whether a non-local Genie route may start local Genie after it fails. Disable this to keep API and remote routes from waking local Genie.
-- `translationPresetName`: active translation preset used at runtime. It is a common setting, not the preset currently being edited in the Translation block.
-- `translationPresets.{name}.translationEnabled`: whether to translate before synthesis.
-- `translationPresets.{name}.apiPresetName`: LLM API preset used for translation.
-- `translationPresets.{name}.prompt`: translation prompt. Prompt variables are rendered before translation only.
-
-Model preset fields:
-
-- `voice.modelConfigName`: active model preset used at runtime. It is a common setting, not the preset currently being edited in the Model block.
-- `voice.modelConfigs.{name}.language`: Genie language, `jp`, `zh`, or `en`.
-- `voice.modelConfigs.{name}.speed`: optional Genie speed multiplier, `0.5` to `2.0`.
-- `voice.modelConfigs.{name}.partSilenceSeconds`: optional silence between split Genie parts, `0` to `3` seconds.
-- `voice.modelConfigs.{name}.splitText`: whether Genie may split one TTS text into multiple synthesized parts.
-
-The config does not store `modelDir`, `referenceAudio`, or `referenceText` paths. They are derived from the selected model preset name:
-
-```text
-assets/tts/preset/{name}/model/
-assets/tts/preset/{name}/reference.*
-assets/tts/preset/{name}/reference.txt
+```json
+{
+  "provider": "genie",
+  "genie": {
+    "enabled": true,
+    "baseURL": "http://127.0.0.1:8767",
+    "localFallbackEnabled": false,
+    "language": "jp",
+    "modelDir": "assets/tts/preset/genie-jp/model",
+    "speed": 1.15,
+    "partSilenceSeconds": 0.25,
+    "splitText": false
+  }
+}
 ```
 
-Legacy config files under `src/channels/tts/config.json` are still read as migration input when the canonical config is missing. Legacy flat fields such as `translationEnabled`, `apiPresetName`, `prompt`, `voice.language`, `voice.modelDir`, `voice.referenceAudio`, and `voice.referenceText` are also still accepted.
+`provider` 决定该预设使用的后台，可以是 `genie`、`openai-api`、`bailian` 或 `mimo`。运行时只使用 `activePresetName` 指向的预设。
 
-## Admin Settings Layout
+## Genie 资源
 
-Current admin page layout:
-
-### Translation
-
-- Always visible: `currentTranslation.translationEnabled` switch.
-- Always visible: `translationEditPresetName` select. This chooses the preset being edited, not the runtime active preset.
-- Changing `translationEditPresetName` only changes the edit target and reloads the editable fields from `translationPresets`; it does not save or activate that preset.
-- `Modify` expands:
-  - `newTranslationPresetName`
-  - `currentTranslation.apiPresetName`
-  - `currentTranslation.prompt`
-- `Save Translation Preset` saves only the selected edit target preset. It does not change `translationPresetName`.
-
-### Model
-
-- Always visible: `voice.modelEditPresetName` select. This chooses the preset being edited, not the runtime active preset.
-- Changing `voice.modelEditPresetName` only changes the edit target and reloads the editable fields from `voice.modelConfigs`; it does not save or activate that preset.
-- `Modify` expands:
-  - `voice.newModelConfigName`
-  - `voice.currentModel.language`
-  - `voice.currentModel.modelDir`
-  - `voice.currentModel.referenceAudio`
-  - `voice.currentModel.referenceText`
-  - `voice.currentModel.speed`
-  - `voice.currentModel.splitText`
-  - `voice.currentModel.partSilenceSeconds`
-- `Save Model Preset` saves only the selected edit target preset. It does not change `voice.modelConfigName`.
-
-### Common
-
-- `translationPresetName`: active translation preset used at runtime.
-- `voice.modelConfigName`: active model preset used at runtime.
-- `enabled`: enables the TTS plugin route.
-- `providers/genie.json.enabled`: enables the remote Genie TTS service.
-- `providers/genie.json.baseURL`: remote Genie TTS IP or base URL.
-- `targetRoute`: readonly `send_chat.voice.before_tts`.
-- `persistTranslation`: readonly note that translations are transient.
-- `Save Common Settings` saves only this section.
-
-This split is intentional. Preset-section saves write the edit target (`translationEditPresetName` or `voice.modelEditPresetName`). Common saves write the active runtime selectors (`translationPresetName` and `voice.modelConfigName`). A dropdown change in a preset section should never be treated as activating that preset.
-
-The admin payload may include `translationEditPresetName`, `currentTranslation`, `voice.modelEditPresetName`, `voice.currentModel`, `newTranslationPresetName`, and `voice.newModelConfigName`. The real config file should not persist those admin-only edit-target fields.
-
-## Remote Genie Flow
-
-When `providers/genie.json.enabled` is true, runtime first tries `providers/genie.json.baseURL`. If the remote service fails before audio is produced, runtime falls back to local Genie only when `providers/genie.json.localFallbackEnabled` is enabled.
-
-Explicit remote Genie requests use the LAN upload protocol documented in `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md`:
-
-1. Send the original synthesis request to `/synthesize` with `content-type: application/json`; do not send `outputPath` for explicit remote requests.
-2. Keep `modelDir` as the local model directory path derived from `assets/tts/preset/{model}/model`.
-3. Put `referenceText` in the JSON body as explicit text content. Do not send a `reference.txt` path.
-4. If the server returns `409` with `code: "MODEL_NOT_UPLOADED"` or `code: "REFERENCE_NOT_UPLOADED"`, zip the preset directory that contains `modelDir` and its matching `reference.*` / `reference.txt`, then POST it to the returned `uploadUrl` as `application/zip`. If the response does not include `uploadUrl`, use `/models/upload?modelDir={modelDir}`.
-5. After upload succeeds, retry the original `/synthesize` request unchanged.
-
-Local Genie still uses the older local `/stream` JSON request path, but its `referenceText` value is also resolved to text before being sent or passed to the local service process.
-
-## Asset Migration
-
-New assets should live under:
+Genie 预设只保存运行所需的模型指针和参数。引用音频和引用文本不保存在预设 JSON 中，路径由预设名推导：
 
 ```text
 assets/tts/preset/{preset}/model/
@@ -144,4 +66,38 @@ assets/tts/preset/{preset}/reference.*
 assets/tts/preset/{preset}/reference.txt
 ```
 
-Legacy assets under `assets/plugin/tts/` or `assets/tts/model/` may remain as migration sources. New admin writes should use `assets/tts/preset/`.
+上传模型时，管理后台写入当前编辑预设的 `genie.modelDir`。上传引用音频和保存引用文本时，管理后台写入同一个预设资源目录。
+
+## 后台预设
+
+- `mimo`：MiMo TTS 预设，保存 MiMo 模式、鉴权、音色、voice clone 数据等配置。
+- `bailian`：百炼 TTS 预设，保存 service、endpoint、workspace、voice、format、采样率等配置。
+- `openai-api`：OpenAI 兼容 speech API 预设，保存 API preset、model、voice、format、采样率等配置。
+- `genie-*`：Genie 预设，通常每个旧 Genie model 生成一个同名派生预设，例如 `genie-jp`。
+
+旧的 `config/plugin/tts/providers/*.json` 不再是运行时配置来源。
+
+## 管理后台行为
+
+TTS 预设有两个独立选择：
+
+- `activePresetName`：运行时使用的预设。
+- `editPresetName`：管理后台当前编辑的预设。
+
+保存编辑预设不会自动切换运行时预设。只有修改 `activePresetName` 才会改变运行时使用的后台和配置。
+
+管理后台 payload 可以包含 `currentPreset` 和 `newPresetName`。这些是表单编辑字段，不写入主配置文件；真正的预设内容写入对应的 `presets/{preset}.json`。
+
+## Remote Genie 流程
+
+当活动预设的 `provider` 是 `genie` 且 `genie.enabled` 为 true 时，运行时先尝试 `genie.baseURL` 指向的远端 Genie 服务。如果远端在产出音频前失败，只有在 `genie.localFallbackEnabled` 为 true 时才允许启动本地 Genie。
+
+显式远端 Genie 请求使用 `docs/remote_server/genie_tts/CLIENT_UPLOAD_FLOW.md` 记录的上传协议：
+
+1. 向 `/synthesize` 发送 JSON 合成请求，不为显式远端请求发送 `outputPath`。
+2. `modelDir` 保持为当前预设的本地模型目录路径。
+3. `referenceText` 作为文本内容放入 JSON 请求体，不发送 `reference.txt` 路径。
+4. 如果服务端返回 `409` 且 `code` 是 `MODEL_NOT_UPLOADED` 或 `REFERENCE_NOT_UPLOADED`，则打包包含 `modelDir` 与同目录引用资源的预设目录，并按返回的 `uploadUrl` 上传。
+5. 上传成功后，使用原始请求重试 `/synthesize`。
+
+本地 Genie 仍使用本地 `/stream` JSON 请求路径，但 `referenceText` 同样会先解析为文本内容。

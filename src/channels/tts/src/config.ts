@@ -8,10 +8,11 @@ import type {
   TtsApiPreset,
   TtsAudioTextChunk,
   TtsBailianConversionConfig,
-  TtsConversionConfig,
   TtsConversionProvider,
+  TtsGeniePresetConfig,
   TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
+  TtsPreset,
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
@@ -49,37 +50,23 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   const raw = fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}";
   const parsed = parseJsonObject(raw);
   const preset = parseJsonObject(parsed.api_preset);
-  const conversion = ttsConversionConfigValue(resolved, parsed.conversion);
-  const legacyPrompt = stringValue(parsed.prompt);
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
-  const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName, {
-    translationEnabled: booleanValue(parsed.translationEnabled, true),
-    apiPresetName: stringValue(parsed.apiPresetName) || stringValue(preset.name),
-    ...(legacyPrompt ? { prompt: legacyPrompt } : {})
-  });
+  const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName);
   const selectedTranslation = selectedTtsTranslationPreset({ translationPresetName, translationPresets });
   const translationEnabled = selectedTranslation.translationEnabled ?? true;
-  const selectedPrompt = selectedTranslation.prompt || legacyPrompt;
+  const selectedPrompt = selectedTranslation.prompt;
   if (translationEnabled && !selectedPrompt) throw new Error("tts translation prompt is required");
-  const voice = parseJsonObject(parsed.voice);
-  const modelConfigName = stringValue(voice.modelConfigName) || ttsLanguageValue(voice.language);
-  const modelConfigs = ttsModelConfigsValue(voice.modelConfigs, modelConfigName, {
-    language: ttsLanguageValue(voice.language),
-    speed: optionalNumberValue(voice.speed),
-    partSilenceSeconds: optionalNumberValue(voice.partSilenceSeconds),
-    splitText: voice.splitText === undefined ? undefined : booleanValue(voice.splitText, false),
-    modelDir: stringValue(voice.modelDir),
-    referenceAudio: stringValue(voice.referenceAudio),
-    referenceText: stringValue(voice.referenceText)
-  });
+  const presets = readTtsPresets(resolved);
+  const activePresetName = safeModelConfigName(stringValue(parsed.activePresetName) || "");
+  if (!activePresetName) throw new Error("tts activePresetName is required");
+  const activePreset = presets[activePresetName];
+  if (!activePreset) throw new Error(`tts active preset not found: ${activePresetName}`);
   return {
     enabled: booleanValue(parsed.enabled, false),
-    remote: {
-      enabled: conversion.genie?.enabled ?? true,
-      baseURL: conversion.genie?.baseURL ?? normalizeBaseURL("http://192.168.0.103:8767"),
-      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? true
-    },
-    conversion,
+    activePresetName,
+    editPresetName: safeModelConfigName(stringValue(parsed.editPresetName) || "") || activePresetName,
+    presets,
+    activePreset,
     translationPresetName,
     translationPresets,
     translationEnabled,
@@ -94,11 +81,7 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
       timeoutMs: numberValue(preset.timeoutMs, 60_000),
       extraParams: recordValue(preset.extraParams)
     },
-    prompt: selectedPrompt ?? "",
-    voice: {
-      modelConfigName,
-      modelConfigs
-    }
+    prompt: selectedPrompt ?? ""
   };
 }
 
@@ -110,13 +93,13 @@ export function renderTtsPrompt(config: TtsPluginConfig, deps: TtsPluginDeps): s
 }
 
 export function ttsGenieOverrides(config: TtsPluginConfig): NonNullable<Parameters<VoiceSynthesizer>[0]["genie"]> {
-  const model = selectedTtsVoiceModelConfig(config);
-  const modelPresetName = selectedTtsVoiceModelConfigName(config);
-  const referenceTextPath = ttsPresetReferenceText(modelPresetName);
+  const model = selectedTtsPreset(config).genie ?? {};
+  const presetName = selectedTtsPresetName(config);
+  const referenceTextPath = ttsPresetReferenceTextPath(presetName);
   return {
     language: model.language ?? "jp",
-    modelDir: ttsPresetModelDir(modelPresetName),
-    referenceAudio: ttsPresetReferenceAudio(modelPresetName),
+    modelDir: model.modelDir || ttsPresetModelDir(presetName),
+    referenceAudio: ttsPresetReferenceAudio(presetName),
     referenceText: fs.existsSync(referenceTextPath) ? ttsReferenceTextValue(referenceTextPath) : undefined,
     ...(model.speed !== undefined ? { speed: model.speed } : {}),
     ...(model.partSilenceSeconds !== undefined ? { partSilenceSeconds: model.partSilenceSeconds } : {}),
@@ -125,16 +108,23 @@ export function ttsGenieOverrides(config: TtsPluginConfig): NonNullable<Paramete
 }
 
 export function selectedTtsVoiceModelConfig(config: TtsPluginConfig): TtsVoiceModelConfig {
-  const voice = config.voice ?? {};
-  const modelConfigs = voice.modelConfigs ?? {};
-  const selected = voice.modelConfigName ? modelConfigs[voice.modelConfigName] : undefined;
-  return selected ?? modelConfigs[Object.keys(modelConfigs)[0] ?? ""] ?? { language: "jp" };
+  return selectedTtsPreset(config).genie ?? { language: "jp" };
 }
 
 export function selectedTtsVoiceModelConfigName(config: TtsPluginConfig): string {
-  const voice = config.voice ?? {};
-  const modelConfigs = voice.modelConfigs ?? {};
-  return voice.modelConfigName || Object.keys(modelConfigs)[0] || "jp";
+  return selectedTtsPresetName(config);
+}
+
+export function selectedTtsPreset(config: TtsPluginConfig): TtsPreset {
+  if (!config.activePresetName) throw new Error("tts activePresetName is required");
+  const preset = config.presets?.[config.activePresetName];
+  if (!preset) throw new Error(`tts active preset not found: ${config.activePresetName}`);
+  return preset;
+}
+
+export function selectedTtsPresetName(config: TtsPluginConfig): string {
+  if (!config.activePresetName) throw new Error("tts activePresetName is required");
+  return config.activePresetName;
 }
 
 export function selectedTtsTranslationPreset(config: Pick<TtsPluginConfig, "translationPresetName" | "translationPresets">): TtsTranslationPreset {
@@ -147,12 +137,12 @@ function ttsPresetModelDir(name: string): string {
   return path.join(ttsPresetAssetRoot, safeModelConfigName(name) || "jp", "model").split(path.sep).join("/");
 }
 
-function ttsPresetReferenceText(name: string): string {
-  return path.join(ttsPresetAssetRoot, safeModelConfigName(name) || "jp", "reference.txt").split(path.sep).join("/");
+export function ttsPresetReferenceTextPath(name: string, assetRoot = "assets"): string {
+  return path.join(assetRoot, "tts", "preset", safeModelConfigName(name) || "jp", "reference.txt").split(path.sep).join("/");
 }
 
-function ttsPresetReferenceAudio(name: string): string | undefined {
-  const root = path.join(ttsPresetAssetRoot, safeModelConfigName(name) || "jp");
+export function ttsPresetReferenceAudio(name: string, assetRoot = "assets"): string | undefined {
+  const root = path.join(assetRoot, "tts", "preset", safeModelConfigName(name) || "jp");
   for (const candidate of ["reference.wav", "reference.mp3", "reference.ogg", "reference.opus", "reference.m4a"]) {
     const filePath = path.join(root, candidate);
     if (fs.existsSync(filePath)) return filePath.split(path.sep).join("/");
@@ -170,34 +160,32 @@ export function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginD
   return config.api_preset;
 }
 
-function ttsConversionConfigValue(configPath: string, value: unknown): TtsConversionConfig {
-  const raw = parseJsonObject(value);
+export function ttsPresetConfigDir(configPath = defaultConfigPath): string {
+  return path.join(path.dirname(path.resolve(configPath)), "presets");
+}
+
+export function ttsPresetConfigPath(configPath: string, presetName: string): string {
+  return path.join(ttsPresetConfigDir(configPath), `${safeModelConfigName(presetName)}.json`);
+}
+
+function readTtsPresets(configPath: string): Record<string, TtsPreset> {
+  const dir = ttsPresetConfigDir(configPath);
+  if (!fs.existsSync(dir)) return {};
+  return Object.fromEntries(fs.readdirSync(dir)
+    .filter((entry) => entry.endsWith(".json"))
+    .map((entry) => {
+      const name = safeModelConfigName(path.basename(entry, ".json"));
+      return [name, ttsPresetValue(parseJsonObject(fs.readFileSync(path.join(dir, entry), "utf8")))];
+    })
+    .filter(([name]) => Boolean(name))) as Record<string, TtsPreset>;
+}
+
+function ttsPresetValue(raw: Record<string, unknown>): TtsPreset {
   const provider = ttsConversionProviderValue(raw.provider);
-  const providersDir = ttsProviderConfigDir(configPath);
-  const genie = parseJsonObject(readTtsProviderConfig(providersDir, "genie"));
-  const openaiApi = parseJsonObject(readTtsProviderConfig(providersDir, "openai-api"));
-  const bailian = parseJsonObject(readTtsProviderConfig(providersDir, "bailian"));
-  const mimo = parseJsonObject(readTtsProviderConfig(providersDir, "mimo"));
-  return {
-    provider,
-    genie: ttsGenieConversionConfigValue(genie),
-    openaiApi: ttsOpenAiApiConversionConfigValue(openaiApi),
-    bailian: ttsBailianConversionConfigValue(bailian),
-    mimo: ttsMimoConversionConfigValue(mimo)
-  };
-}
-
-export function ttsProviderConfigDir(configPath = defaultConfigPath): string {
-  return path.join(path.dirname(path.resolve(configPath)), "providers");
-}
-
-export function ttsProviderConfigPath(configPath: string, provider: TtsConversionProvider): string {
-  return path.join(ttsProviderConfigDir(configPath), `${provider}.json`);
-}
-
-function readTtsProviderConfig(providersDir: string, provider: TtsConversionProvider): Record<string, unknown> {
-  const filePath = path.join(providersDir, `${provider}.json`);
-  return fs.existsSync(filePath) ? parseJsonObject(fs.readFileSync(filePath, "utf8")) : {};
+  if (provider === "openai-api") return { provider, openaiApi: ttsOpenAiApiConversionConfigValue(parseJsonObject(raw.openaiApi)) };
+  if (provider === "bailian") return { provider, bailian: ttsBailianConversionConfigValue(parseJsonObject(raw.bailian)) };
+  if (provider === "mimo") return { provider, mimo: ttsMimoConversionConfigValue(parseJsonObject(raw.mimo)) };
+  return { provider: "genie", genie: ttsGeniePresetConfigValue(parseJsonObject(raw.genie)) };
 }
 
 function ttsConversionProviderValue(value: unknown): TtsConversionProvider {
@@ -211,6 +199,17 @@ function ttsGenieConversionConfigValue(raw: Record<string, unknown>): TtsRemoteC
     baseURL: normalizeBaseURL(stringValue(raw.baseURL) || "http://192.168.0.103:8767"),
     localFallbackEnabled: raw.localFallbackEnabled === undefined ? true : booleanValue(raw.localFallbackEnabled, true),
     ...(textFilters.length ? { textFilters } : {})
+  };
+}
+
+function ttsGeniePresetConfigValue(raw: Record<string, unknown>): TtsGeniePresetConfig {
+  return {
+    ...ttsGenieConversionConfigValue(raw),
+    language: ttsLanguageValue(raw.language),
+    speed: optionalNumberValue(raw.speed),
+    partSilenceSeconds: optionalNumberValue(raw.partSilenceSeconds),
+    splitText: raw.splitText === undefined ? undefined : booleanValue(raw.splitText, false),
+    modelDir: stringValue(raw.modelDir)
   };
 }
 
@@ -301,15 +300,16 @@ export function defaultBailianTtsEndpoint(service: "qwen" | "cosy" | undefined):
 }
 
 export function selectedTtsConversionProvider(config: TtsPluginConfig): TtsConversionProvider {
-  const provider = config.conversion?.provider;
+  const provider = selectedTtsPreset(config).provider;
   return provider === "openai-api" || provider === "bailian" || provider === "mimo" ? provider : "genie";
 }
 
 export function ttsProviderTextFilters(conversion: TtsConversionProvider, config: TtsPluginConfig): TtsTextFilter[] {
-  if (conversion === "openai-api") return config.conversion?.openaiApi?.textFilters ?? [];
-  if (conversion === "bailian") return config.conversion?.bailian?.textFilters ?? [];
-  if (conversion === "mimo") return config.conversion?.mimo?.textFilters ?? [];
-  return config.conversion?.genie?.textFilters ?? config.remote?.textFilters ?? [];
+  const preset = selectedTtsPreset(config);
+  if (conversion === "openai-api") return preset.openaiApi?.textFilters ?? [];
+  if (conversion === "bailian") return preset.bailian?.textFilters ?? [];
+  if (conversion === "mimo") return preset.mimo?.textFilters ?? [];
+  return preset.genie?.textFilters ?? [];
 }
 
 export function applyTtsTextFilters(text: string, filters: TtsTextFilter[]): string {
@@ -324,13 +324,13 @@ function ttsLanguageValue(value: unknown): "jp" | "zh" | "en" {
   return value === "zh" || value === "en" ? value : "jp";
 }
 
-function ttsTranslationPresetsValue(value: unknown, fallbackName: string, fallback: TtsTranslationPreset): Record<string, TtsTranslationPreset> {
+function ttsTranslationPresetsValue(value: unknown, fallbackName: string): Record<string, TtsTranslationPreset> {
   const raw = parseJsonObject(value);
   const entries = Object.fromEntries(Object.entries(raw)
     .map(([name, entry]) => [safeModelConfigName(name), ttsTranslationPresetValue(entry)])
     .filter(([name]) => Boolean(name))) as Record<string, TtsTranslationPreset>;
   if (Object.keys(entries).length > 0) return entries;
-  return { [safeModelConfigName(fallbackName) || "default"]: fallback };
+  return { [safeModelConfigName(fallbackName) || "default"]: { translationEnabled: false } };
 }
 
 function ttsTranslationPresetValue(value: unknown): TtsTranslationPreset {
@@ -340,15 +340,6 @@ function ttsTranslationPresetValue(value: unknown): TtsTranslationPreset {
     apiPresetName: stringValue(raw.apiPresetName),
     prompt: stringValue(raw.prompt)
   };
-}
-
-function ttsModelConfigsValue(value: unknown, fallbackName: string, fallback: TtsVoiceModelConfig): Record<string, TtsVoiceModelConfig> {
-  const raw = parseJsonObject(value);
-  const entries = Object.fromEntries(Object.entries(raw)
-    .map(([name, entry]) => [safeModelConfigName(name), ttsVoiceModelConfigValue(entry)])
-    .filter(([name]) => Boolean(name))) as Record<string, TtsVoiceModelConfig>;
-  if (Object.keys(entries).length > 0) return entries;
-  return { [safeModelConfigName(fallbackName) || "jp"]: fallback };
 }
 
 function ttsVoiceModelConfigValue(value: unknown): TtsVoiceModelConfig {

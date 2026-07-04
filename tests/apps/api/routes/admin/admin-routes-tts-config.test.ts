@@ -22,6 +22,7 @@ import {
   photoDefaults,
   promptStoragePath,
   runMemoryInductionForMessages,
+  writeTtsPluginConfig,
   writePreset
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
@@ -30,12 +31,7 @@ test("admin plugin config patch writes tts config with preset reference only", a
   const root = makeTempDir("admin-plugin-config");
   const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
-    enabled: false,
-    apiPresetName: "old",
-    prompt: "Old prompt"
-  })}\n`);
+  writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "old", prompt: "Old prompt" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
@@ -44,25 +40,24 @@ test("admin plugin config patch writes tts config with preset reference only", a
     pluginConfigs: { tts: { configPath, assetRoot } }
   };
   const handler = createAdminHandler(context);
-  const modelConfigName = `zh-${path.basename(root)}`;
+  const presetName = `zh-${path.basename(root)}`;
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
     enabled: true,
-    remote: {
-      enabled: false,
-      baseURL: "10.0.0.8",
-      localFallbackEnabled: false
-    },
+    newPresetName: presetName,
     newTranslationPresetName: "main",
     currentTranslation: {
       translationEnabled: false,
       prompt: "New prompt",
       apiPresetName: "voice"
     },
-    voice: {
-      newModelConfigName: modelConfigName,
-      currentModel: {
+    currentPreset: {
+      provider: "genie",
+      genie: {
+        enabled: false,
+        baseURL: "10.0.0.8",
+        localFallbackEnabled: false,
         language: "zh",
         referenceText: "これは参照テキストです。",
         speed: 1.2,
@@ -74,40 +69,33 @@ test("admin plugin config patch writes tts config with preset reference only", a
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
-  const savedGenie = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "genie.json"), "utf8"));
+  const savedGenie = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), "utf8"));
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configValue.translationPresetName, "default");
-  assert.deepEqual(body.configValue.remote, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
+  assert.equal(body.configValue.currentPreset.genie.baseURL, "http://10.0.0.8:8767");
   assert.equal(body.configValue.translationPresets.main.apiPresetName, "voice");
-  assert.equal(body.configValue.voice.modelConfigs[modelConfigName].language, "zh");
+  assert.equal(body.configValue.presets[presetName].genie.language, "zh");
   assert.equal(saved.enabled, true);
-  assert.equal(saved.remote, undefined);
-  assert.deepEqual(savedGenie, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false });
-  assert.deepEqual(saved.conversion, { provider: "genie" });
+  assert.equal(savedGenie.provider, "genie");
+  assert.deepEqual(savedGenie.genie, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false, language: "zh", modelDir: "assets/tts/preset/genie-jp/model", speed: 1.2, partSilenceSeconds: 0.45, splitText: false });
   assert.equal(saved.translationPresetName, "default");
   assert.equal(saved.translationPresets.main.translationEnabled, false);
   assert.equal(saved.translationPresets.main.prompt, "New prompt");
   assert.equal(saved.translationPresets.main.apiPresetName, "voice");
   assert.equal(saved.api_preset, undefined);
-  assert.equal(saved.voice.modelConfigName, "jp");
-  assert.equal(saved.voice.newModelConfigName, undefined);
-  assert.equal(saved.voice.currentModel, undefined);
-  assert.equal(saved.voice.modelConfigs[modelConfigName].language, "zh");
-  assert.equal(saved.voice.modelConfigs[modelConfigName].modelDir, undefined);
-  assert.equal(saved.voice.modelConfigs[modelConfigName].referenceText, undefined);
-  assert.equal(saved.voice.modelConfigs[modelConfigName].speed, 1.2);
-  assert.equal(saved.voice.modelConfigs[modelConfigName].partSilenceSeconds, 0.45);
-  assert.equal(saved.voice.modelConfigs[modelConfigName].splitText, false);
-  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", modelConfigName, "reference.txt"), "utf8"), "これは参照テキストです。");
+  assert.equal(saved.activePresetName, "genie-jp");
+  assert.equal(saved.editPresetName, presetName);
+  assert.equal(saved.newPresetName, undefined);
+  assert.equal(saved.currentPreset, undefined);
+  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", presetName, "reference.txt"), "utf8"), "これは参照テキストです。");
 });
 
 test("admin TTS config schema exposes voice language and language model folder", async () => {
   const root = makeTempDir("admin-tts-config-schema");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
@@ -119,24 +107,24 @@ test("admin TTS config schema exposes voice language and language model folder",
   const response = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/tts/config", {}), response);
   const body = JSON.parse(response.body);
-  const configField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.modelEditPresetName");
-  const languageField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.language");
-  const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "voice.currentModel.modelDir");
-  const providerField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.provider");
-  const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.enabled");
-  const localFallbackField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.localFallbackEnabled");
-  const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.genie.baseURL");
-  const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.openaiApi.apiPresetName");
-  const bailianServiceField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.service");
-  const bailianKeyField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.apiKey");
-  const bailianModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.bailian.model");
-  const mimoModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "conversion.mimo.model");
+  const configField = body.configSchema.fields.find((field: { key: string }) => field.key === "editPresetName");
+  const languageField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.genie.language");
+  const modelField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.genie.modelDir");
+  const providerField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.provider");
+  const remoteEnabledField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.genie.enabled");
+  const localFallbackField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.genie.localFallbackEnabled");
+  const remoteUrlField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.genie.baseURL");
+  const openAiPresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.openaiApi.apiPresetName");
+  const bailianServiceField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.bailian.service");
+  const bailianKeyField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.bailian.apiKey");
+  const bailianModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.bailian.model");
+  const mimoModelField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.mimo.model");
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "conversion_bailian", "conversion_mimo", "general"]);
   assert.equal(configField.type, "select");
   assert.equal(configField.group, "model_genie");
-  assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["jp"]);
+  assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["genie-jp"]);
   assert.equal(languageField.type, "select");
   assert.equal(languageField.group, "model_genie");
   assert.deepEqual(languageField.options.map((option: { value: string }) => option.value), ["jp", "zh", "en"]);
@@ -164,12 +152,11 @@ test("admin TTS config schema exposes voice language and language model folder",
 test("admin TTS config patch stores Bailian api key and preserves it when blank", async () => {
   const root = makeTempDir("admin-tts-bailian-key");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
+  writeTtsPluginConfig(root, {
+    configPath,
     enabled: true,
-    translationEnabled: false,
-    prompt: "Read aloud.",
-    conversion: {
+    activePresetName: "bailian",
+    preset: {
       provider: "bailian",
       bailian: {
         service: "qwen",
@@ -179,7 +166,7 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
         voice: "Cherry"
       }
     }
-  })}\n`);
+  });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
@@ -190,7 +177,7 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
 
   const first = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
-    conversion: {
+    currentPreset: {
       provider: "bailian",
       bailian: {
         apiKey: "dashscope-secret",
@@ -200,16 +187,16 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     }
   }), first);
   const firstSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const firstBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
+  const firstBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "bailian.json"), "utf8"));
 
   assert.equal(first.statusCode, 200);
   assert.equal(JSON.parse(first.body).ok, true);
-  assert.deepEqual(firstSaved.conversion, { provider: "bailian" });
-  assert.equal(firstBailian.apiKey, "dashscope-secret");
+  assert.equal(firstSaved.activePresetName, "bailian");
+  assert.equal(firstBailian.bailian.apiKey, "dashscope-secret");
 
   const second = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
-    conversion: {
+    currentPreset: {
       provider: "bailian",
       bailian: {
         apiKey: "",
@@ -218,31 +205,23 @@ test("admin TTS config patch stores Bailian api key and preserves it when blank"
     }
   }), second);
   const secondSaved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const secondBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
+  const secondBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "bailian.json"), "utf8"));
 
   assert.equal(second.statusCode, 200);
   assert.equal(JSON.parse(second.body).ok, true);
-  assert.deepEqual(secondSaved.conversion, { provider: "bailian" });
-  assert.equal(secondBailian.apiKey, "dashscope-secret");
+  assert.equal(secondSaved.activePresetName, "bailian");
+  assert.equal(secondBailian.bailian.apiKey, "dashscope-secret");
 });
 
 test("admin TTS config patch switches Bailian service default endpoint", async () => {
   const root = makeTempDir("admin-tts-bailian-service");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
+  writeTtsPluginConfig(root, {
+    configPath,
     enabled: true,
-    translationEnabled: false,
-    prompt: "Read aloud.",
-    conversion: {
-      provider: "bailian",
-      bailian: {
-        service: "qwen",
-        model: "qwen3-tts-vc-2026-01-22",
-        voice: "Cherry"
-      }
-    }
-  })}\n`);
+    activePresetName: "bailian",
+    preset: { provider: "bailian", bailian: { service: "qwen", model: "qwen3-tts-vc-2026-01-22", voice: "Cherry" } }
+  });
   const context = {
     ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
     pluginConfigs: { tts: { configPath } }
@@ -251,7 +230,7 @@ test("admin TTS config patch switches Bailian service default endpoint", async (
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
-    conversion: {
+    currentPreset: {
       provider: "bailian",
       bailian: {
         service: "cosy",
@@ -261,12 +240,12 @@ test("admin TTS config patch switches Bailian service default endpoint", async (
     }
   }), response);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const savedBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "bailian.json"), "utf8"));
+  const savedBailian = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "bailian.json"), "utf8"));
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(saved.conversion, { provider: "bailian" });
-  assert.equal(savedBailian.service, "cosy");
-  assert.equal(savedBailian.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+  assert.equal(saved.activePresetName, "bailian");
+  assert.equal(savedBailian.bailian.service, "cosy");
+  assert.equal(savedBailian.bailian.endpoint, "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
 });
 
 test("admin plugin test can run tts with translation disabled", async () => {
@@ -276,9 +255,8 @@ test("admin plugin test can run tts with translation disabled", async () => {
   const ttsOutputDir = "generated/tts";
   const voicePath = path.join(assetRoot, "generated", "tts", `voice-${path.basename(root)}.opus`);
   let capturedText = "";
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, translationEnabled: false, prompt: "Translate:" })}\n`);
+  writeTtsPluginConfig(root, { configPath, enabled: true, translation: { prompt: "Translate:" } });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   let llmCalls = 0;
@@ -322,12 +300,7 @@ test("admin plugin test can run tts with translation disabled", async () => {
 test("admin plugin enable and disable update tts config", async () => {
   const root = makeTempDir("admin-plugin-switch");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
-    enabled: false,
-    apiPresetName: "voice",
-    prompt: "Translate:"
-  })}\n`);
+  writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));

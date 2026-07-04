@@ -24,13 +24,39 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
+function ttsConfig(input: any): any {
+  const preset = input.preset ?? (input.conversion
+    ? {
+      provider: input.conversion.provider,
+      genie: input.conversion.genie,
+      openaiApi: input.conversion.openaiApi,
+      bailian: input.conversion.bailian,
+      mimo: input.conversion.mimo
+    }
+    : { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } });
+  return { ...input, activePresetName: "test", presets: { test: preset }, activePreset: preset };
+}
+
+function writeTtsConfigFile(configPath: string, input: any, presetName = "test", preset: any = { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } }) {
+  fs.mkdirSync(path.join(path.dirname(configPath), "presets"), { recursive: true });
+  const { translationEnabled, apiPresetName, prompt, conversion: _conversion, voice: _voice, translationPresets, translationPresetName = "default", ...rest } = input;
+  fs.writeFileSync(configPath, JSON.stringify({
+    ...rest,
+    activePresetName: presetName,
+    editPresetName: presetName,
+    translationPresetName,
+    translationPresets: translationPresets ?? { [translationPresetName]: { translationEnabled, apiPresetName, prompt } }
+  }));
+  fs.writeFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), JSON.stringify(preset));
+}
+
 test("bailian tts uses CosyVoice SpeechSynthesizer endpoint and parameters", async () => {
   const requests: Array<{ url: string; headers: Headers; body: any }> = [];
   const synthesize = createBailianTtsVoiceSynthesizer({
     enabled: true,
     translationEnabled: false,
     prompt: "Read aloud.",
-    conversion: {
+    ...ttsConfig({ conversion: {
       provider: "bailian",
       bailian: {
         service: "cosy",
@@ -42,7 +68,7 @@ test("bailian tts uses CosyVoice SpeechSynthesizer endpoint and parameters", asy
         channels: 1,
         extraParams: { volume: 50 }
       }
-    }
+    } })
   }, {
     env: { DASHSCOPE_API_KEY: "env-key" },
     fetch: async (url, init) => {
@@ -93,7 +119,7 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
     enabled: true,
     translationEnabled: false,
     prompt: "unused",
-    conversion: {
+    ...ttsConfig({ conversion: {
       provider: "mimo",
       mimo: {
         mode: "voiceclone",
@@ -103,7 +129,7 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
         sampleRate: 24000,
         channels: 1
       }
-    }
+    } })
   }, {
     outputDir,
     fetch: async (url, init) => {
@@ -173,12 +199,12 @@ test("tts text chunk splitter batches fixed backend text by sentence-ending bloc
 test("tts stream buffers input into takeable segments before translation and chunks backend text after translation", async () => {
   const dir = makeTempDir("tts-stream-two-stage-splitting");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     translationEnabled: true,
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
-  }));
+  });
   const sourceParts = [
     "入口一入口一入口一入口一入口一入口一入口一。",
     "入口二入口二入口二入口二入口二入口二入口二。",
@@ -241,14 +267,11 @@ test("tts stream buffers input into takeable segments before translation and chu
 test("tts stream translates the full conversation once and yields Genie audio chunks", async () => {
   const dir = makeTempDir("tts-stream");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     apiPresetName: "fixed-flash",
-    prompt: "Translate to Japanese.\nText:",
-    voice: {
-      splitText: true
-    }
-  }));
+    prompt: "Translate to Japanese.\nText:"
+  }, "test", { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model", splitText: true } });
   const translatedInputs: string[] = [];
   const streamedTexts: string[] = [];
   const streamedGenie: unknown[] = [];
@@ -313,11 +336,11 @@ test("tts stream translates the full conversation once and yields Genie audio ch
 test("tts stream maps returned translated audio text back to source punctuation", async () => {
   const dir = makeTempDir("tts-stream-source-text");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
-  }));
+  });
   const backendTexts: string[] = [];
   let fileIndex = 0;
   const plugin = createTtsPlugin({
@@ -364,11 +387,11 @@ test("tts stream maps returned translated audio text back to source punctuation"
 test("tts stream returns original text with symbol-length silence for symbol-only input", async () => {
   const dir = makeTempDir("tts-stream-symbol-only");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
-  }));
+  });
   let llmCalls = 0;
   let streamCalls = 0;
   const logs: string[] = [];

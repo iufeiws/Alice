@@ -22,6 +22,7 @@ import {
   photoDefaults,
   promptStoragePath,
   runMemoryInductionForMessages,
+  writeTtsPluginConfig,
   writePreset
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
@@ -30,8 +31,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   const root = makeTempDir("admin-plugin-asset");
   const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, apiPresetName: "voice", prompt: "Translate:" })}\n`);
+  writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
@@ -49,21 +49,22 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   }), response);
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const expectedAssetPath = `assets/tts/preset/jp/model/${fileName}`;
+  const savedPreset = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "genie-jp.json"), "utf8"));
+  const expectedAssetPath = `assets/tts/preset/genie-jp/model/${fileName}`;
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.assetPath, expectedAssetPath);
-  assert.equal(saved.voice.modelConfigs.jp.modelDir, undefined);
-  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", "jp", "model", fileName), "utf8"), "model");
-  assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "jp", "model", "uploaded-folder", "nested", fileName)), false);
+  assert.equal(saved.activePresetName, "genie-jp");
+  assert.equal(savedPreset.genie.modelDir, "assets/tts/preset/genie-jp/model");
+  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", "genie-jp", "model", fileName), "utf8"), "model");
+  assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "genie-jp", "model", "uploaded-folder", "nested", fileName)), false);
 });
 
 test("admin plugin TTS reference audio upload converts to preset wav", async () => {
   const root = makeTempDir("admin-plugin-reference-audio");
   const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: false, translationEnabled: false, apiPresetName: "voice" })}\n`);
+  writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice" } });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = {
@@ -90,12 +91,12 @@ test("admin plugin TTS reference audio upload converts to preset wav", async () 
 test("admin plugin TTS MiMo voice clone upload stores data url in provider config", async () => {
   const root = makeTempDir("admin-plugin-mimo-audio");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
+  writeTtsPluginConfig(root, {
+    configPath,
     enabled: true,
-    translationEnabled: false,
-    conversion: { provider: "mimo" }
-  })}\n`);
+    activePresetName: "mimo",
+    preset: { provider: "mimo", mimo: { mode: "preset", baseURL: "https://api.xiaomimimo.com/v1", voice: "mimo_default" } }
+  });
   const context = {
     ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
     pluginConfigs: { tts: { configPath } }
@@ -108,14 +109,14 @@ test("admin plugin TTS MiMo voice clone upload stores data url in provider confi
   }), response);
   const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const savedMimo = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "providers", "mimo.json"), "utf8"));
+  const savedMimo = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "mimo.json"), "utf8"));
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
-  assert.deepEqual(saved.conversion, { provider: "mimo" });
-  assert.equal(savedMimo.mode, "voiceclone");
-  assert.equal(savedMimo.voiceCloneAudioDataUrl, `data:audio/mpeg;base64,${Buffer.from("audio-bytes").toString("base64")}`);
-  assert.equal(body.configValue.conversion.mimo.voiceCloneAudioDataUrlSet, true);
+  assert.equal(saved.activePresetName, "mimo");
+  assert.equal(savedMimo.mimo.mode, "voiceclone");
+  assert.equal(savedMimo.mimo.voiceCloneAudioDataUrl, `data:audio/mpeg;base64,${Buffer.from("audio-bytes").toString("base64")}`);
+  assert.equal(body.configValue.currentPreset.mimo.voiceCloneAudioDataUrlSet, true);
 });
 
 test("admin plugin test runs tts translation and tts with prompt variables and timing", async () => {
@@ -128,23 +129,22 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
   let capturedGenie: unknown;
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
+  writeTtsPluginConfig(root, {
+    configPath,
     enabled: true,
-    translationPresetName: "main",
-    translationPresets: {
-      main: {
-        translationEnabled: true,
-        apiPresetName: "voice",
-        prompt: "Translate for {{user}} at {{date}}:"
+    activePresetName: "zh-main",
+    translation: {
+      translationPresetName: "main",
+      translationPresets: {
+        main: {
+          translationEnabled: true,
+          apiPresetName: "voice",
+          prompt: "Translate for {{user}} at {{date}}:"
+        }
       }
     },
-    voice: {
-      modelConfigName: "zh-main",
-      modelConfigs: {
-        "zh-main": { language: "zh", splitText: false }
-      }
-    }
-  })}\n`);
+    preset: { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", language: "zh", modelDir: "assets/tts/preset/zh-main/model", splitText: false } }
+  });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));

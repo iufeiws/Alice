@@ -22,19 +22,15 @@ import {
   photoDefaults,
   promptStoragePath,
   runMemoryInductionForMessages,
-  writePreset
+  writePreset,
+  writeTtsPluginConfig
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
 
 test("admin plugin list exposes tts config card state", async () => {
   const root = makeTempDir("admin-plugin-list");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
-    enabled: true,
-    apiPresetName: "voice",
-    prompt: "Translate:"
-  })}\n`);
+  writeTtsPluginConfig(root, { configPath, enabled: true });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));

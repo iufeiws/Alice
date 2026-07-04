@@ -23,6 +23,32 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
+function ttsConfig(input: any): any {
+  const preset = input.preset ?? (input.conversion
+    ? {
+      provider: input.conversion.provider,
+      genie: input.conversion.genie,
+      openaiApi: input.conversion.openaiApi,
+      bailian: input.conversion.bailian,
+      mimo: input.conversion.mimo
+    }
+    : { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } });
+  return { ...input, activePresetName: "test", presets: { test: preset }, activePreset: preset };
+}
+
+function writeTtsConfigFile(configPath: string, input: any, presetName = "test", preset: any = { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } }) {
+  fs.mkdirSync(path.join(path.dirname(configPath), "presets"), { recursive: true });
+  const { translationEnabled, apiPresetName, prompt, conversion: _conversion, voice: _voice, translationPresets, translationPresetName = "default", ...rest } = input;
+  fs.writeFileSync(configPath, JSON.stringify({
+    ...rest,
+    activePresetName: presetName,
+    editPresetName: presetName,
+    translationPresetName,
+    translationPresets: translationPresets ?? { [translationPresetName]: { translationEnabled, apiPresetName, prompt } }
+  }));
+  fs.writeFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), JSON.stringify(preset));
+}
+
 test("tts plugin does not expose direct backend streamAudio entrypoints", async () => {
   const synthesize = createTtsTranslationSynthesizer({
     enabled: true,
@@ -54,11 +80,11 @@ test("tts plugin does not expose direct backend streamAudio entrypoints", async 
 test("tts stream never hard-cuts source text between punctuation boundaries", async () => {
   const dir = makeTempDir("tts-stream-no-hard-cut");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
-  }));
+  });
   const backendTexts: string[] = [];
   let fileIndex = 0;
   const plugin = createTtsPlugin({
@@ -121,7 +147,7 @@ test("tts stream splitter only flushes on configured sentence endings before har
 });
 
 test("tts passes Genie language and plugin voice assets as per-request overrides", () => {
-  const overrides = ttsGenieOverrides({
+  const overrides = ttsGenieOverrides(ttsConfig({
     enabled: true,
     translationEnabled: true,
     apiPresetName: "fixed-flash",
@@ -130,22 +156,20 @@ test("tts passes Genie language and plugin voice assets as per-request overrides
       model: "flash"
     },
     prompt: "Translate to Japanese.\nText:",
-    voice: {
-      modelConfigName: "jp-unit-no-assets",
-      modelConfigs: {
-        "jp-unit-no-assets": {
-          language: "jp",
-          speed: 1.15,
-          partSilenceSeconds: 0.35,
-          splitText: false
-        }
+    preset: {
+      provider: "genie",
+      genie: {
+        language: "jp",
+        speed: 1.15,
+        partSilenceSeconds: 0.35,
+        splitText: false
       }
     }
-  });
+  }));
 
   assert.deepEqual(overrides, {
     language: "jp",
-    modelDir: "assets/tts/preset/jp-unit-no-assets/model",
+    modelDir: "assets/tts/preset/test/model",
     referenceAudio: undefined,
     referenceText: undefined,
     speed: 1.15,
@@ -155,7 +179,7 @@ test("tts passes Genie language and plugin voice assets as per-request overrides
 });
 
 test("tts passes configured voice language to Genie overrides", () => {
-  const overrides = ttsGenieOverrides({
+  const overrides = ttsGenieOverrides(ttsConfig({
     enabled: true,
     translationEnabled: false,
     api_preset: {
@@ -163,18 +187,16 @@ test("tts passes configured voice language to Genie overrides", () => {
       model: "flash"
     },
     prompt: "Read aloud.",
-    voice: {
-      modelConfigName: "zh-main",
-      modelConfigs: {
-        "zh-main": {
-          language: "zh"
-        }
+    preset: {
+      provider: "genie",
+      genie: {
+        language: "zh"
       }
     }
-  });
+  }));
 
   assert.equal(overrides.language, "zh");
-  assert.equal(overrides.modelDir, "assets/tts/preset/zh-main/model");
+  assert.equal(overrides.modelDir, "assets/tts/preset/test/model");
 });
 
 test("send_chat voice sends bracketed transcript text on feishu", async () => {

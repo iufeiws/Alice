@@ -80,6 +80,10 @@ export type TtsApiPreset = {
 
 export type TtsPluginConfig = {
   enabled: boolean;
+  activePresetName?: string;
+  editPresetName?: string;
+  presets?: Record<string, TtsPreset>;
+  activePreset?: TtsPreset;
   remote?: TtsRemoteConfig;
   conversion?: TtsConversionConfig;
   translationPresetName?: string;
@@ -110,6 +114,16 @@ export type TtsConversionConfig = {
   bailian?: TtsBailianConversionConfig;
   mimo?: TtsMimoConversionConfig;
 };
+
+export type TtsPreset = {
+  provider: TtsConversionProvider;
+  genie?: TtsGeniePresetConfig;
+  openaiApi?: TtsOpenAiApiConversionConfig;
+  bailian?: TtsBailianConversionConfig;
+  mimo?: TtsMimoConversionConfig;
+};
+
+export type TtsGeniePresetConfig = TtsRemoteConfig & TtsVoiceModelConfig;
 
 export type TtsOpenAiApiConversionConfig = {
   apiPresetName?: string;

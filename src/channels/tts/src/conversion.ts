@@ -23,7 +23,7 @@ import type {
   VoiceSynthesizer
 } from "./types.js";
 
-import { defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, defaultMimoTtsModel } from "./config.js";
+import { defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, defaultMimoTtsModel, selectedTtsPreset } from "./config.js";
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
 import { recordTtsApiUsage } from "./usage.js";
@@ -91,7 +91,7 @@ type OpenAiApiTtsSettings = {
 };
 
 function resolveOpenAiApiTtsSettings(config: TtsPluginConfig, deps: Pick<TtsPluginDeps, "env" | "resolveApiPreset">): OpenAiApiTtsSettings {
-  const conversion = config.conversion?.openaiApi ?? {};
+  const conversion = selectedTtsPreset(config).openaiApi ?? {};
   const preset = conversion.apiPresetName ? deps.resolveApiPreset?.(conversion.apiPresetName) : undefined;
   const env = deps.env ?? process.env;
   const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || preset?.apiKey || (preset?.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
@@ -285,7 +285,7 @@ function resolveMimoTtsSettings(
   config: TtsPluginConfig,
   deps: Pick<TtsPluginDeps, "env">
 ): MimoTtsSettings {
-  const conversion = config.conversion?.mimo ?? {};
+  const conversion = selectedTtsPreset(config).mimo ?? {};
   const mode = conversion.mode === "voicedesign" || conversion.mode === "voiceclone" ? conversion.mode : "preset";
   const env = deps.env ?? process.env;
   const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || env.MIMO_API_KEY;
@@ -402,7 +402,7 @@ function resolveBailianTtsSettings(
   config: TtsPluginConfig,
   deps: Pick<TtsPluginDeps, "env">
 ): BailianTtsSettings {
-  const conversion = config.conversion?.bailian ?? {};
+  const conversion = selectedTtsPreset(config).bailian ?? {};
   const env = deps.env ?? process.env;
   const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("Bailian TTS conversion requires apiKey or DASHSCOPE_API_KEY");

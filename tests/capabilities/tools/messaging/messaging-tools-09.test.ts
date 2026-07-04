@@ -24,6 +24,19 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
+function writeTtsConfigFile(configPath: string, input: any, presetName: string, preset: any) {
+  fs.mkdirSync(path.join(path.dirname(configPath), "presets"), { recursive: true });
+  const { translationEnabled, apiPresetName, prompt, translationPresets, translationPresetName = "default", ...rest } = input;
+  fs.writeFileSync(configPath, JSON.stringify({
+    ...rest,
+    activePresetName: presetName,
+    editPresetName: presetName,
+    translationPresetName,
+    translationPresets: translationPresets ?? { [translationPresetName]: { translationEnabled, apiPresetName, prompt } }
+  }));
+  fs.writeFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), JSON.stringify(preset));
+}
+
 test("genie remote stream uploads missing model and retries original stream-input request", async () => {
   const fixture = makeTtsAssetFixture("tts-genie-remote-upload");
   fs.writeFileSync(path.join(fixture.root, "reference.txt"), "参照テキスト\n");
@@ -272,24 +285,15 @@ test("fallback voice synthesizer uses local synthesis when remote synthesis fail
 test("remote-aware tts does not prepare local Genie when API provider is selected", async () => {
   const dir = makeTempDir("tts-remote-aware-api");
   const configPath = path.join(dir, "config.json");
-  const providersDir = path.join(dir, "providers");
-  fs.mkdirSync(providersDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
-    conversion: { provider: "openai-api" },
     translationEnabled: false,
     prompt: "Read aloud."
-  }));
-  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
-    enabled: true,
-    baseURL: "192.168.0.103",
-    localFallbackEnabled: false
-  }));
-  fs.writeFileSync(path.join(providersDir, "openai-api.json"), JSON.stringify({
+  }, "openai-api", { provider: "openai-api", openaiApi: {
     baseURL: "https://tts.example.test/v1",
     model: "voice-model",
     voice: "voice"
-  }));
+  } });
   const calls: string[] = [];
   const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
     fetch: (async (url: string | URL | Request) => {
@@ -310,19 +314,15 @@ test("remote-aware tts does not prepare local Genie when API provider is selecte
 test("remote-aware tts disabled local fallback does not start local Genie after remote failure", async () => {
   const dir = makeTempDir("tts-remote-aware-no-local-fallback");
   const configPath = path.join(dir, "config.json");
-  const providersDir = path.join(dir, "providers");
-  fs.mkdirSync(providersDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
-    conversion: { provider: "genie" },
     translationEnabled: false,
     prompt: "Read aloud."
-  }));
-  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+  }, "genie-remote", { provider: "genie", genie: {
     enabled: true,
     baseURL: "192.168.0.103",
     localFallbackEnabled: false
-  }));
+  } });
   const calls: string[] = [];
   const logs: string[] = [];
   const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {
@@ -348,19 +348,15 @@ test("remote-aware tts disabled local fallback does not start local Genie after 
 test("remote-aware tts retries fetch failed stream before audio", async () => {
   const dir = makeTempDir("tts-remote-aware-stream-retry");
   const configPath = path.join(dir, "config.json");
-  const providersDir = path.join(dir, "providers");
-  fs.mkdirSync(providersDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
-    conversion: { provider: "genie" },
     translationEnabled: false,
     prompt: ""
-  }));
-  fs.writeFileSync(path.join(providersDir, "genie.json"), JSON.stringify({
+  }, "genie-remote", { provider: "genie", genie: {
     enabled: true,
     baseURL: "remote.test",
     localFallbackEnabled: false
-  }));
+  } });
   const calls: string[] = [];
   const logs: string[] = [];
   const synthesize = createTtsRemoteAwareVoiceSynthesizer({ ttsConfigPath: configPath }, {

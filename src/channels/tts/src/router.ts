@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 
 import { writePcmL16Wav } from "./audio-utils.js";
-import { applyTtsTextFilters, selectedTtsConversionProvider, ttsProviderTextFilters } from "./config.js";
+import { applyTtsTextFilters, selectedTtsConversionProvider, selectedTtsPreset, ttsProviderTextFilters } from "./config.js";
 import { createTtsConversionSynthesizer } from "./conversion.js";
 import { resolveAssetOutputDir, uniqueVoiceBaseName, validateGeneratedVoice } from "./internal.js";
 
@@ -86,9 +86,10 @@ function resolveCachedTtsProvider(
 }
 
 function ttsProviderCacheKey(conversion: TtsConversionProvider, config: TtsPluginConfig): string {
-  if (conversion === "openai-api") return JSON.stringify({ conversion, config: config.conversion?.openaiApi });
-  if (conversion === "bailian") return JSON.stringify({ conversion, config: config.conversion?.bailian });
-  if (conversion === "mimo") return JSON.stringify({ conversion, config: config.conversion?.mimo });
+  const preset = selectedTtsPreset(config);
+  if (conversion === "openai-api") return JSON.stringify({ conversion, config: preset.openaiApi });
+  if (conversion === "bailian") return JSON.stringify({ conversion, config: preset.bailian });
+  if (conversion === "mimo") return JSON.stringify({ conversion, config: preset.mimo });
   return JSON.stringify({ conversion });
 }
 

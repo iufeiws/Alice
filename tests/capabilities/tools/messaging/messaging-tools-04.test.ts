@@ -24,6 +24,32 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
+function ttsConfig(input: any): any {
+  const preset = input.preset ?? (input.conversion
+    ? {
+      provider: input.conversion.provider,
+      genie: input.conversion.genie,
+      openaiApi: input.conversion.openaiApi,
+      bailian: input.conversion.bailian,
+      mimo: input.conversion.mimo
+    }
+    : { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } });
+  return { ...input, activePresetName: "test", presets: { test: preset }, activePreset: preset };
+}
+
+function writeTtsConfigFile(configPath: string, input: any, presetName = "test", preset: any = { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", localFallbackEnabled: true, language: "jp", modelDir: "assets/tts/preset/test/model" } }) {
+  fs.mkdirSync(path.join(path.dirname(configPath), "presets"), { recursive: true });
+  const { translationEnabled, apiPresetName, prompt, conversion: _conversion, voice: _voice, translationPresets, translationPresetName = "default", ...rest } = input;
+  fs.writeFileSync(configPath, JSON.stringify({
+    ...rest,
+    activePresetName: presetName,
+    editPresetName: presetName,
+    translationPresetName,
+    translationPresets: translationPresets ?? { [translationPresetName]: { translationEnabled, apiPresetName, prompt } }
+  }));
+  fs.writeFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), JSON.stringify(preset));
+}
+
 test("send_chat voice synthesizes text, sends audio, and removes generated file", async () => {
   const dir = makeTempDir("messaging-send-voice");
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
@@ -161,7 +187,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
   const llmMessages: Array<{ role: string; content: string }> = [];
   const llmAgents: string[] = [];
   let generatedPath = "";
-  const voiceSynthesizer = createTtsTranslationSynthesizer({
+  const voiceSynthesizer = createTtsTranslationSynthesizer(ttsConfig({
     enabled: true,
     translationEnabled: true,
     api_preset: {
@@ -173,7 +199,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
       extraParams: {}
     },
     prompt: "Translate to Japanese.\nText:"
-  }, {
+  }), {
     baseSynthesizer: async ({ text }) => {
       synthesizedTexts.push(text);
       generatedPath = path.join(dir, "voice.wav");
@@ -230,7 +256,7 @@ test("tts plugin can skip translation and send original text to jp tts", async (
   const dir = makeTempDir("messaging-tts-no-translate");
   const synthesizedTexts: string[] = [];
   let llmCalls = 0;
-  const voiceSynthesizer = createTtsTranslationSynthesizer({
+  const voiceSynthesizer = createTtsTranslationSynthesizer(ttsConfig({
     enabled: true,
     translationEnabled: false,
     api_preset: {
@@ -238,7 +264,7 @@ test("tts plugin can skip translation and send original text to jp tts", async (
       model: "flash"
     },
     prompt: "Translate to Japanese.\nText:"
-  }, {
+  }), {
     baseSynthesizer: async ({ text }) => {
       synthesizedTexts.push(text);
       const filePath = path.join(dir, "voice.wav");
@@ -259,7 +285,7 @@ test("tts plugin can skip translation and send original text to jp tts", async (
 
 test("tts translation skips symbol-only text without calling llm", async () => {
   let llmCalls = 0;
-  const translated = await resolveTtsText(" ... ", {
+  const translated = await resolveTtsText(" ... ", ttsConfig({
     enabled: true,
     translationEnabled: true,
     api_preset: {
@@ -268,7 +294,7 @@ test("tts translation skips symbol-only text without calling llm", async () => {
       model: "flash"
     },
     prompt: "Translate to Japanese.\nText:"
-  }, {
+  }), {
     baseSynthesizer: async () => {
       throw new Error("base synthesizer should not be used");
     },
@@ -287,7 +313,7 @@ test("tts router returns a silence file for symbol-only text before backend requ
   const result = await synthesizeTtsRouted({
     text: "...",
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z"))
-  }, {
+  }, ttsConfig({
     enabled: true,
     translationEnabled: false,
     api_preset: {
@@ -295,7 +321,7 @@ test("tts router returns a silence file for symbol-only text before backend requ
       model: "flash"
     },
     prompt: "Translate to Japanese.\nText:"
-  }, {
+  }), {
     baseSynthesizer: async () => {
       backendCalls += 1;
       throw new Error("base synthesizer should not be used");
@@ -315,11 +341,11 @@ test("tts router returns a silence file for symbol-only text before backend requ
 test("tts plugin disabled mode still routes symbol-only text to silence before backend request", async () => {
   const dir = makeTempDir("tts-plugin-disabled-symbol-only");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: false,
     translationEnabled: false,
     prompt: "Read aloud."
-  }));
+  });
   let backendCalls = 0;
   const plugin = createTtsPlugin({
     configPath,
@@ -348,7 +374,7 @@ test("tts router rate limits same provider to three requests per second", async 
   let stampIndex = 0;
   const files: string[] = [];
   const providerId = `rate-limit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const config = {
+  const config = ttsConfig({
     enabled: true,
     translationEnabled: false,
     conversion: {
@@ -361,7 +387,7 @@ test("tts router rate limits same provider to three requests per second", async 
       }
     },
     prompt: "Read aloud."
-  };
+  });
   const deps = {
     baseSynthesizer: async () => {
       throw new Error("base synthesizer should not be used");
@@ -389,7 +415,7 @@ test("tts router rate limits same provider to three requests per second", async 
 test("tts plugin config reads switch, api preset, and prompt from plugin folder config", () => {
   const dir = makeTempDir("tts-config");
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
+  writeTtsConfigFile(configPath, {
     enabled: true,
     translationPresetName: "default",
     translationPresets: {
@@ -399,13 +425,7 @@ test("tts plugin config reads switch, api preset, and prompt from plugin folder 
         prompt: "Translate to Japanese.\nText:"
       }
     },
-    voice: {
-      modelConfigName: "jp",
-      modelConfigs: {
-        jp: { language: "jp", speed: 1.15, splitText: false }
-      }
-    }
-  }));
+  }, "jp", { provider: "genie", genie: { enabled: true, baseURL: "http://127.0.0.1:8767", language: "jp", speed: 1.15, splitText: false, modelDir: "assets/tts/preset/jp/model" } });
 
   const config = readTtsPluginConfig(configPath);
 
@@ -415,7 +435,8 @@ test("tts plugin config reads switch, api preset, and prompt from plugin folder 
   assert.equal(config.api_preset?.apiKey, undefined);
   assert.equal(config.api_preset?.baseURL, "");
   assert.equal(config.prompt, "Translate to Japanese.\nText:");
-  assert.equal(config.voice?.modelConfigs?.jp?.splitText, false);
+  assert.equal(config.activePresetName, "jp");
+  assert.equal(config.activePreset?.genie?.splitText, false);
 });
 
 async function eventually(condition: () => boolean, timeoutMs = 500): Promise<void> {

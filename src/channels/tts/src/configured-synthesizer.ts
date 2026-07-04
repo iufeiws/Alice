@@ -24,7 +24,7 @@ import type {
   VoiceSynthesizer
 } from "./types.js";
 
-import { readTtsPluginConfig } from "./config.js";
+import { readTtsPluginConfig, selectedTtsPreset } from "./config.js";
 import { createGenieTtsVoiceSynthesizer, isRemoteGenieProtocolError } from "./genie-synthesizer.js";
 import { createMossOnnxVoiceSynthesizer } from "./moss-synthesizer.js";
 import { normalizeBaseURL, requireAssetDirectory, requireAssetPath, requireGenieReferenceText, resolveAssetScopedPath } from "./internal.js";
@@ -181,14 +181,15 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     localFallbackEnabled: boolean;
   } => {
     const pluginConfig = readTtsPluginConfig(input.ttsConfigPath);
-    const provider = pluginConfig.conversion?.provider === "openai-api"
+    const preset = selectedTtsPreset(pluginConfig);
+    const provider = preset.provider === "openai-api"
       ? "openai-api"
-      : pluginConfig.conversion?.provider === "bailian"
+      : preset.provider === "bailian"
         ? "bailian"
-        : pluginConfig.conversion?.provider === "mimo"
+        : preset.provider === "mimo"
           ? "mimo"
           : "genie";
-    const genie = pluginConfig.conversion?.genie ?? pluginConfig.remote;
+    const genie = preset.genie;
     const localFallbackEnabled = genie?.localFallbackEnabled ?? true;
     if (provider !== "genie") {
       return { provider, localPreferred: false, localFallbackEnabled };

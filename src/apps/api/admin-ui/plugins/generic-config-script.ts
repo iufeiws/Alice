@@ -196,7 +196,7 @@ export function renderGenericPluginConfigScript(): string {
         const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/config", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ voice: { modelConfigName: input.value } })
+          body: JSON.stringify({ activePresetName: input.value })
         }).then((res) => res.json());
         $("plugin-status").textContent = result.ok ? "Model config switched." : "Switch failed: " + (result.error || "unknown error");
         if (result.ok) await openPluginConfig(pluginId);
@@ -221,7 +221,7 @@ export function renderGenericPluginConfigScript(): string {
         if (!files.length) return;
         const pluginId = $("pluginConfigForm").dataset.pluginId;
         const assetKey = input.dataset.pluginUpload;
-        const presetName = document.querySelector('[data-plugin-field="voice.modelEditPresetName"]')?.value || document.querySelector('[data-plugin-field="voice.modelConfigName"]')?.value || "";
+        const presetName = document.querySelector('[data-plugin-field="editPresetName"]')?.value || document.querySelector('[data-plugin-field="activePresetName"]')?.value || "";
         for (const file of files) {
           const body = await pluginAssetBodyForUpload(pluginId, assetKey, file);
           const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/assets/" + encodeURIComponent(assetKey), {

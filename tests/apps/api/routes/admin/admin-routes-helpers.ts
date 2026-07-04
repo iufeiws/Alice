@@ -293,6 +293,44 @@ export function writePreset(root: string, name: string) {
   fs.writeFileSync(filePath, `${JSON.stringify({ presets })}\n`);
 }
 
+export function writeTtsPluginConfig(root: string, input: {
+  configPath: string;
+  enabled?: boolean;
+  activePresetName?: string;
+  editPresetName?: string;
+  preset?: Record<string, unknown>;
+  translation?: Record<string, unknown>;
+}) {
+  const activePresetName = input.activePresetName ?? "genie-jp";
+  const translationInput = input.translation ?? {};
+  const { translationPresetName = "default", translationPresets, ...translationPreset } = translationInput;
+  fs.mkdirSync(path.dirname(input.configPath), { recursive: true });
+  fs.mkdirSync(path.join(path.dirname(input.configPath), "presets"), { recursive: true });
+  fs.writeFileSync(input.configPath, `${JSON.stringify({
+    enabled: input.enabled ?? false,
+    activePresetName,
+    editPresetName: input.editPresetName ?? activePresetName,
+    translationPresetName,
+    translationPresets: translationPresets ?? {
+      [String(translationPresetName)]: {
+        translationEnabled: false,
+        ...translationPreset
+      }
+    }
+  })}\n`);
+  fs.writeFileSync(path.join(path.dirname(input.configPath), "presets", `${activePresetName}.json`), `${JSON.stringify(input.preset ?? {
+    provider: "genie",
+    genie: {
+      enabled: true,
+      baseURL: "http://127.0.0.1:8767",
+      localFallbackEnabled: true,
+      language: "jp",
+      modelDir: `assets/tts/preset/${activePresetName}/model`,
+      splitText: false
+    }
+  }, null, 2)}\n`);
+}
+
 export function createResponse() {
   return {
     statusCode: 0,

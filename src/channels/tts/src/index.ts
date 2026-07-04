@@ -14,6 +14,7 @@ export type {
   TtsLlmResult,
   TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
+  TtsPreset,
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
@@ -33,9 +34,13 @@ export {
   defaultMimoTtsBaseURL,
   readTtsPluginConfig,
   selectedTtsConversionProvider,
+  selectedTtsPreset,
   selectedTtsTranslationPreset,
   selectedTtsVoiceModelConfig,
   selectedTtsVoiceModelConfigName,
+  ttsPresetConfigPath,
+  ttsPresetReferenceAudio,
+  ttsPresetReferenceTextPath,
   ttsGenieOverrides
 } from "./config.js";
 export { createTtsPlugin } from "./plugin.js";

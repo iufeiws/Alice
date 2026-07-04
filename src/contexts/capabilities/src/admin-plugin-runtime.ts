@@ -1,6 +1,6 @@
 import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/src/index.js";
 import type { AppConfig } from "../../../apps/api/bootstrap/app-config-runtime.js";
-import { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, readTtsPluginConfig, translateTtsText, ttsGenieOverrides, type TtsConversionProvider, type TtsLlmClient, type TtsPluginConfig, type TtsTextFilter, type TtsTranslationPreset, type TtsVoiceModelConfig, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
+import { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, readTtsPluginConfig, selectedTtsPreset, translateTtsText, ttsGenieOverrides, type TtsConversionProvider, type TtsLlmClient, type TtsPluginConfig, type TtsPreset, type TtsTextFilter, type TtsTranslationPreset, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeInput, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { defaultGoogleStreetViewPluginConfigPath, publicGoogleStreetViewPluginConfig, readGoogleStreetViewPluginConfig, validateGoogleStreetViewPluginConfig, type GoogleStreetViewPluginConfig, type GoogleStreetViewRegion } from "../../../channels/google-streetview/src/index.js";
 import { defaultWorldWandererPluginConfigPath, publicWorldWandererConfig, readWorldWandererConfig, readWorldWandererState, validateWorldWandererConfig, writeWorldWandererConfig, type WorldWandererConfig } from "../../world-wanderer/src/index.js";
@@ -40,18 +40,23 @@ type AdminPluginSummary = {
 
 type TtsAdminConfig = {
   enabled: boolean;
-  remote?: {
-    enabled?: boolean;
-    baseURL?: string;
-    localFallbackEnabled?: boolean;
-    textFilters?: TtsTextFilter[];
-  };
-  conversion?: {
-    provider?: TtsConversionProvider;
+  activePresetName: string;
+  editPresetName: string;
+  newPresetName?: string;
+  presets: Record<string, any>;
+  currentPreset: {
+    provider: TtsConversionProvider;
     genie?: {
       enabled?: boolean;
       baseURL?: string;
       localFallbackEnabled?: boolean;
+      language?: "jp" | "zh" | "en";
+      modelDir?: string;
+      referenceAudio?: string;
+      referenceText?: string;
+      speed?: number;
+      partSilenceSeconds?: number;
+      splitText?: boolean;
       textFilters?: TtsTextFilter[];
     };
     openaiApi?: {
@@ -112,26 +117,6 @@ type TtsAdminConfig = {
     translationEnabled?: boolean;
     apiPresetName?: string;
     prompt?: string;
-  };
-  voice: {
-    modelConfigName?: string;
-    modelEditPresetName?: string;
-    newModelConfigName?: string;
-    modelConfigs?: Record<string, {
-      language?: "jp" | "zh" | "en";
-      speed?: number;
-      partSilenceSeconds?: number;
-      splitText?: boolean;
-    }>;
-    currentModel?: {
-      language?: "jp" | "zh" | "en";
-      speed?: number;
-      partSilenceSeconds?: number;
-      splitText?: boolean;
-      modelDir?: string;
-      referenceAudio?: string;
-      referenceText?: string;
-    };
   };
 };
 
@@ -709,7 +694,7 @@ function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<Adm
   if (pluginId !== "tts") return schema;
   const config = configValue as TtsAdminConfig;
   const translationNames = Object.keys(config.translationPresets ?? {});
-  const modelNames = Object.keys(config.voice.modelConfigs ?? {});
+  const presetNames = Object.keys(config.presets ?? {});
   return {
     ...schema,
     fields: schema.fields.map((field) => field.key === "translationPresetName" || field.key === "translationEditPresetName"
@@ -717,10 +702,10 @@ function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<Adm
         ...field,
         options: translationNames.map((name) => ({ value: name, label: name }))
       }
-      : field.key === "voice.modelConfigName" || field.key === "voice.modelEditPresetName"
+      : field.key === "activePresetName" || field.key === "editPresetName"
       ? {
         ...field,
-        options: modelNames.map((name) => ({ value: name, label: name }))
+        options: presetNames.map((name) => ({ value: name, label: name }))
       }
       : field)
   };
@@ -935,18 +920,18 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
       return ttsPluginSummary(context);
     },
     config(context) {
-      return publicTtsConfig(readTtsConfigForAdmin(context));
+      return publicTtsConfig(readTtsConfigForAdmin(context), context.pluginConfigs?.tts?.assetRoot);
     },
     patch(context, patch) {
       const result = updateTtsConfig(context, patch);
-      return "error" in result ? result : { config: publicTtsConfig(result.config) };
+      return "error" in result ? result : { config: publicTtsConfig(result.config, context.pluginConfigs?.tts?.assetRoot) };
     },
     setEnabled(context, enabled) {
       const result = updateTtsConfig(context, { enabled });
-      return "error" in result ? result : { config: publicTtsConfig(result.config) };
+      return "error" in result ? result : { config: publicTtsConfig(result.config, context.pluginConfigs?.tts?.assetRoot) };
     },
     reload(context) {
-      return { config: publicTtsConfig(readTtsConfigForAdmin(context)) };
+      return { config: publicTtsConfig(readTtsConfigForAdmin(context), context.pluginConfigs?.tts?.assetRoot) };
     },
     test(context, input) {
       return testTtsPlugin(context, input);
@@ -969,78 +954,78 @@ function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "currentTranslation.translationEnabled", label: "Translate Text", type: "switch", group: "general", description: "Translate text before TTS. Disable to send the original text directly to the selected voice model." },
         { key: "currentTranslation.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "translation", description: "Select a saved API preset. The plugin does not store API keys." },
         { key: "currentTranslation.prompt", label: "Prompt", type: "textarea", group: "translation", description: "Prompt used by this plugin before it calls the selected API preset." },
-        { key: "voice.modelEditPresetName", label: "Model Preset", type: "select", group: "model_genie", options: [], description: "Select the model preset to edit." },
-        { key: "voice.newModelConfigName", label: "Create or Rename", type: "text", group: "model_genie", description: "Enter a model preset name and save to create/switch to it." },
-        { key: "voice.currentModel.language", label: "Voice Language", type: "select", group: "model_genie", options: [
+        { key: "editPresetName", label: "Model Preset", type: "select", group: "model_genie", options: [], description: "Select the model preset to edit." },
+        { key: "newPresetName", label: "Create or Rename", type: "text", group: "model_genie", description: "Enter a model preset name and save to create/switch to it." },
+        { key: "currentPreset.genie.language", label: "Voice Language", type: "select", group: "model_genie", options: [
           { value: "jp", label: "Japanese" },
           { value: "zh", label: "Chinese" },
           { value: "en", label: "English" }
         ], description: "Genie language used for this TTS voice route." },
-        { key: "voice.currentModel.modelDir", label: "Model Folder", type: "folderUpload", group: "model_genie", assetKey: "model", description: "Genie model folder for the selected model config." },
-        { key: "voice.currentModel.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model_genie", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
-        { key: "voice.currentModel.referenceText", label: "Reference Text", type: "textarea", group: "model_genie", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
-        { key: "voice.currentModel.speed", label: "Voice Speed", type: "number", group: "model_genie", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
-        { key: "voice.currentModel.splitText", label: "Split Text", type: "switch", group: "model_genie", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
-        { key: "voice.currentModel.partSilenceSeconds", label: "Part Silence", type: "number", group: "model_genie", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
+        { key: "currentPreset.genie.modelDir", label: "Model Folder", type: "folderUpload", group: "model_genie", assetKey: "model", description: "Genie model folder for the selected model config." },
+        { key: "currentPreset.genie.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model_genie", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
+        { key: "currentPreset.genie.referenceText", label: "Reference Text", type: "textarea", group: "model_genie", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
+        { key: "currentPreset.genie.speed", label: "Voice Speed", type: "number", group: "model_genie", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
+        { key: "currentPreset.genie.splitText", label: "Split Text", type: "switch", group: "model_genie", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
+        { key: "currentPreset.genie.partSilenceSeconds", label: "Part Silence", type: "number", group: "model_genie", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
-        { key: "voice.modelConfigName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
-        { key: "conversion.provider", label: "Conversion Backend", type: "select", group: "general", options: [
+        { key: "activePresetName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
+        { key: "currentPreset.provider", label: "Conversion Backend", type: "select", group: "general", options: [
           { value: "genie", label: "Genie" },
           { value: "openai-api", label: "OpenAI-API" },
           { value: "bailian", label: "Bailian" },
           { value: "mimo", label: "MiMo" }
         ], description: "Backend used after optional translation." },
         { key: "enabled", label: "Enabled", type: "switch", group: "general", description: "Enable or disable this plugin route." },
-        { key: "conversion.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
-        { key: "conversion.genie.localFallbackEnabled", label: "Local Genie Fallback", type: "switch", group: "model_genie", description: "Allow local Genie only after a non-local Genie route fails. Disable to keep API and remote routes from starting local Genie." },
-        { key: "conversion.genie.baseURL", label: "Remote Genie IP/URL", type: "text", group: "model_genie", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
-        { key: "conversion.openaiApi.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "conversion_openai_api", description: "OpenAI-compatible speech API preset. The plugin does not expose API keys in public config." },
-        { key: "conversion.openaiApi.model", label: "Model", type: "text", group: "conversion_openai_api", description: "Speech model sent as model in POST /audio/speech." },
-        { key: "conversion.openaiApi.voice", label: "Voice", type: "text", group: "conversion_openai_api", description: "Voice name or custom voice ID sent as voice." },
-        { key: "conversion.openaiApi.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_openai_api", min: 1000, max: 300000, step: 1000, description: "Request timeout for OpenAI-API speech calls." },
-        { key: "conversion.openaiApi.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_openai_api", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used to estimate chunk text timing. Default is 32000." },
-        { key: "conversion.openaiApi.channels", label: "PCM Channels", type: "number", group: "conversion_openai_api", min: 1, max: 2, step: 1, description: "PCM channel count used to estimate chunk text timing. Default is 1." },
-        { key: "conversion.openaiApi.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_openai_api", description: "Optional JSON object merged into the speech request before input/model/voice/response_format." },
-        { key: "conversion.bailian.service", label: "Bailian Service", type: "select", group: "conversion_bailian", options: [
+        { key: "currentPreset.genie.enabled", label: "Remote Genie", type: "switch", group: "model_genie", description: "Use the LAN Genie TTS service before falling back to local Genie." },
+        { key: "currentPreset.genie.localFallbackEnabled", label: "Local Genie Fallback", type: "switch", group: "model_genie", description: "Allow local Genie only after a non-local Genie route fails. Disable to keep API and remote routes from starting local Genie." },
+        { key: "currentPreset.genie.baseURL", label: "Remote Genie IP/URL", type: "text", group: "model_genie", description: "Remote Genie TTS IP or base URL. Bare IP/host values default to http://{host}:8767." },
+        { key: "currentPreset.openaiApi.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "conversion_openai_api", description: "OpenAI-compatible speech API preset. The plugin does not expose API keys in public config." },
+        { key: "currentPreset.openaiApi.model", label: "Model", type: "text", group: "conversion_openai_api", description: "Speech model sent as model in POST /audio/speech." },
+        { key: "currentPreset.openaiApi.voice", label: "Voice", type: "text", group: "conversion_openai_api", description: "Voice name or custom voice ID sent as voice." },
+        { key: "currentPreset.openaiApi.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_openai_api", min: 1000, max: 300000, step: 1000, description: "Request timeout for OpenAI-API speech calls." },
+        { key: "currentPreset.openaiApi.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_openai_api", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used to estimate chunk text timing. Default is 32000." },
+        { key: "currentPreset.openaiApi.channels", label: "PCM Channels", type: "number", group: "conversion_openai_api", min: 1, max: 2, step: 1, description: "PCM channel count used to estimate chunk text timing. Default is 1." },
+        { key: "currentPreset.openaiApi.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_openai_api", description: "Optional JSON object merged into the speech request before input/model/voice/response_format." },
+        { key: "currentPreset.bailian.service", label: "Bailian Service", type: "select", group: "conversion_bailian", options: [
           { value: "qwen", label: "Qwen TTS" },
           { value: "cosy", label: "CosyVoice" }
         ], description: "Bailian TTS service family. CosyVoice uses the SpeechSynthesizer endpoint." },
-        { key: "conversion.bailian.endpoint", label: "HTTP Endpoint", type: "text", group: "conversion_bailian", description: "Bailian HTTP endpoint. Qwen defaults to aigc/multimodal-generation; CosyVoice defaults to audio/tts/SpeechSynthesizer." },
-        { key: "conversion.bailian.apiKey", label: "API Key", type: "password", group: "conversion_bailian", description: "Bailian DashScope API key stored in the local ignored plugin config. Leave blank to keep unchanged." },
-        { key: "conversion.bailian.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_bailian", description: "Environment variable containing the Bailian DashScope API key. Default is DASHSCOPE_API_KEY." },
-        { key: "conversion.bailian.workspaceId", label: "Workspace ID", type: "text", group: "conversion_bailian", description: "Optional Bailian workspace id sent as X-DashScope-WorkSpace." },
-        { key: "conversion.bailian.userAgent", label: "User Agent", type: "text", group: "conversion_bailian", description: "Optional user-agent sent with the HTTP request." },
-        { key: "conversion.bailian.model", label: "Model", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime model name." },
-        { key: "conversion.bailian.voice", label: "Voice", type: "text", group: "conversion_bailian", description: "Bailian voice name or custom voice ID." },
-        { key: "conversion.bailian.languageType", label: "Language Type", type: "text", group: "conversion_bailian", description: "Qwen-TTS language_type, for example Chinese, Japanese, English, or Auto." },
-        { key: "conversion.bailian.mode", label: "Mode", type: "select", group: "conversion_bailian", options: [
+        { key: "currentPreset.bailian.endpoint", label: "HTTP Endpoint", type: "text", group: "conversion_bailian", description: "Bailian HTTP endpoint. Qwen defaults to aigc/multimodal-generation; CosyVoice defaults to audio/tts/SpeechSynthesizer." },
+        { key: "currentPreset.bailian.apiKey", label: "API Key", type: "password", group: "conversion_bailian", description: "Bailian DashScope API key stored in the local ignored plugin config. Leave blank to keep unchanged." },
+        { key: "currentPreset.bailian.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_bailian", description: "Environment variable containing the Bailian DashScope API key. Default is DASHSCOPE_API_KEY." },
+        { key: "currentPreset.bailian.workspaceId", label: "Workspace ID", type: "text", group: "conversion_bailian", description: "Optional Bailian workspace id sent as X-DashScope-WorkSpace." },
+        { key: "currentPreset.bailian.userAgent", label: "User Agent", type: "text", group: "conversion_bailian", description: "Optional user-agent sent with the HTTP request." },
+        { key: "currentPreset.bailian.model", label: "Model", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime model name." },
+        { key: "currentPreset.bailian.voice", label: "Voice", type: "text", group: "conversion_bailian", description: "Bailian voice name or custom voice ID." },
+        { key: "currentPreset.bailian.languageType", label: "Language Type", type: "text", group: "conversion_bailian", description: "Qwen-TTS language_type, for example Chinese, Japanese, English, or Auto." },
+        { key: "currentPreset.bailian.mode", label: "Mode", type: "select", group: "conversion_bailian", options: [
           { value: "server_commit", label: "Server Commit" },
           { value: "commit", label: "Commit" }
         ], description: "Retained for older configs; non-realtime streaming uses HTTP SSE." },
-        { key: "conversion.bailian.responseFormat", label: "Response Format", type: "text", group: "conversion_bailian", description: "Local PCM format label for playback; Bailian non-realtime SSE returns PCM audio data." },
-        { key: "conversion.bailian.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_bailian", min: 1000, max: 300000, step: 1000, description: "Request timeout for Bailian non-realtime TTS." },
-        { key: "conversion.bailian.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_bailian", min: 8000, max: 48000, step: 1000, description: "PCM sample rate returned by Bailian. Default is 24000." },
-        { key: "conversion.bailian.channels", label: "PCM Channels", type: "number", group: "conversion_bailian", min: 1, max: 2, step: 1, description: "PCM channel count returned by Bailian. Default is 1." },
-        { key: "conversion.bailian.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_bailian", description: "Optional JSON object merged into Bailian Qwen-TTS input fields." },
-        { key: "conversion.mimo.mode", label: "MiMo Mode", type: "select", group: "conversion_mimo", options: [
+        { key: "currentPreset.bailian.responseFormat", label: "Response Format", type: "text", group: "conversion_bailian", description: "Local PCM format label for playback; Bailian non-realtime SSE returns PCM audio data." },
+        { key: "currentPreset.bailian.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_bailian", min: 1000, max: 300000, step: 1000, description: "Request timeout for Bailian non-realtime TTS." },
+        { key: "currentPreset.bailian.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_bailian", min: 8000, max: 48000, step: 1000, description: "PCM sample rate returned by Bailian. Default is 24000." },
+        { key: "currentPreset.bailian.channels", label: "PCM Channels", type: "number", group: "conversion_bailian", min: 1, max: 2, step: 1, description: "PCM channel count returned by Bailian. Default is 1." },
+        { key: "currentPreset.bailian.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_bailian", description: "Optional JSON object merged into Bailian Qwen-TTS input fields." },
+        { key: "currentPreset.mimo.mode", label: "MiMo Mode", type: "select", group: "conversion_mimo", options: [
           { value: "preset", label: "Preset Voice" },
           { value: "voicedesign", label: "Voice Design" },
           { value: "voiceclone", label: "Voice Clone" }
         ], description: "MiMo V2.5 TTS mode." },
-        { key: "conversion.mimo.baseURL", label: "Base URL", type: "text", group: "conversion_mimo", description: "MiMo API base URL. Defaults to https://api.xiaomimimo.com/v1." },
-        { key: "conversion.mimo.apiKey", label: "API Key", type: "password", group: "conversion_mimo", description: "MiMo API key stored in the provider JSON. Leave blank to keep unchanged." },
-        { key: "conversion.mimo.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_mimo", description: "Environment variable containing the MiMo API key. Default is MIMO_API_KEY." },
-        { key: "conversion.mimo.voice", label: "Preset Voice", type: "text", group: "conversion_mimo", description: "Preset voice for mimo-v2.5-tts." },
-        { key: "conversion.mimo.voiceDesignPrompt", label: "Voice Design Prompt", type: "textarea", group: "conversion_mimo", description: "Sent as the MiMo user message only in voice design mode." },
-        { key: "conversion.mimo.voiceCloneAudioDataUrl", label: "Voice Clone Audio", type: "fileUpload", group: "conversion_mimo", assetKey: "mimo-voiceclone-audio", accept: "audio/wav,audio/mpeg,.wav,.mp3", description: "Uploaded WAV/MP3 is stored as data URL base64 in providers/mimo.json." },
-        { key: "conversion.mimo.audioFormat", label: "Audio Format", type: "select", group: "conversion_mimo", options: [
+        { key: "currentPreset.mimo.baseURL", label: "Base URL", type: "text", group: "conversion_mimo", description: "MiMo API base URL. Defaults to https://api.xiaomimimo.com/v1." },
+        { key: "currentPreset.mimo.apiKey", label: "API Key", type: "password", group: "conversion_mimo", description: "MiMo API key stored in the provider JSON. Leave blank to keep unchanged." },
+        { key: "currentPreset.mimo.apiKeyEnv", label: "API Key Env", type: "text", group: "conversion_mimo", description: "Environment variable containing the MiMo API key. Default is MIMO_API_KEY." },
+        { key: "currentPreset.mimo.voice", label: "Preset Voice", type: "text", group: "conversion_mimo", description: "Preset voice for mimo-v2.5-tts." },
+        { key: "currentPreset.mimo.voiceDesignPrompt", label: "Voice Design Prompt", type: "textarea", group: "conversion_mimo", description: "Sent as the MiMo user message only in voice design mode." },
+        { key: "currentPreset.mimo.voiceCloneAudioDataUrl", label: "Voice Clone Audio", type: "fileUpload", group: "conversion_mimo", assetKey: "mimo-voiceclone-audio", accept: "audio/wav,audio/mpeg,.wav,.mp3", description: "Uploaded WAV/MP3 is stored as data URL base64 in presets/mimo.json." },
+        { key: "currentPreset.mimo.audioFormat", label: "Audio Format", type: "select", group: "conversion_mimo", options: [
           { value: "wav", label: "WAV" },
           { value: "pcm16", label: "PCM16" }
         ], description: "MiMo audio.format. WAV is the normal file output path." },
-        { key: "conversion.mimo.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_mimo", min: 1000, max: 300000, step: 1000, description: "Request timeout for MiMo TTS." },
-        { key: "conversion.mimo.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_mimo", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used when audioFormat is pcm16. Default is 24000." },
-        { key: "conversion.mimo.channels", label: "PCM Channels", type: "number", group: "conversion_mimo", min: 1, max: 2, step: 1, description: "PCM channel count used when audioFormat is pcm16. Default is 1." },
-        { key: "conversion.mimo.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_mimo", description: "Optional JSON object merged into the MiMo chat/completions request." },
+        { key: "currentPreset.mimo.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_mimo", min: 1000, max: 300000, step: 1000, description: "Request timeout for MiMo TTS." },
+        { key: "currentPreset.mimo.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_mimo", min: 8000, max: 48000, step: 1000, description: "PCM sample rate used when audioFormat is pcm16. Default is 24000." },
+        { key: "currentPreset.mimo.channels", label: "PCM Channels", type: "number", group: "conversion_mimo", min: 1, max: 2, step: 1, description: "PCM channel count used when audioFormat is pcm16. Default is 1." },
+        { key: "currentPreset.mimo.extraParamsJson", label: "Extra Params JSON", type: "textarea", group: "conversion_mimo", description: "Optional JSON object merged into the MiMo chat/completions request." },
         { key: "targetRoute", label: "Target Route", type: "readonly", group: "general", description: "send_chat.voice.before_tts" },
         { key: "persistTranslation", label: "Persist Translation", type: "readonly", group: "general", description: "Translations are transient and never written to message log." }
       ]
@@ -1900,9 +1885,10 @@ function optionalNumberFromUnknown(value: unknown): number | undefined {
 
 function ttsPluginSummary(context: AdminRoutesContext, config = readTtsConfigForAdmin(context)): AdminPluginSummary {
   const presetExists = !config.apiPresetName || readLLMApiPresets(context).some((entry) => entry.name === config.apiPresetName);
-  const conversionPresetName = config.conversion?.provider === "openai-api" ? config.conversion.openaiApi?.apiPresetName : undefined;
+  const activePreset = selectedTtsPreset(config);
+  const conversionPresetName = activePreset.provider === "openai-api" ? activePreset.openaiApi?.apiPresetName : undefined;
   const conversionPresetExists = !conversionPresetName || readLLMApiPresets(context).some((entry) => entry.name === conversionPresetName);
-  const missingConfig = config.enabled && ((!config.apiPresetName || !presetExists) || !conversionPresetExists);
+  const missingConfig = config.enabled && ((config.translationEnabled && (!config.apiPresetName || !presetExists)) || !conversionPresetExists);
   return {
     id: "tts",
     name: "TTS",
@@ -1960,19 +1946,20 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
 
   const ttsStartedAt = Date.now();
   const configuredSynthesizer = context.pluginConfigs?.tts?.testVoiceSynthesizer;
+  const activePreset = selectedTtsPreset(config);
   const synthesizer = configuredSynthesizer ?? (
-    config.conversion?.provider === "openai-api"
+    activePreset.provider === "openai-api"
       ? createOpenAiApiTtsVoiceSynthesizer(config, {
         resolveApiPreset(name) {
           return readLLMApiPresets(context).find((entry) => entry.name === name);
         },
         appendLog: context.appendLog
       })
-      : config.conversion?.provider === "bailian"
+      : activePreset.provider === "bailian"
         ? createBailianTtsVoiceSynthesizer(config, {
           appendLog: context.appendLog
         })
-      : config.conversion?.provider === "mimo"
+      : activePreset.provider === "mimo"
         ? createMimoTtsVoiceSynthesizer(config, {
           appendLog: context.appendLog
         })
@@ -1984,7 +1971,7 @@ async function testTtsPlugin(context: AdminRoutesContext, input: Record<string, 
     voice = await synthesizer({
       text: translatedText,
       time: context.time,
-      ...(config.conversion?.provider === "genie" || !config.conversion?.provider ? { genie: ttsGenieOverrides(config) } : {})
+      ...(activePreset.provider === "genie" ? { genie: ttsGenieOverrides(config) } : {})
     });
     ttsMs = Date.now() - ttsStartedAt;
   } finally {
@@ -2024,106 +2011,9 @@ function updateTtsConfig(
   patch: Record<string, unknown>
 ): { config: TtsPluginConfig } | { error: string } {
   const current = readTtsConfigForAdmin(context);
-  const currentVoice = current.voice ?? {};
   if ("api_preset" in patch) return { error: "invalid_plugin_config" };
-  const conversionPatch = patch.conversion && typeof patch.conversion === "object" && !Array.isArray(patch.conversion)
-    ? patch.conversion as Record<string, unknown>
-    : {};
-  const remotePatch = patch.remote && typeof patch.remote === "object" && !Array.isArray(patch.remote)
-    ? patch.remote as Record<string, unknown>
-    : {};
-  const geniePatch = conversionPatch.genie && typeof conversionPatch.genie === "object" && !Array.isArray(conversionPatch.genie)
-    ? conversionPatch.genie as Record<string, unknown>
-    : remotePatch;
-  const currentRemote = current.conversion?.genie ?? current.remote ?? {};
-  const nextRemote = {
-    enabled: geniePatch.enabled === undefined ? currentRemote.enabled ?? true : booleanFromUnknown(geniePatch.enabled),
-    baseURL: geniePatch.baseURL === undefined ? currentRemote.baseURL ?? "" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? ""),
-    localFallbackEnabled: geniePatch.localFallbackEnabled === undefined ? currentRemote.localFallbackEnabled ?? false : booleanFromUnknown(geniePatch.localFallbackEnabled),
-    textFilters: currentRemote.textFilters?.length ? currentRemote.textFilters : undefined
-  };
-  const openAiApiPatch = conversionPatch.openaiApi && typeof conversionPatch.openaiApi === "object" && !Array.isArray(conversionPatch.openaiApi)
-    ? conversionPatch.openaiApi as Record<string, unknown>
-    : {};
-  const currentOpenAiApi = current.conversion?.openaiApi ?? {};
-  const extraParamsResult = parseOptionalJsonObject(openAiApiPatch.extraParamsJson, currentOpenAiApi.extraParams ?? {});
-  if ("error" in extraParamsResult) return { error: extraParamsResult.error };
-  const nextOpenAiApi = {
-    apiPresetName: openAiApiPatch.apiPresetName === undefined ? currentOpenAiApi.apiPresetName : optionalString(openAiApiPatch.apiPresetName),
-    model: openAiApiPatch.model === undefined ? currentOpenAiApi.model ?? "higgs-audio-v3-tts" : requiredString(openAiApiPatch.model),
-    voice: openAiApiPatch.voice === undefined ? currentOpenAiApi.voice ?? "default" : requiredString(openAiApiPatch.voice),
-    timeoutMs: openAiApiPatch.timeoutMs === undefined ? currentOpenAiApi.timeoutMs ?? 60_000 : optionalNumberFromUnknown(openAiApiPatch.timeoutMs),
-    sampleRate: openAiApiPatch.sampleRate === undefined ? currentOpenAiApi.sampleRate ?? 32_000 : optionalNumberFromUnknown(openAiApiPatch.sampleRate),
-    channels: openAiApiPatch.channels === undefined ? currentOpenAiApi.channels ?? 1 : optionalNumberFromUnknown(openAiApiPatch.channels),
-    textFilters: currentOpenAiApi.textFilters?.length ? currentOpenAiApi.textFilters : undefined,
-    extraParams: extraParamsResult.value
-  };
-  const bailianPatch = conversionPatch.bailian && typeof conversionPatch.bailian === "object" && !Array.isArray(conversionPatch.bailian)
-    ? conversionPatch.bailian as Record<string, unknown>
-    : {};
-  const currentBailian = current.conversion?.bailian ?? {};
-  const bailianExtraParamsResult = parseOptionalJsonObject(bailianPatch.extraParamsJson, currentBailian.extraParams ?? {});
-  if ("error" in bailianExtraParamsResult) return { error: "invalid_bailian_extra_params" };
-  const nextBailianService = bailianPatch.service === undefined ? currentBailian.service ?? "qwen" as const : bailianServiceFromUnknown(bailianPatch.service);
-  if (!nextBailianService) return { error: "invalid_bailian_service" };
-  const currentBailianService = currentBailian.service ?? "qwen";
-  const submittedBailianEndpoint = bailianPatch.endpoint === undefined ? undefined : requiredString(bailianPatch.endpoint);
-  const currentBailianEndpoint = currentBailian.endpoint ?? defaultBailianTtsEndpoint(currentBailianService);
-  const nextBailianEndpoint = submittedBailianEndpoint === undefined
-    ? nextBailianService === currentBailianService
-      ? currentBailianEndpoint
-      : defaultBailianTtsEndpoint(nextBailianService)
-    : nextBailianService !== currentBailianService && submittedBailianEndpoint === defaultBailianTtsEndpoint(currentBailianService)
-      ? defaultBailianTtsEndpoint(nextBailianService)
-      : submittedBailianEndpoint;
-  const nextBailianMode = bailianPatch.mode === undefined ? currentBailian.mode ?? "server_commit" : bailianModeFromUnknown(bailianPatch.mode);
-  if (!nextBailianMode) return { error: "invalid_bailian_mode" };
-  const nextBailian = {
-    service: nextBailianService,
-    endpoint: nextBailianEndpoint,
-    apiKey: bailianPatch.apiKey === undefined ? currentBailian.apiKey : optionalString(bailianPatch.apiKey) ?? currentBailian.apiKey,
-    apiKeyEnv: bailianPatch.apiKeyEnv === undefined ? currentBailian.apiKeyEnv ?? "DASHSCOPE_API_KEY" : optionalString(bailianPatch.apiKeyEnv),
-    workspaceId: bailianPatch.workspaceId === undefined ? currentBailian.workspaceId : optionalString(bailianPatch.workspaceId),
-    userAgent: bailianPatch.userAgent === undefined ? currentBailian.userAgent : optionalString(bailianPatch.userAgent),
-    model: bailianPatch.model === undefined ? currentBailian.model ?? "qwen3-tts-vc-2026-01-22" : requiredString(bailianPatch.model),
-    voice: bailianPatch.voice === undefined ? currentBailian.voice ?? "Cherry" : requiredString(bailianPatch.voice),
-    languageType: bailianPatch.languageType === undefined ? currentBailian.languageType ?? "Chinese" : optionalString(bailianPatch.languageType),
-    mode: nextBailianMode,
-    responseFormat: bailianPatch.responseFormat === undefined ? currentBailian.responseFormat ?? "pcm" : requiredString(bailianPatch.responseFormat),
-    timeoutMs: bailianPatch.timeoutMs === undefined ? currentBailian.timeoutMs ?? 60_000 : optionalNumberFromUnknown(bailianPatch.timeoutMs),
-    sampleRate: bailianPatch.sampleRate === undefined ? currentBailian.sampleRate ?? 24_000 : optionalNumberFromUnknown(bailianPatch.sampleRate),
-    channels: bailianPatch.channels === undefined ? currentBailian.channels ?? 1 : optionalNumberFromUnknown(bailianPatch.channels),
-    textFilters: currentBailian.textFilters?.length ? currentBailian.textFilters : undefined,
-    extraParams: bailianExtraParamsResult.value
-  };
-  const mimoPatch = conversionPatch.mimo && typeof conversionPatch.mimo === "object" && !Array.isArray(conversionPatch.mimo)
-    ? conversionPatch.mimo as Record<string, unknown>
-    : {};
-  const currentMimo = current.conversion?.mimo ?? {};
-  const mimoExtraParamsResult = parseOptionalJsonObject(mimoPatch.extraParamsJson, currentMimo.extraParams ?? {});
-  if ("error" in mimoExtraParamsResult) return { error: "invalid_mimo_extra_params" };
-  const nextMimoMode = mimoPatch.mode === undefined ? currentMimo.mode ?? "preset" : mimoModeFromUnknown(mimoPatch.mode);
-  if (!nextMimoMode) return { error: "invalid_mimo_mode" };
-  const nextMimo = {
-    mode: nextMimoMode,
-    baseURL: mimoPatch.baseURL === undefined ? currentMimo.baseURL ?? defaultMimoTtsBaseURL : requiredString(mimoPatch.baseURL),
-    apiKey: mimoPatch.apiKey === undefined ? currentMimo.apiKey : optionalString(mimoPatch.apiKey) ?? currentMimo.apiKey,
-    apiKeyEnv: mimoPatch.apiKeyEnv === undefined ? currentMimo.apiKeyEnv ?? "MIMO_API_KEY" : optionalString(mimoPatch.apiKeyEnv),
-    voice: mimoPatch.voice === undefined ? currentMimo.voice ?? "mimo_default" : requiredString(mimoPatch.voice),
-    voiceDesignPrompt: mimoPatch.voiceDesignPrompt === undefined ? currentMimo.voiceDesignPrompt : optionalString(mimoPatch.voiceDesignPrompt),
-    voiceCloneAudioDataUrl: currentMimo.voiceCloneAudioDataUrl,
-    audioFormat: mimoPatch.audioFormat === undefined ? currentMimo.audioFormat ?? "wav" : mimoAudioFormatFromUnknown(mimoPatch.audioFormat),
-    timeoutMs: mimoPatch.timeoutMs === undefined ? currentMimo.timeoutMs ?? 60_000 : optionalNumberFromUnknown(mimoPatch.timeoutMs),
-    sampleRate: mimoPatch.sampleRate === undefined ? currentMimo.sampleRate ?? 24_000 : optionalNumberFromUnknown(mimoPatch.sampleRate),
-    channels: mimoPatch.channels === undefined ? currentMimo.channels ?? 1 : optionalNumberFromUnknown(mimoPatch.channels),
-    textFilters: currentMimo.textFilters?.length ? currentMimo.textFilters : undefined,
-    extraParams: mimoExtraParamsResult.value
-  };
-  if (!nextMimo.audioFormat) return { error: "invalid_mimo_audio_format" };
-  const nextConversionProvider = conversionPatch.provider === undefined
-    ? current.conversion?.provider ?? "genie"
-    : conversionPatch.provider === "openai-api" ? "openai-api" : conversionPatch.provider === "bailian" ? "bailian" : conversionPatch.provider === "mimo" ? "mimo" : conversionPatch.provider === "genie" ? "genie" : undefined;
-  if (!nextConversionProvider) return { error: "invalid_conversion_provider" };
+  if (!current.activePresetName || !current.presets || !current.activePreset) return { error: "tts_active_preset_not_found" };
+  const currentPresets = current.presets;
   const currentTranslationPresets = current.translationPresets ?? {};
   const activeTranslationPresetName = safeTtsPresetName(optionalString(patch.translationPresetName) || current.translationPresetName || Object.keys(currentTranslationPresets)[0] || "default", "default");
   const editTranslationPresetName = safeTtsPresetName(optionalString(patch.newTranslationPresetName) || optionalString(patch.translationEditPresetName) || activeTranslationPresetName, "default");
@@ -2137,54 +2027,39 @@ function updateTtsConfig(
     apiPresetName: translationPatch.apiPresetName === undefined ? currentTranslation.apiPresetName ?? current.apiPresetName : optionalString(translationPatch.apiPresetName),
     prompt: translationPatch.prompt === undefined ? currentTranslation.prompt ?? current.prompt : requiredString(translationPatch.prompt)
   };
-  const voicePatch = patch.voice && typeof patch.voice === "object" && !Array.isArray(patch.voice)
-    ? patch.voice as Record<string, unknown>
+  const activePresetName = safeTtsPresetName(optionalString(patch.activePresetName) || current.activePresetName, current.activePresetName);
+  const editPresetName = safeTtsPresetName(optionalString(patch.newPresetName) || optionalString(patch.editPresetName) || current.editPresetName || activePresetName, activePresetName);
+  const presetPatch = patch.currentPreset && typeof patch.currentPreset === "object" && !Array.isArray(patch.currentPreset)
+    ? patch.currentPreset as Record<string, unknown>
     : {};
-  const currentModelConfigs = currentVoice.modelConfigs ?? {};
-  const activeModelConfigName = safeTtsPresetName(optionalString(voicePatch.modelConfigName) || currentVoice.modelConfigName || Object.keys(currentModelConfigs)[0] || "jp", "jp");
-  const editModelConfigName = safeTtsPresetName(optionalString(voicePatch.newModelConfigName) || optionalString(voicePatch.modelEditPresetName) || activeModelConfigName, "jp");
-  const currentModel = currentModelConfigs[editModelConfigName] ?? currentModelConfigs[activeModelConfigName] ?? {};
-  const modelPatch = voicePatch.currentModel && typeof voicePatch.currentModel === "object" && !Array.isArray(voicePatch.currentModel)
-    ? voicePatch.currentModel as Record<string, unknown>
+  const shouldUpdatePreset = Object.keys(presetPatch).length > 0 || optionalString(patch.newPresetName) !== undefined;
+  const currentPreset = currentPresets[editPresetName] ?? currentPresets[current.editPresetName ?? ""] ?? currentPresets[activePresetName] ?? current.activePreset;
+  const presetResult = buildTtsPresetFromPatch(currentPreset, presetPatch);
+  if ("error" in presetResult) return presetResult;
+  const geniePatch = presetPatch.genie && typeof presetPatch.genie === "object" && !Array.isArray(presetPatch.genie)
+    ? presetPatch.genie as Record<string, unknown>
     : {};
-  const shouldUpdateModelPreset = Object.keys(modelPatch).length > 0 || optionalString(voicePatch.newModelConfigName) !== undefined;
-  const nextModelLanguage = modelPatch.language === undefined ? currentModel.language ?? "jp" : ttsLanguageFromUnknown(modelPatch.language);
-  if (!nextModelLanguage) return { error: "invalid_tts_language" };
-  const nextModel = {
-    language: nextModelLanguage,
-    speed: modelPatch.speed === undefined ? currentModel.speed : optionalSpeedValue(modelPatch.speed),
-    partSilenceSeconds: modelPatch.partSilenceSeconds === undefined ? currentModel.partSilenceSeconds : optionalPartSilenceSecondsValue(modelPatch.partSilenceSeconds),
-    splitText: modelPatch.splitText === undefined ? currentModel.splitText ?? false : booleanFromUnknown(modelPatch.splitText)
-  };
-  const referenceText = modelPatch.referenceText === undefined ? undefined : optionalString(modelPatch.referenceText);
-  if (referenceText !== undefined) writeTtsPresetReferenceText(editModelConfigName, referenceText, context.pluginConfigs?.tts?.assetRoot);
+  const referenceText = geniePatch.referenceText === undefined ? undefined : optionalString(geniePatch.referenceText);
+  if (referenceText !== undefined) writeTtsPresetReferenceText(editPresetName, referenceText, context.pluginConfigs?.tts?.assetRoot);
   const nextTranslationPresets = shouldUpdateTranslationPreset
     ? { ...currentTranslationPresets, [editTranslationPresetName]: nextTranslation }
     : currentTranslationPresets;
   const activeTranslation = nextTranslationPresets[activeTranslationPresetName] ?? nextTranslation;
-  const nextModelConfigs = shouldUpdateModelPreset
-    ? { ...currentModelConfigs, [editModelConfigName]: nextModel }
-    : currentModelConfigs;
+  const nextPresets = shouldUpdatePreset ? { ...currentPresets, [editPresetName]: presetResult.preset } : currentPresets;
+  const activePreset = nextPresets[activePresetName];
+  if (!activePreset) return { error: "tts_active_preset_not_found" };
   const next: TtsPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
-    remote: nextRemote,
-    conversion: {
-      provider: nextConversionProvider,
-      genie: nextRemote,
-      openaiApi: nextOpenAiApi,
-      bailian: nextBailian,
-      mimo: nextMimo
-    },
+    activePresetName,
+    editPresetName,
+    presets: nextPresets,
+    activePreset,
     translationPresetName: activeTranslationPresetName,
     translationPresets: nextTranslationPresets,
     translationEnabled: activeTranslation.translationEnabled ?? true,
     apiPresetName: activeTranslation.apiPresetName,
     api_preset: current.api_preset,
-    prompt: activeTranslation.prompt ?? current.prompt,
-    voice: {
-      modelConfigName: activeModelConfigName,
-      modelConfigs: nextModelConfigs
-    }
+    prompt: activeTranslation.prompt ?? current.prompt
   };
 
   const validationError = validateTtsConfig(next);
@@ -2193,7 +2068,7 @@ function updateTtsConfig(
   if ((shouldUpdateTranslationPreset || "translationPresetName" in patch || "enabled" in patch) && (presetToValidate.translationEnabled ?? true) && presetToValidate.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === presetToValidate.apiPresetName)) {
     return { error: "invalid_api_preset" };
   }
-  if (next.conversion?.provider === "openai-api" && next.conversion.openaiApi?.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === next.conversion?.openaiApi?.apiPresetName)) {
+  if (activePreset.provider === "openai-api" && activePreset.openaiApi?.apiPresetName && !readLLMApiPresets(context).some((entry) => entry.name === activePreset.openaiApi?.apiPresetName)) {
     return { error: "invalid_openai_api_preset" };
   }
   writeTtsConfig(context, next);
@@ -2201,10 +2076,145 @@ function updateTtsConfig(
 }
 
 function validateTtsConfig(config: TtsPluginConfig): string | undefined {
-  const genie = config.conversion?.genie ?? config.remote;
-  if (genie?.enabled && !genie.baseURL) return "invalid_remote_tts_url";
-  const openaiApi = config.conversion?.openaiApi;
-  if (config.conversion?.provider === "openai-api") {
+  for (const preset of Object.values(config.presets ?? {})) {
+    const error = validateTtsPreset(preset);
+    if (error) return error;
+  }
+  return undefined;
+}
+
+function buildTtsPresetFromPatch(current: TtsPreset, patch: Record<string, unknown>): { preset: TtsPreset } | { error: string } {
+  const provider = patch.provider === undefined
+    ? current.provider
+    : patch.provider === "openai-api" ? "openai-api" : patch.provider === "bailian" ? "bailian" : patch.provider === "mimo" ? "mimo" : patch.provider === "genie" ? "genie" : undefined;
+  if (!provider) return { error: "invalid_tts_preset_provider" };
+  if (provider === "openai-api") {
+    const openAiApiPatch = objectPatch(patch.openaiApi);
+    const currentOpenAiApi = current.openaiApi ?? {};
+    const extraParamsResult = parseOptionalJsonObject(openAiApiPatch.extraParamsJson, currentOpenAiApi.extraParams ?? {});
+    if ("error" in extraParamsResult) return { error: extraParamsResult.error };
+    return {
+      preset: {
+        provider,
+        openaiApi: {
+          apiPresetName: openAiApiPatch.apiPresetName === undefined ? currentOpenAiApi.apiPresetName : optionalString(openAiApiPatch.apiPresetName),
+          model: openAiApiPatch.model === undefined ? currentOpenAiApi.model ?? "higgs-audio-v3-tts" : requiredString(openAiApiPatch.model),
+          voice: openAiApiPatch.voice === undefined ? currentOpenAiApi.voice ?? "default" : requiredString(openAiApiPatch.voice),
+          timeoutMs: openAiApiPatch.timeoutMs === undefined ? currentOpenAiApi.timeoutMs ?? 60_000 : optionalNumberFromUnknown(openAiApiPatch.timeoutMs),
+          sampleRate: openAiApiPatch.sampleRate === undefined ? currentOpenAiApi.sampleRate ?? 32_000 : optionalNumberFromUnknown(openAiApiPatch.sampleRate),
+          channels: openAiApiPatch.channels === undefined ? currentOpenAiApi.channels ?? 1 : optionalNumberFromUnknown(openAiApiPatch.channels),
+          textFilters: currentOpenAiApi.textFilters?.length ? currentOpenAiApi.textFilters : undefined,
+          extraParams: extraParamsResult.value
+        }
+      }
+    };
+  }
+  if (provider === "bailian") {
+    const bailianPatch = objectPatch(patch.bailian);
+    const currentBailian = current.bailian ?? {};
+    const bailianExtraParamsResult = parseOptionalJsonObject(bailianPatch.extraParamsJson, currentBailian.extraParams ?? {});
+    if ("error" in bailianExtraParamsResult) return { error: "invalid_bailian_extra_params" };
+    const nextBailianService = bailianPatch.service === undefined ? currentBailian.service ?? "qwen" as const : bailianServiceFromUnknown(bailianPatch.service);
+    if (!nextBailianService) return { error: "invalid_bailian_service" };
+    const currentBailianService = currentBailian.service ?? "qwen";
+    const submittedBailianEndpoint = bailianPatch.endpoint === undefined ? undefined : requiredString(bailianPatch.endpoint);
+    const currentBailianEndpoint = currentBailian.endpoint ?? defaultBailianTtsEndpoint(currentBailianService);
+    const nextBailianEndpoint = submittedBailianEndpoint === undefined
+      ? nextBailianService === currentBailianService
+        ? currentBailianEndpoint
+        : defaultBailianTtsEndpoint(nextBailianService)
+      : nextBailianService !== currentBailianService && submittedBailianEndpoint === defaultBailianTtsEndpoint(currentBailianService)
+        ? defaultBailianTtsEndpoint(nextBailianService)
+        : submittedBailianEndpoint;
+    const nextBailianMode = bailianPatch.mode === undefined ? currentBailian.mode ?? "server_commit" : bailianModeFromUnknown(bailianPatch.mode);
+    if (!nextBailianMode) return { error: "invalid_bailian_mode" };
+    return {
+      preset: {
+        provider,
+        bailian: {
+          service: nextBailianService,
+          endpoint: nextBailianEndpoint,
+          apiKey: bailianPatch.apiKey === undefined ? currentBailian.apiKey : optionalString(bailianPatch.apiKey) ?? currentBailian.apiKey,
+          apiKeyEnv: bailianPatch.apiKeyEnv === undefined ? currentBailian.apiKeyEnv ?? "DASHSCOPE_API_KEY" : optionalString(bailianPatch.apiKeyEnv),
+          workspaceId: bailianPatch.workspaceId === undefined ? currentBailian.workspaceId : optionalString(bailianPatch.workspaceId),
+          userAgent: bailianPatch.userAgent === undefined ? currentBailian.userAgent : optionalString(bailianPatch.userAgent),
+          model: bailianPatch.model === undefined ? currentBailian.model ?? "qwen3-tts-vc-2026-01-22" : requiredString(bailianPatch.model),
+          voice: bailianPatch.voice === undefined ? currentBailian.voice ?? "Cherry" : requiredString(bailianPatch.voice),
+          languageType: bailianPatch.languageType === undefined ? currentBailian.languageType ?? "Chinese" : optionalString(bailianPatch.languageType),
+          mode: nextBailianMode,
+          responseFormat: bailianPatch.responseFormat === undefined ? currentBailian.responseFormat ?? "pcm" : requiredString(bailianPatch.responseFormat),
+          timeoutMs: bailianPatch.timeoutMs === undefined ? currentBailian.timeoutMs ?? 60_000 : optionalNumberFromUnknown(bailianPatch.timeoutMs),
+          sampleRate: bailianPatch.sampleRate === undefined ? currentBailian.sampleRate ?? 24_000 : optionalNumberFromUnknown(bailianPatch.sampleRate),
+          channels: bailianPatch.channels === undefined ? currentBailian.channels ?? 1 : optionalNumberFromUnknown(bailianPatch.channels),
+          textFilters: currentBailian.textFilters?.length ? currentBailian.textFilters : undefined,
+          extraParams: bailianExtraParamsResult.value
+        }
+      }
+    };
+  }
+  if (provider === "mimo") {
+    const mimoPatch = objectPatch(patch.mimo);
+    const currentMimo = current.mimo ?? {};
+    const mimoExtraParamsResult = parseOptionalJsonObject(mimoPatch.extraParamsJson, currentMimo.extraParams ?? {});
+    if ("error" in mimoExtraParamsResult) return { error: "invalid_mimo_extra_params" };
+    const nextMimoMode = mimoPatch.mode === undefined ? currentMimo.mode ?? "preset" : mimoModeFromUnknown(mimoPatch.mode);
+    if (!nextMimoMode) return { error: "invalid_mimo_mode" };
+    const audioFormat = mimoPatch.audioFormat === undefined ? currentMimo.audioFormat ?? "wav" : mimoAudioFormatFromUnknown(mimoPatch.audioFormat);
+    if (!audioFormat) return { error: "invalid_mimo_audio_format" };
+    return {
+      preset: {
+        provider,
+        mimo: {
+          mode: nextMimoMode,
+          baseURL: mimoPatch.baseURL === undefined ? currentMimo.baseURL ?? defaultMimoTtsBaseURL : requiredString(mimoPatch.baseURL),
+          apiKey: mimoPatch.apiKey === undefined ? currentMimo.apiKey : optionalString(mimoPatch.apiKey) ?? currentMimo.apiKey,
+          apiKeyEnv: mimoPatch.apiKeyEnv === undefined ? currentMimo.apiKeyEnv ?? "MIMO_API_KEY" : optionalString(mimoPatch.apiKeyEnv),
+          voice: mimoPatch.voice === undefined ? currentMimo.voice ?? "mimo_default" : requiredString(mimoPatch.voice),
+          voiceDesignPrompt: mimoPatch.voiceDesignPrompt === undefined ? currentMimo.voiceDesignPrompt : optionalString(mimoPatch.voiceDesignPrompt),
+          voiceCloneAudioDataUrl: currentMimo.voiceCloneAudioDataUrl,
+          audioFormat,
+          timeoutMs: mimoPatch.timeoutMs === undefined ? currentMimo.timeoutMs ?? 60_000 : optionalNumberFromUnknown(mimoPatch.timeoutMs),
+          sampleRate: mimoPatch.sampleRate === undefined ? currentMimo.sampleRate ?? 24_000 : optionalNumberFromUnknown(mimoPatch.sampleRate),
+          channels: mimoPatch.channels === undefined ? currentMimo.channels ?? 1 : optionalNumberFromUnknown(mimoPatch.channels),
+          textFilters: currentMimo.textFilters?.length ? currentMimo.textFilters : undefined,
+          extraParams: mimoExtraParamsResult.value
+        }
+      }
+    };
+  }
+  const geniePatch = objectPatch(patch.genie);
+  const currentGenie = current.genie ?? {};
+  const nextLanguage = geniePatch.language === undefined ? currentGenie.language ?? "jp" : ttsLanguageFromUnknown(geniePatch.language);
+  if (!nextLanguage) return { error: "invalid_tts_language" };
+  return {
+    preset: {
+      provider: "genie",
+      genie: {
+        enabled: geniePatch.enabled === undefined ? currentGenie.enabled ?? true : booleanFromUnknown(geniePatch.enabled),
+        baseURL: geniePatch.baseURL === undefined ? currentGenie.baseURL ?? "" : normalizeRemoteTtsBaseURL(optionalString(geniePatch.baseURL) ?? ""),
+        localFallbackEnabled: geniePatch.localFallbackEnabled === undefined ? currentGenie.localFallbackEnabled ?? false : booleanFromUnknown(geniePatch.localFallbackEnabled),
+        language: nextLanguage,
+        modelDir: geniePatch.modelDir === undefined ? currentGenie.modelDir : optionalString(geniePatch.modelDir),
+        speed: geniePatch.speed === undefined ? currentGenie.speed : optionalSpeedValue(geniePatch.speed),
+        partSilenceSeconds: geniePatch.partSilenceSeconds === undefined ? currentGenie.partSilenceSeconds : optionalPartSilenceSecondsValue(geniePatch.partSilenceSeconds),
+        splitText: geniePatch.splitText === undefined ? currentGenie.splitText ?? false : booleanFromUnknown(geniePatch.splitText),
+        textFilters: currentGenie.textFilters?.length ? currentGenie.textFilters : undefined
+      }
+    }
+  };
+}
+
+function objectPatch(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function validateTtsPreset(preset: TtsPreset): string | undefined {
+  const genie = preset.genie;
+  if (preset.provider === "genie" && genie?.enabled && !genie.baseURL) return "invalid_remote_tts_url";
+  if (genie?.speed !== undefined && invalidNumber(genie.speed, 0.5, 2)) return "invalid_voice_speed";
+  if (genie?.partSilenceSeconds !== undefined && invalidNumber(genie.partSilenceSeconds, 0, 3)) return "invalid_part_silence";
+  const openaiApi = preset.openaiApi;
+  if (preset.provider === "openai-api") {
     if (!openaiApi?.apiPresetName && !openaiApi?.baseURL) return "missing_openai_api_tts_preset";
     if (!openaiApi?.model) return "missing_openai_api_tts_model";
     if (!openaiApi?.voice) return "missing_openai_api_tts_voice";
@@ -2212,8 +2222,8 @@ function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   if (openaiApi?.timeoutMs !== undefined && invalidNumber(openaiApi.timeoutMs, 1000, 300000)) return "invalid_openai_api_timeout";
   if (openaiApi?.sampleRate !== undefined && invalidNumber(openaiApi.sampleRate, 8000, 48000)) return "invalid_openai_api_sample_rate";
   if (openaiApi?.channels !== undefined && invalidNumber(openaiApi.channels, 1, 2)) return "invalid_openai_api_channels";
-  const bailian = config.conversion?.bailian;
-  if (config.conversion?.provider === "bailian") {
+  const bailian = preset.bailian;
+  if (preset.provider === "bailian") {
     if (!bailian?.endpoint) return "missing_bailian_tts_endpoint";
     if (!bailian?.model) return "missing_bailian_tts_model";
     if (!bailian?.voice) return "missing_bailian_tts_voice";
@@ -2221,8 +2231,8 @@ function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   if (bailian?.timeoutMs !== undefined && invalidNumber(bailian.timeoutMs, 1000, 300000)) return "invalid_bailian_timeout";
   if (bailian?.sampleRate !== undefined && invalidNumber(bailian.sampleRate, 8000, 48000)) return "invalid_bailian_sample_rate";
   if (bailian?.channels !== undefined && invalidNumber(bailian.channels, 1, 2)) return "invalid_bailian_channels";
-  const mimo = config.conversion?.mimo;
-  if (config.conversion?.provider === "mimo") {
+  const mimo = preset.mimo;
+  if (preset.provider === "mimo") {
     if (!mimo?.baseURL) return "missing_mimo_tts_base_url";
     if (mimo.mode === "preset" && !mimo.voice) return "missing_mimo_tts_voice";
     if (mimo.mode === "voicedesign" && !mimo.voiceDesignPrompt) return "missing_mimo_voice_design_prompt";
@@ -2232,11 +2242,6 @@ function validateTtsConfig(config: TtsPluginConfig): string | undefined {
   if (mimo?.timeoutMs !== undefined && invalidNumber(mimo.timeoutMs, 1000, 300000)) return "invalid_mimo_timeout";
   if (mimo?.sampleRate !== undefined && invalidNumber(mimo.sampleRate, 8000, 48000)) return "invalid_mimo_sample_rate";
   if (mimo?.channels !== undefined && invalidNumber(mimo.channels, 1, 2)) return "invalid_mimo_channels";
-  const voice = config.voice ?? {};
-  for (const model of Object.values(voice.modelConfigs ?? {})) {
-    if (model.speed !== undefined && invalidNumber(model.speed, 0.5, 2)) return "invalid_voice_speed";
-    if (model.partSilenceSeconds !== undefined && invalidNumber(model.partSilenceSeconds, 0, 3)) return "invalid_part_silence";
-  }
   return undefined;
 }
 
@@ -2284,96 +2289,32 @@ function mimoAudioFormatFromUnknown(value: unknown): "wav" | "pcm16" | undefined
   return value === "wav" || value === "pcm16" ? value : undefined;
 }
 
-function isTtsVoiceAssetPath(value: string): boolean {
-  return isTtsModelAssetPath(value) || isPluginAssetPath("tts", value);
-}
-
 function ttsLanguageFromUnknown(value: unknown): "jp" | "zh" | "en" | undefined {
   return value === "jp" || value === "zh" || value === "en" ? value : undefined;
-}
-
-function safeTtsModelConfigName(value: string): string {
-  return value.trim().replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "jp";
 }
 
 function safeTtsPresetName(value: string, fallback: string): string {
   return value.trim().replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || fallback;
 }
 
-function isLikelyAssetPath(value: string): boolean {
-  return value.startsWith("assets/") || value.startsWith("tts/") || value.startsWith("plugin/") || path.isAbsolute(value);
-}
-
-function isTtsModelAssetPath(value: string): boolean {
-  const root = path.resolve("assets", "tts", "model");
-  const fullPath = path.resolve(value);
-  const relative = path.relative(root, fullPath);
-  return !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-function migrateTtsVoiceModelConfigAssets(modelConfigName: string, model: TtsVoiceModelConfig): TtsVoiceModelConfig {
-  const safeName = safeTtsModelConfigName(modelConfigName);
-  const baseDir = path.join("assets", "tts", "model", safeName);
-  const next: TtsVoiceModelConfig = { ...model };
-
-  if (model.modelDir) {
-    const target = path.join(baseDir, "model");
-    copyAssetPathIfPresent(model.modelDir, target);
-    next.modelDir = normalizeAssetPath(target);
-  }
-  if (model.referenceAudio) {
-    const extension = isLikelyAssetPath(model.referenceAudio) ? path.extname(model.referenceAudio) || ".wav" : ".wav";
-    const target = path.join(baseDir, `reference${extension}`);
-    copyAssetPathIfPresent(model.referenceAudio, target);
-    next.referenceAudio = normalizeAssetPath(target);
-  }
-  if (model.referenceText) {
-    const target = path.join(baseDir, "reference.txt");
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    if (isLikelyAssetPath(model.referenceText)) {
-      copyAssetPathIfPresent(model.referenceText, target);
-    } else {
-      fs.writeFileSync(target, model.referenceText);
-    }
-    next.referenceText = normalizeAssetPath(target);
-  }
-
-  return next;
-}
-
-function copyAssetPathIfPresent(sourcePath: string, targetPath: string): void {
-  if (!isLikelyAssetPath(sourcePath)) return;
-  const source = path.resolve(sourcePath);
-  const target = path.resolve(targetPath);
-  if (source === target) return;
-  if (!fs.existsSync(source)) return;
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  const stat = fs.statSync(source) as { isFile(): boolean; isDirectory?: () => boolean };
-  if (typeof stat.isDirectory === "function" ? stat.isDirectory() : !stat.isFile()) {
-    (fs as any).cpSync(source, target, { recursive: true });
-  } else {
-    fs.writeFileSync(target, fs.readFileSync(source));
-  }
-}
-
 function normalizeAssetPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
-function ttsPresetRoot(modelConfigName: string, assetRoot = "assets"): string {
-  return path.join(assetRoot, "tts", "preset", safeTtsPresetName(modelConfigName, "jp"));
+function ttsPresetRoot(presetName: string, assetRoot = "assets"): string {
+  return path.join(assetRoot, "tts", "preset", safeTtsPresetName(presetName, "jp"));
 }
 
-function ttsPresetModelDir(modelConfigName: string): string {
-  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName), "model"));
+function ttsPresetModelDir(presetName: string, assetRoot = "assets"): string {
+  return normalizeAssetPath(path.join(ttsPresetRoot(presetName, assetRoot), "model"));
 }
 
-function ttsPresetReferenceTextPath(modelConfigName: string, assetRoot = "assets"): string {
-  return normalizeAssetPath(path.join(ttsPresetRoot(modelConfigName, assetRoot), "reference.txt"));
+function ttsPresetReferenceTextPath(presetName: string, assetRoot = "assets"): string {
+  return normalizeAssetPath(path.join(ttsPresetRoot(presetName, assetRoot), "reference.txt"));
 }
 
-function ttsPresetReferenceAudioPath(modelConfigName: string): string | undefined {
-  const root = ttsPresetRoot(modelConfigName);
+function ttsPresetReferenceAudioPath(presetName: string, assetRoot = "assets"): string | undefined {
+  const root = ttsPresetRoot(presetName, assetRoot);
   for (const candidate of ["reference.wav", "reference.mp3", "reference.ogg", "reference.opus", "reference.m4a"]) {
     const filePath = path.join(root, candidate);
     if (fs.existsSync(filePath)) return normalizeAssetPath(filePath);
@@ -2386,8 +2327,8 @@ function ttsPresetReferenceAudioPath(modelConfigName: string): string | undefine
   }
 }
 
-function readTtsPresetReferenceText(modelConfigName: string): string | undefined {
-  const filePath = ttsPresetReferenceTextPath(modelConfigName);
+function readTtsPresetReferenceText(presetName: string, assetRoot = "assets"): string | undefined {
+  const filePath = ttsPresetReferenceTextPath(presetName, assetRoot);
   try {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return fs.readFileSync(filePath, "utf8");
   } catch {
@@ -2396,8 +2337,8 @@ function readTtsPresetReferenceText(modelConfigName: string): string | undefined
   return undefined;
 }
 
-function writeTtsPresetReferenceText(modelConfigName: string, value: string, assetRoot = "assets"): void {
-  const filePath = ttsPresetReferenceTextPath(modelConfigName, assetRoot);
+function writeTtsPresetReferenceText(presetName: string, value: string, assetRoot = "assets"): void {
+  const filePath = ttsPresetReferenceTextPath(presetName, assetRoot);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, value);
 }
@@ -2410,16 +2351,15 @@ function writeTtsConfig(context: AdminRoutesContext, config: TtsPluginConfig): v
   const filePath = ttsConfigPath(context);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(canonicalTtsConfig(config), null, 2)}\n`);
-  writeTtsProviderConfigs(context, config);
+  writeTtsPresetConfigs(context, config);
 }
 
-function writeTtsProviderConfigs(context: AdminRoutesContext, config: TtsPluginConfig): void {
-  const dir = ttsProviderConfigDirectory(context);
+function writeTtsPresetConfigs(context: AdminRoutesContext, config: TtsPluginConfig): void {
+  const dir = ttsPresetConfigDirectory(context);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "genie.json"), `${JSON.stringify(config.conversion?.genie ?? {}, null, 2)}\n`);
-  fs.writeFileSync(path.join(dir, "openai-api.json"), `${JSON.stringify(config.conversion?.openaiApi ?? {}, null, 2)}\n`);
-  fs.writeFileSync(path.join(dir, "bailian.json"), `${JSON.stringify(config.conversion?.bailian ?? {}, null, 2)}\n`);
-  fs.writeFileSync(path.join(dir, "mimo.json"), `${JSON.stringify(config.conversion?.mimo ?? {}, null, 2)}\n`);
+  for (const [name, preset] of Object.entries(config.presets ?? {})) {
+    fs.writeFileSync(path.join(dir, `${safeTtsPresetName(name, "tts")}.json`), `${JSON.stringify(canonicalTtsPreset(preset), null, 2)}\n`);
+  }
 }
 
 async function uploadGenericPluginAsset(
@@ -2429,6 +2369,7 @@ async function uploadGenericPluginAsset(
   request: any
 ): Promise<{ config: TtsAdminConfig; assetPath: string } | { error: string; statusCode?: number }> {
   const config = readTtsConfigForAdmin(context);
+  if (!config.activePresetName || !config.presets || !config.activePreset) return { error: "tts_active_preset_not_found" };
   const fileName = safePluginAssetFileName(decodeHeaderFileName(optionalString(request.headers?.["x-file-name"]) ?? ""));
   const relativeDir = decodeHeaderFileName(optionalString(request.headers?.["x-relative-dir"]) ?? "");
   const maxBytes = assetKey === "model"
@@ -2456,24 +2397,29 @@ async function uploadGenericPluginAsset(
     fs.writeFileSync(assetPath.fullPath, body);
   }
 
-  const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
-  const modelConfigs = config.voice?.modelConfigs ?? {};
-  const currentModel = modelConfigs[modelConfigName] ?? {};
-  const next: TtsPluginConfig = {
-    ...config,
-    voice: {
-      ...config.voice,
-      modelConfigName,
-      modelConfigs: {
-        ...modelConfigs,
-        [modelConfigName]: {
-          ...currentModel
-        }
+  const targetPresetName = safeTtsPresetName(presetName || config.editPresetName || config.activePresetName, config.activePresetName);
+  const targetPreset = config.presets[targetPresetName] ?? config.activePreset;
+  const nextPreset = assetKey === "model"
+    ? {
+      ...targetPreset,
+      provider: "genie" as const,
+      genie: {
+        ...(targetPreset.genie ?? {}),
+        modelDir: path.join("assets", "tts", "preset", targetPresetName, "model").split(path.sep).join("/")
       }
     }
+    : targetPreset;
+  const next: TtsPluginConfig = {
+    ...config,
+    editPresetName: targetPresetName,
+    presets: {
+      ...config.presets,
+      [targetPresetName]: nextPreset
+    },
+    activePreset: config.presets[config.activePresetName] ?? config.activePreset
   };
   writeTtsConfig(context, next);
-  return { config: publicTtsConfig(next), assetPath: assetPath.assetPath };
+  return { config: publicTtsConfig(next, context.pluginConfigs?.tts?.assetRoot), assetPath: assetPath.assetPath };
 }
 
 function writeTtsMimoVoiceCloneAudioUpload(
@@ -2484,22 +2430,27 @@ function writeTtsMimoVoiceCloneAudioUpload(
 ): { config: TtsAdminConfig; assetPath: string } | { error: string; statusCode?: number } {
   const mimeType = mimoVoiceCloneMimeType(fileName);
   if (!mimeType) return { error: "unsupported_mimo_voiceclone_audio_type" };
-  const currentMimo = config.conversion?.mimo ?? {};
+  if (!config.activePresetName || !config.presets || !config.activePreset) return { error: "tts_active_preset_not_found" };
+  const presetName = config.editPresetName || config.activePresetName;
+  const currentPreset = config.presets[presetName] ?? config.activePreset;
+  const currentMimo = currentPreset.mimo ?? {};
   const nextMode = "voiceclone" as const;
-  const next: TtsPluginConfig = {
-    ...config,
-    conversion: {
-      ...config.conversion,
-      provider: config.conversion?.provider ?? "mimo",
-      mimo: {
-        ...currentMimo,
-        mode: nextMode,
-        voiceCloneAudioDataUrl: `data:${mimeType};base64,${body.toString("base64")}`
-      }
+  const nextPreset: TtsPreset = {
+    provider: "mimo",
+    mimo: {
+      ...currentMimo,
+      mode: nextMode,
+      voiceCloneAudioDataUrl: `data:${mimeType};base64,${body.toString("base64")}`
     }
   };
+  const next: TtsPluginConfig = {
+    ...config,
+    editPresetName: presetName,
+    presets: { ...config.presets, [presetName]: nextPreset },
+    activePreset: config.activePresetName === presetName ? nextPreset : config.activePreset
+  };
   writeTtsConfig(context, next);
-  return { config: publicTtsConfig(next), assetPath: `${path.join(ttsProviderConfigDirectory(context), "mimo.json").split(path.sep).join("/")}#voiceCloneAudioDataUrl` };
+  return { config: publicTtsConfig(next, context.pluginConfigs?.tts?.assetRoot), assetPath: `${path.join(ttsPresetConfigDirectory(context), `${presetName}.json`).split(path.sep).join("/")}#voiceCloneAudioDataUrl` };
 }
 
 function mimoVoiceCloneMimeType(fileName: string): string | undefined {
@@ -2510,8 +2461,9 @@ function mimoVoiceCloneMimeType(fileName: string): string | undefined {
 }
 
 function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
-  const modelConfigName = safeTtsPresetName(presetName || config.voice?.modelConfigName || "jp", "jp");
-  const root = path.resolve(assetRoot, "tts", "preset", modelConfigName);
+  if (!config.activePresetName) throw new HttpJsonError(400, "tts_active_preset_not_found");
+  const selectedPresetName = safeTtsPresetName(presetName || config.editPresetName || config.activePresetName, config.activePresetName);
+  const root = path.resolve(assetRoot, "tts", "preset", selectedPresetName);
   const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
   const baseRelativeDir = assetKey === "model" ? "model" : "";
   const outputName = assetKey === "reference-text"
@@ -2526,7 +2478,7 @@ function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: st
   }
   return {
     fullPath,
-    assetPath: path.join("assets", "tts", "preset", modelConfigName, relative).split(path.sep).join("/")
+    assetPath: path.join("assets", "tts", "preset", selectedPresetName, relative).split(path.sep).join("/")
   };
 }
 
@@ -2617,8 +2569,8 @@ function ttsConfigPath(context: AdminRoutesContext): string {
   return context.pluginConfigs?.tts?.configPath ?? "config/plugin/tts/config.json";
 }
 
-function ttsProviderConfigDirectory(context: AdminRoutesContext): string {
-  return path.join(path.dirname(ttsConfigPath(context)), "providers");
+function ttsPresetConfigDirectory(context: AdminRoutesContext): string {
+  return path.join(path.dirname(ttsConfigPath(context)), "presets");
 }
 
 function ttsConfigMtime(context: AdminRoutesContext): string | undefined {
@@ -2632,79 +2584,20 @@ function ttsConfigMtime(context: AdminRoutesContext): string | undefined {
   }
 }
 
-function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
+function publicTtsConfig(config: TtsPluginConfig, assetRoot = "assets"): TtsAdminConfig {
+  if (!config.activePresetName || !config.presets || !config.activePreset) throw new Error("tts active preset not found");
   const translationPresets = config.translationPresets ?? {};
   const translationPresetName = config.translationPresetName ?? Object.keys(translationPresets)[0] ?? "default";
   const currentTranslation = translationPresets[translationPresetName] ?? {};
-  const voice = config.voice ?? {};
-  const modelConfigs = voice.modelConfigs ?? {};
-  const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
-  const currentModel = modelConfigs[modelConfigName] ?? {};
-  const conversion = config.conversion ?? { provider: "genie" as const, genie: config.remote };
-  const openaiApi = conversion.openaiApi ?? {};
-  const bailian = conversion.bailian ?? {};
-  const mimo = conversion.mimo ?? {};
+  const editPresetName = config.editPresetName ?? config.activePresetName;
+  const currentPreset = config.presets[editPresetName] ?? config.activePreset;
   return {
     enabled: config.enabled,
-    remote: {
-      enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
-      baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "",
-      localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false,
-      ...((conversion.genie?.textFilters ?? config.remote?.textFilters)?.length ? { textFilters: conversion.genie?.textFilters ?? config.remote?.textFilters } : {})
-    },
-    conversion: {
-      provider: conversion.provider ?? "genie",
-      genie: {
-        enabled: conversion.genie?.enabled ?? config.remote?.enabled ?? true,
-        baseURL: conversion.genie?.baseURL ?? config.remote?.baseURL ?? "",
-        localFallbackEnabled: conversion.genie?.localFallbackEnabled ?? config.remote?.localFallbackEnabled ?? false,
-        ...((conversion.genie?.textFilters ?? config.remote?.textFilters)?.length ? { textFilters: conversion.genie?.textFilters ?? config.remote?.textFilters } : {})
-      },
-      openaiApi: {
-        apiPresetName: openaiApi.apiPresetName,
-        model: openaiApi.model ?? "higgs-audio-v3-tts",
-        voice: openaiApi.voice ?? "default",
-        timeoutMs: openaiApi.timeoutMs ?? 60_000,
-        sampleRate: openaiApi.sampleRate ?? 32_000,
-        channels: openaiApi.channels ?? 1,
-        ...(openaiApi.textFilters?.length ? { textFilters: openaiApi.textFilters } : {}),
-        extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
-      },
-      bailian: {
-        service: bailian.service ?? "qwen",
-        endpoint: bailian.endpoint ?? defaultBailianTtsEndpoint(bailian.service),
-        apiKey: "",
-        apiKeyEnv: bailian.apiKeyEnv ?? "DASHSCOPE_API_KEY",
-        workspaceId: bailian.workspaceId,
-        userAgent: bailian.userAgent,
-        model: bailian.model ?? "qwen3-tts-vc-2026-01-22",
-        voice: bailian.voice ?? "Cherry",
-        languageType: bailian.languageType ?? "Chinese",
-        mode: bailian.mode ?? "server_commit",
-        responseFormat: bailian.responseFormat ?? "pcm",
-        timeoutMs: bailian.timeoutMs ?? 60_000,
-        sampleRate: bailian.sampleRate ?? 24_000,
-        channels: bailian.channels ?? 1,
-        ...(bailian.textFilters?.length ? { textFilters: bailian.textFilters } : {}),
-        extraParamsJson: JSON.stringify(bailian.extraParams ?? {}, null, 2)
-      },
-      mimo: {
-        mode: mimo.mode ?? "preset",
-        baseURL: mimo.baseURL ?? defaultMimoTtsBaseURL,
-        apiKey: "",
-        apiKeyEnv: mimo.apiKeyEnv ?? "MIMO_API_KEY",
-        voice: mimo.voice ?? "mimo_default",
-        voiceDesignPrompt: mimo.voiceDesignPrompt,
-        voiceCloneAudioDataUrl: mimo.voiceCloneAudioDataUrl ? "(configured)" : "",
-        voiceCloneAudioDataUrlSet: Boolean(mimo.voiceCloneAudioDataUrl),
-        audioFormat: mimo.audioFormat ?? "wav",
-        timeoutMs: mimo.timeoutMs ?? 60_000,
-        sampleRate: mimo.sampleRate ?? 24_000,
-        channels: mimo.channels ?? 1,
-        ...(mimo.textFilters?.length ? { textFilters: mimo.textFilters } : {}),
-        extraParamsJson: JSON.stringify(mimo.extraParams ?? {}, null, 2)
-      }
-    },
+    activePresetName: config.activePresetName,
+    editPresetName,
+    newPresetName: "",
+    presets: Object.fromEntries(Object.entries(config.presets).map(([name, preset]) => [name, publicTtsPreset(name, preset, assetRoot)])),
+    currentPreset: publicTtsPreset(editPresetName, currentPreset, assetRoot),
     translationPresetName,
     translationEditPresetName: translationPresetName,
     newTranslationPresetName: "",
@@ -2714,43 +2607,94 @@ function publicTtsConfig(config: TtsPluginConfig): TtsAdminConfig {
       apiPresetName: currentTranslation.apiPresetName ?? config.apiPresetName,
       prompt: currentTranslation.prompt ?? config.prompt
     },
-    voice: {
-      modelConfigName,
-      modelEditPresetName: modelConfigName,
-      newModelConfigName: "",
-      modelConfigs,
-      currentModel: {
-        ...currentModel,
-        modelDir: ttsPresetModelDir(modelConfigName),
-        referenceAudio: ttsPresetReferenceAudioPath(modelConfigName),
-        referenceText: readTtsPresetReferenceText(modelConfigName)
-      }
+  };
+}
+
+function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"): TtsAdminConfig["currentPreset"] {
+  const openaiApi = preset.openaiApi ?? {};
+  const bailian = preset.bailian ?? {};
+  const mimo = preset.mimo ?? {};
+  const genie = preset.genie ?? {};
+  return {
+    provider: preset.provider,
+    genie: {
+      enabled: genie.enabled ?? true,
+      baseURL: genie.baseURL ?? "",
+      localFallbackEnabled: genie.localFallbackEnabled ?? false,
+      language: genie.language ?? "jp",
+      modelDir: genie.modelDir ?? ttsPresetModelDir(name, assetRoot),
+      referenceAudio: ttsPresetReferenceAudioPath(name, assetRoot),
+      referenceText: readTtsPresetReferenceText(name, assetRoot),
+      speed: genie.speed,
+      partSilenceSeconds: genie.partSilenceSeconds,
+      splitText: genie.splitText ?? false,
+      ...(genie.textFilters?.length ? { textFilters: genie.textFilters } : {})
+    },
+    openaiApi: {
+      apiPresetName: openaiApi.apiPresetName,
+      model: openaiApi.model ?? "higgs-audio-v3-tts",
+      voice: openaiApi.voice ?? "default",
+      timeoutMs: openaiApi.timeoutMs ?? 60_000,
+      sampleRate: openaiApi.sampleRate ?? 32_000,
+      channels: openaiApi.channels ?? 1,
+      ...(openaiApi.textFilters?.length ? { textFilters: openaiApi.textFilters } : {}),
+      extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
+    },
+    bailian: {
+      service: bailian.service ?? "qwen",
+      endpoint: bailian.endpoint ?? defaultBailianTtsEndpoint(bailian.service),
+      apiKey: "",
+      apiKeyEnv: bailian.apiKeyEnv ?? "DASHSCOPE_API_KEY",
+      workspaceId: bailian.workspaceId,
+      userAgent: bailian.userAgent,
+      model: bailian.model ?? "qwen3-tts-vc-2026-01-22",
+      voice: bailian.voice ?? "Cherry",
+      languageType: bailian.languageType ?? "Chinese",
+      mode: bailian.mode ?? "server_commit",
+      responseFormat: bailian.responseFormat ?? "pcm",
+      timeoutMs: bailian.timeoutMs ?? 60_000,
+      sampleRate: bailian.sampleRate ?? 24_000,
+      channels: bailian.channels ?? 1,
+      ...(bailian.textFilters?.length ? { textFilters: bailian.textFilters } : {}),
+      extraParamsJson: JSON.stringify(bailian.extraParams ?? {}, null, 2)
+    },
+    mimo: {
+      mode: mimo.mode ?? "preset",
+      baseURL: mimo.baseURL ?? defaultMimoTtsBaseURL,
+      apiKey: "",
+      apiKeyEnv: mimo.apiKeyEnv ?? "MIMO_API_KEY",
+      voice: mimo.voice ?? "mimo_default",
+      voiceDesignPrompt: mimo.voiceDesignPrompt,
+      voiceCloneAudioDataUrl: mimo.voiceCloneAudioDataUrl ? "(configured)" : "",
+      voiceCloneAudioDataUrlSet: Boolean(mimo.voiceCloneAudioDataUrl),
+      audioFormat: mimo.audioFormat ?? "wav",
+      timeoutMs: mimo.timeoutMs ?? 60_000,
+      sampleRate: mimo.sampleRate ?? 24_000,
+      channels: mimo.channels ?? 1,
+      ...(mimo.textFilters?.length ? { textFilters: mimo.textFilters } : {}),
+      extraParamsJson: JSON.stringify(mimo.extraParams ?? {}, null, 2)
     }
   };
+}
+
+function canonicalTtsPreset(preset: TtsPreset): TtsPreset {
+  if (preset.provider === "openai-api") return { provider: preset.provider, openaiApi: preset.openaiApi };
+  if (preset.provider === "bailian") return { provider: preset.provider, bailian: preset.bailian };
+  if (preset.provider === "mimo") return { provider: preset.provider, mimo: preset.mimo };
+  return { provider: "genie", genie: preset.genie };
 }
 
 function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   const translationPresets = config.translationPresets ?? {};
   const translationPresetName = config.translationPresetName ?? Object.keys(translationPresets)[0] ?? "default";
-  const voice = config.voice ?? {};
-  const modelConfigs = voice.modelConfigs ?? {};
-  const modelConfigName = voice.modelConfigName ?? Object.keys(modelConfigs)[0] ?? "jp";
   return {
     enabled: config.enabled,
-    conversion: {
-      provider: config.conversion?.provider ?? "genie"
-    },
+    activePresetName: config.activePresetName,
+    editPresetName: config.editPresetName,
     translationPresetName,
     translationPresets,
-    translationEnabled: config.translationEnabled,
-    apiPresetName: config.apiPresetName,
-    api_preset: undefined,
-    prompt: config.prompt,
-    voice: {
-      modelConfigName,
-      modelConfigs
-    }
-  };
+    api_preset: undefined
+  } as TtsPluginConfig;
 }
 
 function ttsConfigSchema(): unknown {
@@ -2758,15 +2702,9 @@ function ttsConfigSchema(): unknown {
     type: "object",
     properties: {
       enabled: { type: "boolean" },
-      remote: {
-        type: "object",
-        properties: {
-          enabled: { type: "boolean" },
-          baseURL: { type: "string" },
-          localFallbackEnabled: { type: "boolean" }
-        }
-      },
-      conversion: {
+      activePresetName: { type: "string" },
+      editPresetName: { type: "string" },
+      currentPreset: {
         type: "object",
         properties: {
           provider: { type: "string", enum: ["genie", "openai-api", "bailian", "mimo"] },
@@ -2783,12 +2721,18 @@ function ttsConfigSchema(): unknown {
           mimo: { type: "object" }
         }
       },
-      translationEnabled: { type: "boolean" },
-      apiPresetName: { type: "string" },
-      prompt: { type: "string" },
-      voice: { type: "object" }
+      translationPresetName: { type: "string" },
+      translationPresets: { type: "object" },
+      currentTranslation: {
+        type: "object",
+        properties: {
+          translationEnabled: { type: "boolean" },
+          apiPresetName: { type: "string" },
+          prompt: { type: "string" }
+        }
+      }
     },
-    required: ["enabled", "prompt"]
+    required: ["enabled", "activePresetName"]
   };
 }
 

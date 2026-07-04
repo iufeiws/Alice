@@ -22,7 +22,8 @@ import {
   photoDefaults,
   promptStoragePath,
   runMemoryInductionForMessages,
-  writePreset
+  writePreset,
+  writeTtsPluginConfig
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
 
@@ -105,10 +106,11 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
   fs.writeFileSync(asrConfigPath, `${JSON.stringify({ enabled: true, defaultProvider: "openai_compatible", providers: { openaiCompatible: {} } })}\n`);
   fs.writeFileSync(worldConfigPath, `${JSON.stringify({ enabled: true })}\n`);
-  fs.writeFileSync(ttsConfigPath, `${JSON.stringify({
+  writeTtsPluginConfig(root, {
+    configPath: ttsConfigPath,
     enabled: true,
-    translationEnabled: false,
-    conversion: {
+    activePresetName: "bailian",
+    preset: {
       provider: "bailian",
       bailian: {
         service: "qwen",
@@ -117,7 +119,7 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
         voice: "Cherry"
       }
     }
-  })}\n`);
+  });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const base = baseContext(root, memoryStore, promptStore);
@@ -137,7 +139,7 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieCodexTimeoutMs: "abc" }, "invalid_selfie_codex_timeout");
   await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
   await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
-  await assertPatchError(handler, "/admin/api/plugins/tts/config", { conversion: { bailian: { service: "bad" } } }, "invalid_bailian_service");
+  await assertPatchError(handler, "/admin/api/plugins/tts/config", { currentPreset: { provider: "bailian", bailian: { service: "bad" } } }, "invalid_bailian_service");
   await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { network: "bad" }, "invalid_bash_sandbox_network");
   await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { mounts: "{}" }, "invalid_bash_sandbox_mounts");
 });

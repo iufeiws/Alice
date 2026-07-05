@@ -54,10 +54,57 @@ test("asrFinal_talkRuntimeIngressTodo_marksTodoWithoutIngesting", async () => {
   assert.equal(statuses.some((entry) => entry.state === "asr.stream.final"), true);
 });
 
-test("WebRTC voice uses injected TalkRuntime for session open, final transcript, interrupt, and close", async () => {
+test("WebRTC voice opens injected TalkRuntime session", async () => {
+  const { call, statuses } = await createCallWithInjectedTalkRuntime("open");
+
+  try {
+    assert.equal(call.talkRuntimeIngressStatus, "connected");
+    assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open" && entry.detail === String(call.talkSessionId)), true);
+  } finally {
+    await call.close("test_done");
+  }
+});
+
+test("WebRTC voice ingests final transcript into injected TalkRuntime", async () => {
+  const { call, statuses, talkRuntime } = await createCallWithInjectedTalkRuntime("final");
+
+  try {
+    await call.endInboundAudio();
+    assert.deepEqual(talkRuntime.buildNextLoopMessagePatch(call.talkSessionId).messages, [
+      { role: "user", content: "もしもし" }
+    ]);
+    assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress" && entry.detail === "audio.transcript.final: もしもし"), true);
+  } finally {
+    await call.close("test_done");
+  }
+});
+
+test("WebRTC voice records manual interrupt in injected TalkRuntime", async () => {
+  const { call, talkRuntime } = await createCallWithInjectedTalkRuntime("interrupt");
+
+  try {
+    talkRuntime.appendAssistantDelta({ sessionId: call.talkSessionId, outputId: "output-talk-runtime", delta: "まだ話している途中です。" });
+    await call.interrupt("manual");
+
+    assert.equal(talkRuntime.store.listSegments(call.talkSessionId).some((segment) => segment.kind === "interrupt"), true);
+    assert.equal(talkRuntime.store.getOutput("output-talk-runtime")?.status, "interrupted");
+  } finally {
+    await call.close("test_done");
+  }
+});
+
+test("WebRTC voice closes injected TalkRuntime session", async () => {
+  const { call, statuses } = await createCallWithInjectedTalkRuntime("close");
+
+  await call.close("manual");
+
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "manual"), true);
+});
+
+async function createCallWithInjectedTalkRuntime(suffix: string) {
   const statuses: Array<{ state: string; detail?: string }> = [];
   const talkRuntime = createTalkRuntime({
-    store: createTalkStore(path.join(makeTempDir("webrtc-talk-runtime"), "talk.sqlite")),
+    store: createTalkStore(path.join(makeTempDir(`webrtc-talk-runtime-${suffix}`), "talk.sqlite")),
     time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"))
   });
   const asr = new FakeAsrSession([
@@ -82,23 +129,8 @@ test("WebRTC voice uses injected TalkRuntime for session open, final transcript,
   });
 
   const call = await plugin.createCall({ callId: "call-talk-runtime", userId: "browser-talk-runtime", offerSdp: "offer" });
-  assert.equal(call.talkRuntimeIngressStatus, "connected");
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open" && entry.detail === String(call.talkSessionId)), true);
-
-  await call.endInboundAudio();
-  assert.deepEqual(talkRuntime.buildNextLoopMessagePatch(call.talkSessionId).messages, [
-    { role: "user", content: "もしもし" }
-  ]);
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress" && entry.detail === "audio.transcript.final: もしもし"), true);
-
-  talkRuntime.appendAssistantDelta({ sessionId: call.talkSessionId, outputId: "output-talk-runtime", delta: "まだ話している途中です。" });
-  await call.interrupt("manual");
-  assert.equal(talkRuntime.store.listSegments(call.talkSessionId).some((segment) => segment.kind === "interrupt"), true);
-  assert.equal(talkRuntime.store.getOutput("output-talk-runtime")?.status, "interrupted");
-
-  await call.close("manual");
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "manual"), true);
-});
+  return { call, statuses, talkRuntime };
+}
 
 test("WebRTC voice passes local ICE callback into server peer creation", async () => {
   let callbackSeen = false;

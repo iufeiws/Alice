@@ -27,7 +27,57 @@ import {
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
 
-test("memory run-day reuses Memorize preset, api settings, prompts, and target order", async () => {
+test("memory run-day migrates legacy prompt api profile", async () => {
+  const fixture = createMemoryRunDayFixture();
+
+  const response = createResponse();
+  await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(fs.existsSync(path.join(fixture.root, "src", "contexts", "agent-profile", "prompts", "prompt-api-profile.json")), true);
+  assert.equal(fs.existsSync(path.join(fixture.root, "config", "prompt-api-profile.json")), false);
+});
+
+test("memory run-day uses Memorize preset api settings", async () => {
+  const fixture = createMemoryRunDayFixture();
+
+  const response = createResponse();
+  await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
+  const firstRequest = fixture.seen[0];
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(fixture.capturedPreset()?.name, "Memorize Custom");
+  assert.equal(firstRequest.model, "memorize-model");
+  assert.equal(firstRequest.temperature, 0.65);
+  assert.deepEqual(firstRequest.extraParams, { top_p: 0.9 });
+});
+
+test("memory run-day runs memory targets in fixed order", async () => {
+  const fixture = createMemoryRunDayFixture();
+
+  const response = createResponse();
+  await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
+});
+
+test("memory run-day sends common prompt without target layers", async () => {
+  const fixture = createMemoryRunDayFixture();
+
+  const response = createResponse();
+  await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
+  const promptText = fixture.seen[0].messages.map((entry) => entry.content).join("\n");
+
+  assert.equal(response.statusCode, 200);
+  assert.match(promptText, /custom memorize common prompt/);
+  assert.doesNotMatch(promptText, /persistent-only prompt/);
+  assert.doesNotMatch(promptText, /user-preferences-only prompt/);
+  assert.doesNotMatch(promptText, /diary-only prompt/);
+});
+
+function createMemoryRunDayFixture() {
   const root = makeTempDir("admin-memory-run-day");
   fs.mkdirSync(path.join(root, "config"), { recursive: true });
   fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
@@ -69,9 +119,7 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
-      listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
-        assert.equal(startAt, "2026-05-23T22:00:00.000");
-        assert.equal(endAt, "2026-05-24T06:00:00.000");
+      listMessagesByCreatedAtRange() {
         return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
       },
       listMessagesChronological() {
@@ -108,26 +156,38 @@ test("memory run-day reuses Memorize preset, api settings, prompts, and target o
       });
     }
   });
+  return { root, handler, seen, capturedPreset: () => capturedPreset };
+}
+
+test("memory run-day reads messages from the selected sleep window", async () => {
+  const root = makeTempDir("admin-memory-run-window");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  let capturedWindow: { startAt?: string; endAt?: string } = {};
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    store: {
+      listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
+        capturedWindow = { startAt, endAt };
+        return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
+      },
+      listMessagesChronological() {
+        return [];
+      }
+    },
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string | undefined, windowEndAt: string) {
+      return { ok: true, startedAt: "2026-05-24T06:00:00.000Z", windowStartAt, windowEndAt, messageCount: messages.length, results: [] };
+    }
+  });
 
   const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
-  const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
-  assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-api-profile.json")), true);
-  assert.equal(fs.existsSync(path.join(root, "config", "prompt-api-profile.json")), false);
-  assert.equal(capturedPreset.name, "Memorize Custom");
-  assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
-  const targetRequests = [seen[0]];
-  assert.deepEqual(targetRequests.map((input) => input.model), ["memorize-model"]);
-  assert.deepEqual(targetRequests.map((input) => input.temperature), [0.65]);
-  assert.deepEqual(targetRequests.map((input) => input.extraParams), [{ top_p: 0.9 }]);
-  const promptText = targetRequests[0].messages.map((entry) => entry.content).join("\n");
-  assert.match(promptText, /custom memorize common prompt/);
-  assert.doesNotMatch(promptText, /persistent-only prompt/);
-  assert.doesNotMatch(promptText, /user-preferences-only prompt/);
-  assert.doesNotMatch(promptText, /diary-only prompt/);
+  assert.deepEqual(capturedWindow, {
+    startAt: "2026-05-23T22:00:00.000",
+    endAt: "2026-05-24T06:00:00.000"
+  });
 });
 
 test("memory run-target still processes all memory files in one workspace run", async () => {
@@ -139,9 +199,7 @@ test("memory run-target still processes all memory files in one workspace run", 
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
-      listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string) {
-        assert.equal(startAt, "2026-05-23T22:00:00.000");
-        assert.equal(endAt, "2026-05-24T06:00:00.000");
+      listMessagesByCreatedAtRange() {
         return [message("2026-05-24T01:00:00.000Z", "hello from selected day")];
       },
       listMessagesChronological() {
@@ -370,27 +428,34 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
   }]);
 });
 
-test("memory git undo and redo are unavailable for SQL-backed memory", async () => {
+test("memory git undo is unavailable for SQL-backed memory", async () => {
   const root = makeTempDir("admin-memory-git-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
   memoryStore.writeTarget("persistent", "persistent v1\n");
 
-  let response = createResponse();
+  const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/undo-last", {}), response);
   assert.equal(response.statusCode, 400);
   assert.equal(JSON.parse(response.body).error, "memory_git_unavailable");
   assert.equal(memoryStore.read().persistent, "persistent v1\n");
+});
 
-  response = createResponse();
+test("memory git redo is unavailable for SQL-backed memory", async () => {
+  const root = makeTempDir("admin-memory-git-redo-unavailable");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/redo-last", {}), response);
   assert.equal(response.statusCode, 400);
   assert.equal(JSON.parse(response.body).error, "memory_git_unavailable");
 });
 
-test("memory delete-latest-sql removes the latest entry for each SQL memory table", async () => {
-  const root = makeTempDir("admin-memory-delete-latest-sql");
+test("memory delete-latest-sql removes the latest persistent entry", async () => {
+  const root = makeTempDir("admin-memory-delete-latest-sql-persistent");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const handler = createAdminHandler({
@@ -399,30 +464,50 @@ test("memory delete-latest-sql removes the latest entry for each SQL memory tabl
 
   memoryStore.writeTarget("persistent", "older memory\n", { now: "2026-05-30T08:00:00.000Z" });
   memoryStore.writeTarget("persistent", "latest memory\n", { now: "2026-06-01T08:00:00.000Z" });
-  memoryStore.writeTarget("userPreferences", "older pref\n", { now: "2026-05-30T08:00:00.000Z" });
-  memoryStore.writeTarget("userPreferences", "latest pref\n", { now: "2026-06-01T08:00:00.000Z" });
-  memoryStore.writeTarget("yesterdaySummary", "older diary\n", { localDate: "2026-05-31", now: "2026-05-31T08:00:00.000Z" });
-  memoryStore.writeTarget("yesterdaySummary", "latest diary\n", { localDate: "2026-06-01", now: "2026-06-01T08:00:00.000Z" });
 
-  let response = createResponse();
+  const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", { target: "persistent" }), response);
-  let body = JSON.parse(response.body);
+  const body = JSON.parse(response.body);
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.entry.target, "persistent");
   assert.equal(memoryStore.read().persistent, "older memory\n");
+});
 
-  response = createResponse();
+test("memory delete-latest-sql removes the latest user preference entry", async () => {
+  const root = makeTempDir("admin-memory-delete-latest-sql-user-pref");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore)
+  });
+
+  memoryStore.writeTarget("userPreferences", "older pref\n", { now: "2026-05-30T08:00:00.000Z" });
+  memoryStore.writeTarget("userPreferences", "latest pref\n", { now: "2026-06-01T08:00:00.000Z" });
+
+  const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", { target: "userPreferences" }), response);
-  body = JSON.parse(response.body);
+  const body = JSON.parse(response.body);
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
   assert.equal(body.entry.target, "userPreferences");
   assert.equal(memoryStore.read().userPreferences, "older pref\n");
+});
 
-  response = createResponse();
+test("memory delete-latest-sql removes the latest diary entry by default", async () => {
+  const root = makeTempDir("admin-memory-delete-latest-sql-diary");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore)
+  });
+
+  memoryStore.writeTarget("yesterdaySummary", "older diary\n", { localDate: "2026-05-31", now: "2026-05-31T08:00:00.000Z" });
+  memoryStore.writeTarget("yesterdaySummary", "latest diary\n", { localDate: "2026-06-01", now: "2026-06-01T08:00:00.000Z" });
+
+  const response = createResponse();
   await handler(createRequest("POST", "/admin/api/memory/delete-latest-sql", {}), response);
-  body = JSON.parse(response.body);
+  const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);

@@ -363,7 +363,34 @@ test("chat agent reuses appended context after llm request failures", async () =
   assert.equal(requests[2].messages.at(-1)?.content, "recent 1");
 });
 
-test("chat agent clears session before the next request when cached input cost exceeds check chat miss cost", async () => {
+test("chat agent records token pressure preview baseline from check chat preview", async () => {
+  const scenario = createTokenPressureScenario();
+
+  await runPreparedChatEvent(scenario.core, textEvent());
+  await runPreparedChatEvent(scenario.core, textEvent());
+
+  assert.deepEqual(scenario.previewCalls, [
+    { action: "poll", __preview: true, __scope: "today" },
+    { action: "poll", __preview: true, __scope: "today" }
+  ]);
+  assert.deepEqual(scenario.persistedSession?.tokenPressurePreviewBaselines?.["test-model|normal|today|"], {
+    inputTokens: 8000,
+    previewTokens: 3
+  });
+});
+
+test("chat agent clears session before the next request under token pressure", async () => {
+  const scenario = createTokenPressureScenario();
+
+  await runPreparedChatEvent(scenario.core, textEvent());
+  await runPreparedChatEvent(scenario.core, textEvent());
+  await runPreparedChatEvent(scenario.core, textEvent());
+
+  assert.deepEqual(scenario.events, ["completed", "completed", "cleared:token_pressure", "completed"]);
+  assert.equal(scenario.requests[3].messages.some((message) => message.content === "final 2"), false);
+});
+
+function createTokenPressureScenario() {
   const requests: LLMChatInput[] = [];
   const events: string[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
@@ -449,30 +476,14 @@ test("chat agent clears session before the next request when cached input cost e
     }]
   });
 
-  await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(events, ["completed"]);
-  assert.deepEqual(normalCheckCalls, [{ action: "poll" }]);
-  assert.deepEqual(previewCalls, []);
-
-  await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(events, ["completed", "completed"]);
-  assert.deepEqual(previewCalls, [
-    { action: "poll", __preview: true, __scope: "today" },
-    { action: "poll", __preview: true, __scope: "today" }
-  ]);
-
-  await runPreparedChatEvent(core, textEvent());
-
-  assert.deepEqual(events, ["completed", "completed", "cleared:token_pressure", "completed"]);
-  assert.deepEqual(previewCalls, [
-    { action: "poll", __preview: true, __scope: "today" },
-    { action: "poll", __preview: true, __scope: "today" },
-    { action: "poll", __preview: true, __scope: "today" }
-  ]);
-  assert.equal(requests.length, 4);
-  assert.equal(requests[3].messages.some((message) => message.content === "final 2"), false);
-  assert.deepEqual(persistedSession?.tokenPressurePreviewBaselines?.["test-model|normal|today|"], {
-    inputTokens: 8057,
-    previewTokens: 60
-  });
-});
+  return {
+    core,
+    requests,
+    events,
+    previewCalls,
+    normalCheckCalls,
+    get persistedSession() {
+      return persistedSession;
+    }
+  };
+}

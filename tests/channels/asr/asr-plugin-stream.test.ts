@@ -254,7 +254,7 @@ test("openaiCompatiblePseudoStream_pcm16_wrapsChunksAsWav", async () => {
   assert.deepEqual(receivedFiles, [{ name: "call.wav", type: "audio/wav", size: 48 }]);
 });
 
-test("inboundStream_badSequenceAndAbort_returnsProtocolErrors", async () => {
+test("inboundStream_outOfOrderChunk_returnsProtocolError", async () => {
   const config: AsrPluginConfig = {
     enabled: true,
     defaultProvider: "openai_compatible",
@@ -276,6 +276,24 @@ test("inboundStream_badSequenceAndAbort_returnsProtocolErrors", async () => {
     streamId: "stream-2",
     error: "out_of_order_chunk"
   });
+});
+
+test("inboundStream_abortClosesStream", async () => {
+  const config: AsrPluginConfig = {
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {
+      openaiCompatible: {
+        apiPresetName: "openai"
+      }
+    }
+  };
+  const session = createAsrInboundStreamSession({
+    type: "start",
+    streamId: "stream-2",
+    audio: { filename: "stream.wav", mimeType: "audio/wav" }
+  }, config, {});
+
   assert.deepEqual(await session.accept({ type: "abort", streamId: "stream-2", reason: "caller_cancelled" }), {
     ok: true,
     type: "aborted",

@@ -4,7 +4,7 @@ import { createCurrentTimeProvider } from "../../../../src/platform/time/src/ind
 import { createCalendarEventRuntime } from "../../../../src/capabilities/tools/calendar/src/index.js";
 import { calendarStore, addSchedule } from "./calendar-tools-helpers.js";
 
-test("calendar due reminder uses short local-time window and marks one fired", () => {
+function dueReminderRuntime() {
   let now = new Date("2026-06-22T00:00:00.000Z");
   const store = calendarStore("calendar-due-window");
   addSchedule(store, { title: "ping", day: 22, time: "00:01" });
@@ -14,13 +14,49 @@ test("calendar due reminder uses short local-time window and marks one fired", (
     getDefaultTarget: () => ({ plugin: "test", sessionId: "session-1" })
   });
 
+  return {
+    runtime,
+    store,
+    advanceToDue() {
+      now = new Date("2026-06-22T00:01:00.000Z");
+    }
+  };
+}
+
+test("calendar due reminder is not emitted before the due window", () => {
+  const { runtime } = dueReminderRuntime();
+
   assert.equal(runtime.consumeDueReminderEvent(), undefined);
-  now = new Date("2026-06-22T00:01:00.000Z");
+});
+
+test("calendar due reminder emits an agent trigger at the due time", () => {
+  const { runtime, advanceToDue } = dueReminderRuntime();
+  runtime.consumeDueReminderEvent();
+  advanceToDue();
+
   const event = runtime.consumeDueReminderEvent();
 
   assert.equal(event?.meta.raw.calendarReminder, true);
   assert.equal(event?.meta.raw.agentInitiatedTriggerEvent, "calendar.schedule_due");
+});
+
+test("calendar due reminder marks the schedule fired", () => {
+  const { runtime, store, advanceToDue } = dueReminderRuntime();
+  runtime.consumeDueReminderEvent();
+  advanceToDue();
+
+  runtime.consumeDueReminderEvent();
+
   assert.equal(store.listEntries("schedule")[0].firedAt, "2026-06-22T00:01:00.000");
+});
+
+test("calendar due reminder is emitted once", () => {
+  const { runtime, advanceToDue } = dueReminderRuntime();
+  runtime.consumeDueReminderEvent();
+  advanceToDue();
+
+  assert.ok(runtime.consumeDueReminderEvent());
+
   assert.equal(runtime.consumeDueReminderEvent(), undefined);
 });
 

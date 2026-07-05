@@ -3,7 +3,9 @@ const os = await import("node:os");
 const path = await import("node:path");
 
 export async function createMediaProcessPeerWorker(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alice-media-worker-"));
+  const root = path.join(os.tmpdir(), "alice-tests");
+  await fs.mkdir(root, { recursive: true });
+  const dir = await fs.mkdtemp(path.join(root, "alice-media-worker-"));
   const workerPath = path.join(dir, "worker.mjs");
   await fs.writeFile(workerPath, `
     const current = { outputId: "output-1", chunkId: "chunk-1", playbackTextCache: "hello world", playedMs: 20, totalMs: 100, status: "playing" };

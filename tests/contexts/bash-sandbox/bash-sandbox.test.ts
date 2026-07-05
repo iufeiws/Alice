@@ -68,7 +68,7 @@ test("permission gate only enforces sandbox entry boundary", () => {
   assert.match(denyReason(classifyBashCommand({ config, cwd: "/etc", command: "echo hello" })), /cwd/);
 });
 
-test("config rejects writable mounts under skills and sensitive host paths", () => {
+test("config uses default bash sandbox paths", () => {
   const config = loadConfig({});
   assert.equal(config.bashSandbox.image, "cimg/python:3.13-browsers");
   assert.equal(config.bashSandbox.hostWorkspaceDir.endsWith(path.join(".sandbox", "bash", "workspace")), true);
@@ -78,6 +78,9 @@ test("config rejects writable mounts under skills and sensitive host paths", () 
   assert.equal(config.skills.installedRoot, ".agents/skills");
   assert.equal("enabled" in config.bashSandbox, false);
   assert.deepEqual(config.bashSandbox.skillMounts, []);
+});
+
+test("config rejects writable mounts under skills and sensitive host paths", () => {
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/skills/generated", readOnly: false }]) }), /skills mount/);
 });

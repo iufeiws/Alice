@@ -14,7 +14,46 @@ import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.
 import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore, messageContentText } from "./agent-tools-helpers.js";
 
-test("chat agent appends sleep cocoon goodnight instruction from heartbeat event", async () => {
+test("chat agent appends sleep cocoon goodnight tool request from heartbeat event", async () => {
+  const scenario = createSleepCocoonGoodnightScenario();
+
+  await runPreparedChatEvent(scenario.core, scenario.event);
+
+  assert.deepEqual(scenario.sleepCalls, [{ action: "in" }]);
+  const sleepToolRequestIndex = scenario.requests[0].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "sleep_cocoon");
+  assert.ok(sleepToolRequestIndex >= 0);
+  assert.equal(scenario.requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"in\"}");
+  assert.equal(scenario.requests[0].messages[sleepToolRequestIndex + 1]?.toolCallId, scenario.requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.id);
+});
+
+test("chat agent stores sleep cocoon goodnight fixed prefix session mode", async () => {
+  const scenario = createSleepCocoonGoodnightScenario();
+
+  await runPreparedChatEvent(scenario.core, scenario.event);
+
+  assert.equal(scenario.sessionUpdates.at(-1)?.mode, "fixed_prefix");
+  assert.equal(scenario.sessionUpdates.at(-1)?.fixedPrefixKind, "sleep_cocoon");
+});
+
+test("chat agent records completed sleep cocoon goodnight behavior run", async () => {
+  const scenario = createSleepCocoonGoodnightScenario();
+
+  await runPreparedChatEvent(scenario.core, scenario.event);
+
+  assert.deepEqual(scenario.behaviorRuns.map((run) => ({
+    result: run.result,
+    steps: run.steps.map((step) => ({ kind: step.kind, result: step.result })),
+    error: run.error
+  })), [{
+    result: "completed",
+    steps: [
+      { kind: "llm_instruction", result: "completed" }
+    ],
+    error: undefined
+  }]);
+});
+
+function createSleepCocoonGoodnightScenario() {
   const requests: LLMChatInput[] = [];
   const sleepCalls: Array<Record<string, unknown>> = [];
   const behaviorRuns: Array<{ result: string; steps: Array<{ kind: string; result: string }>; error?: string }> = [];
@@ -78,30 +117,8 @@ test("chat agent appends sleep cocoon goodnight instruction from heartbeat event
     }
   });
 
-  await runPreparedChatEvent(core, event);
-
-  assert.equal(requests.length, 1);
-  assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
-  assert.equal(sessionUpdates.at(-1)?.fixedPrefixKind, "sleep_cocoon");
-  assert.deepEqual(sleepCalls, [{ action: "in" }]);
-  assert.deepEqual(behaviorRuns.map((run) => ({
-    result: run.result,
-    steps: run.steps.map((step) => ({ kind: step.kind, result: step.result })),
-    error: run.error
-  })), [{
-    result: "completed",
-    steps: [
-      { kind: "llm_instruction", result: "completed" }
-    ],
-    error: undefined
-  }]);
-  assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
-  const sleepToolRequestIndex = requests[0].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "sleep_cocoon");
-  assert.ok(sleepToolRequestIndex >= 0);
-  assert.equal(requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.function.arguments, "{\"action\":\"in\"}");
-  assert.equal(requests[0].messages[sleepToolRequestIndex + 1]?.role, "tool");
-  assert.equal(requests[0].messages[sleepToolRequestIndex + 1]?.toolCallId, requests[0].messages[sleepToolRequestIndex]?.toolCalls?.[0]?.id);
-});
+  return { core, event, requests, sleepCalls, behaviorRuns, sessionUpdates };
+}
 
 test("chat agent skips sleep cocoon goodnight when sleep tool is hidden", async () => {
   const requests: LLMChatInput[] = [];

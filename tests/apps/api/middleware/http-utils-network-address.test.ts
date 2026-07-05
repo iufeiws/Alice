@@ -18,8 +18,11 @@ test("network address classifier accepts private LAN addresses", () => {
   assert.equal(isPrivateNetworkAddress("fe80::1"), true);
 });
 
-test("network address classifier rejects public or missing addresses", () => {
+test("network address classifier rejects public addresses", () => {
   assert.equal(isLoopbackAddress("8.8.8.8"), false);
   assert.equal(isPrivateNetworkAddress("8.8.8.8"), false);
+});
+
+test("network address classifier rejects missing addresses", () => {
   assert.equal(isPrivateNetworkAddress(undefined), false);
 });

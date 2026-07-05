@@ -199,8 +199,8 @@ test("tts passes configured voice language to Genie overrides", () => {
   assert.equal(overrides.modelDir, "assets/tts/preset/test/model");
 });
 
-test("send_chat voice sends bracketed transcript text on feishu", async () => {
-  const dir = makeTempDir("messaging-send-voice-feishu-transcript");
+async function sendFeishuVoiceMessage(name: string, alice?: string) {
+  const dir = makeTempDir(name);
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "feishu:dm:oc_1", "feishu");
   const sent: AgentOutput[] = [];
@@ -228,64 +228,68 @@ test("send_chat voice sends bracketed transcript text on feishu", async () => {
   });
 
   const result = await tools.execute({
-    id: "call_send_voice_feishu_transcript",
-    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
+    id: `call_${name}`,
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", ...(alice ? { alice } : {}) }
   });
+
+  return { generatedPath, logs, result, sent, store };
+}
+
+test("send_chat voice sends audio and transcript on feishu", async () => {
+  const { result, sent } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-transcript");
 
   assert.equal(result.ok, true);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
   assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "晚点见" });
+});
+
+test("send_chat voice removes generated feishu audio file after send", async () => {
+  const { generatedPath } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-cleanup");
+
   assert.equal(fs.existsSync(generatedPath), false);
+});
+
+test("send_chat voice renders bracketed transcript text on feishu", async () => {
+  const { result } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-output");
+
   assert.match(String(result.output), /Alice:\[语音\]晚点见/);
   assert.doesNotMatch(String(result.output), /Alice:\[晚点见\]/);
+});
+
+test("send_chat voice stores bracketed transcript text on feishu", async () => {
+  const { store } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-store");
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
+
   assert.equal(stored.length, 1);
   assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见"]);
+});
+
+test("send_chat voice logs bracketed transcript text on feishu", async () => {
+  const { logs } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-log");
+
   assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
 });
 
 test("send_chat voice sends plain markdown transcript for feishu core before channel render", async () => {
-  const dir = makeTempDir("messaging-send-voice-feishu-core-transcript");
-  const store = createAliceStore(path.join(dir, "alice.sqlite"));
-  seedUserInbound(store, "feishu:dm:oc_1", "feishu");
-  const sent: AgentOutput[] = [];
-  let generatedPath = "";
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
-    sleep: async () => {},
-    voiceSynthesizer: async ({ text }) => {
-      generatedPath = path.join(dir, "voice.wav");
-      fs.writeFileSync(generatedPath, `voice:${text}`);
-      return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
-    },
-    outputRouter: {
-      async send(output) {
-        sent.push(output);
-        return { messageId: `sent_${sent.length}` };
-      }
-    },
-    getDefaultTarget: () => ({ plugin: "feishu", channelId: "oc_1", sessionId: "feishu:dm:oc_1" })
-  });
-
-  const result = await tools.execute({
-    id: "call_send_voice_feishu_core_transcript",
-    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", alice: "core" }
-  });
+  const { result, sent } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-core-transcript", "core");
 
   assert.equal(result.ok, true);
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
   assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "晚点见" });
-  assert.equal(fs.existsSync(generatedPath), false);
   assert.match(String(result.output), /\[语音\]晚点见/);
+});
+
+test("send_chat voice stores feishu core sender name", async () => {
+  const { store } = await sendFeishuVoiceMessage("messaging-send-voice-feishu-core-store", "core");
+
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
   assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
-test("send_chat voice retries feishu transcript without storing it", async () => {
-  const dir = makeTempDir("messaging-send-voice-feishu-transcript-retry");
+async function sendFeishuVoiceWithTranscriptRetry(name: string) {
+  const dir = makeTempDir(name);
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "feishu:dm:oc_1", "feishu");
   const sent: AgentOutput[] = [];
@@ -326,15 +330,41 @@ test("send_chat voice retries feishu transcript without storing it", async () =>
     toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
+  return { generatedPath, logs, result, sent, store, transcriptAttempts, warnings };
+}
+
+test("send_chat voice retries feishu transcript send", async () => {
+  const { result, sent, transcriptAttempts } = await sendFeishuVoiceWithTranscriptRetry("messaging-send-voice-feishu-transcript-retry");
+
   assert.equal(result.ok, true);
   assert.equal(transcriptAttempts, 2);
   assert.equal(sent.length, 3);
   assert.deepEqual(sent.map((output) => output.content.kind), ["audio", "markdown", "markdown"]);
+});
+
+test("send_chat voice removes generated file after feishu transcript retry", async () => {
+  const { generatedPath } = await sendFeishuVoiceWithTranscriptRetry("messaging-send-voice-feishu-transcript-retry-cleanup");
+
   assert.equal(fs.existsSync(generatedPath), false);
+});
+
+test("send_chat voice does not store retried feishu transcript messages", async () => {
+  const { store } = await sendFeishuVoiceWithTranscriptRetry("messaging-send-voice-feishu-transcript-retry-store");
   const stored = store.listMessagesForConversation("feishu:dm:oc_1", 10).filter((message) => message.direction === "outbound");
+
   assert.equal(stored.length, 1);
   assert.deepEqual(stored.map((message) => message.contentText), ["[语音]晚点见"]);
+});
+
+test("send_chat voice logs only the audio send after feishu transcript retry", async () => {
+  const { logs } = await sendFeishuVoiceWithTranscriptRetry("messaging-send-voice-feishu-transcript-retry-log");
+
   assert.deepEqual(logs, [{ status: "sent", summary: "[语音]晚点见" }]);
+});
+
+test("send_chat voice suppresses warnings for recovered feishu transcript retry", async () => {
+  const { warnings } = await sendFeishuVoiceWithTranscriptRetry("messaging-send-voice-feishu-transcript-retry-warn");
+
   assert.deepEqual(warnings, []);
 });
 

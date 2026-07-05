@@ -14,6 +14,7 @@ import {
 
 export function createInitiatedBehaviorRuntime(input: {
   configPath: string;
+  customPromptProfileDir?: string;
   appendLog(level: "warn", message: string): void;
 }) {
   let overrides = readAgentInitiatedBehaviorOverrides(input.configPath, input.appendLog);
@@ -27,7 +28,7 @@ export function createInitiatedBehaviorRuntime(input: {
   };
 
   function getPlans(): AgentInitiatedBehaviorPlan[] {
-    return applyAgentInitiatedBehaviorOverrides(defaultAgentInitiatedBehaviorPlans, overrides);
+    return applyAgentInitiatedBehaviorOverrides(defaultAgentInitiatedBehaviorPlans, overrides, input.customPromptProfileDir);
   }
 
   function setConfig(id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined {
@@ -70,7 +71,7 @@ export function createInitiatedBehaviorRuntime(input: {
       }
     };
     writeAgentInitiatedBehaviorOverrides(input.configPath, overrides);
-    const plan = customAgentInitiatedBehaviorPlan(id, overrides[id]);
+    const plan = customAgentInitiatedBehaviorPlan(id, overrides[id], input.customPromptProfileDir);
     writeAgentInitiatedBehaviorPromptProfile(plan.promptProfilePath!, patch.promptProfile ?? { layers: [] });
     return getPlans().find((item) => item.id === id);
   }

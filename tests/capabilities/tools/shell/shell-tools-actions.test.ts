@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeShellStore, makeShellTools } from "./shell-tools-helpers.js";
 
-test("wardrobe list returns groups or searchable outfits", async () => {
+test("wardrobe list returns outfit groups", async () => {
   const store = makeShellStore("wardrobe-list", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two", group: "formal" },
@@ -16,18 +16,62 @@ test("wardrobe list returns groups or searchable outfits", async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.output, "<groups>\nroot\ncasual\nformal\n</groups>");
+});
+
+test("wardrobe list finds an outfit by name", async () => {
+  const store = makeShellStore("wardrobe-list-name", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two", group: "formal" }
+  ]);
+  const tools = makeShellTools("wardrobe-list-name", store);
 
   const nameFiltered = await tools.execute({ id: "call_filter", toolName: "Wardrobe", input: { action: "list", name: "Two" } });
+
   assert.equal(nameFiltered.output, "<O Two group=\"formal\">\noutfit two\n</O Two>");
+});
+
+test("wardrobe list finds outfits by group", async () => {
+  const store = makeShellStore("wardrobe-list-group", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two", group: "formal" },
+    { id: "o3", name: "O Three", content: "outfit three", group: "formal" }
+  ]);
+  const tools = makeShellTools("wardrobe-list-group", store);
 
   const groupFiltered = await tools.execute({ id: "call_filter_group", toolName: "Wardrobe", input: { action: "list", name: "formal" } });
+
   assert.equal(groupFiltered.output, "<O Three group=\"formal\">\noutfit three\n</O Three>\n<O Two group=\"formal\">\noutfit two\n</O Two>");
+});
+
+test("wardrobe list renders compact tags for broad matches", async () => {
+  const store = makeShellStore("wardrobe-list-compact", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two", group: "formal" },
+    { id: "o3", name: "O Three", content: "outfit three", group: "formal" },
+    { id: "o4", name: "O Four", content: "outfit four", group: "casual" }
+  ]);
+  const tools = makeShellTools("wardrobe-list-compact", store);
 
   const compact = await tools.execute({ id: "call_filter_compact", toolName: "Wardrobe", input: { action: "list", name: "O" } });
+
   assert.equal(compact.output, "<O One group=\"root\" />\n<O Four group=\"casual\" />\n<O Three group=\"formal\" />\n<O Two group=\"formal\" />");
 });
 
-test("wardrobe mirror returns the current outfit without sending a message", async () => {
+test("wardrobe mirror returns the current outfit", async () => {
+  const store = makeShellStore("wardrobe-mirror", [
+    { id: "o1", name: "O One", content: "outfit one" },
+    { id: "o2", name: "O Two", content: "outfit two" }
+  ]);
+  store.switchOutfit(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai", "o2");
+  const tools = makeShellTools("wardrobe-mirror", store);
+
+  const result = await tools.execute({ id: "call_mirror", toolName: "Wardrobe", input: { action: "mirror" } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "<O Two group=\"root\">\noutfit two\n</O Two>");
+});
+
+test("wardrobe mirror does not send a message", async () => {
   const store = makeShellStore("wardrobe-mirror", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -45,7 +89,6 @@ test("wardrobe mirror returns the current outfit without sending a message", asy
   const result = await tools.execute({ id: "call_mirror", toolName: "Wardrobe", input: { action: "mirror" } });
 
   assert.equal(result.ok, true);
-  assert.equal(result.output, "<O Two group=\"root\">\noutfit two\n</O Two>");
   assert.deepEqual(sent, []);
 });
 
@@ -65,18 +108,24 @@ test("wardrobe switch returns changed outfit message", async () => {
   assert.equal(store.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });
 
-test("wardrobe switch requires a current target and known outfit name", async () => {
-  const store = makeShellStore("wardrobe-errors", [{ id: "o1", name: "O One", content: "outfit one" }]);
-  const tools = makeShellTools("wardrobe-errors", store);
+test("wardrobe switch requires a current target", async () => {
+  const store = makeShellStore("wardrobe-no-target", [{ id: "o1", name: "O One", content: "outfit one" }]);
+  const tools = makeShellTools("wardrobe-no-target", store);
 
   const noTarget = await tools.execute({ id: "call_no_target", toolName: "Wardrobe", input: { action: "switch", name: "O One" } });
+
   assert.equal(noTarget.ok, false);
   assert.equal(noTarget.error, "<error>No current messaging session is available</error>");
+});
 
-  const withTarget = makeShellTools("wardrobe-errors-target", store, {
+test("wardrobe switch rejects unknown outfit names", async () => {
+  const store = makeShellStore("wardrobe-unknown", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const withTarget = makeShellTools("wardrobe-unknown", store, {
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
   const unknown = await withTarget.execute({ id: "call_unknown", toolName: "Wardrobe", input: { action: "switch", name: "missing" } });
+
   assert.equal(unknown.ok, false);
   assert.equal(unknown.error, "<error>unknown outfit name</error>");
 });

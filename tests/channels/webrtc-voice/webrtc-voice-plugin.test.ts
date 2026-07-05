@@ -9,7 +9,22 @@ import { ControlledQueueTrack, DelayedEnqueueTrack, FakeAsrSession, FakeHangingA
 
 const path = await import("node:path");
 
-test("callPage_enabledConfig_exposesUserControlsAndSignalingContract", () => {
+test("callPage_enabledConfig_exposesUserControls", () => {
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => []
+  });
+
+  const html = plugin.renderCallPage();
+
+  assert.match(html, /Hold to talk/);
+  assert.match(html, /Type more than 1 character to interrupt; press Enter to submit\./);
+});
+
+test("callPage_enabledConfig_exposesSignalingPath", () => {
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
     createPeer: async () => new FakePeer(),
@@ -21,27 +36,37 @@ test("callPage_enabledConfig_exposesUserControlsAndSignalingContract", () => {
   const html = plugin.renderCallPage();
 
   assert.match(html, /\/plugins\/webrtc-voice\/signaling/);
-  assert.match(html, /RTCPeerConnection/);
-  assert.match(html, /getUserMedia/);
-  assert.match(html, /Hold to talk/);
-  assert.match(html, /id="typedInterruptInput"/);
-  assert.match(html, /Type more than 1 character to interrupt; press Enter to submit\./);
+});
+
+test("callPage_enabledConfig_exposesInterruptScriptContract", () => {
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => []
+  });
+
+  const html = plugin.renderCallPage();
+
   assert.match(html, /type: "interrupt", reason: "manual"/);
-  assert.match(html, /type: "text-draft", text/);
-  assert.match(html, /type: "text-input", text: payloadText/);
-  assert.match(html, /type: "ping"/);
-  assert.match(html, /message\.type === "pong"/);
-  assert.match(html, /id="assistantOutputText"/);
-  assert.match(html, /id="userInputText"/);
-  assert.match(html, /tts\.output_text/);
-  assert.match(html, /tts\.playback\.consumer/);
+});
+
+test("callPage_enabledConfig_exposesAudioContract", () => {
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => []
+  });
+
+  const html = plugin.renderCallPage();
+
   assert.match(html, /audio\.transcript\.final/);
-  assert.match(html, /message\.state === "asr\.partial"/);
   assert.match(html, /これは疑似ストリーミング音声のテストです。/);
   assert.match(html, /"sampleRateHz":16000/);
   assert.match(html, /"encoding":"pcm_s16le"/);
-  assert.match(html, /addTransceiver\("audio", \{ direction: "recvonly" \}\)/);
-  assert.match(html, /remoteAudio/);
 });
 
 test("WebRTC voice defaults inbound push-to-talk audio to PCM16 16k mono", () => {
@@ -203,39 +228,32 @@ test("WebRTC voice call requires a server outbound audio track", async () => {
   );
 });
 
-test("WebRTC voice playback synthesizes Japanese voice and writes frames to outbound track", async () => {
-  const peer = new FakePeer();
-  const synthesizedTexts: string[] = [];
-  const decodedFiles: string[] = [];
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => peer,
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
-      synthesizedTexts.push(text);
-      return { assetId: "generated/tts/reply.opus", filePath: tempFilePath("reply.opus") };
-    }, {}),
-    decodeAudioFileToFrames: async (input) => {
-      decodedFiles.push(input.filePath);
-      assert.equal(input.sampleRateHz, 48000);
-      assert.equal(input.channels, 1);
-      assert.equal(input.frameMs, 20);
-      return [
-        { sequence: 0, pcm: new Int16Array([1, 2]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
-        { sequence: 1, pcm: new Int16Array([3, 4]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
-      ];
-    }
-  });
+test("WebRTC voice playback synthesizes Japanese voice", async () => {
+  const scenario = await createSingleFilePlaybackScenario();
 
-  const call = await plugin.createCall({ callId: "call-2", userId: "browser-2", offerSdp: "offer" });
-  const result = await call.playReplyText("晚点见", "output-1");
+  assert.equal(scenario.result.status, "played");
+  assert.deepEqual(scenario.synthesizedTexts, ["晚点见"]);
+  await scenario.call.close("test_done");
+});
 
-  assert.equal(result.status, "played");
-  assert.deepEqual(synthesizedTexts, ["晚点见"]);
-  assert.deepEqual(decodedFiles, [tempFilePath("reply.opus")]);
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1, 2], [3, 4]]);
-  assert.equal(peer.outboundTrack?.stopped, false);
-  await call.close("test_done");
+test("WebRTC voice playback decodes generated audio with outbound contract", async () => {
+  const scenario = await createSingleFilePlaybackScenario();
+
+  assert.deepEqual(scenario.decodedInputs, [{
+    filePath: tempFilePath("reply.opus"),
+    sampleRateHz: 48000,
+    channels: 1,
+    frameMs: 20
+  }]);
+  await scenario.call.close("test_done");
+});
+
+test("WebRTC voice playback writes decoded frames to outbound track", async () => {
+  const scenario = await createSingleFilePlaybackScenario();
+
+  assert.deepEqual(scenario.peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1, 2], [3, 4]]);
+  assert.equal(scenario.peer.outboundTrack?.stopped, false);
+  await scenario.call.close("test_done");
 });
 
 test("WebRTC voice drains TTS-owned ready chunks into the playback queue without playback settlement backpressure", async () => {
@@ -414,3 +432,34 @@ test("callSetup_asrPreflightFails_rejectsBeforePeerCreation", async () => {
   assert.equal(peerCreated, false);
   assert.equal(statuses.some((entry) => entry.state === "asr.preflight.failed" && entry.detail === "boom"), true);
 });
+
+async function createSingleFilePlaybackScenario() {
+  const peer = new FakePeer();
+  const synthesizedTexts: string[] = [];
+  const decodedInputs: Array<{ filePath: string; sampleRateHz: number; channels: number; frameMs: number }> = [];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async ({ text }: { text: string }) => {
+      synthesizedTexts.push(text);
+      return { assetId: "generated/tts/reply.opus", filePath: tempFilePath("reply.opus") };
+    }, {}),
+    decodeAudioFileToFrames: async (input) => {
+      decodedInputs.push({
+        filePath: input.filePath,
+        sampleRateHz: input.sampleRateHz,
+        channels: input.channels,
+        frameMs: input.frameMs
+      });
+      return [
+        { sequence: 0, pcm: new Int16Array([1, 2]), sampleRateHz: 48000, channels: 1, durationMs: 20 },
+        { sequence: 1, pcm: new Int16Array([3, 4]), sampleRateHz: 48000, channels: 1, durationMs: 20 }
+      ];
+    }
+  });
+
+  const call = await plugin.createCall({ callId: "call-2", userId: "browser-2", offerSdp: "offer" });
+  const result = await call.playReplyText("晚点见", "output-1");
+  return { call, decodedInputs, peer, result, synthesizedTexts };
+}

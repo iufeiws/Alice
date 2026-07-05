@@ -211,10 +211,10 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
   assert.deepEqual(synthesizedTexts, ["原文", "日本語"]);
 });
 
-test("openai-api tts sends non-stream pcm speech request with full text chunk", async () => {
+function createOpenAiApiTtsFixture(name: string) {
   const requests: Array<{ url: string; body: any; authorization: string | null }> = [];
   const usageEvents: any[] = [];
-  const outputDir = path.join(makeTempDir("openai-api-tts-output"), "assets", "generated", "tts");
+  const outputDir = path.join(makeTempDir(name), "assets", "generated", "tts");
   const first = new Uint8Array(32_000 * 2);
   const second = new Uint8Array(32_000 * 2);
   second.fill(1);
@@ -261,12 +261,17 @@ test("openai-api tts sends non-stream pcm speech request with full text chunk", 
     }
   });
 
-  const chunks = [];
-  for await (const chunk of synthesize.streamAudioWithText!({
+  return { outputDir, requests, synthesize, usageEvents };
+}
+
+test("openai-api tts sends non-stream pcm speech request with full text chunk", async () => {
+  const { requests, synthesize } = createOpenAiApiTtsFixture("openai-api-tts-stream-request");
+
+  for await (const _chunk of synthesize.streamAudioWithText!({
     text: "第一句。第二句。",
     time: createCurrentTimeProvider("UTC")
   })) {
-    chunks.push([chunk.text, chunk.chunk.byteLength, chunk.sampleRateHz, chunk.channels]);
+    // Exhaust the stream.
   }
 
   assert.equal(requests[0].url, "https://api.boson.ai/v1/audio/speech");
@@ -277,13 +282,42 @@ test("openai-api tts sends non-stream pcm speech request with full text chunk", 
     voice: "default",
     response_format: "pcm"
   });
+});
+
+test("openai-api tts stream returns one pcm chunk for the full text", async () => {
+  const { synthesize } = createOpenAiApiTtsFixture("openai-api-tts-stream-output");
+  const chunks = [];
+
+  for await (const chunk of synthesize.streamAudioWithText!({
+    text: "第一句。第二句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    chunks.push([chunk.text, chunk.chunk.byteLength, chunk.sampleRateHz, chunk.channels]);
+  }
+
   assert.deepEqual(chunks, [
     ["第一句。第二句。", 128_000, 16_000, 1]
   ]);
+});
+
+test("openai-api tts stream records token usage", async () => {
+  const { synthesize, usageEvents } = createOpenAiApiTtsFixture("openai-api-tts-stream-usage");
+
+  for await (const _chunk of synthesize.streamAudioWithText!({
+    text: "第一句。第二句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    // Exhaust the stream.
+  }
+
   assert.equal(usageEvents.length, 1);
   assert.equal(usageEvents[0].agentId, "tts");
   assert.equal(usageEvents[0].model, "tts:openai-api:higgs-audio-v3-tts");
   assert.deepEqual(usageEvents[0].result.usage, { inputTokens: 8, outputTokens: 0, totalTokens: 8 });
+});
+
+test("openai-api tts synthesize writes a pcm wav asset", async () => {
+  const { outputDir, synthesize } = createOpenAiApiTtsFixture("openai-api-tts-output");
 
   const result = await synthesize({
     text: "保存音频。",
@@ -296,13 +330,35 @@ test("openai-api tts sends non-stream pcm speech request with full text chunk", 
     assert.equal(path.resolve(outputDir, path.basename(result.assetId)), path.resolve(result.filePath));
     const wav = fs.readFileSync(result.filePath);
     assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 16_000);
-    assert.equal(requests[1].body.response_format, "pcm");
-    assert.equal("stream" in requests[1].body, false);
-    assert.equal(usageEvents.length, 2);
-    assert.deepEqual(usageEvents[1].result.usage, { inputTokens: 5, outputTokens: 0, totalTokens: 5 });
   } finally {
     fs.rmSync(result.filePath, { force: true });
   }
+});
+
+test("openai-api tts synthesize requests pcm without stream mode", async () => {
+  const { requests, synthesize } = createOpenAiApiTtsFixture("openai-api-tts-synthesize-request");
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-09T02:10:51.609Z"))
+  });
+  fs.rmSync(result.filePath, { force: true });
+
+  assert.equal(requests[0].body.response_format, "pcm");
+  assert.equal("stream" in requests[0].body, false);
+});
+
+test("openai-api tts synthesize records token usage", async () => {
+  const { synthesize, usageEvents } = createOpenAiApiTtsFixture("openai-api-tts-synthesize-usage");
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-09T02:10:51.609Z"))
+  });
+  fs.rmSync(result.filePath, { force: true });
+
+  assert.equal(usageEvents.length, 1);
+  assert.deepEqual(usageEvents[0].result.usage, { inputTokens: 5, outputTokens: 0, totalTokens: 5 });
 });
 
 test("tts router applies selected provider text filters", async () => {
@@ -337,8 +393,8 @@ test("tts router applies selected provider text filters", async () => {
   assert.deepEqual(texts, ["第一句。\n第二句。"]);
 });
 
-test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", async () => {
-  const outputDir = path.join(makeTempDir("bailian-tts-output"), "assets", "generated", "tts");
+function createBailianQwenFixture(name: string) {
+  const outputDir = path.join(makeTempDir(name), "assets", "generated", "tts");
   const requests: Array<{ url: string; headers: Headers; body: any }> = [];
   const usageEvents: any[] = [];
   const sse = [
@@ -386,7 +442,13 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
     }
   });
 
+  return { requests, synthesize, usageEvents };
+}
+
+test("bailian tts stream reads non-realtime HTTP SSE audio data", async () => {
+  const { requests, synthesize } = createBailianQwenFixture("bailian-tts-stream");
   const chunks = [];
+
   for await (const chunk of synthesize.streamAudioWithText!({
     text: "第一句。",
     time: createCurrentTimeProvider("UTC")
@@ -411,10 +473,26 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
   assert.deepEqual(chunks, [
     ["第一句。", [1, 2, 3, 4], 24000, 1]
   ]);
+});
+
+test("bailian tts stream records token usage", async () => {
+  const { synthesize, usageEvents } = createBailianQwenFixture("bailian-tts-stream-usage");
+
+  for await (const _chunk of synthesize.streamAudioWithText!({
+    text: "第一句。",
+    time: createCurrentTimeProvider("UTC")
+  })) {
+    // Exhaust the stream.
+  }
+
   assert.equal(usageEvents.length, 1);
   assert.equal(usageEvents[0].agentId, "tts");
   assert.equal(usageEvents[0].model, "tts:bailian-qwen:qwen3-tts-vc-2026-01-22");
   assert.deepEqual(usageEvents[0].result.usage, { inputTokens: 4, outputTokens: 0, totalTokens: 4 });
+});
+
+test("bailian tts synthesize writes a pcm wav asset", async () => {
+  const { synthesize } = createBailianQwenFixture("bailian-tts-output");
 
   const result = await synthesize({
     text: "保存音频。",
@@ -424,11 +502,22 @@ test("bailian tts uses non-realtime HTTP SSE audio data and writes pcm wav", asy
     assert.equal(result.assetId, "generated/tts/2026-06-10T02_10_51.609-bailian.wav");
     const wav = fs.readFileSync(result.filePath);
     assert.equal(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint32(24, true), 24000);
-    assert.equal(usageEvents.length, 2);
-    assert.deepEqual(usageEvents[1].result.usage, { inputTokens: 5, outputTokens: 0, totalTokens: 5 });
   } finally {
     fs.rmSync(result.filePath, { force: true });
   }
+});
+
+test("bailian tts synthesize records token usage", async () => {
+  const { synthesize, usageEvents } = createBailianQwenFixture("bailian-tts-synthesize-usage");
+
+  const result = await synthesize({
+    text: "保存音频。",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-10T02:10:51.609Z"))
+  });
+  fs.rmSync(result.filePath, { force: true });
+
+  assert.equal(usageEvents.length, 1);
+  assert.deepEqual(usageEvents[0].result.usage, { inputTokens: 5, outputTokens: 0, totalTokens: 5 });
 });
 
 async function eventually(condition: () => boolean, timeoutMs = 500): Promise<void> {

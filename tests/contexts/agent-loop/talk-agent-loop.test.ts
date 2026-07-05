@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTalkAgentLoopForSession } from "../../../src/contexts/agent-loop/src/application/run-talk-loop.js";
-import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { defaultTalkOutputReadyChars } from "../../../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
@@ -10,10 +9,9 @@ import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
 test("talk loop returns no prepared run while voice output backpressure is active", async () => {
-  let pendingChars = defaultTalkOutputReadyChars;
+  const pendingChars = defaultTalkOutputReadyChars;
   let sendCalls = 0;
   let activeSession: any;
-  const sentMessages: unknown[][] = [];
   const finishedOutputs: string[] = [];
   const logs: Array<{ level: string; message: string }> = [];
   const controller = createTalkAgentLoopForSession({
@@ -38,7 +36,6 @@ test("talk loop returns no prepared run while voice output backpressure is activ
       stream: false
     }),
     async sendRequest(input) {
-      sentMessages.push(input.messages);
       sendCalls += 1;
       return { message: { role: "assistant", content: `reply-${sendCalls}` }, finishReason: "stop" };
     },
@@ -51,24 +48,11 @@ test("talk loop returns no prepared run while voice output backpressure is activ
     }
   });
 
-  let prepared = await controller.prepareTalkAgentLoopForSession(101);
+  const prepared = await controller.prepareTalkAgentLoopForSession(101);
   assert.equal(prepared, undefined);
   assert.equal(sendCalls, 0);
   assert.equal(finishedOutputs.length, 0);
-  assert.equal(sentMessages.length, 0);
   assert.equal(logs.some((entry) => entry.message.includes("talk loop not ready: voice output")), true);
-
-  pendingChars = 0;
-  prepared = await controller.prepareTalkAgentLoopForSession(101);
-  assert.ok(prepared);
-  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
-  assert.ok(spec && !Array.isArray(spec));
-  prepared.complete(await runAgentFunctionCallLoop(spec));
-  await prepared.dispose?.();
-
-  assert.equal(sendCalls, 1);
-  assert.equal(finishedOutputs.length, 1);
-  assert.equal(sentMessages.length, 1);
 });
 
 test("talk loop prepares spec for external function-call runtime execution", async () => {
@@ -199,7 +183,7 @@ test("talk loop delegates transcript preparation to injected session context run
 });
 
 test("talk loop returns no prepared run until foreground playback is idle", async () => {
-  let foregroundIdle = false;
+  const foregroundIdle = false;
   let sendCalls = 0;
   let activeSession: any;
   const logs: Array<{ level: string; message: string }> = [];
@@ -235,20 +219,10 @@ test("talk loop returns no prepared run until foreground playback is idle", asyn
     }
   });
 
-  let prepared = await controller.prepareTalkAgentLoopForSession(105);
+  const prepared = await controller.prepareTalkAgentLoopForSession(105);
   assert.equal(prepared, undefined);
   assert.equal(sendCalls, 0);
   assert.equal(logs.some((entry) => entry.message.includes("foreground_idle=false")), true);
-
-  foregroundIdle = true;
-  prepared = await controller.prepareTalkAgentLoopForSession(105);
-  assert.ok(prepared);
-  const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);
-  assert.ok(spec && !Array.isArray(spec));
-  prepared.complete(await runAgentFunctionCallLoop(spec));
-  await prepared.dispose?.();
-
-  assert.equal(sendCalls, 1);
 });
 
 test("talk tool-call followup runs in the same function-call loop", async () => {

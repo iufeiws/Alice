@@ -14,7 +14,23 @@ import {
   waitFor
 } from "./agent-run-indicator-helpers.js";
 
-test("Feishu agent run indicator creates a card and flushes final content", async () => {
+test("Feishu agent run indicator creates a card on begin", async () => {
+  const store = memoryCardStore();
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 10_000,
+    getState: () => ({ state: "working" })
+  });
+
+  const session = await indicator.begin({ round: 0 });
+  assert.ok(session);
+
+  assertCreatedCard(client, { state: "正在输入中...", reasoning: "", content: "", tools: "" });
+});
+
+test("Feishu agent run indicator streams and flushes final content", async () => {
   const store = memoryCardStore();
   const client = fakeCardClient();
   const indicator = createTestFeishuIndicator({
@@ -31,12 +47,30 @@ test("Feishu agent run indicator creates a card and flushes final content", asyn
   await session.appendContentDelta("llo");
   await session.finish();
 
-  assertCreatedCard(client, { state: "正在输入中...", reasoning: "", content: "", tools: "" });
   assertStreamState(client, true);
   assertStreamState(client, false);
   assertUpdateIncludes(client, "reasoning", "think");
   assertUpdateIncludes(client, "content", "hello");
   assertUpdateIncludes(client, "state", "working");
+});
+
+test("Feishu agent run indicator saves final card content", async () => {
+  const store = memoryCardStore();
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 10_000,
+    getState: () => ({ state: "working" })
+  });
+
+  const session = await indicator.begin({ round: 0 });
+  assert.ok(session);
+  await session.appendContentDelta("he");
+  await session.appendReasoningDelta("think");
+  await session.appendContentDelta("llo");
+  await session.finish();
+
   assertCardRecord(store, {
     messageId: "om_new",
     cardId: "card_new",

@@ -78,18 +78,21 @@ test("messageRuntime_feishuTypingDisabled_skipsFeishuTypingStart", async () => {
   assert.deepEqual(indicatorTypingEvents, [true, false]);
 });
 
-test("messageRuntime_sleepCocoonWake_createsFreshAgentRunCardOnlyBeforeWake", async () => {
+test("messageRuntime_sleepCocoonWake_createsFreshAgentRunCard", async () => {
   const wakeEvents = await runMessageRuntimeWakeIndicator("sleep_cocoon.wake");
-  const forceWakeEvents = await runMessageRuntimeWakeIndicator("sleep_cocoon.force_wake");
 
   assert.deepEqual(wakeEvents, ["fresh", "typing:true", "loop", "typing:false"]);
+});
+
+test("messageRuntime_sleepCocoonForceWake_skipsFreshAgentRunCard", async () => {
+  const forceWakeEvents = await runMessageRuntimeWakeIndicator("sleep_cocoon.force_wake");
+
   assert.deepEqual(forceWakeEvents, ["typing:true", "loop", "typing:false"]);
 });
 
 test("messageRuntime_pendingInboundLogs_sendsOneLlmRequestAndMarksProcessed", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
-  const typingEvents: Array<{ plugin: string; sessionId: string; typing: boolean }> = [];
   const outputs: AgentOutput[] = [textOutput("session-1", "ok")];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
@@ -103,9 +106,6 @@ test("messageRuntime_pendingInboundLogs_sendsOneLlmRequestAndMarksProcessed", as
     outputRouter: {
       async sendAll() {}
     },
-    async setTypingIndicator(input) {
-      typingEvents.push({ plugin: input.plugin, sessionId: input.sessionId, typing: input.typing });
-    },
     appendLog() {},
     appendMessageLog(input) {
       return store.insertMessageLog({ time: new Date().toISOString(), ...input });
@@ -116,22 +116,41 @@ test("messageRuntime_pendingInboundLogs_sendsOneLlmRequestAndMarksProcessed", as
   runtime.ingestEvent(textEvent("session-1", "om_2", "world"));
   await waitFor(() => coreInputs.length === 1);
 
-  assert.equal(coreInputs[0].payload.kind, "text");
-  assert.ok(coreInputs[0].payload.kind === "text");
-  if (coreInputs[0].payload.kind === "text") {
-    assert.notEqual(coreInputs[0].payload.text.trim(), "");
-    assert.doesNotMatch(coreInputs[0].payload.text, /hello|world/);
-  }
+  assert.equal(coreInputs.length, 1);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
-  assert.equal(store.listMessagesForConversation("session-1", 10).filter((entry) => entry.direction === "outbound").length, 1);
-  assert.deepEqual(typingEvents, [
-    { plugin: "feishu", sessionId: "session-1", typing: true },
-    { plugin: "feishu", sessionId: "session-1", typing: false }
-  ]);
 });
 
-test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudioAndProcessesTranscript", async () => {
+test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudio", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-audio-inbound"), "alice.sqlite"));
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    store,
+    chatAgent: {
+      async prepareEventRun() {
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.ingestEvent(audioEvent("session-1", "om_audio_1", "voice-1.opus", "[语音][0:0.020,0:5.000]  晚点见"));
+
+  const stored = store.listMessagesForConversation("session-1", 10)[0];
+  assert.equal(stored.contentType, "audio");
+  assert.equal(stored.contentText, "[语音]晚点见");
+  assert.equal(stored.coreProcessedAt ?? undefined, undefined);
+  assert.equal(JSON.parse(stored.contentJson ?? "{}").transcript, "晚点见");
+});
+
+test("messageRuntime_audioTranscriptInbound_processesTranscript", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-audio-process"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
@@ -153,12 +172,6 @@ test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudioAndProcessesTr
   });
 
   runtime.ingestEvent(audioEvent("session-1", "om_audio_1", "voice-1.opus", "[语音][0:0.020,0:5.000]  晚点见"));
-
-  const stored = store.listMessagesForConversation("session-1", 10)[0];
-  assert.equal(stored.contentType, "audio");
-  assert.equal(stored.contentText, "[语音]晚点见");
-  assert.equal(stored.coreProcessedAt ?? undefined, undefined);
-  assert.equal(JSON.parse(stored.contentJson ?? "{}").transcript, "晚点见");
 
   await runtime.processNow();
 

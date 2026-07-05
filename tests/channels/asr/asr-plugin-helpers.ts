@@ -4,6 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import type { AsrPluginConfig } from "../../../src/channels/asr/src/index.js";
 
+const fixtureRoot = path.join(os.tmpdir(), "alice-tests", `alice-asr-plugin-tests-${process.pid}`);
+
 export class FakeWebSocket {
   sent: Array<string | Uint8Array> = [];
   closed = false;
@@ -29,17 +31,15 @@ export class FakeWebSocket {
 }
 
 export function writeAudioFixture(fileName: string, size = 14): string {
-  const dir = path.join(os.tmpdir(), "alice-tests", "alice-asr-plugin-tests");
-  fs.mkdirSync(dir, { recursive: true });
-  const filePath = path.join(dir, fileName);
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const filePath = path.join(fixtureRoot, fileName);
   fs.writeFileSync(filePath, new Uint8Array(size).fill(1));
   return filePath;
 }
 
 export function writeAsrConfigFixture(fileName: string, config: AsrPluginConfig): string {
-  const dir = path.join(os.tmpdir(), "alice-tests", "alice-asr-plugin-tests");
-  fs.mkdirSync(dir, { recursive: true });
-  const filePath = path.join(dir, fileName);
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const filePath = path.join(fixtureRoot, fileName);
   fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return filePath;
 }

@@ -32,7 +32,7 @@ export function configWithOutput(outputDir: string): GoogleStreetViewPluginConfi
 }
 
 export function tempOutputRoot(): string {
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "alice-tests", "google-streetview-"));
+  const projectRoot = fs.mkdtempSync(path.join(aliceTestsRoot(), "google-streetview-"));
   tempRoots.push(projectRoot);
   process.chdir(projectRoot);
   const parent = path.join(projectRoot, "assets", "plugin", "google-streetview");
@@ -42,7 +42,9 @@ export function tempOutputRoot(): string {
 }
 
 export function missingConfigPath(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "alice-google-streetview-config-")), "missing.json");
+  const root = fs.mkdtempSync(path.join(aliceTestsRoot(), "alice-google-streetview-config-"));
+  tempRoots.push(root);
+  return path.join(root, "missing.json");
 }
 
 export function writeStoredResult(
@@ -82,4 +84,10 @@ export function bytesResponse(value: Uint8Array): Response {
 export function sequenceRandom(values: number[]): () => number {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)]!;
+}
+
+function aliceTestsRoot(): string {
+  const root = path.join(os.tmpdir(), "alice-tests");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
 }

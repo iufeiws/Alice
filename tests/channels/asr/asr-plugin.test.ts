@@ -254,19 +254,21 @@ test("providerRequest_firstTimeout_retriesAndReturnsText", async () => {
   assert.equal(result.text, "retry ok");
 });
 
-test("asrPlugin_disabledOrEmpty_returnsUnifiedErrors", async () => {
+test("asrPlugin_disabled_returnsDisabledError", async () => {
   const audioPath = writeAudioFixture("empty.wav");
-  const disabled = await transcribeWithAsrPlugin({ audioFile: audioPath }, {
+  const result = await transcribeWithAsrPlugin({ audioFile: audioPath }, {
     enabled: false,
     defaultProvider: "openai_compatible",
     providers: {}
   }, {});
 
-  assertAsrError(disabled);
-  assert.equal(disabled.ok, false);
-  assert.equal(disabled.error, "asr_disabled");
+  assertAsrError(result);
+  assert.equal(result.error, "asr_disabled");
+});
 
-  const empty = await transcribeWithAsrPlugin({ audioFile: audioPath }, {
+test("asrPlugin_emptyTranscription_returnsEmptyError", async () => {
+  const audioPath = writeAudioFixture("empty.wav");
+  const result = await transcribeWithAsrPlugin({ audioFile: audioPath }, {
     enabled: true,
     defaultProvider: "openai_compatible",
     providers: {
@@ -291,7 +293,6 @@ test("asrPlugin_disabledOrEmpty_returnsUnifiedErrors", async () => {
     fetch: async () => jsonResponse({ text: "" })
   });
 
-  assertAsrError(empty);
-  assert.equal(empty.ok, false);
-  assert.equal(empty.error, "empty_transcription");
+  assertAsrError(result);
+  assert.equal(result.error, "empty_transcription");
 });

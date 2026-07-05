@@ -119,7 +119,46 @@ test("admin plugin TTS MiMo voice clone upload stores data url in provider confi
   assert.equal(body.configValue.currentPreset.mimo.voiceCloneAudioDataUrlSet, true);
 });
 
-test("admin plugin test runs tts translation and tts with prompt variables and timing", async () => {
+test("admin plugin test translates input before synthesis", async () => {
+  const fixture = await runTtsPluginTest();
+
+  assert.equal(fixture.response.statusCode, 200);
+  assert.equal(fixture.body.result.input, "晚点见");
+  assert.equal(fixture.body.result.output, "また後で");
+  assert.equal(fixture.synthesizedText, "また後で");
+});
+
+test("admin plugin test returns generated TTS asset url", async () => {
+  const fixture = await runTtsPluginTest();
+
+  assert.equal(fixture.response.statusCode, 200);
+  assert.equal(fixture.body.result.voice.audioUrl, `/admin/assets/tts/${fixture.voiceFileName}`);
+});
+
+test("admin plugin test reports timing metrics", async () => {
+  const fixture = await runTtsPluginTest();
+
+  assert.equal(fixture.response.statusCode, 200);
+  assert.equal(typeof fixture.body.result.timing.translationMs, "number");
+  assert.equal(typeof fixture.body.result.timing.ttsMs, "number");
+  assert.equal(typeof fixture.body.result.timing.totalMs, "number");
+});
+
+test("admin plugin test sends translation through TTS agent", async () => {
+  const fixture = await runTtsPluginTest();
+
+  assert.equal(fixture.response.statusCode, 200);
+  assert.deepEqual(fixture.senderAgents, ["tts"]);
+});
+
+test("admin plugin test passes Genie preset to synthesizer", async () => {
+  const fixture = await runTtsPluginTest();
+
+  assert.equal(fixture.response.statusCode, 200);
+  assert.deepEqual(fixture.capturedGenie, { language: "zh", modelDir: "assets/tts/preset/zh-main/model", referenceAudio: undefined, referenceText: undefined, splitText: false });
+});
+
+async function runTtsPluginTest() {
   const root = makeTempDir("admin-plugin-test");
   const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
@@ -127,6 +166,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
   const voiceFileName = `voice-${path.basename(root)}.opus`;
   const voicePath = path.join(assetRoot, "generated", "tts", voiceFileName);
   let capturedGenie: unknown;
+  let synthesizedText = "";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
   writeTtsPluginConfig(root, {
@@ -161,6 +201,7 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
         assetRoot,
         testVoiceSynthesizer: async ({ text, genie }: { text: string; genie?: unknown }) => {
           capturedGenie = genie;
+          synthesizedText = text;
           fs.writeFileSync(voicePath, `voice:${text}`);
           return { assetId: "generated/tts/voice.opus", filePath: voicePath };
         }
@@ -177,15 +218,6 @@ test("admin plugin test runs tts translation and tts with prompt variables and t
   await handler(createRequest("POST", "/admin/api/plugins/tts/test", { text: "晚点见" }), response);
   const body = JSON.parse(response.body);
 
-  assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
-  assert.equal(body.result.input, "晚点见");
-  assert.equal(body.result.output, "また後で");
-  assert.equal(body.result.voice.audioUrl, `/admin/assets/tts/${voiceFileName}`);
-  assert.equal(typeof body.result.timing.translationMs, "number");
-  assert.equal(typeof body.result.timing.ttsMs, "number");
-  assert.equal(typeof body.result.timing.totalMs, "number");
-  assert.deepEqual(senderAgents, ["tts"]);
-  assert.deepEqual(capturedGenie, { language: "zh", modelDir: "assets/tts/preset/zh-main/model", referenceAudio: undefined, referenceText: undefined, splitText: false });
   fs.rmSync(voicePath, { force: true });
-});
+  return { response, body, capturedGenie, senderAgents, synthesizedText, voiceFileName };
+}

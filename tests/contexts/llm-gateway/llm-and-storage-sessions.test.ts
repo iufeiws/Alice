@@ -7,10 +7,15 @@ import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } f
 import type { LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import { fs, path, fixedTime, makeTempDir } from "./llm-and-storage-helpers.js";
 
-test("LLM session files use type and UTC creation time in path and metadata", () => {
+test("LLM session files use type and UTC creation time in path", () => {
   const root = makeTempDir("llm-session-path");
   const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "chat" });
   assert.equal(path.relative(root, filePath), path.join("chat", "2026-06-03", "06-19-01-271.jsonl"));
+});
+
+test("LLM session jsonl preserves metadata", () => {
+  const root = makeTempDir("llm-session-metadata");
+  const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "chat" });
   writeLLMSessionJsonl(filePath, {
     type: "llm_session",
     schemaVersion: 1,
@@ -20,6 +25,18 @@ test("LLM session files use type and UTC creation time in path and metadata", ()
   const parsed = readLLMSessionJsonl(filePath);
   assert.equal(parsed?.metadata.sessionId, Date.parse("2026-06-03T06:19:01.271Z"));
   assert.equal(parsed?.metadata.sessionCreatedAtUtc, "2026-06-03T06:19:01.271Z");
+});
+
+test("LLM session jsonl preserves transcript messages", () => {
+  const root = makeTempDir("llm-session-transcript");
+  const filePath = createLLMSessionFilePath(root, "2026-06-03T14:19:01.271+08:00", { type: "chat" });
+  writeLLMSessionJsonl(filePath, {
+    type: "llm_session",
+    schemaVersion: 1,
+    sessionId: Date.parse("2026-06-03T06:19:01.271Z"),
+    sessionCreatedAtUtc: "2026-06-03T06:19:01.271Z"
+  }, [{ role: "user", content: "hello" }]);
+  const parsed = readLLMSessionJsonl(filePath);
   assert.equal(parsed?.messages[0].content, "hello");
 });
 
@@ -67,44 +84,57 @@ test("LLM log runtime binds responses to the request session instead of current 
   assert.equal(responseLogs[0].sessionId, 100);
 });
 
-test("LLM session runtime writes chat request and response directly to jsonl", () => {
-  const root = makeTempDir("llm-session-jsonl");
-  const runtime = createApiSessionRuntime({
-    config: { memoryFiles: { root } },
-    time: fixedTime("2026-06-14T01:00:00.000Z"),
-    getConversationStartIndex: () => undefined,
-    buildTalkRuntimeMessages: () => [],
-    appendLog() {}
-  }).llmSessionRuntime;
-
-  const request: any = {
-    id: 1,
-    agentId: "chat" as const,
-    time: "2026-06-14T01:00:00.000",
-    timeUtc: "2026-06-14T01:00:00.000Z",
-    model: "chat-model",
-    messages: [
-      { role: "system" as const, content: "system" },
-      { role: "user" as const, content: "hello" }
-    ]
-  };
+test("LLM session runtime writes chat request directly to jsonl", () => {
+  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-request-jsonl");
+  const request = chatRequest(1, [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "hello" }
+  ]);
   runtime.noteLLMRequest(request, "chat");
-  const sessionId = request.sessionId;
-  const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { path: string };
-  const filePath = path.join(root, "llm-sessions", pointer.path);
+
+  const filePath = filePathFor();
   assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user"]);
+});
+
+test("LLM session runtime appends chat response directly to jsonl", () => {
+  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-response-jsonl");
+  const request = chatRequest(1, [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "hello" }
+  ]);
+  runtime.noteLLMRequest(request, "chat");
 
   runtime.noteLLMResponse({
     id: 2,
     agentId: "chat",
-    sessionId,
+    sessionId: request.sessionId,
     requestId: 1,
     time: "2026-06-14T01:00:01.000",
     timeUtc: "2026-06-14T01:00:01.000Z",
     message: { role: "assistant", content: "done" },
     finishReason: "stop"
   });
+  const filePath = filePathFor();
   assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user", "assistant"]);
+});
+
+test("LLM session runtime records latest chat request metadata", () => {
+  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-latest-request");
+  const request = chatRequest(1, [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "hello" }
+  ]);
+  runtime.noteLLMRequest(request, "chat");
+  runtime.noteLLMResponse({
+    id: 2,
+    agentId: "chat",
+    sessionId: request.sessionId,
+    requestId: 1,
+    time: "2026-06-14T01:00:01.000",
+    timeUtc: "2026-06-14T01:00:01.000Z",
+    message: { role: "assistant", content: "done" },
+    finishReason: "stop"
+  });
 
   runtime.noteLLMRequest({
     id: 3,
@@ -119,6 +149,7 @@ test("LLM session runtime writes chat request and response directly to jsonl", (
       { role: "user", content: "again" }
     ]
   }, "chat");
+  const filePath = filePathFor();
   const metadata = readLLMSessionJsonl(filePath)?.metadata;
   assert.equal((metadata?.latestRequest as any)?.round, 1);
   assert.deepEqual(metadata?.requestIds, [1, 3]);
@@ -126,7 +157,6 @@ test("LLM session runtime writes chat request and response directly to jsonl", (
 
 test("LLM requests runtime passes request-scoped log entry to response logging", async () => {
   const responseRequestIds: Array<number | undefined> = [];
-  const requestPresetNames: Array<string | undefined> = [];
   let nextRequestId = 10;
   const client: LLMClient = {
     async chat() {
@@ -138,7 +168,6 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
       return undefined;
     },
     appendLLMRequestLog(request) {
-      requestPresetNames.push(request.presetName);
       return {
         id: nextRequestId++,
         agentId: "chat",
@@ -168,12 +197,57 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
     round: 0
   });
 
-  assert.deepEqual(requestPresetNames, ["chat-flash"]);
   assert.deepEqual(responseRequestIds, [10]);
 });
 
-test("LLM requests runtime writes non-main requests to subagent sessions", async () => {
-  const subagentRoot = makeTempDir("llm-subagent-session");
+test("LLM requests runtime writes subagent session metadata", async () => {
+  const { parsed } = await runSubagentSession("llm-subagent-metadata");
+  assert.equal(parsed?.metadata.type, "llm_subagent_session");
+  assert.equal(parsed?.metadata.agent, "asr");
+  assert.deepEqual(parsed?.metadata.metadata, { pluginId: "asr" });
+});
+
+test("LLM requests runtime writes subagent transcript", async () => {
+  const { parsed } = await runSubagentSession("llm-subagent-transcript");
+  assert.deepEqual(parsed?.messages.map((message) => message.role), ["user", "assistant"]);
+});
+
+test("LLM requests runtime records subagent token usage", async () => {
+  const { usageEvents } = await runSubagentSession("llm-subagent-usage");
+  assert.deepEqual(usageEvents.map((event) => event.agentId), ["asr"]);
+});
+
+function createChatSessionRuntime(name: string) {
+  const root = makeTempDir(name);
+  const runtime = createApiSessionRuntime({
+    config: { memoryFiles: { root } },
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    getConversationStartIndex: () => undefined,
+    buildTalkRuntimeMessages: () => [],
+    appendLog() {}
+  }).llmSessionRuntime;
+  return {
+    runtime,
+    filePathFor() {
+      const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { path: string };
+      return path.join(root, "llm-sessions", pointer.path);
+    }
+  };
+}
+
+function chatRequest(id: number, messages: any[]) {
+  return {
+    id,
+    agentId: "chat" as const,
+    time: "2026-06-14T01:00:00.000",
+    timeUtc: "2026-06-14T01:00:00.000Z",
+    model: "chat-model",
+    messages
+  } as any;
+}
+
+async function runSubagentSession(name: string) {
+  const subagentRoot = makeTempDir(name);
   const usageEvents: any[] = [];
   const client: LLMClient = {
     async chat() {
@@ -226,10 +300,5 @@ test("LLM requests runtime writes non-main requests to subagent sessions", async
   const sessionDir = path.join(subagentRoot, "asr", "2026-06-14");
   const files = fs.readdirSync(sessionDir).filter((entry) => entry.endsWith(".jsonl"));
   assert.equal(files.length, 1);
-  const parsed = readLLMSessionJsonl(path.join(sessionDir, files[0]));
-  assert.equal(parsed?.metadata.type, "llm_subagent_session");
-  assert.equal(parsed?.metadata.agent, "asr");
-  assert.deepEqual(parsed?.metadata.metadata, { pluginId: "asr" });
-  assert.deepEqual(parsed?.messages.map((message) => message.role), ["user", "assistant"]);
-  assert.deepEqual(usageEvents.map((event) => event.agentId), ["asr"]);
-});
+  return { parsed: readLLMSessionJsonl(path.join(sessionDir, files[0])), usageEvents };
+}

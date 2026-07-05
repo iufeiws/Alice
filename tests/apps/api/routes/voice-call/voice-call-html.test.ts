@@ -75,20 +75,27 @@ test("voice-call text input keeps typed interrupt behavior", () => {
   assert.doesNotMatch(html, /event\.shiftKey/);
 });
 
-test("voice-call page keeps transcript and playback acknowledgement protocol", () => {
+test("voice-call page keeps playback acknowledgement protocol", () => {
   const html = renderVoiceCallHtml();
 
   assertContains(html, [
     'state === "voice_call.playback_text_cache"',
     'state === "voice_call.playback_idle_ack.request"',
-    'type: "playback-idle-ack"',
+    'type: "playback-idle-ack"'
+  ]);
+  assert.doesNotMatch(html, /state === "tts\.playback\.consumer"/);
+  assert.doesNotMatch(html, /state === "tts\.playing_text"/);
+});
+
+test("voice-call page keeps transcript protocol", () => {
+  const html = renderVoiceCallHtml();
+
+  assertContains(html, [
     'state === "asr.partial"',
     'state === "talk_runtime.ingress"',
     'state === "talk_runtime.ingress.todo"',
     "audio.transcript.final:"
   ]);
-  assert.doesNotMatch(html, /state === "tts\.playback\.consumer"/);
-  assert.doesNotMatch(html, /state === "tts\.playing_text"/);
 });
 
 test("voice-call hold-to-talk sends microphone audio through signaling", () => {

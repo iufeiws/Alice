@@ -12,7 +12,7 @@ const os = await import("node:os");
 const path = await import("node:path");
 
 test("check_location is listed only while world wanderer is enabled", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-location-tool-"));
+  const root = tmpDir();
   const configPath = path.join(root, "config.json");
   const dbPath = path.join(root, "alice.sqlite");
   const baseConfig = readWorldWandererConfig(configPath);
@@ -37,7 +37,7 @@ test("check_location is listed only while world wanderer is enabled", () => {
 });
 
 test("check_location returns readable place text without raw location ids", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-location-tool-"));
+  const root = tmpDir();
   const configPath = path.join(root, "config.json");
   const dbPath = path.join(root, "alice.sqlite");
   const baseConfig = readWorldWandererConfig(configPath);
@@ -83,4 +83,10 @@ function locationPano() {
       date: "2020-08"
     }
   };
+}
+
+function tmpDir(): string {
+  const root = path.join(os.tmpdir(), "alice-tests");
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, "alice-location-tool-"));
 }

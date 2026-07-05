@@ -416,9 +416,9 @@ test("chat agent can disable LLM streaming from config", async () => {
   assert.deepEqual(sentLines, ["one\ntwo"]);
 });
 
-test("chat agent emits llm lifecycle logs for streaming and non-streaming calls", async () => {
-  const streamLogs: string[] = [];
-  const streamCore = createChatAgent({
+test("chat agent emits llm lifecycle logs for streaming calls", async () => {
+  const logs: string[] = [];
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat() {
@@ -433,15 +433,18 @@ test("chat agent emits llm lifecycle logs for streaming and non-streaming calls"
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
     onLLMLog(event) {
-      streamLogs.push(`${event.kind}:${event.stream}`);
+      logs.push(`${event.kind}:${event.stream}`);
     }
   });
 
-  await runPreparedChatEvent(streamCore, textEvent());
-  assert.deepEqual(streamLogs, ["call_start:true", "stream_start:true", "stream_end:true"]);
+  await runPreparedChatEvent(core, textEvent());
 
-  const nonStreamLogs: string[] = [];
-  const nonStreamCore = createChatAgent({
+  assert.deepEqual(logs, ["call_start:true", "stream_start:true", "stream_end:true"]);
+});
+
+test("chat agent emits llm lifecycle logs for non-streaming calls", async () => {
+  const logs: string[] = [];
+  const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
     llm: {
       async chat() {
@@ -456,10 +459,11 @@ test("chat agent emits llm lifecycle logs for streaming and non-streaming calls"
     sessionResolver: createSessionResolver(),
     policy: createAllowAllPolicy(),
     onLLMLog(event) {
-      nonStreamLogs.push(`${event.kind}:${event.stream}`);
+      logs.push(`${event.kind}:${event.stream}`);
     }
   });
 
-  await runPreparedChatEvent(nonStreamCore, textEvent());
-  assert.deepEqual(nonStreamLogs, ["call_start:false", "response_received:false"]);
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.deepEqual(logs, ["call_start:false", "response_received:false"]);
 });

@@ -97,8 +97,11 @@ test("memory summary config may reuse core auth settings but not core model sett
   assert.equal(config.memorySummary.temperature, 0.8);
 });
 
-test("memory manual run requires sleeping by default and can be disabled", () => {
+test("memory manual run requires sleeping by default", () => {
   assert.equal(loadConfig({}).memorySummary.manualRunRequiresSleeping, true);
+});
+
+test("memory manual run sleeping requirement can be disabled", () => {
   assert.equal(loadConfig({ MEMORY_MANUAL_RUN_REQUIRES_SLEEPING: "false" }).memorySummary.manualRunRequiresSleeping, false);
 });
 

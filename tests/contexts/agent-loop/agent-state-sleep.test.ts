@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createAgentStateController } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { memoryStore, persistedSnapshot } from "./agent-state-helpers.js";
 
-test("sleep flow moves from going_to_sleep to sleeping and back to waiting", () => {
+test("going_to_sleep moves to sleeping at the next transition", () => {
   let current = new Date("2026-05-25T00:00:00.000Z");
   const controller = createAgentStateController({
     store: memoryStore(),
@@ -18,8 +18,18 @@ test("sleep flow moves from going_to_sleep to sleeping and back to waiting", () 
   assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T06:00:00.001");
   assert.equal(controller.canRunHeartbeat(), false);
   assert.equal(controller.canReplyToInbound(), false);
+});
 
-  current = new Date("2026-05-25T06:00:00.001Z");
+test("sleeping moves back to waiting at the next transition", () => {
+  let current = new Date("2026-05-25T00:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 0
+  });
+
+  controller.setState("sleeping", { durationMs: 1 });
+  current = new Date("2026-05-25T00:00:00.001Z");
   controller.tick();
   assert.equal(controller.getSnapshot().state, "waiting");
 });

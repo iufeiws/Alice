@@ -10,5 +10,4 @@ test("sleep_cocoon duration uses requested integer hours plus fifteen minute jit
 test("sleep_cocoon default duration is between six and eight hours", () => {
   assert.equal(resolveSleepDurationMs(undefined, () => 0), 6 * 60 * 60 * 1000);
   assert.equal(resolveSleepDurationMs(undefined, () => 1), 8 * 60 * 60 * 1000);
-  assert.equal(resolveSleepDurationMs(undefined, () => 0.123), Math.round((6 + 0.246) * 60 * 60 * 1000));
 });

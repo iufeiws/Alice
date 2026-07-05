@@ -92,7 +92,7 @@ test("feishu plugin retries typing reaction removal", async () => {
   assert.equal(warnings.some((message) => message.includes("typing stop failed")), false);
 });
 
-test("feishu plugin typing failures warn without throwing", async () => {
+test("feishu plugin warns when typing starts without a recent message", async () => {
   const warnings: string[] = [];
   const plugin = createFeishuPlugin(feishuConfig(), {
     async onEvent() {},
@@ -111,10 +111,31 @@ test("feishu plugin typing failures warn without throwing", async () => {
   });
 
   await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
+
+  assert.ok(warnings.some((message) => message.includes("typing ignored: missing recent message")));
+});
+
+test("feishu plugin warns when typing reaction start fails", async () => {
+  const warnings: string[] = [];
+  const plugin = createFeishuPlugin(feishuConfig(), {
+    async onEvent() {},
+    pairingStore: pairedStore(),
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    },
+    reactionClient: {
+      async addReaction() {
+        throw new Error("invalid reaction type");
+      },
+      async removeReaction() {
+        throw new Error("not expected");
+      }
+    }
+  });
+
   await plugin.ingestTextMessage(rawTextMessage("om_warn", "hello"));
   await plugin.setTyping({ sessionId: "feishu:dm:oc_chat", typing: true });
 
-  assert.ok(warnings.some((message) => message.includes("typing ignored: missing recent message")));
   assert.ok(warnings.some((message) => message.includes("typing start failed: invalid reaction type")));
 });
 

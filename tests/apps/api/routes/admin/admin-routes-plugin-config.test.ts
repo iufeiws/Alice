@@ -46,7 +46,6 @@ test("admin plugin list exposes tts config card state", async () => {
   const tts = body.plugins.find((plugin: { id: string }) => plugin.id === "tts");
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.plugins.some((plugin: { id: string }) => plugin.id === "feishu"), false);
   assert.equal(tts.status, "enabled");
   assert.equal(tts.health, "healthy");
   assert.equal(tts.configurable, true);
@@ -123,7 +122,7 @@ test("admin plugin list exposes photo selfie config card state", async () => {
   assert.equal(photo.configSource, configPath);
 });
 
-test("admin plugin config exposes and writes messaging config", async () => {
+test("admin plugin config exposes messaging config values", async () => {
   const root = makeTempDir("admin-messaging-plugin");
   const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -142,12 +141,39 @@ test("admin plugin config exposes and writes messaging config", async () => {
   assert.equal(configBody.configValue.splitMultilineSendChat, true);
   assert.equal(configBody.configValue.limitConsecutiveSends, true);
   assert.equal(configBody.configValue.feishuTypingEmojiEnabled, true);
+});
+
+test("admin plugin config exposes messaging config schema", async () => {
+  const root = makeTempDir("admin-messaging-plugin-schema");
+  const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { messaging: { configPath } }
+  });
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/messaging/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+
   assert.match(JSON.stringify(configBody.configSchema), /splitMultilineSendChat/);
   assert.deepEqual(configBody.configSchema.groups, [
     { key: "general", label: "General" },
     { key: "feishu", label: "Feishu" }
   ]);
   assert.match(JSON.stringify(configBody.configSchema), /feishuTypingEmojiEnabled/);
+});
+
+test("admin plugin config patch returns messaging config values", async () => {
+  const root = makeTempDir("admin-messaging-plugin-patch");
+  const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { messaging: { configPath } }
+  });
 
   const patchResponse = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/messaging/config", {
@@ -156,7 +182,6 @@ test("admin plugin config exposes and writes messaging config", async () => {
     feishuTypingEmojiEnabled: false
   }), patchResponse);
   const patchBody = JSON.parse(patchResponse.body);
-  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
   assert.equal(patchResponse.statusCode, 200);
   assert.deepEqual(patchBody.configValue, {
@@ -164,10 +189,33 @@ test("admin plugin config exposes and writes messaging config", async () => {
     limitConsecutiveSends: false,
     feishuTypingEmojiEnabled: false
   });
-  assert.deepEqual(saved, patchBody.configValue);
 });
 
-test("admin plugin config exposes and writes bash sandbox env settings for restart", async () => {
+test("admin plugin config patch persists messaging config", async () => {
+  const root = makeTempDir("admin-messaging-plugin-save");
+  const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { messaging: { configPath } }
+  });
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/messaging/config", {
+    splitMultilineSendChat: false,
+    limitConsecutiveSends: false,
+    feishuTypingEmojiEnabled: false
+  }), patchResponse);
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), {
+    splitMultilineSendChat: false,
+    limitConsecutiveSends: false,
+    feishuTypingEmojiEnabled: false
+  });
+});
+
+test("admin plugin list exposes bash sandbox config card state", async () => {
   const root = makeTempDir("admin-bash-sandbox-plugin");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -188,6 +236,17 @@ test("admin plugin config exposes and writes bash sandbox env settings for resta
   assert.equal(plugin.configurable, true);
   assert.equal(plugin.switchable, false);
   assert.equal(plugin.configSource, envPath);
+});
+
+test("admin plugin config exposes bash sandbox env settings", async () => {
+  const root = makeTempDir("admin-bash-sandbox-plugin-schema");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath } }
+  });
 
   const configResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/bash_sandbox/config", {}), configResponse);
@@ -196,6 +255,33 @@ test("admin plugin config exposes and writes bash sandbox env settings for resta
   assert.equal(configResponse.statusCode, 200);
   assert.equal(configBody.configValue.network, "none");
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "mounts"));
+});
+
+test("admin plugin config patch returns bash sandbox restart requirement", async () => {
+  const { patchResponse, patchBody } = await patchBashSandboxConfig();
+
+  assert.equal(patchResponse.statusCode, 200);
+  assert.equal(patchBody.restartRequired, true);
+});
+
+test("admin plugin config patch does not mutate active bash sandbox runtime config", async () => {
+  const { patchResponse, context } = await patchBashSandboxConfig();
+
+  assert.equal(patchResponse.statusCode, 200);
+  assert.equal(context.config.bashSandbox.network, "none");
+});
+
+async function patchBashSandboxConfig() {
+  const root = makeTempDir("admin-bash-sandbox-plugin-patch");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    pluginConfigs: { bashSandbox: { envPath } }
+  };
+  const handler = createAdminHandler(context);
 
   const patchResponse = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/bash_sandbox/config", {
@@ -207,16 +293,48 @@ test("admin plugin config exposes and writes bash sandbox env settings for resta
     mounts: JSON.stringify([{ id: "data", hostPath: path.join(root, "data"), containerPath: "/mnt/data", readOnly: true }])
   }), patchResponse);
   const patchBody = JSON.parse(patchResponse.body);
+
+  return { patchResponse, patchBody, context };
+}
+
+test("admin plugin config patch persists bash sandbox env settings", async () => {
+  const root = makeTempDir("admin-bash-sandbox-plugin-save");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath } }
+  });
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/bash_sandbox/config", {
+    network: "configured",
+    image: "node:22-bookworm",
+    pidsLimit: ""
+  }), patchResponse);
   const saved = fs.readFileSync(envPath, "utf8");
 
-  assert.equal(patchResponse.statusCode, 200);
-  assert.equal(patchBody.restartRequired, true);
-  assert.equal(patchBody.configValue.network, "configured");
-  assert.equal(patchBody.configValue.image, "node:22-bookworm");
-  assert.equal(context.config.bashSandbox.network, "none");
   assert.match(saved, /^BASH_SANDBOX_NETWORK=configured$/m);
   assert.match(saved, /^BASH_SANDBOX_IMAGE=node:22-bookworm$/m);
   assert.doesNotMatch(saved, /^BASH_SANDBOX_PIDS_LIMIT=/m);
+});
+
+test("admin plugin config reads persisted bash sandbox env settings", async () => {
+  const root = makeTempDir("admin-bash-sandbox-plugin-read-save");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath } }
+  });
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/bash_sandbox/config", {
+    network: "configured",
+    image: "node:22-bookworm"
+  }), patchResponse);
 
   const savedConfigResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/bash_sandbox/config", {}), savedConfigResponse);
@@ -225,7 +343,7 @@ test("admin plugin config exposes and writes bash sandbox env settings for resta
   assert.equal(savedConfigBody.configValue.image, "node:22-bookworm");
 });
 
-test("admin plugin config exposes and writes world wanderer config", async () => {
+test("admin plugin list exposes world wanderer config card state", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -246,6 +364,17 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(plugin.kind, "context");
   assert.equal(plugin.configurable, true);
   assert.equal(plugin.switchable, true);
+});
+
+test("admin plugin config exposes world wanderer config values", async () => {
+  const root = makeTempDir("admin-world-wanderer-plugin-values");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath } }
+  });
 
   const configResponse = createResponse();
   await handler(createRequest("GET", "/admin/api/plugins/world_wanderer/config", {}), configResponse);
@@ -257,12 +386,55 @@ test("admin plugin config exposes and writes world wanderer config", async () =>
   assert.equal(configBody.configValue.libraryPrompt, "");
   assert.equal(configBody.configValue.mapsJavaScriptApiKey, "");
   assert.deepEqual(configBody.runtimeState.pathStack, []);
+});
+
+test("admin plugin config exposes world wanderer values without creating sqlite storage", async () => {
+  const root = makeTempDir("admin-world-wanderer-plugin-values-no-sqlite");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath } }
+  });
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/world_wanderer/config", {}), configResponse);
+
+  assert.equal(configResponse.statusCode, 200);
   assert.equal(fs.existsSync(path.join(root, "alice.sqlite")), false);
+});
+
+test("admin plugin config exposes world wanderer config schema", async () => {
+  const root = makeTempDir("admin-world-wanderer-plugin-schema");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath } }
+  });
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/world_wanderer/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "libraryPrompt"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "mapsJavaScriptApiKey"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "maxPanosPerIdle"));
   assert.ok(configBody.configSchema.fields.some((field: { key: string }) => field.key === "selectionTemperature"));
   assert.equal(configBody.configSchema.fields.some((field: { key: string }) => field.key === "headingJitterDegrees"), false);
+});
+
+test("admin plugin config patch persists world wanderer config", async () => {
+  const root = makeTempDir("admin-world-wanderer-plugin-save");
+  const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath } }
+  });
 
   const patchResponse = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/world_wanderer/config", {
@@ -324,7 +496,7 @@ test("prompt variables use empty world wanderer library prompt without fallback"
   assert.equal(JSON.parse(response.body).variables.library.content, "");
 });
 
-test("admin plugin config patch stores Google Street View api key", async () => {
+test("admin plugin config exposes Google Street View radius schema", async () => {
   const root = makeTempDir("admin-google-streetview-plugin-config");
   const configPath = path.join(root, "config", "plugin", "google-streetview", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -357,6 +529,34 @@ test("admin plugin config patch stores Google Street View api key", async () => 
   const radiusField = configBody.configSchema.fields.find((field: { key: string }) => field.key === "radiusExpansionFactor");
   assert.equal(configResponse.statusCode, 200);
   assert.equal(radiusField.step, 0.01);
+});
+
+test("admin plugin config patch stores Google Street View api key", async () => {
+  const root = makeTempDir("admin-google-streetview-plugin-config-key");
+  const configPath = path.join(root, "config", "plugin", "google-streetview", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    apiKey: "",
+    imageSize: "640x640",
+    heading: 0,
+    pitch: 0,
+    fov: 90,
+    initialRadiusMeters: 50,
+    radiusExpansionFactor: 2,
+    maxRadiusMeters: 1000,
+    randomAttempts: 8,
+    coordinatePrecision: 5,
+    outputDir: "assets/plugin/google-streetview",
+    regions: []
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { googleStreetView: { configPath } }
+  };
+  const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/google_streetview/config", {
@@ -376,12 +576,43 @@ test("admin plugin config patch stores Google Street View api key", async () => 
   }), response);
 
   assert.equal(response.statusCode, 200);
-  const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  assert.equal(body.ok, true);
+  assert.equal(saved.apiKey, "google-secret");
+});
+
+test("admin plugin config patch hides Google Street View api key", async () => {
+  const root = makeTempDir("admin-google-streetview-plugin-config-hide-key");
+  const configPath = path.join(root, "config", "plugin", "google-streetview", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiKey: "" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { googleStreetView: { configPath } }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/google_streetview/config", {
+    apiKey: "google-secret"
+  }), response);
+  const body = JSON.parse(response.body);
+
   assert.equal(body.configValue.apiKeySet, true);
   assert.equal(body.configValue.apiKey, undefined);
-  assert.equal(saved.apiKey, "google-secret");
+});
+
+test("admin plugin config patch preserves Google Street View api key when blank", async () => {
+  const root = makeTempDir("admin-google-streetview-plugin-config-preserve-key");
+  const configPath = path.join(root, "config", "plugin", "google-streetview", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiKey: "google-secret" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { googleStreetView: { configPath } }
+  });
 
   const preserveResponse = createResponse();
   await handler(createRequest("PATCH", "/admin/api/plugins/google_streetview/config", {

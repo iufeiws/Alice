@@ -6,14 +6,12 @@ import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/
 import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { emptyPromptRenderer, fakeTime, textEvent } from "./agent-loop-runtime-helpers.js";
 
-test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.execute", async () => {
+test("chat loop exposes visible tools to LLM requests", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],
     requestTimestamps: [],
     mode: "normal"
   };
-  const sent: string[] = [];
-  const executedTools: string[] = [];
   const tools: ToolPlugin[] = [{
     id: "messaging",
     listTools() {
@@ -23,8 +21,6 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
       ];
     },
     async execute(call) {
-      executedTools.push(call.toolName);
-      if (call.toolName === "Chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];
@@ -43,12 +39,7 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
         return {
           message: {
             role: "assistant",
-            content: [
-              "before",
-              "<chat alice='core' type='voice'>",
-              "prefix",
-              "</chat ignored>",
-            ].join("\n"),
+            content: "",
             toolCalls: [{
               id: "call_test",
               type: "function",
@@ -58,7 +49,7 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
           finishReason: "tool_calls"
         };
       }
-      return { message: { role: "assistant", content: "<chat type=\"bad\" alice=\"bad\">done" }, finishReason: "stop" };
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
     },
     time: fakeTime(),
     buildTextVariables: emptyPromptRenderer,
@@ -71,6 +62,56 @@ test("chat loop exposes visible tools and sends chat blocks through ToolPlugin.e
   loop.complete(await runAgentFunctionCallLoop(loop.spec));
 
   assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
-  assert.deepEqual(executedTools, ["Chat", "test_tool", "Chat"]);
-  assert.deepEqual(sent, ["core:voice:prefix", "shell:message:done"]);
+});
+
+test("chat loop sends chat blocks through ToolPlugin.execute", async () => {
+  const session = {
+    messages: [{ role: "user" as const, content: "go" }],
+    requestTimestamps: [],
+    mode: "normal"
+  };
+  const sent: string[] = [];
+  const tools: ToolPlugin[] = [{
+    id: "messaging",
+    listTools() {
+      return [{ name: "Chat", description: "send", inputSchema: {} }];
+    },
+    async execute(call) {
+      if (call.toolName === "Chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
+      return { callId: call.id, ok: true, output: "ok" };
+    }
+  }];
+  registerLLMToolLoopTools("default", tools);
+  const loop = buildChatAgentLoop({
+    llmInput: { messages: session.messages, toolNames: ["Chat"] },
+    event: textEvent("session-content-send"),
+    session,
+    ensureSession: async () => session,
+    appendSessionContext: async () => {},
+    llm: { async chat() { throw new Error("unused"); } },
+    async llmRequestSender() {
+      return {
+        message: {
+          role: "assistant",
+          content: [
+            "before",
+            "<chat alice='core' type='voice'>",
+            "prefix",
+            "</chat ignored>"
+          ].join("\n")
+        },
+        finishReason: "stop"
+      };
+    },
+    time: fakeTime(),
+    buildTextVariables: emptyPromptRenderer,
+    noteSessionUpdated: () => {},
+    getLastCompletedToolName: () => undefined,
+    setLastCompletedToolName: () => {},
+    applyModeStateToNewSession: () => {}
+  });
+
+  loop.complete(await runAgentFunctionCallLoop(loop.spec));
+
+  assert.deepEqual(sent, ["core:voice:prefix"]);
 });

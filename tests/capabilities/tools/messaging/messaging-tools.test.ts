@@ -99,12 +99,11 @@ test("check_chat range scope filters with from and to", async () => {
   });
   assert.equal(result.ok, true);
   assert.match(String(result.output), /<chat-log>\n\[2026-05-24 09:00:00\]\n\{\{user\}\}:inside range\n<\/chat-log>/);
-  assert.match(formatToolResultForLLM(result, { user: "Y" }), /<chat-log>\n\[2026-05-24 09:00:00\]\nY:inside range\n<\/chat-log>/);
   assert.doesNotMatch(String(result.output), /before range|after range/);
 });
 
-test("check_chat defaults to unread new messages", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-view"), "alice.sqlite"));
+async function pollDefaultUnreadMessages(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   const baseTime = Date.now();
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -150,10 +149,22 @@ test("check_chat defaults to unread new messages", async () => {
   });
 
   const recent = await tools.execute({ id: "call_1", toolName: "Chat", input: { action: "poll" } });
+
+  return { baseTime, recent, store, tools };
+}
+
+test("check_chat defaults to unread new messages", async () => {
+  const { recent } = await pollDefaultUnreadMessages("messaging-view");
+
   assert.equal(recent.ok, true);
   assert.match(String(recent.output), /hello today/);
   assert.match(String(recent.output), /hello from old session/);
   assert.match(String(recent.output), /hello from wechat/);
+});
+
+test("check_chat default output uses chat-log format", async () => {
+  const { recent } = await pollDefaultUnreadMessages("messaging-view-format");
+
   assert.match(String(recent.output), /\{\{user\}\}:hello today/);
   assert.match(formatToolResultForLLM(recent, { user: "小王" }), /小王:hello today/);
   assert.match(String(recent.output), /Alice:hello back/);
@@ -163,12 +174,21 @@ test("check_chat defaults to unread new messages", async () => {
   assert.doesNotMatch(String(recent.output), /\.\d{3}Z/);
   assert.match(String(recent.output), /^<have-new-message\/>\n<chat-log>\n/);
   assert.match(String(recent.output), /\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
+});
+
+test("check_chat marks default unread messages as read", async () => {
+  const { store } = await pollDefaultUnreadMessages("messaging-view-read-state");
   const readMessages = store.listMessages(10).filter((message) => message.direction === "inbound");
+
   assert.equal(readMessages.length, 3);
   assert.deepEqual(readMessages.map((message) => Boolean(message.isRead)), [true, true, true]);
   assert.deepEqual(readMessages.map((message) => Boolean(message.readAt)), [true, true, true]);
   assert.deepEqual(readMessages.map((message) => Boolean(message.coreProcessedAt)), [true, true, true]);
   assert.deepEqual(store.listPendingCoreConversations(), []);
+});
+
+test("check_chat default poll advances to the next unread message", async () => {
+  const { baseTime, store, tools } = await pollDefaultUnreadMessages("messaging-view-next-unread");
 
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -263,8 +283,8 @@ test("check_chat default scope ignores active main llm session generation", asyn
   assert.match(String(afterSwitch.output), /nothing new/);
 });
 
-test("check_chat new starts at any unread message and marks outbound read", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-new-unread-any"), "alice.sqlite"));
+async function pollFromUnreadMessage(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -299,10 +319,21 @@ test("check_chat new starts at any unread message and marks outbound read", asyn
 
   const result = await tools.execute({ id: "call_new_unread_any", toolName: "Chat", input: { action: "poll" } });
 
+  return { inbound, outbound, result, store };
+}
+
+test("check_chat new starts at any unread message", async () => {
+  const { result } = await pollFromUnreadMessage("messaging-new-unread-any");
+
   assert.match(String(result.output), /^<have-new-message\/>\n<chat-log>\n/);
   assert.match(String(result.output), /Alice:assistant sent/);
   assert.match(String(result.output), /\{\{user\}\}:user during send/);
+});
+
+test("check_chat new marks returned inbound and outbound messages read", async () => {
+  const { inbound, outbound, store } = await pollFromUnreadMessage("messaging-new-unread-read-state");
   const messages = store.listMessagesForConversation("session-1", 10);
+
   assert.equal(Boolean(messages.find((message) => message.id === outbound.id)?.isRead), true);
   assert.equal(messages.find((message) => message.id === outbound.id)?.coreProcessedAt ?? undefined, undefined);
   assert.equal(Boolean(messages.find((message) => message.id === inbound.id)?.isRead), true);
@@ -324,8 +355,8 @@ test("check_chat returns current time from configured timezone provider", async 
   assert.match(String(result.output), /<now local="2026-05-26T12:34:56\.789"\/>$/);
 });
 
-test("check_chat today starts ten messages before sleep cocoon pointer and todayold keeps old anchor", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-sleep-cocoon-today"), "alice.sqlite"), {
+function createSleepCocoonTodayTools(name: string, withSleepPointer = true) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"), {
     time: createCurrentTimeProvider("Asia/Shanghai")
   });
   store.upsertInboundMessage({
@@ -355,32 +386,40 @@ test("check_chat today starts ten messages before sleep cocoon pointer and today
     senderId: "user-1",
     contentType: "text",
     contentText: "after sleep cocoon",
-    createdAt: "2026-05-25T12:30:00.000"
-  });
+      createdAt: "2026-05-25T12:30:00.000"
+    });
   const tools = createMessagingTools({
     store,
     outputRouter: { async send() {} },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
-    getSleepCocoonEnteredAt: () => "2026-05-25T12:00:00.000",
+    ...(withSleepPointer ? { getSleepCocoonEnteredAt: () => "2026-05-25T12:00:00.000" } : {}),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
+
+  return tools;
+}
+
+test("check_chat today starts ten messages before sleep cocoon pointer", async () => {
+  const tools = createSleepCocoonTodayTools("messaging-sleep-cocoon-today");
 
   const today = await tools.execute({ id: "call_today", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.doesNotMatch(String(today.output), /after old today anchor/);
   assert.match(String(today.output), /pre sleep context 1/);
   assert.match(String(today.output), /pre sleep context 10/);
   assert.match(String(today.output), /after sleep cocoon/);
+});
+
+test("check_chat todayold keeps the old today anchor", async () => {
+  const tools = createSleepCocoonTodayTools("messaging-sleep-cocoon-todayold");
 
   const todayOld = await tools.execute({ id: "call_todayold", toolName: "Chat", input: { action: "poll",  scope: "todayold" } });
   assert.match(String(todayOld.output), /after old today anchor/);
   assert.match(String(todayOld.output), /after sleep cocoon/);
+});
 
-  const toolsWithoutSleepPointer = createMessagingTools({
-    store,
-    outputRouter: { async send() {} },
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
+test("check_chat today uses the old anchor without a sleep cocoon pointer", async () => {
+  const toolsWithoutSleepPointer = createSleepCocoonTodayTools("messaging-sleep-cocoon-today-no-pointer", false);
+
   const todayWithoutSleepPointer = await toolsWithoutSleepPointer.execute({ id: "call_today_no_sleep", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.match(String(todayWithoutSleepPointer.output), /after old today anchor/);
   assert.match(String(todayWithoutSleepPointer.output), /after sleep cocoon/);

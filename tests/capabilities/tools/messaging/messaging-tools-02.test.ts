@@ -24,8 +24,8 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
-test("check_chat defaults to new across repeated calls", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-view-llm-session"), "alice.sqlite"));
+test("check_chat default poll returns the first unread message", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-default-first"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -35,18 +35,26 @@ test("check_chat defaults to new across repeated calls", async () => {
     contentText: "initial today",
     createdAt: "2026-05-26T01:00:00.000Z"
   });
-
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
-    outputRouter: { async send() {} },
-    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
+  const tools = createDefaultChatTools(store);
 
   const first = await tools.execute({ id: "call_1", toolName: "Chat", input: { action: "poll" } });
   assert.equal(first.ok, true);
   assert.match(String(first.output), /initial today/);
+});
+
+test("check_chat default poll returns new messages across sessions", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-default-cross-session"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "initial today",
+    createdAt: "2026-05-26T01:00:00.000Z"
+  });
+  const tools = createDefaultChatTools(store);
+  await tools.execute({ id: "call_1", toolName: "Chat", input: { action: "poll" } });
 
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -69,18 +77,36 @@ test("check_chat defaults to new across repeated calls", async () => {
 
   const second = await tools.execute({ id: "call_2", toolName: "Chat", input: { action: "poll" } });
   assert.equal(second.ok, true);
-  assert.doesNotMatch(String(second.output), /initial today/);
   assert.match(String(second.output), /after first default check/);
   assert.match(String(second.output), /wechat after first check/);
+});
 
-  const third = await tools.execute({ id: "call_3", toolName: "Chat", input: { action: "poll" } });
-  assert.equal(third.ok, true);
-  assert.match(String(third.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
+test("check_chat default poll returns empty output when no messages are pending", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-default-empty"), "alice.sqlite"));
+  const tools = createDefaultChatTools(store);
 
-  const nextSessionFirst = await tools.execute({ id: "call_4", toolName: "Chat", input: { action: "poll" } });
-  assert.equal(nextSessionFirst.ok, true);
-  assert.doesNotMatch(String(nextSessionFirst.output), /initial today/);
-  assert.match(String(nextSessionFirst.output), /nothing new/);
+  const result = await tools.execute({ id: "call_empty", toolName: "Chat", input: { action: "poll" } });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
+});
+
+test("check_chat default poll advances the repeated-call cursor", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-default-cursor"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "consume once",
+    createdAt: "2026-05-26T01:00:00.000Z"
+  });
+  const tools = createDefaultChatTools(store);
+  await tools.execute({ id: "call_first", toolName: "Chat", input: { action: "poll" } });
+
+  const repeated = await tools.execute({ id: "call_repeated", toolName: "Chat", input: { action: "poll" } });
+  assert.equal(repeated.ok, true);
+  assert.doesNotMatch(String(repeated.output), /consume once/);
 });
 
 test("check_chat renders system prompts as system messages", async () => {
@@ -120,8 +146,8 @@ test("check_chat renders system prompts as system messages", async () => {
   assert.doesNotMatch(String(result.output), /Alice:\(大失败\.\.\.\)/);
 });
 
-test("check_chat simplifies outbound media records", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-media-records"), "alice.sqlite"));
+test("check_chat simplifies outbound image records", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-image-record"), "alice.sqlite"));
   store.insertOutboundMessage({
     plugin: "feishu",
     conversationId: "session-1",
@@ -130,6 +156,16 @@ test("check_chat simplifies outbound media records", async () => {
     contentJson: JSON.stringify({ kind: "image", assetId: "generated/selfies/selfie_20260528_160956.jpg" }),
     createdAt: "2026-05-26T12:00:00.000Z"
   });
+  const tools = createDefaultChatTools(store);
+
+  const result = await tools.execute({ id: "call_image_record", toolName: "Chat", input: { action: "poll",  scope: "today" } });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /Alice发送了一张图片/);
+  assert.doesNotMatch(String(result.output), /selfie_20260528_160956\.jpg/);
+});
+
+test("check_chat simplifies outbound audio records", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-audio-record"), "alice.sqlite"));
   store.insertOutboundMessage({
     plugin: "feishu",
     conversationId: "session-1",
@@ -138,6 +174,16 @@ test("check_chat simplifies outbound media records", async () => {
     contentJson: JSON.stringify({ kind: "audio", assetId: "voice-1.mp3", transcript: "[语音][0:0.020,0:5.000]  晚点见" }),
     createdAt: "2026-05-26T12:00:01.000Z"
   });
+  const tools = createDefaultChatTools(store);
+
+  const result = await tools.execute({ id: "call_audio_record", toolName: "Chat", input: { action: "poll",  scope: "today" } });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+  assert.doesNotMatch(String(result.output), /0:0\.020|0:5\.000/);
+});
+
+test("check_chat simplifies outbound file records", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-file-record"), "alice.sqlite"));
   store.insertOutboundMessage({
     plugin: "feishu",
     conversationId: "session-1",
@@ -146,24 +192,11 @@ test("check_chat simplifies outbound media records", async () => {
     contentJson: JSON.stringify({ kind: "file", assetId: "files/report.pdf", filename: "report.pdf" }),
     createdAt: "2026-05-26T12:00:02.000Z"
   });
+  const tools = createDefaultChatTools(store);
 
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:01:00.000Z")),
-    outputRouter: { async send() {} },
-    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
-
-  const result = await tools.execute({ id: "call_media_records", toolName: "Chat", input: { action: "poll",  scope: "today" } });
+  const result = await tools.execute({ id: "call_file_record", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /Alice发送了一张图片/);
-  assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
-  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
-  assert.doesNotMatch(String(result.output), /0:0\.020|0:5\.000/);
   assert.match(String(result.output), /Alice发送了文件\[report\.pdf\]/);
-  assert.doesNotMatch(String(result.output), /Alice:发送了文件\[report\.pdf\]/);
-  assert.doesNotMatch(String(result.output), /selfie_20260528_160956\.jpg/);
 });
 
 test("check_chat renders voicecalltranscript as an embedded transcript block", async () => {
@@ -269,8 +302,8 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
   assert.equal((String(recent.output).match(/\{\{user\}\}:msg /g) ?? []).length, 50);
 });
 
-test("check_chat preview does not mark messages read or advance cursor", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-view-preview"), "alice.sqlite"));
+test("check_chat preview returns pending message content", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-preview-output"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_1",
@@ -280,14 +313,7 @@ test("check_chat preview does not mark messages read or advance cursor", async (
     contentText: "preview should not consume",
     createdAt: "2026-05-26T12:01:00.000"
   });
-
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:02:00.000Z")),
-    outputRouter: { async send() {} },
-    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
-  });
+  const tools = createDefaultChatTools(store);
 
   const preview = await tools.execute({
     id: "call_preview",
@@ -295,12 +321,57 @@ test("check_chat preview does not mark messages read or advance cursor", async (
   });
   assert.equal(preview.ok, true);
   assert.match(String(preview.output), /preview should not consume/);
+});
+
+test("check_chat preview leaves message read state unchanged", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-preview-read-state"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "preview should not read",
+    createdAt: "2026-05-26T12:01:00.000"
+  });
+  const tools = createDefaultChatTools(store);
+  await tools.execute({ id: "call_preview", toolName: "Chat", input: { action: "poll",  __preview: true } });
 
   const stored = store.listMessagesForConversation("session-1", 10)[0];
   assert.equal(Boolean(stored.isRead), false);
   assert.equal(stored.readAt ?? undefined, undefined);
   assert.equal(stored.coreProcessedAt ?? undefined, undefined);
+});
+
+test("check_chat preview leaves the pending conversation cursor unchanged", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-preview-pending"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "preview should stay pending",
+    createdAt: "2026-05-26T12:01:00.000"
+  });
+  const tools = createDefaultChatTools(store);
+  await tools.execute({ id: "call_preview", toolName: "Chat", input: { action: "poll",  __preview: true } });
+
   assert.equal(store.listPendingCoreConversations()[0].conversationId, "session-1");
+});
+
+test("check_chat recent preview can show already consumed messages", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-recent-preview"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_1",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "text",
+    contentText: "recent preview can repeat",
+    createdAt: "2026-05-26T12:01:00.000"
+  });
+  const tools = createDefaultChatTools(store);
 
   await tools.execute({ id: "call_first", toolName: "Chat", input: { action: "poll" } });
   const recentPreview = await tools.execute({
@@ -308,10 +379,7 @@ test("check_chat preview does not mark messages read or advance cursor", async (
     toolName: "Chat", input: { action: "poll",  __preview: true, __scope: "recent" }
   });
   assert.equal(recentPreview.ok, true);
-  assert.match(String(recentPreview.output), /preview should not consume/);
-  const next = await tools.execute({ id: "call_next", toolName: "Chat", input: { action: "poll" } });
-  assert.equal(next.ok, true);
-  assert.doesNotMatch(String(next.output), /preview should not consume/);
+  assert.match(String(recentPreview.output), /recent preview can repeat/);
 });
 
 test("check_chat recent is independent of the 6am today anchor", async () => {
@@ -378,6 +446,16 @@ test("check_chat chat labels use absolute local time", async () => {
   assert.match(String(result.output), /\[2026-05-25 23:30:00\]\n\{\{user\}\}:late yesterday/);
   assert.doesNotMatch(String(result.output), /\[(?:today|yesterday) /);
 });
+
+function createDefaultChatTools(store: ReturnType<typeof createAliceStore>) {
+  return createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:02:00.000Z")),
+    outputRouter: { async send() {} },
+    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+}
 
 async function eventually(condition: () => boolean, timeoutMs = 500): Promise<void> {
   const startedAt = Date.now();

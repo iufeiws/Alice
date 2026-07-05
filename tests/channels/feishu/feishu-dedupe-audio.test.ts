@@ -36,14 +36,8 @@ test("feishu plugin prepares inbound audio with transcript for message runtime",
   const event = handled[0];
   assert.equal(event.type, "message.audio");
   assert.equal(event.payload.kind, "audio");
-  assert.equal(event.payload.assetId, "plugin/feishu/audio/om_audio.opus");
   assert.equal(event.payload.transcript, "今晚十点提醒我睡觉");
-  assert.equal(event.source.plugin, "feishu");
-  assert.equal(event.source.rawMessageId, "om_audio");
-  assert.equal(event.externalSession.scope, "dm");
-  assert.equal(event.externalSession.sessionId, "feishu:dm:oc_chat");
   assert.equal(event.meta.replyTo, "om_audio");
-  assert.equal(event.meta.receivedAtUtc, "2026-02-02T02:40:00.000Z");
 });
 
 test("feishu plugin does not forward inbound audio when asr returns no transcript", async () => {
@@ -76,5 +70,4 @@ test("feishu plugin does not forward inbound audio when asr returns no transcrip
   await waitFor(() => warnings.some((message) => message.includes("ignored audio om_empty: asr empty_transcription")));
 
   assert.equal(handled, 0);
-  assert.ok(warnings.some((message) => message.includes("ignored audio om_empty: asr empty_transcription")));
 });

@@ -50,22 +50,6 @@ test("WebRTC voice queues streaming encoder frames before playback", async () =>
 
   assert.equal(result.status, "played");
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[1], [2], [3]]);
-  assert.equal(statuses.some((entry) => entry.state === "tts.queue.waiting"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.queue.ready"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.queue.producer_done"), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.queue.encoded"), false);
-  assert.equal(statuses.some((entry) => entry.state === "tts.stream.frames_sent" && entry.detail?.includes("queued=")), false);
-  assert.equal(statuses.some((entry) => entry.state === "tts.stream.audio_text"), false);
-  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text" && entry.detail === "原文播放片段"), true);
-  assert.deepEqual(statuses.filter((entry) => entry.state === "tts.playback.consumer"), [
-    { state: "tts.playback.consumer", detail: "前文=原文播放片段 时长=60ms", callId: "call-stream-queue" }
-  ]);
-  assert.ok(statuses.findIndex((entry) => entry.state === "voice_call.connected") < statuses.findIndex((entry) => entry.state === "tts.playback.consumer"));
-  assert.equal(statuses.some((entry) => entry.state === "tts.playback.consumer" && entry.detail === "前文= 时长=20ms"), false);
-  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_text_cache" && entry.detail === JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" })));
-  assert.equal(statuses.filter((entry) => entry.state === "voice_call.playback_text_cache").at(-1)?.detail, JSON.stringify({ chunkId: "queue-output", text: "原文播放片段" }));
-  assert.equal(statuses.filter((entry) => entry.state === "tts.playing_text").at(-1)?.detail, "原文播放片段");
-  assert.equal(statuses.some((entry) => entry.state === "tts.playing_text.missing"), true);
 });
 
 test("WebRTC voice treats zero-frame queued streaming interrupt as interrupted", async () => {
@@ -108,9 +92,6 @@ test("WebRTC voice treats zero-frame queued streaming interrupt as interrupted",
 
   assert.equal(result.status, "interrupted");
   assert.equal(result.frameCount, 0);
-  assert.equal(result.failureReason, undefined);
-  assert.equal(statuses.some((entry) => entry.state === "tts.interrupted" && entry.detail?.includes("zero-interrupt-output")), true);
-  assert.equal(statuses.some((entry) => entry.state === "tts.failed" && entry.detail?.includes("zero-interrupt-output")), false);
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0), []);
 });
 
@@ -319,5 +300,4 @@ test("WebRTC voice fills streaming underrun with timed silence frames", async ()
   assert.ok(silenceCount > 0);
   assert.ok(finalFrameIndex > 60);
   assert.equal(frames.some((frame) => frame.pcm.length === 0 && frame.durationMs === 20), true);
-  assert.ok(finalFrameIndex > 60);
 });

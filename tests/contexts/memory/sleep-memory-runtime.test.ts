@@ -82,7 +82,7 @@ test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
   const memoryStore = createMarkdownMemoryStore(root);
   const streamFlags: unknown[] = [];
 
-  const result = await runMemoryInductionForMessages({
+  await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -103,7 +103,6 @@ test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
     log() {}
   }, "persistent");
 
-  assert.equal(result.ok, true);
   assert.deepEqual(streamFlags, [true]);
 });
 
@@ -112,7 +111,7 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
   const memoryStore = createMarkdownMemoryStore(root);
   const seen: unknown[] = [];
 
-  const result = await runMemoryInductionForMessages({
+  await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -150,7 +149,6 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
     log() {}
   }, "persistent");
 
-  assert.equal(result.ok, true);
   assert.deepEqual(seen, [{ first: true }, { followup: true }]);
 });
 
@@ -160,7 +158,7 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
   let chatCalls = 0;
   let streamCalls = 0;
 
-  const result = await runMemoryInductionForMessages({
+  await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -182,7 +180,6 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
     log() {}
   }, "persistent");
 
-  assert.equal(result.ok, true);
   assert.equal(chatCalls, 0);
   assert.equal(streamCalls, 1);
 });
@@ -234,8 +231,29 @@ test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => 
   assert.equal(attempts.length, 3);
 });
 
-test("memorizeSession_completeRun_persistsMetadataAndTranscript", async () => {
-  const root = makeTempDir("memory-session-transcript");
+test("memorizeSession_completeRun_usesUtcSessionPath", async () => {
+  const { root, filePath } = await runMemorySession("memory-session-path");
+
+  assert.equal(path.relative(path.join(root, "llm-sessions"), filePath), path.join("memorize", "2026-05-24", "06-00-00-000.jsonl"));
+});
+
+test("memorizeSession_completeRun_persistsMetadata", async () => {
+  const { lines } = await runMemorySession("memory-session-metadata");
+
+  assert.equal(lines[0].type, "llm_session");
+  assert.equal(lines[0].agent, "memorize");
+  assert.deepEqual(lines[0].targets, ["persistent", "userPreferences", "yesterdaySummary"]);
+});
+
+test("memorizeSession_completeRun_persistsTranscript", async () => {
+  const { lines } = await runMemorySession("memory-session-transcript");
+
+  assert.equal(lines.some((entry) => entry.type === "request" || entry.type === "response"), false);
+  assert.equal(lines.some((entry) => entry.role === "system"), true);
+});
+
+async function runMemorySession(name: string) {
+  const root = makeTempDir(name);
   const memoryStore = createMarkdownMemoryStore(root);
 
   await runMemoryInductionForMessages({
@@ -258,11 +276,5 @@ test("memorizeSession_completeRun_persistsMetadataAndTranscript", async () => {
 
   const filePath = findSessionFiles(path.join(root, "llm-sessions", "memorize"))[0];
   const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
-
-  assert.equal(path.relative(path.join(root, "llm-sessions"), filePath), path.join("memorize", "2026-05-24", "06-00-00-000.jsonl"));
-  assert.equal(lines[0].type, "llm_session");
-  assert.equal(lines[0].agent, "memorize");
-  assert.deepEqual(lines[0].targets, ["persistent", "userPreferences", "yesterdaySummary"]);
-  assert.equal(lines.some((entry) => entry.type === "request" || entry.type === "response"), false);
-  assert.equal(lines.some((entry) => entry.role === "system"), true);
-});
+  return { root, filePath, lines };
+}

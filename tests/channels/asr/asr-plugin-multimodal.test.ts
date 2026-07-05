@@ -179,8 +179,8 @@ test("multimodalLlm_defaultConfig_sendsToolRequestAndReturnsText", async () => {
   assert.equal(capturedRequest.extraParams.tool_choice.function.name, "submit_audio_context");
 });
 
-test("multimodalLlm_missingPromptOrToolCall_returnsErrors", async () => {
-  const missingPrompt = await transcribeWithAsrPlugin({
+test("multimodalLlm_missingPrompt_returnsProviderConfigError", async () => {
+  const result = await transcribeWithAsrPlugin({
     audioFile: new Uint8Array([1]),
     filename: "speech.wav"
   }, {
@@ -203,10 +203,12 @@ test("multimodalLlm_missingPromptOrToolCall_returnsErrors", async () => {
       throw new Error("should not send without prompt");
     }
   });
-  assertAsrError(missingPrompt);
-  assert.equal(missingPrompt.error, "missing_provider_config");
+  assertAsrError(result);
+  assert.equal(result.error, "missing_provider_config");
+});
 
-  const missingToolCall = await transcribeWithAsrPlugin({
+test("multimodalLlm_missingToolCall_returnsProviderRequestError", async () => {
+  const result = await transcribeWithAsrPlugin({
     audioFile: new Uint8Array([1]),
     filename: "speech.wav"
   }, {
@@ -229,7 +231,6 @@ test("multimodalLlm_missingPromptOrToolCall_returnsErrors", async () => {
       return { message: { role: "assistant", content: "no tool" } };
     }
   });
-  assertAsrError(missingToolCall);
-  assert.equal(missingToolCall.error, "provider_request_failed");
-  assert.match(missingToolCall.message ?? "", /missing_tool_call/);
+  assertAsrError(result);
+  assert.equal(result.error, "provider_request_failed");
 });

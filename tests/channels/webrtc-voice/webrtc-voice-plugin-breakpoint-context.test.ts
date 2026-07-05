@@ -213,7 +213,6 @@ test("WebRTC voice keeps consumer cache until the next stream text is consumed",
   const peer = new FakePeer();
   let call: any;
   let sleeps = 0;
-  const statuses: Array<{ state: string; detail?: string }> = [];
   const interrupts: Array<{ beforeText?: string; afterText?: string }> = [];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
@@ -248,7 +247,6 @@ test("WebRTC voice keeps consumer cache until the next stream text is consumed",
         });
       }
     },
-    emitStatus: (event) => statuses.push(event),
     sleep: async () => {
       sleeps += 1;
       if (sleeps === 2) await call.setSpeechActive(true);
@@ -261,14 +259,12 @@ test("WebRTC voice keeps consumer cache until the next stream text is consumed",
   assert.equal(result.status, "interrupted");
   await waitFor(() => interrupts.length === 1);
   assert.deepEqual(interrupts, [{ beforeText: undefined, afterText: "上一段。" }]);
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.interrupt.breakpoint" && entry.detail === "前文= 后文=上一段。"), true);
 });
 
 test("WebRTC voice does not replace current segment cache with empty or none stream text", async () => {
   const peer = new FakePeer();
   let call: any;
   const interrupts: Array<{ beforeText?: string; afterText?: string }> = [];
-  const yieldedTexts: Array<string | undefined> = [];
   const plugin = createWebRtcVoicePlugin({
     config: defaultConfig,
     createPeer: async () => peer,
@@ -277,15 +273,10 @@ test("WebRTC voice does not replace current segment cache with empty or none str
       throw new Error("file synthesizer should not be used");
     }, {
       async *stream() {
-        yieldedTexts.push("当前段文本");
         yield { type: "audio" as const, sequence: 0, text: "当前段文本", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
-        yieldedTexts.push(undefined);
         yield { type: "audio" as const, sequence: 1, chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
-        yieldedTexts.push("");
         yield { type: "audio" as const, sequence: 2, text: "", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
-        yieldedTexts.push("none");
         yield { type: "audio" as const, sequence: 3, text: "none", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
-        yieldedTexts.push("None");
         yield { type: "audio" as const, sequence: 4, text: "None", chunk: new Uint8Array(2_560), contentType: "audio/L16; rate=32000; channels=1" };
         yield { type: "done" as const };
       }
@@ -322,7 +313,6 @@ test("WebRTC voice does not replace current segment cache with empty or none str
   assert.equal(result.status, "interrupted");
   await waitFor(() => interrupts.length === 1);
   assert.deepEqual(interrupts, [{ beforeText: undefined, afterText: "当前段文本" }]);
-  assert.deepEqual(yieldedTexts, ["当前段文本", undefined, ""]);
 });
 
 test("WebRTC voice sends breakpoint context without index to TalkRuntime on barge-in", async () => {

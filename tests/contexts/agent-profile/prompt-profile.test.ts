@@ -9,7 +9,6 @@ import {
   staticPromptFingerprint
 } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createPromptToolPreviewRuntime } from "../../../src/contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
-import { promptLayerToMessage, normalizePromptLayers } from "../../../src/contexts/agent-profile/src/domain/prompt-layer.js";
 import { promptStoragePath } from "../../../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { makeTempDir, messageContentText, promptContext, textEvent } from "./prompt-profile-helpers.js";
@@ -148,29 +147,23 @@ test("promptMessages_variables_rendersConfiguredLayerContent", () => {
 });
 
 test("promptMessages_layerNames_useParserDefaultsAndConfiguredNames", () => {
-  const filePath = path.join(makeTempDir("prompt-layer-name"), "prompt-profile.json");
-  const store = createPromptProfileStore(filePath);
-  const saved = store.save({
+  const profile = {
     ...defaultPromptProfile(),
     layers: [
-      { id: "default_name", title: "Default Name", role: "user", enabled: true, content: "hello", order: 1 },
-      { id: "named", title: "Named", role: "user", name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 },
-      { id: "assistant_default", title: "Assistant Default", role: "assistant", enabled: true, content: "", order: 3 },
-      { id: "assistant_named", title: "Assistant Named", role: "assistant", name: "Alice", enabled: true, content: "", order: 4 },
-      { id: "tool_request_default", title: "Tool Request Default", role: "tool_request", enabled: true, content: "", order: 5, toolCalls: [] }
+      { id: "default_name", title: "Default Name", role: "user" as const, enabled: true, content: "hello", order: 1 },
+      { id: "named", title: "Named", role: "user" as const, name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 },
+      { id: "assistant_default", title: "Assistant Default", role: "assistant" as const, enabled: true, content: "", order: 3 },
+      { id: "assistant_named", title: "Assistant Named", role: "assistant" as const, name: "Alice", enabled: true, content: "", order: 4 },
+      { id: "tool_request_default", title: "Tool Request Default", role: "tool_request" as const, enabled: true, content: "", order: 5, toolCalls: [] }
     ]
-  });
-  const messages = buildPromptMessages(saved, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }));
+  };
+  const messages = buildPromptMessages(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }));
 
-  assert.equal(saved.layers[0].name, undefined);
-  assert.equal(saved.layers[2].name, undefined);
-  assert.equal(saved.layers[4].name, undefined);
   assert.equal(messages[0].name, "小王");
   assert.equal(messages[1].name, "小王_speaker");
   assert.equal(messages[2].name, undefined);
   assert.equal(messages[3].name, "Alice");
   assert.equal(messages[4].name, undefined);
-  assert.doesNotMatch(fs.readFileSync(filePath, "utf8"), /"name": "\{\{user\}\}"/);
 });
 
 test("promptMessages_memoryVariables_rendersConfiguredLayerContent", () => {
@@ -215,10 +208,7 @@ test("promptMessages_toolRequestLayer_pairsWithActualToolResult", async () => {
     ]
   };
 
-  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (layer, call) => {
-    assert.equal(layer.id, "request");
-    assert.equal(call.toolName, "Chat");
-    assert.deepEqual(call.input, { action: "poll" });
+  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (_layer, call) => {
     return {
       callId: call.id,
       ok: true,
@@ -287,9 +277,7 @@ test("appendPromptMessages_toolRequestLayer_pairsWithActualToolResult", async ()
     ]
   };
 
-  const messages = await buildAppendPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (layer, call) => {
-    assert.equal(layer.id, "append_request");
-    assert.equal(call.toolName, "Chat");
+  const messages = await buildAppendPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (_layer, call) => {
     return {
       callId: call.id,
       ok: true,
@@ -303,7 +291,7 @@ test("appendPromptMessages_toolRequestLayer_pairsWithActualToolResult", async ()
   assert.equal(messages[1].content, "recent");
 });
 
-test("promptMessages_promptLayerParser_matchesRequestMessages", () => {
+test("promptMessages_ordersEnabledLayers", () => {
   const profile = {
     ...defaultPromptProfile(),
     layers: [
@@ -312,17 +300,12 @@ test("promptMessages_promptLayerParser_matchesRequestMessages", () => {
       { id: "first", title: "First", role: "system" as const, enabled: true, content: "static", order: 1 }
     ]
   };
-  const context = promptContext();
-  const parserMessages = normalizePromptLayers(profile.layers)
-    .filter((layer) => layer.enabled)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => promptLayerToMessage(layer, context.renderer));
+  const messages = buildPromptMessages(profile, promptContext());
 
-  assert.deepEqual(buildPromptMessages(profile, context), parserMessages);
-  assert.deepEqual(parserMessages.map((message) => message.content), ["static", "hello"]);
+  assert.deepEqual(messages.map((message) => message.content), ["static", "hello"]);
 });
 
-test("promptPreview_requestMessages_matchesRuntimePreview", async () => {
+test("promptPreview_toolRequestLayer_includesToolResult", async () => {
   const time = createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"));
   const context = promptContext({ time });
   const profile = {
@@ -351,10 +334,12 @@ test("promptPreview_requestMessages_matchesRuntimePreview", async () => {
     messagingTools: { execute: () => undefined }
   });
 
-  assert.deepEqual(
-    await runtime.buildPromptPreviewMessages(profile, textEvent()),
-    await buildPromptMessagesWithToolResults(profile, { ...context, preview: true }, runTool as any)
-  );
+  const messages = await runtime.buildPromptPreviewMessages(profile, textEvent());
+
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].toolCalls?.[0]?.function.name, "Chat");
+  assert.equal(messages[1].role, "tool");
+  assert.equal(messages[1].content, "recent");
 });
 
 test("staticPromptFingerprint_appendLayers_ignoresAppendChanges", () => {

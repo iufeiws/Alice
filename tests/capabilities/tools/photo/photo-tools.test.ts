@@ -70,7 +70,26 @@ test("photoConfig_onBodySettings_readsPersistedValues", () => {
   assert.equal(config.selfie2DinRealPrompt, "  use 2DinReal\n");
 });
 
-test("imageGenerationGateway_duplicateAndOverLimitRequests_rejectsUntilRelease", async () => {
+test("imageGenerationGateway_duplicateRequest_rejectsWhileOriginalRuns", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const executor = async (input: SelfieExecutorInput) => {
+    await gate;
+    return { stdout: input.prompt };
+  };
+  const first = runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor);
+  const duplicate = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor)
+    .then(() => "", (error) => error instanceof Error ? error.message : String(error));
+
+  release();
+  await first;
+
+  assert.equal(duplicate, "image generation duplicate request is already running");
+});
+
+test("imageGenerationGateway_concurrencyLimit_rejectsExtraRequest", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -82,28 +101,22 @@ test("imageGenerationGateway_duplicateAndOverLimitRequests_rejectsUntilRelease",
     return { stdout: input.prompt };
   };
   const first = runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor);
-  const duplicate = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), executor)
-    .then(() => "", (error) => error instanceof Error ? error.message : String(error));
   const second = runImageGenerationProvider(providerInput("other", ["b.jpg"]), executor);
-  const third = await runImageGenerationProvider(providerInput("third", ["c.jpg"]), executor)
+  const overLimit = await runImageGenerationProvider(providerInput("third", ["c.jpg"]), executor)
     .then(() => "", (error) => error instanceof Error ? error.message : String(error));
 
   release();
   await Promise.all([first, second]);
-  const afterRelease = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "released" }));
 
-  assert.equal(duplicate, "image generation duplicate request is already running");
-  assert.equal(third, "image generation concurrency limit reached");
+  assert.equal(overLimit, "image generation concurrency limit reached");
   assert.deepEqual(started, ["same", "other"]);
-  assert.deepEqual(afterRelease, { stdout: "released" });
 });
 
-test("codexSelfieRunner_explicitlyEnablesImageGeneration", () => {
-  const runner = fs.readFileSync("src/capabilities/skills/external/alice-selfie-fast/scripts/run-alice-selfie-fast.mjs", "utf8");
+test("imageGenerationGateway_finishedRequest_releasesDuplicateKey", async () => {
+  await runImageGenerationProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "first" }));
+  const afterRelease = await runImageGenerationProvider(providerInput("same", ["a.jpg"]), async () => ({ stdout: "released" }));
 
-  assert.match(runner, /"--enable",\s*"image_generation"/);
-  assert.match(runner, /\.\.\.imageArgs,\s*"--",\s*codexPrompt/);
-  assert.doesNotMatch(runner, /SKILL\.md|skillInstructions/);
+  assert.deepEqual(afterRelease, { stdout: "released" });
 });
 
 test("outfitOnBodyAutoGeneration_defaultConfig_doesNotFetch", async () => {

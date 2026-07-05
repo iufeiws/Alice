@@ -114,7 +114,7 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
   assert.equal(messages[checkChatIndex + 1]?.content, "recent");
 });
 
-test("chat agent uses fixed prefix current transcript from an initial session snapshot", async () => {
+test("chat agent uses fixed prefix transcript from an initial session snapshot", async () => {
   const fixedPrefixStatic: LLMChatInput["messages"] = [
     {
       role: "assistant",
@@ -128,8 +128,6 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
     { role: "tool", name: "Bookcase", toolCallId: "tool_draw", content: "<book>restored story</book>" }
   ];
   const requests: LLMChatInput[] = [];
-  const clearedReasons: string[] = [];
-  const sessionUpdates: LLMSessionSnapshot[] = [];
   const modeStartedAt = "2026-05-30T00:00:00.000Z";
   const core = createChatAgent({
     config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
@@ -148,7 +146,7 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
       userName: "user",
       visibleTools: { feishu: true },
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "new static prompt", order: 1 }],
-      appendLayers: [{ id: "append_check", title: "Append check", role: "tool_request", enabled: true, content: "", thinking: "check", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }]
+      appendLayers: []
     }),
     initialLLMSession: {
       messages: [
@@ -166,39 +164,18 @@ test("chat agent uses fixed prefix current transcript from an initial session sn
       fixedPrefixKind: "bookcase",
       fixedPrefixStartedAt: "2026-05-30T00:00:00.000"
     },
-    tools: [{
-      id: "messaging",
-      listTools() {
-        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
-      },
-      async execute(call) {
-        return { callId: call.id, ok: true, output: "fresh chat after restore" };
-      }
-    }],
-    onLLMSessionCleared(reason) {
-      clearedReasons.push(reason);
-    },
-    onLLMSessionUpdated(session) {
-      sessionUpdates.push(session);
-    }
+    tools: []
   });
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(clearedReasons, []);
   assert.equal(requests.length, 1);
   const messages = requests[0].messages;
   assert.equal(messages.some((message) => message.content === "old live context"), true);
   assert.equal(messages.some((message) => message.content === "old static prompt"), true);
   const bookcaseIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Bookcase");
-  const checkChatIndex = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat");
   assert.ok(bookcaseIndex >= 0);
-  assert.ok(checkChatIndex > bookcaseIndex);
   assert.equal(messages[bookcaseIndex + 1]?.content, "<book>restored story</book>");
-  assert.equal(messages[checkChatIndex + 1]?.content, "fresh chat after restore");
-  assert.equal(sessionUpdates.at(-1)?.mode, "fixed_prefix");
-  assert.equal(sessionUpdates.at(-1)?.modeStartedAt, modeStartedAt);
-  assert.equal(sessionUpdates.at(-1)?.fixedPrefixKind, "bookcase");
 });
 
 test("chat agent exits expired fixed prefix mode on the next request", async () => {

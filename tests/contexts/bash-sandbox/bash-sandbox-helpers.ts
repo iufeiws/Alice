@@ -82,5 +82,7 @@ export function writeSkill(root: string, relative: string, frontmatter: string, 
 }
 
 export function tmpDir(name: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));
+  const root = path.join(os.tmpdir(), "alice-tests");
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, `${name}-`));
 }

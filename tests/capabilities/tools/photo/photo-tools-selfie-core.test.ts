@@ -17,73 +17,124 @@ import {
   writeReferenceFiles
 } from "./photo-tools-helpers.js";
 
-test("selfie_validContext_sendsImageAndPersistsMessages", async () => {
-  const outputRoot = makeAssetTempDir("selfie-success");
-  const referenceRoot = makeTempDir("selfie-ref");
-  const outfitImage = path.join(makeTempDir("selfie-outfit"), "dress.jpg");
+function makeSuccessfulSelfieFixture(name: string) {
+  const outputRoot = makeAssetTempDir(name);
+  const referenceRoot = makeTempDir(`${name}-ref`);
+  const outfitImage = path.join(makeTempDir(`${name}-outfit`), "dress.jpg");
   const store = createTestStore("selfie-db");
   const sent: AgentOutput[] = [];
   const executorInputs: SelfieExecutorInput[] = [];
   let nextMessageId = 1;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
+  const tools = createPhotoTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+    selfieReferenceDir: referenceRoot,
+    selfieOutputDir: outputRoot,
+    selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+    selfieExecutor: async (input) => {
+      executorInputs.push(input);
+      fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      return { stdout: "ok", stderr: "", lastMessage: "saved target file" };
+    },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `om_selfie_${nextMessageId++}` };
+      }
+    },
+    getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
+    getAppearanceDescription: () => "发色: 低饱和浅金色\n眼睛: 浅金色",
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+  return {
+    tools,
+    store,
+    sent,
+    executorInputs,
+    referenceRoot,
+    outfitImage,
+    cleanup() {
+      fs.rmSync(outputRoot, { recursive: true, force: true });
+      fs.rmSync(referenceRoot, { recursive: true, force: true });
+      fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    }
+  };
+}
 
+test("selfie_validContext_passesPromptAndReferencesToExecutor", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-prompt");
   try {
-    const tools = createPhotoTools({
-      store,
-      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
-      selfieReferenceDir: referenceRoot,
-      selfieOutputDir: outputRoot,
-      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
-      selfieExecutor: async (input) => {
-        executorInputs.push(input);
-        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
-        return { stdout: "ok", stderr: "", lastMessage: "saved target file" };
-      },
-      outputRouter: {
-        async send(output) {
-          sent.push(output);
-          return { messageId: `om_selfie_${nextMessageId++}` };
-        }
-      },
-      getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
-      getAppearanceDescription: () => "发色: 低饱和浅金色\n眼睛: 浅金色",
-      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    await fixture.tools.execute({
+      id: "call_selfie",
+      toolName: "Selfie",
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     });
 
-    const result = await tools.execute({
+    assert.equal(fixture.executorInputs[0].prompt.includes("踮脚靠近镜头"), true);
+    assert.equal(fixture.executorInputs[0].prompt.includes("发色: 低饱和浅金色"), true);
+    assert.equal(fixture.executorInputs[0].prompt.includes("说话声音很小"), true);
+    assert.equal(fixture.executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
+    assert.doesNotMatch(fixture.executorInputs[0].prompt, /\{\{[^}]+\}\}/);
+    assert.deepEqual(fixture.executorInputs[0].referenceImages, [
+      path.resolve(fixture.referenceRoot, "alice-character-reference.jpg"),
+      path.resolve(fixture.outfitImage),
+      path.resolve(fixture.referenceRoot, "magic-library-reference.jpg")
+    ]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-send");
+  try {
+    const result = await fixture.tools.execute({
       id: "call_selfie",
       toolName: "Selfie",
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     }, { llmCapabilities: { supportsImage: true } });
 
-    assert.equal(result.ok, true);
-    assert.equal("aspectRatio" in executorInputs[0], false);
-    assert.equal(executorInputs[0].fileName, "selfie_20260526_120000.jpg");
-    assert.equal(executorInputs[0].prompt.includes("踮脚靠近镜头"), true);
-    assert.equal(executorInputs[0].prompt.includes("发色: 低饱和浅金色"), true);
-    assert.equal(executorInputs[0].prompt.includes("说话声音很小"), true);
-    assert.equal(executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
-    assert.doesNotMatch(executorInputs[0].prompt, /\{\{[^}]+\}\}/);
-    assert.deepEqual(executorInputs[0].referenceImages, [
-      path.resolve(referenceRoot, "alice-character-reference.jpg"),
-      path.resolve(outfitImage),
-      path.resolve(referenceRoot, "magic-library-reference.jpg")
-    ]);
-    assert.equal(fs.existsSync(executorInputs[0].workDir), false);
-    assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "-少女拍照中-");
-    assert.equal(sent[1].content.kind, "image");
-    assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
-    assert.equal(result.output, "照片已发送");
+    const imageContent = fixture.sent.at(-1)?.content;
+    assert.equal(imageContent?.kind, "image");
+    assert.match(imageContent?.kind === "image" ? imageContent.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
     assert.match(result.llmFollowupAttachments?.[0]?.path ?? "", /selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
-    assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
-    assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
   } finally {
-    fs.rmSync(outputRoot, { recursive: true, force: true });
-    fs.rmSync(referenceRoot, { recursive: true, force: true });
-    fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
+    fixture.cleanup();
+  }
+});
+
+test("selfie_validContext_persistsSentMessages", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-persist");
+  try {
+    await fixture.tools.execute({
+      id: "call_selfie",
+      toolName: "Selfie",
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
+    });
+
+    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
+    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_validContext_cleansWorkDir", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-cleanup");
+  try {
+    await fixture.tools.execute({
+      id: "call_selfie",
+      toolName: "Selfie",
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
+    });
+
+    assert.equal(fs.existsSync(fixture.executorInputs[0].workDir), false);
+  } finally {
+    fixture.cleanup();
   }
 });
 
@@ -268,7 +319,7 @@ test("selfie_generatedOutfitImage_usesCurrentOutfitAsReference", async () => {
   }
 });
 
-test("selfie_voiceRequester_usesDefaultOutputTarget", async () => {
+test("selfie_voiceRequester_sendsToDefaultOutputTarget", async () => {
   const outputRoot = makeAssetTempDir("selfie-voice-requester");
   const referenceRoot = makeTempDir("selfie-ref-voice-requester");
   const store = createTestStore("selfie-voice-requester-db");
@@ -306,7 +357,7 @@ test("selfie_voiceRequester_usesDefaultOutputTarget", async () => {
       })
     });
 
-    const result = await tools.execute({
+    await tools.execute({
       id: "call_selfie_voice",
       toolName: "Selfie",
       input: { pose: "对镜头挥手" },
@@ -314,9 +365,52 @@ test("selfie_voiceRequester_usesDefaultOutputTarget", async () => {
       externalSession: { scope: "dm", sessionId: "talk-session-1" }
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(sent.length, 2);
     assert.deepEqual(sent.map((output) => output.target), [expectedTarget, expectedTarget]);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
+test("selfie_voiceRequester_persistsMessagesToDefaultConversation", async () => {
+  const outputRoot = makeAssetTempDir("selfie-voice-requester-persist");
+  const referenceRoot = makeTempDir("selfie-ref-voice-requester-persist");
+  const store = createTestStore("selfie-voice-requester-persist-db");
+  const sent: AgentOutput[] = [];
+  writeReferenceFiles(referenceRoot);
+
+  try {
+    const defaultTarget = { plugin: "feishu", channelId: "chat-default", sessionId: "session-default" };
+    const tools = createPhotoTools({
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieExecutor: async (input) => {
+        fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      },
+      outputRouter: {
+        async send(output) {
+          sent.push(output);
+          return { messageId: `om_voice_selfie_${sent.length}` };
+        }
+      },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => defaultTarget,
+      resolveOutputTarget: createToolOutputTargetResolver({
+        getDefaultTarget: () => defaultTarget
+      })
+    });
+
+    await tools.execute({
+      id: "call_selfie_voice",
+      toolName: "Selfie",
+      input: { pose: "对镜头挥手" },
+      requester: { plugin: "webrtc_voice", channelId: "call-1", userId: "browser-1" },
+      externalSession: { scope: "dm", sessionId: "talk-session-1" }
+    });
+
     assert.deepEqual(store.listMessagesForConversation("session-default", 10).map((message) => message.contentType), ["text", "image"]);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });

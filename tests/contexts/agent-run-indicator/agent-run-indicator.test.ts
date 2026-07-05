@@ -20,7 +20,7 @@ test("chat loop behaves unchanged when no agent run indicator is configured", as
   assert.deepEqual(sentRequests, ["chat"]);
 });
 
-test("chat loop forwards stream deltas to indicator and preserves existing stream handler", async () => {
+test("chat loop forwards stream deltas to indicator", async () => {
   const calls: string[] = [];
   const indicator: AgentRunIndicator = {
     async begin(input) {
@@ -46,13 +46,6 @@ test("chat loop forwards stream deltas to indicator and preserves existing strea
   };
   const loop = buildChatAgentLoop(loopInput({
     agentRunIndicator: indicator,
-    llmInput: {
-      streamHandlers: {
-        onContentDelta(delta) {
-          calls.push(`existing:${delta}`);
-        }
-      }
-    },
     llmRequestSender: async (request) => {
       await request.streamHandlers?.onReasoningDelta?.("think");
       await request.streamHandlers?.onContentDelta?.("he");
@@ -65,10 +58,43 @@ test("chat loop forwards stream deltas to indicator and preserves existing strea
 
   assert.equal(result.finalMessage.content, "hello");
   assert.equal(calls[0], "begin:chat:0");
-  assert.deepEqual(calls.filter((call) => call.startsWith("existing:")), ["existing:he", "existing:llo"]);
   assert.deepEqual(calls.filter((call) => call.startsWith("indicator:")), ["indicator:he", "indicator:llo"]);
   assert.ok(calls.includes("reasoning:think"));
   assert.ok(calls.includes("finish"));
+});
+
+test("chat loop preserves existing stream handler when indicator is configured", async () => {
+  const calls: string[] = [];
+  const indicator: AgentRunIndicator = {
+    async begin() {
+      return {
+        async appendReasoningDelta() {},
+        async appendContentDelta() {},
+        async appendToolCall() {},
+        async finish() {},
+        async fail() {}
+      };
+    }
+  };
+  const loop = buildChatAgentLoop(loopInput({
+    agentRunIndicator: indicator,
+    llmInput: {
+      streamHandlers: {
+        onContentDelta(delta) {
+          calls.push(`existing:${delta}`);
+        }
+      }
+    },
+    llmRequestSender: async (request) => {
+      await request.streamHandlers?.onContentDelta?.("he");
+      await request.streamHandlers?.onContentDelta?.("llo");
+      return { message: { role: "assistant", content: "hello" } };
+    }
+  }));
+
+  await runAgentFunctionCallLoop(loop.spec);
+
+  assert.deepEqual(calls, ["existing:he", "existing:llo"]);
 });
 
 test("chat loop forwards raw LLM tool calls to indicator", async () => {

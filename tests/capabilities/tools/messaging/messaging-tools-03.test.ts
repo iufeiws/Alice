@@ -114,8 +114,8 @@ test("store searchMessages keeps persisted message FTS available", async () => {
   assert.equal(hits[0].contentText, "project alpha decision");
 });
 
-test("send_chat defaults to message and splits newline text into multiple sends", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send"), "alice.sqlite"));
+async function sendDefaultMultilineChat(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "old_1",
@@ -146,19 +146,45 @@ test("send_chat defaults to message and splits newline text into multiple sends"
     toolName: "Chat", input: { action: "send",  content: "one\n\ntwo", alice: "shell" }
   });
 
+  return { result, sent, store, tools };
+}
+
+test("send_chat defaults to message", async () => {
+  const { result } = await sendDefaultMultilineChat("messaging-send-default-message");
+
   assert.equal(result.ok, true);
   assert.match(String(result.output), /^<chat-log>\n/);
   assert.match(String(result.output), /Alice\(壳\):one/);
-  assert.match(String(result.output), /Alice\(壳\):two/);
-  assert.doesNotMatch(String(result.output), /old context should not come back from send_chat/);
+});
+
+test("send_chat splits newline text into multiple sends", async () => {
+  const { sent } = await sendDefaultMultilineChat("messaging-send-split-newline");
+
   assert.equal(sent.length, 2);
   assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+});
+
+test("send_chat result omits old poll context", async () => {
+  const { result } = await sendDefaultMultilineChat("messaging-send-no-old-context");
+
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(String(result.output), /old context should not come back from send_chat/);
+});
+
+test("send_chat persists outbound message ids and sender name", async () => {
+  const { store } = await sendDefaultMultilineChat("messaging-send-persist");
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
+
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["shell", "shell"]);
+});
+
+test("send_chat output is visible to the next poll", async () => {
+  const { tools } = await sendDefaultMultilineChat("messaging-send-next-poll");
 
   const noNew = await tools.execute({ id: "call_check_new", toolName: "Chat", input: { action: "poll" } });
+
   assert.equal(noNew.ok, true);
   assert.match(String(noNew.output), /Alice\(壳\):one/);
   assert.match(String(noNew.output), /Alice\(壳\):two/);
@@ -191,8 +217,8 @@ test("send_chat can keep newline text in one send from messaging config", async 
   assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one\ntwo"]);
 });
 
-test("send_chat sends feishu core message as markdown without storing render markup", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-core-markdown"), "alice.sqlite"));
+async function sendFeishuCoreMarkdown(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "session-1", "feishu");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
@@ -213,11 +239,27 @@ test("send_chat sends feishu core message as markdown without storing render mar
     toolName: "Chat", input: { action: "send",  content: "core text\nsecond", alice: "core" }
   });
 
+  return { result, sent, store };
+}
+
+test("send_chat sends feishu core message as markdown", async () => {
+  const { result, sent } = await sendFeishuCoreMarkdown("messaging-send-core-markdown");
+
   assert.equal(result.ok, true);
   assert.deepEqual(sent.map((output) => output.content), [{ kind: "markdown", markdown: "core text\nsecond" }]);
+});
+
+test("send_chat renders feishu core sender without channel markdown", async () => {
+  const { result } = await sendFeishuCoreMarkdown("messaging-send-core-markdown-output");
+
   assert.match(String(result.output), /Alice\(里\):\ncore text\nsecond/);
   assert.doesNotMatch(String(result.output), /\*core text/);
+});
+
+test("send_chat stores feishu core message without render markup", async () => {
+  const { store } = await sendFeishuCoreMarkdown("messaging-send-core-markdown-store");
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
+
   assert.deepEqual(stored.map((message) => message.contentType), ["markdown"]);
   assert.deepEqual(stored.map((message) => message.contentText), ["core text\nsecond"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
@@ -288,8 +330,8 @@ test("send_chat can disable consecutive-send limit from messaging config", async
   assert.equal(sendCalls, 1);
 });
 
-test("send_chat filters parenthetical text before sending and storing", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-filter-parentheses"), "alice.sqlite"));
+function createParentheticalFilterTools(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
@@ -304,25 +346,48 @@ test("send_chat filters parenthetical text before sending and storing", async ()
     getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
   });
 
+  return { sent, store, tools };
+}
+
+async function sendParentheticalFilteredMessage(name: string) {
+  const { sent, store, tools } = createParentheticalFilterTools(name);
+
   const result = await tools.execute({
     id: "call_send_filter_parentheses",
     toolName: "Chat", input: { action: "send",  type: "message", content: "one(不发送)\n(整行不发送)\ntwo（也不发送）" }
   });
+
+  return { result, sent, store, tools };
+}
+
+test("send_chat filters parenthetical text before sending", async () => {
+  const { result, sent } = await sendParentheticalFilteredMessage("messaging-send-filter-parentheses-send");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+});
+
+test("send_chat filters parenthetical text before storing", async () => {
+  const { store } = await sendParentheticalFilteredMessage("messaging-send-filter-parentheses-store");
+  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+
+  assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
+});
+
+test("send_chat rejects content made only of parenthetical text", async () => {
+  const { tools } = createParentheticalFilterTools("messaging-send-filter-parentheses-empty");
+
   const emptyResult = await tools.execute({
     id: "call_send_filter_parentheses_empty",
     toolName: "Chat", input: { action: "send",  type: "message", content: "(只是一段旁白)" }
   });
 
-  assert.equal(result.ok, true);
   assert.equal(emptyResult.ok, false);
   assert.equal(emptyResult.error, "content is required");
-  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
-  const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
-  assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
 });
 
-test("send_chat filters DSML markup lines before sending and storing", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-filter-dsml"), "alice.sqlite"));
+async function sendDsmlFilteredMessage(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "feishu:dm:ou-user", "feishu");
   const sent: AgentOutput[] = [];
   const tools = createMessagingTools({
@@ -342,9 +407,20 @@ test("send_chat filters DSML markup lines before sending and storing", async () 
     toolName: "Chat", input: { action: "send",  type: "message", content: "one\n<｜｜DSML｜｜parameter name=\"type\" string=\"true\">message\ntwo" }
   });
 
+  return { result, sent, store };
+}
+
+test("send_chat filters DSML markup lines before sending", async () => {
+  const { result, sent } = await sendDsmlFilteredMessage("messaging-send-filter-dsml-send");
+
   assert.equal(result.ok, true);
   assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+});
+
+test("send_chat filters DSML markup lines before storing", async () => {
+  const { store } = await sendDsmlFilteredMessage("messaging-send-filter-dsml-store");
   const stored = store.listMessagesForConversation("feishu:dm:ou-user", 10).filter((message) => message.direction === "outbound");
+
   assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
 });
 

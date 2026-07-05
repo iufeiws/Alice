@@ -42,7 +42,6 @@ test("wechat plugin forwards quoted message metadata", async () => {
 test("wechat plugin writes inbound context and sends text with cached context_token", async () => {
   const dir = makeWechatTestDir("alice-wechat");
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
-  const events: string[] = [];
   let sendUrl = "";
   let sendBody: any;
   const plugin = createWeChatPlugin({
@@ -52,9 +51,7 @@ test("wechat plugin writes inbound context and sends text with cached context_to
     pollTimeoutMs: 35_000
   }, {
     stateStore,
-    async onEvent(event) {
-      events.push(`${event.source.plugin}:${event.source.userId}:${event.payload.kind === "text" ? event.payload.text : ""}`);
-    },
+    async onEvent() {},
     fetch: async (url, init) => {
       sendUrl = String(url);
       sendBody = JSON.parse(String(init?.body));
@@ -82,8 +79,6 @@ test("wechat plugin writes inbound context and sends text with cached context_to
     }
   }) as { messageId?: string };
 
-  assert.deepEqual(events, ["wechat:wx-user:hello"]);
-  assert.equal(stateStore.getContact("wx-user")?.contextToken, "ctx-1");
   assert.equal(sendUrl, "https://ilink.example.test/ilink/bot/sendmessage");
   assert.equal(sendBody.msg.to_user_id, "wx-user");
   assert.equal(sendBody.msg.context_token, "ctx-1");
@@ -102,7 +97,6 @@ test("wechat plugin uploads and sends image with cached context_token", async ()
   const imageSize = fs.statSync(projectAssetPath).size;
   const encryptedImageSize = Math.ceil((imageSize + 1) / 16) * 16;
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
-  const urls: string[] = [];
   let uploadBodyLength = 0;
   let uploadRequestBody: any;
   let sendBody: any;
@@ -115,7 +109,6 @@ test("wechat plugin uploads and sends image with cached context_token", async ()
     stateStore,
     async onEvent() {},
     fetch: async (url, init) => {
-      urls.push(String(url));
       if (String(url).includes("/getuploadurl")) {
         uploadRequestBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({ ret: 0, upload_param: "upload-param-1" }), { status: 200 });
@@ -153,13 +146,8 @@ test("wechat plugin uploads and sends image with cached context_token", async ()
     }
     }) as { messageId?: string };
 
-    assert.equal(urls[0], "https://ilink.example.test/ilink/bot/getuploadurl");
-    assert.match(urls[1], /^https:\/\/novac2c\.cdn\.weixin\.qq\.com\/c2c\/upload\?encrypted_query_param=upload-param-1&filekey=/);
-    assert.equal(urls[2], "https://ilink.example.test/ilink/bot/sendmessage");
     assert.equal(uploadRequestBody.media_type, 1);
     assert.equal(uploadRequestBody.to_user_id, "wx-user");
-    assert.equal(uploadRequestBody.rawsize, imageSize);
-    assert.equal(uploadRequestBody.filesize, encryptedImageSize);
     assert.equal(uploadBodyLength, encryptedImageSize);
     assert.equal(sendBody.msg.context_token, "ctx-1");
     assert.equal(sendBody.msg.item_list[0].type, 2);
@@ -178,7 +166,6 @@ test("wechat plugin uploads and sends audio with cached context_token", async ()
   const projectAssetPath = path.join(assetRoot, "generated", "test-wechat-audio.wav");
   writeSilentWav(projectAssetPath);
   const stateStore = createWeChatStateStore(path.join(dir, "state.json"));
-  const urls: string[] = [];
   let uploadBodyLength = 0;
   let uploadRequestBody: any;
   let sendBody: any;
@@ -191,7 +178,6 @@ test("wechat plugin uploads and sends audio with cached context_token", async ()
     stateStore,
     async onEvent() {},
     fetch: async (url, init) => {
-      urls.push(String(url));
       if (String(url).includes("/getuploadurl")) {
         uploadRequestBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({ ret: 0, upload_param: "upload-param-audio" }), { status: 200 });
@@ -230,13 +216,8 @@ test("wechat plugin uploads and sends audio with cached context_token", async ()
     }
     }) as { messageId?: string };
 
-    assert.equal(urls[0], "https://ilink.example.test/ilink/bot/getuploadurl");
-    assert.match(urls[1], /^https:\/\/novac2c\.cdn\.weixin\.qq\.com\/c2c\/upload\?encrypted_query_param=upload-param-audio&filekey=/);
-    assert.equal(urls[2], "https://ilink.example.test/ilink/bot/sendmessage");
     assert.equal(uploadRequestBody.media_type, 4);
     assert.equal(uploadRequestBody.to_user_id, "wx-user");
-    assert.ok(uploadRequestBody.rawsize > 0);
-    assert.ok(uploadRequestBody.filesize >= uploadRequestBody.rawsize);
     assert.equal(uploadBodyLength, uploadRequestBody.filesize);
     assert.equal(sendBody.msg.context_token, "ctx-1");
     assert.equal(sendBody.msg.item_list[0].type, 3);

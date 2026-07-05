@@ -27,7 +27,7 @@ test("calendar store persists entry source", () => {
   assert.equal(store.listEntries("holiday")[0].source, "date-holidays:US:2026");
 });
 
-test("calendar add action stores schedule and returns the day view", async () => {
+test("calendar add action stores schedule", async () => {
   const store = calendarStore("calendar-schedule-add");
   const tools = calendarTools({
     store,
@@ -43,6 +43,23 @@ test("calendar add action stores schedule and returns the day view", async () =>
 
   assert.equal(added.ok, true);
   assert.equal(store.listEntries("schedule")[0].title, "买药");
+});
+
+test("calendar add action returns the day view", async () => {
+  const store = calendarStore("calendar-schedule-add-view");
+  const tools = calendarTools({
+    store,
+    timeZone: "Asia/Shanghai",
+    now: new Date("2026-06-22T00:00:00.000Z")
+  });
+
+  const added = await tools.execute({
+    id: "call_add_schedule_view",
+    toolName: "calendar",
+    input: { action: "add", title: "买药", datetime: "2026-06-23 09:30", note: "带医保卡" }
+  });
+
+  assert.equal(added.ok, true);
   assert.match((added.output as { calendar: string }).calendar, /2026-06-23 星期二 明天\n09:30 买药 带医保卡/);
 });
 
@@ -62,12 +79,10 @@ test("calendar remove action deletes an exact future schedule", async () => {
   assert.deepEqual(store.listEntries(), []);
 });
 
-test("calendar remove action accepts one unique field and returns misses as candidates", async () => {
-  const store = calendarStore("calendar-schedule-remove-candidates");
+test("calendar remove action accepts one unique field", async () => {
+  const store = calendarStore("calendar-schedule-remove-tolerant");
   const tools = calendarTools({ store });
   addSchedule(store, { title: "牙医", year: 2026, day: 23, time: "09:00" });
-  addSchedule(store, { title: "体检", year: 2026, day: 24, time: "10:00" });
-  addSchedule(store, { title: "体检", year: 2026, day: 25, time: "11:00" });
 
   const tolerant = await tools.execute({
     id: "call_remove_tolerant",
@@ -76,6 +91,13 @@ test("calendar remove action accepts one unique field and returns misses as cand
   });
   assert.equal(tolerant.ok, true);
   assert.equal((tolerant.output as { removed: { title: string } }).removed.title, "牙医");
+});
+
+test("calendar remove action returns candidates for misses", async () => {
+  const store = calendarStore("calendar-schedule-remove-candidates");
+  const tools = calendarTools({ store });
+  addSchedule(store, { title: "体检", year: 2026, day: 24, time: "10:00" });
+  addSchedule(store, { title: "体检", year: 2026, day: 25, time: "11:00" });
 
   const missed = await tools.execute({
     id: "call_remove_missed",
@@ -104,7 +126,7 @@ test("calendar search action returns matching future schedules", async () => {
   assert.deepEqual(result.output, [{ title: "买药", datetime: "2026-06-23 09:30", note: "医保卡" }]);
 });
 
-test("calendar list action returns visible days and one empty marker", async () => {
+test("calendar list action returns visible days", async () => {
   const store = calendarStore("calendar-list");
   const tools = calendarTools({
     store,
@@ -129,8 +151,16 @@ test("calendar list action returns visible days and one empty marker", async () 
 
   assert.equal(listed.ok, true);
   assert.equal(listed.output, "<calendar>\n2026-06-22 星期一 今天\n端午\n</calendar>");
+});
 
-  store.removeEntry(store.listEntries()[0].id);
+test("calendar list action returns one empty marker", async () => {
+  const store = calendarStore("calendar-list-empty");
+  const tools = calendarTools({
+    store,
+    timeZone: "Asia/Shanghai",
+    now: new Date("2026-06-22T00:00:00.000Z")
+  });
+
   const empty = await tools.execute({
     id: "call_list_calendar_empty",
     toolName: "calendar",

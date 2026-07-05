@@ -3,21 +3,28 @@ import assert from "node:assert/strict";
 import { updateEnvFile } from "../../../../src/apps/api/server/env-file.js";
 import { createEnvFile, readEnvFile } from "./env-file-helpers.js";
 
-test("updateEnvFile updates existing keys and appends new keys", () => {
+test("updateEnvFile updates existing keys", () => {
   const file = createEnvFile("alice-env-update", "LLM_BASE_URL=http://old\nLLM_API_KEY=secret\n");
 
   updateEnvFile(file, {
-    LLM_BASE_URL: "https://opencode.ai/zen/go/v1",
-    AGENT_INBOUND_DEBOUNCE_MS: "8000"
+    LLM_BASE_URL: "https://opencode.ai/zen/go/v1"
   });
 
   assert.equal(readEnvFile(file), [
     "LLM_BASE_URL=https://opencode.ai/zen/go/v1",
     "LLM_API_KEY=secret",
-    "",
-    "AGENT_INBOUND_DEBOUNCE_MS=8000",
     ""
   ].join("\n"));
+});
+
+test("updateEnvFile appends new keys", () => {
+  const file = createEnvFile("alice-env-append", "LLM_API_KEY=secret\n");
+
+  updateEnvFile(file, {
+    AGENT_INBOUND_DEBOUNCE_MS: "8000"
+  });
+
+  assert.equal(readEnvFile(file), "LLM_API_KEY=secret\n\nAGENT_INBOUND_DEBOUNCE_MS=8000\n");
 });
 
 test("updateEnvFile keeps existing keys when update value is undefined", () => {

@@ -3,7 +3,22 @@ import assert from "node:assert/strict";
 import { createApiLogRuntime } from "../../../../src/apps/api/bootstrap/api-log-runtime.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 
-test("api log runtime appends system logs to memory and configured storage", () => {
+test("api log runtime appends system logs to memory", () => {
+  const current = new Date("2026-05-23T00:00:00.000Z");
+  const runtime = createApiLogRuntime({
+    time: createCurrentTimeProvider("UTC", () => current),
+    getMessageStore: () => undefined,
+    getSystemLogStore: () => undefined
+  });
+
+  runtime.appendLog("info", "ordinary log");
+
+  assert.deepEqual(runtime.logs.map(({ id, level, message }) => ({ id, level, message })), [
+    { id: 1, level: "info", message: "ordinary log" }
+  ]);
+});
+
+test("api log runtime appends system logs to configured storage", () => {
   const current = new Date("2026-05-23T00:00:00.000Z");
   const stored: Array<{ time: string; utcTime?: string; level: string; message: string }> = [];
   const runtime = createApiLogRuntime({
@@ -21,9 +36,6 @@ test("api log runtime appends system logs to memory and configured storage", () 
 
   runtime.appendLog("info", "ordinary log");
 
-  assert.deepEqual(runtime.logs.map(({ id, level, message }) => ({ id, level, message })), [
-    { id: 1, level: "info", message: "ordinary log" }
-  ]);
   assert.deepEqual(stored.map(({ level, message }) => ({ level, message })), [
     { level: "info", message: "ordinary log" }
   ]);
@@ -47,16 +59,11 @@ test("api log runtime hydrates persisted log state before assigning new ids", ()
   ]);
 });
 
-test("api log runtime appends message logs to memory and configured storage", () => {
-  const stored: unknown[] = [];
+test("api log runtime appends message logs to memory", () => {
   const runtime = createApiLogRuntime({
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-23T00:00:00.000Z")),
     getSystemLogStore: () => undefined,
-    getMessageStore: () => ({
-      insertMessageLog(input: unknown) {
-        stored.push(input);
-      }
-    } as any)
+    getMessageStore: () => undefined
   });
 
   const entry = runtime.appendMessageLog({
@@ -70,23 +77,35 @@ test("api log runtime appends message logs to memory and configured storage", ()
 
   assert.equal(entry.id, 1);
   assert.equal(runtime.messageLogs[0], entry);
-  assert.deepEqual(stored, [{
-    time: entry.time,
-    timeUtc: entry.timeUtc,
+});
+
+test("api log runtime appends message logs to configured storage", () => {
+  const stored: unknown[] = [];
+  const runtime = createApiLogRuntime({
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-23T00:00:00.000Z")),
+    getSystemLogStore: () => undefined,
+    getMessageStore: () => ({
+      insertMessageLog(input: unknown) {
+        stored.push(input);
+      }
+    } as any)
+  });
+
+  runtime.appendMessageLog({
     direction: "inbound",
     plugin: "wechat",
     kind: "text",
-    target: undefined,
-    sessionId: undefined,
     rawMessageId: "msg-1",
-    processedAt: undefined,
-    processedBatchId: undefined,
-    externalEventId: undefined,
-    parentRawMessageId: undefined,
-    actorId: undefined,
     status: "received",
-    rawJson: undefined,
-    error: undefined,
+    summary: "hello log"
+  });
+
+  assert.deepEqual(stored.map(({ direction, plugin, kind, rawMessageId, status, summary }: any) => ({ direction, plugin, kind, rawMessageId, status, summary })), [{
+    direction: "inbound",
+    plugin: "wechat",
+    kind: "text",
+    rawMessageId: "msg-1",
+    status: "received",
     summary: "hello log"
   }]);
 });

@@ -11,14 +11,14 @@ export const os = await import("node:os");
 export const path = await import("node:path");
 
 const tempRoots: string[] = [];
-const missingDefaultConfigPath = path.join(os.tmpdir(), `alice-world-wanderer-missing-config-${process.pid}.json`);
+const missingDefaultConfigPath = path.join(aliceTestsRoot(), `alice-world-wanderer-missing-config-${process.pid}.json`);
 
 after(() => {
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
 export function worldWandererPaths() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-world-wanderer-"));
+  const root = fs.mkdtempSync(path.join(aliceTestsRoot(), "alice-world-wanderer-"));
   tempRoots.push(root);
   return {
     root,
@@ -82,4 +82,10 @@ export function graphGoogleStreetView(
 
 export function pathPanoIds(state: Pick<WorldWandererState, "pathStack">): string[] {
   return state.pathStack.map((entry) => entry.panoId);
+}
+
+function aliceTestsRoot(): string {
+  const root = path.join(os.tmpdir(), "alice-tests");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
 }

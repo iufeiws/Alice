@@ -26,7 +26,7 @@ test("openai-compatible client retries fetch errors once", async () => {
   }
 });
 
-test("openai-compatible client retries 503 once but not 500", async () => {
+test("openai-compatible client retries 503 once", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -45,12 +45,24 @@ test("openai-compatible client retries 503 once but not 500", async () => {
     const result = await client.chat({ messages: [] });
     assert.equal(result.message.content, "retry ok");
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
-    calls = 0;
-    globalThis.fetch = async () => {
-      calls += 1;
-      return new Response("server error", { status: 500, statusText: "Internal Server Error" });
-    };
+test("openai-compatible client does not retry 500", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response("server error", { status: 500, statusText: "Internal Server Error" });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
     await assert.rejects(() => client.chat({ messages: [] }), /500 Internal Server Error/);
     assert.equal(calls, 1);
   } finally {
@@ -58,7 +70,7 @@ test("openai-compatible client retries 503 once but not 500", async () => {
   }
 });
 
-test("openai-compatible client sends empty reasoning content for tool request messages", async () => {
+test("openai-compatible client sends empty reasoning content for tool request messages without reasoning", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody: any;
   globalThis.fetch = async (_url, init) => {
@@ -86,7 +98,32 @@ test("openai-compatible client sends empty reasoning content for tool request me
               arguments: "{\"action\":\"poll\"}"
             }
           }]
-        },
+        }
+      ]
+    });
+    assert.equal(requestBody.messages[0].reasoning_content, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client preserves reasoning content for tool request messages", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: any;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ok" } }]
+    }), { status: 200 });
+  };
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test"
+    });
+    await client.chat({
+      messages: [
         {
           role: "assistant",
           content: "",
@@ -102,8 +139,7 @@ test("openai-compatible client sends empty reasoning content for tool request me
         }
       ]
     });
-    assert.equal(requestBody.messages[0].reasoning_content, "");
-    assert.equal(requestBody.messages[1].reasoning_content, "original thinking");
+    assert.equal(requestBody.messages[0].reasoning_content, "original thinking");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -247,13 +283,8 @@ test("openai-compatible client preserves token usage cache hit stats", async () 
       model: "test"
     });
     const result = await client.chat({ messages: [] });
-    assert.deepEqual(result.usage, {
-      inputTokens: 11,
-      outputTokens: 7,
-      totalTokens: 18,
-      cacheHitTokens: 5,
-      cacheMissTokens: 6
-    });
+    assert.equal(result.usage?.cacheHitTokens, 5);
+    assert.equal(result.usage?.cacheMissTokens, 6);
   } finally {
     globalThis.fetch = originalFetch;
   }

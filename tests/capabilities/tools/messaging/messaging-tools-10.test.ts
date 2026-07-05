@@ -254,8 +254,8 @@ test("send_chat voice keeps newline and escaped newline text in one audio messag
   assert.deepEqual(logs, [{ status: "sent", summary: "[语音]第一句\n第二句\n第三句" }]);
 });
 
-test("send_chat voice returns tts failure without sending fallback text", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-voice-tts-failed"), "alice.sqlite"));
+async function sendWechatVoiceWithTtsFailure(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   let sendCalls = 0;
@@ -283,16 +283,37 @@ test("send_chat voice returns tts failure without sending fallback text", async 
     toolName: "Chat", input: { action: "send",  type: "voice", content: "不要发文字" }
   });
 
+  return { logs, result, sendCalls, store };
+}
+
+test("send_chat voice returns tts failure", async () => {
+  const { result } = await sendWechatVoiceWithTtsFailure("messaging-send-voice-tts-failed");
+
   assert.equal(result.ok, false);
   assert.equal(result.error, "tts unavailable");
+});
+
+test("send_chat voice tts failure does not send fallback text", async () => {
+  const { sendCalls } = await sendWechatVoiceWithTtsFailure("messaging-send-voice-tts-failed-no-send");
+
   assert.equal(sendCalls, 0);
+});
+
+test("send_chat voice tts failure logs the failed synthesis", async () => {
+  const { logs } = await sendWechatVoiceWithTtsFailure("messaging-send-voice-tts-failed-log");
+
   assert.equal(logs[0].status, "tts_failed");
   assert.equal(logs[0].summary, "不要发文字");
+});
+
+test("send_chat voice tts failure does not store outbound text", async () => {
+  const { store } = await sendWechatVoiceWithTtsFailure("messaging-send-voice-tts-failed-store");
+
   assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound").length, 0);
 });
 
-test("send_chat voice send failure marks failed and removes generated file without retry", async () => {
-  const dir = makeTempDir("messaging-send-voice-send-failed");
+async function sendFailingWechatVoice(name: string) {
+  const dir = makeTempDir(name);
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
@@ -327,19 +348,50 @@ test("send_chat voice send failure marks failed and removes generated file witho
   });
   await new Promise((resolve) => setImmediate(resolve));
 
+  return { attempts, generatedPath, logs, result, store, trainingDir };
+}
+
+test("send_chat voice returns the send failure", async () => {
+  const { result } = await sendFailingWechatVoice("messaging-send-voice-send-failed-result");
+
   assert.equal(result.ok, false);
   assert.equal(result.error, "wechat audio failed");
+});
+
+test("send_chat voice does not retry failed audio sends", async () => {
+  const { attempts, logs } = await sendFailingWechatVoice("messaging-send-voice-send-failed-retry");
+
   assert.equal(attempts, 1);
+  assert.equal(logs.some((entry) => entry.status === "retry_failed"), false);
+});
+
+test("send_chat voice removes generated files after send failure", async () => {
+  const { generatedPath } = await sendFailingWechatVoice("messaging-send-voice-send-failed-cleanup");
+
   assert.equal(fs.existsSync(generatedPath), false);
+});
+
+test("send_chat voice records failed training sample", async () => {
+  const { trainingDir } = await sendFailingWechatVoice("messaging-send-voice-send-failed-training");
   const trainingFiles = fs.readdirSync(trainingDir).sort();
   const audioFileName = trainingFiles.find((fileName) => fileName.endsWith(".wav"));
+
   assert.ok(audioFileName);
   const audioFilePath = path.join(trainingDir, audioFileName);
   assert.equal(fs.readFileSync(audioFilePath, "utf8"), "voice");
   assert.equal(JSON.parse(fs.readFileSync(`${audioFilePath}.json`, "utf8")).status, "failed");
+});
+
+test("send_chat voice logs failed outbound audio", async () => {
+  const { logs } = await sendFailingWechatVoice("messaging-send-voice-send-failed-log");
+
   assert.equal(logs.filter((entry) => entry.status === "send_failed").length, 1);
-  assert.equal(logs.some((entry) => entry.status === "retry_failed"), false);
+});
+
+test("send_chat voice stores failed outbound audio", async () => {
+  const { store } = await sendFailingWechatVoice("messaging-send-voice-send-failed-store");
   const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+
   assert.equal(stored.length, 1);
   assert.equal(stored[0].contentType, "audio");
   assert.equal(stored[0].status, "send_failed");

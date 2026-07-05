@@ -14,7 +14,25 @@ import {
   worldWandererPaths
 } from "./world-wanderer-helpers.js";
 
-test("world wanderer starts from configured coordinates and persists the moved pano", async () => {
+test("world wanderer starts from configured coordinates", async () => {
+  const { coordinateCalls } = await runConfiguredWorldWanderer();
+  assert.deepEqual(coordinateCalls, [{ lat: 41.0086, lng: 28.9802 }]);
+});
+
+test("world wanderer moves to linked pano", async () => {
+  const { state } = await runConfiguredWorldWanderer();
+  assert.ok(state);
+  assert.equal(state.panoId, "b");
+  assert.equal(state.lastHeading, 90);
+  assert.deepEqual(pathPanoIds(state), ["a", "b"]);
+});
+
+test("world wanderer persists the moved pano", async () => {
+  const { configPath, dbPath } = await runConfiguredWorldWanderer();
+  assert.equal(readWorldWandererState(dbPath, readWorldWandererConfig(configPath)).panoId, "b");
+});
+
+async function runConfiguredWorldWanderer() {
   const { configPath, dbPath } = worldWandererPaths();
   writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
 
@@ -32,16 +50,23 @@ test("world wanderer starts from configured coordinates and persists the moved p
   });
 
   const state = await runtime.runIdleTransition({ delayMs: 0 });
-
-  assert.ok(state);
-  assert.deepEqual(coordinateCalls, [{ lat: 41.0086, lng: 28.9802 }]);
-  assert.equal(state.panoId, "b");
-  assert.equal(state.lastHeading, 90);
-  assert.deepEqual(pathPanoIds(state), ["a", "b"]);
-  assert.equal(readWorldWandererState(dbPath, readWorldWandererConfig(configPath)).panoId, "b");
-});
+  return { configPath, dbPath, coordinateCalls, state };
+}
 
 test("world wanderer probes nearby when current pano has no links", async () => {
+  const { coordinateCalls } = await runNearbyWorldWanderer();
+  assert.equal(coordinateCalls.length, 2);
+});
+
+test("world wanderer moves through nearby pano links", async () => {
+  const { next, state } = await runNearbyWorldWanderer();
+  assert.ok(state);
+  assert.equal(state.panoId, "next");
+  assert.deepEqual(pathPanoIds(state), ["linked", "next"]);
+  assert.equal(state.location.lat, next.location.lat);
+});
+
+async function runNearbyWorldWanderer() {
   const { configPath, dbPath } = worldWandererPaths();
   writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
 
@@ -77,13 +102,8 @@ test("world wanderer probes nearby when current pano has no links", async () => 
   });
 
   const state = await runtime.runIdleTransition({ delayMs: 0 });
-
-  assert.ok(state);
-  assert.equal(state.panoId, "next");
-  assert.equal(coordinateCalls.length, 2);
-  assert.deepEqual(pathPanoIds(state), ["linked", "next"]);
-  assert.equal(state.location.lat, next.location.lat);
-});
+  return { coordinateCalls, next, state };
+}
 
 test("world wanderer preserves previous position when streetview graph lookup fails", async () => {
   const { configPath, dbPath } = worldWandererPaths();

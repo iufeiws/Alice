@@ -12,14 +12,16 @@ import { createDiaryStore } from "../../../src/platform/storage/src/diary-store.
 import * as sqlite from "../../../src/platform/storage/src/sqlite-compat.js";
 import { makeTempDir, message } from "./sleep-memory-helpers.js";
 
-test("memoryStore_bootstrap_enforcesFilesAndLimits", () => {
+test("memoryStore_bootstrap_createsRequiredFiles", () => {
   const root = makeTempDir("memory-store");
   const store = createMarkdownMemoryStore(root);
   store.ensure();
 
   assert.equal(fs.existsSync(path.join(root, "alice.sqlite")), true);
   assert.equal(fs.existsSync(path.join(root, "tmp", "memory-workspaces")), true);
+});
 
+test("memoryStore_enforcesMemoryLimits", () => {
   const limited = enforceMemoryLimits({
     persistent: Array.from({ length: 200 }, (_, index) => `line ${index}`).join("\n"),
     userPreferences: `${"好".repeat(6000)}\n`,
@@ -44,6 +46,15 @@ test("memorySqlStore_separateTargets_persistsRows", () => {
   assert.equal(db.prepare("SELECT content FROM persistent_memory_entries ORDER BY id DESC LIMIT 1").get().content, "memory\n");
   assert.equal(db.prepare("SELECT content FROM user_preferences_entries ORDER BY id DESC LIMIT 1").get().content, "pref\n");
   assert.equal(db.prepare("SELECT content FROM diary_entries ORDER BY id DESC LIMIT 1").get().content, "diary\n");
+});
+
+test("memorySqlStore_stats_listsTargetTables", () => {
+  const root = makeTempDir("memory-sql-stats");
+  const store = createMarkdownMemoryStore(root);
+  store.writeTarget("persistent", "memory\n");
+  store.writeTarget("userPreferences", "pref\n");
+  store.writeTarget("yesterdaySummary", "diary\n", { localDate: "2026-06-04", now: "2026-06-04T08:00:00.000Z" });
+
   assert.deepEqual(store.stats().map((entry) => entry.tableName), ["persistent_memory_entries", "user_preferences_entries", "diary_entries"]);
 });
 
@@ -111,7 +122,7 @@ test("memorySqlStore_currentDiarySqlite_doesNotImportEntries", () => {
   assert.deepEqual(migratedStore.listSleepPreparationBoundaries().map((entry) => entry.occurredAt), []);
 });
 
-test("diaryStore_sleepPreparationBoundaries_behavesAsStack", () => {
+test("diaryStore_sleepPreparationBoundaries_listsRecordedBoundaries", () => {
   const root = makeTempDir("diary-sleep-preparation-boundaries");
   const store = createDiaryStore(path.join(root, "diary.sqlite"));
 
@@ -130,7 +141,23 @@ test("diaryStore_sleepPreparationBoundaries_behavesAsStack", () => {
 
   assert.equal(store.latestSleepPreparationBoundary()?.id, second.id);
   assert.deepEqual(store.listSleepPreparationBoundaries().map((boundary) => boundary.id), [first.id, second.id]);
+});
 
+test("diaryStore_sleepPreparationBoundaries_deletesLatestBoundary", () => {
+  const root = makeTempDir("diary-sleep-preparation-delete");
+  const store = createDiaryStore(path.join(root, "diary.sqlite"));
+  const first = store.recordSleepPreparationBoundary({
+    occurredAt: "2026-05-24T23:00:00.000",
+    occurredAtUtc: "2026-05-24T15:00:00.000Z",
+    now: "2026-05-24T23:00:00.000",
+    nowUtc: "2026-05-24T15:00:00.000Z"
+  });
+  const second = store.recordSleepPreparationBoundary({
+    occurredAt: "2026-05-25T01:00:00.000",
+    occurredAtUtc: "2026-05-24T17:00:00.000Z",
+    now: "2026-05-25T01:00:00.000",
+    nowUtc: "2026-05-24T17:00:00.000Z"
+  });
   const deleted = store.deleteLatestSleepPreparationBoundary();
 
   assert.equal(deleted?.id, second.id);
@@ -154,7 +181,7 @@ test("diaryStore_wakeBoundaries_deduplicatesByOccurredAt", () => {
     now: "2026-05-25T07:01:00.000",
     nowUtc: "2026-05-24T23:01:00.000Z"
   });
-  const second = store.recordWakeBoundary({
+  store.recordWakeBoundary({
     occurredAt: "2026-05-26T08:00:00.000",
     occurredAtUtc: "2026-05-26T00:00:00.000Z",
     now: "2026-05-26T08:00:00.000",
@@ -162,11 +189,30 @@ test("diaryStore_wakeBoundaries_deduplicatesByOccurredAt", () => {
   });
 
   assert.equal(duplicate.id, first.id);
+});
+
+test("diaryStore_wakeBoundaries_listsLatestByOccurredAt", () => {
+  const root = makeTempDir("diary-wake-boundaries-latest");
+  const store = createDiaryStore(path.join(root, "diary.sqlite"));
+
+  const first = store.recordWakeBoundary({
+    occurredAt: "2026-05-25T07:00:00.000",
+    occurredAtUtc: "2026-05-24T23:00:00.000Z",
+    now: "2026-05-25T07:00:00.000",
+    nowUtc: "2026-05-24T23:00:00.000Z"
+  });
+  const second = store.recordWakeBoundary({
+    occurredAt: "2026-05-26T08:00:00.000",
+    occurredAtUtc: "2026-05-26T00:00:00.000Z",
+    now: "2026-05-26T08:00:00.000",
+    nowUtc: "2026-05-26T00:00:00.000Z"
+  });
+
   assert.equal(store.latestWakeBoundary()?.id, second.id);
   assert.deepEqual(store.listWakeBoundaries().map((boundary) => boundary.id), [first.id, second.id]);
 });
 
-test("diaryTarget_draftCommit_persistsAfterCommit", () => {
+test("diaryTarget_draftWrite_doesNotReplaceCommittedDiary", () => {
   const root = makeTempDir("memory-diary-draft");
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.writeTarget("yesterdaySummary", "old diary\n", {
@@ -186,6 +232,23 @@ test("diaryTarget_draftCommit_persistsAfterCommit", () => {
   assert.equal(draft, "new diary\n");
   assert.equal(fs.readFileSync(draftPath, "utf8"), "new diary\n");
   assert.equal(memoryStore.read().yesterdaySummary, "old diary\n");
+});
+
+test("diaryTarget_draftCommit_replacesCommittedDiary", () => {
+  const root = makeTempDir("memory-diary-commit");
+  const memoryStore = createMarkdownMemoryStore(root);
+  memoryStore.writeTarget("yesterdaySummary", "old diary\n", {
+    now: "2026-05-23T06:00:00.000Z",
+    localDate: "2026-05-23",
+    windowEndAt: "2026-05-23T06:00:00.000Z"
+  });
+  const draftPath = memoryStore.createDiaryDraft();
+  memoryStore.writeTarget("yesterdaySummary", "new diary\n", {
+    diaryDraftPath: draftPath,
+    now: "2026-05-24T06:00:00.000Z",
+    localDate: "2026-05-24",
+    windowEndAt: "2026-05-24T06:00:00.000Z"
+  });
 
   memoryStore.commitDiaryDraft(draftPath, {
     now: "2026-05-24T06:00:00.000Z",

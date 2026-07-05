@@ -4,15 +4,30 @@ import assert from "node:assert/strict";
 import { createMediaProcessPeer, defaultWebRtcVoiceConfig } from "../../../src/channels/webrtc-voice/src/index.js";
 import { createMediaProcessPeerWorker } from "./webrtc-voice-media-process-peer-helpers.js";
 
-test("media process peer proxies signaling status, candidates, and close", async () => {
-  const { peer, statuses, candidates } = await createTestPeer();
+test("media process peer proxies signaling status", async () => {
+  const { peer, statuses } = await createTestPeer();
 
   assert.equal(await peer.createAnswer("offer"), "answer:offer");
-  await peer.addIceCandidate?.({ candidate: "remote" });
+  await peer.close();
+
+  assert.equal(statuses.includes("fake.ready:call-media-proxy"), true);
+});
+
+test("media process peer proxies local candidates", async () => {
+  const { peer, candidates } = await createTestPeer();
+
+  assert.equal(await peer.createAnswer("offer"), "answer:offer");
   await peer.close();
 
   assert.deepEqual(candidates, [{ candidate: "candidate" }]);
-  assert.equal(statuses.includes("fake.ready:call-media-proxy"), true);
+});
+
+test("media process peer proxies close", async () => {
+  const { peer } = await createTestPeer();
+
+  await peer.close();
+
+  await assert.rejects(Promise.resolve().then(() => peer.createAnswer("offer")));
 });
 
 test("media process outbound track exposes playback and frame contract", async () => {

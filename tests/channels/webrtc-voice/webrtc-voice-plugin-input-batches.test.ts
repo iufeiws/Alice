@@ -9,50 +9,21 @@ import { ControlledQueueTrack, DelayedEnqueueTrack, FakeAsrSession, FakeHangingA
 
 const path = await import("node:path");
 
-test("WebRTC voice starts barge-in batch on speech start and commits ASR final as the result", async () => {
-  const statuses: Array<{ state: string; detail?: string }> = [];
-  const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
-  const batches: unknown[] = [];
-  const asr = new FakeAsrSession([
-    {
-      ok: true,
-      type: "final",
-      streamId: "asr-call-barge-batch-0",
-      result: {
-        text: "もしもし",
-        provider: "tencent"
-      }
-    }
-  ]);
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => new FakePeer(),
-    createAsrSession: () => asr,
-    voiceSynthesizer: fakeVoiceSynthesizer,
-    decodeAudioFileToFrames: async () => [],
-    talkRuntime: {
-      openSession() {},
-      ingestInput() {
-        throw new Error("final should be committed through interrupt batch");
-      },
-      closeSession() {},
-      interruptLatestOutput(input) {
-        latestInterrupts.push({ reason: input.reason, omitAssistantMessage: input.omitAssistantMessage });
-        return { interruptId: "runtime-interrupt-barge-batch" };
-      },
-      commitStableInputBatch(batch) {
-        batches.push(batch);
-      }
-    },
-    sleep: async () => {},
-    emitStatus: (event) => statuses.push(event)
-  });
+test("WebRTC voice starts barge-in batch on speech start", async () => {
+  const { call, latestInterrupts, statuses } = await createBargeInBatchScenario();
 
-  const call = await plugin.createCall({ callId: "call-barge-batch", userId: "browser-barge-batch", offerSdp: "offer" });
+  await call.setSpeechActive(true);
+
+  assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
+  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), true);
+});
+
+test("WebRTC voice commits ASR final as the barge-in batch result", async () => {
+  const { call, batches, statuses } = await createBargeInBatchScenario();
+
   await call.setSpeechActive(true);
   await call.setSpeechActive(false);
 
-  assert.deepEqual(latestInterrupts, [{ reason: "barge_in", omitAssistantMessage: true }]);
   await waitFor(() => batches.length === 1);
   assert.deepEqual((batches[0] as { inputs: Array<{ interruptId: string; reason: string; text: string; asrStreamId?: string }> }).inputs.map((input) => ({
     interruptId: input.interruptId,
@@ -60,7 +31,6 @@ test("WebRTC voice starts barge-in batch on speech start and commits ASR final a
     text: input.text,
     asrStreamId: input.asrStreamId
   })), [{ interruptId: "runtime-interrupt-barge-batch", reason: "barge_in", text: "もしもし", asrStreamId: "asr-call-barge-batch-0" }]);
-  assert.equal(statuses.some((entry) => entry.state === "tts.barge_in"), true);
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch" && entry.detail?.endsWith(":1")), true);
 });
 
@@ -434,3 +404,45 @@ test("WebRTC voice marks stable batch commit failure and reopens playback gate",
   assert.equal(playback.status, "played");
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[8]]);
 });
+
+async function createBargeInBatchScenario() {
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const latestInterrupts: Array<{ reason?: string; omitAssistantMessage?: boolean }> = [];
+  const batches: unknown[] = [];
+  const asr = new FakeAsrSession([
+    {
+      ok: true,
+      type: "final",
+      streamId: "asr-call-barge-batch-0",
+      result: {
+        text: "もしもし",
+        provider: "tencent"
+      }
+    }
+  ]);
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => new FakePeer(),
+    createAsrSession: () => asr,
+    voiceSynthesizer: fakeVoiceSynthesizer,
+    decodeAudioFileToFrames: async () => [],
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {
+        throw new Error("final should be committed through interrupt batch");
+      },
+      closeSession() {},
+      interruptLatestOutput(input) {
+        latestInterrupts.push({ reason: input.reason, omitAssistantMessage: input.omitAssistantMessage });
+        return { interruptId: "runtime-interrupt-barge-batch" };
+      },
+      commitStableInputBatch(batch) {
+        batches.push(batch);
+      }
+    },
+    sleep: async () => {},
+    emitStatus: (event) => statuses.push(event)
+  });
+  const call = await plugin.createCall({ callId: "call-barge-batch", userId: "browser-barge-batch", offerSdp: "offer" });
+  return { batches, call, latestInterrupts, statuses };
+}

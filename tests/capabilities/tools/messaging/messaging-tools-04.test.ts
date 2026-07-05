@@ -50,8 +50,8 @@ function writeTtsConfigFile(configPath: string, input: any, presetName = "test",
   fs.writeFileSync(path.join(path.dirname(configPath), "presets", `${presetName}.json`), JSON.stringify(preset));
 }
 
-test("send_chat voice synthesizes text, sends audio, and removes generated file", async () => {
-  const dir = makeTempDir("messaging-send-voice");
+async function sendVoiceMessage(name: string) {
+  const dir = makeTempDir(name);
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "custom:dm:user-1", "custom");
   const sent: AgentOutput[] = [];
@@ -70,7 +70,6 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
     outputRouter: {
       async send(output) {
         sent.push(output);
-        assert.equal(fs.existsSync(generatedPath), true);
         return { messageId: "voice_1" };
       }
     },
@@ -82,10 +81,36 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
     toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
+  return { generatedPath, result, sent, store, trainingDir };
+}
+
+test("send_chat voice synthesizes text and sends audio", async () => {
+  const { result, sent } = await sendVoiceMessage("messaging-send-voice-audio");
+
   assert.equal(result.ok, true);
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
+  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
+});
+
+test("send_chat voice stores sent outbound audio", async () => {
+  const { store } = await sendVoiceMessage("messaging-send-voice-store");
+  const stored = store.listMessagesForConversation("custom:dm:user-1", 10).filter((message) => message.direction === "outbound");
+
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].contentType, "audio");
+  assert.equal(stored[0].externalMessageId, "voice_1");
+});
+
+test("send_chat voice removes the generated audio file after send", async () => {
+  const { generatedPath } = await sendVoiceMessage("messaging-send-voice-cleanup");
+
   assert.equal(fs.existsSync(generatedPath), false);
+});
+
+test("send_chat voice writes a sent training sample", async () => {
+  const { trainingDir } = await sendVoiceMessage("messaging-send-voice-training");
+
   const trainingFiles = fs.readdirSync(trainingDir).sort();
   assert.equal(trainingFiles.length, 2);
   const audioFileName = trainingFiles.find((fileName) => fileName.endsWith(".wav"));
@@ -98,15 +123,10 @@ test("send_chat voice synthesizes text, sends audio, and removes generated file"
   assert.equal(metadata.plugin, "custom");
   assert.equal(metadata.sessionId, "custom:dm:user-1");
   assert.equal(metadata.assetId, "generated/tts/voice.wav");
-  assert.match(String(result.output), /Alice:\[语音\]晚点见/);
-  const stored = store.listMessagesForConversation("custom:dm:user-1", 10).filter((message) => message.direction === "outbound");
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0].contentType, "audio");
-  assert.equal(stored[0].externalMessageId, "voice_1");
 });
 
-test("send_chat voice falls back to text for wechat without calling tts", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-wechat-voice-text"), "alice.sqlite"));
+async function sendWechatVoiceTextFallback(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "wechat:dm:wx-user", "wechat");
   const sent: AgentOutput[] = [];
   let ttsCalls = 0;
@@ -132,11 +152,27 @@ test("send_chat voice falls back to text for wechat without calling tts", async 
     toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见" }
   });
 
+  return { result, sent, store, ttsCalls };
+}
+
+test("send_chat voice falls back to text for wechat", async () => {
+  const { result, sent } = await sendWechatVoiceTextFallback("messaging-send-wechat-voice-text");
+
   assert.equal(result.ok, true);
-  assert.equal(ttsCalls, 0);
   assert.deepEqual(sent.map((output) => output.content), [{ kind: "text", text: "晚点见" }]);
   assert.match(String(result.output), /Alice:晚点见/);
+});
+
+test("send_chat voice fallback skips tts for wechat", async () => {
+  const { ttsCalls } = await sendWechatVoiceTextFallback("messaging-send-wechat-voice-text-no-tts");
+
+  assert.equal(ttsCalls, 0);
+});
+
+test("send_chat voice fallback stores text for wechat", async () => {
+  const { store } = await sendWechatVoiceTextFallback("messaging-send-wechat-voice-text-store");
   const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
+
   assert.equal(stored.length, 1);
   assert.equal(stored[0].contentType, "text");
   assert.equal(stored[0].contentText, "晚点见");

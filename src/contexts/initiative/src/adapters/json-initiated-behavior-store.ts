@@ -78,7 +78,8 @@ export function deleteAgentInitiatedBehaviorPromptProfile(filePath: string): voi
 
 export function applyAgentInitiatedBehaviorOverrides(
   plans: AgentInitiatedBehaviorPlan[],
-  overrides: AgentInitiatedBehaviorOverrides
+  overrides: AgentInitiatedBehaviorOverrides,
+  customPromptProfileDir?: string
 ): AgentInitiatedBehaviorPlan[] {
   const builtInIds = new Set(plans.map((plan) => plan.id));
   const builtIns = plans.map((plan) => {
@@ -96,12 +97,14 @@ export function applyAgentInitiatedBehaviorOverrides(
   });
   const customs = Object.entries(overrides)
     .filter(([id, override]) => override.custom === true && !builtInIds.has(id) && /^[A-Za-z0-9_-]+$/.test(id))
-    .map(([id, override]) => customAgentInitiatedBehaviorPlan(id, override));
+    .map(([id, override]) => customAgentInitiatedBehaviorPlan(id, override, customPromptProfileDir));
   return [...builtIns, ...customs];
 }
 
-export function customAgentInitiatedBehaviorPlan(id: string, override: AgentInitiatedBehaviorOverrides[string]): AgentInitiatedBehaviorPlan {
-  const promptProfilePath = `src/contexts/initiative/behaviors/${id}.json`;
+export function customAgentInitiatedBehaviorPlan(id: string, override: AgentInitiatedBehaviorOverrides[string], customPromptProfileDir?: string): AgentInitiatedBehaviorPlan {
+  const promptProfilePath = customPromptProfileDir
+    ? path.join(customPromptProfileDir, `${id}.json`)
+    : `src/contexts/initiative/behaviors/${id}.json`;
   return {
     id,
     custom: true,

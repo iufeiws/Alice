@@ -9,77 +9,31 @@ import { ControlledQueueTrack, DelayedEnqueueTrack, FakeAsrSession, FakeHangingA
 
 const path = await import("node:path");
 
-test("WebRTC voice waits for TalkRuntime output, reports connected after first TTS audio, then delays playback", async () => {
-  const peer = new FakePeer();
-  const statuses: Array<{ state: string; detail?: string }> = [];
-  const sleeps: number[] = [];
-  const synthesizedTexts: string[] = [];
-  const startedLoops: number[] = [];
-  const playedChunks: string[] = [];
-  let claimed = false;
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => peer,
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: Object.assign(async () => {
-      throw new Error("file synthesizer should not be used");
-    }, {
-      async *stream({ text, onInputBufferIdle }: { text: AsyncIterable<string> | string; onInputBufferIdle?: () => void | Promise<void> }) {
-        assert.notEqual(typeof text, "string");
-        synthesizedTexts.push(await collectVoiceTextInput(text));
-        await onInputBufferIdle?.();
-        yield { type: "audio_file" as const, sequence: 0, text: synthesizedTexts.at(-1), assetId: "asset-runtime-output", filePath: "/tmp/runtime-output.wav" };
-        yield { type: "done" as const };
-      }
-    }),
-    decodeAudioFileToFrames: async () => {
-      return [{ sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 }];
-    },
-    encodePcmL16StreamToFrames: async function* (input) {
-      for await (const _chunk of input.chunks) {
-        yield { sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
-      }
-    },
-    talkRuntime: {
-      openSession() {},
-      ingestInput() {},
-      closeSession() {},
-      markAgentLoopReady(sessionId: number) {
-        startedLoops.push(sessionId);
-      },
-      claimReadyOutputChunk(sessionId: number) {
-        if (claimed) return undefined;
-        claimed = true;
-        return {
-          sessionId,
-          outputId: "output-greeting",
-          chunkId: "chunk-greeting",
-          text: "接通测试。",
-          outputTextLength: 5
-        };
-      },
-      markOutputChunkPlayed(input: { sessionId: number; chunkId: string }) {
-        playedChunks.push(`${input.sessionId}:${input.chunkId}`);
-      }
-    },
-    sleep: async (ms) => {
-      sleeps.push(ms);
-    },
-    emitStatus: (event) => statuses.push(event)
-  });
+test("WebRTC voice waits for TalkRuntime output before TTS synthesis", async () => {
+  const scenario = await createRuntimeOutputScenario();
 
-  const call = await plugin.createCall({ callId: "call-runtime-output", userId: "browser-runtime-output", offerSdp: "offer" });
+  assert.equal(scenario.statuses.some((entry) => entry.state === "voice_call.waiting" && entry.detail === String(scenario.call.talkSessionId)), true);
+  await waitFor(() => scenario.synthesizedTexts.length === 1);
+  assert.deepEqual(scenario.startedLoops, [scenario.call.talkSessionId]);
+  assert.deepEqual(scenario.synthesizedTexts, ["接通测试。"]);
+  await scenario.call.close("test_done");
+});
 
-  assert.equal(statuses.some((entry) => entry.state === "voice_call.waiting" && entry.detail === String(call.talkSessionId)), true);
-  await waitFor(() => synthesizedTexts.length === 1);
-  assert.deepEqual(synthesizedTexts, ["接通测试。"]);
-  assert.deepEqual(startedLoops, [call.talkSessionId]);
-  assert.deepEqual(playedChunks, []);
-  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === String(call.talkSessionId)));
-  assert.equal(sleeps.includes(20), true);
-  assert.equal(sleeps.includes(1000), false);
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[7]]);
-  await call.close("test_done");
+test("WebRTC voice reports connected after first TTS audio", async () => {
+  const scenario = await createRuntimeOutputScenario();
+
+  await waitFor(() => scenario.statuses.some((entry) => entry.state === "voice_call.connected" && entry.detail === String(scenario.call.talkSessionId)));
+  assert.deepEqual(scenario.playedChunks, []);
+  await scenario.call.close("test_done");
+});
+
+test("WebRTC voice delays playback and writes frames", async () => {
+  const scenario = await createRuntimeOutputScenario();
+
+  await waitFor(() => (scenario.peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).length ?? 0) === 1);
+  assert.equal(scenario.sleeps.includes(20), true);
+  assert.deepEqual(scenario.peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[7]]);
+  await scenario.call.close("test_done");
 });
 
 test("WebRTC voice claims next TalkRuntime chunk after current TTS stream finishes before playback ends", async () => {
@@ -228,64 +182,26 @@ test("WebRTC voice barge-in uses playback consumer text when next queued chunk h
   await call.close("test_done");
 });
 
-test("WebRTC voice does not synthesize later TalkRuntime chunks after current TTS stream failure closes the call", async () => {
-  const peer = new FakePeer();
-  const claimedChunks: string[] = [];
-  const synthesizedTexts: string[] = [];
-  const statuses: Array<{ state: string; detail?: string }> = [];
-  const chunks = [
-    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
-    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
-  ];
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => peer,
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: Object.assign(async () => {
-      throw new Error("file synthesizer should not be used");
-    }, {
-      async *stream({ text, onInputBufferIdle }: { text: AsyncIterable<string> | string; onInputBufferIdle?: () => void | Promise<void> }) {
-        assert.notEqual(typeof text, "string");
-        const inputText = await collectVoiceTextInput(text);
-        synthesizedTexts.push(inputText);
-        await onInputBufferIdle?.();
-        if (inputText === "第一段。") throw new Error("stream failed");
-        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
-        yield { type: "done" as const };
-      }
-    }),
-    decodeAudioFileToFrames: async () => {
-      throw new Error("file decoder should not be used");
-    },
-    encodePcmL16StreamToFrames: async function* (input) {
-      for await (const _chunk of input.chunks) {
-        yield { sequence: 0, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
-      }
-    },
-    talkRuntime: {
-      openSession() {},
-      ingestInput() {},
-      closeSession() {},
-      markAgentLoopReady() {},
-      claimReadyOutputChunk(sessionId: number) {
-        const chunk = chunks.shift();
-        if (!chunk) return undefined;
-        claimedChunks.push(chunk.chunkId);
-        return { ...chunk, sessionId };
-      }
-    },
-    emitStatus: (event) => statuses.push(event)
-  });
+test("WebRTC voice closes the call after current TTS stream failure", async () => {
+  const scenario = await createStreamFailureScenario();
 
-  await plugin.createCall({ callId: "call-stream-failure", userId: "browser-stream-failure", offerSdp: "offer" });
-  await waitFor(() => statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "tts_failed"), 2_000);
-  await waitFor(() => claimedChunks.length === 2 && statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed"));
+  await waitFor(() => scenario.statuses.some((entry) => entry.state === "talk_runtime.close" && entry.detail === "tts_failed"), 2_000);
+  assert.equal(scenario.peer.closed, true);
+});
 
-  assert.deepEqual(claimedChunks, ["chunk-1", "chunk-2"]);
-  assert.deepEqual(synthesizedTexts, ["第一段。"]);
-  assert.equal(statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail === "stream failed"), true);
-  assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), []);
-  assert.equal(peer.closed, true);
+test("WebRTC voice does not synthesize later TalkRuntime chunks after current TTS stream failure", async () => {
+  const scenario = await createStreamFailureScenario();
+
+  await waitFor(() => scenario.claimedChunks.length === 2 && scenario.statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed"));
+  assert.deepEqual(scenario.claimedChunks, ["chunk-1", "chunk-2"]);
+  assert.deepEqual(scenario.synthesizedTexts, ["第一段。"]);
+});
+
+test("WebRTC voice writes no frames for a failed current TTS stream", async () => {
+  const scenario = await createStreamFailureScenario();
+
+  await waitFor(() => scenario.statuses.some((entry) => entry.state === "voice_call.output_pump.playback_failed" && entry.detail === "stream failed"));
+  assert.deepEqual(scenario.peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), []);
 });
 
 test("WebRTC voice feeds buffered TalkRuntime output into one TTS plugin stream", async () => {
@@ -401,7 +317,150 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
   await call.close("test_done");
 });
 
-test("WebRTC voice waits for remote worker playback idle and frontend ACK before marking TalkRuntime idle", async () => {
+test("WebRTC voice waits for remote worker playback idle before requesting foreground idle ACK", async () => {
+  const scenario = await createRemoteIdleScenario();
+
+  await waitFor(() => scenario.track.enqueued.length === 1 && scenario.track.waitingSettlements === 1);
+  scenario.track.settle(0, { itemId: scenario.track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  await waitFor(() => scenario.track.waitingIdleResolvers === 1);
+  assert.equal(scenario.statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"), false);
+  scenario.track.resolveIdle();
+  await waitFor(() => scenario.statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"));
+  await scenario.call.close("test_done");
+});
+
+test("WebRTC voice waits for frontend ACK before marking TalkRuntime idle", async () => {
+  const scenario = await createRemoteIdleScenario();
+
+  await waitFor(() => scenario.track.enqueued.length === 1 && scenario.track.waitingSettlements === 1);
+  scenario.track.settle(0, { itemId: scenario.track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
+  await waitFor(() => scenario.track.waitingIdleResolvers === 1);
+  scenario.track.resolveIdle();
+  await waitFor(() => scenario.statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"));
+  assert.deepEqual(scenario.foregroundIdle, []);
+
+  const request = scenario.statuses.find((entry) => entry.state === "voice_call.playback_idle_ack.request");
+  const ackId = JSON.parse(request?.detail ?? "{}").ackId;
+  assert.equal(typeof ackId, "string");
+  scenario.call.ackPlaybackIdle?.(ackId);
+  await waitFor(() => scenario.foregroundIdle.length === 1);
+  assert.deepEqual(scenario.foregroundIdle, [scenario.call.talkSessionId]);
+  await scenario.call.close("test_done");
+});
+
+async function createRuntimeOutputScenario() {
+  const peer = new FakePeer();
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const sleeps: number[] = [];
+  const synthesizedTexts: string[] = [];
+  const startedLoops: number[] = [];
+  const playedChunks: string[] = [];
+  let claimed = false;
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream({ text, onInputBufferIdle }: { text: AsyncIterable<string> | string; onInputBufferIdle?: () => void | Promise<void> }) {
+        synthesizedTexts.push(await collectVoiceTextInput(text));
+        await onInputBufferIdle?.();
+        yield { type: "audio_file" as const, sequence: 0, text: synthesizedTexts.at(-1), assetId: "asset-runtime-output", filePath: "/tmp/runtime-output.wav" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      return [{ sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 }];
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([7]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      markAgentLoopReady(sessionId: number) {
+        startedLoops.push(sessionId);
+      },
+      claimReadyOutputChunk(sessionId: number) {
+        if (claimed) return undefined;
+        claimed = true;
+        return {
+          sessionId,
+          outputId: "output-greeting",
+          chunkId: "chunk-greeting",
+          text: "接通测试。",
+          outputTextLength: 5
+        };
+      },
+      markOutputChunkPlayed(input: { sessionId: number; chunkId: string }) {
+        playedChunks.push(`${input.sessionId}:${input.chunkId}`);
+      }
+    },
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+  const call = await plugin.createCall({ callId: "call-runtime-output", userId: "browser-runtime-output", offerSdp: "offer" });
+  return { call, peer, playedChunks, sleeps, startedLoops, statuses, synthesizedTexts };
+}
+
+async function createStreamFailureScenario() {
+  const peer = new FakePeer();
+  const claimedChunks: string[] = [];
+  const synthesizedTexts: string[] = [];
+  const statuses: Array<{ state: string; detail?: string }> = [];
+  const chunks = [
+    { sessionId: 0, outputId: "output-1", chunkId: "chunk-1", text: "第一段。" },
+    { sessionId: 0, outputId: "output-2", chunkId: "chunk-2", text: "第二段。" }
+  ];
+  const plugin = createWebRtcVoicePlugin({
+    config: defaultConfig,
+    createPeer: async () => peer,
+    createAsrSession: () => new FakeAsrSession([]),
+    voiceSynthesizer: Object.assign(async () => {
+      throw new Error("file synthesizer should not be used");
+    }, {
+      async *stream({ text, onInputBufferIdle }: { text: AsyncIterable<string> | string; onInputBufferIdle?: () => void | Promise<void> }) {
+        const inputText = await collectVoiceTextInput(text);
+        synthesizedTexts.push(inputText);
+        await onInputBufferIdle?.();
+        if (inputText === "第一段。") throw new Error("stream failed");
+        yield { type: "audio" as const, sequence: 0, chunk: new Uint8Array([1, 2]), contentType: "audio/L16; rate=32000; channels=1" };
+        yield { type: "done" as const };
+      }
+    }),
+    decodeAudioFileToFrames: async () => {
+      throw new Error("file decoder should not be used");
+    },
+    encodePcmL16StreamToFrames: async function* (input) {
+      for await (const _chunk of input.chunks) {
+        yield { sequence: 0, pcm: new Int16Array([2]), sampleRateHz: 48000, channels: 1, durationMs: 20 };
+      }
+    },
+    talkRuntime: {
+      openSession() {},
+      ingestInput() {},
+      closeSession() {},
+      markAgentLoopReady() {},
+      claimReadyOutputChunk(sessionId: number) {
+        const chunk = chunks.shift();
+        if (!chunk) return undefined;
+        claimedChunks.push(chunk.chunkId);
+        return { ...chunk, sessionId };
+      }
+    },
+    emitStatus: (event) => statuses.push(event)
+  });
+  await plugin.createCall({ callId: "call-stream-failure", userId: "browser-stream-failure", offerSdp: "offer" });
+  return { claimedChunks, peer, statuses, synthesizedTexts };
+}
+
+async function createRemoteIdleScenario() {
   const track = new ControlledQueueTrack();
   const statuses: Array<{ state: string; detail?: string }> = [];
   const foregroundIdle: number[] = [];
@@ -446,22 +505,6 @@ test("WebRTC voice waits for remote worker playback idle and frontend ACK before
     },
     emitStatus: (event) => statuses.push(event)
   });
-
   const call = await plugin.createCall({ callId: "call-remote-idle", userId: "browser-remote-idle", offerSdp: "offer" });
-  await waitFor(() => track.enqueued.length === 1 && track.waitingSettlements === 1);
-  track.settle(0, { itemId: track.enqueued[0]!.itemId, status: "played", framesWritten: 1, playedMs: 20, totalMs: 20 });
-  await waitFor(() => track.waitingIdleResolvers === 1);
-  assert.deepEqual(foregroundIdle, []);
-
-  track.resolveIdle();
-  await waitFor(() => statuses.some((entry) => entry.state === "voice_call.playback_idle_ack.request"));
-  assert.deepEqual(foregroundIdle, []);
-
-  const request = statuses.find((entry) => entry.state === "voice_call.playback_idle_ack.request");
-  const ackId = JSON.parse(request?.detail ?? "{}").ackId;
-  assert.equal(typeof ackId, "string");
-  call.ackPlaybackIdle?.(ackId);
-  await waitFor(() => foregroundIdle.length === 1);
-  assert.deepEqual(foregroundIdle, [call.talkSessionId]);
-  await call.close("test_done");
-});
+  return { call, foregroundIdle, statuses, track };
+}

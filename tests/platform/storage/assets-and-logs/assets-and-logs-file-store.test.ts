@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createFileLogStore } from "../../../../src/contexts/conversation-hub/src/adapters/file-log-store.js";
 import { fs, makeTempDir, path, readJsonl } from "./assets-and-logs-helpers.js";
 
-test("file log store writes entries to configured local-date files and reads recent logs", () => {
+test("file log store writes entries to configured local-date files", () => {
   const root = makeTempDir("file-logs");
   const store = createFileLogStore(root, { timeZone: "Asia/Shanghai" });
 
@@ -16,6 +16,18 @@ test("file log store writes entries to configured local-date files and reads rec
   const filePath = path.join(root, "2026-05-24.log.jsonl");
 
   assert.deepEqual(readJsonl(filePath), [entry]);
+});
+
+test("file log store reads recent logs", () => {
+  const root = makeTempDir("file-logs-recent");
+  const store = createFileLogStore(root, { timeZone: "Asia/Shanghai" });
+  const entry = store.append({
+    time: "2026-05-24T02:00:00.000",
+    utcTime: "2026-05-23T18:00:00.000Z",
+    level: "info",
+    message: "recent"
+  });
+
   assert.deepEqual(store.listRecent(1), [entry]);
 });
 
@@ -52,7 +64,7 @@ test("file log store resolves timezone dynamically when writing", () => {
   assert.equal(fs.existsSync(path.join(root, "2026-05-24.log.jsonl")), true);
 });
 
-test("file log store keeps persisted ids and lists recent entries across log files", () => {
+test("file log store lists recent entries across log files", () => {
   const root = makeTempDir("file-logs-state");
   fs.writeFileSync(path.join(root, "2026-05-20.log.jsonl"), [
     "{\"id\":1,\"time\":\"2026-05-20T00:00:00.000\",\"level\":\"info\",\"message\":\"old-1\"}",
@@ -68,6 +80,13 @@ test("file log store keeps persisted ids and lists recent entries across log fil
   const store = createFileLogStore(root, { timeZone: "UTC" });
 
   assert.deepEqual(store.listRecent(3).map((entry) => entry.message), ["middle", "latest-1", "latest-2"]);
+});
+
+test("file log store continues ids from persisted log files", () => {
+  const root = makeTempDir("file-logs-id-state");
+  fs.writeFileSync(path.join(root, "2026-05-22.log.jsonl"), "{\"id\":5,\"time\":\"2026-05-22T00:00:01.000\",\"level\":\"info\",\"message\":\"latest\"}\n");
+  const store = createFileLogStore(root, { timeZone: "UTC" });
+
   assert.equal(store.append({
     time: "2026-05-22T00:00:02.000",
     level: "info",

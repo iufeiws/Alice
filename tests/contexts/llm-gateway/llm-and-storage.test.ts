@@ -20,12 +20,6 @@ test("tool followup helper builds OpenAI-compatible image messages when preset s
   const root = makeTempDir("tool-followup-image");
   const filePath = path.join(root, "dress.jpg");
   fs.writeFileSync(filePath, Buffer.from("fake-image"));
-  const pngPath = path.join(root, "actual-png.jpg");
-  const pngBytes = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    0x00, 0x00, 0x00, 0x00
-  ]);
-  fs.writeFileSync(pngPath, pngBytes);
 
   const result = buildToolFollowupLLMMessages({
     callId: "call_1",
@@ -40,13 +34,29 @@ test("tool followup helper builds OpenAI-compatible image messages when preset s
   const content = Array.isArray(result.messages[0].content) ? result.messages[0].content : [];
   assert.equal(content[0]?.type, "image_url");
   assert.equal(content[0]?.type === "image_url" ? content[0].image_url.url : "", `data:image/jpeg;base64,${Buffer.from("fake-image").toString("base64")}`);
-  assert.equal(content.some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0), true);
+});
+
+test("tool followup helper skips image messages when preset does not support images", () => {
+  const root = makeTempDir("tool-followup-no-image");
+  const filePath = path.join(root, "dress.jpg");
+  fs.writeFileSync(filePath, Buffer.from("fake-image"));
+
   assert.deepEqual(buildToolFollowupLLMMessages({
     callId: "call_1",
     ok: true,
     output: "ok",
     llmFollowupAttachments: [{ kind: "image", path: filePath }]
   }, { supportsImage: false }).messages, []);
+});
+
+test("tool followup helper detects png content before declared mime", () => {
+  const root = makeTempDir("tool-followup-png");
+  const pngPath = path.join(root, "actual-png.jpg");
+  const pngBytes = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x00
+  ]);
+  fs.writeFileSync(pngPath, pngBytes);
 
   const pngResult = buildToolFollowupLLMMessages({
     callId: "call_2",

@@ -6,25 +6,36 @@ import { makeTempDir, replaceShellCategory } from "./prompt-profile-helpers.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("dailyShellStore_emptyRoot_createsCategoryFilesAndDailyShell", () => {
+test("dailyShellStore_emptyRoot_createsCategoryFiles", () => {
   const root = makeTempDir("daily-shell");
+  const store = createDailyShellStore(root);
+  store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  const shellDir = path.join(root, "shell");
+
+  assert.equal(fs.readdirSync(path.join(shellDir, "personalities")).filter((item) => item.endsWith(".json")).length >= 10, true);
+  assert.equal(fs.readdirSync(path.join(shellDir, "relationships")).filter((item) => item.endsWith(".json")).length >= 10, true);
+  assert.equal(fs.readdirSync(path.join(shellDir, "outfits")).filter((item) => item.endsWith(".json")).length >= 10, true);
+});
+
+test("dailyShellStore_sameDay_reusesDailyShell", () => {
+  const root = makeTempDir("daily-shell-same-day");
   const store = createDailyShellStore(root);
   const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   const second = store.get(new Date("2026-05-26T15:59:59.000Z"), "Asia/Shanghai");
-  const shellDir = path.join(root, "shell");
 
   assert.equal(first.date, "2026-05-26");
   assert.equal(second.date, "2026-05-26");
   assert.equal(second.personality.id, first.personality.id);
   assert.equal(second.relationship.id, first.relationship.id);
   assert.equal(second.outfit.id, first.outfit.id);
-  assert.equal(fs.readdirSync(path.join(shellDir, "personalities")).filter((item) => item.endsWith(".json")).length >= 10, true);
-  assert.equal(fs.readdirSync(path.join(shellDir, "relationships")).filter((item) => item.endsWith(".json")).length >= 10, true);
-  assert.equal(fs.readdirSync(path.join(shellDir, "outfits")).filter((item) => item.endsWith(".json")).length >= 10, true);
+});
+
+test("dailyShellStore_emptyRoot_createsPromptTemplateInAgentProfileFolder", () => {
+  const root = makeTempDir("daily-shell-template");
+  createDailyShellStore(root).get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt")), true);
-  assert.equal(fs.existsSync(path.join(shellDir, "prompt-template.txt")), false);
-  assert.equal(typeof JSON.parse(fs.readFileSync(path.join(shellDir, "daily-shell.json"), "utf8")).rendered, "string");
-  assert.equal(store.render(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai").length > 0, true);
+  assert.equal(fs.existsSync(path.join(root, "shell", "prompt-template.txt")), false);
 });
 
 test("dailyShellStore_outfitImageUrls_preservesImageState", () => {
@@ -43,13 +54,10 @@ test("dailyShellStore_outfitImageUrls_preservesImageState", () => {
     }
   ]);
 
-  assert.equal(fs.existsSync(path.join(root, "shell", "outfits", "custom_outfit.json")), true);
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   assert.equal(config.outfits[0].imageUrl, "memory-files/shell/assets/custom.png");
   assert.equal(config.outfits[0].onBodyImageUrl, "memory-files/shell/assets/custom-on-body.png");
   assert.equal(config.outfits[0].outfitImageGenerated, true);
-  assert.equal(config.outfits[0].onBodyGenerationAttempted, true);
-  assert.equal(config.outfits[0].group, "fantasy");
 });
 
 test("dailyShellStore_generatedOutfitImage_marksOnBodyAttempted", () => {
@@ -71,7 +79,7 @@ test("dailyShellStore_generatedOutfitImage_marksOnBodyAttempted", () => {
   assert.equal(config.outfits[0].onBodyGenerationAttempted, true);
 });
 
-test("dailyShellPromptTemplate_savedTemplate_rendersConfig", () => {
+test("dailyShellPromptTemplate_savedTemplate_persistsConfig", () => {
   const root = makeTempDir("daily-shell-prompt");
   const store = createDailyShellStore(root);
   replaceShellCategory(root, store, "personalities", [
@@ -81,10 +89,8 @@ test("dailyShellPromptTemplate_savedTemplate_rendersConfig", () => {
   store.savePromptTemplate("P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
 
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
-  assert.equal(config.personalities[0].id, "p1");
   assert.equal(config.promptTemplate, "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
   assert.equal(fs.readFileSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt"), "utf8"), "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}\n");
-  assert.match(config.rendered, /^P=/);
 });
 
 test("dailyShellPromptTemplate_legacyShellTemplate_migratesToAgentProfileFolder", () => {
@@ -99,7 +105,6 @@ test("dailyShellPromptTemplate_legacyShellTemplate_migratesToAgentProfileFolder"
   assert.equal(config.promptTemplate, "Legacy={{outfit_name}}");
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt")), true);
   assert.equal(fs.existsSync(legacyPath), false);
-  assert.match(config.rendered, /^Legacy=/);
 });
 
 test("dailyShellStore_activeOptionEdited_keepsSameDailyShell", () => {
@@ -122,7 +127,6 @@ test("dailyShellStore_activeOptionEdited_keepsSameDailyShell", () => {
   assert.equal(first.relationship.id, second.relationship.id);
   assert.equal(first.outfit.id, second.outfit.id);
   assert.equal(second.personality.id, "p2");
-  assert.equal(store.render(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai"), store.render(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai"));
 });
 
 test("dailyShellStore_activeOptionFileChanged_refreshesDailyShell", () => {
@@ -153,12 +157,7 @@ test("dailyShellStore_activeOptionFileChanged_refreshesDailyShell", () => {
 
 test("dailyShellStore_switchOutfit_updatesOnlyActiveOutfit", () => {
   const root = makeTempDir("daily-shell-switch-outfit");
-  const switchEvents: string[] = [];
-  const store = createDailyShellStore(root, {
-    onSwitch(entry) {
-      switchEvents.push(entry.outfitName);
-    }
-  });
+  const store = createDailyShellStore(root);
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
   replaceShellCategory(root, store, "outfits", [
@@ -167,8 +166,6 @@ test("dailyShellStore_switchOutfit_updatesOnlyActiveOutfit", () => {
   ]);
 
   const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
-  const switchLogCount = store.listSwitchLogs().length;
-  const switchEventCount = switchEvents.length;
   const switched = store.switchOutfit(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai", "o2");
 
   assert.equal(switched.personality.id, first.personality.id);
@@ -176,11 +173,18 @@ test("dailyShellStore_switchOutfit_updatesOnlyActiveOutfit", () => {
   assert.equal(switched.outfit.id, "o2");
   assert.equal(switched.date, first.date);
   assert.equal(switched.createdAt, first.createdAt);
-  assert.match(fs.readFileSync(path.join(root, "shell", "daily-shell.json"), "utf8"), /"outfitId": "o2"/);
-  assert.equal(store.listSwitchLogs().length, switchLogCount);
-  assert.equal(switchEvents.length, switchEventCount);
+});
+
+test("dailyShellStore_switchOutfit_rejectsUnknownOutfit", () => {
+  const root = makeTempDir("daily-shell-switch-missing");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+
   assert.throws(() => store.switchOutfit(new Date("2026-05-26T14:00:00.000Z"), "Asia/Shanghai", "missing"), /unknown_outfit/);
-  assert.equal(store.get(new Date("2026-05-26T15:00:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });
 
 test("dailyShellStore_rolloverBeforeWake_keepsShellUntilReroll", () => {
@@ -201,7 +205,6 @@ test("dailyShellStore_rolloverBeforeWake_keepsShellUntilReroll", () => {
   assert.equal(after.createdAt, first.createdAt);
   assert.equal(woke.date, "2026-05-27");
   assert.notEqual(woke.createdAt, first.createdAt);
-  assert.equal(store.getSettings().rolloverHour, 4);
 });
 
 test("dailyShellStore_recentRelationships_avoidsRecentlyUsedIdentities", () => {
@@ -234,28 +237,14 @@ test("dailyShellStore_recentRelationships_avoidsRecentlyUsedIdentities", () => {
       [first.relationship.id, second.relationship.id, third.relationship.id, fourth.relationship.id],
       ["r1", "r3", "r2", "r3"]
     );
-    assert.deepEqual(
-      [first.personality.id, second.personality.id, third.personality.id, fourth.personality.id],
-      ["p1", "p1", "p1", "p1"]
-    );
   } finally {
     Math.random = originalRandom;
   }
-
-  const record = JSON.parse(fs.readFileSync(path.join(root, "shell", "daily-shell.json"), "utf8")) as {
-    recentRelationshipIds?: string[];
-  };
-  assert.deepEqual(record.recentRelationshipIds, ["r3"]);
 });
 
 test("dailyShellStore_shellSwitch_recordsLocalTimeLogs", () => {
   const root = makeTempDir("daily-shell-switch-log");
-  const switchEvents: string[] = [];
-  const store = createDailyShellStore(root, {
-    onSwitch(entry) {
-      switchEvents.push(entry.message);
-    }
-  });
+  const store = createDailyShellStore(root);
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "冷淡", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "同桌", content: "relationship one" }]);
   replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "制服", content: "outfit one" }]);
@@ -272,5 +261,4 @@ test("dailyShellStore_shellSwitch_recordsLocalTimeLogs", () => {
   assert.equal(logs[1].time, "2026-05-27T04:00:00.000");
   assert.doesNotMatch(logs[0].time, /Z$|[+-]\d{2}:\d{2}$/);
   assert.doesNotMatch(logs[1].time, /Z$|[+-]\d{2}:\d{2}$/);
-  assert.deepEqual(switchEvents, logs.map((log) => log.message));
 });

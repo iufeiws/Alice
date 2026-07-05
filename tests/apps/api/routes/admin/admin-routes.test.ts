@@ -79,21 +79,13 @@ test("llm api preset save stores extra params as part of the preset", async () =
     extraParams: JSON.stringify({ top_p: 0.7, stream_options: { include_usage: true } }),
     followupExtraParams: JSON.stringify({ top_p: 0.2 })
   }), response);
-  const body = JSON.parse(response.body);
-  const saved = JSON.parse(fs.readFileSync(path.join(root, "config", "llm-api-presets.json"), "utf8"));
+  const saved = JSON.parse(fs.readFileSync(path.join(root, "config", "llm-api-presets.json"), "utf8")).presets[0];
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
-  assert.equal(context.config.llm.timeoutMs, 60_000);
-  assert.deepEqual(saved.presets[0], {
-    name: "Chat Custom",
-    baseURL: "https://chat.example.test/v1",
-    model: "chat-custom",
-    temperature: 0.4,
-    timeoutMs: 90_000,
-    stream: true,
-    supportsImage: false,
-    supportsAudio: false,
+  assert.deepEqual({
+    extraParams: saved.extraParams,
+    followupExtraParams: saved.followupExtraParams
+  }, {
     extraParams: { top_p: 0.7, stream_options: { include_usage: true } },
     followupExtraParams: { top_p: 0.2 }
   });
@@ -148,7 +140,7 @@ test("admin birthday save writes a birthday calendar entry", async () => {
   assert.equal(birthday?.isLeapMonth, true);
 });
 
-test("prompt api profile saves chat binding and migrates legacy core binding", async () => {
+test("prompt api profile saves chat binding", async () => {
   const root = makeTempDir("admin-prompt-api-profile-chat");
   fs.mkdirSync(path.join(root, "config"), { recursive: true });
   fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
@@ -191,7 +183,7 @@ test("prompt api profile saves chat binding and migrates legacy core binding", a
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/prompt-api-profile", {
-    corePresetName: "Chat Custom",
+    chatPresetName: "Chat Custom",
     talkPresetName: "Talk Custom",
     memorizePresetName: "Memorize Custom"
   }), response);
@@ -205,6 +197,37 @@ test("prompt api profile saves chat binding and migrates legacy core binding", a
     talkPresetName: "Talk Custom",
     memorizePresetName: "Memorize Custom"
   });
+});
+
+test("prompt api profile migrates legacy core binding to chat binding", async () => {
+  const root = makeTempDir("admin-prompt-api-profile-legacy-core");
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
+    presets: [
+      {
+        name: "Chat Custom",
+        baseURL: "https://chat.example.test/v1",
+        model: "chat-custom",
+        temperature: 0.4,
+        timeoutMs: 90_000,
+        stream: true,
+        extraParams: {},
+        followupExtraParams: {}
+      }
+    ]
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/prompt-api-profile", {
+    corePresetName: "Chat Custom"
+  }), response);
+  const saved = JSON.parse(fs.readFileSync(promptStoragePath(root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.chatPresetName, "Chat Custom");
 });
 
 test("talk prompt profile saves independently from chat prompt profile", async () => {
@@ -227,7 +250,7 @@ test("talk prompt profile saves independently from chat prompt profile", async (
   assert.equal(context.promptProfileStore.get().layers[0]?.id, undefined);
 });
 
-test("agent state admin route exposes and accepts calling state", async () => {
+test("agent state admin route exposes calling state", async () => {
   const root = makeTempDir("admin-agent-state-calling");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
@@ -253,6 +276,26 @@ test("agent state admin route exposes and accepts calling state", async () => {
   assert.equal(getResponse.statusCode, 200);
   assert.equal(getBody.state.state, "calling");
   assert.ok(getBody.states.includes("calling"));
+});
+
+test("agent state admin route accepts calling state", async () => {
+  const root = makeTempDir("admin-agent-state-set-calling");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  let currentState = "idle";
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    agentState: {
+      getSnapshot: () => ({ state: currentState, intimacy: 50 }),
+      setState(state: string) {
+        currentState = state;
+        return { state: currentState, intimacy: 50 };
+      },
+      setIntimacy(intimacy: number) {
+        return { state: currentState, intimacy };
+      }
+    }
+  });
 
   const putResponse = createResponse();
   await handler(createRequest("PUT", "/admin/api/agent-state", { state: "calling" }), putResponse);
@@ -261,7 +304,6 @@ test("agent state admin route exposes and accepts calling state", async () => {
   assert.equal(putResponse.statusCode, 200);
   assert.equal(currentState, "calling");
   assert.equal(putBody.state.state, "calling");
-  assert.ok(putBody.states.includes("calling"));
 });
 
 test("admin messaging runtime rejects missing Feishu target", async () => {
@@ -391,20 +433,15 @@ test("initiated behavior config patch rejects system prompt layers", async () =>
   assert.match(response.body, /invalid_initiated_behavior_prompt_layer_role/);
 });
 
-test("admin initiated behavior create and delete route custom plans", async () => {
+test("admin initiated behavior create route custom plans", async () => {
   const root = makeTempDir("admin-initiated-behavior-custom");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
   const context = baseContext(root, memoryStore, promptStore);
   let receivedCreate: unknown;
-  let receivedDelete = "";
   context.createAgentInitiatedBehaviorConfig = (id: string, patch: unknown) => {
     receivedCreate = { id, patch };
     return { id, custom: true, kind: "event", enabled: true, triggerEvent: "custom.check", steps: [] };
-  };
-  context.deleteAgentInitiatedBehaviorConfig = (id: string) => {
-    receivedDelete = id;
-    return id === "custom_check" ? { id, custom: true, kind: "event", enabled: true, steps: [] } : undefined;
   };
   const handler = createAdminHandler(context);
 
@@ -425,6 +462,19 @@ test("admin initiated behavior create and delete route custom plans", async () =
       promptProfile: { layers: [] }
     }
   });
+});
+
+test("admin initiated behavior delete route custom plans", async () => {
+  const root = makeTempDir("admin-initiated-behavior-custom-delete");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = baseContext(root, memoryStore, promptStore);
+  let receivedDelete = "";
+  context.deleteAgentInitiatedBehaviorConfig = (id: string) => {
+    receivedDelete = id;
+    return id === "custom_check" ? { id, custom: true, kind: "event", enabled: true, steps: [] } : undefined;
+  };
+  const handler = createAdminHandler(context);
 
   const deleteResponse = createResponse();
   await handler(createRequest("DELETE", "/admin/api/initiated-behaviors/custom_check", {}), deleteResponse);

@@ -2,10 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDiceTools } from "../../../../src/capabilities/tools/dice/src/index.js";
 
-test("dice exposes Dice tool and defaults to 1d6 xml output", async () => {
+test("dice exposes Dice tool", () => {
   const tools = createDiceTools({ random: () => 0.5 });
 
   assert.equal(tools.listTools().map((tool) => tool.name).includes("Dice"), true);
+});
+
+test("dice defaults to 1d6 xml output", async () => {
+  const tools = createDiceTools({ random: () => 0.5 });
 
   const result = await tools.execute({ id: "call_default", toolName: "Dice", input: {} });
 

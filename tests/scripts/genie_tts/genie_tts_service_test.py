@@ -17,7 +17,45 @@ SERVICE_PATH = Path(__file__).resolve().parents[3] / "scripts" / "genie_tts" / "
 
 
 class GenieTtsTextSplitTest(unittest.TestCase):
-    def test_splits_on_sentence_endings_and_batches_over_ten_chars(self) -> None:
+    def test_splits_on_sentence_endings(self) -> None:
+        fake_genie = make_file_tts_genie([])
+
+        with loaded_service("sentence_split", genie=fake_genie) as module:
+            parts = module.split_text_by_symbols("嗯，之前只拆句号。问号？现在，符号！后面．没")
+
+        self.assertEqual(parts, ["嗯，之前只拆句号。", "问号？", "现在，符号！", "后面．", "没"])
+
+    def test_batches_split_text_over_ten_chars(self) -> None:
+        fake_genie = make_file_tts_genie([])
+
+        with loaded_service("text_batch", genie=fake_genie) as module:
+            parts = module.split_text_for_tts("嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面．再来一点。没")
+
+        self.assertEqual(parts, ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面．再来一点。没"])
+
+    def test_synthesize_sends_split_parts_to_downstream_tts(self) -> None:
+        with make_temp_dir() as temp_dir:
+            tmp_path = Path(temp_dir)
+            calls: list[dict[str, object]] = []
+            fake_genie = make_file_tts_genie(calls)
+            fake_numpy, fake_soundfile = make_audio_modules()
+
+            with loaded_service("synthesize_downstream_split", genie=fake_genie, numpy=fake_numpy, soundfile=fake_soundfile) as module:
+                runtime = make_runtime(module, tmp_path)
+                runtime.synthesize(
+                    text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面．再来一点。没",
+                    output_path=tmp_path / "out.wav",
+                    part_silence_seconds=0.25,
+                )
+
+            tts_calls = calls_for(calls, "tts")
+            self.assertEqual(
+                [call["text"] for call in tts_calls],
+                ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面．再来一点。没"],
+            )
+            self.assertTrue(all(call["split_sentence"] is False for call in tts_calls))
+
+    def test_synthesize_inserts_silence_between_split_parts(self) -> None:
         with make_temp_dir() as temp_dir:
             tmp_path = Path(temp_dir)
             calls: list[dict[str, object]] = []
@@ -27,7 +65,7 @@ class GenieTtsTextSplitTest(unittest.TestCase):
                 concatenate=lambda chunks, axis=0: _capture_concatenate(concatenate_chunks, chunks),
             )
 
-            with loaded_service("text_split", genie=fake_genie, numpy=fake_numpy, soundfile=fake_soundfile) as module:
+            with loaded_service("synthesize_part_silence", genie=fake_genie, numpy=fake_numpy, soundfile=fake_soundfile) as module:
                 runtime = make_runtime(module, tmp_path)
                 runtime.synthesize(
                     text="嗯，之前只拆句号。问号？现在，符号！都拆开；再拼接。后面．再来一点。没",
@@ -35,15 +73,7 @@ class GenieTtsTextSplitTest(unittest.TestCase):
                     part_silence_seconds=0.25,
                 )
 
-            tts_calls = calls_for(calls, "tts")
-            self.assertEqual(len(tts_calls), 2)
-            self.assertEqual(
-                [call["text"] for call in tts_calls],
-                ["嗯，之前只拆句号。问号？", "现在，符号！都拆开；再拼接。后面．再来一点。没"],
-            )
-            self.assertTrue(all(call["split_sentence"] is False for call in tts_calls))
             self.assertEqual([chunk.shape for chunk in concatenate_chunks], [(16, 1), (8000, 1), (16, 1)])
-            self.assertTrue((tmp_path / "out.wav").is_file())
 
     def test_can_disable_text_split(self) -> None:
         with make_temp_dir() as temp_dir:
@@ -95,6 +125,26 @@ class GenieTtsStreamingTest(unittest.TestCase):
                     "第二句第二句第二句啊。:b".encode("utf-8"),
                 ],
             )
+
+    def test_stream_sends_split_parts_to_downstream_tts(self) -> None:
+        with make_temp_dir() as temp_dir:
+            tmp_path = Path(temp_dir)
+            calls: list[dict[str, object]] = []
+
+            async def fake_tts_async(**kwargs: object):
+                calls.append({"method": "tts_async", **kwargs})
+                yield b"chunk"
+
+            fake_genie = types.SimpleNamespace(
+                load_character=lambda **kwargs: calls.append({"method": "load_character", **kwargs}),
+                set_reference_audio=lambda **kwargs: calls.append({"method": "set_reference_audio", **kwargs}),
+                tts_async=fake_tts_async,
+            )
+
+            with loaded_service("stream_downstream_split", genie=fake_genie) as module:
+                runtime = make_runtime(module, tmp_path)
+                list(runtime.stream(text="第一句第一句第一句啊。第二句第二句第二句啊。", split_text=True))
+
             tts_calls = calls_for(calls, "tts_async")
             self.assertEqual([call["text"] for call in tts_calls], ["第一句第一句第一句啊。", "第二句第二句第二句啊。"])
             self.assertTrue(all(call["split_sentence"] is False for call in tts_calls))

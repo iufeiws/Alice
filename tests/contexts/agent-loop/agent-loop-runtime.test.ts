@@ -4,16 +4,10 @@ import { createAgentLoopRuntime, runAgentFunctionCallLoop } from "../../../src/c
 import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import { emptyPromptRenderer, textEvent } from "./agent-loop-runtime-helpers.js";
 
-test("agent loop runtime runs chat requests through configured runner and exposes active main session", async () => {
+test("agent loop runtime returns chat outputs from the configured runner", async () => {
   const runtime = createAgentLoopRuntime();
-  const observedRunSeqs: number[] = [];
   runtime.setRunners({
     prepareChat({ sessionId }) {
-      const active = runtime.getActiveMainLLMSession();
-      assert.equal(active?.id, sessionId);
-      assert.equal(active?.agentId, "chat");
-      assert.equal(active?.phase, "running");
-      observedRunSeqs.push(active.agentLoopRunSeq);
       return [{
         id: "out_1",
         target: { plugin: "test", sessionId },
@@ -32,6 +26,30 @@ test("agent loop runtime runs chat requests through configured runner and expose
 
   assert.equal(result.started, true);
   assert.equal(result.outputs.length, 1);
+});
+
+test("agent loop runtime exposes active main session during a chat run", async () => {
+  const runtime = createAgentLoopRuntime();
+  const observedRunSeqs: number[] = [];
+  runtime.setRunners({
+    prepareChat({ sessionId }) {
+      const active = runtime.getActiveMainLLMSession();
+      assert.equal(active?.id, sessionId);
+      assert.equal(active?.agentId, "chat");
+      assert.equal(active?.phase, "running");
+      observedRunSeqs.push(active.agentLoopRunSeq);
+      return [];
+    }
+  });
+
+  const result = await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-1",
+    reason: "test",
+    event: textEvent("session-1")
+  });
+
+  assert.equal(result.started, true);
   assert.deepEqual(observedRunSeqs, [1]);
   assert.equal(runtime.getActiveMainLLMSession()?.phase, "idle");
 });

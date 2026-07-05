@@ -2,9 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createWeChatILinkClient } from "../../../src/channels/wechat/src/client.js";
 
-test("wechat iLink client supports QR login primitives", async () => {
+test("wechat iLink client fetches QR login code", async () => {
   const urls: string[] = [];
-  const statusHeaders: string[] = [];
   const client = createWeChatILinkClient({
     enabled: true,
     baseURL: "https://ilink.example.test/ilink/bot",
@@ -19,6 +18,28 @@ test("wechat iLink client supports QR login primitives", async () => {
           qrcode_img_content: "https://liteapp.weixin.qq.com/q/qr-1"
         }), { status: 200 });
       }
+      throw new Error("status endpoint should not be called");
+    }
+  });
+
+  const qr = await client.getLoginQRCode();
+
+  assert.equal(urls[0], "https://ilink.example.test/ilink/bot/get_bot_qrcode?bot_type=3");
+  assert.equal(qr.qrcode, "qr-1");
+  assert.equal(qr.qrcodeUrl, "https://liteapp.weixin.qq.com/q/qr-1");
+  assert.equal(qr.qrcodeContent, "https://liteapp.weixin.qq.com/q/qr-1");
+});
+
+test("wechat iLink client fetches QR login status", async () => {
+  const urls: string[] = [];
+  const statusHeaders: string[] = [];
+  const client = createWeChatILinkClient({
+    enabled: true,
+    baseURL: "https://ilink.example.test/ilink/bot",
+    pollTimeoutMs: 35_000
+  }, {
+    fetch: async (url, init) => {
+      urls.push(String(url));
       statusHeaders.push(String((init?.headers as Record<string, string>)["iLink-App-ClientVersion"]));
       return new Response(JSON.stringify({
         ret: 0,
@@ -29,14 +50,9 @@ test("wechat iLink client supports QR login primitives", async () => {
     }
   });
 
-  const qr = await client.getLoginQRCode();
-  const status = await client.getQRCodeStatus(qr.qrcode);
+  const status = await client.getQRCodeStatus("qr-1");
 
-  assert.equal(urls[0], "https://ilink.example.test/ilink/bot/get_bot_qrcode?bot_type=3");
-  assert.equal(urls[1], "https://ilink.example.test/ilink/bot/get_qrcode_status?qrcode=qr-1");
-  assert.equal(qr.qrcode, "qr-1");
-  assert.equal(qr.qrcodeUrl, "https://liteapp.weixin.qq.com/q/qr-1");
-  assert.equal(qr.qrcodeContent, "https://liteapp.weixin.qq.com/q/qr-1");
+  assert.equal(urls[0], "https://ilink.example.test/ilink/bot/get_qrcode_status?qrcode=qr-1");
   assert.equal(statusHeaders[0], "1");
   assert.equal(status.status, "confirmed");
   assert.equal(status.botToken, "token-1");
@@ -61,7 +77,7 @@ test("wechat iLink client expands bare host to ilink bot API path", async () => 
   assert.equal(urls[0], "https://ilink.example.test/ilink/bot/get_bot_qrcode?bot_type=3");
 });
 
-test("wechat iLink client sends required long-poll headers and parses messages", async () => {
+test("wechat iLink client sends required long-poll request", async () => {
   let requestUrl = "";
   let requestBody: any;
   let auth = "";
@@ -95,6 +111,30 @@ test("wechat iLink client sends required long-poll headers and parses messages",
   assert.equal(requestBody.longpolling_timeout_ms, 35_000);
   assert.equal(requestBody.base_info.channel_version, "1.0.3");
   assert.equal(auth, "Bearer token-1");
+  assert.equal(updates.nextCursor, "cursor-2");
+});
+
+test("wechat iLink client parses long-poll messages", async () => {
+  const client = createWeChatILinkClient({
+    enabled: true,
+    botToken: "token-1",
+    baseURL: "https://ilink.example.test/ilink/bot",
+    pollTimeoutMs: 35_000
+  }, {
+    fetch: async () => new Response(JSON.stringify({
+      ret: 0,
+      get_updates_buf: "cursor-2",
+      messages: [{
+        message_id: "msg-1",
+        from_user_id: "wx-user",
+        context_token: "ctx-1",
+        content: JSON.stringify({ text: "hello" })
+      }]
+    }), { status: 200 })
+  });
+
+  const updates = await client.getUpdates("cursor-1");
+
   assert.equal(updates.nextCursor, "cursor-2");
   assert.equal(updates.messages[0].fromUserId, "wx-user");
   assert.equal(updates.messages[0].text, "hello");

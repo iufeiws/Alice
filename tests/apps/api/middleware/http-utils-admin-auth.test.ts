@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { assertLoopbackAdminRequest } from "../../../../src/apps/api/middleware/http-utils.js";
 import { httpJsonError } from "./http-utils-helpers.js";
 
-test("admin auth allows local and LAN admin requests", () => {
+test("admin auth allows local admin requests", () => {
   assertLoopbackAdminRequest({ url: "/admin/api/config", socket: { remoteAddress: "127.0.0.1" } });
+});
+
+test("admin auth allows LAN admin requests", () => {
   assertLoopbackAdminRequest({ url: "/admin/api/config", socket: { remoteAddress: "10.0.0.2" } });
 });
 

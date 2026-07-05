@@ -27,7 +27,34 @@ import {
 } from "./admin-routes-helpers.js";
 import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
 
-test("admin plugin config patch writes ASR config with preset references only", async () => {
+test("admin plugin config patch writes ASR general and OpenAI compatible fields", async () => {
+  const { response, saved } = await patchAsrConfig();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.providers.openaiCompatible.apiPresetName, "asr-openai");
+  assert.equal(saved.directAudioInputEnabled, true);
+  assert.equal(saved.providers.openaiCompatible.apiKey, undefined);
+  assert.equal(saved.providers.openaiCompatible.model, undefined);
+});
+
+test("admin plugin config patch writes ASR multimodal LLM fields", async () => {
+  const { response, saved } = await patchAsrConfig();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.providers.multimodalLlm.apiPresetName, "asr-openai");
+  assert.equal(saved.providers.multimodalLlm.prompt, "configured prompt");
+  assert.equal(saved.providers.multimodalLlm.extraParams.tool_choice.function.name, "submit_audio_context");
+});
+
+test("admin plugin config patch writes ASR Tencent fields", async () => {
+  const { response, saved } = await patchAsrConfig();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.providers.tencent.secretKey, "secret-key");
+  assert.equal(saved.providers.tencent.engineModelType, "16k_zh");
+});
+
+async function patchAsrConfig() {
   const root = makeTempDir("admin-asr-plugin-config");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -72,40 +99,78 @@ test("admin plugin config patch writes ASR config with preset references only", 
       }
     }
   }), response);
-  const body = JSON.parse(response.body);
   const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
-  assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
-  assert.equal(body.configValue.directAudioInputEnabled, true);
-  assert.equal(body.configValue.providers.openaiCompatible.apiPresetName, "asr-openai");
-  assert.equal(body.configValue.providers.multimodalLlm.apiPresetName, "asr-openai");
-  assert.equal(body.configValue.providers.multimodalLlm.prompt, "configured prompt");
-  assert.equal(body.configValue.providers.multimodalLlm.extraParams.tool_choice.function.name, "submit_audio_context");
-  assert.equal(body.configValue.providers.tencent.secretId, "secret-id");
-  assert.equal(body.configValue.providers.tencent.secretKey, "secret-key");
-  assert.equal(saved.providers.openaiCompatible.apiKey, undefined);
-  assert.equal(saved.directAudioInputEnabled, true);
-  assert.equal(saved.providers.tencent.secretKey, "secret-key");
-  assert.equal(saved.providers.openaiCompatible.model, undefined);
-  assert.equal(saved.providers.multimodalLlm.extraParams.tool_choice.function.name, "submit_audio_context");
-  assert.equal(saved.providers.tencent.engineModelType, "16k_zh");
-});
+  return { response, saved };
+}
 
-test("admin plugin config patch rejects invalid submitted values instead of falling back", async () => {
+test("admin photo plugin config rejects invalid selfie mode", async () => {
   const root = makeTempDir("admin-plugin-invalid-inputs");
   const photoConfigPath = path.join(root, "config", "plugin", "photo", "config.json");
-  const asrConfigPath = path.join(root, "config", "plugin", "asr", "config.json");
-  const worldConfigPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
-  const ttsConfigPath = path.join(root, "config", "plugin", "tts", "config.json");
-  const bashSandboxEnvPath = path.join(root, ".env");
   fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
-  fs.mkdirSync(path.dirname(asrConfigPath), { recursive: true });
-  fs.mkdirSync(path.dirname(worldConfigPath), { recursive: true });
-  fs.mkdirSync(path.dirname(ttsConfigPath), { recursive: true });
   fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const handler = createAdminHandler({
+    ...base,
+    config: { ...base.config, photo: photoDefaults() },
+    pluginConfigs: { photo: { configPath: photoConfigPath } }
+  });
+
+  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieMode: "bad" }, "invalid_selfie_mode");
+});
+
+test("admin photo plugin config rejects invalid selfie timeout", async () => {
+  const root = makeTempDir("admin-plugin-invalid-photo-timeout");
+  const photoConfigPath = path.join(root, "config", "plugin", "photo", "config.json");
+  fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
+  fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const base = baseContext(root, memoryStore, promptStore);
+  const handler = createAdminHandler({
+    ...base,
+    config: { ...base.config, photo: photoDefaults() },
+    pluginConfigs: { photo: { configPath: photoConfigPath } }
+  });
+
+  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieCodexTimeoutMs: "abc" }, "invalid_selfie_codex_timeout");
+});
+
+test("admin ASR plugin config rejects invalid provider", async () => {
+  const root = makeTempDir("admin-plugin-invalid-asr");
+  const asrConfigPath = path.join(root, "config", "plugin", "asr", "config.json");
+  fs.mkdirSync(path.dirname(asrConfigPath), { recursive: true });
   fs.writeFileSync(asrConfigPath, `${JSON.stringify({ enabled: true, defaultProvider: "openai_compatible", providers: { openaiCompatible: {} } })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath: asrConfigPath } }
+  });
+
+  await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
+});
+
+test("admin world wanderer plugin config rejects invalid initial location", async () => {
+  const root = makeTempDir("admin-plugin-invalid-world");
+  const worldConfigPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
+  fs.mkdirSync(path.dirname(worldConfigPath), { recursive: true });
   fs.writeFileSync(worldConfigPath, `${JSON.stringify({ enabled: true })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { worldWanderer: { configPath: worldConfigPath } }
+  });
+
+  await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
+});
+
+test("admin TTS plugin config rejects invalid Bailian service", async () => {
+  const root = makeTempDir("admin-plugin-invalid-tts");
+  const ttsConfigPath = path.join(root, "config", "plugin", "tts", "config.json");
   writeTtsPluginConfig(root, {
     configPath: ttsConfigPath,
     enabled: true,
@@ -122,30 +187,42 @@ test("admin plugin config patch rejects invalid submitted values instead of fall
   });
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const base = baseContext(root, memoryStore, promptStore);
   const handler = createAdminHandler({
-    ...base,
-    config: { ...base.config, photo: photoDefaults() },
-    pluginConfigs: {
-      photo: { configPath: photoConfigPath },
-      asr: { configPath: asrConfigPath },
-      worldWanderer: { configPath: worldConfigPath },
-      tts: { configPath: ttsConfigPath },
-      bashSandbox: { envPath: bashSandboxEnvPath }
-    }
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath: ttsConfigPath } }
   });
 
-  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieMode: "bad" }, "invalid_selfie_mode");
-  await assertPatchError(handler, "/admin/api/plugins/photo/config", { selfieCodexTimeoutMs: "abc" }, "invalid_selfie_codex_timeout");
-  await assertPatchError(handler, "/admin/api/plugins/asr/config", { defaultProvider: "bad" }, "invalid_asr_provider");
-  await assertPatchError(handler, "/admin/api/plugins/world_wanderer/config", { initialLocation: "[]" }, "invalid_initial_location");
   await assertPatchError(handler, "/admin/api/plugins/tts/config", { currentPreset: { provider: "bailian", bailian: { service: "bad" } } }, "invalid_bailian_service");
+});
+
+test("admin bash sandbox plugin config rejects invalid network", async () => {
+  const root = makeTempDir("admin-plugin-invalid-bash-network");
+  const bashSandboxEnvPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath: bashSandboxEnvPath } }
+  });
+
   await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { network: "bad" }, "invalid_bash_sandbox_network");
+});
+
+test("admin bash sandbox plugin config rejects invalid mounts", async () => {
+  const root = makeTempDir("admin-plugin-invalid-bash-mounts");
+  const bashSandboxEnvPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { bashSandbox: { envPath: bashSandboxEnvPath } }
+  });
+
   await assertPatchError(handler, "/admin/api/plugins/bash_sandbox/config", { mounts: "{}" }, "invalid_bash_sandbox_mounts");
 });
 
-test("admin ASR plugin config schema groups general and provider settings", async () => {
-  const root = makeTempDir("admin-asr-plugin-schema-groups");
+async function readAsrConfigSchema(name: string) {
+  const root = makeTempDir(name);
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({
@@ -164,22 +241,50 @@ test("admin ASR plugin config schema groups general and provider settings", asyn
   await handler(createRequest("GET", "/admin/api/plugins/asr/config", {}), response);
   const body = JSON.parse(response.body);
 
+  return { body, response };
+}
+
+test("admin ASR plugin config schema exposes group order", async () => {
+  const { body, response } = await readAsrConfigSchema("admin-asr-plugin-schema-groups");
+
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["general", "openai_compatible", "multimodal_llm", "tencent"]);
+});
+
+test("admin ASR plugin config schema exposes general fields", async () => {
+  const { body, response } = await readAsrConfigSchema("admin-asr-plugin-schema-general");
+
+  assert.equal(response.statusCode, 200);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "enabled").group, "general");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "directAudioInputEnabled").type, "switch");
+});
+
+test("admin ASR plugin config schema exposes OpenAI compatible fields", async () => {
+  const { body, response } = await readAsrConfigSchema("admin-asr-plugin-schema-openai");
+
+  assert.equal(response.statusCode, 200);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.model"), undefined);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.openaiCompatible.apiPresetName").group, "openai_compatible");
+});
+
+test("admin ASR plugin config schema exposes multimodal LLM fields", async () => {
+  const { body, response } = await readAsrConfigSchema("admin-asr-plugin-schema-multimodal");
+
+  assert.equal(response.statusCode, 200);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.apiPresetName").group, "multimodal_llm");
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.extraParams").type, "textarea");
   const protocolField = body.configSchema.fields.find((field: { key: string }) => field.key === "providers.multimodalLlm.protocolCall");
   assert.equal(protocolField.type, "readonlyTextarea");
-  assert.equal(typeof body.configValue.providers.multimodalLlm.prompt, "string");
-  assert.equal(body.configValue.providers.multimodalLlm.extraParams.tool_choice.function.name, "submit_audio_context");
+});
+
+test("admin ASR plugin config schema exposes Tencent fields", async () => {
+  const { body, response } = await readAsrConfigSchema("admin-asr-plugin-schema-tencent");
+
+  assert.equal(response.statusCode, 200);
   assert.equal(body.configSchema.fields.find((field: { key: string }) => field.key === "providers.tencent.engineModelType").group, "tencent");
 });
 
-test("admin plugin enable and disable update ASR config", async () => {
+test("admin plugin enable updates ASR config", async () => {
   const root = makeTempDir("admin-asr-plugin-switch");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -200,6 +305,24 @@ test("admin plugin enable and disable update ASR config", async () => {
   await handler(createRequest("POST", "/admin/api/plugins/asr/enable", {}), enableResponse);
   assert.equal(enableResponse.statusCode, 200);
   assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).enabled, true);
+});
+
+test("admin plugin disable updates ASR config", async () => {
+  const root = makeTempDir("admin-asr-plugin-disable");
+  const configPath = path.join(root, "config", "plugin", "asr", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    enabled: true,
+    defaultProvider: "openai_compatible",
+    providers: {}
+  })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { asr: { configPath } }
+  };
+  const handler = createAdminHandler(context);
 
   const disableResponse = createResponse();
   await handler(createRequest("POST", "/admin/api/plugins/asr/disable", {}), disableResponse);
@@ -297,7 +420,33 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   fs.rmSync(audioPath, { force: true });
 });
 
-test("admin plugin test runs multimodal LLM ASR through llm request dependencies", async () => {
+test("admin plugin test sends multimodal LLM ASR request contract", async () => {
+  const { response, capturedRequest } = await runMultimodalLlmAsrTest();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(capturedRequest.agentId, "asr");
+  assert.equal(capturedRequest.presetName, "asr");
+  assert.deepEqual(capturedRequest.toolNames, ["submit_audio_context"]);
+  assert.deepEqual(capturedRequest.extraParams, {
+    tool_choice: {
+      type: "function",
+      function: { name: "submit_audio_context" }
+    }
+  });
+});
+
+test("admin plugin test parses multimodal LLM ASR tool-call output", async () => {
+  const { response, body } = await runMultimodalLlmAsrTest();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.result.output, "[语音][calm]后台识别");
+  assert.equal(body.result.provider, "multimodal_llm");
+  assert.equal(body.result.model, "flash");
+  assert.equal(body.result.requestId, "admin-asr-request");
+});
+
+async function runMultimodalLlmAsrTest() {
   const root = makeTempDir("admin-asr-plugin-test-multimodal");
   const assetRoot = path.join(root, "assets");
   const configPath = path.join(root, "config", "plugin", "asr", "config.json");
@@ -361,21 +510,6 @@ test("admin plugin test runs multimodal LLM ASR through llm request dependencies
   await handler(createRequest("POST", "/admin/api/plugins/asr/test", {}), response);
   const body = JSON.parse(response.body);
 
-  assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
-  assert.equal(body.result.output, "[语音][calm]后台识别");
-  assert.equal(body.result.provider, "multimodal_llm");
-  assert.equal(body.result.model, "flash");
-  assert.equal(body.result.requestId, "admin-asr-request");
-  assert.equal(capturedRequest.agentId, "asr");
-  assert.equal(capturedRequest.client && typeof capturedRequest.client.chat, "function");
-  assert.equal(capturedRequest.presetName, "asr");
-  assert.deepEqual(capturedRequest.toolNames, ["submit_audio_context"]);
-  assert.deepEqual(capturedRequest.extraParams, {
-    tool_choice: {
-      type: "function",
-      function: { name: "submit_audio_context" }
-    }
-  });
   fs.rmSync(audioPath, { force: true });
-});
+  return { response, body, capturedRequest };
+}

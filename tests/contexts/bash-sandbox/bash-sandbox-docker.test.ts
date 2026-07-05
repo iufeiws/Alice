@@ -7,7 +7,27 @@ const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-test("docker executor prepares image and runs with configured sandbox contract", async () => {
+test("docker executor prepares a missing image", async () => {
+  const { calls } = await runWithFakeDocker();
+
+  assert.equal(calls.some((call) => call === "image inspect cimg/python:3.13-browsers"), true);
+  assert.equal(calls.some((call) => call === "pull cimg/python:3.13-browsers"), true);
+});
+
+test("docker executor runs with configured sandbox contract", async () => {
+  const { calls, result } = await runWithFakeDocker();
+  const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
+
+  assert.match(runCall, /--network bridge/);
+  assert.match(runCall, /--add-host host\.docker\.internal:host-gateway/);
+  assert.match(runCall, /HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
+  assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
+  assert.match(runCall, /PATH=\/sandbox\/bin:/);
+  assert.match(runCall, /\/sandbox\/bin:ro/);
+  assert.equal(result.stdout.trim(), "docker-ok");
+});
+
+async function runWithFakeDocker() {
   const root = tmpDir("fake-docker");
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
@@ -51,17 +71,7 @@ exit 64
     const config = testConfig({ network: "configured", hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
     const result = await createDockerBashExecutor(config).execute({ command: "echo ok", cwd: config.workspaceDir, timeoutMs: 1000, outputLimitBytes: 1024 });
     const calls = fs.readFileSync(log, "utf8").trim().split(/\r?\n/);
-    const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
-
-    assert.equal(calls.some((call) => call === "image inspect cimg/python:3.13-browsers"), true);
-    assert.equal(calls.some((call) => call === "pull cimg/python:3.13-browsers"), true);
-    assert.match(runCall, /--network bridge/);
-    assert.match(runCall, /--add-host host\.docker\.internal:host-gateway/);
-    assert.match(runCall, /HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
-    assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
-    assert.match(runCall, /PATH=\/sandbox\/bin:/);
-    assert.match(runCall, /\/sandbox\/bin:ro/);
-    assert.equal(result.stdout.trim(), "docker-ok");
+    return { calls, result };
   } finally {
     process.env.PATH = previousPath;
     if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;
@@ -69,7 +79,7 @@ exit 64
     if (previousNoProxy === undefined) delete process.env.NO_PROXY;
     else process.env.NO_PROXY = previousNoProxy;
   }
-});
+}
 
 test("docker executor saves full output in container tmp when preview limit is exceeded", async (t) => {
   if (process.env.BASH_SANDBOX_DOCKER_TEST !== "1") {

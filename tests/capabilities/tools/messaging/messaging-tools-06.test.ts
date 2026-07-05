@@ -264,8 +264,8 @@ test("tts stream buffers input into takeable segments before translation and chu
   ]);
 });
 
-test("tts stream translates the full conversation once and yields Genie audio chunks", async () => {
-  const dir = makeTempDir("tts-stream");
+async function streamTranslatedTts(name: string) {
+  const dir = makeTempDir(name);
   const configPath = path.join(dir, "config.json");
   writeTtsConfigFile(configPath, {
     enabled: true,
@@ -307,29 +307,50 @@ test("tts stream translates the full conversation once and yields Genie audio ch
     appendLog: (_level, message) => logs.push(message)
   });
 
-  const events = [];
+  const streamEvents = [];
   for await (const event of plugin.voiceSynthesizer.stream!({
     text: ["第一句第一句啊。", "第二句第二句啊。"],
     time: createCurrentTimeProvider("UTC"),
     source: "send_chat.voice",
     streamId: "stream-1"
   })) {
-    events.push(event);
+    streamEvents.push(event);
   }
+
+  return { logs, streamEvents, streamedGenie, streamedTexts, translatedInputs };
+}
+
+test("tts stream translates the full conversation once", async () => {
+  const { streamedTexts, translatedInputs } = await streamTranslatedTts("tts-stream-translation");
 
   assert.deepEqual(translatedInputs, ["第一句第一句啊。第二句第二句啊。"]);
   assert.deepEqual(streamedTexts, ["ja:1"]);
+});
+
+test("tts stream passes Genie overrides to the backend", async () => {
+  const { streamedGenie } = await streamTranslatedTts("tts-stream-genie-overrides");
+
   assert.equal(streamedGenie.every((genie: any) => genie?.speed === undefined && genie?.splitText === true), true);
-  assert.deepEqual(events.map((event) => event.type), [
+});
+
+test("tts stream yields the expected stream contract", async () => {
+  const { streamEvents } = await streamTranslatedTts("tts-stream-contract");
+
+  assert.deepEqual(streamEvents.map((event) => event.type), [
     "translation_started",
     "translation_done",
     "audio_file",
     "part_done",
     "done"
   ]);
-  assert.deepEqual(events.filter((event) => event.type === "audio_file").map((event: any) => [event.sequence, event.text, event.textchunk, path.basename(event.filePath)]), [
+  assert.deepEqual(streamEvents.filter((event) => event.type === "audio_file").map((event: any) => [event.sequence, event.text, event.textchunk, path.basename(event.filePath)]), [
     [0, "第一句第一句啊。第二句第二句啊。", "ja:1", "voice-1.wav"]
   ]);
+});
+
+test("tts stream logs completion with generated file count", async () => {
+  const { logs } = await streamTranslatedTts("tts-stream-log");
+
   assert.equal(logs.some((message) => message.includes("tts stream tts complete") && message.includes("files=1")), true);
 });
 

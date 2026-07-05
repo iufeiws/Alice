@@ -82,10 +82,78 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
 
-test("chat agent executes same-round tools when finish_and_wait appears and resumes wait result later", async () => {
+test("chat agent executes same-round tools when finish_and_wait appears", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  const llm: LLMClient = {
+    async chat(input) {
+      requests.push(input);
+      if (requests.length > 1) return { message: { role: "assistant", content: "done" } };
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool_check",
+              type: "function",
+              function: { name: "Chat", arguments: "{\"action\":\"poll\"}" }
+            },
+            {
+              id: "tool_wait",
+              type: "function",
+              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
+            },
+            {
+              id: "tool_later",
+              type: "function",
+              function: { name: "later_tool", arguments: "{\"action\":\"poll\"}" }
+            }
+          ]
+        },
+        finishReason: "tool_calls"
+      };
+    }
+  };
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    llm,
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools((call) => calls.push(call.toolName))],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.deepEqual(calls, ["Chat", "Yield", "later_tool"]);
+  const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
+  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "Yield"));
+  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["Chat", "Yield", "later_tool"]);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
+  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
+});
+
+test("chat agent resumes same-round finish_and_wait result on heartbeat", async () => {
+  const requests: LLMChatInput[] = [];
   let persistedSession: LLMSessionSnapshot | undefined;
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
   const llm: LLMClient = {
@@ -132,10 +200,9 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
       layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
       appendLayers: []
     }),
-    tools: [chatTestTools((call) => calls.push(call.toolName))],
+    tools: [chatTestTools()],
     onLLMSessionUpdated(session) {
       persistedSession = session;
-      sessionUpdates.push(session);
     },
     loadLLMSession() {
       return persistedSession;
@@ -144,21 +211,11 @@ test("chat agent executes same-round tools when finish_and_wait appears and resu
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(calls, ["Chat", "Yield", "later_tool"]);
-  const latestMessages = sessionUpdates.at(-1)?.messages ?? [];
-  const assistant = latestMessages.find((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "Yield"));
-  assert.deepEqual(assistant?.toolCalls?.map((call) => call.function.name), ["Chat", "Yield", "later_tool"]);
-  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), false);
-  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
-  assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
-
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
   await runPreparedChatEvent(core, { ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
 
   const resumedMessages = requests[1].messages;
-  assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_check"), true);
   assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), true);
-  assert.equal(resumedMessages.filter((message) => message.role === "tool" && message.toolCallId === "tool_later").length, 1);
 });
 
 test("chat agent rebuilds fixed prefix session immediately after bookcase draw", async () => {

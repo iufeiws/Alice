@@ -24,8 +24,8 @@ const genieRequiredModelFiles = [
   "vits_fp32.onnx"
 ];
 
-test("send_chat returns failed outbound messages as chat records", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-send-failed"), "alice.sqlite"));
+async function sendFeishuMessageWithApiFailure(name: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   seedUserInbound(store, "session-1", "feishu");
   const logs: Array<{ status?: string; error?: string; summary: string }> = [];
   const tools = createMessagingTools({
@@ -60,10 +60,26 @@ test("send_chat returns failed outbound messages as chat records", async () => {
 
   await new Promise((resolve) => setImmediate(resolve));
 
+  return { logs, result };
+}
+
+test("send_chat returns feishu api failure", async () => {
+  const { result } = await sendFeishuMessageWithApiFailure("messaging-send-failed");
+
   assert.equal(result.ok, false);
   assert.match(String(result.output), /^<send-chat-failed reason="Feishu API 230001: invalid receive_id log_id=log_1"\/>\n<chat-log>\n/);
+});
+
+test("send_chat returns failed outbound messages as chat records", async () => {
+  const { result } = await sendFeishuMessageWithApiFailure("messaging-send-failed-record");
+
   assert.match(String(result.output), /Alice:test\[发送失败\]/);
   assert.doesNotMatch(String(result.output), /#1 message failed/);
+});
+
+test("send_chat logs feishu api failure and retry failure", async () => {
+  const { logs } = await sendFeishuMessageWithApiFailure("messaging-send-failed-log");
+
   assert.equal(logs[0].status, "send_failed");
   assert.equal(logs[0].error, "Feishu API 230001: invalid receive_id log_id=log_1");
   assert.equal(logs.filter((entry) => entry.status === "retry_failed").length, 1);

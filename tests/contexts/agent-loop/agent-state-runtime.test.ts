@@ -25,7 +25,7 @@ test("waking from sleeping records the configured local and UTC wake time", () =
   }]);
 });
 
-test("waking from sleeping rerolls the daily shell and queues morning work", () => {
+test("waking from sleeping rerolls the daily shell and sends it to on-body generation", () => {
   const root = makeTempDir("agent-state-runtime-wake-daily");
   writePersistedState(root, "sleeping");
   const calls = createCalls();
@@ -38,10 +38,20 @@ test("waking from sleeping rerolls the daily shell and queues morning work", () 
     timeZone: "Asia/Shanghai"
   }]);
   assert.deepEqual(calls.onBodyDailies, [dailyShell]);
+});
+
+test("waking from sleeping queues morning work", () => {
+  const root = makeTempDir("agent-state-runtime-wake-morning");
+  writePersistedState(root, "sleeping");
+  const calls = createCalls();
+  const agentState = createRuntime(root, calls);
+
+  agentState.setState("waiting", { reason: "woke" });
+
   assert.equal(calls.morningEvents, 1);
 });
 
-test("entering sleeping records sleep time and runs sleep side effects", () => {
+test("entering sleeping records sleep time", () => {
   const root = makeTempDir("agent-state-runtime-sleep");
   const calls = createCalls();
   const agentState = createRuntime(root, calls);
@@ -56,8 +66,35 @@ test("entering sleeping records sleep time and runs sleep side effects", () => {
     now: "2026-05-26T08:00:00.000",
     nowUtc: "2026-05-26T00:00:00.000Z"
   }]);
+});
+
+test("entering sleeping clears the LLM session", () => {
+  const root = makeTempDir("agent-state-runtime-sleep-clear-session");
+  const calls = createCalls();
+  const agentState = createRuntime(root, calls);
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+
   assert.equal(calls.clearedSessions, 1);
+});
+
+test("entering sleeping sends a sleep notice", () => {
+  const root = makeTempDir("agent-state-runtime-sleep-notice");
+  const calls = createCalls();
+  const agentState = createRuntime(root, calls);
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+
   assert.equal(calls.sleepNotices, 1);
+});
+
+test("entering sleeping triggers sleep memory induction", () => {
+  const root = makeTempDir("agent-state-runtime-sleep-induction");
+  const calls = createCalls();
+  const agentState = createRuntime(root, calls);
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+
   assert.equal(calls.sleepInductions, 1);
 });
 

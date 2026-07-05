@@ -280,7 +280,7 @@ async function runSuccessfulOnBodyGeneration() {
     selfieMode: "openai",
     selfieImageApiKey: "image-key",
     onBodyReferenceImage: path.relative(root, referencePath),
-    onBodyPrompt: "configured-prompt {{outfit/content}}"
+    onBodyPrompt: "configured-prompt {{targetOutfit/content}}"
   })}\n`);
   const previousFetch = globalThis.fetch;
   let renderedPrompt = "";
@@ -320,7 +320,7 @@ async function runSuccessfulOnBodyGeneration() {
     const expectedImageUrl = path.join(path.dirname(path.relative(root, outfitPath)), "dress_1.On_Body_Ref.jpg");
     const outputPath = path.join(path.dirname(outfitPath), "dress_1.On_Body_Ref.jpg");
     const attempted = dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits.find((outfit) => outfit.id === "dress_1")?.onBodyGenerationAttempted;
-    const expectedPrompt = context.getPromptRenderer().renderText("configured-prompt {{outfit/content}}");
+    const expectedPrompt = "configured-prompt black dress";
     return { response, body, expectedImageUrl, outputPath, renderedPrompt, expectedPrompt, attempted };
   } finally {
     globalThis.fetch = previousFetch;

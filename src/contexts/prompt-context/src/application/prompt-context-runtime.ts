@@ -2,18 +2,7 @@ import { buildCalendarContext } from "../../../../capabilities/tools/calendar/sr
 import { formatAvailableSkillsXml } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
-
-export type PromptContextShellOption = {
-  id: string;
-  name: string;
-  content: string;
-  group?: string;
-  imageUrl?: string;
-  onBodyImageUrl?: string;
-  outfitImageGenerated?: boolean;
-  onBodyGenerationAttempted?: boolean;
-};
+import type { PromptContextRenderOptions, PromptContextRuntime, PromptContextShellOption, PromptContextValue } from "../contracts/prompt-context-runtime.js";
 
 const memoryTargets = ["persistent", "userPreferences", "yesterdaySummary"] as const;
 const optionFields = ["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"] as const;
@@ -33,6 +22,7 @@ const variableNames = [
   "dailyShell/date",
   "dailyShell/createdAt",
   ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `outfit/${field}`]),
+  ...optionFields.map((field) => `targetOutfit/${field}`),
   ...memoryTargets.flatMap((target) => [
     `memory/${target}/content`,
     `memory/${target}/limit/lines`,
@@ -59,9 +49,9 @@ export function createPromptContextRuntime(input: {
   worldWandererConfigPath?: string;
 }): PromptContextRuntime {
   const runtime: PromptContextRuntime = {
-    renderText(content) {
+    renderText(content, options) {
       return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
-        const resolved = runtime.getVariable(key);
+        const resolved = runtime.getVariable(key, options);
         return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
       });
     },
@@ -70,7 +60,7 @@ export function createPromptContextRuntime(input: {
   };
   return runtime;
 
-  function getVariable(name: string): PromptContextValue {
+  function getVariable(name: string, options?: PromptContextRenderOptions): PromptContextValue {
     if (name === "user") return input.username.trim() || "user";
     const time = timeVariable(name);
     if (time !== undefined) return time;
@@ -78,6 +68,7 @@ export function createPromptContextRuntime(input: {
     if (name === "library/content") return librarySetting();
     if (name.startsWith("dailyShell/")) return dailyShellVariable(name);
     if (name.startsWith("outfit/")) return optionVariable(dailyShell()?.outfit, name.slice("outfit/".length));
+    if (name.startsWith("targetOutfit/")) return optionVariable(options?.targetOutfit, name.slice("targetOutfit/".length));
     if (name.startsWith("memory/")) return memoryVariable(name);
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();

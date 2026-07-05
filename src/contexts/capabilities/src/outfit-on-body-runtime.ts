@@ -88,7 +88,7 @@ export async function generatePhotoOnBodyImage(context: any, body: Record<string
 
   try {
     savePhotoOnBodyAttempt(context, outfit);
-    const prompt = renderPhotoOnBodyPrompt(context, promptTemplate);
+    const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
     const generated = await runPhotoGateway({
       config,
       workDir: tempDir,
@@ -173,8 +173,8 @@ function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, o
   };
 }
 
-function renderPhotoOnBodyPrompt(context: any, template: string): string {
-  return context.getPromptRenderer().renderText(template);
+function renderPhotoOnBodyPrompt(context: any, template: string, outfit: ShellOption): string {
+  return context.getPromptRenderer().renderText(template, { targetOutfit: outfit });
 }
 
 function savePhotoOnBodyAttempt(context: any, outfit: ShellOption, imageUrl?: string): void {

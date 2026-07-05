@@ -1,8 +1,8 @@
 import type { AgentEvent } from "../contracts/agent-contracts.js";
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMToolCall } from "../../../llm-gateway/src/index.js";
+import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
+import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
@@ -312,8 +312,7 @@ function createAgentRunIndicatorRequestSender(input: {
       if (input.isCancelled?.()) {
         await failIndicatorSession(session, new Error("llm_run_cancelled"), input.onError);
       } else {
-        session = await appendIndicatorToolCalls(session, result.message.toolCalls ?? [], input.onError);
-        await finishIndicatorSession(session, input.onError);
+        await finishIndicatorSession(session, outputFromAssistantMessage(result.message), input.onError);
       }
       return result;
     } catch (error) {
@@ -369,38 +368,35 @@ function withAgentRunIndicatorStreamHandlers(
         input.disableSession();
         await failIndicatorSession(session, error, input.onError);
       }
+    },
+    async onToolCallDelta(delta) {
+      await handlers?.onToolCallDelta?.(delta);
+      const session = input.getSession();
+      if (!session) return;
+      try {
+        await session.appendToolCallDelta({
+          index: delta.index,
+          id: delta.id,
+          name: delta.function?.name,
+          arguments: delta.function?.arguments
+        });
+      } catch (error) {
+        input.onError?.(error);
+        input.disableSession();
+        await failIndicatorSession(session, error, input.onError);
+      }
     }
   };
 }
 
-async function appendIndicatorToolCalls(
-  session: AgentRunIndicatorSession | undefined,
-  calls: LLMToolCall[],
-  onError: ((error: unknown) => void) | undefined
-): Promise<AgentRunIndicatorSession | undefined> {
-  for (const call of calls) {
-    if (!session) return undefined;
-    try {
-      await session.appendToolCall({
-        name: call.function.name,
-        arguments: call.function.arguments
-      });
-    } catch (error) {
-      onError?.(error);
-      await failIndicatorSession(session, error, onError);
-      return undefined;
-    }
-  }
-  return session;
-}
-
 async function finishIndicatorSession(
   session: AgentRunIndicatorSession | undefined,
+  output: AgentRunIndicatorOutput,
   onError: ((error: unknown) => void) | undefined
 ): Promise<void> {
   if (!session) return;
   try {
-    await session.finish();
+    await session.finish(output);
   } catch (error) {
     onError?.(error);
   }
@@ -421,6 +417,18 @@ async function failIndicatorSession(
 
 function isWaitChatToolName(toolName: string | undefined): boolean {
   return toolName === "Yield";
+}
+
+function outputFromAssistantMessage(message: LLMChatResult["message"]): AgentRunIndicatorOutput {
+  return {
+    reasoning: message.reasoningContent ?? "",
+    content: messageContentText(message.content),
+    toolCalls: (message.toolCalls ?? []).map((call) => ({
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments
+    }))
+  };
 }
 
 function messageContentText(content: LLMChatInput["messages"][number]["content"]): string {

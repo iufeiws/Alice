@@ -2,7 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { FeishuAgentRunCardBlock, FeishuDynamicCardClient } from "../../../../channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../../channels/feishu/src/pairing.js";
-import type { AgentRunIndicator, AgentRunIndicatorSession, AgentRunIndicatorToolCall } from "../ports.js";
+import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSession, AgentRunIndicatorToolCall } from "../ports.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -138,7 +138,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   function createSession(card: ActiveCard): AgentRunIndicatorSession {
     let reasoning = "";
     let content = "";
-    let tools = "";
+    let toolCalls = new Map<number, AgentRunIndicatorToolCall>();
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
     let flushPromise: Promise<void> = Promise.resolve();
     let failed = false;
@@ -154,7 +154,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         flushPromise = flushPromise
-          .then(() => flushContent(card, runningBlocks(reasoning, content, tools)))
+          .then(() => flushContent(card, runningBlocks(reasoning, content, toolCallsText(toolCalls))))
           .catch((error) => {
             failed = true;
             input.log?.("error", `[agent-run-indicator] Feishu indicator flush failed: ${errorMessage(error)}`);
@@ -162,10 +162,12 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       }, throttleMs);
     };
 
-    async function flushNow(): Promise<void> {
+    async function finishOutput(output: AgentRunIndicatorOutput): Promise<void> {
       clearFlushTimer();
       await flushPromise;
-      if (!failed) await flushContent(card, runningBlocks(reasoning, content, tools));
+      reasoning = output.reasoning;
+      content = output.content;
+      toolCalls = toolCallsFromOutput(output.toolCalls);
     }
 
     return {
@@ -179,20 +181,23 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         content += delta;
         queueFlush();
       },
-      async appendToolCall(call) {
+      async appendToolCallDelta(delta) {
         if (failed) return;
-        const line = formatToolCall(call);
-        tools = tools ? `${tools}\n${line}` : line;
-        await updateBlock(card, "tools", tools, { ...card.blocks, tools });
+        const current = toolCalls.get(delta.index) ?? { id: delta.id, name: "", arguments: "" };
+        if (delta.id) current.id = delta.id;
+        if (delta.name) current.name = delta.name;
+        if (delta.arguments) current.arguments += delta.arguments;
+        toolCalls.set(delta.index, current);
+        queueFlush();
       },
-      async finish() {
+      async finish(output) {
         if (failed) return;
-        await flushNow();
+        await finishOutput(output);
         const finalBlocks = {
           state: stateLabel(input.getState?.()),
           reasoning,
           content,
-          tools
+          tools: toolCallsText(toolCalls)
         };
         await updateBlocks(card, finalBlocks, finalBlocks);
         await updateStreaming(card, false);
@@ -310,7 +315,8 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   async function updateBlocks(card: ActiveCard, blocks: IndicatorBlocks, nextSavedBlocks?: IndicatorBlocks): Promise<void> {
     await updateBlock(card, "state", blocks.state);
     await updateBlock(card, "reasoning", blocks.reasoning);
-    await updateBlock(card, "content", blocks.content, blocks, nextSavedBlocks);
+    await updateBlock(card, "content", blocks.content);
+    await updateBlock(card, "tools", blocks.tools, blocks, nextSavedBlocks);
   }
 
   async function flushContent(card: ActiveCard, blocks: IndicatorBlocks): Promise<void> {
@@ -369,8 +375,20 @@ function blocksFromRecord(record: Pick<FeishuAgentRunIndicatorCardRecord, "state
   };
 }
 
+function toolCallsFromOutput(calls: AgentRunIndicatorToolCall[]): Map<number, AgentRunIndicatorToolCall> {
+  return new Map(calls.map((call, index) => [index, { ...call }]));
+}
+
+function toolCallsText(calls: Map<number, AgentRunIndicatorToolCall>): string {
+  return [...calls.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, call]) => formatToolCall(call))
+    .filter(Boolean)
+    .join("\n");
+}
+
 function formatToolCall(call: AgentRunIndicatorToolCall): string {
-  return `${call.name} ${call.arguments}`;
+  return [call.name, call.arguments].filter(Boolean).join(" ");
 }
 
 function stateLabel(value: unknown): string {

@@ -32,11 +32,11 @@ test("chat loop forwards stream deltas to indicator", async () => {
         async appendContentDelta(delta) {
           calls.push(`indicator:${delta}`);
         },
-        async appendToolCall(input) {
+        async appendToolCallDelta(input) {
           calls.push(`tool:${JSON.stringify(input)}`);
         },
-        async finish() {
-          calls.push("finish");
+        async finish(output) {
+          calls.push(`finish:${output.reasoning}:${output.content}:${output.toolCalls.length}`);
         },
         async fail(error) {
           calls.push(`fail:${error instanceof Error ? error.message : String(error)}`);
@@ -50,7 +50,7 @@ test("chat loop forwards stream deltas to indicator", async () => {
       await request.streamHandlers?.onReasoningDelta?.("think");
       await request.streamHandlers?.onContentDelta?.("he");
       await request.streamHandlers?.onContentDelta?.("llo");
-      return { message: { role: "assistant", content: "hello" } };
+      return { message: { role: "assistant", content: "hello", reasoningContent: "think" } };
     }
   }));
 
@@ -60,7 +60,7 @@ test("chat loop forwards stream deltas to indicator", async () => {
   assert.equal(calls[0], "begin:chat:0");
   assert.deepEqual(calls.filter((call) => call.startsWith("indicator:")), ["indicator:he", "indicator:llo"]);
   assert.ok(calls.includes("reasoning:think"));
-  assert.ok(calls.includes("finish"));
+  assert.ok(calls.includes("finish:think:hello:0"));
 });
 
 test("chat loop preserves existing stream handler when indicator is configured", async () => {
@@ -70,7 +70,7 @@ test("chat loop preserves existing stream handler when indicator is configured",
       return {
         async appendReasoningDelta() {},
         async appendContentDelta() {},
-        async appendToolCall() {},
+        async appendToolCallDelta() {},
         async finish() {},
         async fail() {}
       };
@@ -97,17 +97,17 @@ test("chat loop preserves existing stream handler when indicator is configured",
   assert.deepEqual(calls, ["existing:he", "existing:llo"]);
 });
 
-test("chat loop forwards raw LLM tool calls to indicator", async () => {
+test("chat loop forwards final raw LLM tool calls to indicator output", async () => {
   const toolPayloads: string[] = [];
   const indicator: AgentRunIndicator = {
     async begin() {
       return {
         async appendReasoningDelta() {},
         async appendContentDelta() {},
-        async appendToolCall(call) {
-          toolPayloads.push(`${call.name}:${call.arguments}`);
+        async appendToolCallDelta() {},
+        async finish(output) {
+          for (const call of output.toolCalls) toolPayloads.push(`${call.name}:${call.arguments}`);
         },
-        async finish() {},
         async fail() {}
       };
     }
@@ -144,6 +144,59 @@ test("chat loop forwards raw LLM tool calls to indicator", async () => {
   ]);
 });
 
+test("chat loop forwards streaming LLM tool call deltas to indicator", async () => {
+  const calls: string[] = [];
+  const indicator: AgentRunIndicator = {
+    async begin() {
+      return {
+        async appendReasoningDelta() {},
+        async appendContentDelta() {},
+        async appendToolCallDelta(delta) {
+          calls.push(`delta:${delta.index}:${delta.id ?? ""}:${delta.name ?? ""}:${delta.arguments ?? ""}`);
+        },
+        async finish(output) {
+          for (const call of output.toolCalls) calls.push(`finish:${call.name}:${call.arguments}`);
+        },
+        async fail() {}
+      };
+    }
+  };
+  let requestCount = 0;
+  const loop = buildChatAgentLoop(loopInput({
+    agentRunIndicator: indicator,
+    toolPlugins: [demoToolPlugin()],
+    llmInput: { toolNames: ["Demo"] },
+    llmRequestSender: async (request) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        await request.streamHandlers?.onToolCallDelta?.({ index: 0, id: "call_1", type: "function", function: { name: "Demo" } });
+        await request.streamHandlers?.onToolCallDelta?.({ index: 0, function: { arguments: "{\"short\"" } });
+        await request.streamHandlers?.onToolCallDelta?.({ index: 0, function: { arguments: ":\"abc\"}" } });
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              { id: "call_1", type: "function", function: { name: "Demo", arguments: "{\"short\":\"abc\"}" } }
+            ]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    }
+  }));
+
+  const result = await runAgentFunctionCallLoop(loop.spec);
+
+  assert.equal(result.finalMessage.content, "done");
+  assert.deepEqual(calls.filter((call) => call.startsWith("delta:")), [
+    "delta:0:call_1:Demo:",
+    "delta:0:::{\"short\"",
+    "delta:0::::\"abc\"}"
+  ]);
+  assert.ok(calls.includes("finish:Demo:{\"short\":\"abc\"}"));
+});
+
 test("chat loop disables current indicator session after indicator delta failure", async () => {
   const errors: string[] = [];
   const calls: string[] = [];
@@ -155,7 +208,7 @@ test("chat loop disables current indicator session after indicator delta failure
       calls.push(`delta:${delta}`);
       throw new Error("indicator_down");
     },
-    async appendToolCall() {},
+    async appendToolCallDelta() {},
     async finish() {
       calls.push("finish");
     },

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { AgentRunIndicatorOutput } from "../../../src/contexts/agent-run-indicator/src/index.js";
 import {
   assertCardRecord,
   assertCreatedCard,
@@ -13,6 +14,14 @@ import {
   pairedStore,
   waitFor
 } from "./agent-run-indicator-helpers.js";
+
+function output(input: Partial<AgentRunIndicatorOutput> = {}): AgentRunIndicatorOutput {
+  return {
+    reasoning: input.reasoning ?? "",
+    content: input.content ?? "",
+    toolCalls: input.toolCalls ?? []
+  };
+}
 
 test("Feishu agent run indicator creates a card on begin", async () => {
   const store = memoryCardStore();
@@ -45,7 +54,7 @@ test("Feishu agent run indicator streams and flushes final content", async () =>
   await session.appendContentDelta("he");
   await session.appendReasoningDelta("think");
   await session.appendContentDelta("llo");
-  await session.finish();
+  await session.finish(output({ reasoning: "think", content: "hello" }));
 
   assertStreamState(client, true);
   assertStreamState(client, false);
@@ -69,7 +78,7 @@ test("Feishu agent run indicator saves final card content", async () => {
   await session.appendContentDelta("he");
   await session.appendReasoningDelta("think");
   await session.appendContentDelta("llo");
-  await session.finish();
+  await session.finish(output({ reasoning: "think", content: "hello" }));
 
   assertCardRecord(store, {
     messageId: "om_new",
@@ -95,10 +104,17 @@ test("Feishu agent run indicator renders raw LLM tool calls below content", asyn
 
   const session = await indicator.begin({ round: 0 });
   assert.ok(session);
-  await session.appendToolCall({ name: "Search", arguments: "{\"query\":\"alice\"}" });
-  await session.appendToolCall({ name: "Demo", arguments: "{\"short\":\"abc\"}" });
-  await session.appendToolCall({ name: "Demo", arguments: "{\"short\":\"abc\"}" });
-  await session.finish();
+  await session.appendToolCallDelta({ index: 0, id: "call_1", name: "Search" });
+  await session.appendToolCallDelta({ index: 0, arguments: "{\"query\":\"alice\"}" });
+  await session.appendToolCallDelta({ index: 1, id: "call_2", name: "Demo", arguments: "{\"short\":\"abc\"}" });
+  await session.appendToolCallDelta({ index: 2, id: "call_3", name: "Demo", arguments: "{\"short\":\"abc\"}" });
+  await session.finish(output({
+    toolCalls: [
+      { id: "call_1", name: "Search", arguments: "{\"query\":\"alice\"}" },
+      { id: "call_2", name: "Demo", arguments: "{\"short\":\"abc\"}" },
+      { id: "call_3", name: "Demo", arguments: "{\"short\":\"abc\"}" }
+    ]
+  }));
 
   const tools = "Search {\"query\":\"alice\"}\nDemo {\"short\":\"abc\"}\nDemo {\"short\":\"abc\"}";
   assertUpdateIncludes(client, "tools", tools);
@@ -111,6 +127,52 @@ test("Feishu agent run indicator renders raw LLM tool calls below content", asyn
     reasoning: "",
     content: "",
     tools
+  });
+});
+
+test("Feishu agent run indicator clears all output blocks on streamed tool-only output", async () => {
+  const store = memoryCardStore({
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 7,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+    state: "idle",
+    reasoning: "old thinking",
+    content: "old content",
+    tools: "old tool"
+  });
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 0,
+    getState: () => ({ state: "waiting" })
+  });
+
+  const session = await indicator.begin({ round: 0 });
+  assert.ok(session);
+  await session.appendToolCallDelta({ index: 0, id: "call_1", name: "Search" });
+  await session.appendToolCallDelta({ index: 0, arguments: "{\"query\":\"alice\"}" });
+  await waitFor(() => client.calls.some((call) => call.kind === "update" && call.block === "tools" && call.content === "Search {\"query\":\"alice\"}"));
+
+  assertUpdateIncludes(client, "reasoning", "");
+  assertUpdateIncludes(client, "content", "");
+  assertUpdateIncludes(client, "tools", "Search {\"query\":\"alice\"}");
+
+  await session.finish(output({
+    toolCalls: [{ id: "call_1", name: "Search", arguments: "{\"query\":\"alice\"}" }]
+  }));
+
+  assertCardRecord(store, {
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    updatedAt: fixedNow,
+    state: "waiting",
+    reasoning: "",
+    content: "",
+    tools: "Search {\"query\":\"alice\"}"
   });
 });
 
@@ -132,7 +194,7 @@ test("Feishu agent run indicator reuses persisted card and preserves empty block
 
   const session = await indicator.begin({ round: 0 });
   assert.ok(session);
-  await session.finish();
+  await session.finish(output());
 
   assert.equal(client.calls.some((call) => call.kind === "create"), false);
   assertStreamState(client, true);
@@ -174,7 +236,7 @@ test("Feishu agent run indicator clears previous blocks on streamed content", as
   assert.ok(session);
   await session.appendReasoningDelta("c");
   await session.appendContentDelta("co");
-  await session.finish();
+  await session.finish(output({ reasoning: "c", content: "co" }));
 
   assertUpdateIncludes(client, "reasoning", "c");
   assertUpdateIncludes(client, "content", "co");
@@ -227,7 +289,7 @@ test("Feishu agent run indicator streams current content while saving clean fina
   });
   await session.appendReasoningDelta("o");
   await session.appendContentDelta("o");
-  await session.finish();
+  await session.finish(output({ reasoning: "co", content: "co" }));
 
   assertUpdateIncludes(client, "reasoning", "c");
   assertUpdateIncludes(client, "content", "c");

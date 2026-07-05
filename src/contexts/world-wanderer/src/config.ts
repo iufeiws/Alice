@@ -29,6 +29,7 @@ export function validateWorldWandererConfig(config: WorldWandererConfig): string
   if (typeof config.mapsJavaScriptApiKey !== "string") return "invalid_maps_javascript_api_key";
   if (!Number.isFinite(config.speedMetersPerSecond) || config.speedMetersPerSecond < 0 || config.speedMetersPerSecond > 10) return "invalid_speed";
   if (!validLocation(config.initialLocation)) return "invalid_initial_location";
+  if (config.targetLocation && !validLocation(config.targetLocation)) return "invalid_target_location";
   if (!Number.isFinite(config.initialHeading) || config.initialHeading < 0 || config.initialHeading >= 360) return "invalid_initial_heading";
   if (!Number.isInteger(config.recentHistoryLimit) || config.recentHistoryLimit < 1 || config.recentHistoryLimit > 1000) return "invalid_recent_history_limit";
   if (!Number.isInteger(config.maxPanosPerIdle) || config.maxPanosPerIdle < 1 || config.maxPanosPerIdle > 100) return "invalid_max_panos_per_idle";
@@ -56,6 +57,7 @@ function normalizeWorldWandererConfig(parsed: Record<string, unknown>): WorldWan
     mapsJavaScriptApiKey: typeof parsed.mapsJavaScriptApiKey === "string" ? parsed.mapsJavaScriptApiKey : "",
     speedMetersPerSecond: numberValue(parsed.speedMetersPerSecond, 1.4),
     initialLocation,
+    targetLocation: locationValue(parsed.targetLocation, undefined),
     initialHeading: normalizeHeading(numberValue(parsed.initialHeading, 90)),
     recentHistoryLimit: integerValue(parsed.recentHistoryLimit, 100),
     maxPanosPerIdle: integerValue(parsed.maxPanosPerIdle, 10),

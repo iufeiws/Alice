@@ -2,7 +2,7 @@ import type {
   GoogleStreetViewLocation,
   GoogleStreetViewPanoGraphResult
 } from "../../../channels/google-streetview/src/index.js";
-import { readWorldWandererConfig } from "./config.js";
+import { readWorldWandererConfig, writeWorldWandererConfig } from "./config.js";
 import { distanceMeters, moveLocation, normalizeHeading } from "./geo.js";
 import { chooseNextLink } from "./policy.js";
 import {
@@ -19,6 +19,9 @@ import type {
   WorldWandererRuntime,
   WorldWandererState
 } from "./types.js";
+import { defaultWorldWandererPluginConfigPath } from "./types.js";
+
+const targetArrivalRadiusMeters = 50;
 
 export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWandererRuntime {
   const random = deps.random ?? Math.random;
@@ -29,7 +32,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
       return readWorldWandererConfig(deps.configPath).enabled;
     },
     async runIdleTransition(input) {
-      const config = readWorldWandererConfig(deps.configPath);
+      let config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return undefined;
 
       const previous = readWorldWandererState(deps.dbPath, config);
@@ -44,6 +47,11 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           const entry = pathEntryFromPano({ pano: currentPano, lastHeading: previous.lastHeading, time: updatedAt });
           pathStack = [entry];
           newPathEntries = [entry];
+        }
+        let targetLocation = config.targetLocation;
+        if (targetLocation && distanceMeters(currentPano.location, targetLocation) <= targetArrivalRadiusMeters) {
+          config = clearTargetLocation(config);
+          targetLocation = undefined;
         }
         if (!hasMovableLinks(currentPano)) {
           const nearbyPano = await findNearbyLinkedPano(currentPano.location);
@@ -69,6 +77,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
               pathStack
             },
             config,
+            targetLocation,
             random
           });
           if (!decision) {
@@ -91,6 +100,11 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           const entry = pathEntryFromPano({ pano: currentPano, lastHeading, time: updatedAt });
           pathStack = prunePathStack([...pathStack, entry], config.recentHistoryLimit);
           newPathEntries.push(entry);
+          if (targetLocation && distanceMeters(currentPano.location, targetLocation) <= targetArrivalRadiusMeters) {
+            config = clearTargetLocation(config);
+            targetLocation = undefined;
+            break;
+          }
         }
 
         const next = stateFromPath(pathStack, config);
@@ -130,6 +144,14 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
       return deps.googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId });
     }
     return deps.googleStreetView.getPanoGraphByCoordinates(config.initialLocation);
+  }
+
+  function clearTargetLocation(config: WorldWandererConfig): WorldWandererConfig {
+    const next = { ...config };
+    delete next.targetLocation;
+    writeWorldWandererConfig(deps.configPath ?? defaultWorldWandererPluginConfigPath, next);
+    deps.appendLog?.("info", "world wanderer target reached and cleared");
+    return next;
   }
 
   async function findNearbyLinkedPano(location: GoogleStreetViewLocation, avoidPanoIds = new Set<string>()): Promise<GoogleStreetViewPanoGraphResult | undefined> {

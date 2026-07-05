@@ -1,4 +1,5 @@
 import type {
+  GoogleStreetViewLocation,
   GoogleStreetViewPanoGraphLink,
   GoogleStreetViewPanoGraphResult
 } from "../../../channels/google-streetview/src/index.js";
@@ -7,12 +8,13 @@ import type {
   WorldWandererPathEntry,
   WorldWandererState
 } from "./types.js";
-import { headingDelta } from "./geo.js";
+import { bearingDegrees, headingDelta } from "./geo.js";
 
 export function chooseNextLink(input: {
   currentPano: GoogleStreetViewPanoGraphResult;
   state: Pick<WorldWandererState, "lastHeading" | "pathStack">;
   config: WorldWandererConfig;
+  targetLocation?: GoogleStreetViewLocation;
   random: () => number;
 }): { link: GoogleStreetViewPanoGraphLink; backtrack: boolean } | undefined {
   const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId);
@@ -24,7 +26,7 @@ export function chooseNextLink(input: {
 
   const scored = links.map((link) => ({
     link,
-    score: scoreLink(link, input.state, recentSet, input.config, previousRoadText)
+    score: scoreLink(link, input.currentPano.location, input.state, recentSet, input.config, previousRoadText, input.targetLocation)
   }));
   const selected = softmaxSelect(scored, input.config.selectionTemperature, input.random);
   if (!selected) return undefined;
@@ -36,14 +38,17 @@ export function chooseNextLink(input: {
 
 function scoreLink(
   link: GoogleStreetViewPanoGraphLink,
+  currentLocation: GoogleStreetViewLocation,
   state: Pick<WorldWandererState, "lastHeading">,
   recentSet: Set<string>,
   config: WorldWandererConfig,
-  previousRoadText?: string
+  previousRoadText?: string,
+  targetLocation?: GoogleStreetViewLocation
 ): number {
   const delta = headingDelta(link.heading, state.lastHeading);
   let score = recentSet.has(link.panoId) ? -config.loopPenalty : config.noveltyWeight;
   score += config.forwardWeight * (1 - delta / 180);
+  if (targetLocation) score += config.forwardWeight * (1 - headingDelta(link.heading, bearingDegrees(currentLocation, targetLocation)) / 180);
   if (previousRoadText && link.text && previousRoadText === link.text) score += config.roadContinuityWeight;
   if (delta >= 135) score -= config.uturnPenalty;
   return score;

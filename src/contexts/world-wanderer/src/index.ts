@@ -21,6 +21,7 @@ export {
   writeWorldWandererState
 } from "./state.js";
 export {
+  bearingDegrees,
   distanceMeters,
   moveLocation
 } from "./geo.js";

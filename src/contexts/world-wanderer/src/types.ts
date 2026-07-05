@@ -9,6 +9,7 @@ export type WorldWandererConfig = {
   mapsJavaScriptApiKey: string;
   speedMetersPerSecond: number;
   initialLocation: GoogleStreetViewLocation;
+  targetLocation?: GoogleStreetViewLocation;
   initialHeading: number;
   recentHistoryLimit: number;
   maxPanosPerIdle: number;

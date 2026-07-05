@@ -42,6 +42,16 @@ export function headingDelta(a: number, b: number): number {
   return Math.min(delta, 360 - delta);
 }
 
+export function bearingDegrees(a: GoogleStreetViewLocation, b: GoogleStreetViewLocation): number {
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const deltaLng = degreesToRadians(b.lng - a.lng);
+  return normalizeHeading(radiansToDegrees(Math.atan2(
+    Math.sin(deltaLng) * Math.cos(lat2),
+    Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng)
+  )));
+}
+
 export function normalizeHeading(value: number): number {
   return ((value % 360) + 360) % 360;
 }

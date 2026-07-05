@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createWorldWandererRuntime,
   distanceMeters,
+  readWorldWandererConfig,
   writeWorldWandererConfig,
   writeWorldWandererState
 } from "../../../src/contexts/world-wanderer/src/index.js";
@@ -117,6 +118,66 @@ test("world wanderer avoids recent loops when a novel link exists", async () => 
 
   assert.ok(state);
   assert.equal(state.panoId, "c");
+});
+
+test("world wanderer target direction policy uses forward weight", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({
+    initialHeading: 0,
+    initialLocation: { lat: 41, lng: 29 },
+    targetLocation: { lat: 41, lng: 29.01 },
+    speedMetersPerSecond: 0,
+    noveltyWeight: 0,
+    forwardWeight: 2,
+    roadContinuityWeight: 0,
+    uturnPenalty: 0,
+    loopPenalty: 0,
+    selectionTemperature: 0.01
+  }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [
+      { panoId: "east", heading: 90, text: "Road" },
+      { panoId: "west", heading: 270, text: "Road" }
+    ])],
+    ["east", pano("east", 41, 29.001, [])],
+    ["west", pano("west", 41, 28.999, [])]
+  ]);
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: graphGoogleStreetView(graph)
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.ok(state);
+  assert.equal(state.panoId, "east");
+});
+
+test("world wanderer clears target location when close enough", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({
+    initialLocation: { lat: 41, lng: 29 },
+    targetLocation: { lat: 41, lng: 29.0001 },
+    speedMetersPerSecond: 0
+  }));
+
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: graphGoogleStreetView(new Map([
+      ["a", pano("a", 41, 29, [])]
+    ]))
+  });
+
+  await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.equal(readWorldWandererConfig(configPath).targetLocation, undefined);
 });
 
 test("world wanderer probes nearby instead of backtracking at recent dead end", async () => {

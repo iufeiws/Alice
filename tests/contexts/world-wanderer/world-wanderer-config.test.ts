@@ -20,6 +20,7 @@ test("world wanderer config defaults to disabled with stable movement settings",
   assert.equal(config.libraryPrompt, "");
   assert.equal(config.mapsJavaScriptApiKey, "");
   assert.deepEqual(config.initialLocation, defaultWorldWandererInitialLocation);
+  assert.equal(config.targetLocation, undefined);
   assert.equal(config.initialHeading, 90);
   assert.equal(config.speedMetersPerSecond, 1.4);
   assert.equal(config.recentHistoryLimit, 100);

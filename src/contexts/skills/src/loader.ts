@@ -59,12 +59,9 @@ function validateLoadable(skill: SkillMetadata): void {
 function renderSkillInstructions(content: string, args: string): string {
   if (!args) return content;
   const positional = parseShellQuote(args, (key) => `$${key}`).filter((entry): entry is string => typeof entry === "string");
-  const hasPlaceholder = /\$ARGUMENTS(?:\[\d+])?|\$\d+/.test(content);
-  let rendered = content.replace(/\$ARGUMENTS(?:\[(\d+)])?|\$(\d+)/g, (_match, bracketIndex: string | undefined, dollarIndex: string | undefined) => {
+  return content.replace(/\$ARGUMENTS(?:\[(\d+)])?|\$(\d+)/g, (_match, bracketIndex: string | undefined, dollarIndex: string | undefined) => {
     if (bracketIndex !== undefined) return positional[Number(bracketIndex)] ?? "";
     if (dollarIndex !== undefined) return positional[Number(dollarIndex)] ?? "";
     return args;
   });
-  if (!hasPlaceholder) rendered = `${content.trimEnd()}\n\nARGUMENTS: ${args}\n`;
-  return rendered;
 }

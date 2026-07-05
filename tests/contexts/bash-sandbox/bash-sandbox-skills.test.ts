@@ -76,21 +76,6 @@ test("Skill tool mounts loaded skill resources read-write", async () => {
   assert.throws(() => loader.load("demo").resolveResource("../escape"), /escapes/);
 });
 
-test("Skill tool appends unused args", async () => {
-  const root = tmpDir("skill-unused-args");
-  writeSkill(root, "plain", "name: plain\ndescription: Plain skill.", "No placeholders\n");
-  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
-  const runtime = createBashSandboxRuntime({
-    config: testConfig({ skillMounts: [] }),
-    executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
-  });
-  const tools = createSkillsTools({ loader: createSkillLoader(registry, runtime) });
-
-  const loaded = await tools.execute({ id: "plain", toolName: "Skill", input: { skill: "plain", args: "alpha beta" } });
-
-  assert.match(String(loaded.output), /ARGUMENTS: alpha beta/);
-});
-
 test("Skill tool returns spec error codes", async () => {
   const root = tmpDir("skill-errors");
   writeSkill(root, "disabled", "name: disabled\ndescription: Disabled.\ndisabled: true", "Nope\n");

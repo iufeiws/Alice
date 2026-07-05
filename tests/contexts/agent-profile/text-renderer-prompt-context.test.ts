@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import { createPromptContextRuntime } from "../../../src/apps/api/bootstrap/prompt-context-runtime.js";
+import { createPromptContextRuntime } from "../../../src/contexts/prompt-context/src/index.js";
 
 test("prompt context runtime exposes available_skills from the actual variable tree", () => {
   const runtime = createPromptContextRuntime({

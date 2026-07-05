@@ -1,5 +1,5 @@
 import type { LLMToolCall } from "../../../llm-gateway/src/index.js";
-import { formatToolResultForLLM as renderToolResultForLLM, type LLMTextRenderer, type LLMTextVariables } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent, ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 
 export type AgentLoopToolExecutor = {
@@ -10,7 +10,7 @@ export type AgentLoopToolExecutor = {
 };
 
 export type AgentLoopToolExecutionOptions = {
-  variables?: LLMTextVariables | LLMTextRenderer;
+  variables?: PromptContextRuntime;
   agentLoopRunSeq?: number;
   llmSessionId?: number;
   llmCapabilities?: ToolExecutionContext["llmCapabilities"];
@@ -140,20 +140,26 @@ export function parseAgentLoopToolArguments(raw: string): Record<string, unknown
   }
 }
 
-export function formatAgentLoopToolResultForLLM(result: ToolResult, variables: LLMTextVariables | LLMTextRenderer = {}): string {
-  return renderToolResultForLLM(result, variables);
+export function formatAgentLoopToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined): string {
+  if (!runtime) throw new Error("prompt_context_runtime_required");
+  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
+  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
+  if (typeof result.output === "string") return runtime.renderText(result.output);
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  return JSON.stringify(result.output);
 }
 
 export function formatAgentLoopToolMessage(
   callId: string,
   toolName: string,
   result: ToolResult,
-  variables: LLMTextVariables | LLMTextRenderer = {}
+  variables: PromptContextRuntime | undefined
 ): AgentLoopExecutedToolCall["message"] {
   return {
     role: "tool",
     toolCallId: callId,
     name: toolName,
-    content: formatAgentLoopToolResultForLLM(result, variables)
+    content: formatAgentLoopToolMessageContent(result, variables)
   };
 }

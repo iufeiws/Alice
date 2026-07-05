@@ -7,8 +7,8 @@ import {
   sanitizeLLMResponseMessage,
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
-import { renderLLMValue, type LLMTextRenderer, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 
 export type LLMRequestLogEvent = {
   kind: "call_start" | "stream_start" | "stream_end" | "response_received";
@@ -30,7 +30,7 @@ export type LLMRequestsDeps = {
 
 export type LLMRequests = {
   send: LLMRequestSender;
-  buildTools(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer): LLMToolSpec[];
+  buildTools(toolNames: string[], runtime: PromptContextRuntime): LLMToolSpec[];
   cancelActive(reason?: string): boolean;
   isCancelRequested(): boolean;
   resetCancel(): void;
@@ -40,11 +40,12 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
   let activeController: AbortController | undefined;
   let cancelRequested = false;
 
-  function buildTools(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer): LLMToolSpec[] {
-    return buildToolsFromDefinitions(toolNames, variables);
+  function buildTools(toolNames: string[], runtime: PromptContextRuntime): LLMToolSpec[] {
+    return buildToolsFromDefinitions(toolNames, runtime);
   }
 
-  function buildToolsFromDefinitions(toolNames: string[], variables?: Record<string, unknown> | LLMTextRenderer, inlineTools: ToolDefinition[] = []): LLMToolSpec[] {
+  function buildToolsFromDefinitions(toolNames: string[], runtime: PromptContextRuntime | undefined, inlineTools: ToolDefinition[] = []): LLMToolSpec[] {
+    if (toolNames.length > 0 && !runtime) throw new Error("prompt_context_runtime_required");
     const seen = new Set<string>();
     const inlineToolMap = new Map(inlineTools.map((tool) => [tool.name, tool]));
     const tools: LLMToolSpec[] = [];
@@ -57,8 +58,8 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
         type: "function",
         function: {
           name: tool.name,
-          description: String(renderLLMValue(tool.description, variables as LLMTextVariables | LLMTextRenderer | undefined)),
-          parameters: renderLLMValue(tool.inputSchema, variables as LLMTextVariables | LLMTextRenderer | undefined) as Record<string, unknown>
+          description: runtime!.renderText(tool.description),
+          parameters: renderToolInputSchema(tool.inputSchema, runtime!)
         }
       });
     }
@@ -74,14 +75,13 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     const abort = () => requestController.abort();
     if (input.signal?.aborted) requestController.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
-    const renderedExtraParams = renderLLMValue(input.extraParams, input.toolVariables as LLMTextVariables | LLMTextRenderer | undefined);
-    const useStream = (input.stream === true || renderedExtraParams?.stream === true) && Boolean(client.chatStream);
+    const useStream = (input.stream === true || input.extraParams?.stream === true) && Boolean(client.chatStream);
     const request: LLMChatInput = {
       messages: sanitizeLLMRequestMessages(input.messages, deps.messageSanitization),
       model: input.model,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
-      extraParams: withStreamUsageOptions(renderedExtraParams, useStream),
+      extraParams: withStreamUsageOptions(input.extraParams, useStream),
       presetName: input.presetName,
       tools: buildToolsFromDefinitions(input.toolNames, input.toolVariables, input.inlineTools),
       signal: requestController.signal
@@ -136,6 +136,22 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       cancelRequested = false;
     }
   };
+}
+
+function renderToolInputSchema(schema: Record<string, unknown>, runtime: PromptContextRuntime): Record<string, unknown> {
+  return renderJsonSchemaNode(schema, runtime) as Record<string, unknown>;
+}
+
+function renderJsonSchemaNode(value: unknown, runtime: PromptContextRuntime): unknown {
+  if (Array.isArray(value)) return value.map((entry) => renderJsonSchemaNode(entry, runtime));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+    if ((key === "description" || key === "title") && typeof entry === "string") return [key, runtime.renderText(entry)];
+    if (key === "properties" || key === "$defs" || key === "definitions" || key === "items" || key === "anyOf" || key === "oneOf" || key === "allOf") {
+      return [key, renderJsonSchemaNode(entry, runtime)];
+    }
+    return [key, entry];
+  }));
 }
 
 function sanitizeLLMChatResult(result: LLMChatResult, options?: LLMMessageSanitizationOptions): LLMChatResult {

@@ -1,5 +1,6 @@
 import { formatCheckChatMessages } from "../../../../capabilities/tools/messaging/src/index.js";
 import { createLLMClientFromPreset } from "../../../llm-gateway/src/llm-api-profile.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { MemorySummaryConfig } from "../contracts/memory-config.js";
 import {
   buildMemoryPromptPreview,
@@ -54,6 +55,7 @@ type MemoryAdminRuntimeInput = {
   memoryStore: MemoryStore;
   diaryStore: any;
   memoryInductionPromptStore: MemoryInductionPromptStore;
+  promptContextRuntime: PromptContextRuntime;
   agentState: { getSnapshot(): { state: string } };
   isHeartbeatPaused?: () => boolean;
   time: { timeZone: string; now(): { iso: string; date: Date } };
@@ -189,6 +191,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
     const preview = buildMemoryPromptPreview({
       memoryStore: input.memoryStore,
       prompts: prompts ?? input.memoryInductionPromptStore.get(),
+      promptContextRuntime: input.promptContextRuntime,
       messages,
       windowStartAt: window.startAt,
       windowEndAt: window.endAt,
@@ -249,6 +252,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
     return await runMemoryInductionForMessages({
       memoryStore: input.memoryStore,
       promptStore: input.memoryInductionPromptStore,
+      promptContextRuntime: input.promptContextRuntime,
       messages,
       windowStartAt,
       windowEndAt,

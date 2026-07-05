@@ -1,13 +1,12 @@
 import { createTalkAgentLoopForSession } from "../../../src/contexts/agent-loop/src/application/run-talk-loop.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import type { LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 export function testPromptRenderer() {
-  return createLLMTextVariableRenderer({
-    variables: () => buildLLMTextVariables({ userName: "user", time: createCurrentTimeProvider("UTC") })
-  });
+  const time = createCurrentTimeProvider("UTC").now();
+  return testPromptRuntime({ user: "user", date_time: time.iso.slice(0, 19).replace("T", " "), time: time.iso.slice(11, 19), date: time.iso.slice(0, 10), timezone: time.timeZone });
 }
 
 export async function runPreparedTalkAgentLoop(controller: ReturnType<typeof createTalkAgentLoopForSession>, sessionId: number): Promise<void> {

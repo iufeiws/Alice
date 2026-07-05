@@ -15,6 +15,7 @@ import type {
 } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { LLMClient, LLMToolCall } from "../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { sanitizeAudioTranscript } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const tencentLocalAudioUploadLimitBytes = 5 * 1024 * 1024;
@@ -167,6 +168,7 @@ export type AsrPluginDeps = {
   sleep?(ms: number): Promise<void>;
   splitAudio?(input: AsrSplitAudioInput): Promise<AsrAudioChunk[]>;
   llmRequestSender?: LLMRequestSender;
+  promptRenderer?: PromptContextRuntime | (() => PromptContextRuntime);
   createLlmClientFromPreset?(preset: AsrApiPreset, env: Record<string, string | undefined>): LLMClient | undefined;
   now?(): Date;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
@@ -785,7 +787,7 @@ async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPlu
   const providerConfig = config.providers.multimodalLlm;
   const preset = providerConfig?.apiPresetName ? deps.resolveApiPreset?.(providerConfig.apiPresetName) : undefined;
   const client = preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined;
-  const prompt = providerConfig?.prompt ?? defaultMultimodalLlmAsrPrompt;
+  const prompt = renderAsrPrompt(providerConfig?.prompt ?? defaultMultimodalLlmAsrPrompt, deps);
   if (!providerConfig?.apiPresetName || !preset || !client || !deps.llmRequestSender || !prompt) {
     throw new AsrConfigError("missing_provider_config");
   }
@@ -808,12 +810,6 @@ async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPlu
     extraParams: providerConfig.extraParams ?? defaultMultimodalLlmAsrExtraParams(),
     toolNames: [submitAudioContextTool.name],
     inlineTools: [submitAudioContextTool],
-    toolVariables: {
-      provider: "multimodal_llm",
-      filename: input.filename || audio.filename,
-      mimeType,
-      metadata: input.metadata ?? {}
-    },
     round: 0,
     stream: false,
     metadata: {
@@ -832,6 +828,12 @@ async function transcribeMultimodalLlm(input: AsrTranscribeInput, config: AsrPlu
     requestId: result.id,
     raw: result.raw
   };
+}
+
+function renderAsrPrompt(prompt: string, deps: AsrPluginDeps): string {
+  if (!deps.promptRenderer) return prompt;
+  const renderer = typeof deps.promptRenderer === "function" ? deps.promptRenderer() : deps.promptRenderer;
+  return renderer.renderText(prompt);
 }
 
 async function transcribeTencent(input: AsrTranscribeInput, config: AsrPluginConfig, deps: AsrPluginDeps): Promise<AsrTranscribeResult> {

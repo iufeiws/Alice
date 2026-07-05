@@ -1,8 +1,12 @@
 import { createMarkdownMemoryStore, createMemoryInductionPromptStore, createSleepMemoryStateStore, runSleepMemoryBackfill } from "../src/contexts/memory/src/memory.js";
+import { createDiaryStore } from "../src/platform/storage/src/diary-store.js";
 import { createOpenAICompatibleClient } from "../src/contexts/llm-gateway/src/index.js";
 import { createMutableCurrentTimeProvider } from "../src/platform/time/src/index.js";
 import { loadConfig } from "../src/apps/api/bootstrap/app-config-runtime.js";
+import { createPromptContextRuntime } from "../src/contexts/prompt-context/src/index.js";
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
+import { createSkillRegistry } from "../src/contexts/skills/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -14,6 +18,23 @@ const currentTime = createMutableCurrentTimeProvider(config.core.timezone);
 const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const promptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
 const stateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));
+const calendarStore = createCalendarStore(path.join(config.memoryFiles.root, "alice.sqlite"));
+const skillsRegistry = createSkillRegistry({
+  roots: [
+    { root: config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
+    { root: config.skills?.installedRoot ?? ".agents/skills", source: "third-party" }
+  ]
+});
+const promptContextRuntime = createPromptContextRuntime({
+  username: config.project.username,
+  time: currentTime,
+  dailyShellStore: { get: () => undefined },
+  coreProfileStore: { get: () => ({}) },
+  memoryStore,
+  diaryStore: createDiaryStore(path.join(config.memoryFiles.root, "alice.sqlite")),
+  calendarStore,
+  skillsRegistry
+});
 const store = createAliceStore(path.join(config.memoryFiles.root, "alice.sqlite"), {
   time: currentTime,
   messageLogDbPath: path.join("logs", "message", "message-logs.sqlite")
@@ -32,6 +53,7 @@ const llm = config.memorySummary.enabled && config.memorySummary.apiKey
 const result = await runSleepMemoryBackfill({
   memoryStore,
   promptStore,
+  promptContextRuntime,
   stateStore,
   messageStore: store,
   llm,

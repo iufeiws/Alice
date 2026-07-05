@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registerLLMToolLoopTools, runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatResult } from "../../../src/contexts/llm-gateway/src/index.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("LLM tool loop throws on repeated assistant messages ignoring tool call id", async () => {
   let requests = 0;
@@ -33,7 +34,7 @@ test("LLM tool loop throws on repeated assistant messages ignoring tool call id"
     runLLMToolLoop({
       initialMessages: [{ role: "user", content: "start" }],
       buildRequest({ messages }) {
-        return { agentId: "chat", messages, toolNames: [] };
+        return { agentId: "chat", messages, toolNames: [], toolVariables: testPromptRuntime() };
       },
       async sendRequest() {
         requests += 1;

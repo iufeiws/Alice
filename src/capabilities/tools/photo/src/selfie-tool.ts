@@ -1,7 +1,7 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { buildLLMTextVariables, renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
+import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { normalizePhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig } from "./config.js";
 import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, runPhotoGateway, validateGeneratedImage, type ImageGenerationProvider, type ImageGenerationProviderInput, type ImageGenerationProviderResult } from "../../../../channels/image-generation/src/index.js";
 import { extractSentMessageId, sendImage, sendSelfieFailureNotice, sendText, type PhotoSendDeps } from "./send-output.js";
@@ -45,6 +45,7 @@ export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
   selfieExecutor?: SelfieExecutor;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   getSelfieContext?(): SelfieContext;
+  promptContextRuntime: PromptContextRuntime;
   getUserName?: () => string;
   getAppearanceDescription?: () => string;
   getDefaultTarget?(): PhotoToolTarget | undefined;
@@ -102,7 +103,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const references = await resolveReferenceImages(context);
-      const prompt = buildSelfiePrompt(pose, context);
+      const prompt = buildSelfiePrompt();
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -192,53 +193,19 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(pose: string, context: SelfieContext): string {
+  function buildSelfiePrompt(): string {
     const photoConfig = runtimePhotoConfig();
     const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
-    const prompt = renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"), pose, context);
+    const prompt = renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"));
     return photoConfig.selfie2DinRealEnabled && photoConfig.selfie2DinRealPrompt
-      ? `${prompt}\n\n${photoConfig.selfie2DinRealPrompt}`
+      ? `${prompt}\n\n${renderSelfiePrompt(photoConfig.selfie2DinRealPrompt)}`
       : prompt;
   }
 
-  function renderSelfiePrompt(template: string, pose: string, context: SelfieContext): string {
-    const now = time.now();
-    return renderLLMText(template, {
-      ...buildLLMTextVariables({
-        userName: deps.getUserName?.() || "user",
-        time,
-        appearanceDescription: deps.getAppearanceDescription?.() ?? context.appearanceDescription ?? "",
-        dailyShellRaw: {
-          date: now.iso.slice(0, 10),
-          dateUtc: now.date.toISOString().slice(0, 10),
-          createdAt: now.iso,
-          createdAtUtc: now.date.toISOString(),
-          personality: {
-            id: context.personalityName,
-            name: context.personalityName,
-            content: context.personalityContent
-          },
-          relationship: {
-            id: "",
-            name: "",
-            content: ""
-          },
-          outfit: {
-            id: context.outfitId,
-            name: context.outfitName,
-            content: context.outfitContent,
-            ...(context.outfitImageUrl ? { imageUrl: context.outfitImageUrl } : {}),
-            ...(context.onBodyImageUrl ? { onBodyImageUrl: context.onBodyImageUrl } : {}),
-            ...(context.outfitImageGenerated ? { outfitImageGenerated: context.outfitImageGenerated } : {}),
-            ...(context.onBodyGenerationAttempted ? { onBodyGenerationAttempted: context.onBodyGenerationAttempted } : {})
-          }
-        }
-      }),
-      user: deps.getUserName?.() || "user",
-      pose,
-    });
+  function renderSelfiePrompt(template: string): string {
+    return deps.promptContextRuntime.renderText(template);
   }
 
   async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; usesOnBodyReference: boolean; worldWandererStreetViewImage?: string }> {

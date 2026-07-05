@@ -250,10 +250,10 @@ test("admin photo on-body generation writes beside outfit image", async () => {
 });
 
 test("admin photo on-body generation renders configured outfit prompt", async () => {
-  const { response, renderedPrompt } = await runSuccessfulOnBodyGeneration();
+  const { response, renderedPrompt, expectedPrompt } = await runSuccessfulOnBodyGeneration();
 
   assert.equal(response.statusCode, 200, response.body);
-  assert.equal(renderedPrompt, "configured-prompt black dress");
+  assert.equal(renderedPrompt, expectedPrompt);
 });
 
 test("admin photo on-body generation marks successful outfit attempts", async () => {
@@ -320,7 +320,8 @@ async function runSuccessfulOnBodyGeneration() {
     const expectedImageUrl = path.join(path.dirname(path.relative(root, outfitPath)), "dress_1.On_Body_Ref.jpg");
     const outputPath = path.join(path.dirname(outfitPath), "dress_1.On_Body_Ref.jpg");
     const attempted = dailyShellStore.getConfig(new Date("2026-05-24T06:00:00.000Z"), "Asia/Shanghai").outfits.find((outfit) => outfit.id === "dress_1")?.onBodyGenerationAttempted;
-    return { response, body, expectedImageUrl, outputPath, renderedPrompt, attempted };
+    const expectedPrompt = context.getPromptRenderer().renderText("configured-prompt {{outfit/content}}");
+    return { response, body, expectedImageUrl, outputPath, renderedPrompt, expectedPrompt, attempted };
   } finally {
     globalThis.fetch = previousFetch;
     process.chdir(previousCwd);
@@ -329,11 +330,9 @@ async function runSuccessfulOnBodyGeneration() {
 
 test("admin photo on-body generation marks requests before upstream call", async () => {
   let sawLockedRequest = false;
-  const fixture = createOnBodyFailureFixture((prompt, readAttempted) => {
-    if (prompt.includes("busy")) {
-      sawLockedRequest = true;
-      assert.equal(readAttempted("busy"), true);
-    }
+  const fixture = createOnBodyFailureFixture((_prompt, readAttempted) => {
+    sawLockedRequest = true;
+    assert.equal(readAttempted("busy"), true);
     return new Response("upstream busy", { status: 503, statusText: "Service Unavailable" });
   });
 
@@ -379,8 +378,8 @@ test("admin photo on-body generation keeps failed retry attempts", async () => {
 });
 
 test("admin photo on-body generation marks blocked retries as attempted", async () => {
-  const fixture = createOnBodyFailureFixture((prompt) => {
-    if (prompt.includes("blocked")) return new Response(JSON.stringify({ error: { message: "rejected by safety system" } }), { status: 400, statusText: "Bad Request" });
+  const fixture = createOnBodyFailureFixture((_prompt, readAttempted) => {
+    if (readAttempted("blocked") === true) return new Response(JSON.stringify({ error: { message: "rejected by safety system" } }), { status: 400, statusText: "Bad Request" });
     return new Response("upstream busy", { status: 503, statusText: "Service Unavailable" });
   });
 

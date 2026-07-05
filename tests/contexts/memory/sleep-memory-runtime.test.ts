@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -25,6 +26,7 @@ test("memorizeLoop_failedCompletion_doesNotCommitStagedEdit", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -85,6 +87,7 @@ test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -114,6 +117,7 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -161,6 +165,7 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -193,6 +198,7 @@ test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => 
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -259,6 +265,7 @@ async function runMemorySession(name: string) {
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",

@@ -1,5 +1,5 @@
 import { createAdminRequestHandlerRuntime } from "./admin-context-runtime.js";
-import { promptVariableTree } from "./prompt-context-runtime.js";
+import { promptVariableTree } from "../../../contexts/prompt-context/src/index.js";
 import type { ApiRuntimeState } from "../server/api-lifecycle-runtime.js";
 
 export function createApiAdminRuntime(input: {

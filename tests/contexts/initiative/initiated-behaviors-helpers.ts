@@ -3,12 +3,12 @@ import path from "node:path";
 import os from "node:os";
 import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile, PromptRenderContext } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type {
   AgentInitiatedBehaviorPlan,
   AgentInitiatedBehaviorPromptProfile
 } from "../../../src/contexts/initiative/src/domain/initiated-behavior.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 export function tempPath(name: string, fileName: string): string {
   const dir = path.join(os.tmpdir(), "alice-tests", `${name}-${process.pid}-${Date.now()}`);
@@ -39,9 +39,7 @@ export function visiblePromptProfile(visibleTools: PromptProfile["visibleTools"]
 export function promptRenderContext(userName = "YY"): PromptRenderContext {
   const time = createCurrentTimeProvider("UTC");
   return {
-    renderer: createLLMTextVariableRenderer({
-      variables: () => buildLLMTextVariables({ userName, time })
-    }),
+    renderer: testPromptRuntime({ user: userName, timezone: time.timeZone }),
     event: textEvent(),
     time
   };

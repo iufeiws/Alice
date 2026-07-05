@@ -4,7 +4,6 @@ import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTe
 import type { LLMRequestSenderInput } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { AgentEvent, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../../../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../src/contexts/agent-loop/src/ports/policy.js";

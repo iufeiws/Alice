@@ -1,5 +1,5 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
-import type { LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 
 export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
 
@@ -51,7 +51,7 @@ export function normalizePromptLayers(
 
 export function promptLayerToMessage(
   layer: PromptLayer,
-  renderer: LLMTextRenderer,
+  renderer: PromptContextRuntime,
   options: PromptLayerParserOptions = {}
 ): LLMMessage {
   if (layer.role === "tool_request") {
@@ -99,7 +99,7 @@ function defaultPromptLayerName(role: PromptLayerRole): string | undefined {
   return role === "user" ? "{{user}}" : undefined;
 }
 
-function renderPromptLayerName(layer: PromptLayer, renderer: LLMTextRenderer): string | undefined {
+function renderPromptLayerName(layer: PromptLayer, renderer: PromptContextRuntime): string | undefined {
   return layer.name ? renderer.renderText(layer.name) : undefined;
 }
 

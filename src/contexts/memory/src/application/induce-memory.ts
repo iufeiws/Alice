@@ -1,6 +1,7 @@
 import type { SleepMemoryInductionConfig } from "../contracts/memory-config.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { createAliceStore } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { DiaryStore } from "../../../../platform/storage/src/diary-store.js";
 import {
@@ -20,6 +21,7 @@ export function createSleepMemoryInductionRuntime(input: {
   config: SleepMemoryInductionConfig;
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
+  promptContextRuntime: PromptContextRuntime;
   stateStore: SleepMemoryStateStore;
   diaryStore: DiaryStore;
   getMessageStore(): AliceStore | undefined;
@@ -68,6 +70,7 @@ export function createSleepMemoryInductionRuntime(input: {
       const ok = await runSleepMemoryInduction({
         memoryStore: input.memoryStore,
         promptStore: input.promptStore,
+        promptContextRuntime: input.promptContextRuntime,
         stateStore: input.stateStore,
         diaryStore: input.diaryStore,
         messageStore,

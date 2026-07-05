@@ -6,14 +6,14 @@ import {
   buildPromptMessagesWithToolResults,
   type PromptRenderContext
 } from "./build-system-prompt.js";
-import type { LLMTextRenderer } from "./llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import { memoryToolDefinitions } from "../../../memory/src/memory.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
-  getPromptRenderer(): LLMTextRenderer;
+  getPromptRenderer(): PromptContextRuntime;
   toolPlugins: any[];
-  llmRequests: { buildTools(names: string[], renderer: LLMTextRenderer): LLMChatInput["tools"] };
+  llmRequests: { buildTools(names: string[], renderer: PromptContextRuntime): LLMChatInput["tools"] };
   messagingTools: { execute(call: any): Promise<unknown> | unknown };
 }) {
   return {

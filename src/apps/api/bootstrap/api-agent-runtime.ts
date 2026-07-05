@@ -1,6 +1,6 @@
 import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime/chat-agent-runtime.js";
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
-import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 
 export function createApiAgentRuntime(input: {
   config: any;
@@ -13,7 +13,7 @@ export function createApiAgentRuntime(input: {
   promptProfileStore: any;
   talkPromptProfileStore: any;
   time: any;
-  getPromptRenderer(): LLMTextRenderer;
+  getPromptRenderer(): PromptContextRuntime;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;

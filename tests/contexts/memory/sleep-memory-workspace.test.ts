@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import path from "node:path";
 import {
@@ -25,6 +26,7 @@ test("workspaceEdit_validPatch_updatesLongTermMemory", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -48,6 +50,7 @@ test("workspaceEdit_exactMiss_leavesMemoryUnchanged", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -71,6 +74,7 @@ test("workspaceEdit_markdownBullet_updatesLine", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -108,6 +112,7 @@ test("workspaceEdit_multipleRegions_appliesAllEdits", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -143,6 +148,7 @@ test("workspaceEdit_ambiguousMatch_keepsMemoryUnchanged", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -174,6 +180,7 @@ test("workspaceInduction_allTargetsCommitAfterCompletion", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -205,6 +212,7 @@ test("memorySelfTalk_validContent_returnsToolResult", async () => {
   const result = await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",

@@ -1,8 +1,8 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
 import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
-import { formatToolResultForLLM, type LLMTextRenderer } from "../../agent-profile/src/application/llm-text-renderer.js";
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
 import { promptLayerToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
+import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
 
@@ -17,7 +17,7 @@ export type LLMRequestSenderInput = {
   presetName?: string;
   toolNames: string[];
   inlineTools?: ToolDefinition[];
-  toolVariables?: Record<string, unknown> | LLMTextRenderer;
+  toolVariables?: PromptContextRuntime;
   round: number;
   stream?: boolean;
   streamHandlers?: LLMStreamHandlers;
@@ -356,17 +356,10 @@ function consumePendingUserMessageInterruptMessages(input: LLMToolLoopInput, req
   if (!input.promptProfile) return [];
   const layer = normalizePromptProfile(input.promptProfile).interruptLayer;
   if (!layer?.enabled) return [];
-  const renderer = llmTextRenderer(request.toolVariables);
-  if (!renderer) return [];
+  if (!request.toolVariables) throw new Error("prompt_context_runtime_required");
   if (input.runtimeInterrupts?.hasPendingUserMessage() !== true) return [];
   if (input.runtimeInterrupts.consumePendingUserMessage() !== true) return [];
-  return [promptLayerToMessage(layer, renderer)];
-}
-
-function llmTextRenderer(value: LLMToolLoopRoundRequest["toolVariables"]): LLMTextRenderer | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const renderer = value as Partial<LLMTextRenderer>;
-  return typeof renderer.renderText === "function" ? renderer as LLMTextRenderer : undefined;
+  return [promptLayerToMessage(layer, request.toolVariables)];
 }
 
 async function executeTool(
@@ -398,7 +391,7 @@ async function executeTool(
     role: "tool" as const,
     toolCallId: call.id,
     name: call.function.name,
-    content: formatToolResultForLLM(toolResult, request.toolVariables as Parameters<typeof formatToolResultForLLM>[1])
+    content: formatToolMessageContent(toolResult, request.toolVariables)
   };
   return await input.afterToolResult?.({
     ...context,
@@ -410,6 +403,16 @@ async function executeTool(
     message: toolMessage,
     control: toolControlFromResult(toolResult)
   };
+}
+
+function formatToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined): string {
+  if (!runtime) throw new Error("prompt_context_runtime_required");
+  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
+  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
+  if (typeof result.output === "string") return runtime.renderText(result.output);
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  return JSON.stringify(result.output);
 }
 
 function toolPluginForCall(registryName: string, toolName: string): ToolPlugin {

@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools } from "../../../../src/capabilities/tools/photo/src/index.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -24,7 +25,7 @@ test("selfie_missingOutfitImage_usesTextOutfitAndSendsImage", async () => {
   writeReferenceFiles(referenceRoot);
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -73,7 +74,7 @@ test("selfie_worldWandererStreetviewAvailable_usesStreetviewAsThirdReference", a
   fs.writeFileSync(streetViewImage, fakeJpegBytes);
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -123,7 +124,7 @@ test("selfie_worldWandererWithoutOutfit_keepsStreetviewReference", async () => {
   fs.writeFileSync(streetViewImage, fakeJpegBytes);
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -166,7 +167,7 @@ test("selfie_worldWandererLookupFails_returnsErrorWithoutRunningExecutor", async
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -208,7 +209,7 @@ test("selfie_worldWandererLookupFails_sendsFailureNotice", async () => {
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -251,7 +252,7 @@ test("selfie_requiredReferenceMissing_sendsStartThenFailureNotice", async () => 
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -294,7 +295,7 @@ test("selfie_generatedFileMissing_returnsMissingFileError", async () => {
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -333,7 +334,7 @@ test("selfie_generatedFileMissing_cleansWorkDir", async () => {
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -372,7 +373,7 @@ test("selfie_generatedFileMissing_sendsFailureNotice", async () => {
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -409,7 +410,7 @@ test("selfie_outputDirOutsideAssets_returnsContractError", async () => {
   fs.writeFileSync(outfitImage, "dress-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: makeTempDir("selfie-outside"),

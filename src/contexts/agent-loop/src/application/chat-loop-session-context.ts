@@ -1,8 +1,8 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput, LLMToolCall } from "../../../llm-gateway/src/index.js";
-import type { LLMTextRenderer, LLMTextVariables } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
-import { formatAgentLoopToolResultForLLM, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
+import { formatAgentLoopToolMessageContent, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import type { ChatAgentLoopInput, ChatAgentLoopSession, ChatAgentModeState } from "./run-chat-loop.js";
 
 export async function buildWaitChatResumeMessages(input: {
@@ -10,7 +10,7 @@ export async function buildWaitChatResumeMessages(input: {
   event: AgentEvent;
   toolPlugins: ToolPlugin[];
   time: CurrentTimeProvider;
-  buildTextVariables(event: AgentEvent): LLMTextRenderer;
+  buildTextVariables(event: AgentEvent): PromptContextRuntime;
   onLLMLog?: ChatAgentLoopInput["onLLMLog"];
 }): Promise<LLMChatInput["messages"]> {
   const pending = pendingWaitChatToolCalls(input.session.messages);
@@ -46,7 +46,7 @@ export async function buildWaitChatResumeMessages(input: {
       role: "tool",
       toolCallId: call.id,
       name: call.function.name,
-      content: formatToolResultForLLM(result, textVariables)
+      content: formatToolMessageContent(result, textVariables)
     });
   }
   return messages;
@@ -198,8 +198,8 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-function formatToolResultForLLM(result: ToolResult, variables: LLMTextVariables | LLMTextRenderer = {}): string {
-  return formatAgentLoopToolResultForLLM(result, variables);
+function formatToolMessageContent(result: ToolResult, variables: PromptContextRuntime): string {
+  return formatAgentLoopToolMessageContent(result, variables);
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {

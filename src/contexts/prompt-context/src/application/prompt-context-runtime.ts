@@ -1,15 +1,19 @@
-import { buildCalendarContext } from "../../../capabilities/tools/calendar/src/index.js";
-import {
-  createLLMTextRenderer,
-  type LLMTextRenderer,
-  type LLMTextShellOption,
-  type LLMTextValue
-} from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
-import { formatAvailableSkillsXml } from "../../../contexts/skills/src/index.js";
-import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../contexts/world-wanderer/src/index.js";
-import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
+import { formatAvailableSkillsXml } from "../../../../contexts/skills/src/index.js";
+import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
 
-export type PromptContextRuntime = LLMTextRenderer;
+export type PromptContextShellOption = {
+  id: string;
+  name: string;
+  content: string;
+  group?: string;
+  imageUrl?: string;
+  onBodyImageUrl?: string;
+  outfitImageGenerated?: boolean;
+  onBodyGenerationAttempted?: boolean;
+};
 
 const memoryTargets = ["persistent", "userPreferences", "yesterdaySummary"] as const;
 const optionFields = ["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"] as const;
@@ -54,13 +58,19 @@ export function createPromptContextRuntime(input: {
   skillsRegistry: any;
   worldWandererConfigPath?: string;
 }): PromptContextRuntime {
-  const renderer = createLLMTextRenderer({
+  const runtime: PromptContextRuntime = {
+    renderText(content) {
+      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
+        const resolved = runtime.getVariable(key);
+        return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
+      });
+    },
     getVariable,
     listVariables: () => [...variableNames]
-  });
-  return renderer;
+  };
+  return runtime;
 
-  function getVariable(name: string): LLMTextValue {
+  function getVariable(name: string): PromptContextValue {
     if (name === "user") return input.username.trim() || "user";
     const time = timeVariable(name);
     if (time !== undefined) return time;
@@ -92,7 +102,7 @@ export function createPromptContextRuntime(input: {
     } as Record<string, string | Date>;
   }
 
-  function timeVariable(name: string): LLMTextValue {
+  function timeVariable(name: string): PromptContextValue {
     if (!["date_time", "date_time_utc", "time", "time_utc", "date", "date_utc", "weekday", "weekday_utc", "timezone"].includes(name)) return undefined;
     return currentTime()[name] as string;
   }
@@ -106,11 +116,11 @@ export function createPromptContextRuntime(input: {
     return worldWanderer.enabled ? worldWanderer.libraryPrompt : coreProfile().librarySetting ?? "";
   }
 
-  function dailyShell(): { date: string; createdAt: string; personality: LLMTextShellOption; relationship: LLMTextShellOption; outfit: LLMTextShellOption } | undefined {
-    return input.dailyShellStore.get(currentTime().dateObject, input.time.timeZone) as { date: string; createdAt: string; personality: LLMTextShellOption; relationship: LLMTextShellOption; outfit: LLMTextShellOption } | undefined;
+  function dailyShell(): { date: string; createdAt: string; personality: PromptContextShellOption; relationship: PromptContextShellOption; outfit: PromptContextShellOption } | undefined {
+    return input.dailyShellStore.get(currentTime().dateObject, input.time.timeZone) as { date: string; createdAt: string; personality: PromptContextShellOption; relationship: PromptContextShellOption; outfit: PromptContextShellOption } | undefined;
   }
 
-  function dailyShellVariable(name: string): LLMTextValue {
+  function dailyShellVariable(name: string): PromptContextValue {
     const shell = dailyShell();
     const key = name.slice("dailyShell/".length);
     if (key === "date") return shell?.date ?? "";
@@ -120,14 +130,14 @@ export function createPromptContextRuntime(input: {
     return undefined;
   }
 
-  function optionVariable(option: LLMTextShellOption | undefined, field: string): LLMTextValue {
+  function optionVariable(option: PromptContextShellOption | undefined, field: string): PromptContextValue {
     if (!optionFields.includes(field as (typeof optionFields)[number])) return undefined;
-    const value = option?.[field as keyof LLMTextShellOption];
+    const value = option?.[field as keyof PromptContextShellOption];
     if (typeof value === "boolean") return value;
     return value ?? "";
   }
 
-  function memoryVariable(name: string): LLMTextValue {
+  function memoryVariable(name: string): PromptContextValue {
     const [, target, field, metric] = name.split("/");
     if (!memoryTargets.includes(target as (typeof memoryTargets)[number])) return undefined;
     if (field === "content") return (input.memoryStore.read() as Record<string, string | undefined>)[target] ?? "";
@@ -135,7 +145,7 @@ export function createPromptContextRuntime(input: {
     return undefined;
   }
 
-  function wakeBoundaryVariable(name: string): LLMTextValue {
+  function wakeBoundaryVariable(name: string): PromptContextValue {
     const boundary = input.diaryStore.latestWakeBoundary() as { occurredAt?: string; occurredAtUtc?: string } | undefined;
     const key = name.slice("wakeBoundary/".length);
     if (key === "occurredAt") return boundary?.occurredAt ?? "";
@@ -164,23 +174,6 @@ export function createPromptContextRuntime(input: {
       userName: input.username
     });
   }
-}
-
-export function promptVariableTree(renderer: LLMTextRenderer): Record<string, LLMTextValue> {
-  const out: Record<string, LLMTextValue> = {};
-  for (const name of renderer.listVariables()) setPath(out, name, renderer.getVariable(name));
-  return out;
-}
-
-function setPath(target: Record<string, LLMTextValue>, path: string, value: LLMTextValue): void {
-  const parts = path.split("/");
-  let cursor: Record<string, LLMTextValue> = target;
-  for (const part of parts.slice(0, -1)) {
-    const existing = cursor[part];
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) cursor[part] = {};
-    cursor = cursor[part] as Record<string, LLMTextValue>;
-  }
-  cursor[parts.at(-1)!] = value;
 }
 
 function formatWeekday(date: Date, timeZone: string): string {

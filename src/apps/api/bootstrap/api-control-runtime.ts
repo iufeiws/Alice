@@ -30,6 +30,7 @@ export function createApiControlRuntime(input: {
     time: input.time,
     promptProfileStore: apiContextRuntime.promptProfileStore,
     coreProfileStore: apiContextRuntime.coreProfileStore,
+    promptContextRuntime: apiContextRuntime.promptContextRuntime,
     appendLog: input.appendLog
   });
   const apiBehaviorRuntime = createApiBehaviorRuntime({

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLLMRequests } from "../../../src/contexts/llm-gateway/src/llm-requests.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import { createTokenUsageStore } from "../../../src/platform/storage/src/token-usage-store.js";
 import type { LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import { path, makeTempDir } from "./llm-and-storage-helpers.js";
@@ -215,7 +216,7 @@ test("LLM request message sanitization merges consecutive assistant content", as
   ]);
 });
 
-test("LLM request sender renders tool variables in extra params", async () => {
+test("LLM request sender leaves extra params unrendered", async () => {
   let request: any;
   const client: LLMClient = {
     async chat(input) {
@@ -250,9 +251,7 @@ test("LLM request sender renders tool variables in extra params", async () => {
         }
       }
     }],
-    toolVariables: {
-      toolName: "submit_audio_context"
-    },
+    toolVariables: testPromptRuntime({ toolName: "submit_audio_context" }),
     round: 0,
     stream: false
   });
@@ -260,7 +259,7 @@ test("LLM request sender renders tool variables in extra params", async () => {
   assert.deepEqual(request.extraParams, {
     tool_choice: {
       type: "function",
-      function: { name: "submit_audio_context" }
+          function: { name: "{{toolName}}" }
     }
   });
 });
@@ -294,6 +293,7 @@ test("LLM request sender supports inline tools", async () => {
         }
       }
     }],
+    toolVariables: testPromptRuntime(),
     round: 0,
     stream: false
   });
@@ -415,9 +415,10 @@ test("LLMRequests builds tools by name with stable order", async () => {
     }
   });
 
-  const tools = requests.buildTools(["second", "first", "second"], { name: "tool", value: "v" });
+  const tools = requests.buildTools(["second", "first", "second"], testPromptRuntime({ name: "tool", value: "v" }));
   assert.deepEqual(tools.map((tool) => tool.function.name), ["second", "first"]);
-  assert.deepEqual(tools[1].function.parameters?.properties, { a: { const: "v" } });
+  assert.equal(tools[1].function.description, "First tool");
+  assert.deepEqual(tools[1].function.parameters?.properties, { a: { const: "{{value}}" } });
 });
 
 test("LLMRequests rejects unknown tools", async () => {
@@ -427,7 +428,7 @@ test("LLMRequests rejects unknown tools", async () => {
     }
   });
 
-  assert.throws(() => requests.buildTools(["missing"]), /unknown LLM tool: missing/);
+  assert.throws(() => requests.buildTools(["missing"], testPromptRuntime()), /unknown LLM tool: missing/);
 });
 
 test("LLMRequests records memorize token usage through response hook", async () => {
@@ -468,6 +469,7 @@ test("LLMRequests records memorize token usage through response hook", async () 
     messages: [],
     model: "memorize-model",
     toolNames: ["read_memory"],
+    toolVariables: testPromptRuntime(),
     round: 0
   });
 

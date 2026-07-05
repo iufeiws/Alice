@@ -2,7 +2,7 @@ import { createChatAgent } from "../application/chat-agent.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
-import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 
 export function createChatAgentRuntime(input: {
   config: any;
@@ -14,7 +14,7 @@ export function createChatAgentRuntime(input: {
   toolPlugins: any[];
   promptProfileStore: any;
   time: any;
-  getPromptRenderer(): LLMTextRenderer;
+  getPromptRenderer(): PromptContextRuntime;
   agentState: any;
   getAgentInitiatedBehaviorPlans(): any[];
   initiatedBehaviorRunStore: any;

@@ -10,8 +10,8 @@ import {
 } from "../../../src/contexts/agent-run-indicator/src/index.js";
 import type { FeishuDynamicCardClient } from "../../../src/channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../src/channels/feishu/src/pairing.js";
-import { createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 export const CARD_LAYOUT_VERSION = 5;
 export const fixedNow = "2026-06-29T00:00:00.000Z";
@@ -64,7 +64,7 @@ export function loopInput(overrides: {
     },
     llmRequestSender: overrides.llmRequestSender ?? (async () => ({ message: { role: "assistant", content: "ok" } })),
     time: createCurrentTimeProvider("UTC", () => new Date(fixedNow)),
-    buildTextVariables: () => createLLMTextVariableRenderer({ variables: () => ({}) }),
+    buildTextVariables: () => testPromptRuntime(),
     noteSessionUpdated() {},
     getLastCompletedToolName: () => undefined,
     setLastCompletedToolName() {},

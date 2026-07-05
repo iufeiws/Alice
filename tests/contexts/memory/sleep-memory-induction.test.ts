@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import path from "node:path";
 import {
@@ -29,6 +30,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
   const ok = await runSleepMemoryInduction({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     stateStore,
     diaryStore,
     messageStore: {
@@ -70,6 +72,7 @@ test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
   const ok = await runSleepMemoryInduction({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     stateStore,
     diaryStore,
     messageStore: {
@@ -112,6 +115,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
   const ok = await runSleepMemoryInduction({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
     stateStore,
     diaryStore,
     messageStore: {

@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools, readPhotoPluginConfig, type SelfieExecutorInput } from "../../../../src/capabilities/tools/photo/src/index.js";
 import { runImageGenerationProvider } from "../../../../src/channels/image-generation/src/index.js";
@@ -14,7 +15,7 @@ import {
 
 test("selfie_schema_exposesPoseOnly", () => {
   const store = createTestStore("selfie-schema-db");
-  const tools = createPhotoTools({
+  const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
     store,
     outputRouter: { async send() {} },
     getSelfieContext: selfieContext,
@@ -126,7 +127,7 @@ test("outfitOnBodyAutoGeneration_defaultConfig_doesNotFetch", async () => {
     fetchCount += 1;
     throw new Error("fetch should not run");
   }) as typeof fetch;
-  const attempt = createOutfitOnBodyGenerationAttempt({
+  const attempt = createOutfitOnBodyGenerationAttempt({ promptContextRuntime: testPromptRuntime(),
     config: { photo: {} },
     dailyShellStore: {},
     time: {},
@@ -149,7 +150,7 @@ test("photoTool_invalidConfig_returnsErrorToAgent", async () => {
   const configPath = path.join(makeTempDir("selfie-tool-invalid-config"), "config.json");
   const store = createTestStore("selfie-tool-invalid-config-db");
   fs.writeFileSync(configPath, JSON.stringify({ selfieMode: "api" }));
-  const tools = createPhotoTools({
+  const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
     store,
     outputRouter: { async send() {} },
     selfieConfigPath: configPath,

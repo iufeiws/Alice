@@ -6,7 +6,7 @@ import { createDefaultTargetResolver } from "./default-target-runtime.js";
 import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile-memory-runtime.js";
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
-import { createPromptContextRuntime } from "./prompt-context-runtime.js";
+import { createPromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 
 const path = await import("node:path");
 

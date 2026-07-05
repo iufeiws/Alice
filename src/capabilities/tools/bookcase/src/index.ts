@@ -3,8 +3,8 @@ import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports
 import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { renderLLMText } from "../../../../contexts/agent-profile/src/ports/prompt-rendering.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import * as sqlite from "../../../../platform/storage/src/sqlite-compat.js";
 import { bookcaseInstructionBlockLines, bookcaseTool, bookcaseToolText } from "../profile.js";
 
@@ -23,6 +23,7 @@ export type BookcaseToolTarget = {
 export type BookcaseToolsDeps = {
   dbPath?: string;
   getUserName?: () => string;
+  promptContextRuntime: PromptContextRuntime;
   time?: CurrentTimeProvider;
   store?: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter?: Pick<OutputRouter, "send">;
@@ -56,9 +57,8 @@ type SelectedBook = {
 
 const defaultDbPath = path.resolve("assets/tools/bookcase/booksummaries.sqlite");
 
-export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
+export function createBookcaseTools(deps: BookcaseToolsDeps): ToolPlugin {
   const dbPath = deps.dbPath ?? defaultDbPath;
-  const getUserName = deps.getUserName ?? (() => "user");
 
   return {
     id: "bookcase",
@@ -87,7 +87,7 @@ export function createBookcaseTools(deps: BookcaseToolsDeps = {}): ToolPlugin {
 
       const selectedId = chooseId(ids, call.input);
       const book = fetchBook(db, selectedId);
-      const output = formatBookAsXml(book, getUserName(), localTimeText());
+      const output = formatBookAsXml(book, deps.promptContextRuntime, localTimeText());
       const result: ToolResult = {
         callId: call.id,
         ok: true,
@@ -279,7 +279,7 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function formatBookAsXml(book: SelectedBook, userName: string, timeText: string): string {
+function formatBookAsXml(book: SelectedBook, promptContextRuntime: PromptContextRuntime, timeText: string): string {
   const template = [
     "<book>",
     "  <source>",
@@ -297,7 +297,7 @@ function formatBookAsXml(book: SelectedBook, userName: string, timeText: string)
     "</book>",
     `<time>${escapeXml(timeText)}<\\time>`
   ].join("\n");
-  return renderLLMText(template, { user: escapeXml(userName.trim() || "user") });
+  return promptContextRuntime.renderText(template);
 }
 
 function staticMessagesForCall(call: ToolCall, output: string): NonNullable<ToolResult["llmSessionStaticMessages"]> {

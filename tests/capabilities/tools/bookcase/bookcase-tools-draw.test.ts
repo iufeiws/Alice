@@ -1,10 +1,11 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createBookcaseTools } from "../../../../src/capabilities/tools/bookcase/src/index.js";
 import { createFixtureDb, fixedTime, fixtureCounts, fixtureSummary } from "./bookcase-tools-helpers.js";
 
 async function drawFantasyBook(dbPath = createFixtureDb()) {
-  const tools = createBookcaseTools({ dbPath, getUserName: () => "YY", time: fixedTime() });
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime({ user: "YY" }), dbPath, getUserName: () => "YY", time: fixedTime() });
 
   return tools.execute({
     id: "call_bookcase",
@@ -44,7 +45,7 @@ test("bookcase draw does not change the database", async () => {
 });
 
 async function drawMissingBook(dbPath = createFixtureDb()) {
-  const tools = createBookcaseTools({ dbPath });
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(), dbPath });
 
   return tools.execute({
     id: "call_bookcase_none",

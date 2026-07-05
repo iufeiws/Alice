@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools, type SelfieExecutorInput } from "../../../../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
@@ -17,6 +18,15 @@ import {
   writeReferenceFiles
 } from "./photo-tools-helpers.js";
 
+function selfiePromptRuntime() {
+  return testPromptRuntime({
+    time: "12:00:00",
+    appearance: "发色: 低饱和浅金色\n眼睛: 浅金色",
+    dailyShell: { persona: { content: "说话声音很小" } },
+    outfit: { content: "黑色薄纱短袖高领上衣" }
+  });
+}
+
 function makeSuccessfulSelfieFixture(name: string) {
   const outputRoot = makeAssetTempDir(name);
   const referenceRoot = makeTempDir(`${name}-ref`);
@@ -27,7 +37,7 @@ function makeSuccessfulSelfieFixture(name: string) {
   let nextMessageId = 1;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
-  const tools = createPhotoTools({
+  const tools = createPhotoTools({ promptContextRuntime: selfiePromptRuntime(),
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
     selfieReferenceDir: referenceRoot,
@@ -72,11 +82,12 @@ test("selfie_validContext_passesPromptAndReferencesToExecutor", async () => {
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     });
 
-    assert.equal(fixture.executorInputs[0].prompt.includes("踮脚靠近镜头"), true);
+    assert.equal(fixture.executorInputs[0].prompt.includes("12:00:00"), true);
     assert.equal(fixture.executorInputs[0].prompt.includes("发色: 低饱和浅金色"), true);
     assert.equal(fixture.executorInputs[0].prompt.includes("说话声音很小"), true);
     assert.equal(fixture.executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
-    assert.doesNotMatch(fixture.executorInputs[0].prompt, /\{\{[^}]+\}\}/);
+    assert.equal(fixture.executorInputs[0].prompt.includes("踮脚靠近镜头"), false);
+    assert.match(fixture.executorInputs[0].prompt, /\{\{pose\}\}/);
     assert.deepEqual(fixture.executorInputs[0].referenceImages, [
       path.resolve(fixture.referenceRoot, "alice-character-reference.jpg"),
       path.resolve(fixture.outfitImage),
@@ -148,7 +159,7 @@ test("selfie_2DinRealEnabled_usesReplacementReference", async () => {
   fs.writeFileSync(ref2DinReal, "2dinreal-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: selfiePromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -193,7 +204,7 @@ test("selfie_nonJpegOutput_convertsAttachmentToJpeg", async () => {
   writeReferenceFiles(referenceRoot);
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: selfiePromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -239,7 +250,7 @@ test("selfie_storedOnBodyReference_usesStandardPrompt", async () => {
   fs.writeFileSync(onBodyImage, "on-body-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: selfiePromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -266,7 +277,7 @@ test("selfie_storedOnBodyReference_usesStandardPrompt", async () => {
       "dress.On_Body_Ref.jpg",
       "magic-library-reference.jpg"
     ]);
-    assert.match(executorInput?.prompt ?? "", /角色动作:\n看镜头/);
+    assert.match(executorInput?.prompt ?? "", /角色动作:\n\{\{pose\}\}/);
     assert.doesNotMatch(executorInput?.prompt ?? "", /on-body prompt/);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
@@ -285,7 +296,7 @@ test("selfie_generatedOutfitImage_usesCurrentOutfitAsReference", async () => {
   fs.writeFileSync(outfitImage, "uploaded-on-body-image");
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -335,7 +346,7 @@ test("selfie_voiceRequester_sendsToDefaultOutputTarget", async () => {
       userId: undefined,
       sessionId: "session-default"
     };
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -381,7 +392,7 @@ test("selfie_voiceRequester_persistsMessagesToDefaultConversation", async () => 
 
   try {
     const defaultTarget = { plugin: "feishu", channelId: "chat-default", sessionId: "session-default" };
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -426,7 +437,7 @@ test("selfie_sameLoopFailure_blocksRetryUntilNextRun", async () => {
   writeReferenceFiles(referenceRoot);
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,

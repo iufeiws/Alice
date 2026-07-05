@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools } from "../../../../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
@@ -50,7 +51,7 @@ test("selfie_openaiMode_sendsImageApiRequestContract", async () => {
   }) as typeof fetch;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieReferenceDir: referenceRoot,
@@ -102,7 +103,7 @@ test("selfie_openaiMode_sendsGeneratedImage", async () => {
   }) as typeof fetch;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -171,7 +172,7 @@ test("selfie_openaiRelayMode_sendsRelayRequestContract", async () => {
   }) as typeof fetch;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -227,7 +228,7 @@ test("selfie_openaiRelayMode_sendsGeneratedImage", async () => {
   }) as typeof fetch;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -280,7 +281,7 @@ test("selfie_openaiRelayFetchFailure_logsCauseAndSendsFailureNotice", async () =
   }) as typeof fetch;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -370,7 +371,7 @@ test("selfie_codexMode_sendsCodexCommandContract", async () => {
   process.env.CODEX_HOME = codexHome;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
       selfieConfigPath: configPath,
@@ -454,7 +455,7 @@ test("selfie_codexMode_sendsCodexPromptContract", async () => {
   process.env.CODEX_HOME = codexHome;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieConfigPath: configPath,
       selfieReferenceDir: referenceRoot,
@@ -518,7 +519,7 @@ test("selfie_codexMode_convertsGeneratedAssetAndSendsResult", async () => {
   process.env.CODEX_HOME = codexHome;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieConfigPath: configPath,
       selfieReferenceDir: referenceRoot,
@@ -591,7 +592,7 @@ test("selfie_codexRunnerFailure_logsRunnerOutput", async () => {
   process.env.CODEX_HOME = codexHome;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
@@ -661,7 +662,7 @@ test("selfie_codexRunnerFailure_sendsFailureNotice", async () => {
   process.env.CODEX_HOME = codexHome;
 
   try {
-    const tools = createPhotoTools({
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
       store,
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,

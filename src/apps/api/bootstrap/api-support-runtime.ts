@@ -34,6 +34,7 @@ export function createApiSupportRuntime(input: {
     config: input.config,
     memoryStore: input.apiContextRuntime.memoryStore,
     promptStore: input.apiContextRuntime.memoryInductionPromptStore,
+    promptContextRuntime: input.apiContextRuntime.promptContextRuntime,
     stateStore: input.apiContextRuntime.sleepMemoryStateStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     getMessageStore: () => input.store,

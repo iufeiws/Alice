@@ -239,7 +239,8 @@ test("standalone agent function-call loop writes tool result back into the next 
       return {
         agentId: "chat",
         messages,
-        toolNames: ["test_tool"]
+        toolNames: ["test_tool"],
+        toolVariables: emptyPromptRenderer()
       };
     },
     async sendRequest({ round }) {

@@ -4,7 +4,6 @@ import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTe
 import type { LLMRequestSenderInput } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../../../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../src/contexts/agent-loop/src/ports/policy.js";
@@ -13,12 +12,13 @@ import { createSessionResolver } from "../../../src/contexts/agent-loop/src/appl
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore } from "./agent-tools-helpers.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("chat agent requires an injected prompt profile", async () => {
   const core = createChatAgentUnderTest({
     config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: { async chat() { return { message: { role: "assistant", content: "unused" } }; } },
-    getPromptRenderer: () => createLLMTextVariableRenderer({ variables: () => buildLLMTextVariables({ time: createCurrentTimeProvider("UTC") }) }),
+    getPromptRenderer: () => testPromptRuntime(),
     llmRequestSender: async () => ({ message: { role: "assistant", content: "unused" } }),
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),

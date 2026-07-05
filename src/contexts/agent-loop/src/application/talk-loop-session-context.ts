@@ -1,6 +1,6 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMMessage } from "../../../llm-gateway/src/index.js";
-import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent, ToolCall, ToolPlugin } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
 import { createAgentLoopToolExecutor } from "./agent-loop-tool-executor.js";
@@ -15,7 +15,7 @@ export type TalkLoopRuntimeState = {
 export type TalkLoopSessionContextDeps = {
   getTalkPromptProfile(): PromptProfile;
   time: CurrentTimeProvider;
-  getPromptRenderer(): LLMTextRenderer;
+  getPromptRenderer(): PromptContextRuntime;
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
   buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
@@ -53,7 +53,7 @@ export type TalkLoopPreparedSessionContext = {
   session: AgentLoopTranscriptSession;
   promptProfile: PromptProfile;
   toolNames: string[];
-  toolVariables: LLMTextRenderer | undefined;
+  toolVariables: PromptContextRuntime | undefined;
   event: AgentEvent;
 };
 
@@ -113,7 +113,7 @@ export async function prepareTalkLoopSessionContext(input: {
   };
 }
 
-function requirePromptRenderer(deps: TalkLoopSessionContextDeps): LLMTextRenderer {
+function requirePromptRenderer(deps: TalkLoopSessionContextDeps): PromptContextRuntime {
   return deps.getPromptRenderer();
 }
 

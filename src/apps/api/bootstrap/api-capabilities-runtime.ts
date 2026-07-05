@@ -64,6 +64,7 @@ export function createApiCapabilitiesRuntime(input: {
     calendarStore: input.calendarStore,
     coreProfileStore: input.coreProfileStore,
     skillsRegistry: input.skillsRegistry,
+    promptContextRuntime: input.promptContextRuntime,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,

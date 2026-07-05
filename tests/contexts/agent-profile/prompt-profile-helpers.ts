@@ -1,9 +1,9 @@
 import type { LLMMessageContent } from "../../../src/contexts/llm-gateway/src/index.js";
-import { createLLMTextVariableRenderer, buildLLMTextVariables } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import type { PromptRenderContext } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import type { DailyShellStore, ShellCategory, ShellOption } from "../../../src/contexts/agent-profile/src/domain/shell.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -40,12 +40,17 @@ export function promptContext(input: {
 } = {}): PromptRenderContext {
   const time = input.time ?? createCurrentTimeProvider("UTC");
   return {
-    renderer: createLLMTextVariableRenderer({
-      variables: () => buildLLMTextVariables({
-        userName: "小王",
-        time,
-        memory: input.memory
-      })
+    renderer: testPromptRuntime({
+      user: "小王",
+      date_time: time.now().iso.slice(0, 19).replace("T", " "),
+      time: time.now().iso.slice(11, 19),
+      date: time.now().iso.slice(0, 10),
+      timezone: time.timeZone,
+      memory: {
+        persistent: { content: input.memory?.persistent ?? "", limit: { lines: 0, bytes: 0, kib: 0 } },
+        userPreferences: { content: input.memory?.userPreferences ?? "", limit: { lines: 0, bytes: 0, kib: 0 } },
+        yesterdaySummary: { content: input.memory?.yesterdaySummary ?? "", limit: { lines: 0, bytes: 0, kib: 0 } }
+      }
     }),
     event: textEvent(),
     time

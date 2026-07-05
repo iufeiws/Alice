@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import {
   addPatch,
@@ -131,6 +132,7 @@ function createMemoryRunDayFixture() {
       return runMemoryInductionForMessages({
         memoryStore,
         promptStore,
+            promptContextRuntime: testPromptRuntime(),
         messages,
         windowStartAt,
         windowEndAt,

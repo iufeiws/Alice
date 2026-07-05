@@ -16,6 +16,7 @@ import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/
 import { createSkillLoader, type SkillRegistry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
+import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 
 const path = await import("node:path");
 
@@ -38,6 +39,7 @@ export function createToolRuntime(input: {
   getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   skillsRegistry: SkillRegistry;
+  promptContextRuntime: PromptContextRuntime;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
 }) {
@@ -72,6 +74,7 @@ export function createToolRuntime(input: {
     time: input.time,
     promptProfileStore: input.promptProfileStore,
     coreProfileStore: input.coreProfileStore,
+    promptContextRuntime: input.promptContextRuntime,
     photoConfigPath,
     appendLog: input.appendLog
   });
@@ -107,6 +110,7 @@ export function createToolRuntime(input: {
     selfie2DinRealEnabled: input.config.photo.selfie2DinRealEnabled,
     selfie2DinRealReferenceImage: input.config.photo.selfie2DinRealReferenceImage,
     selfie2DinRealPrompt: input.config.photo.selfie2DinRealPrompt,
+    promptContextRuntime: input.promptContextRuntime,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     getSelfieContext() {
       const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
@@ -149,6 +153,7 @@ export function createToolRuntime(input: {
 
   const bookcaseTools = createBookcaseTools({
     getUserName: () => input.config.project.username,
+    promptContextRuntime: input.promptContextRuntime,
     time: input.time,
     store: input.store,
     outputRouter: input.outputRouter,

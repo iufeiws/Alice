@@ -10,7 +10,7 @@ import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } f
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, normalizePromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
-import { type LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import { deepSeekPriceForModel } from "../../../llm-gateway/src/token-pricing.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentRunIndicator } from "../../../agent-run-indicator/src/index.js";
@@ -179,7 +179,7 @@ export type ChatAgentDeps = {
   outputRouter: OutputRouter;
   tools?: ToolPlugin[];
   getPromptProfile?: () => PromptProfile;
-  getPromptRenderer: () => LLMTextRenderer;
+  getPromptRenderer: () => PromptContextRuntime;
   state?: AgentStateController;
   time?: CurrentTimeProvider;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
@@ -728,11 +728,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     }
   };
 
-  function buildTurnTextVariables(event: AgentEvent): LLMTextRenderer {
+  function buildTurnTextVariables(event: AgentEvent): PromptContextRuntime {
     return requirePromptRenderer();
   }
 
-  function requirePromptRenderer(): LLMTextRenderer {
+  function requirePromptRenderer(): PromptContextRuntime {
     return deps.getPromptRenderer();
   }
 

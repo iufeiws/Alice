@@ -4,10 +4,10 @@ import { createLLMRequests } from "../../../src/contexts/llm-gateway/src/llm-req
 import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, AgentOutput, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import type { AgentStateStore } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -44,12 +44,16 @@ export function createChatAgent(deps: TestChatAgentDeps) {
   return createChatAgentUnderTest({
     getPromptProfile: testPromptProfile,
     ...deps,
-    getPromptRenderer: deps.getPromptRenderer ?? (() => createLLMTextVariableRenderer({
-      variables: () => buildLLMTextVariables({
-        userName: (deps.config as any).project?.username ?? "user",
-        time: deps.time ?? createCurrentTimeProvider("UTC")
-      })
-    })),
+    getPromptRenderer: deps.getPromptRenderer ?? (() => {
+      const time = (deps.time ?? createCurrentTimeProvider("UTC")).now();
+      return testPromptRuntime({
+        user: (deps.config as any).project?.username ?? "user",
+        date_time: time.iso.slice(0, 19).replace("T", " "),
+        time: time.iso.slice(11, 19),
+        date: time.iso.slice(0, 10),
+        timezone: time.timeZone
+      });
+    }),
     llmRequestSender,
     loadLLMSession,
     onLLMSessionUpdated(session) {

@@ -3,10 +3,9 @@ import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../
 import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
-import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabilities/tools/workspace-files/src/index.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer, type LLMTextVariables } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
 import { createLLMSessionTranscriptLogger } from "../../llm-session/src/adapters/jsonl-llm-session-log.js";
 import { registerLLMToolLoopTools, runLLMToolLoop, type LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
@@ -98,6 +97,7 @@ export type SleepMemoryStateStore = {
 export type MemorySummaryDeps = {
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
+  promptContextRuntime: PromptContextRuntime;
   stateStore: SleepMemoryStateStore;
   diaryStore?: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
   messageStore: {
@@ -195,12 +195,6 @@ const targetDirectories: Record<MemoryTarget, string> = {
   persistent: "long-term-memory",
   userPreferences: "long-term-memory",
   yesterdaySummary: "diary"
-};
-
-const targetTitles: Record<MemoryTarget, string> = {
-  persistent: "持久记忆",
-  userPreferences: "用户偏好",
-  yesterdaySummary: "日记"
 };
 
 const maxMessagesPerSummary = 10_000;
@@ -869,6 +863,7 @@ async function runWorkspaceMemoryInduction(
           maxTokens: 8192,
           extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
           toolNames: [...memoryToolNames],
+          toolVariables: deps.promptContextRuntime,
           stream: deps.config.stream === true,
           metadata: { target: targets.length === 1 ? targets[0] : "workspace" }
         };
@@ -985,6 +980,7 @@ function buildWorkspaceMemoryPromptMessages(
   deps: {
     memoryStore: MemoryStore;
     promptStore: Pick<MemoryInductionPromptStore, "get">;
+    promptContextRuntime: PromptContextRuntime;
     messages: StoredConversationMessage[];
     windowStartAt?: string;
     windowEndAt: string;
@@ -995,14 +991,11 @@ function buildWorkspaceMemoryPromptMessages(
   targets: MemoryTarget[],
   options?: { includeCommonLayers?: boolean }
 ): LLMMessage[] {
-  const renderer = createLLMTextVariableRenderer({
-    variables: () => memoryPromptVariables(deps, targets[0] ?? "persistent", deps.draft)
-  });
   const prompts = deps.promptStore.get();
   const layers = memoryPromptLayersForTargets(prompts, options);
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, renderer, {
+    const message = promptLayerToMessage(layer, deps.promptContextRuntime, {
       defaultToolName: "Read",
       toolCallIdPrefix: "memory_prompt",
       allowedToolNames: ["Read", "self_talk"]
@@ -1080,6 +1073,7 @@ export async function runSleepMemoryBackfill(deps: MemorySummaryDeps): Promise<{
   const result = await runMemoryInductionForMessages({
     memoryStore: deps.memoryStore,
     promptStore: deps.promptStore,
+    promptContextRuntime: deps.promptContextRuntime,
     llm: deps.llm,
     config: deps.config,
     nowIso: deps.nowIso,
@@ -1139,6 +1133,7 @@ export function buildMemoryPromptPreview(
     timezone: string;
     userName?: string;
     config?: Partial<MemorySummaryConfig>;
+    promptContextRuntime: PromptContextRuntime;
     generatedAt?: string;
   },
   target: MemoryTarget
@@ -1148,6 +1143,7 @@ export function buildMemoryPromptPreview(
   const messages = buildMemoryPromptMessages({
     memoryStore: deps.memoryStore,
     promptStore,
+    promptContextRuntime: deps.promptContextRuntime,
     messages: deps.messages,
     windowStartAt: deps.windowStartAt,
     windowEndAt: deps.windowEndAt,
@@ -1260,6 +1256,7 @@ async function runSingleMemoryInduction(
             maxTokens: 8192,
             extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
             toolNames: [...memoryToolNames],
+            toolVariables: deps.promptContextRuntime,
             stream: deps.config.stream === true,
             metadata: { target }
           };
@@ -1329,6 +1326,7 @@ function buildMemoryPromptMessages(
   deps: {
     memoryStore: MemoryStore;
     promptStore: Pick<MemoryInductionPromptStore, "get">;
+    promptContextRuntime: PromptContextRuntime;
     messages: StoredConversationMessage[];
     windowStartAt?: string;
     windowEndAt: string;
@@ -1339,13 +1337,10 @@ function buildMemoryPromptMessages(
   target: MemoryTarget,
   options?: { includeCommonLayers?: boolean }
 ): LLMMessage[] {
-  const renderer = createLLMTextVariableRenderer({
-    variables: () => memoryPromptVariables(deps, target)
-  });
   const layers = memoryPromptLayers(deps.promptStore.get(), target, options);
   const messages: LLMMessage[] = [];
   for (const layer of layers) {
-    const message = promptLayerToMessage(layer, renderer, {
+    const message = promptLayerToMessage(layer, deps.promptContextRuntime, {
       defaultToolName: "Read",
       toolCallIdPrefix: "memory_prompt",
       allowedToolNames: ["Read", "self_talk"]
@@ -1442,108 +1437,6 @@ function cleanupDiaryDraft(draftPath?: string): void {
   } catch {
     // Temp draft cleanup is best-effort.
   }
-}
-
-function memoryPromptVariables(
-  deps: {
-    messages: StoredConversationMessage[];
-    windowStartAt?: string;
-    windowEndAt: string;
-    timezone: string;
-    userName?: string;
-    memoryStore: MemoryStore;
-    diaryDraftPath?: string;
-    draft?: MemoryWorkspaceDraft;
-  },
-  target: MemoryTarget,
-  draft?: MemoryWorkspaceDraft
-): LLMTextVariables {
-  const workspaceDraft = draft ?? deps.draft;
-  const snapshot = workspaceDraft?.readSnapshot() ?? deps.memoryStore.read();
-  const currentContent = workspaceDraft ? snapshot[target] : readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath);
-  const limits = memoryFileLimits[target];
-  const memoryVariables = {
-    persistent: {
-      content: snapshot.persistent,
-      limit: memoryLimitVariables("persistent")
-    },
-    userPreferences: {
-      content: snapshot.userPreferences,
-      limit: memoryLimitVariables("userPreferences")
-    },
-    yesterdaySummary: {
-      content: snapshot.yesterdaySummary,
-      limit: memoryLimitVariables("yesterdaySummary")
-    }
-  };
-  const localDate = deps.windowEndAt.slice(0, 10);
-  const localTime = deps.windowEndAt.match(/T(\d{2}:\d{2}:\d{2})/)?.[1] ?? "";
-  const userName = deps.userName?.trim() || "user";
-  return buildLLMTextVariables({
-    userName,
-    memory: snapshot,
-    extra: {
-      date: localDate,
-      time: localTime,
-      timezone: deps.timezone,
-      memory: memoryVariables,
-      memorize: {
-        target: {
-          key: target,
-          title: targetTitles[target],
-          fileName: workspaceDraft?.files[target] ?? targetFiles[target],
-          currentContent: currentContent || ""
-        },
-        workspace: workspaceDraft ? {
-          files: {
-            persistent: workspaceDraft.files.persistent,
-            userPreferences: workspaceDraft.files.userPreferences,
-            yesterdaySummary: workspaceDraft.files.yesterdaySummary
-          }
-        } : undefined,
-        files: {
-          persistent: {
-            filePath: workspaceDraft?.files.persistent ?? targetFiles.persistent,
-            description: "长期事实、关系连续性、项目长期背景"
-          },
-          userPreferences: {
-            filePath: workspaceDraft?.files.userPreferences ?? targetFiles.userPreferences,
-            description: "用户稳定偏好、交互方式、长期约束"
-          },
-          yesterdaySummary: {
-            filePath: workspaceDraft?.files.yesterdaySummary ?? targetFiles.yesterdaySummary,
-            description: "本轮窗口日记摘要"
-          }
-        },
-        limit: {
-          lines: limits.lines,
-          bytes: limits.bytes,
-          kib: Math.round(limits.bytes / 1024)
-        },
-        window: {
-          startAt: deps.windowStartAt ?? "(beginning)",
-          endAt: deps.windowEndAt
-        },
-        timezone: deps.timezone,
-        messages: {
-          count: deps.messages.length,
-          content: formatCheckChatMessages(deps.messages, {
-            timeZone: deps.timezone,
-            userName
-          })
-        }
-      }
-    }
-  });
-}
-
-function memoryLimitVariables(target: MemoryTarget): LLMTextVariables {
-  const limit = memoryFileLimits[target];
-  return {
-    lines: limit.lines,
-    bytes: limit.bytes,
-    kib: Math.round(limit.bytes / 1024)
-  };
 }
 
 export const memoryToolNames = ["Read", "Edit", "Glob", "Grep", "self_talk"] as const;

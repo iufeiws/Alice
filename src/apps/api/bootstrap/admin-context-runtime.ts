@@ -3,7 +3,7 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
-import type { LLMTextRenderer } from "../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { createAdminRouteServices } from "./admin-api-service.js";
 import type { AdminRuntimeContext, PromptVariableTree } from "./admin-route-context.js";
 import { createApiRequestHandler } from "../routes/admin-routes.js";
@@ -49,7 +49,7 @@ export function createAdminRequestHandlerRuntime(input: {
   getLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTalkLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
-  getPromptRenderer(): LLMTextRenderer;
+  getPromptRenderer(): PromptContextRuntime;
   getPromptVariableTree(): PromptVariableTree;
   getTokenUsageReport(query: any): unknown;
   clearLLMChainCache(): void;
@@ -103,6 +103,7 @@ export function createAdminRequestHandlerRuntime(input: {
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
+    promptContextRuntime: input.getPromptRenderer(),
     agentState: input.agentState,
     isHeartbeatPaused: () => Boolean(input.messageRuntime.getStatus?.()?.heartbeatPaused),
     time: input.time,

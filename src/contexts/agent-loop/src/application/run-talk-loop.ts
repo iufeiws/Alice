@@ -1,5 +1,5 @@
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
-import type { LLMTextRenderer } from "../../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent } from "../contracts/agent-contracts.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
@@ -40,7 +40,7 @@ type TalkAgentLoopLLMConfig = {
 type TalkAgentLoopState = {
   promptProfile: TalkLoopPreparedSessionContext["promptProfile"];
   toolNames: string[];
-  toolVariables: LLMTextRenderer | undefined;
+  toolVariables: PromptContextRuntime | undefined;
   event: AgentEvent;
 };
 
@@ -128,7 +128,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     session: AgentLoopTranscriptSession;
     promptProfile: TalkLoopPreparedSessionContext["promptProfile"];
     toolNames: string[];
-    toolVariables: LLMTextRenderer | undefined;
+    toolVariables: PromptContextRuntime | undefined;
     event: AgentEvent;
     config: TalkAgentLoopLLMConfig;
     signal?: AbortSignal;

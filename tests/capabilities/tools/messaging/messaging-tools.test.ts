@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
-import { formatToolResultForLLM } from "../../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { createMessagingTools } from "../../../../src/capabilities/tools/messaging/src/index.js";
 import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/finish-and-wait/src/index.js";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -166,7 +166,7 @@ test("check_chat default output uses chat-log format", async () => {
   const { recent } = await pollDefaultUnreadMessages("messaging-view-format");
 
   assert.match(String(recent.output), /\{\{user\}\}:hello today/);
-  assert.match(formatToolResultForLLM(recent, { user: "小王" }), /小王:hello today/);
+  assert.match(testPromptRuntime({ user: "小王" }).renderText(String(recent.output)), /小王:hello today/);
   assert.match(String(recent.output), /Alice:hello back/);
   assert.match(String(recent.output), /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\n\{\{user\}\}:hello today\nAlice:hello back/m);
   assert.doesNotMatch(String(recent.output), /\[(?:today|yesterday) /);

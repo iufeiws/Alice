@@ -1,10 +1,11 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createBookcaseTools } from "../../../../src/capabilities/tools/bookcase/src/index.js";
 import { createFixtureDb, fixtureCounts } from "./bookcase-tools-helpers.js";
 
 async function returnBook(dbPath = createFixtureDb()) {
-  const tools = createBookcaseTools({ dbPath });
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(), dbPath });
 
   return tools.execute({
     id: "call_bookcase_return",

@@ -1,7 +1,7 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
-import { formatToolResultForLLM, type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "../domain/prompt-layer.js";
 
 export type { PromptLayer, PromptLayerRole } from "../domain/prompt-layer.js";
@@ -32,14 +32,14 @@ export type PromptProfile = {
 };
 
 export type PromptRenderContext = {
-  renderer: LLMTextRenderer;
+  renderer: PromptContextRuntime;
   event: AgentEvent;
   time: CurrentTimeProvider;
   preview?: boolean;
 };
 
 export type PromptContextDeps = {
-  renderer: LLMTextRenderer;
+  renderer: PromptContextRuntime;
   event: AgentEvent;
   time: CurrentTimeProvider;
   preview?: boolean;
@@ -157,7 +157,7 @@ export async function buildAppendPromptMessagesWithToolResults(
 
 export async function buildLayerMessagesWithToolResults(
   inputLayers: PromptLayer[],
-  renderer: LLMTextRenderer,
+  renderer: PromptContextRuntime,
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>,
   options: { toolCallIdPrefix?: string } = {}
@@ -185,7 +185,7 @@ export async function buildLayerMessagesWithToolResults(
         role: "tool",
         name: toolCall.function.name,
         toolCallId: toolCall.id,
-        content: formatPromptToolResult(result, renderer)
+        content: formatPromptToolMessageContent(result, renderer)
       });
     }
   }
@@ -193,7 +193,7 @@ export async function buildLayerMessagesWithToolResults(
   return messages;
 }
 
-export function promptRenderer(context: PromptRenderContext): LLMTextRenderer {
+export function promptRenderer(context: PromptRenderContext): PromptContextRuntime {
   return context.renderer;
 }
 
@@ -206,7 +206,7 @@ export function makePromptContext(input: PromptContextDeps): PromptRenderContext
   };
 }
 
-export function renderTemplate(content: string, renderer: LLMTextRenderer): string {
+export function renderTemplate(content: string, renderer: PromptContextRuntime): string {
   return renderer.renderText(content);
 }
 
@@ -245,8 +245,13 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function formatPromptToolResult(result: ToolResult, renderer: LLMTextRenderer): string {
-  return formatToolResultForLLM(result, renderer);
+function formatPromptToolMessageContent(result: ToolResult, runtime: PromptContextRuntime): string {
+  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
+  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
+  if (typeof result.output === "string") return runtime.renderText(result.output);
+  if (result.output === undefined || result.output === null) return "ok";
+  if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
+  return JSON.stringify(result.output);
 }
 
 export function getPromptContent(id: string): string {

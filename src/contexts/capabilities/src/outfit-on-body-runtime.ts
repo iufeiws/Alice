@@ -1,6 +1,6 @@
 import type { ShellOption } from "../../agent-profile/src/domain/shell.js";
 import { shouldAttemptOnBodyGeneration } from "../../agent-profile/src/domain/outfit.js";
-import { createLLMTextRenderer, type LLMTextValue } from "../../agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 import { defaultPhotoPluginConfigPath, detectImageMime, normalizeGeneratedSelfieJpeg, readPhotoPluginConfig, runPhotoGateway, validateGeneratedImage } from "../../../channels/image-generation/src/index.js";
 import { optionalString, requiredString } from "../../../shared/admin-input/src/index.js";
 
@@ -17,6 +17,7 @@ export function createOutfitOnBodyGenerationAttempt(input: {
   time: any;
   promptProfileStore: any;
   coreProfileStore: any;
+  promptContextRuntime: PromptContextRuntime;
   photoConfigPath?: string;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
@@ -38,6 +39,7 @@ export function createOutfitOnBodyGenerationAttempt(input: {
       time: input.time,
       promptProfileStore: input.promptProfileStore,
       coreProfileStore: input.coreProfileStore,
+      getPromptRenderer: () => input.promptContextRuntime,
       appendLog: input.appendLog
     } as any, {
       outfitId: outfit.id,
@@ -86,7 +88,7 @@ export async function generatePhotoOnBodyImage(context: any, body: Record<string
 
   try {
     savePhotoOnBodyAttempt(context, outfit);
-    const prompt = renderPhotoOnBodyPrompt(context, promptTemplate, outfit);
+    const prompt = renderPhotoOnBodyPrompt(context, promptTemplate);
     const generated = await runPhotoGateway({
       config,
       workDir: tempDir,
@@ -171,24 +173,8 @@ function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, o
   };
 }
 
-function renderPhotoOnBodyPrompt(context: any, template: string, outfit: ShellOption): string {
-  const base = context.getPromptRenderer();
-  const renderer = createLLMTextRenderer({
-    getVariable(name) {
-      return name.startsWith("outfit/") ? outfitVariable(outfit, name.slice("outfit/".length)) : base.getVariable(name);
-    },
-    listVariables() {
-      return base.listVariables();
-    }
-  });
-  return renderer.renderText(template);
-}
-
-function outfitVariable(outfit: ShellOption, field: string): LLMTextValue {
-  if (!["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"].includes(field)) return undefined;
-  const value = outfit[field as keyof ShellOption];
-  if (typeof value === "boolean") return value;
-  return value ?? "";
+function renderPhotoOnBodyPrompt(context: any, template: string): string {
+  return context.getPromptRenderer().renderText(template);
 }
 
 function savePhotoOnBodyAttempt(context: any, outfit: ShellOption, imageUrl?: string): void {

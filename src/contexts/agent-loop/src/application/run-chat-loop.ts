@@ -3,7 +3,7 @@ import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMTool
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
-import { type LLMTextRenderer } from "../../../../contexts/agent-profile/src/application/llm-text-renderer.js";
+import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
@@ -73,7 +73,7 @@ export type ChatAgentLoopInput = {
   llm: LLMClient;
   llmRequestSender: LLMRequestSender;
   time: CurrentTimeProvider;
-  buildTextVariables(event: AgentEvent): LLMTextRenderer;
+  buildTextVariables(event: AgentEvent): PromptContextRuntime;
   noteSessionUpdated(): void;
   getLastCompletedToolName(): string | undefined;
   setLastCompletedToolName(name: string): void;

@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createBookcaseTools } from "../../../../src/capabilities/tools/bookcase/src/index.js";
 import { createFixtureDb, fixedTime } from "./bookcase-tools-helpers.js";
@@ -20,7 +21,7 @@ test("bookcase draw sends a transient notice", async () => {
     markOutboundMessageSent() {},
     markOutboundMessageFailed() {}
   };
-  const tools = createBookcaseTools({
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
     store,
@@ -56,7 +57,7 @@ test("bookcase return sends a transient notice", async () => {
     markOutboundMessageSent() {},
     markOutboundMessageFailed() {}
   };
-  const tools = createBookcaseTools({
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
     store,
@@ -83,7 +84,7 @@ test("bookcase return sends a transient notice", async () => {
 test("bookcase sent notices are logged", async () => {
   const dbPath = createFixtureDb();
   const logs: Array<{ status?: string; summary: string }> = [];
-  const tools = createBookcaseTools({
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
     outputRouter: {
@@ -120,7 +121,7 @@ test("bookcase draw continues when notice sending fails", async () => {
     markOutboundMessageSent() {},
     markOutboundMessageFailed() {}
   };
-  const tools = createBookcaseTools({
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
     store,
@@ -162,7 +163,7 @@ test("bookcase return continues when notice sending fails", async () => {
     markOutboundMessageSent() {},
     markOutboundMessageFailed() {}
   };
-  const tools = createBookcaseTools({
+  const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
     store,

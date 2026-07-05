@@ -1,7 +1,7 @@
 import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
-export const emptyPromptRenderer = () => createLLMTextVariableRenderer({ variables: () => ({}) });
+export const emptyPromptRenderer = () => testPromptRuntime();
 
 export function fakeTime() {
   return {

@@ -2,11 +2,10 @@ import type { ToolPlugin } from "../../../agent-loop/src/contracts/agent-contrac
 import { createAdminMemoryRuntime } from "../../../memory/src/application/admin-memory-runtime.js";
 import { defaultPromptRegistry, PromptProfileValidationError, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
 import { isToolVisibleInPromptProfile } from "../../../initiative/src/domain/initiated-behavior.js";
-import { renderLLMValue } from "./llm-text-renderer.js";
 import { HttpJsonError, readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { normalizePromptApiProfile, readLLMApiPresets, resolveMemorizeApiPreset, writePromptApiProfile } from "../../../llm-gateway/src/admin-presets.js";
-import { formatToolResultForLLM, getAdminTextRenderer, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
+import { formatToolMessageContent, getAdminTextRenderer, resolveAdminMessagingTarget } from "../../../../capabilities/tools/messaging/src/admin-shared.js";
 import { optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
@@ -65,6 +64,7 @@ export function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<t
     memoryStore: context.memoryStore,
     diaryStore: context.diaryStore,
     memoryInductionPromptStore: context.memoryInductionPromptStore,
+    promptContextRuntime: context.getPromptRenderer(),
     agentState: context.agentState,
     isHeartbeatPaused: () => Boolean((context.messageRuntime.getStatus() as { heartbeatPaused?: unknown })?.heartbeatPaused),
     time: context.time,
@@ -127,8 +127,8 @@ export function getAdminTools(context: AdminRoutesContext): Array<{
   return getAdminToolPlugins(context).flatMap((plugin) => plugin.listTools().map((tool) => ({
     pluginId: plugin.id,
     name: tool.name,
-    description: String(renderLLMValue(tool.description, renderer)),
-    inputSchema: renderLLMValue(tool.inputSchema, renderer) as Record<string, unknown>
+    description: renderer.renderText(tool.description),
+    inputSchema: renderToolInputSchema(tool.inputSchema, renderer)
   })));
 }
 
@@ -182,7 +182,7 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
       pluginId: plugin.id,
       toolName,
       targetPlugin: target.plugin,
-      content: formatToolResultForLLM(result, getAdminTextRenderer(context)),
+      content: formatToolMessageContent(result, getAdminTextRenderer(context)),
       result
     });
   } catch (error) {
@@ -209,4 +209,20 @@ function unsafePreviewReason(toolName: string, input: Record<string, unknown>): 
   if (toolName === "Selfie") return "Selfie cannot run from tool preview";
   if (toolName === "Wardrobe" && input.action === "switch") return "Wardrobe switch cannot run from tool preview";
   return undefined;
+}
+
+function renderToolInputSchema(schema: Record<string, unknown>, renderer: ReturnType<typeof getAdminTextRenderer>): Record<string, unknown> {
+  return renderJsonSchemaNode(schema, renderer) as Record<string, unknown>;
+}
+
+function renderJsonSchemaNode(value: unknown, renderer: ReturnType<typeof getAdminTextRenderer>): unknown {
+  if (Array.isArray(value)) return value.map((entry) => renderJsonSchemaNode(entry, renderer));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+    if ((key === "description" || key === "title") && typeof entry === "string") return [key, renderer.renderText(entry)];
+    if (key === "properties" || key === "$defs" || key === "definitions" || key === "items" || key === "anyOf" || key === "oneOf" || key === "allOf") {
+      return [key, renderJsonSchemaNode(entry, renderer)];
+    }
+    return [key, entry];
+  }));
 }

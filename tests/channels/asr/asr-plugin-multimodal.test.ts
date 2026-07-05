@@ -87,7 +87,13 @@ test("multimodalLlm_toolCall_returnsSpeechTextAndRequestContract", async () => {
   assert.equal(capturedRequest.messages[0].role, "user");
   assert.equal(capturedRequest.messages[0].content[0].type, "input_audio");
   assert.match(capturedRequest.messages[0].content[0].input_audio.data, /^data:audio\/wav;base64,/);
-  assert.deepEqual(capturedRequest.toolVariables.metadata, { source: "unit-test" });
+  assert.equal(capturedRequest.toolVariables, undefined);
+  assert.deepEqual(capturedRequest.metadata, {
+    pluginId: "asr",
+    provider: "multimodal_llm",
+    filename: "speech.wav",
+    mimeType: "audio/wav"
+  });
 });
 
 test("multimodalLlm_emptySpeech_returnsDescriptionText", async () => {

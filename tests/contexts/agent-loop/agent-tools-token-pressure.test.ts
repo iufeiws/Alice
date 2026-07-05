@@ -4,15 +4,14 @@ import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTe
 import type { LLMRequestSenderInput } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { AgentEvent, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { buildLLMTextVariables, createLLMTextVariableRenderer } from "../../../src/contexts/agent-profile/src/application/llm-text-renderer.js";
 import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.js";
 import { createOutputRouter } from "../../../src/platform/output-router/src/index.js";
 import { createAllowAllPolicy } from "../../../src/contexts/agent-loop/src/ports/policy.js";
 import { createIntentRouter } from "../../../src/contexts/agent-loop/src/application/intent-router.js";
 import { createSessionResolver } from "../../../src/contexts/agent-loop/src/application/session-resolver.js";
-import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore, messageContentText } from "./agent-tools-helpers.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("chat agent restores token pressure baseline from persisted session snapshot", async () => {
   const requests: LLMChatInput[] = [];
@@ -255,12 +254,9 @@ test("chat agent rechecks static prompt before each LLM request", async () => {
         { id: "static", title: "Static", role: "system", enabled: true, content: "{{dailyShell/persona/content}}", order: 1 }
       ]
     }),
-    getPromptRenderer: () => createLLMTextVariableRenderer({
-      variables: () => buildLLMTextVariables({
-        userName: "user",
-        time: createCurrentTimeProvider("UTC"),
-        dailyShellRaw
-      })
+    getPromptRenderer: () => testPromptRuntime({
+      user: "user",
+      dailyShell: { persona: { content: dailyShellRaw.personality.content } }
     }),
     onLLMSessionCleared(reason) {
       clears.push(reason);

@@ -10,7 +10,7 @@ import {
 import { promptStoragePath } from "../../../../../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createPromptProfileStore } from "../../../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createDailyShellStore } from "../../../../../src/contexts/agent-profile/src/domain/shell.js";
-import { createPromptContextRuntime, promptVariableTree } from "../../../../../src/apps/api/bootstrap/prompt-context-runtime.js";
+import { createPromptContextRuntime, promptVariableTree } from "../../../../../src/contexts/prompt-context/src/index.js";
 import type { LLMChatInput, LLMClient } from "../../../../../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../../../../../src/platform/storage/src/diary-store.js";
 import { createCalendarStore } from "../../../../../src/platform/storage/src/calendar-store.js";

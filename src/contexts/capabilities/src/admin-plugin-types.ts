@@ -133,7 +133,7 @@ export type AdminPluginRegistryEntry = {
   routePreview?: string[];
   runtimeAccess?: string[];
   testSchema?: {
-    input: "text" | "audio";
+    input: "text" | "audio" | "image";
     label: string;
     buttonLabel: string;
     defaultValue?: string;

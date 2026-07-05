@@ -21,7 +21,7 @@ export function resolvePluginAssetPathForUpload(pluginId: string, assetKey: stri
   const root = path.resolve(assetRoot, "plugin", pluginId);
   const normalizedRelativeDir = sanitizePluginAssetRelativePath(relativeDir);
   const effectiveFileName = fileName || defaultPluginAssetFileName(assetKey);
-  const baseRelativeDir = assetKey === "model" || assetKey === "test-audio" ? assetKey : normalizedRelativeDir;
+  const baseRelativeDir = assetKey === "model" || assetKey === "test-audio" || assetKey === "test-image" ? assetKey : normalizedRelativeDir;
   const fullPath = path.resolve(root, baseRelativeDir, effectiveFileName);
   const relative = path.relative(root, fullPath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {

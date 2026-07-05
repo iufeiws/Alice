@@ -80,6 +80,8 @@ export function renderGenericPluginConfigScript(): string {
         const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Test translation and voice" };
         const input = schema.input === "audio"
           ? \`<label>\${escapeHtml(schema.label || "Audio")}<input id="pluginTestAudio" value="\${escapeAttr((payload.configValue && payload.configValue.testAudioPath) || schema.defaultValue || "")}" placeholder="assets/plugin/asr/test-audio/example.wav" /></label>\`
+          : schema.input === "image"
+            ? \`<label>\${escapeHtml(schema.label || "Image")}<input id="pluginTestImage" value="\${escapeAttr((payload.configValue && payload.configValue.testImagePath) || schema.defaultValue || "")}" placeholder="assets/plugin/image-recognition/test-image/example.jpg" /></label>\`
           : \`<label>\${escapeHtml(schema.label || "Input")}<textarea id="pluginTestText" rows="4" spellcheck="false">\${escapeHtml(schema.defaultValue || "")}</textarea></label>\`;
         return \`
           <h2>Test</h2>
@@ -256,7 +258,9 @@ export function renderGenericPluginConfigScript(): string {
         const box = document.querySelector(".plugin-test-box");
         const body = box && box.dataset.pluginTestInput === "audio"
           ? { audioFile: $("pluginTestAudio").value }
-          : { text: $("pluginTestText").value };
+          : box && box.dataset.pluginTestInput === "image"
+            ? { imageFile: $("pluginTestImage").value }
+            : { text: $("pluginTestText").value };
         const payload = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/test", {
           method: "POST",
           headers: { "content-type": "application/json" },

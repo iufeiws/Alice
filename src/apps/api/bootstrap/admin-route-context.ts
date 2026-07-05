@@ -21,6 +21,7 @@ import type { DailyShellStore } from "../../../contexts/agent-profile/src/domain
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/admin-presets.js";
 import type { VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import type { AsrPluginConfig, AsrTranscribeError, AsrTranscribeInput, AsrTranscribeResult } from "../../../channels/asr/src/index.js";
+import type { ImageRecognitionConfig, ImageRecognitionError, ImageRecognitionInput, ImageRecognitionResult } from "../../../channels/image-recognition/src/index.js";
 
 export type AdminRouteServices = {
   handleApiRoute(request: any, response: any): Promise<void>;
@@ -146,6 +147,11 @@ export type AdminRuntimeContext = {
       configPath?: string;
       assetRoot?: string;
       testTranscriber?(input: AsrTranscribeInput, config: AsrPluginConfig): Promise<AsrTranscribeResult | AsrTranscribeError> | AsrTranscribeResult | AsrTranscribeError;
+    };
+    imageRecognition?: {
+      configPath?: string;
+      assetRoot?: string;
+      testRecognizer?(input: ImageRecognitionInput, config: ImageRecognitionConfig): Promise<ImageRecognitionResult | ImageRecognitionError> | ImageRecognitionResult | ImageRecognitionError;
     };
     googleStreetView?: {
       configPath?: string;

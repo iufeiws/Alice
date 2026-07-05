@@ -8,6 +8,7 @@ import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConf
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../apps/api/bootstrap/admin-route-context.js";
 import { asrPluginEntry } from "./admin-plugin-asr-runtime.js";
 import { googleStreetViewPluginEntry, worldWandererPluginEntry } from "./admin-plugin-geo-runtime.js";
+import { imageRecognitionPluginEntry } from "./admin-plugin-image-recognition-runtime.js";
 import { generatePhotoOnBody, photoPluginEntry } from "./admin-plugin-photo-runtime.js";
 import { ttsPluginEntry } from "./admin-plugin-tts-runtime.js";
 import type { AdminPluginRegistryEntry, AdminPluginSummary, TtsAdminConfig } from "./admin-plugin-types.js";
@@ -87,6 +88,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
     messagingPluginEntry(),
     bashSandboxPluginEntry(),
     asrPluginEntry(),
+    imageRecognitionPluginEntry(),
     ttsPluginEntry(),
     photoPluginEntry(),
     googleStreetViewPluginEntry(),

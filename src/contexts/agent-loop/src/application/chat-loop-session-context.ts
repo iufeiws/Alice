@@ -8,7 +8,6 @@ import type { ChatAgentLoopInput, ChatAgentLoopSession, ChatAgentModeState } fro
 export async function buildWaitChatResumeMessages(input: {
   session: ChatAgentLoopSession;
   event: AgentEvent;
-  toolPlugins: ToolPlugin[];
   time: CurrentTimeProvider;
   buildTextVariables(event: AgentEvent): PromptContextRuntime;
   onLLMLog?: ChatAgentLoopInput["onLLMLog"];
@@ -21,7 +20,7 @@ export async function buildWaitChatResumeMessages(input: {
   for (const call of pending.calls) {
     let result: ToolResult;
     if (isWaitChatToolName(call.function.name)) {
-      waitChatCheckResult ??= await runWaitChatResumeCheck(call.id, input.session, input.event, input.toolPlugins);
+      waitChatCheckResult ??= await runWaitChatResumeCheck(call.id, input.session, input.event);
       result = {
         ...waitChatCheckResult,
         callId: call.id,
@@ -37,8 +36,7 @@ export async function buildWaitChatResumeMessages(input: {
           input: toolInput,
           requester: input.event.source,
           externalSession: input.event.externalSession
-        },
-        input.toolPlugins
+        }
       );
       if (isCheckChatToolName(call.function.name)) waitChatCheckResult ??= result;
     }
@@ -132,8 +130,7 @@ function pendingWaitChatToolCalls(messages: LLMChatInput["messages"]): { calls: 
 async function runWaitChatResumeCheck(
   callId: string,
   session: ChatAgentLoopSession,
-  event: AgentEvent,
-  toolPlugins: ToolPlugin[]
+  event: AgentEvent
 ): Promise<ToolResult> {
   const checkInput = session.mode === "fixed_prefix"
     ? fixedPrefixToolInput("Chat", { action: "poll" }, session)
@@ -146,8 +143,7 @@ async function runWaitChatResumeCheck(
       input: checkInput,
       requester: event.source,
       externalSession: event.externalSession
-    },
-    toolPlugins
+    }
   );
 }
 

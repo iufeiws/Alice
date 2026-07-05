@@ -7,6 +7,65 @@ import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/
 import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
+test("talk loop includes prompt tool result in first llm request", async () => {
+  let activeSession: any;
+  const sentMessages: unknown[][] = [];
+  const tools: ToolPlugin[] = [{
+    id: "messaging",
+    listTools: () => [{
+      name: "Chat",
+      description: "view",
+      inputSchema: { type: "object", properties: {} }
+    }],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "talk-prompt-tool-result" };
+    }
+  }];
+  registerLLMToolLoopTools("default", tools);
+  const controller = createTalkAgentLoopForSession({
+    isActiveTalkLLMSession: () => true,
+    getCurrentTalkLLMSessionId: () => 107,
+    isTalkSessionOpen: () => true,
+    pendingVoiceOutputCharCount: () => 0,
+    isForegroundPlaybackIdle: () => true,
+    getTalkPromptProfile: () => ({
+      ...defaultPromptProfile(),
+      layers: [
+        { id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 },
+        { id: "prompt_tool", title: "Prompt Tool", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 2 }
+      ],
+      appendLayers: []
+    }),
+    getPromptRenderer: testPromptRenderer,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
+    setLoopPrefixMessageCount: () => {},
+    buildNextLoopMessagePatch: () => ({ replaceFrom: activeSession?.staticPromptMessageCount ?? 0, messages: [{ role: "user", content: "hello" }] }),
+    loadActiveTalkLLMSessionTranscript: () => activeSession,
+    updateActiveTalkLLMSessionTranscript: (session) => {
+      activeSession = session;
+    },
+    visibleToolNames: () => ["Chat"],
+    toolPlugins: tools,
+    getLLMConfig: () => ({
+      client: noopClient,
+      stream: false
+    }),
+    async sendRequest(input) {
+      sentMessages.push(input.messages);
+      return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    },
+    appendAssistantDelta: () => {},
+    finishAssistantOutput: () => {},
+    log: () => {}
+  });
+
+  await runPreparedTalkAgentLoop(controller, 107);
+
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].some((message) => (message as { role?: string; toolCalls?: Array<{ function: { name: string } }> }).role === "assistant" && (message as { toolCalls?: Array<{ function: { name: string } }> }).toolCalls?.[0]?.function.name === "Chat"), true);
+  assert.equal(sentMessages[0].some((message) => (message as { role?: string; name?: string; content?: string }).role === "tool" && (message as { name?: string }).name === "Chat" && (message as { content?: string }).content === "talk-prompt-tool-result"), true);
+});
+
 test("talk exposed selfie tool calls receive agent loop run context", async () => {
   let sendCalls = 0;
   let activeSession: any;

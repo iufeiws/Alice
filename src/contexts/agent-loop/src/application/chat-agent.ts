@@ -436,14 +436,14 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               buildMessages: async () => {
                 if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
                 const initiatedMessages = await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
-                  const result = await runPromptToolRequest(layer, call, toolPlugins);
+                  const result = await runPromptToolRequest(layer, call);
                   initiatedBehaviorPromptToolResult = result;
                   return result;
                 });
                 initiatedBehaviorMessageCount = initiatedMessages.length;
                 return [
                   ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                    return runPromptToolRequest(layer, call, toolPlugins);
+                    return runPromptToolRequest(layer, call);
                   }),
                   ...initiatedMessages,
                   ...mode.modeStaticMessages
@@ -491,7 +491,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       const buildWaitResumeMessages = (session: LLMSessionRecord) => buildWaitChatResumeMessages({
         session,
         event,
-        toolPlugins,
         time,
         buildTextVariables: buildTurnTextVariables,
         onLLMLog: deps.onLLMLog
@@ -516,9 +515,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         if (createdSessionThisRun) return;
         const appendProfile = {
           ...promptProfile,
-          appendLayers: (promptProfile.appendLayers ?? []).filter((layer) => (
-            layer.role !== "tool_request" || (layer.toolCalls ?? []).every((call) => Boolean(findToolPlugin(toolPlugins, call.toolName)))
-          )).map((layer) => {
+          appendLayers: (promptProfile.appendLayers ?? []).map((layer) => {
             if (layer.role !== "tool_request") return layer;
             return {
               ...layer,
@@ -534,7 +531,13 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             ...call,
             input: fixedPrefixToolInput(call.toolName, call.input, session)
           };
-          return runPromptToolRequest(layer, preparedCall, toolPlugins);
+          return runPromptToolRequest(layer, preparedCall, {
+            context: {
+              lastCompletedToolName,
+              agentLoopRunSeq: session.agentLoopRunSeq,
+              llmSessionId: session.id
+            }
+          });
         });
         if (appendMessages.length === 0) return;
         const result = appendLoopSessionContext({

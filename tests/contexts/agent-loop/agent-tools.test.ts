@@ -118,6 +118,83 @@ test("chat agent resolves tool calls before final reply", async () => {
   assert.equal(requests[1].messages.at(-1)?.content, "history");
 });
 
+test("chat agent includes prompt tool result in first llm request", async () => {
+  const requests: LLMChatInput[] = [];
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "final answer" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [
+        { id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 },
+        { id: "prompt_tool", title: "Prompt Tool", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 2 }
+      ],
+      appendLayers: []
+    }),
+    tools: [{
+      id: "test-tools",
+      listTools() {
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        return { callId: call.id, ok: true, output: "tool-result-from-runtime" };
+      }
+    }]
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat"), true);
+  assert.equal(requests[0].messages.some((message) => message.role === "tool" && message.name === "Chat" && message.content === "tool-result-from-runtime"), true);
+});
+
+test("chat append tool request fails instead of disappearing when tool is unavailable", async () => {
+  const requests: LLMChatInput[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return { message: { role: "assistant", content: "final answer" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: [{ id: "append_missing", title: "Append Missing", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "missing_tool", toolArguments: "{}" }], order: 1 }]
+    }),
+    tools: [],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+  await assert.rejects(() => runPreparedChatEvent(core, { ...textEvent(), id: "evt_2" }), /llm_tool_unavailable:missing_tool/);
+
+  assert.equal(requests.length, 1);
+});
+
 test("chat agent prepares chat loop execution for external function-call runtime", async () => {
   let externalRuntimeCalls = 0;
   let setActiveCalls = 0;

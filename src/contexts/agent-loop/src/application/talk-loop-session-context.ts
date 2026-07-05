@@ -3,7 +3,7 @@ import type { LLMMessage } from "../../../llm-gateway/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent, ToolCall, ToolPlugin } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
-import { createAgentLoopToolExecutor } from "./agent-loop-tool-executor.js";
+import { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 import { buildPromptMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "./prompts.js";
 
 export type TalkLoopMessagePatch = AgentLoopMessagePatch;
@@ -68,23 +68,22 @@ export async function prepareTalkLoopSessionContext(input: {
   const profile = deps.getTalkPromptProfile();
   const event = buildTalkAgentEvent(sessionId, deps.time);
   let session: AgentLoopTranscriptSession | undefined;
-  const toolExecutor = createAgentLoopToolExecutor({
-    event,
-    toolPlugins: [...deps.toolPlugins],
-    getLastCompletedToolName: () => session?.lastCompletedToolName,
-    setLastCompletedToolName(name) {
-      if (!session) return;
-      session.lastCompletedToolName = name;
-      deps.updateActiveTalkLLMSessionTranscript(session);
-    }
-  });
   const context = {
     renderer: requirePromptRenderer(deps),
     event,
     time: deps.time
   };
   const renderer = promptRenderer(context);
-  const runPromptTool = async (_layer: unknown, call: ToolCall) => toolExecutor.executeToolCall(call);
+  const runPromptTool = async (_layer: unknown, call: ToolCall) => {
+    const result = await runPromptToolRequest(_layer, call, {
+      context: { lastCompletedToolName: session?.lastCompletedToolName }
+    });
+    if (session) {
+      session.lastCompletedToolName = call.toolName;
+      deps.updateActiveTalkLLMSessionTranscript(session);
+    }
+    return result;
+  };
   const preparedSession = await (deps.prepareSessionContext ?? prepareAgentLoopSessionContext)({
     kind: "talk",
     sessionId: textSessionId,

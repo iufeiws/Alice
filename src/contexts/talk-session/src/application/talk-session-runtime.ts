@@ -1,119 +1,44 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
-import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type {
-  TalkEvent,
-  TalkOutputChunk,
-  TalkOutputInterrupt,
-  TalkSource,
-  TalkStore
-} from "../adapters/sqlite-talk-session-store.js";
+import type { TalkOutputInterrupt } from "../adapters/sqlite-talk-session-store.js";
+import {
+  assertNumericSessionId,
+  assertOpenSession,
+  assertOutputSession,
+  assertSessionExists,
+  audioPayload,
+  current,
+  interruptReason,
+  parseJsonObject,
+  payloadText,
+  segmentId,
+  stringValue,
+  utcTimestamp
+} from "./talk-session-guards.js";
+import {
+  charLength,
+  clampIndex,
+  ratio,
+  sliceChars,
+  speechDeltaForOutput,
+  splitIndexFromContext
+} from "./talk-session-text.js";
+import {
+  isHangupText,
+  recordTranscriptEnd,
+  recordTranscriptEntry
+} from "./talk-session-transcript.js";
+import type { TalkRuntime, TalkRuntimeDeps } from "./talk-session-types.js";
 
-export type TalkRuntime = {
-  store: TalkStore;
-  openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
-  closeSession(input: { sessionId: number; occurredAt?: string; occurredAtUtc?: string }): void;
-  markAgentLoopReady(sessionId: number): void;
-  claimReadyAgentLoopSession(): number | undefined;
-  prepareReadyAgentLoopSession(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
-  ingestInput(event: TalkEvent): void;
-  commitStableInputBatch(batch: StableInputBatch): void;
-  appendAssistantDelta(input: { sessionId: number; outputId: string; delta: string }): void;
-  finishAssistantOutput(input: { sessionId: number; outputId: string }): void;
-  claimBufferedOutputText(sessionId: number): { outputId: string; sessionId: number; text: string; status: "streaming" | "finished" } | undefined;
-  claimReadyOutputChunk(sessionId: number): TalkOutputChunk | undefined;
-  isSessionOutputIdle(sessionId: number): boolean;
-  isForegroundPlaybackIdle(sessionId: number): boolean;
-  markForegroundPlaybackIdle(input: { sessionId: number }): void;
-  markOutputChunkPlayed(input: { sessionId: number; chunkId: string }): void;
-  interruptOutput(input: {
-    sessionId: number;
-    outputId: string;
-    reason: "barge_in" | "manual" | "network" | "unknown";
-    elapsedMs?: number;
-    totalMs?: number;
-    breakpointContext?: { beforeText?: string; afterText?: string };
-    omitAssistantMessage?: boolean;
-    breakMarker?: string;
-  }): TalkOutputInterrupt;
-  interruptLatestOutput(input: {
-    sessionId: number;
-    reason: "barge_in" | "manual" | "network" | "unknown";
-    elapsedMs?: number;
-    totalMs?: number;
-    breakpointContext?: { beforeText?: string; afterText?: string };
-    omitAssistantMessage?: boolean;
-    breakMarker?: string;
-  }): TalkOutputInterrupt | undefined;
-  interruptAgentLoop(sessionId: number, input?: { reason?: string; interruptEpoch?: number }): void;
-  setLoopPrefixMessageCount(sessionId: number, count: number): void;
-  buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): TalkLoopMessagePatch;
-};
-
-export type TalkLoopMessagePatch = {
-  replaceFrom: number;
-  messages: LLMMessage[];
-};
-
-export type TalkSessionOpenInput = {
-  sessionId?: number;
-  source: TalkSource;
-  occurredAt?: string;
-  occurredAtUtc?: string;
-  metadata?: unknown;
-};
-
-export type TalkSessionOpenResult = {
-  sessionId: number;
-};
-
-export type StableInputBatch = {
-  sessionId: number;
-  batchId: string;
-  interruptEpoch: number;
-  inputs: StableInputItem[];
-};
-
-export type StableInputItem = {
-  interruptId: string;
-  sequence: number;
-  reason: "barge_in" | "manual" | "asr_failure" | "call_close";
-  asrStreamId?: string;
-  text: string;
-  audio?: TalkAudioInputPayload;
-  occurredAt: string;
-  occurredAtUtc?: string;
-  targetOutputId?: string;
-  targetChunkId?: string;
-};
-
-export type TalkAudioInputPayload = {
-  kind: "audio";
-  data: string;
-  format: string;
-  mimeType?: string;
-  sampleRateHz?: number;
-  channels?: number;
-  encoding?: string;
-  bytes?: number;
-  durationMs?: number;
-};
-
-export type TalkRuntimeDeps = {
-  store: TalkStore;
-  time: CurrentTimeProvider;
-  breakMarker?: string;
-  readyChars?: number;
-  createLLMSession?(input: {
-    occurredAt: string;
-    occurredAtUtc?: string;
-    source: TalkSource;
-    metadata?: unknown;
-  }): number;
-  prepareAgentLoop?(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
-  interruptAgentLoop?(sessionId: number, outputId: string): Promise<void> | void;
-  onSessionOpened?(sessionId: number): void;
-  onSessionClosed?(sessionId: number): void;
-};
+export type {
+  StableInputBatch,
+  StableInputItem,
+  TalkAudioInputPayload,
+  TalkLoopMessagePatch,
+  TalkRuntime,
+  TalkRuntimeDeps,
+  TalkSessionOpenInput,
+  TalkSessionOpenResult
+} from "./talk-session-types.js";
 
 export const defaultTalkOutputReadyChars = 20;
 const noSpeechUserMessage = " (没有说话)";
@@ -632,287 +557,4 @@ let syntheticSequence = 1_000_000;
 function nextSyntheticSequence(): number {
   syntheticSequence += 1;
   return syntheticSequence;
-}
-
-function current(time: CurrentTimeProvider): { occurredAt: string; occurredAtUtc: string } {
-  const now = time.now();
-  return {
-    occurredAt: now.iso,
-    occurredAtUtc: now.date.toISOString()
-  };
-}
-
-function utcTimestamp(timeUtc: string): number {
-  const timestamp = Date.parse(timeUtc);
-  if (!Number.isFinite(timestamp)) throw new Error(`invalid talk session time: ${timeUtc}`);
-  return timestamp;
-}
-
-function assertNumericSessionId(sessionId: unknown): asserts sessionId is number {
-  if (typeof sessionId !== "number" || !Number.isFinite(sessionId)) throw new Error(`invalid talk session id: ${sessionId}`);
-}
-
-function assertSessionExists(store: TalkStore, sessionId: number): void {
-  if (!store.getSession(sessionId)) throw new Error(`talk session not found: ${sessionId}`);
-}
-
-function assertOpenSession(store: TalkStore, sessionId: number): void {
-  const session = store.getSession(sessionId);
-  if (!session) throw new Error(`talk session not found: ${sessionId}`);
-  if (session.status !== "open") throw new Error(`talk session is not open: ${sessionId}`);
-}
-
-function assertOutputSession(outputSessionId: number, expectedSessionId: number, outputId: string): void {
-  if (outputSessionId !== expectedSessionId) {
-    throw new Error(`talk output session mismatch: output=${outputId} session=${outputSessionId} expected=${expectedSessionId}`);
-  }
-}
-
-function payloadText(payload: unknown): string | undefined {
-  return payload && typeof payload === "object" && typeof (payload as { text?: unknown }).text === "string"
-    ? (payload as { text: string }).text
-    : undefined;
-}
-
-function audioPayload(payload: unknown): TalkAudioInputPayload | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const value = payload as Record<string, unknown>;
-  if (value.kind !== "audio" || typeof value.data !== "string" || typeof value.format !== "string") return undefined;
-  return {
-    kind: "audio",
-    data: value.data,
-    format: value.format,
-    mimeType: stringValue(value.mimeType),
-    sampleRateHz: numberValue(value.sampleRateHz),
-    channels: numberValue(value.channels),
-    encoding: stringValue(value.encoding),
-    bytes: numberValue(value.bytes),
-    durationMs: numberValue(value.durationMs)
-  };
-}
-
-function interruptReason(payload: unknown): string {
-  return payload && typeof payload === "object" && typeof (payload as { reason?: unknown }).reason === "string"
-    ? (payload as { reason: string }).reason
-    : "unknown";
-}
-
-function segmentId(kind: string, eventId: number): string {
-  return `${kind}:${eventId}`;
-}
-
-function recordTranscriptEntry(store: TalkStore, input: {
-  sessionId: number;
-  entryId: string;
-  role: "system" | "assistant" | "user";
-  contentText: string;
-  occurredAt: string;
-  occurredAtUtc?: string;
-  sourceKind: string;
-  sourceId: string;
-}): void {
-  store.upsertTranscriptEntry(input);
-}
-
-function recordTranscriptEnd(store: TalkStore, input: {
-  sessionId: number;
-  occurredAt: string;
-  occurredAtUtc?: string;
-  sourceKind: string;
-  sourceId: string;
-}): void {
-  if (store.listTranscriptEntries(input.sessionId).some((entry) => entry.entryId === "system:end")) return;
-  store.upsertTranscriptEntry({
-    sessionId: input.sessionId,
-    entryId: "system:end",
-    role: "system",
-    contentText: "结束",
-    occurredAt: input.occurredAt,
-    occurredAtUtc: input.occurredAtUtc,
-    sourceKind: input.sourceKind,
-    sourceId: input.sourceId
-  });
-}
-
-function isHangupText(text: string): boolean {
-  return text.trim() === "已挂断" || text.trim() === "-已挂断-";
-}
-
-function speechDeltaForOutput(delta: string, previousFullText: string): string {
-  let parenthesisDepth = parenthesisDepthAfter(previousFullText);
-  let speech = "";
-  for (const char of Array.from(delta)) {
-    if (char === "(" || char === "（") {
-      parenthesisDepth += 1;
-      continue;
-    }
-    if ((char === ")" || char === "）") && parenthesisDepth > 0) {
-      parenthesisDepth -= 1;
-      continue;
-    }
-    if (parenthesisDepth > 0) continue;
-    speech += char;
-  }
-  return speech;
-}
-
-function parenthesisDepthAfter(text: string): number {
-  let depth = 0;
-  for (const char of Array.from(text)) {
-    if (char === "(" || char === "（") depth += 1;
-    else if ((char === ")" || char === "）") && depth > 0) depth -= 1;
-  }
-  return depth;
-}
-
-function charLength(text: string): number {
-  return Array.from(text).length;
-}
-
-function sliceChars(text: string, start: number, end?: number): string {
-  return Array.from(text).slice(start, end).join("");
-}
-
-function splitIndexFromContext(originalText: string, context?: { beforeText?: string; afterText?: string }): number | undefined {
-  const beforeText = context?.beforeText;
-  const afterText = context?.afterText;
-  if (!beforeText && !afterText) return undefined;
-  const originalChars = Array.from(originalText);
-  const beforeChars = beforeText ? Array.from(beforeText) : [];
-  const afterChars = afterText ? Array.from(afterText) : [];
-  for (let index = 0; index <= originalChars.length; index += 1) {
-    if (beforeChars.length > 0 && !charsEndWith(originalChars, index, beforeChars)) continue;
-    if (afterChars.length > 0 && !charsStartWith(originalChars, index, afterChars)) continue;
-    return index;
-  }
-  if (beforeChars.length > 0 && afterChars.length > 0) {
-    const index = charIndexBetweenContextAcrossOmittedParentheses(originalChars, beforeChars, afterChars);
-    if (index !== undefined) return index;
-  }
-  if (beforeChars.length > 0) {
-    const index = lastCharIndexOf(originalChars, beforeChars);
-    if (index >= 0) return index + beforeChars.length;
-  }
-  if (afterChars.length > 0) {
-    const index = firstCharIndexOf(originalChars, afterChars);
-    if (index >= 0) return index;
-  }
-  return normalizedSplitIndexFromContext(originalText, context);
-}
-
-function charIndexBetweenContextAcrossOmittedParentheses(chars: string[], before: string[], after: string[]): number | undefined {
-  for (let index = 0; index <= chars.length; index += 1) {
-    if (!charsEndWith(chars, index, before)) continue;
-    const afterIndex = skipParenthesizedAt(chars, index);
-    if (afterIndex !== undefined && charsStartWith(chars, afterIndex, after)) return index;
-  }
-  return undefined;
-}
-
-function skipParenthesizedAt(chars: string[], index: number): number | undefined {
-  const opener = chars[index];
-  const closer = opener === "(" ? ")" : opener === "（" ? "）" : undefined;
-  if (!closer) return undefined;
-  let depth = 0;
-  for (let cursor = index; cursor < chars.length; cursor += 1) {
-    const char = chars[cursor];
-    if (char === opener) depth += 1;
-    else if (char === closer) {
-      depth -= 1;
-      if (depth === 0) return cursor + 1;
-    }
-  }
-  return undefined;
-}
-
-function charsEndWith(chars: string[], endIndex: number, suffix: string[]): boolean {
-  if (suffix.length > endIndex) return false;
-  for (let offset = 0; offset < suffix.length; offset += 1) {
-    if (chars[endIndex - suffix.length + offset] !== suffix[offset]) return false;
-  }
-  return true;
-}
-
-function charsStartWith(chars: string[], startIndex: number, prefix: string[]): boolean {
-  if (startIndex + prefix.length > chars.length) return false;
-  for (let offset = 0; offset < prefix.length; offset += 1) {
-    if (chars[startIndex + offset] !== prefix[offset]) return false;
-  }
-  return true;
-}
-
-function firstCharIndexOf(chars: string[], needle: string[]): number {
-  for (let index = 0; index <= chars.length - needle.length; index += 1) {
-    if (charsStartWith(chars, index, needle)) return index;
-  }
-  return -1;
-}
-
-function lastCharIndexOf(chars: string[], needle: string[]): number {
-  for (let index = chars.length - needle.length; index >= 0; index -= 1) {
-    if (charsStartWith(chars, index, needle)) return index;
-  }
-  return -1;
-}
-
-function normalizedSplitIndexFromContext(originalText: string, context: { beforeText?: string; afterText?: string }): number | undefined {
-  const original = normalizeForContextLookup(originalText);
-  const before = context.beforeText ? normalizeForContextLookup(context.beforeText) : undefined;
-  const after = context.afterText ? normalizeForContextLookup(context.afterText) : undefined;
-  for (let index = 0; index <= original.text.length; index += 1) {
-    if (before && !original.text.slice(0, index).endsWith(before.text)) continue;
-    if (after && !original.text.slice(index).startsWith(after.text)) continue;
-    return original.endIndexes[Math.max(0, index - 1)] ?? 0;
-  }
-  if (before) {
-    const index = original.text.lastIndexOf(before.text);
-    if (index >= 0) return original.endIndexes[index + before.text.length - 1] ?? 0;
-  }
-  if (after) {
-    const index = original.text.indexOf(after.text);
-    if (index >= 0) return original.startIndexes[index] ?? 0;
-  }
-  return undefined;
-}
-
-function normalizeForContextLookup(text: string): { text: string; startIndexes: number[]; endIndexes: number[] } {
-  const chars = Array.from(text);
-  let normalized = "";
-  const startIndexes: number[] = [];
-  const endIndexes: number[] = [];
-  for (const [index, char] of chars.entries()) {
-    if (/\s/u.test(char)) continue;
-    const value = char === "…" ? "." : char;
-    normalized += value;
-    startIndexes.push(index);
-    endIndexes.push(index + 1);
-  }
-  return { text: normalized, startIndexes, endIndexes };
-}
-
-function ratio(elapsedMs?: number, totalMs?: number): number {
-  if (!elapsedMs || !totalMs || totalMs <= 0) return 0;
-  return Math.max(0, Math.min(1, elapsedMs / totalMs));
-}
-
-function clampIndex(value: number, length: number): number {
-  return Math.max(0, Math.min(length, Math.trunc(value)));
-}
-
-function parseJsonObject(value: string | undefined): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

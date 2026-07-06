@@ -147,7 +147,9 @@ test("Edit passes prior full Read state to sandbox tool and updates state", asyn
     runtime: fakeRuntime(async (payload, toolName) => {
       calls.push({ toolName, payload });
       if (toolName === "Edit") {
-        assert.deepEqual(payload.read_state, { content: "old", timestamp: 123, offset: undefined, limit: undefined, isPartialView: false });
+        assert.deepEqual(payload.read_state, calls.length === 2
+          ? { content: "old", timestamp: 123, offset: 1, limit: undefined }
+          : { content: "new", timestamp: 124, offset: undefined, limit: undefined });
         return JSON.stringify({ type: "edit", file: { filePath: payload.file_path, content: "new" }, meta: { mtimeMs: 124 }, message: `The file ${payload.file_path} has been updated successfully.` });
       }
       return readOutput(String(payload.file_path), "old", 1, 123);
@@ -161,7 +163,50 @@ test("Edit passes prior full Read state to sandbox tool and updates state", asyn
   assert.equal(edit.ok, true);
   assert.equal(edit.output, "The file /workspace/notes.txt has been updated successfully.");
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Edit"]);
-  assert.deepEqual(calls[2]?.payload.read_state, { content: "new", timestamp: 124, offset: undefined, limit: undefined, isPartialView: false });
+});
+
+test("Edit accepts state from a ranged Read", async () => {
+  const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeRuntime(async (payload, toolName) => {
+      calls.push({ toolName, payload });
+      if (toolName === "Edit") {
+        assert.deepEqual(payload.read_state, { content: "target", timestamp: 123, offset: 2, limit: 1 });
+        return JSON.stringify({ type: "edit", file: { filePath: payload.file_path, content: "updated" }, meta: { mtimeMs: 124 }, message: "ok" });
+      }
+      return readOutput(String(payload.file_path), "target", 1, 123);
+    })
+  });
+
+  await tools.execute({ id: "read_range", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 2, limit: 1 } });
+  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "target", new_string: "updated" } });
+
+  assert.equal(edit.ok, true);
+  assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit"]);
+});
+
+test("Read does not return file_unchanged from Edit-updated state", async () => {
+  const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeRuntime(async (payload, toolName) => {
+      calls.push({ toolName, payload });
+      if (toolName === "Edit") {
+        return JSON.stringify({ type: "edit", file: { filePath: payload.file_path, content: "new" }, meta: { mtimeMs: 124 }, message: "ok" });
+      }
+      if (payload.operation === "mtime") return mtimeOutput(String(payload.file_path), 124);
+      return readOutput(String(payload.file_path), calls.length === 1 ? "old" : "new", 1, calls.length === 1 ? 123 : 124);
+    })
+  });
+
+  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
+  await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "old", new_string: "new" } });
+  const reread = await tools.execute({ id: "reread", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
+
+  assert.equal(reread.ok, true);
+  assert.equal(reread.output, "1\tnew");
+  assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Read"]);
 });
 
 test("Edit allows empty old_string and empty new_string", async () => {

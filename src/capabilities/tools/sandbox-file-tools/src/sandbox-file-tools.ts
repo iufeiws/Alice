@@ -102,9 +102,9 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
     validateNoBlockedBinary(filePath);
     const offset = nonNegativeInteger(rawOffset, 1);
     const limit = optionalPositiveInteger(rawLimit);
-    const stateOffset = rawOffset === undefined ? undefined : offset;
+    const stateOffset = offset;
     const existing = getFeatureValue_CACHED_MAY_BE_STALE("tengu_read_dedup_killswitch", false) ? undefined : readFileState.get(filePath);
-    if (existing && !existing.isPartialView && existing.offset === stateOffset && existing.limit === limit) {
+    if (existing && !existing.isPartialView && existing.offset !== undefined && existing.offset === stateOffset && existing.limit === limit) {
       const mtimeMs = await getFileModificationTimeAsync(filePath);
       if (mtimeMs === existing.timestamp) return { callId: call.id, ok: true, output: fileUnchangedStub };
     }
@@ -129,8 +129,7 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
         content: output.file.content,
         timestamp: Math.floor(output.meta.mtimeMs),
         offset: stateOffset,
-        limit,
-        isPartialView: rawLimit !== undefined || offset > 1
+        limit
       });
     }
     return { callId: call.id, ok: true, output: formatReadToolResult(output.file) };
@@ -210,8 +209,7 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
         content: output.file.content,
         timestamp: Math.floor(output.meta.mtimeMs),
         offset: undefined,
-        limit: undefined,
-        isPartialView: false
+        limit: undefined
       });
     }
     return { callId: call.id, ok: true, output: output.message };

@@ -1,12 +1,17 @@
 import type { BashSandboxConfig, BashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
 import { isAllowedCwd, normalizeContainerPath } from "../../../../contexts/bash-sandbox/src/paths.js";
 import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createOpenAICompatibleClient } from "../../../../contexts/llm-gateway/src/index.js";
+import { createPromptApiPresetStore } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
+import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../../channels/image-recognition/src/index.js";
 
 const path = await import("node:path");
 
 const defaultMaxSizeBytes = 256 * 1024;
+const defaultMaxImageSizeBytes = 10 * 1024 * 1024;
 const defaultMaxOutputTokens = 25_000;
 const fileUnchangedStub = "File unchanged since last read. The content from the earlier Read tool_result in this conversation is still current — refer to that instead of re-reading.";
+const promptApiPresetStore = createPromptApiPresetStore("memory-files");
 
 type ReadState = {
   content: string;
@@ -36,6 +41,19 @@ type SandboxReadMtimeOutput = {
   type: "mtime";
   file: { filePath: string };
   mtimeMs: number;
+};
+
+type SandboxReadBase64Output = {
+  type: "base64";
+  file: {
+    filePath: string;
+    content: string;
+  };
+  meta?: {
+    mtimeMs?: number;
+    totalBytes?: number;
+    readBytes?: number;
+  };
 };
 
 type SandboxEditOutput = {
@@ -80,6 +98,7 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
     const rawLimit = call.input.limit;
     const filePath = normalizeReadPath(requiredString(call.input.file_path, "file_path"));
     if (!isAllowedCwd(input.config, filePath)) throw new Error(`path is outside configured sandbox paths: ${filePath}`);
+    if (isSupportedImageFile(filePath)) return await readSandboxImageFile(call, filePath, rawOffset, rawLimit);
     validateNoBlockedBinary(filePath);
     const offset = nonNegativeInteger(rawOffset, 1);
     const limit = optionalPositiveInteger(rawLimit);
@@ -115,6 +134,57 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
       });
     }
     return { callId: call.id, ok: true, output: formatReadToolResult(output.file) };
+  }
+
+  async function readSandboxImageFile(call: ToolCall, filePath: string, rawOffset: unknown, rawLimit: unknown): Promise<ToolResult> {
+    if (rawOffset !== undefined || rawLimit !== undefined) throw new Error("offset and limit are not supported for image files");
+    const result = await input.runtime.runFileTool({
+      toolName: "Read",
+      payload: {
+        operation: "base64",
+        file_path: filePath,
+        max_size_bytes: defaultMaxImageSizeBytes,
+        allowed_roots: allowedRoots(input.config),
+        cwd: input.config.defaultCwd
+      },
+      outputLimitBytes: defaultMaxImageSizeBytes * 2
+    });
+    const output = parseToolJson<SandboxReadBase64Output>(result, "Read");
+    if (output.type !== "base64") throw new Error(`unsupported Read output type: ${String((output as { type?: unknown }).type)}`);
+    const config = readImageRecognitionConfig();
+    const recognition = await recognizeImageWithPlugin({
+      imageFile: Buffer.from(output.file.content, "base64"),
+      filename: path.basename(filePath),
+      mimeType: mimeTypeForImageFile(filePath)
+    }, config, {
+      resolveApiPreset(name) {
+        return promptApiPresetStore.readLLMApiPresets().find((entry) => entry.name === name);
+      },
+      createLlmClientFromPreset(preset) {
+        if (!preset.baseURL || !preset.apiKey) return undefined;
+        return createOpenAICompatibleClient({
+          baseURL: preset.baseURL,
+          apiKey: preset.apiKey,
+          model: preset.model,
+          temperature: preset.temperature,
+          timeoutMs: preset.timeoutMs,
+          extraParams: preset.extraParams
+        });
+      },
+      async llmRequestSender(request) {
+        if (!request.client) throw new Error("missing_image_recognition_client");
+        return await request.client.chat({
+          messages: request.messages,
+          model: request.model,
+          temperature: request.temperature,
+          maxTokens: request.maxTokens,
+          extraParams: request.extraParams,
+          signal: request.signal
+        });
+      }
+    });
+    if ("ok" in recognition) throw new Error(recognition.error);
+    return { callId: call.id, ok: true, output: `Image recognition result:\n${recognition.text}` };
   }
 
   async function editSandboxFile(call: ToolCall): Promise<ToolResult> {
@@ -305,6 +375,21 @@ function validateContentTokens(content: string): void {
     throw new Error(`File content (${estimate} tokens) exceeds maximum allowed tokens (${defaultMaxOutputTokens}). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.`);
   }
 }
+
+function isSupportedImageFile(filePath: string): boolean {
+  return supportedImageExtensions.has(path.extname(filePath).toLowerCase());
+}
+
+function mimeTypeForImageFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "application/octet-stream";
+}
+
+const supportedImageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
 const binaryExtensions = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif",

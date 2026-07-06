@@ -63,6 +63,46 @@ test("Read reports empty files as empty instead of shorter than offset", async (
   assert.equal(result.output, "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>");
 });
 
+test("Read asks sandbox for base64 when reading supported image files", async () => {
+  const cwd = process.cwd();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-image-config-"));
+  const calls: Record<string, unknown>[] = [];
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeRuntime(async (payload) => {
+      calls.push(payload);
+      return JSON.stringify({
+        type: "base64",
+        file: { filePath: payload.file_path, content: Buffer.from([1, 2, 3]).toString("base64") },
+        meta: { mtimeMs: 123, totalBytes: 3, readBytes: 3 }
+      });
+    })
+  });
+
+  try {
+    process.chdir(root);
+    const result = await tools.execute({ id: "read_image", toolName: "Read", input: { file_path: "/workspace/photo.png" } });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "image_recognition_disabled");
+    assert.equal(calls[0]?.operation, "base64");
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("Read wrapper returns structured base64 for image files", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-image-read-"));
+  const filePath = path.join(root, "photo.png");
+  fs.writeFileSync(filePath, Buffer.from([1, 2, 3]));
+
+  const output = await runReadTool({ operation: "base64", file_path: filePath, allowed_roots: [root], cwd: root });
+
+  assert.equal(output.type, "base64");
+  assert.equal(output.file.content, Buffer.from([1, 2, 3]).toString("base64"));
+  assert.equal(output.meta.totalBytes, 3);
+});
+
 test("Read returns file_unchanged for the same full read and mtime", async () => {
   let calls = 0;
   const tools = createSandboxFileTools({

@@ -60,6 +60,18 @@ export async function runReadTool(payload) {
   if (payload.operation === "mtime") {
     return { type: "mtime", file: { filePath }, mtimeMs: await getFileModificationTimeAsync(filePath) };
   }
+  if (payload.operation === "base64") {
+    const bytes = await readBinaryFile(filePath, maxSizeBytes);
+    return {
+      type: "base64",
+      file: { filePath, content: bytes.toString("base64") },
+      meta: {
+        mtimeMs: (await fsStat(filePath)).mtimeMs,
+        totalBytes: bytes.length,
+        readBytes: bytes.length
+      }
+    };
+  }
   const lineOffset = offset === 0 ? 0 : offset - 1;
   let resolvedFilePath = filePath;
   let result;
@@ -241,6 +253,13 @@ async function readFileInRange(filePath, offset = 0, maxLines, maxBytes, signal,
   }
 
   return readFileInRangeStreaming(filePath, offset, maxLines, maxBytes, truncateOnByteLimit, signal);
+}
+
+async function readBinaryFile(filePath, maxBytes) {
+  const stats = await fsStat(filePath);
+  if (stats.isDirectory()) throw new Error(`EISDIR: illegal operation on a directory, read '${filePath}'`);
+  if (maxBytes !== undefined && stats.size > maxBytes) throw new FileTooLargeError(stats.size, maxBytes);
+  return await readFile(filePath);
 }
 
 function readFileInRangeFast(raw, mtimeMs, offset, maxLines, truncateAtBytes) {
@@ -436,7 +455,7 @@ function validateReadInput(payload) {
     throw new Error(`Cannot read '${filePath}': this device file would block or produce infinite output.`);
   }
   const ext = path.posix.extname(filePath).toLowerCase();
-  if (BINARY_EXTENSIONS.has(ext)) {
+  if (BINARY_EXTENSIONS.has(ext) && payload.operation !== "base64") {
     throw new Error(`This tool cannot read binary files. The file appears to be a binary ${ext} file. Please use appropriate tools for binary file analysis.`);
   }
   const offset = numberValue(payload.offset) ?? 1;

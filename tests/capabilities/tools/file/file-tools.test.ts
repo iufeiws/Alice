@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSandboxFileTools } from "../../../../src/capabilities/tools/sandbox-file-tools/src/sandbox-file-tools.js";
+import { createFileTools } from "../../../../src/capabilities/tools/file/src/index.js";
 import type { BashSandboxRuntime } from "../../../../src/contexts/bash-sandbox/src/index.js";
 import { testConfig } from "../../../contexts/bash-sandbox/bash-sandbox-helpers.js";
 
@@ -11,19 +11,19 @@ const path = await import("node:path");
 // @ts-expect-error file tool wrappers are runtime .mjs entry modules.
 const { runEditTool, runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrappers/file-tool-core.mjs");
 
-test("sandbox file tools exposes Read Edit Glob and Grep", () => {
-  const tools = createSandboxFileTools({
+test("file tools exposes Read Edit Glob and Grep", () => {
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async () => readOutput("/workspace/notes.txt", "one", 1, 1))
   });
 
-  assert.equal(tools.id, "sandbox-file-tools");
+  assert.equal(tools.id, "file-tools");
   assert.deepEqual(tools.listTools().map((tool) => tool.name), ["Read", "Edit", "Glob", "Grep"]);
 });
 
 test("Read runs against an absolute sandbox path", async () => {
   const calls: Record<string, unknown>[] = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload) => {
       calls.push(payload);
@@ -52,7 +52,7 @@ test("Read does not count an empty file as one line", async () => {
 });
 
 test("Read reports empty files as empty instead of shorter than offset", async () => {
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async () => readOutput("/workspace/empty.txt", "", 0, 123))
   });
@@ -67,7 +67,7 @@ test("Read asks sandbox for base64 when reading supported image files", async ()
   const cwd = process.cwd();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-image-config-"));
   const calls: Record<string, unknown>[] = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload) => {
       calls.push(payload);
@@ -105,7 +105,7 @@ test("Read wrapper returns structured base64 for image files", async () => {
 
 test("Read returns file_unchanged for the same full read and mtime", async () => {
   let calls = 0;
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload) => {
       calls += 1;
@@ -125,7 +125,7 @@ test("Read returns file_unchanged for the same full read and mtime", async () =>
 
 test("Read rejects paths outside sandbox roots before calling runtime", async () => {
   let called = false;
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async () => {
       called = true;
@@ -142,7 +142,7 @@ test("Read rejects paths outside sandbox roots before calling runtime", async ()
 
 test("Edit passes prior full Read state to sandbox tool and updates state", async () => {
   const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload, toolName) => {
       calls.push({ toolName, payload });
@@ -182,7 +182,7 @@ test("Edit returns a short success message", () => {
 
 test("Edit accepts state from a ranged Read", async () => {
   const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload, toolName) => {
       calls.push({ toolName, payload });
@@ -203,7 +203,7 @@ test("Edit accepts state from a ranged Read", async () => {
 
 test("Read does not return file_unchanged from Edit-updated state", async () => {
   const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload, toolName) => {
       calls.push({ toolName, payload });
@@ -226,7 +226,7 @@ test("Read does not return file_unchanged from Edit-updated state", async () => 
 
 test("Edit allows empty old_string and empty new_string", async () => {
   const calls: Record<string, unknown>[] = [];
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (payload, toolName) => {
       assert.equal(toolName, "Edit");
@@ -252,7 +252,7 @@ test("Edit allows empty old_string and empty new_string", async () => {
 });
 
 test("Glob and Grep return sandbox formatted content", async () => {
-  const tools = createSandboxFileTools({
+  const tools = createFileTools({
     config: testConfig(),
     runtime: fakeRuntime(async (_payload, toolName) => {
       if (toolName === "Glob") return JSON.stringify({ type: "glob", content: "a.txt\nb.txt" });

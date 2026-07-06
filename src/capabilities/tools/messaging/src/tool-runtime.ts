@@ -9,7 +9,7 @@ import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
 import { createBashTools } from "../../bash/src/index.js";
-import { createSandboxFileTools } from "../../sandbox-file-tools/src/sandbox-file-tools.js";
+import { createFileTools } from "../../file/src/index.js";
 import { createSkillsTools } from "../../skills/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
@@ -193,12 +193,12 @@ export function createToolRuntime(input: {
   const bashTools = createBashTools({
     runtime: bashRuntime
   });
-  const sandboxFileTools = createSandboxFileTools({
+  const fileTools = createFileTools({
     runtime: bashRuntime,
     config: input.config.bashSandbox
   });
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, sandboxFileTools, skillsTools, bashTools];
+  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
 
   return {
     messagingTools,
@@ -213,7 +213,7 @@ export function createToolRuntime(input: {
     locationTools,
     bashTools,
     bashRuntime,
-    sandboxFileTools,
+    fileTools,
     skillsTools,
     skillsRegistry: input.skillsRegistry,
     skillsLoader,

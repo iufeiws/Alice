@@ -3,7 +3,7 @@ import type { LLMClient, LLMToolSpec } from '../../../contexts/llm-gateway/src/i
 import type { LLMRequestSender } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
 import type { MemoryRunResult } from './model.js';
 import { targetResultFiles } from './model.js';
-import { editTool, readTool } from '../../../capabilities/tools/sandbox-file-tools/src/sandbox-file-tools.js';
+import { editTool, readTool } from '../../../capabilities/tools/file/profile.js';
 
 export const memoryToolNames = ["Read", "Edit", "self_talk"] as const;
 

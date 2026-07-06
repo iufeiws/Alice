@@ -70,10 +70,10 @@ export function makeMemorySandbox(root: string): { config: BashSandboxConfig; ru
       throw new Error("bash is not available in memory sandbox tests");
     },
     async runFileTool() {
-      throw new Error("memory tests must not execute sandbox file tools");
+      throw new Error("memory tests must not execute file tools");
     },
     async readFile() {
-      throw new Error("memory tests must not execute sandbox file tools");
+      throw new Error("memory tests must not execute file tools");
     }
   };
   return { config, runtime };

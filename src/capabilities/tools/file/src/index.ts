@@ -1,9 +1,10 @@
 import type { BashSandboxConfig, BashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
 import { isAllowedCwd, normalizeContainerPath } from "../../../../contexts/bash-sandbox/src/paths.js";
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createOpenAICompatibleClient } from "../../../../contexts/llm-gateway/src/index.js";
 import { createPromptApiPresetStore } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../../channels/image-recognition/src/index.js";
+import { editTool, globTool, grepTool, readTool } from "../profile.js";
 
 const path = await import("node:path");
 
@@ -73,10 +74,10 @@ type SandboxSearchOutput = {
   content: string;
 };
 
-export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig }): ToolPlugin {
+export function createFileTools(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig }): ToolPlugin {
   const readFileState = new Map<string, ReadState>();
   return {
-    id: "sandbox-file-tools",
+    id: "file-tools",
     listTools() {
       return [readTool, editTool, globTool, grepTool];
     },
@@ -86,7 +87,7 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
         if (call.toolName === "Edit") return await editSandboxFile(call);
         if (call.toolName === "Glob") return await searchSandboxFiles(call, "Glob");
         if (call.toolName === "Grep") return await searchSandboxFiles(call, "Grep");
-        return toolError(call, `Unknown sandbox file tool: ${call.toolName}`);
+        return toolError(call, `Unknown file tool: ${call.toolName}`);
       } catch (error) {
         return toolError(call, error instanceof Error ? error.message : String(error));
       }
@@ -249,77 +250,6 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
     return Math.floor(output.mtimeMs);
   }
 }
-
-export const readTool: ToolDefinition = {
-  name: "Read",
-  description: "Reads a text file from the configured sandbox by absolute sandbox path.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", description: "Absolute path to the file to read inside the sandbox." },
-      offset: { type: "number", description: "Optional 1-based line number to start reading from." },
-      limit: { type: "number", description: "Optional number of lines to read." }
-    },
-    required: ["file_path"],
-    additionalProperties: false
-  }
-};
-
-export const editTool: ToolDefinition = {
-  name: "Edit",
-  description: "Performs exact string replacements in a sandbox file.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", description: "Absolute path to the file to modify inside the sandbox." },
-      old_string: { type: "string", description: "The text to replace." },
-      new_string: { type: "string", description: "The text to replace it with." },
-      replace_all: { type: "boolean", description: "Replace all occurrences of old_string." }
-    },
-    required: ["file_path", "old_string", "new_string"],
-    additionalProperties: false
-  }
-};
-
-export const globTool: ToolDefinition = {
-  name: "Glob",
-  description: "Finds files by glob pattern in the configured sandbox.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "The glob pattern to match files against." },
-      path: { type: "string", description: "Optional absolute sandbox directory path to search in." }
-    },
-    required: ["pattern"],
-    additionalProperties: false
-  }
-};
-
-export const grepTool: ToolDefinition = {
-  name: "Grep",
-  description: "Searches file contents with ripgrep in the configured sandbox.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "The regular expression pattern to search for in file contents." },
-      path: { type: "string", description: "Optional absolute sandbox file or directory path to search in." },
-      glob: { type: "string", description: "Optional glob pattern to filter files." },
-      output_mode: { type: "string", enum: ["content", "files_with_matches", "count"], description: "Output mode. Defaults to files_with_matches." },
-      "-B": { type: "number", description: "Number of lines to show before each match for content output." },
-      "-A": { type: "number", description: "Number of lines to show after each match for content output." },
-      "-C": { type: "number", description: "Alias for context." },
-      context: { type: "number", description: "Number of lines to show before and after each match for content output." },
-      "-n": { type: "boolean", description: "Show line numbers in content output. Defaults to true." },
-      "-i": { type: "boolean", description: "Case insensitive search." },
-      type: { type: "string", description: "Ripgrep file type filter." },
-      head_limit: { type: "number", description: "Limit output to first N lines or entries. Defaults to 250; pass 0 for unlimited." },
-      offset: { type: "number", description: "Skip first N lines or entries before applying head_limit." },
-      multiline: { type: "boolean", description: "Enable multiline mode." }
-    },
-    required: ["pattern"],
-    additionalProperties: false
-  }
-};
 
 function allowedRoots(config: BashSandboxConfig): string[] {
   return [

@@ -124,8 +124,8 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
       toolName: "Edit",
       payload: {
         file_path: filePath,
-        old_string: requiredString(call.input.old_string, "old_string"),
-        new_string: requiredString(call.input.new_string, "new_string"),
+        old_string: requiredStringValue(call.input.old_string, "old_string"),
+        new_string: requiredStringValue(call.input.new_string, "new_string"),
         ...(call.input.replace_all !== undefined ? { replace_all: booleanValue(call.input.replace_all, "replace_all") } : {}),
         read_state: readFileState.get(filePath),
         allowed_roots: allowedRoots(input.config),
@@ -322,6 +322,11 @@ const binaryExtensions = new Set([
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0) throw new Error(`${name} is required`);
+  return value;
+}
+
+function requiredStringValue(value: unknown, name: string): string {
+  if (typeof value !== "string") throw new Error(`${name} is required`);
   return value;
 }
 

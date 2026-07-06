@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import {
   createMarkdownMemoryStore,
@@ -169,12 +170,11 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
   assert.equal(streamCalls, 1);
 });
 
-test("memorizeRetry_firstWorkspaceFailure_retriesSingleWorkspaceRun", async () => {
-  const root = makeTempDir("memory-retry-workspace");
+test("memorizeLoop_firstWorkspaceFailureDoesNotRetry", async () => {
+  const root = makeTempDir("memory-no-retry-workspace");
   const memoryStore = createMarkdownMemoryStore(root);
   const sandbox = makeMemorySandbox(root);
-  const attempts: string[] = [];
-  const finished = new Set<string>();
+  let attempts = 0;
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
@@ -190,24 +190,9 @@ test("memorizeRetry_firstWorkspaceFailure_retriesSingleWorkspaceRun", async () =
       }
     },
     llmRequestSender: async (input) => {
-      const target = String(input.metadata?.target ?? "");
-      attempts.push(target);
-      if (attempts.length === 1) {
-        throw new Error("temporary workspace failure");
-      }
-      if (finished.has(target)) return { message: { role: "assistant", content: "done" } };
-      finished.add(target);
-      return {
-        message: {
-          role: "assistant",
-          content: "",
-          toolCalls: [{
-            id: `read_${target}`,
-            type: "function",
-            function: { name: "self_talk", arguments: JSON.stringify({ content: target }) }
-          }]
-        }
-      };
+      assert.equal(input.metadata?.target, "persistent");
+      attempts += 1;
+      throw new Error("temporary workspace failure");
     },
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
@@ -215,6 +200,134 @@ test("memorizeRetry_firstWorkspaceFailure_retriesSingleWorkspaceRun", async () =
     log() {}
   });
 
+  assert.equal(result.ok, false);
+  assert.equal(attempts, 1);
+  assert.deepEqual(result.results.map((entry) => entry.error), [
+    "temporary workspace failure",
+    "temporary workspace failure",
+    "temporary workspace failure"
+  ]);
+});
+
+test("memorizeLoop_oversizedWorkspaceFile_returnsErrorToModelBeforeCommit", async () => {
+  const root = makeTempDir("memory-limit-error");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
+  const hostPersistentPath = path.join(sandbox.config.hostWorkspaceDir, "memory_organization", "persistent-memory.md");
+  const sandboxPersistentPath = "/workspace/memory_organization/persistent-memory.md";
+  let calls = 0;
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
+    sandbox,
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: {
+      async chat() {
+        throw new Error("request sender should handle memorize calls");
+      }
+    },
+    llmRequestSender: async (input) => {
+      calls += 1;
+      if (calls === 1) {
+        fs.writeFileSync(hostPersistentPath, `${Array.from({ length: 101 }, (_, index) => `${index} ${"好".repeat(100)}`).join("\n")}\n`);
+        return { message: { role: "assistant", content: "done" } };
+      }
+
+      const errorMessage = input.messages.find((entry) => entry.role === "user" && entry.name === "Cheshire Cat");
+      assert.ok(errorMessage);
+      const errorContent = errorMessage.content;
+      if (typeof errorContent !== "string") throw new Error("expected text error message");
+      assert.match(errorContent, /<Error>/);
+      assert.match(errorContent, new RegExp(sandboxPersistentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.match(errorContent, /lines=101 > 100/);
+      assert.match(errorContent, /bytes=\d+ > 10240/);
+      assert.doesNotMatch(errorContent, /user-preferences\.md/);
+      assert.doesNotMatch(errorContent, /diary\.md/);
+      fs.writeFileSync(hostPersistentPath, "fixed\n");
+      return { message: { role: "assistant", content: "done" } };
+    },
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    log() {}
+  }, "persistent");
+
   assert.equal(result.ok, true);
-  assert.equal(attempts.length >= 2, true);
+  assert.equal(calls, 2);
+  assert.equal(memoryStore.read().persistent, "fixed\n");
+});
+
+test("memorizeLoop_limitErrorFollowupGetsFreshRoundBudget", async () => {
+  const root = makeTempDir("memory-limit-error-fresh-rounds");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
+  const hostPersistentPath = path.join(sandbox.config.hostWorkspaceDir, "memory_organization", "persistent-memory.md");
+  let calls = 0;
+  let sawError = false;
+  let followupToolRounds = 0;
+
+  const result = await runMemoryInductionForMessages({
+    memoryStore,
+    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptContextRuntime: testPromptRuntime(),
+    sandbox,
+    messages: [message("2026-05-24T01:00:00.000Z", "hello")],
+    windowStartAt: "2026-05-24T00:00:00.000Z",
+    windowEndAt: "2026-05-24T06:00:00.000Z",
+    llm: {
+      async chat() {
+        throw new Error("request sender should handle memorize calls");
+      }
+    },
+    llmRequestSender: async (input) => {
+      calls += 1;
+      sawError = sawError || input.messages.some((entry) => entry.role === "user" && entry.name === "Cheshire Cat");
+      if (!sawError) {
+        if (calls < 29) {
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: `talk_${calls}`,
+                type: "function",
+                function: { name: "self_talk", arguments: JSON.stringify({ content: `round ${calls}` }) }
+              }]
+            }
+          };
+        }
+        fs.writeFileSync(hostPersistentPath, `${Array.from({ length: 101 }, (_, index) => `line ${index}`).join("\n")}\n`);
+        return { message: { role: "assistant", content: "done" } };
+      }
+
+      followupToolRounds += 1;
+      if (followupToolRounds < 2) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: `fix_${followupToolRounds}`,
+              type: "function",
+              function: { name: "self_talk", arguments: JSON.stringify({ content: `fix ${followupToolRounds}` }) }
+            }]
+          }
+        };
+      }
+      fs.writeFileSync(hostPersistentPath, "fixed\n");
+      return { message: { role: "assistant", content: "done" } };
+    },
+    config: memoryConfig(),
+    nowIso: () => "2026-05-24T06:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    log() {}
+  }, "persistent");
+
+  assert.equal(result.ok, true);
+  assert.equal(followupToolRounds, 2);
+  assert.equal(memoryStore.read().persistent, "fixed\n");
 });

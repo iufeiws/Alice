@@ -5,6 +5,8 @@ import { writeAtomic } from './store.js';
 const fs = await import('node:fs');
 const path = await import('node:path');
 
+export const memoryErrorLayerId = "common_error";
+
 export function createMemoryInductionPromptStore(filePath: string): MemoryInductionPromptStore {
   let current = readMemoryInductionPrompts(filePath);
   if (!fs.existsSync(filePath)) writeMemoryInductionPrompts(filePath, current);
@@ -58,6 +60,19 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
           toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}"
         }],
         thinking: "先读取长期记忆文件，保持工具上下文一致。"
+      },
+      {
+        id: memoryErrorLayerId,
+        title: "Error",
+        role: "user",
+        name: "Cheshire Cat",
+        enabled: true,
+        order: 100,
+        content: [
+          "<Error>",
+          "{{memorize/ErrorDetail}}",
+          "</Error>"
+        ].join("\n")
       }
     ],
     persistentLayers: [],
@@ -90,8 +105,12 @@ export function writeMemoryInductionPrompts(filePath: string, prompts: MemoryInd
 
 export function normalizeMemoryInductionPrompts(value: Partial<MemoryInductionPrompts>): MemoryInductionPrompts {
   const fallback = defaultMemoryInductionPrompts();
+  const commonLayers = normalizePromptLayers(value.commonLayers, fallback.commonLayers);
+  if (!commonLayers.some((layer) => layer.id === memoryErrorLayerId)) {
+    commonLayers.push(fallback.commonLayers.find((layer) => layer.id === memoryErrorLayerId)!);
+  }
   return {
-    commonLayers: normalizePromptLayers(value.commonLayers, fallback.commonLayers),
+    commonLayers,
     persistentLayers: normalizePromptLayers(value.persistentLayers, fallback.persistentLayers),
     userPreferencesLayers: normalizePromptLayers(value.userPreferencesLayers, fallback.userPreferencesLayers),
     yesterdaySummaryLayers: normalizePromptLayers(value.yesterdaySummaryLayers, fallback.yesterdaySummaryLayers)

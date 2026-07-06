@@ -6,7 +6,7 @@ import { parsePromptToolArguments, promptLayerToMessage } from '../../../context
 import type { MemoryInductionPrompts, MemoryInductionPromptStore, MemoryPromptLayer, MemoryPromptPreview, MemoryStore, MemoryTarget } from './model.js';
 import { memoryFileLimits, targetResultFiles } from './model.js';
 import { memoryTools } from './tools.js';
-import { normalizeMemoryInductionPrompts } from './prompt-store.js';
+import { memoryErrorLayerId, normalizeMemoryInductionPrompts } from './prompt-store.js';
 import { readFile } from './store.js';
 import { lineCount, utf8ByteLength } from './text-utils.js';
 import { formatCheckChatMessages } from '../../../capabilities/tools/messaging/src/index.js';
@@ -78,9 +78,10 @@ export function buildMemoryPromptMessages(
     userName?: string;
     diaryDraftPath?: string;
     sandboxPaths?: MemorySandboxPromptPaths;
+    memorizeErrorDetail?: string;
   },
   target: MemoryTarget,
-  options?: { includeCommonLayers?: boolean }
+  options?: { includeCommonLayers?: boolean; includeErrorLayer?: boolean }
 ): LLMMessage[] {
   const layers = memoryPromptLayers(deps.promptStore.get(), target, options);
   const promptContextRuntime = memoryPromptRuntime(deps, target);
@@ -105,6 +106,26 @@ export function buildMemoryPromptMessages(
   return messages;
 }
 
+export function buildMemoryErrorMessages(
+  deps: {
+    promptStore: Pick<MemoryInductionPromptStore, "get">;
+    promptContextRuntime: PromptContextRuntime;
+    messages: StoredConversationMessage[];
+    windowStartAt?: string;
+    windowEndAt: string;
+    timezone: string;
+    userName?: string;
+    sandboxPaths?: MemorySandboxPromptPaths;
+  },
+  target: MemoryTarget,
+  errorDetail: string
+): LLMMessage[] {
+  const layer = memoryPromptLayers(deps.promptStore.get(), target, { includeCommonLayers: true, includeErrorLayer: true })
+    .find((entry) => entry.id === memoryErrorLayerId);
+  if (!layer) throw new Error("memorize_error_layer_missing");
+  return [promptLayerToMessage(layer, memoryPromptRuntime({ ...deps, memorizeErrorDetail: errorDetail }, target))];
+}
+
 function memoryPromptRuntime(
   deps: {
     promptContextRuntime: PromptContextRuntime;
@@ -114,6 +135,7 @@ function memoryPromptRuntime(
     timezone: string;
     userName?: string;
     sandboxPaths?: MemorySandboxPromptPaths;
+    memorizeErrorDetail?: string;
   },
   target: MemoryTarget
 ): PromptContextRuntime {
@@ -142,11 +164,13 @@ function memoryPromptVariables(
     timezone: string;
     userName?: string;
     sandboxPaths?: MemorySandboxPromptPaths;
+    memorizeErrorDetail?: string;
   },
   target: MemoryTarget
 ): Record<string, PromptContextValue> {
   const variables: Record<string, PromptContextValue> = {
     "memorize/target/fileName": deps.sandboxPaths?.files[target] ?? targetResultFiles[target],
+    "memorize/ErrorDetail": deps.memorizeErrorDetail ?? "",
     "memorize/window/startAt": deps.windowStartAt ?? "",
     "memorize/window/endAt": deps.windowEndAt,
     "memorize/timezone": deps.timezone,
@@ -170,7 +194,7 @@ function memoryPromptVariables(
 function memoryPromptLayers(
   prompts: MemoryInductionPrompts,
   target: MemoryTarget,
-  options?: { includeCommonLayers?: boolean }
+  options?: { includeCommonLayers?: boolean; includeErrorLayer?: boolean }
 ): MemoryPromptLayer[] {
   const targetLayers = target === "persistent"
     ? prompts.persistentLayers
@@ -179,6 +203,7 @@ function memoryPromptLayers(
       : prompts.yesterdaySummaryLayers;
   const sortEnabled = (layers: MemoryPromptLayer[]) => layers
     .filter((item) => item.enabled !== false)
+    .filter((item) => item.id !== memoryErrorLayerId || options?.includeErrorLayer === true)
     .sort((left, right) => left.order - right.order);
   return [
     ...(options?.includeCommonLayers === false ? [] : sortEnabled(prompts.commonLayers)),

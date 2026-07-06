@@ -1,9 +1,9 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
 import { registerLLMToolLoopTools, runLLMToolLoop } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
 import type { MemoryInductionSession, MemoryRunResult, MemoryRunSummary, MemorySummaryDeps, MemoryTarget } from './model.js';
-import { maxMessagesPerSummary, memoryInductionMaxAttempts, memoryToolRoundLimit, targetFiles, targetResultFiles } from './model.js';
+import { maxMessagesPerSummary, memoryFileLimits, memoryToolRoundLimit, targetFiles, targetResultFiles } from './model.js';
 import { latestMemorySleepWindow } from './sleep-window.js';
-import { buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-build.js';
+import { buildMemoryErrorMessages, buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-build.js';
 import { createMemoryInductionSession } from './session.js';
 import { createMemoryLocalLLMRequestSender, createMemorySelfTalkToolPlugin, memoryToolDefinitions, memoryToolNames, memoryTools } from './tools.js';
 import { lineCount, utf8ByteLength } from './text-utils.js';
@@ -116,7 +116,13 @@ export async function runMemoryInductionForMessages(
     };
   }
 
-  const results = await runMemoryOrganizationInductionWithRetry(deps, targetFilter ?? "persistent");
+  let results: MemoryRunResult[];
+  try {
+    results = await runMemoryOrganizationInduction(deps, targetFilter ?? "persistent");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    results = memoryTargets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: message, toolCalls: [] }));
+  }
   for (const entry of results) {
     if (entry.ok) deps.log("info", `Memorize ${entry.target} completed`);
     else deps.log("warn", `Memorize ${entry.target} failed: ${entry.error ?? "unknown"}`);
@@ -129,33 +135,6 @@ export async function runMemoryInductionForMessages(
     messageCount: deps.messages.length,
     results
   };
-}
-
-async function runMemoryOrganizationInductionWithRetry(
-  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
-    messages: StoredConversationMessage[];
-    windowStartAt?: string;
-    windowEndAt: string;
-    memorySession?: MemoryInductionSession;
-  },
-  promptTarget: MemoryTarget
-): Promise<MemoryRunResult[]> {
-  let lastResults: MemoryRunResult[] | undefined;
-  for (let attempt = 1; attempt <= memoryInductionMaxAttempts; attempt += 1) {
-    try {
-      const results = await runMemoryOrganizationInduction(deps, promptTarget);
-      if (results.every((entry) => entry.ok) || attempt >= memoryInductionMaxAttempts) return results;
-      lastResults = results;
-      const reason = results.find((entry) => !entry.ok)?.error ?? "unknown Memorize failure";
-      deps.log("warn", `Memorize attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${reason}, retrying`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      lastResults = memoryTargets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: message, toolCalls: [] }));
-      if (attempt >= memoryInductionMaxAttempts) return lastResults;
-      deps.log("warn", `Memorize attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${message}, retrying`);
-    }
-  }
-  return lastResults ?? memoryTargets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: "unknown Memorize failure", toolCalls: [] }));
 }
 
 export async function runSleepMemoryBackfill(deps: MemorySummaryDeps): Promise<{ ok: boolean; segments: number; messages: number }> {
@@ -214,6 +193,14 @@ type MemoryOrganizationWorkspace = {
   initialContent: Record<MemoryTarget, string>;
 };
 
+type MemoryFileLimitViolation = {
+  path: string;
+  lines: number;
+  maxLines: number;
+  bytes: number;
+  maxBytes: number;
+};
+
 function createMemoryOrganizationWorkspace(
   deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
     windowEndAt: string;
@@ -235,6 +222,28 @@ function createMemoryOrganizationWorkspace(
 
 function cleanupMemoryOrganizationWorkspace(workspace: MemoryOrganizationWorkspace): void {
   fs.rmSync(workspace.hostRoot, { recursive: true, force: true });
+}
+
+function memoryWorkspaceLimitViolations(workspace: MemoryOrganizationWorkspace): MemoryFileLimitViolation[] {
+  return memoryTargets.flatMap((target) => {
+    const content = readFile(workspace.hostFiles[target]);
+    const limit = memoryFileLimits[target];
+    const lines = lineCount(content);
+    const bytes = utf8ByteLength(content);
+    return lines > limit.lines || bytes > limit.bytes
+      ? [{ path: workspace.containerFiles[target], lines, maxLines: limit.lines, bytes, maxBytes: limit.bytes }]
+      : [];
+  });
+}
+
+function formatMemoryLimitError(violations: MemoryFileLimitViolation[]): string {
+  return violations.map((violation) => {
+    const issues = [
+      violation.lines > violation.maxLines ? `lines=${violation.lines} > ${violation.maxLines}` : undefined,
+      violation.bytes > violation.maxBytes ? `bytes=${violation.bytes} > ${violation.maxBytes}` : undefined
+    ].filter(Boolean).join(", ");
+    return `${violation.path}: ${issues}`;
+  }).join("\n");
 }
 
 function commitMemoryOrganizationWorkspace(
@@ -345,23 +354,29 @@ async function runMemoryOrganizationInduction(
       createMemorySelfTalkToolPlugin({ toolCalls })
     ]);
 
-    const loopResult = await (async () => {
-      try {
-        return await runLLMToolLoop({
-          initialMessages: messages,
+    let currentMessages = messages;
+    let totalRounds = 0;
+    let response: MemoryRunResult["response"];
+    try {
+      while (true) {
+        const roundBase = totalRounds;
+        const loopResult = await runLLMToolLoop({
+          initialMessages: currentMessages,
           toolRegistryName,
           limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
           buildRequest({ round, messages }) {
+            const absoluteRound = roundBase + round;
+            const extraParams = absoluteRound === 0 ? deps.config.extraParams : deps.config.followupExtraParams;
             const request = {
               model: deps.config.model,
               temperature: deps.config.temperature,
               maxTokens: 8192,
-              extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+              extraParams,
               tools: memoryTools(),
               messages
             };
-            deps.onRound?.(promptTarget, round + 1);
-            session.append?.({ type: "request", round: session.roundOffset + round, request });
+            deps.onRound?.(promptTarget, absoluteRound + 1);
+            session.append?.({ type: "request", round: session.roundOffset + absoluteRound, request });
             return {
               agentId: "memorize",
               client: deps.llm,
@@ -369,7 +384,7 @@ async function runMemoryOrganizationInduction(
               model: deps.config.model,
               temperature: deps.config.temperature,
               maxTokens: 8192,
-              extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+              extraParams,
               toolNames: [...memoryToolNames],
               inlineTools: memoryToolDefinitions(),
               toolVariables: promptRuntime,
@@ -379,10 +394,10 @@ async function runMemoryOrganizationInduction(
           },
           sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
           afterRequest({ round, result }) {
-            session.append?.({ type: "response", round: session.roundOffset + round, response: result });
+            session.append?.({ type: "response", round: session.roundOffset + roundBase + round, response: result });
           },
           beforeTool({ round, call }) {
-            deps.onRound?.(promptTarget, round + 1, call.function.name);
+            deps.onRound?.(promptTarget, roundBase + round + 1, call.function.name);
           },
           afterToolResult({ call, toolInput, toolResult }) {
             if (call.function.name === "Read" || call.function.name === "Edit") {
@@ -403,28 +418,45 @@ async function runMemoryOrganizationInduction(
             session.append?.({ type: "final_messages", messages });
           }
         });
-      } finally {
-        unregisterTools();
+        totalRounds += loopResult.rounds;
+        response = loopResult.finalResult?.message;
+        currentMessages = loopResult.messages;
+        if (loopResult.stopReason !== "completed") break;
+
+        const violations = memoryWorkspaceLimitViolations(workspace);
+        if (violations.length === 0) {
+          session.roundOffset += totalRounds;
+          for (const target of memoryTargets) {
+            if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
+          }
+          session.activeTarget = undefined;
+          return commitMemoryOrganizationWorkspace(deps, workspace, toolCalls, totalRounds, response, session);
+        }
+
+        const errorDetail = formatMemoryLimitError(violations);
+        const errorMessages = buildMemoryErrorMessages({
+          ...deps,
+          promptContextRuntime: promptRuntime,
+          sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles }
+        }, promptTarget, errorDetail);
+        currentMessages = [...currentMessages, ...errorMessages];
+        session.messages = currentMessages;
+        session.append?.({ type: "memory_limit_error", error: errorDetail });
+        session.append?.({ type: "final_messages", messages: currentMessages });
       }
-    })();
-    session.roundOffset += loopResult.rounds;
-    for (const target of memoryTargets) {
-      if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
+    } finally {
+      unregisterTools();
     }
+    session.roundOffset += totalRounds;
     session.activeTarget = undefined;
-
-    if (loopResult.stopReason === "completed") {
-      return commitMemoryOrganizationWorkspace(deps, workspace, toolCalls, loopResult.rounds, loopResult.finalResult?.message, session);
-    }
-
     return memoryTargets.map((target) => ({
       target,
       ok: false,
       edited: false,
-      rounds: loopResult.rounds,
+      rounds: totalRounds,
       error: "model did not finish memory induction within tool round limit",
       toolCalls: toolCallsForTarget(toolCalls, target),
-      response: loopResult.finalResult?.message
+      response
     }));
   } finally {
     cleanupMemoryOrganizationWorkspace(workspace);

@@ -277,12 +277,14 @@ function readFileInRangeFast(raw, mtimeMs, offset, maxLines, truncateAtBytes) {
     startPos = newlinePos + 1;
   }
 
-  if (lineIndex >= offset && lineIndex < endLine && !truncatedByBytes) {
-    let line = text.slice(startPos);
-    if (line.endsWith("\r")) line = line.slice(0, -1);
-    tryPush(line);
+  if (text.length > 0) {
+    if (lineIndex >= offset && lineIndex < endLine && !truncatedByBytes) {
+      let line = text.slice(startPos);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      tryPush(line);
+    }
+    lineIndex++;
   }
-  lineIndex++;
 
   const content = selectedLines.join("\n");
   return {
@@ -359,22 +361,24 @@ function streamOnData(chunk) {
 }
 
 function streamOnEnd() {
-  let line = this.partial;
-  if (line.endsWith("\r")) line = line.slice(0, -1);
-  if (this.currentLineIndex >= this.offset && this.currentLineIndex < this.endLine) {
-    if (this.truncateOnByteLimit && this.maxBytes !== undefined) {
-      const sep = this.selectedLines.length > 0 ? 1 : 0;
-      const nextBytes = this.selectedBytes + sep + Buffer.byteLength(line);
-      if (nextBytes > this.maxBytes) {
-        this.truncatedByBytes = true;
+  if (this.totalBytesRead > 0 || this.partial.length > 0) {
+    let line = this.partial;
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    if (this.currentLineIndex >= this.offset && this.currentLineIndex < this.endLine) {
+      if (this.truncateOnByteLimit && this.maxBytes !== undefined) {
+        const sep = this.selectedLines.length > 0 ? 1 : 0;
+        const nextBytes = this.selectedBytes + sep + Buffer.byteLength(line);
+        if (nextBytes > this.maxBytes) {
+          this.truncatedByBytes = true;
+        } else {
+          this.selectedLines.push(line);
+        }
       } else {
         this.selectedLines.push(line);
       }
-    } else {
-      this.selectedLines.push(line);
     }
+    this.currentLineIndex++;
   }
-  this.currentLineIndex++;
 
   const content = this.selectedLines.join("\n");
   const truncated = this.truncatedByBytes;

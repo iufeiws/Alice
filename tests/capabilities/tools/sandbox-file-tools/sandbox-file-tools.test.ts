@@ -4,6 +4,13 @@ import { createSandboxFileTools } from "../../../../src/capabilities/tools/sandb
 import type { BashSandboxRuntime } from "../../../../src/contexts/bash-sandbox/src/index.js";
 import { testConfig } from "../../../contexts/bash-sandbox/bash-sandbox-helpers.js";
 
+const fs = await import("node:fs");
+const os = await import("node:os");
+const path = await import("node:path");
+
+// @ts-expect-error file tool wrappers are runtime .mjs entry modules.
+const { runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrappers/file-tool-core.mjs");
+
 test("sandbox file tools exposes Read Edit Glob and Grep", () => {
   const tools = createSandboxFileTools({
     config: testConfig(),
@@ -30,6 +37,30 @@ test("Read runs against an absolute sandbox path", async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.file_path, "/workspace/notes.txt");
   assert.equal(result.output, "1\tone\n2\ttwo");
+});
+
+test("Read does not count an empty file as one line", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-empty-read-"));
+  const filePath = path.join(root, "empty.txt");
+  fs.writeFileSync(filePath, "");
+
+  const output = await runReadTool({ file_path: filePath, allowed_roots: [root], cwd: root });
+
+  assert.equal(output.file.content, "");
+  assert.equal(output.file.numLines, 0);
+  assert.equal(output.file.totalLines, 0);
+});
+
+test("Read reports empty files as empty instead of shorter than offset", async () => {
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeRuntime(async () => readOutput("/workspace/empty.txt", "", 0, 123))
+  });
+
+  const result = await tools.execute({ id: "read_empty", toolName: "Read", input: { file_path: "/workspace/empty.txt" } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>");
 });
 
 test("Read returns file_unchanged for the same full read and mtime", async () => {
@@ -91,6 +122,33 @@ test("Edit passes prior full Read state to sandbox tool and updates state", asyn
   assert.equal(edit.output, "The file /workspace/notes.txt has been updated successfully.");
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Edit"]);
   assert.deepEqual(calls[2]?.payload.read_state, { content: "new", timestamp: 124, offset: undefined, limit: undefined, isPartialView: false });
+});
+
+test("Edit allows empty old_string and empty new_string", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeRuntime(async (payload, toolName) => {
+      assert.equal(toolName, "Edit");
+      calls.push(payload);
+      return JSON.stringify({
+        type: "edit",
+        file: { filePath: payload.file_path, content: payload.new_string },
+        meta: { mtimeMs: 124 },
+        message: "ok"
+      });
+    })
+  });
+
+  const create = await tools.execute({ id: "edit_create", toolName: "Edit", input: { file_path: "/workspace/empty.txt", old_string: "", new_string: "hello" } });
+  const deleteText = await tools.execute({ id: "edit_delete", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "hello", new_string: "" } });
+
+  assert.equal(create.ok, true);
+  assert.equal(deleteText.ok, true);
+  assert.equal(calls[0]?.old_string, "");
+  assert.equal(calls[0]?.new_string, "hello");
+  assert.equal(calls[1]?.old_string, "hello");
+  assert.equal(calls[1]?.new_string, "");
 });
 
 test("Glob and Grep return sandbox formatted content", async () => {

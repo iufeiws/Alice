@@ -5,6 +5,7 @@ export function createSleepMemoryBridgeRuntime(input: {
   memoryStore: any;
   promptStore: any;
   promptContextRuntime: any;
+  sandbox?: any;
   stateStore: any;
   diaryStore: any;
   getMessageStore(): any;
@@ -20,6 +21,7 @@ export function createSleepMemoryBridgeRuntime(input: {
     memoryStore: input.memoryStore,
     promptStore: input.promptStore,
     promptContextRuntime: input.promptContextRuntime,
+    sandbox: input.sandbox,
     stateStore: input.stateStore,
     diaryStore: input.diaryStore,
     getMessageStore: input.getMessageStore,

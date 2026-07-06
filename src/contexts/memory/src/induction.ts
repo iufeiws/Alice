@@ -3,10 +3,10 @@ import { registerLLMToolLoopTools, runLLMToolLoop } from '../../../contexts/llm-
 import type { MemoryInductionSession, MemoryRunResult, MemoryRunSummary, MemorySummaryDeps, MemoryTarget } from './model.js';
 import { maxMessagesPerSummary, memoryInductionMaxAttempts, memoryToolRoundLimit, targetFiles, targetResultFiles } from './model.js';
 import { latestMemorySleepWindow } from './sleep-window.js';
-import { buildMemoryPromptMessages, cleanupDiaryDraft, isLongTermMemoryTarget, readMemoryTargetForRun } from './prompt-build.js';
+import { buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-build.js';
 import { createMemoryInductionSession } from './session.js';
 import { createMemoryLocalLLMRequestSender, createMemorySelfTalkToolPlugin, memoryToolDefinitions, memoryToolNames, memoryTools } from './tools.js';
-import { enforceTargetLimit, lineCount, utf8ByteLength } from './text-utils.js';
+import { lineCount, utf8ByteLength } from './text-utils.js';
 import { createSandboxFileTools } from '../../../capabilities/tools/sandbox-files/src/index.js';
 import { readFile, writeAtomic } from './store.js';
 
@@ -165,6 +165,7 @@ export async function runSleepMemoryBackfill(deps: MemorySummaryDeps): Promise<{
     promptStore: deps.promptStore,
     promptContextRuntime: deps.promptContextRuntime,
     llm: deps.llm,
+    sandbox: deps.sandbox,
     config: deps.config,
     nowIso: deps.nowIso,
     timezone: deps.timezone,
@@ -203,6 +204,106 @@ export function splitMessagesByLongGaps(messages: StoredConversationMessage[], g
   }
   if (current.length > 0) segments.push(current);
   return segments;
+}
+
+type MemoryOrganizationWorkspace = {
+  containerRoot: string;
+  hostFiles: Record<MemoryTarget, string>;
+  containerFiles: Record<MemoryTarget, string>;
+  initialContent: Record<MemoryTarget, string>;
+};
+
+function createMemoryOrganizationWorkspace(
+  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
+    windowEndAt: string;
+  }
+): MemoryOrganizationWorkspace {
+  if (!deps.sandbox) throw new Error("memory_sandbox_required");
+  const runId = sanitizeRunId(`${deps.windowEndAt}-${deps.nowIso()}`);
+  const hostRoot = path.join(deps.sandbox.config.hostWorkspaceDir, "memory_organization", runId);
+  const containerRoot = path.posix.join(deps.sandbox.config.workspaceDir, "memory_organization", runId);
+  fs.mkdirSync(hostRoot, { recursive: true });
+
+  const hostFiles = Object.fromEntries(memoryTargets.map((target) => [target, path.join(hostRoot, targetFiles[target])])) as Record<MemoryTarget, string>;
+  const containerFiles = Object.fromEntries(memoryTargets.map((target) => [target, path.posix.join(containerRoot, targetFiles[target])])) as Record<MemoryTarget, string>;
+  const initialContent = Object.fromEntries(memoryTargets.map((target) => [target, readMemoryTargetForRun(deps.memoryStore, target)])) as Record<MemoryTarget, string>;
+  for (const target of memoryTargets) writeAtomic(hostFiles[target], initialContent[target]);
+
+  return { containerRoot, hostFiles, containerFiles, initialContent };
+}
+
+function commitMemoryOrganizationWorkspace(
+  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
+    windowStartAt?: string;
+    windowEndAt: string;
+  },
+  workspace: MemoryOrganizationWorkspace,
+  toolCalls: MemoryRunResult["toolCalls"],
+  rounds: number,
+  response: MemoryRunResult["response"],
+  session: MemoryInductionSession
+): MemoryRunResult[] {
+  return memoryTargets.map((target) => {
+    const content = readFile(workspace.hostFiles[target]);
+    const edited = content !== workspace.initialContent[target];
+    if (edited) {
+      const written = deps.memoryStore.writeTarget(target, content, {
+        now: deps.nowIso(),
+        localDate: deps.windowEndAt.slice(0, 10),
+        windowStartAt: deps.windowStartAt,
+        windowEndAt: deps.windowEndAt
+      });
+      session.append?.({
+        type: "memory_commit",
+        file: targetResultFiles[target],
+        sandboxPath: workspace.containerFiles[target],
+        lines: lineCount(written),
+        bytes: utf8ByteLength(written)
+      });
+    }
+    return {
+      target,
+      ok: true,
+      edited,
+      rounds,
+      toolCalls: toolCallsForTarget(toolCalls, target),
+      response
+    };
+  });
+}
+
+function toolCallsForTarget(toolCalls: MemoryRunResult["toolCalls"], target: MemoryTarget): MemoryRunResult["toolCalls"] {
+  const file = targetResultFiles[target];
+  return toolCalls.filter((entry) => entry.file === file || entry.name === "self_talk");
+}
+
+function fileForSandboxPath(workspace: MemoryOrganizationWorkspace, filePath: string): MemoryRunResult["toolCalls"][number]["file"] {
+  for (const target of memoryTargets) {
+    if (filePath === workspace.containerFiles[target]) return targetResultFiles[target];
+  }
+  return targetResultFiles.persistent;
+}
+
+function withMemoryPromptPaths(runtime: MemorySummaryDeps["promptContextRuntime"], workspace: MemoryOrganizationWorkspace): MemorySummaryDeps["promptContextRuntime"] {
+  const variables = Object.fromEntries(memoryTargets.map((target) => [`memorize/files/${target}/filePath`, workspace.containerFiles[target]])) as Record<string, string>;
+  return {
+    renderText(content, options) {
+      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
+        const value = variables[key] ?? runtime.getVariable(key, options);
+        return value === undefined || value === null || typeof value === "object" ? match : String(value);
+      });
+    },
+    getVariable(name, options) {
+      return variables[name] ?? runtime.getVariable(name, options);
+    },
+    listVariables() {
+      return [...new Set([...runtime.listVariables(), ...Object.keys(variables)])];
+    }
+  };
+}
+
+function sanitizeRunId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 120) || "run";
 }
 
 async function runMemoryOrganizationInduction(

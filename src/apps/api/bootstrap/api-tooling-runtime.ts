@@ -51,6 +51,7 @@ export function createApiToolingRuntime(input: {
     apiContextRuntime: input.apiContextRuntime,
     apiLLMRuntime: input.apiLLMRuntime,
     apiRuntimeState: input.apiRuntimeState,
+    bashRuntime: apiCapabilitiesRuntime.bashRuntime,
     store: input.store,
     getDefaultTarget: input.getDefaultTarget,
     resolvePromptApiPreset: input.resolvePromptApiPreset,

@@ -150,7 +150,7 @@ function memoryPromptVariables(
     "memorize/window/startAt": deps.windowStartAt ?? "",
     "memorize/window/endAt": deps.windowEndAt,
     "memorize/timezone": deps.timezone,
-    "memorize/messages/content": formatCheckChatMessages(deps.messages, { timeZone: deps.timezone, userName: deps.userName })
+    "memorize/messages/content": formatCheckChatMessages(deps.messages, { timeZone: deps.timezone, userName: deps.userName ?? "user" })
   };
   if (deps.sandboxPaths) {
     variables["memorize/workspace/path"] = deps.sandboxPaths.workspacePath;

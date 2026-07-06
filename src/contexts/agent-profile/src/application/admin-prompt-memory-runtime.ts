@@ -65,6 +65,7 @@ export function getMemoryAdminRuntime(context: AdminRoutesContext): ReturnType<t
     diaryStore: context.diaryStore,
     memoryInductionPromptStore: context.memoryInductionPromptStore,
     promptContextRuntime: context.getPromptRenderer(),
+    sandbox: context.sandbox,
     agentState: context.agentState,
     isHeartbeatPaused: () => Boolean((context.messageRuntime.getStatus() as { heartbeatPaused?: unknown })?.heartbeatPaused),
     time: context.time,

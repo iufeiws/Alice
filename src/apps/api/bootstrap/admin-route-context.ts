@@ -100,6 +100,7 @@ export type AdminRuntimeContext = {
   diaryStore: DiaryStore;
   calendarStore: CalendarStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
+  sandbox?: any;
   memoryAdminRuntime?: ReturnType<typeof createAdminMemoryRuntime>;
   runMemoryInductionForMessages?(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
   llmSessionRoot?(): string;

@@ -7,6 +7,7 @@ export function createApiSupportRuntime(input: {
   apiContextRuntime: any;
   apiLLMRuntime: any;
   apiRuntimeState: any;
+  bashRuntime: any;
   store: any;
   getDefaultTarget(): any;
   resolvePromptApiPreset(kind: any): any;
@@ -35,6 +36,10 @@ export function createApiSupportRuntime(input: {
     memoryStore: input.apiContextRuntime.memoryStore,
     promptStore: input.apiContextRuntime.memoryInductionPromptStore,
     promptContextRuntime: input.apiContextRuntime.promptContextRuntime,
+    sandbox: {
+      config: input.config.bashSandbox,
+      runtime: input.bashRuntime
+    },
     stateStore: input.apiContextRuntime.sleepMemoryStateStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     getMessageStore: () => input.store,

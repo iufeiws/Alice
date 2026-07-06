@@ -2,6 +2,7 @@ import type { SleepMemoryInductionConfig } from "../contracts/memory-config.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
+import type { BashSandboxConfig, BashSandboxRuntime } from "../../../bash-sandbox/src/index.js";
 import type { createAliceStore } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { DiaryStore } from "../../../../platform/storage/src/diary-store.js";
 import {
@@ -22,6 +23,10 @@ export function createSleepMemoryInductionRuntime(input: {
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
   promptContextRuntime: PromptContextRuntime;
+  sandbox?: {
+    config: BashSandboxConfig;
+    runtime: BashSandboxRuntime;
+  };
   stateStore: SleepMemoryStateStore;
   diaryStore: DiaryStore;
   getMessageStore(): AliceStore | undefined;
@@ -71,6 +76,7 @@ export function createSleepMemoryInductionRuntime(input: {
         memoryStore: input.memoryStore,
         promptStore: input.promptStore,
         promptContextRuntime: input.promptContextRuntime,
+        sandbox: input.sandbox,
         stateStore: input.stateStore,
         diaryStore: input.diaryStore,
         messageStore,

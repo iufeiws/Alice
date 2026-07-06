@@ -73,6 +73,10 @@ export function createApiAdminRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,
     memoryInductionPromptStore: input.apiContextRuntime.memoryInductionPromptStore,
+    sandbox: {
+      config: input.config.bashSandbox,
+      runtime: input.apiCapabilitiesRuntime.bashRuntime
+    },
     sleepMemoryInductionRuntime: input.sleepMemoryInductionRuntime,
     ensureMemoryConsoleSession: (windowEndAt, windowStartAt) => input.adminLLMSessionRuntime.memoryConsoleRuntime.ensureSession(windowEndAt, windowStartAt),
     llmRequests: input.apiCapabilitiesRuntime.llmRequests,

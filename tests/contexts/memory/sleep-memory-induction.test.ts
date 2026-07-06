@@ -10,8 +10,7 @@ import {
 } from "../../../src/contexts/memory/src/memory.js";
 import { createDiaryStore } from "../../../src/platform/storage/src/diary-store.js";
 import {
-  addPatch,
-  editToolClient,
+  makeMemorySandbox,
   makeTempDir,
   memoryConfig,
   message
@@ -21,6 +20,8 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
   const root = makeTempDir("memory-induction");
   const memoryStore = createMarkdownMemoryStore(root);
   const stateStore = createSleepMemoryStateStore(path.join(root, "state.json"));
+  const sandbox = makeMemorySandbox(root);
+  const seen: string[] = [];
   const diaryStore = createDiaryStore(path.join(root, "diary.sqlite"));
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T00:00:00.000", source: "sleep", now: "2026-05-24T00:00:00.000" });
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T06:00:00.000", source: "sleep", now: "2026-05-24T06:00:00.000" });
@@ -31,6 +32,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     stateStore,
     diaryStore,
     messageStore: {
@@ -43,27 +45,32 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
         return [];
       }
     },
-    llm: editToolClient([], [
-      addPatch("- fact\n"),
-      addPatch("- pref\n"),
-      addPatch("- summary\n")
-    ]),
+    llm: {
+      async chat(input) {
+        seen.push(input.messages.map((entry) => entry.content ?? "").join("\n"));
+        return { message: { role: "assistant", content: "done" } };
+      }
+    },
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
     log() {}
   });
 
-  assert.equal(ok, false);
+  assert.equal(ok, true);
   assert.deepEqual(calls, [{ start: "2026-05-24T00:00:00.000", end: "2026-05-24T06:00:00.000" }]);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T00:00:00.000Z");
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T06:00:00.000");
+  assert.match(seen[0] ?? "", /\/workspace\/memory_organization\/.+\/persistent-memory\.md/);
   assert.equal(memoryStore.read().persistent, "");
+  assert.equal(memoryStore.read().userPreferences, "");
+  assert.equal(memoryStore.read().yesterdaySummary, "");
 });
 
 test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
   const root = makeTempDir("memory-induction-sleep-window");
   const memoryStore = createMarkdownMemoryStore(root);
   const stateStore = createSleepMemoryStateStore(path.join(root, "state.json"));
+  const sandbox = makeMemorySandbox(root);
   const diaryStore = createDiaryStore(path.join(root, "diary.sqlite"));
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T14:00:00.000", source: "sleep", now: "2026-05-24T14:00:00.000" });
   stateStore.write({ lastInductionAt: "2026-05-23T20:00:00.000Z" });
@@ -73,6 +80,7 @@ test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     stateStore,
     diaryStore,
     messageStore: {
@@ -86,20 +94,20 @@ test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
         return [];
       }
     },
-    llm: editToolClient([], [
-      addPatch("- fact\n"),
-      addPatch("- pref\n"),
-      addPatch("- summary\n")
-    ]),
+    llm: {
+      async chat() {
+        return { message: { role: "assistant", content: "done" } };
+      }
+    },
     config: memoryConfig(),
     nowIso: () => "2026-05-24T14:00:00.000Z",
     timezone: "Asia/Shanghai",
     log() {}
   });
 
-  assert.equal(ok, false);
+  assert.equal(ok, true);
   assert.deepEqual(calls, [{ start: undefined, end: "2026-05-24T14:00:00.000" }]);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-23T20:00:00.000Z");
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T14:00:00.000");
 });
 
 test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", async () => {
@@ -107,6 +115,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
   const memoryStore = createMarkdownMemoryStore(root);
   memoryStore.write({ persistent: "old\n", userPreferences: "", yesterdaySummary: "" });
   const stateStore = createSleepMemoryStateStore(path.join(root, "state.json"));
+  const sandbox = makeMemorySandbox(root);
   const diaryStore = createDiaryStore(path.join(root, "diary.sqlite"));
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T00:00:00.000", source: "sleep", now: "2026-05-24T00:00:00.000" });
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T06:00:00.000", source: "sleep", now: "2026-05-24T06:00:00.000" });
@@ -116,6 +125,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     stateStore,
     diaryStore,
     messageStore: {
@@ -137,7 +147,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
     log() {}
   });
 
-  assert.equal(ok, false);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T00:00:00.000Z");
+  assert.equal(ok, true);
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T06:00:00.000");
   assert.equal(memoryStore.read().persistent, "old\n");
 });

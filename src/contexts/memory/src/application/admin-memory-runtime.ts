@@ -1,6 +1,7 @@
 import { formatCheckChatMessages } from "../../../../capabilities/tools/messaging/src/index.js";
 import { createLLMClientFromPreset } from "../../../llm-gateway/src/llm-api-profile.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
+import type { BashSandboxConfig, BashSandboxRuntime } from "../../../bash-sandbox/src/index.js";
 import type { MemorySummaryConfig } from "../contracts/memory-config.js";
 import {
   buildMemoryPromptPreview,
@@ -14,6 +15,7 @@ import {
   type MemoryStore,
   type MemoryTarget
 } from "../memory.js";
+import { targetFiles } from "../model.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -47,6 +49,7 @@ type MemoryAdminRuntimeInput = {
     project: { username: string };
     memoryFiles: { root: string };
     memorySummary: MemorySummaryConfig;
+    bashSandbox?: BashSandboxConfig;
   };
   store?: {
     listMessagesByCreatedAtRange?(startAt: string | undefined, endAt: string, limit?: number): any[];
@@ -56,6 +59,10 @@ type MemoryAdminRuntimeInput = {
   diaryStore: any;
   memoryInductionPromptStore: MemoryInductionPromptStore;
   promptContextRuntime: PromptContextRuntime;
+  sandbox?: {
+    config: BashSandboxConfig;
+    runtime: BashSandboxRuntime;
+  };
   agentState: { getSnapshot(): { state: string } };
   isHeartbeatPaused?: () => boolean;
   time: { timeZone: string; now(): { iso: string; date: Date } };
@@ -198,9 +205,23 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
       timezone: input.time.timeZone,
       userName: input.config.project.username,
       config: memorySummaryConfigForPreset(apiPreset ?? input.resolveMemorizeApiPreset()),
+      sandboxPaths: memoryPreviewSandboxPaths(input.config.bashSandbox),
       generatedAt: input.time.now().iso
     }, target);
     return { status: 200, body: { ok: true, date: window.date, source: window.source, preview } };
+  }
+
+  function memoryPreviewSandboxPaths(config: BashSandboxConfig | undefined) {
+    if (!config) return undefined;
+    const workspacePath = path.posix.join(config.workspaceDir, "memory_organization", "preview");
+    return {
+      workspacePath,
+      files: {
+        persistent: path.posix.join(workspacePath, targetFiles.persistent),
+        userPreferences: path.posix.join(workspacePath, targetFiles.userPreferences),
+        yesterdaySummary: path.posix.join(workspacePath, targetFiles.yesterdaySummary)
+      }
+    };
   }
 
   async function runMemoryForDate(date: string, target?: MemoryTarget, runId?: string, resolvedApiPreset?: MemoryAdminLLMApiPreset) {
@@ -253,6 +274,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
       memoryStore: input.memoryStore,
       promptStore: input.memoryInductionPromptStore,
       promptContextRuntime: input.promptContextRuntime,
+      sandbox: input.sandbox,
       messages,
       windowStartAt,
       windowEndAt,

@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { StoredConversationMessage } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { BashSandboxConfig, BashSandboxRuntime } from "../../../src/contexts/bash-sandbox/src/index.js";
 
 export function memoryConfig() {
   return {
@@ -16,106 +16,6 @@ export function memoryConfig() {
     extraParams: {},
     followupExtraParams: {}
   };
-}
-
-export function editToolClient(seen: LLMChatInput[], patches: string[]): LLMClient {
-  const files = patches.length >= 3
-    ? ["persistent-memory.md", "user-preferences.md", "diary.md"]
-    : ["persistent-memory.md"];
-  const edits = patches.map((patch, index) => ({ file: files[index] ?? "persistent-memory.md", ...patchToEdit(patch) }));
-  return editSequenceClient(seen, edits);
-}
-
-export function editSequenceClient(seen: LLMChatInput[], edits: Array<{ file: string; oldString: string; newString: string }>): LLMClient {
-  let index = 0;
-  let phase: "read" | "edit" | "done" = edits.length > 0 ? "read" : "done";
-  return {
-    async chat(input) {
-      seen.push(input);
-      if (phase === "done") {
-        return { message: { role: "assistant", content: "done" } };
-      }
-      const edit = edits[index];
-      if (phase === "read") {
-        phase = "edit";
-        return {
-          message: {
-            role: "assistant",
-            content: "",
-            toolCalls: [{
-              id: `read_${index + 1}`,
-              type: "function",
-              function: {
-                name: "Read",
-                arguments: JSON.stringify({ file_path: edit.file })
-              }
-            }]
-          }
-        };
-      }
-      index += 1;
-      phase = index >= edits.length ? "done" : "read";
-      return {
-        message: {
-          role: "assistant",
-          content: "",
-          toolCalls: [{
-            id: `edit_${index}`,
-            type: "function",
-            function: {
-              name: "Edit",
-              arguments: JSON.stringify({ file_path: edit.file, old_string: edit.oldString, new_string: edit.newString })
-            }
-          }]
-        }
-      };
-    }
-  };
-}
-
-function patchToEdit(patch: string): { oldString: string; newString: string } {
-  const oldLines: string[] = [];
-  const newLines: string[] = [];
-  for (const line of patch.split(/\r?\n/)) {
-    if (line.startsWith("---")) continue;
-    if (line.startsWith("--")) {
-      oldLines.push(line.slice(1));
-      continue;
-    }
-    if (line.startsWith("-")) {
-      oldLines.push(line.slice(1));
-      continue;
-    }
-    if (line.startsWith("+")) {
-      newLines.push(line.slice(1));
-    }
-  }
-  return {
-    oldString: oldLines.length ? `${oldLines.join("\n")}\n` : "",
-    newString: newLines.length ? `${newLines.join("\n")}\n` : ""
-  };
-}
-
-export function addPatch(content: string): string {
-  const lines = content.trimEnd().split("\n");
-  return [
-    "*** Begin Patch",
-    "@@",
-    ...lines.map((line) => `+${line}`),
-    "*** End Patch"
-  ].join("\n");
-}
-
-export function replacePatch(from: string, to: string): string {
-  const oldLines = from.trimEnd().split("\n");
-  const newLines = to.trimEnd().split("\n");
-  return [
-    "*** Begin Patch",
-    "@@",
-    ...oldLines.map((line) => `-${line}`),
-    ...newLines.map((line) => `+${line}`),
-    "*** End Patch"
-  ].join("\n");
 }
 
 export function message(createdAt: string, contentText: string): StoredConversationMessage {
@@ -140,4 +40,41 @@ export function makeTempDir(name: string): string {
   const dir = path.join(os.tmpdir(), "alice-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+export function makeMemorySandbox(root: string): { config: BashSandboxConfig; runtime: BashSandboxRuntime } {
+  const hostWorkspaceDir = path.join(root, "sandbox", "workspace");
+  const config: BashSandboxConfig = {
+    containerName: "test",
+    image: "test",
+    defaultCwd: "/workspace",
+    hostWorkspaceDir,
+    workspaceDir: "/workspace",
+    hostCacheDir: path.join(root, "sandbox", "cache"),
+    cacheDir: "/cache",
+    tmpDir: "/tmp",
+    skillMounts: [],
+    mounts: [],
+    network: "none",
+    timeoutMs: 1000,
+    outputLimitBytes: 100_000,
+    auditLogPath: path.join(root, "audit.jsonl")
+  };
+  const runtime: BashSandboxRuntime = {
+    setReporter() {},
+    mountSkill(mount) {
+      config.skillMounts.push(mount);
+      return mount;
+    },
+    async run() {
+      throw new Error("bash is not available in memory sandbox tests");
+    },
+    async runFileTool() {
+      throw new Error("memory tests must not execute sandbox file tools");
+    },
+    async readFile() {
+      throw new Error("memory tests must not execute sandbox file tools");
+    }
+  };
+  return { config, runtime };
 }

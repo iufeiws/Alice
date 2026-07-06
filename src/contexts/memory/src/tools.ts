@@ -1,7 +1,7 @@
 import type { ToolDefinition, ToolPlugin } from '../../agent-loop/src/contracts/agent-contracts.js';
 import type { LLMClient, LLMToolSpec } from '../../../contexts/llm-gateway/src/index.js';
 import type { LLMRequestSender } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
-import type { MemoryRunResult, MemoryTarget } from './model.js';
+import type { MemoryRunResult } from './model.js';
 import { targetResultFiles } from './model.js';
 import { editTool, readTool } from '../../../capabilities/tools/sandbox-files/src/index.js';
 

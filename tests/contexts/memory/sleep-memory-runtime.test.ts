@@ -7,11 +7,12 @@ import {
   createMemoryInductionPromptStore,
   runMemoryInductionForMessages
 } from "../../../src/contexts/memory/src/memory.js";
-import { addPatch, editToolClient, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
+import { makeMemorySandbox, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
 
-test("memorizeLoop_failedCompletion_doesNotCommitStagedEdit", async () => {
+test("memorizeLoop_failedCompletion_doesNotCommitWorkspace", async () => {
   const root = makeTempDir("memory-long-term-stage");
   const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
   memoryStore.writeTarget("persistent", "old persistent\n");
   let calls = 0;
 
@@ -25,42 +26,23 @@ test("memorizeLoop_failedCompletion_doesNotCommitStagedEdit", async () => {
     llm: {
       async chat() {
         calls += 1;
-        if (calls === 1) {
-          return {
-            message: {
-              role: "assistant",
-              content: "",
-              toolCalls: [{
-                id: "read_1",
-                type: "function",
-                function: {
-                  name: "Read",
-                  arguments: JSON.stringify({ file_path: "persistent-memory.md" })
-                }
-              }]
-            }
-          };
-        }
         return {
           message: {
             role: "assistant",
             content: "",
             toolCalls: [{
-              id: `edit_${calls}`,
+              id: `talk_${calls}`,
               type: "function",
               function: {
-                name: "Edit",
-                arguments: JSON.stringify({
-                  file_path: "persistent-memory.md",
-                  old_string: calls === 2 ? "old persistent\n" : "new persistent\n",
-                  new_string: "new persistent\n"
-                })
+                name: "self_talk",
+                arguments: JSON.stringify({ content: "still working" })
               }
             }]
           }
         };
       }
     },
+    sandbox,
     config: memoryConfig(),
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
@@ -74,12 +56,14 @@ test("memorizeLoop_failedCompletion_doesNotCommitStagedEdit", async () => {
 test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
   const root = makeTempDir("memory-stream-sender");
   const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
   const streamFlags: unknown[] = [];
 
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -98,18 +82,20 @@ test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
     log() {}
   }, "persistent");
 
-  assert.deepEqual(streamFlags, []);
+  assert.deepEqual(streamFlags, [true]);
 });
 
 test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
   const root = makeTempDir("memory-followup-extra");
   const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
   const seen: unknown[] = [];
 
   await runMemoryInductionForMessages({
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -128,7 +114,7 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
             toolCalls: [{
               id: "read_1",
               type: "function",
-              function: { name: "Read", arguments: JSON.stringify({ file_path: "persistent-memory.md" }) }
+              function: { name: "self_talk", arguments: JSON.stringify({ content: "thinking" }) }
             }]
           }
         };
@@ -145,12 +131,13 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
     log() {}
   }, "persistent");
 
-  assert.deepEqual(seen, []);
+  assert.deepEqual(seen, [{ first: true }, { followup: true }]);
 });
 
 test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
   const root = makeTempDir("memory-local-stream");
   const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
   let chatCalls = 0;
   let streamCalls = 0;
 
@@ -158,6 +145,7 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -178,12 +166,13 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
   }, "persistent");
 
   assert.equal(chatCalls, 0);
-  assert.equal(streamCalls, 0);
+  assert.equal(streamCalls, 1);
 });
 
-test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => {
-  const root = makeTempDir("memory-retry-serial");
+test("memorizeRetry_firstWorkspaceFailure_retriesSingleWorkspaceRun", async () => {
+  const root = makeTempDir("memory-retry-workspace");
   const memoryStore = createMarkdownMemoryStore(root);
+  const sandbox = makeMemorySandbox(root);
   const attempts: string[] = [];
   const finished = new Set<string>();
 
@@ -191,6 +180,7 @@ test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => 
     memoryStore,
     promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
     promptContextRuntime: testPromptRuntime(),
+    sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
     windowEndAt: "2026-05-24T06:00:00.000Z",
@@ -214,7 +204,7 @@ test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => 
           toolCalls: [{
             id: `read_${target}`,
             type: "function",
-            function: { name: "Read", arguments: JSON.stringify({ file_path: "persistent-memory.md" }) }
+            function: { name: "self_talk", arguments: JSON.stringify({ content: target }) }
           }]
         }
       };
@@ -225,6 +215,6 @@ test("memorizeRetry_firstWorkspaceFailure_retriesBeforeCompletion", async () => 
     log() {}
   });
 
-  assert.equal(result.ok, false);
-  assert.deepEqual(attempts, []);
+  assert.equal(result.ok, true);
+  assert.equal(attempts.length >= 2, true);
 });

@@ -98,7 +98,13 @@ export function createMessageRuntimeRuntime(input: {
       input.chatAgent.clearLLMSession("mode_transition");
     },
     appendLog: input.appendLog,
-    appendMessageLog: input.appendMessageLog
+    appendMessageLog: input.appendMessageLog,
+    downloadInboundAttachment(downloadInput) {
+      if (downloadInput.event.source.plugin === "feishu") {
+        return input.feishu.downloadInboundAttachment(downloadInput);
+      }
+      throw new Error(`missing inbound attachment downloader for ${downloadInput.event.source.plugin}`);
+    }
   });
 
   async function setAgentRunIndicatorTyping(typing: boolean): Promise<void> {

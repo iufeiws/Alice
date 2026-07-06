@@ -29,6 +29,7 @@ type FeishuTypingSessionState = {
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
   ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
   ingestAudioMessage(raw: FeishuAudioMessageEvent): Promise<void>;
+  downloadInboundAttachment(input: { event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>; filePath: string }): Promise<{ filename?: string; mime?: string } | void>;
   setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }): Promise<void>;
   agentRunCardClient: FeishuDynamicCardClient;
 } {
@@ -129,6 +130,22 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     },
     async ingestAudioMessage(raw: FeishuAudioMessageEvent) {
       await receiveAudioMessage(raw);
+    },
+    async downloadInboundAttachment(input: { event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>; filePath: string }) {
+      const type = input.event.payload.kind;
+      if (type !== "image" && type !== "file") throw new Error("inbound attachment must be image or file");
+      const resource = input.event.payload.resource;
+      if (!resource?.id) throw new Error("missing inbound attachment resource");
+      await monitor.downloadMessageResource({
+        messageId: input.event.source.rawMessageId ?? input.event.id,
+        fileKey: resource.id,
+        type,
+        filePath: input.filePath
+      });
+      return {
+        filename: resource.filename,
+        mime: resource.mime
+      };
     },
     async setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }) {
       await setTyping(input);

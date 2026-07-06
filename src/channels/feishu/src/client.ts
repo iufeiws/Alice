@@ -1,7 +1,7 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuDynamicCardClient, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
 
 const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   state: "agent_run_state",
@@ -25,6 +25,7 @@ export type FeishuClient = {
   sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
   sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
   downloadAudioResource(input: { messageId: string; fileKey: string }): Promise<FeishuStoredAudioAsset>;
+  downloadMessageResource(input: { messageId: string; fileKey: string; type: FeishuInboundResourceType; filePath: string }): Promise<void>;
 } & FeishuReactionClient & FeishuDynamicCardClient;
 
 export type FeishuClientDeps = {
@@ -221,6 +222,22 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         filename,
         mimeType: "audio/opus"
       };
+    },
+    async downloadMessageResource(input) {
+      assertStarted(client);
+      fs.mkdirSync(path.dirname(input.filePath), { recursive: true });
+      const resource = await client.im.v1.messageResource.get({
+        path: {
+          message_id: input.messageId,
+          file_key: input.fileKey
+        },
+        params: {
+          type: input.type
+        }
+      });
+      if (!resource?.writeFile) throw new Error(`Feishu ${input.type} resource download did not return writeFile`);
+      await resource.writeFile(input.filePath);
+      deps.log?.("info", `[feishu] downloaded ${input.type} ${input.messageId} to ${input.filePath}`);
     },
     async addReaction(input) {
       assertStarted(client);

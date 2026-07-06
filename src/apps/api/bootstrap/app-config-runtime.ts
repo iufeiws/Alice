@@ -2,7 +2,7 @@ import { envBool, envJsonObject, envNumber, trimTrailingSlashes, type Env } from
 import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts/memory-config.js";
 import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
-import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../../contexts/bash-sandbox/src/index.js";
+import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type BashSandboxMountConfig } from "../../../contexts/bash-sandbox/src/index.js";
 
 export type LLMConfig = {
   provider: "openai-compatible" | "stub";
@@ -234,7 +234,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
       skillMounts: [],
-      mounts: parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
+      mounts: withDefaultAssetsMount(parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : [])),
       network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
       outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 30_000),
@@ -310,4 +310,17 @@ export function loadConfig(env: Env = process.env): AppConfig {
       generatedCleanupEnabled: envBool(env.TTS_GENERATED_CLEANUP_ENABLED, true)
     }
   };
+}
+
+function withDefaultAssetsMount(mounts: BashSandboxMountConfig[]): BashSandboxMountConfig[] {
+  if (mounts.some((mount) => mount.containerPath === "/assets")) return mounts;
+  return [
+    {
+      id: "assets",
+      hostPath: "assets",
+      containerPath: "/assets",
+      readOnly: true
+    },
+    ...mounts
+  ];
 }

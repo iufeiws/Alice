@@ -14,6 +14,7 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     sendAudio: client.sendAudio,
     sendFile: client.sendFile,
     downloadAudioResource: client.downloadAudioResource,
+    downloadMessageResource: client.downloadMessageResource,
     addReaction: client.addReaction,
     removeReaction: client.removeReaction,
     createAgentRunCard: client.createAgentRunCard,

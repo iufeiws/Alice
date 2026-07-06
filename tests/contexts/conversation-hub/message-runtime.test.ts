@@ -4,7 +4,7 @@ import { createMessageRuntimeRuntime } from "../../../src/apps/api/bootstrap/mes
 import { createMessageRuntime } from "../../../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentEvent, AgentOutput } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { audioEvent, makeTempDir, runMessageRuntimeWakeIndicator, textEvent, textEventAt, textOutput, waitFor } from "./message-runtime-helpers.js";
+import { audioEvent, imageResourceEvent, makeTempDir, runMessageRuntimeWakeIndicator, textEvent, textEventAt, textOutput, waitFor } from "./message-runtime-helpers.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -118,6 +118,44 @@ test("messageRuntime_pendingInboundLogs_sendsOneLlmRequestAndMarksProcessed", as
 
   assert.equal(coreInputs.length, 1);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
+test("messageRuntime stores inbound image resources under chat_files before inserting message", async () => {
+  const root = makeTempDir("runtime-chat-files");
+  const store = createAliceStore(path.join(root, "alice.sqlite"));
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 10_000,
+    store,
+    chatAgent: {
+      async prepareEventRun() {
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    chatFilesOutputRoot: path.join(root, "assets", "chat_files"),
+    async downloadInboundAttachment(input) {
+      assert.equal(input.event.payload.kind, "image");
+      assert.equal(input.event.payload.resource?.id, "img_v2_1");
+      fs.writeFileSync(input.filePath, "png");
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(imageResourceEvent("session-1", "om_image", "img_v2_1", "hello.png"));
+
+  const [message] = store.listMessagesForConversation("session-1", 10);
+  assert.equal(message.contentType, "image");
+  assert.equal(message.contentText, "assets/chat_files/2026-05/om_image-hello.png");
+  assert.deepEqual(JSON.parse(message.contentJson ?? "{}"), {
+    kind: "image",
+    assetId: "assets/chat_files/2026-05/om_image-hello.png"
+  });
+  assert.equal(fs.readFileSync(path.join(root, "assets", "chat_files", "2026-05", "om_image-hello.png"), "utf8"), "png");
 });
 
 test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudio", async () => {

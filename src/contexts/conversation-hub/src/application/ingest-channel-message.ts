@@ -20,6 +20,9 @@ import type {
   UpsertInboundMessageInput
 } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
+const fs = await import("node:fs");
+const path = await import("node:path");
+
 export type MessageRuntimeDeps = {
   getDelayMs(): number;
   getHeartbeatIntervalMs?: () => number;
@@ -94,11 +97,14 @@ export type MessageRuntimeDeps = {
   };
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
+  downloadInboundAttachment?(input: { event: AgentEvent; filePath: string }): Promise<{ filename?: string; mime?: string } | void>;
+  chatFilesRoot?: string;
+  chatFilesOutputRoot?: string;
   onHeartbeatPausedChange?: (paused: boolean) => void;
 };
 
 export type MessageRuntime = {
-  ingestEvent(event: AgentEvent): void;
+  ingestEvent(event: AgentEvent): Promise<void>;
   ingestLifecycle(event: MessageLifecycleEvent): void;
   recoverPendingSessions(): void;
   pauseHeartbeat(): void;
@@ -214,54 +220,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   return {
     ingestEvent(event) {
       event = normalizeInboundEvent(event);
-      deps.agentState?.noteInboundMessage();
-      const contentText = summarizeEventPayload(event);
-      deps.appendMessageLog({
-        direction: "inbound",
-        plugin: event.source.plugin,
-        kind: event.payload.kind,
-        target: event.source.channelId ?? event.source.userId,
-        sessionId: event.externalSession.sessionId,
-        rawMessageId: event.source.rawMessageId,
-        externalEventId: event.id,
-        status: "received",
-        rawJson: safeJson(event.meta.raw),
-        summary: contentText
-      });
-      if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
-        deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
-        deps.clearLLMSession?.("force_wake");
-        deps.onForceWake?.();
-        deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
-        return;
-      }
-      const receivedAt = event.meta.receivedAt;
-      const receivedAtUtc = event.meta.receivedAtUtc;
-      deps.store.upsertInboundMessage({
-        plugin: event.source.plugin,
-        externalMessageId: event.source.rawMessageId ?? event.id,
-        conversationId: event.externalSession.sessionId,
-        senderId: event.source.userId,
-        senderRole: "user",
-        contentType: event.payload.kind,
-        contentText,
-        contentJson: safeJson({ ...event.payload, quotedMessage: event.meta.quotedMessage }),
-        createdAt: receivedAt,
-        createdAtUtc: receivedAtUtc,
-        lastEventAt: receivedAt,
-        lastEventAtUtc: receivedAtUtc,
-        coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
-      });
-      deps.onInboundUserMessage?.({
-        sessionId: event.externalSession.sessionId,
-        receivedAt,
-        receivedAtUtc
-      });
-      if (shouldProcessInboundWithCore(event)) {
-        agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId);
-      }
-      latestSessionEvents.set(event.externalSession.sessionId, event);
-      markPending(event.externalSession.sessionId);
+      const persisted = persistInboundAttachment(event, deps);
+      if (isPromise(persisted)) return persisted.then(ingestStoredEvent);
+      ingestStoredEvent(persisted);
+      return Promise.resolve();
     },
     ingestLifecycle(event) {
       deps.appendMessageLog({
@@ -326,6 +288,57 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       unsubscribeState?.();
     }
   };
+
+  function ingestStoredEvent(event: AgentEvent): void {
+    deps.agentState?.noteInboundMessage();
+    const contentText = summarizeEventPayload(event);
+    deps.appendMessageLog({
+      direction: "inbound",
+      plugin: event.source.plugin,
+      kind: event.payload.kind,
+      target: event.source.channelId ?? event.source.userId,
+      sessionId: event.externalSession.sessionId,
+      rawMessageId: event.source.rawMessageId,
+      externalEventId: event.id,
+      status: "received",
+      rawJson: safeJson(event.meta.raw),
+      summary: contentText
+    });
+    if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
+      deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
+      deps.clearLLMSession?.("force_wake");
+      deps.onForceWake?.();
+      deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
+      return;
+    }
+    const receivedAt = event.meta.receivedAt;
+    const receivedAtUtc = event.meta.receivedAtUtc;
+    deps.store.upsertInboundMessage({
+      plugin: event.source.plugin,
+      externalMessageId: event.source.rawMessageId ?? event.id,
+      conversationId: event.externalSession.sessionId,
+      senderId: event.source.userId,
+      senderRole: "user",
+      contentType: event.payload.kind,
+      contentText,
+      contentJson: safeJson({ ...event.payload, quotedMessage: event.meta.quotedMessage }),
+      createdAt: receivedAt,
+      createdAtUtc: receivedAtUtc,
+      lastEventAt: receivedAt,
+      lastEventAtUtc: receivedAtUtc,
+      coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
+    });
+    deps.onInboundUserMessage?.({
+      sessionId: event.externalSession.sessionId,
+      receivedAt,
+      receivedAtUtc
+    });
+    if (shouldProcessInboundWithCore(event)) {
+      agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId);
+    }
+    latestSessionEvents.set(event.externalSession.sessionId, event);
+    markPending(event.externalSession.sessionId);
+  }
 
   function markPending(sessionId: string): void {
     pendingSessions.add(sessionId);
@@ -869,6 +882,65 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   function userIdFromWechatConversationId(conversationId: string): string {
     return conversationId.startsWith("wechat:dm:") ? conversationId.slice("wechat:dm:".length) : conversationId;
   }
+}
+
+function persistInboundAttachment(event: AgentEvent, deps: MessageRuntimeDeps): AgentEvent | Promise<AgentEvent> {
+  if ((event.payload.kind !== "image" && event.payload.kind !== "file") || event.payload.assetId || !event.payload.resource) return event;
+  if (!deps.downloadInboundAttachment) throw new Error(`missing inbound attachment downloader for ${event.source.plugin}`);
+  const payload = event.payload;
+  const resource = event.payload.resource;
+  const assetId = inboundAttachmentAssetId(event, deps.chatFilesRoot ?? path.join("assets", "chat_files"));
+  const filePath = deps.chatFilesOutputRoot
+    ? path.resolve(deps.chatFilesOutputRoot, path.relative(deps.chatFilesRoot ?? path.join("assets", "chat_files"), assetId))
+    : path.resolve(assetId);
+  return Promise.resolve()
+    .then(async () => {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const stored = await deps.downloadInboundAttachment!({ event, filePath });
+      deps.appendLog("info", `inbound ${event.payload.kind} stored: ${event.source.plugin} ${event.source.rawMessageId ?? event.id} -> ${assetId}`);
+      return {
+        ...event,
+        payload: payload.kind === "image"
+          ? {
+              ...payload,
+              assetId,
+              resource: undefined
+            }
+          : {
+              ...payload,
+              assetId,
+              filename: assetId,
+              mime: stored?.mime ?? payload.mime ?? resource.mime,
+              resource: undefined
+            }
+      };
+    });
+}
+
+function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>).then === "function";
+}
+
+function inboundAttachmentAssetId(event: AgentEvent, root: string): string {
+  const yearMonth = /^\d{4}-\d{2}/.exec(event.meta.receivedAt)?.[0] ?? "unknown-month";
+  const resource = event.payload.kind === "image" || event.payload.kind === "file" ? event.payload.resource : undefined;
+  const messageId = safeAttachmentFileName(event.source.rawMessageId ?? event.id);
+  const originalName = safeAttachmentFileName(resource?.filename);
+  const filename = originalName ? `${messageId}-${originalName}` : `${messageId}${attachmentExtension(event)}`;
+  return path.join(root, yearMonth, filename).split(path.sep).join("/");
+}
+
+function attachmentExtension(event: AgentEvent): string {
+  if (event.payload.kind === "file") return "";
+  const mime = event.payload.kind === "image" ? event.payload.resource?.mime : undefined;
+  if (mime === "image/png") return ".png";
+  if (mime === "image/webp") return ".webp";
+  if (mime === "image/gif") return ".gif";
+  return ".jpg";
+}
+
+function safeAttachmentFileName(value: string | undefined): string {
+  return (value ?? "").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
 }
 
 export function summarizePayload(payload: { kind: string; text?: string; markdown?: string; assetId?: string; url?: string; filename?: string; transcript?: string }): string {

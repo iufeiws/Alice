@@ -31,6 +31,8 @@ export type FeishuTextMessageEvent = {
       message_id: string;
       chat_id: string;
       chat_type: "p2p" | "group" | string;
+      message_type?: string;
+      msg_type?: string;
       content: string;
       mentions?: Array<{ id?: { open_id?: string }; name?: string; key?: string }>;
       thread_id?: string;
@@ -170,6 +172,15 @@ export type FeishuStoredAudioAsset = {
   filename?: string;
   mimeType?: string;
 };
+
+export type FeishuInboundResourceType = "image" | "file";
+
+export type FeishuInboundResourceDownloader = (input: {
+  messageId: string;
+  fileKey: string;
+  type: FeishuInboundResourceType;
+  filePath: string;
+}) => Promise<{ filename?: string; mime?: string } | void>;
 
 export type FeishuAudioAssetStore = (input: {
   fileKey: string;

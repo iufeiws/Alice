@@ -1,9 +1,15 @@
+export type AgentAttachmentResource = {
+  id: string;
+  filename?: string;
+  mime?: string;
+};
+
 export type AgentPayload =
   | { kind: "text"; text: string }
   | { kind: "markdown"; markdown: string }
-  | { kind: "image"; assetId: string; alt?: string }
+  | { kind: "image"; assetId?: string; alt?: string; resource?: AgentAttachmentResource }
   | { kind: "audio"; assetId: string; transcript?: string }
-  | { kind: "file"; assetId: string; filename: string; mime?: string }
+  | { kind: "file"; assetId?: string; filename?: string; mime?: string; resource?: AgentAttachmentResource }
   | { kind: "link"; url: string; title?: string; description?: string }
   | { kind: "card_action"; actionId: string; values: Record<string, unknown> };
 

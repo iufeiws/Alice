@@ -57,6 +57,36 @@ export function audioEvent(sessionId: string, rawMessageId: string, assetId: str
   };
 }
 
+export function imageResourceEvent(sessionId: string, rawMessageId: string, resourceId: string, filename?: string): AgentEvent {
+  return {
+    id: `evt_${rawMessageId}`,
+    source: {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "chat",
+      userId: "user",
+      rawMessageId
+    },
+    externalSession: {
+      scope: "dm",
+      sessionId
+    },
+    type: "message.image",
+    payload: {
+      kind: "image",
+      resource: {
+        id: resourceId,
+        filename,
+        mime: "image/png"
+      }
+    },
+    meta: {
+      receivedAt: "2026-05-24T00:00:00.000Z",
+      replyTo: rawMessageId
+    }
+  };
+}
+
 export function textOutput(sessionId: string, text: string): AgentOutput {
   return {
     id: "out_1",

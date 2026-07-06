@@ -17,7 +17,7 @@ export function createChannelPluginRuntime(input: {
     time: input.time,
     asr: input.asrPlugin,
     async onEvent(event) {
-      input.getMessageRuntime().ingestEvent(event);
+      await input.getMessageRuntime().ingestEvent(event);
     },
     async onLifecycleEvent(event) {
       input.getMessageRuntime().ingestLifecycle({ plugin: "feishu", ...event });
@@ -29,7 +29,7 @@ export function createChannelPluginRuntime(input: {
     stateStore: input.wechatStateStore,
     time: input.time,
     async onEvent(event) {
-      input.getMessageRuntime().ingestEvent(event);
+      await input.getMessageRuntime().ingestEvent(event);
     }
   });
 

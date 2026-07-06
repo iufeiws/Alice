@@ -247,8 +247,8 @@ test("check_chat formats multiline text messages with speaker on its own line", 
   assert.match(String(result.output), /Alice:\nalice first\nalice second/);
   assert.doesNotMatch(String(result.output), /\{\{user\}\}:user first\nuser second/);
   assert.doesNotMatch(String(result.output), /Alice:alice first\nalice second/);
-  assert.match(String(result.output), /Alice发送了一张图片/);
-  assert.doesNotMatch(String(result.output), /Alice:发送了一张图片/);
+  assert.match(String(result.output), /Alice: <image path = "\/assets\/generated\/selfies\/selfie\.jpg"\/>/);
+  assert.doesNotMatch(String(result.output), /Alice\/assets\/generated\/selfies\/selfie\.jpg/);
 });
 
 test("check_chat default scope ignores active main llm session generation", async () => {

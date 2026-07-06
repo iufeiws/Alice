@@ -129,6 +129,7 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
   const reactions = summarizeReactions(message.reactionsJson);
   const content = `${message.isRecalled ? messagingToolText.recalledMessage : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
   if (isSystem) return content;
+  if (isImageMessage(message)) return `${speaker}: ${content}`;
   if (isMediaActionMessage(message)) return `${speaker}${content}`;
   return content.includes("\n") ? `${speaker}:\n${content}` : `${speaker}:${content}`;
 }
@@ -140,7 +141,10 @@ function formatAssistantSpeaker(value: string | undefined): string {
 function formatMessageContent(message: StoredConversationMessage): string {
   const content = parseContentJson(message.contentJson);
   if (isVoiceCallTranscriptMessage(message)) return message.contentText;
-  if (message.contentType === "image" || content?.kind === "image") return messagingToolText.imageMessage;
+  if (message.contentType === "image" || content?.kind === "image") {
+    const imagePath = sandboxAssetPath(optionalStringValue(content?.assetId) || message.contentText);
+    return imagePath ? `<image path = "${imagePath}"/>` : messagingToolText.imageMessage;
+  }
   if (message.contentType === "audio" || content?.kind === "audio") {
     const transcript = optionalStringValue(content?.transcript) || message.contentText;
     return summarizeAudioText(transcript, message.contentText);
@@ -152,9 +156,22 @@ function formatMessageContent(message: StoredConversationMessage): string {
   return message.contentText;
 }
 
+function sandboxAssetPath(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+  if (normalized.startsWith("/")) return normalized;
+  if (normalized.startsWith("assets/")) return `/${normalized}`;
+  return `/assets/${normalized}`;
+}
+
 function isVoiceCallTranscriptMessage(message: StoredConversationMessage): boolean {
   const content = parseContentJson(message.contentJson);
   return message.contentType === "voicecalltranscript" || content?.kind === "voicecalltranscript";
+}
+
+function isImageMessage(message: StoredConversationMessage): boolean {
+  const content = parseContentJson(message.contentJson);
+  return message.contentType === "image" || content?.kind === "image";
 }
 
 function parseVoiceCallTranscriptMessage(message: StoredConversationMessage): VoiceCallTranscriptRow | undefined {

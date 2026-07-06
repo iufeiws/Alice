@@ -17,7 +17,7 @@ export async function* streamTtsText(
 ): AsyncIterable<TtsStreamChunk> {
   if (input.source !== "send_chat.voice") throw new Error("tts stream only supports send_chat.voice");
   if (!config.enabled) throw new Error("tts stream is disabled");
-  const conversion = selectedTtsConversionProvider(config);
+  const conversion = selectedTtsConversionProvider(config, input.alice);
 
   let streamSequence = 0;
   for await (const sourceText of bufferTtsStreamInput(input.text, {
@@ -45,7 +45,7 @@ export async function* streamTtsText(
 
   const streamGenie = conversion === "genie"
     ? (() => {
-      const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...genie } = ttsGenieOverrides(config);
+      const { speed: _streamUnsupportedSpeed, partSilenceSeconds: _streamUnusedSilence, ...genie } = ttsGenieOverrides(config, input.alice);
       return genie;
     })()
     : undefined;
@@ -60,6 +60,7 @@ export async function* streamTtsText(
     const voice = await synthesizeTtsRouted({
       text: part,
       time: input.time,
+      alice: input.alice,
       ...(streamGenie ? { genie: streamGenie } : {})
     }, config, deps, { ...(streamGenie ? { genie: streamGenie } : {}) });
     totalAudioFiles += 1;

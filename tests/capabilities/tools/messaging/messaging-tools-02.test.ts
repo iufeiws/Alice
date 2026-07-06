@@ -159,8 +159,27 @@ test("check_chat simplifies outbound image records", async () => {
 
   const result = await tools.execute({ id: "call_image_record", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /Alice发送了一张图片/);
-  assert.doesNotMatch(String(result.output), /selfie_20260528_160956\.jpg/);
+  assert.match(String(result.output), /Alice: <image path = "\/assets\/generated\/selfies\/selfie_20260528_160956\.jpg"\/>/);
+});
+
+test("check_chat renders inbound chat image path as sandbox absolute path", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-chat-image-path"), "alice.sqlite"));
+  store.upsertInboundMessage({
+    plugin: "feishu",
+    externalMessageId: "om_image",
+    conversationId: "session-1",
+    senderId: "user-1",
+    contentType: "image",
+    contentText: "assets/chat_files/2026-05/om_image-hello.png",
+    contentJson: JSON.stringify({ kind: "image", assetId: "assets/chat_files/2026-05/om_image-hello.png" }),
+    createdAt: "2026-05-26T12:00:00.000Z"
+  });
+  const tools = createDefaultChatTools(store);
+
+  const result = await tools.execute({ id: "call_chat_image_path", toolName: "Chat", input: { action: "poll", scope: "today" } });
+  assert.equal(result.ok, true);
+  assert.match(String(result.output), /\{\{user\}\}: <image path = "\/assets\/chat_files\/2026-05\/om_image-hello\.png"\/>/);
+  assert.doesNotMatch(String(result.output), /\{\{user\}\}\/assets\/chat_files/);
 });
 
 test("check_chat simplifies outbound audio records", async () => {

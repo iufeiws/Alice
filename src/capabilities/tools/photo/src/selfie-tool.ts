@@ -50,6 +50,7 @@ export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
   getAppearanceDescription?: () => string;
   getDefaultTarget?(): PhotoToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
+  mountGeneratedSelfieInSandbox?(input: { hostPath: string; containerPath: string }): void;
 };
 
 const selfiePromptFileName = "selfie-prompt.txt";
@@ -160,11 +161,15 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       if (finalImageMime !== "image/jpeg") throw new Error(photoToolText.finalFileNotJpeg);
 
       const sent = await sendImage(deps, time, target, assetId);
+      deps.mountGeneratedSelfieInSandbox?.({
+        hostPath: finalFilePath,
+        containerPath: path.posix.join("/assets/generated/selfies", path.basename(fileName))
+      });
       deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
       return {
         callId: call.id,
         ok: true,
-        output: photoToolText.sent,
+        output: photoToolText.sent(path.basename(fileName)),
         llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage
           ? [{
             kind: "image",

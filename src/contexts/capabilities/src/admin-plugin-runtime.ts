@@ -560,7 +560,7 @@ function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<Adm
         ...field,
         options: translationNames.map((name) => ({ value: name, label: name }))
       }
-      : field.key === "activePresetName" || field.key === "editPresetName"
+      : field.key === "activePresetName" || field.key === "editPresetName" || field.key === "corePresetName" || field.key === "shellPresetName"
       ? {
         ...field,
         options: presetNames.map((name) => ({ value: name, label: name }))

@@ -29,10 +29,12 @@ export function renderTtsPluginScript(): string {
                 '<button type="button" id="pluginConfigLogs" class="secondary">Show TTS Event Log</button>',
               '</div>',
             '</div>',
-            '<div class="plugin-public-grid">',
-              ttsPluginField(payload, "enabled"),
-              ttsPluginField(payload, "activePresetName"),
-            '</div>',
+              '<div class="plugin-public-grid">',
+                ttsPluginField(payload, "enabled"),
+                ttsPluginField(payload, "activePresetName"),
+                ttsPluginField(payload, "corePresetName"),
+                ttsPluginField(payload, "shellPresetName"),
+              '</div>',
             renderPluginTestBox(payload),
           '</section>'
         ].join("");

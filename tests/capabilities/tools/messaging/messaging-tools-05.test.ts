@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 import { createMessagingTools } from "../../../../src/capabilities/tools/messaging/src/index.js";
 import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/finish-and-wait/src/index.js";
-import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
+import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, selectedTtsPresetName, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 
@@ -96,6 +96,31 @@ test("tts plugin config can disable local Genie fallback", () => {
   assert.equal(config.activePreset.genie?.enabled, true);
   assert.equal(config.activePreset.genie?.baseURL, "http://192.168.0.103:8767");
   assert.equal(config.activePreset.genie?.localFallbackEnabled, false);
+});
+
+test("tts plugin config selects core and shell preset names with opposite fallback", () => {
+  const dir = makeTempDir("tts-config-alice-presets");
+  const configPath = path.join(dir, "config.json");
+  const presetDir = path.join(dir, "presets");
+  fs.mkdirSync(presetDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    activePresetName: "legacy",
+    corePresetName: "core",
+    translationPresets: { default: { translationEnabled: false } }
+  }));
+  for (const name of ["legacy", "core"]) {
+    fs.writeFileSync(path.join(presetDir, `${name}.json`), JSON.stringify({
+      provider: "genie",
+      genie: { enabled: true, baseURL: "127.0.0.1" }
+    }));
+  }
+
+  const config = readTtsPluginConfig(configPath);
+
+  assert.equal(selectedTtsPresetName(config, "core"), "core");
+  assert.equal(selectedTtsPresetName(config, "shell"), "core");
+  assert.equal(selectedTtsPresetName(config), "legacy");
 });
 
 test("tts plugin config reads Bailian conversion settings", () => {

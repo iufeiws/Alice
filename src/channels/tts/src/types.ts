@@ -39,6 +39,7 @@ export type TTSConfig = {
 export type VoiceSynthesisInput = {
   text: string;
   time: CurrentTimeProvider;
+  alice?: "core" | "shell";
   genie?: {
     language?: string;
     modelDir?: string;
@@ -81,6 +82,8 @@ export type TtsApiPreset = {
 export type TtsPluginConfig = {
   enabled: boolean;
   activePresetName?: string;
+  corePresetName?: string;
+  shellPresetName?: string;
   editPresetName?: string;
   presets?: Record<string, TtsPreset>;
   activePreset?: TtsPreset;
@@ -264,6 +267,7 @@ export type TtsStreamInput = {
   text: AsyncIterable<string> | Iterable<string> | string;
   time: CurrentTimeProvider;
   source: "send_chat.voice";
+  alice?: "core" | "shell";
   streamId?: string;
   onInputBufferIdle?(): void | Promise<void>;
   beforeBackendRequest?(input: { sequence: number; text: string }): void | Promise<void>;

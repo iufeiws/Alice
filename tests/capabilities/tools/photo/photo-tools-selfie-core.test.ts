@@ -34,6 +34,7 @@ function makeSuccessfulSelfieFixture(name: string) {
   const store = createTestStore("selfie-db");
   const sent: AgentOutput[] = [];
   const executorInputs: SelfieExecutorInput[] = [];
+  const sandboxMounts: Array<{ hostPath: string; containerPath: string }> = [];
   let nextMessageId = 1;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
@@ -56,13 +57,15 @@ function makeSuccessfulSelfieFixture(name: string) {
     },
     getSelfieContext: () => ({ ...selfieContext(), outfitImageUrl: outfitImage }),
     getAppearanceDescription: () => "发色: 低饱和浅金色\n眼睛: 浅金色",
-    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" }),
+    mountGeneratedSelfieInSandbox: (mount) => sandboxMounts.push(mount)
   });
   return {
     tools,
     store,
     sent,
     executorInputs,
+    sandboxMounts,
     referenceRoot,
     outfitImage,
     cleanup() {
@@ -107,12 +110,34 @@ test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     }, { llmCapabilities: { supportsImage: true } });
 
+    assert.equal(result.output, '<sent path="/assets/generated/selfies/selfie_20260526_120000.jpg"/>');
     const imageContent = fixture.sent.at(-1)?.content;
     assert.equal(imageContent?.kind, "image");
     assert.match(imageContent?.kind === "image" ? imageContent.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
     assert.match(result.llmFollowupAttachments?.[0]?.path ?? "", /selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_validContext_mountsGeneratedImageFileInSandbox", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-sandbox-mount");
+  try {
+    await fixture.tools.execute({
+      id: "call_selfie",
+      toolName: "Selfie",
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
+    });
+
+    assert.deepEqual(fixture.sandboxMounts.map((mount) => ({
+      hostPath: path.basename(mount.hostPath),
+      containerPath: mount.containerPath
+    })), [{
+      hostPath: "selfie_20260526_120000.jpg",
+      containerPath: "/assets/generated/selfies/selfie_20260526_120000.jpg"
+    }]);
   } finally {
     fixture.cleanup();
   }

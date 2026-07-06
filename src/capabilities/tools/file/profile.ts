@@ -2,7 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const readTool: ToolDefinition = {
   name: "Read",
-  description: "Reads a text file by absolute path.",
+  description: "Reads a file by absolute path. This tool can read text and images (eg PNG, JPG, etc). ",
   inputSchema: {
     type: "object",
     properties: {

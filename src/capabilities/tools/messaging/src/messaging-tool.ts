@@ -256,7 +256,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     let synthesized: VoiceSynthesisResult | undefined;
     try {
       deps.appendLog?.("info", `voice tts start: chars=${Array.from(text).length}`);
-      synthesized = await voiceSynthesizer({ text, time });
+      synthesized = await voiceSynthesizer({ text, time, alice: senderAlice(senderName) });
       const audioResult = await sendOutputPart(target, "voice", synthesized.assetId, { transcript: text, retry: false, skipWait: true, senderName });
       await archiveVoiceMessageTtsOutput(target, text, synthesized, audioResult.ok ? "sent" : "failed");
       if (target.plugin !== "feishu" || !audioResult.ok) return [audioResult];
@@ -280,6 +280,10 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     } finally {
       if (synthesized) await removeGeneratedVoice(synthesized.filePath);
     }
+  }
+
+  function senderAlice(senderName: string | undefined): "core" | "shell" | undefined {
+    return senderName === "core" || senderName === "shell" ? senderName : undefined;
   }
 
   async function archiveVoiceMessageTtsOutput(

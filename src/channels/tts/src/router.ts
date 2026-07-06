@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 
 import { writePcmL16Wav } from "./audio-utils.js";
-import { applyTtsTextFilters, selectedTtsConversionProvider, selectedTtsPreset, ttsProviderTextFilters } from "./config.js";
+import { applyTtsTextFilters, selectedTtsConversionProvider, selectedTtsPreset, selectedTtsPresetName, ttsProviderTextFilters } from "./config.js";
 import { createTtsConversionSynthesizer } from "./conversion.js";
 import { resolveAssetOutputDir, uniqueVoiceBaseName, validateGeneratedVoice } from "./internal.js";
 
@@ -45,11 +45,12 @@ export async function synthesizeTtsRouted(
     return silenceSynthesizer(input, symbolOnly);
   }
 
-  const conversion = selectedTtsConversionProvider(config);
-  const text = applyTtsTextFilters(input.text, ttsProviderTextFilters(conversion, config));
+  const routeConfig = ttsRouteConfig(config, input.alice);
+  const conversion = selectedTtsConversionProvider(routeConfig);
+  const text = applyTtsTextFilters(input.text, ttsProviderTextFilters(conversion, routeConfig));
   const routedInput = text === input.text ? input : { ...input, text };
-  const providerKey = ttsProviderCacheKey(conversion, config);
-  const provider = resolveCachedTtsProvider(conversion, providerKey, config, deps);
+  const providerKey = ttsProviderCacheKey(conversion, routeConfig);
+  const provider = resolveCachedTtsProvider(conversion, providerKey, routeConfig, deps);
   await waitForTtsProviderRateLimit(providerKey);
   return provider({
     ...routedInput,
@@ -83,6 +84,12 @@ function resolveCachedTtsProvider(
   const provider = createTtsConversionSynthesizer(conversion, config, deps) ?? deps.baseSynthesizer;
   routerCaches.set(deps, { key, provider });
   return provider;
+}
+
+function ttsRouteConfig(config: TtsPluginConfig, alice?: "core" | "shell"): TtsPluginConfig {
+  const activePresetName = selectedTtsPresetName(config, alice);
+  const activePreset = selectedTtsPreset(config, alice);
+  return activePresetName === config.activePresetName ? config : { ...config, activePresetName, activePreset };
 }
 
 function ttsProviderCacheKey(conversion: TtsConversionProvider, config: TtsPluginConfig): string {

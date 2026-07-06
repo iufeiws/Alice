@@ -22,6 +22,8 @@ export type AdminPluginSummary = {
 export type TtsAdminConfig = {
   enabled: boolean;
   activePresetName: string;
+  corePresetName?: string;
+  shellPresetName?: string;
   editPresetName: string;
   newPresetName?: string;
   presets: Record<string, any>;

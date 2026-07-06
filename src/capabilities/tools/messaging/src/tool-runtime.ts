@@ -69,6 +69,7 @@ export function createToolRuntime(input: {
   });
 
   const photoConfigPath = "config/plugin/photo/config.json";
+  const bashRuntime = createBashSandboxRuntime({ config: input.config.bashSandbox });
   const attemptOnBodyGeneration = createOutfitOnBodyGenerationAttempt({
     config: input.config,
     dailyShellStore: input.dailyShellStore,
@@ -135,6 +136,12 @@ export function createToolRuntime(input: {
       return input.getDefaultTarget();
     },
     resolveOutputTarget,
+    mountGeneratedSelfieInSandbox(mount) {
+      const next = { id: "generated_selfie", readOnly: true, ...mount };
+      const existing = input.config.bashSandbox.mounts.findIndex((entry: any) => entry.id === next.id);
+      if (existing >= 0) input.config.bashSandbox.mounts[existing] = next;
+      else input.config.bashSandbox.mounts.push(next);
+    },
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog
   });
@@ -187,7 +194,6 @@ export function createToolRuntime(input: {
     getGoogleStreetView: input.getGoogleStreetView,
     now: () => input.time.now().date
   });
-  const bashRuntime = createBashSandboxRuntime({ config: input.config.bashSandbox });
   const skillsLoader = createSkillLoader(input.skillsRegistry, bashRuntime);
   const skillsTools = createSkillsTools({ loader: skillsLoader });
   const bashTools = createBashTools({

@@ -73,6 +73,8 @@ test("pluginConfig_ttsUsesDedicatedPresetRenderer", () => {
   assertIncludesAll(html, [
     "pluginConfigRenderers.tts = renderTtsPluginConfig",
     "ttsRuntimeForm",
+    "corePresetName",
+    "shellPresetName",
     "ttsPresetEditor",
     "tts-provider-panel",
     "Save Runtime Settings",

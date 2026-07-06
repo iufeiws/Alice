@@ -160,14 +160,14 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     return remote;
   };
 
-  const selectedRoute = (): {
+  const selectedRoute = (alice?: VoiceSynthesisInput["alice"]): {
     provider: TtsConversionProvider;
     remote?: VoiceSynthesizer;
     localPreferred: boolean;
     localFallbackEnabled: boolean;
   } => {
     const pluginConfig = readTtsPluginConfig(input.ttsConfigPath);
-    const preset = selectedTtsPreset(pluginConfig);
+    const preset = selectedTtsPreset(pluginConfig, alice);
     const provider = preset.provider === "openai-api"
       ? "openai-api"
       : preset.provider === "bailian"
@@ -200,7 +200,7 @@ export function createTtsRemoteAwareVoiceSynthesizer(
   };
 
   const synthesize = (async (request) => {
-    const route = selectedRoute();
+    const route = selectedRoute(request.alice);
     const remote = route.remote;
     if (!remote) {
       if (route.localPreferred) return localFor()(request);
@@ -216,7 +216,7 @@ export function createTtsRemoteAwareVoiceSynthesizer(
   }) as VoiceSynthesizer;
 
   synthesize.streamAudio = async function* (request) {
-    const route = selectedRoute();
+    const route = selectedRoute(request.alice);
     const remote = route.remote;
     if (!remote?.streamAudio) {
       if (!route.localPreferred) throw noLocalRouteError(route.provider);
@@ -255,7 +255,7 @@ export function createTtsRemoteAwareVoiceSynthesizer(
     }
   };
   synthesize.streamAudioWithText = async function* (request) {
-    const route = selectedRoute();
+    const route = selectedRoute(request.alice);
     const remote = route.remote;
     if (!remote?.streamAudioWithText) {
       if (!route.localPreferred) throw noLocalRouteError(route.provider);

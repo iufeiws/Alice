@@ -23,7 +23,7 @@ export const photoToolText = {
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",
   takingNotice: "-少女拍照中-",
-  sent: "照片已发送",
+  sent: (fileName: string) => `<sent path="/assets/generated/selfies/${fileName}"/>`,
   followupImageText: "这是上一步工具返回的图像",
   promptTemplateNotFound: "selfie prompt template was not found",
   selfieOnBodyPromptRequired: "selfie on-body prompt is required",

@@ -12,6 +12,8 @@ export function publicTtsConfig(config: TtsPluginConfig, assetRoot = "assets"): 
   return {
     enabled: config.enabled,
     activePresetName: config.activePresetName,
+    corePresetName: config.corePresetName,
+    shellPresetName: config.shellPresetName,
     editPresetName,
     newPresetName: "",
     presets: Object.fromEntries(Object.entries(config.presets).map(([name, preset]) => [name, publicTtsPreset(name, preset, assetRoot)])),

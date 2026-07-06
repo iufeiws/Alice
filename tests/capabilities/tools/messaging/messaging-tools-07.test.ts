@@ -192,12 +192,14 @@ async function sendFeishuVoiceMessage(name: string, alice?: string) {
   seedUserInbound(store, "feishu:dm:oc_1", "feishu");
   const sent: AgentOutput[] = [];
   const logs: Array<{ status?: string; summary: string }> = [];
+  const ttsAlice: Array<string | undefined> = [];
   let generatedPath = "";
   const tools = createMessagingTools({
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
     sleep: async () => {},
-    voiceSynthesizer: async ({ text }) => {
+    voiceSynthesizer: async ({ text, alice }) => {
+      ttsAlice.push(alice);
       generatedPath = path.join(dir, "voice.wav");
       fs.writeFileSync(generatedPath, `voice:${text}`);
       return { assetId: "generated/tts/voice.wav", filePath: generatedPath };
@@ -219,7 +221,7 @@ async function sendFeishuVoiceMessage(name: string, alice?: string) {
     toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", ...(alice ? { alice } : {}) }
   });
 
-  return { generatedPath, logs, result, sent, store };
+  return { generatedPath, logs, result, sent, store, ttsAlice };
 }
 
 test("send_chat voice sends audio and transcript on feishu", async () => {
@@ -266,6 +268,12 @@ test("send_chat voice sends plain markdown transcript for feishu core before cha
   assert.deepEqual(sent[0].content, { kind: "audio", assetId: "generated/tts/voice.wav", transcript: "晚点见" });
   assert.deepEqual(sent[1].content, { kind: "markdown", markdown: "晚点见" });
   assert.match(String(result.output), /\[语音\]晚点见/);
+});
+
+test("send_chat voice passes alice to tts", async () => {
+  const { ttsAlice } = await sendFeishuVoiceMessage("messaging-send-voice-tts-alice", "core");
+
+  assert.deepEqual(ttsAlice, ["core"]);
 });
 
 test("send_chat voice stores feishu core sender name", async () => {

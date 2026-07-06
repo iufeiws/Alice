@@ -48,9 +48,15 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   if (!activePresetName) throw new Error("tts activePresetName is required");
   const activePreset = presets[activePresetName];
   if (!activePreset) throw new Error(`tts active preset not found: ${activePresetName}`);
+  const corePresetName = safeModelConfigName(stringValue(parsed.corePresetName) || "") || undefined;
+  const shellPresetName = safeModelConfigName(stringValue(parsed.shellPresetName) || "") || undefined;
+  if (corePresetName && !presets[corePresetName]) throw new Error(`tts core preset not found: ${corePresetName}`);
+  if (shellPresetName && !presets[shellPresetName]) throw new Error(`tts shell preset not found: ${shellPresetName}`);
   return {
     enabled: booleanValue(parsed.enabled, false),
     activePresetName,
+    corePresetName,
+    shellPresetName,
     editPresetName: safeModelConfigName(stringValue(parsed.editPresetName) || "") || activePresetName,
     presets,
     activePreset,
@@ -69,9 +75,9 @@ export function renderTtsPrompt(config: TtsPluginConfig, deps: TtsPluginDeps): s
   return renderer.renderText(config.prompt.trim());
 }
 
-export function ttsGenieOverrides(config: TtsPluginConfig): NonNullable<Parameters<VoiceSynthesizer>[0]["genie"]> {
-  const model = selectedTtsPreset(config).genie ?? {};
-  const presetName = selectedTtsPresetName(config);
+export function ttsGenieOverrides(config: TtsPluginConfig, alice?: "core" | "shell"): NonNullable<Parameters<VoiceSynthesizer>[0]["genie"]> {
+  const model = selectedTtsPreset(config, alice).genie ?? {};
+  const presetName = selectedTtsPresetName(config, alice);
   const referenceTextPath = ttsPresetReferenceTextPath(presetName);
   return {
     language: model.language ?? "jp",
@@ -84,24 +90,29 @@ export function ttsGenieOverrides(config: TtsPluginConfig): NonNullable<Paramete
   };
 }
 
-export function selectedTtsVoiceModelConfig(config: TtsPluginConfig): TtsVoiceModelConfig {
-  return selectedTtsPreset(config).genie ?? { language: "jp" };
+export function selectedTtsVoiceModelConfig(config: TtsPluginConfig, alice?: "core" | "shell"): TtsVoiceModelConfig {
+  return selectedTtsPreset(config, alice).genie ?? { language: "jp" };
 }
 
-export function selectedTtsVoiceModelConfigName(config: TtsPluginConfig): string {
-  return selectedTtsPresetName(config);
+export function selectedTtsVoiceModelConfigName(config: TtsPluginConfig, alice?: "core" | "shell"): string {
+  return selectedTtsPresetName(config, alice);
 }
 
-export function selectedTtsPreset(config: TtsPluginConfig): TtsPreset {
-  if (!config.activePresetName) throw new Error("tts activePresetName is required");
-  const preset = config.presets?.[config.activePresetName];
-  if (!preset) throw new Error(`tts active preset not found: ${config.activePresetName}`);
+export function selectedTtsPreset(config: TtsPluginConfig, alice?: "core" | "shell"): TtsPreset {
+  const presetName = selectedTtsPresetName(config, alice);
+  const preset = config.presets?.[presetName];
+  if (!preset) throw new Error(`tts preset not found: ${presetName}`);
   return preset;
 }
 
-export function selectedTtsPresetName(config: TtsPluginConfig): string {
-  if (!config.activePresetName) throw new Error("tts activePresetName is required");
-  return config.activePresetName;
+export function selectedTtsPresetName(config: TtsPluginConfig, alice?: "core" | "shell"): string {
+  const presetName = alice === "core"
+    ? config.corePresetName || config.shellPresetName || config.activePresetName
+    : alice === "shell"
+      ? config.shellPresetName || config.corePresetName || config.activePresetName
+      : config.activePresetName || config.shellPresetName || config.corePresetName;
+  if (!presetName) throw new Error("tts preset name is required");
+  return presetName;
 }
 
 export function selectedTtsTranslationPreset(config: Pick<TtsPluginConfig, "translationPresetName" | "translationPresets">): TtsTranslationPreset {
@@ -274,13 +285,13 @@ export function defaultBailianTtsEndpoint(service: "qwen" | "cosy" | undefined):
   return service === "cosy" ? defaultBailianCosyTtsEndpoint : defaultBailianQwenTtsEndpoint;
 }
 
-export function selectedTtsConversionProvider(config: TtsPluginConfig): TtsConversionProvider {
-  const provider = selectedTtsPreset(config).provider;
+export function selectedTtsConversionProvider(config: TtsPluginConfig, alice?: "core" | "shell"): TtsConversionProvider {
+  const provider = selectedTtsPreset(config, alice).provider;
   return provider === "openai-api" || provider === "bailian" || provider === "mimo" ? provider : "genie";
 }
 
-export function ttsProviderTextFilters(conversion: TtsConversionProvider, config: TtsPluginConfig): TtsTextFilter[] {
-  const preset = selectedTtsPreset(config);
+export function ttsProviderTextFilters(conversion: TtsConversionProvider, config: TtsPluginConfig, alice?: "core" | "shell"): TtsTextFilter[] {
+  const preset = selectedTtsPreset(config, alice);
   if (conversion === "openai-api") return preset.openaiApi?.textFilters ?? [];
   if (conversion === "bailian") return preset.bailian?.textFilters ?? [];
   if (conversion === "mimo") return preset.mimo?.textFilters ?? [];

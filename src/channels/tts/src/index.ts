@@ -35,6 +35,7 @@ export {
   readTtsPluginConfig,
   selectedTtsConversionProvider,
   selectedTtsPreset,
+  selectedTtsPresetName,
   selectedTtsTranslationPreset,
   selectedTtsVoiceModelConfig,
   selectedTtsVoiceModelConfigName,

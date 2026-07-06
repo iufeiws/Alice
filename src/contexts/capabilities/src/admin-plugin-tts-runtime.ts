@@ -62,6 +62,8 @@ export function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "currentPreset.genie.partSilenceSeconds", label: "Part Silence", type: "number", group: "model_genie", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
         { key: "activePresetName", label: "Runtime Voice Preset", type: "select", group: "general", options: [], description: "Preset used by the normal TTS route. Save Runtime Settings persists this field." },
+        { key: "corePresetName", label: "Core TTS Preset", type: "select", group: "general", options: [], description: "TTS preset used when send_chat voice alice is core. Missing value falls back to shell, then active." },
+        { key: "shellPresetName", label: "Shell TTS Preset", type: "select", group: "general", options: [], description: "TTS preset used when send_chat voice alice is shell. Missing value falls back to core, then active." },
         { key: "currentPreset.provider", label: "Conversion Backend", type: "select", group: "general", options: [
           { value: "genie", label: "Genie" },
           { value: "openai-api", label: "OpenAI-API" },

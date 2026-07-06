@@ -30,6 +30,8 @@ export function updateTtsConfig(
   const requestedNewPresetName = optionalString(patch.newPresetName);
   const requestedCopyPresetName = optionalString(patch.copyPresetName);
   const activePresetName = safeTtsPresetName(optionalString(patch.activePresetName) || current.activePresetName, current.activePresetName);
+  const corePresetName = safeTtsPresetName(optionalString(patch.corePresetName) || current.corePresetName || "", "");
+  const shellPresetName = safeTtsPresetName(optionalString(patch.shellPresetName) || current.shellPresetName || "", "");
   const editPresetName = safeTtsPresetName(requestedNewPresetName || optionalString(patch.editPresetName) || current.editPresetName || activePresetName, activePresetName);
   const copyPresetName = requestedCopyPresetName ? safeTtsPresetName(requestedCopyPresetName, "") : undefined;
   if (copyPresetName && !requestedNewPresetName?.trim()) return { error: "tts_copy_target_required" };
@@ -54,9 +56,13 @@ export function updateTtsConfig(
   const nextPresets = shouldUpdatePreset ? { ...currentPresets, [editPresetName]: presetResult.preset } : currentPresets;
   const activePreset = nextPresets[activePresetName];
   if (!activePreset) return { error: "tts_active_preset_not_found" };
+  if (corePresetName && !nextPresets[corePresetName]) return { error: "tts_core_preset_not_found" };
+  if (shellPresetName && !nextPresets[shellPresetName]) return { error: "tts_shell_preset_not_found" };
   const next: TtsPluginConfig = {
     enabled: patch.enabled === undefined ? current.enabled : booleanFromUnknown(patch.enabled),
     activePresetName,
+    corePresetName: corePresetName || undefined,
+    shellPresetName: shellPresetName || undefined,
     editPresetName,
     presets: nextPresets,
     activePreset,
@@ -401,6 +407,8 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   return {
     enabled: config.enabled,
     activePresetName: config.activePresetName,
+    corePresetName: config.corePresetName,
+    shellPresetName: config.shellPresetName,
     translationPresetName,
     translationPresets
   } as TtsPluginConfig;

@@ -31,7 +31,7 @@ export function createTtsTranslationSynthesizer(
     const result = await synthesizeTtsRouted({
       ...input,
       text: ttsText
-    }, config, deps, { genie: ttsGenieOverrides(config) });
+    }, config, deps, { genie: ttsGenieOverrides(config, input.alice) });
     deps.appendLog?.("info", `tts synthesis complete: asset=${result.assetId}`);
     return result;
   }) as TtsSynthesizer;
@@ -57,7 +57,7 @@ function createTtsRoutingSynthesizer(deps: TtsPluginDeps): TtsSynthesizer {
     const result = await synthesizeTtsRouted({
       ...input,
       text: ttsText
-    }, config, deps, { genie: ttsGenieOverrides(config) });
+    }, config, deps, { genie: ttsGenieOverrides(config, input.alice) });
     deps.appendLog?.("info", `tts synthesis complete: asset=${result.assetId}`);
     return result;
   }) as TtsSynthesizer;

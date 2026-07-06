@@ -32,10 +32,10 @@ export type DockerExecutor = {
 };
 
 export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecutor {
-  let mountedSkillKey = "";
+  let mountKey = "";
   return {
     async execute(input) {
-      mountedSkillKey = await ensureContainer(config, mountedSkillKey);
+      mountKey = await ensureContainer(config, mountKey);
       const startedAt = Date.now();
       const seconds = Math.max(1, Math.ceil(input.timeoutMs / 1000));
       const captured = await runCapturedCommand(config, input.command, input.cwd, seconds, input.timeoutMs + 2000);
@@ -108,25 +108,25 @@ async function removeContainerFiles(config: BashSandboxConfig, ...filePaths: str
   if (result.exitCode !== 0) throw new Error(result.stderr || "failed to remove bash output temp files");
 }
 
-async function ensureContainer(config: BashSandboxConfig, mountedSkillKey: string): Promise<string> {
+async function ensureContainer(config: BashSandboxConfig, currentMountKey: string): Promise<string> {
   await ensureImage(config);
   fs.mkdirSync(config.hostWorkspaceDir, { recursive: true });
   fs.mkdirSync(config.hostCacheDir, { recursive: true });
-  const nextSkillKey = skillMountKey(config);
+  const nextMountKey = containerMountKey(config);
   const inspect = await execFile("docker", ["inspect", "-f", "{{.State.Running}}", config.containerName], 10_000, 4096);
-  if (inspect.exitCode === 0 && inspect.stdout.trim() === "true" && mountedSkillKey === nextSkillKey) return mountedSkillKey;
+  if (inspect.exitCode === 0 && inspect.stdout.trim() === "true" && currentMountKey === nextMountKey) return currentMountKey;
   if (inspect.exitCode === 0) {
-    if (mountedSkillKey === nextSkillKey) {
+    if (currentMountKey === nextMountKey) {
       const start = await execFile("docker", ["start", config.containerName], 10_000, 4096);
       if (start.exitCode !== 0) throw new Error(start.stderr || "failed to start bash sandbox container");
-      return nextSkillKey;
+      return nextMountKey;
     }
     const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
     if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to recreate bash sandbox container");
   }
   const create = await execFile("docker", createContainerArgs(config), 30_000, 8192);
   if (create.exitCode !== 0) throw new Error(create.stderr || "failed to create bash sandbox container");
-  return nextSkillKey;
+  return nextMountKey;
 }
 
 async function ensureImage(config: BashSandboxConfig): Promise<void> {
@@ -186,9 +186,10 @@ function formatTruncatedStream(stream: "stdout" | "stderr", filePath: string, by
   return `[truncated ${stream}: full output saved to ${filePath} (${bytes} bytes)]\n${preview}`;
 }
 
-function skillMountKey(config: BashSandboxConfig): string {
+function containerMountKey(config: BashSandboxConfig): string {
   return JSON.stringify({
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
+    mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined
   });
 }

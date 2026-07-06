@@ -24,6 +24,7 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
   assert.match(runCall, /PATH=\/sandbox\/bin:/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
+  assert.match(runCall, /\/assets-host:\/assets:ro/);
   assert.equal(result.stdout.trim(), "docker-ok");
 });
 
@@ -68,7 +69,12 @@ exit 64
   process.env.HTTPS_PROXY = "http://127.0.0.1:7890";
   process.env.NO_PROXY = "localhost,127.0.0.1";
   try {
-    const config = testConfig({ network: "configured", hostWorkspaceDir: path.join(root, "workspace"), hostCacheDir: path.join(root, "cache") });
+    const config = testConfig({
+      network: "configured",
+      hostWorkspaceDir: path.join(root, "workspace"),
+      hostCacheDir: path.join(root, "cache"),
+      mounts: [{ id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }]
+    });
     const result = await createDockerBashExecutor(config).execute({ command: "echo ok", cwd: config.workspaceDir, timeoutMs: 1000, outputLimitBytes: 1024 });
     const calls = fs.readFileSync(log, "utf8").trim().split(/\r?\n/);
     return { calls, result };

@@ -78,6 +78,12 @@ test("config uses default bash sandbox paths", () => {
   assert.equal(config.skills.installedRoot, ".agents/skills");
   assert.equal("enabled" in config.bashSandbox, false);
   assert.deepEqual(config.bashSandbox.skillMounts, []);
+  assert.deepEqual(config.bashSandbox.mounts[0], {
+    id: "assets",
+    hostPath: path.resolve("assets"),
+    containerPath: "/assets",
+    readOnly: true
+  });
 });
 
 test("config rejects writable mounts under skills and sensitive host paths", () => {

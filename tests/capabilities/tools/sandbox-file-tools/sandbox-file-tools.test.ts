@@ -9,7 +9,7 @@ const os = await import("node:os");
 const path = await import("node:path");
 
 // @ts-expect-error file tool wrappers are runtime .mjs entry modules.
-const { runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrappers/file-tool-core.mjs");
+const { runEditTool, runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrappers/file-tool-core.mjs");
 
 test("sandbox file tools exposes Read Edit Glob and Grep", () => {
   const tools = createSandboxFileTools({
@@ -161,8 +161,23 @@ test("Edit passes prior full Read state to sandbox tool and updates state", asyn
   await tools.execute({ id: "edit2", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "new", new_string: "newer" } });
 
   assert.equal(edit.ok, true);
-  assert.equal(edit.output, "The file /workspace/notes.txt has been updated successfully.");
+  assert.equal(edit.output, "OK");
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Edit"]);
+});
+
+test("Edit returns a short success message", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alice-short-edit-"));
+  const filePath = path.join(root, "created.txt");
+
+  const output = runEditTool({
+    file_path: filePath,
+    old_string: "",
+    new_string: "hello",
+    allowed_roots: [root],
+    cwd: root
+  });
+
+  assert.equal(output.message, "OK");
 });
 
 test("Edit accepts state from a ranged Read", async () => {

@@ -128,10 +128,7 @@ export function runEditTool(payload) {
   const updatedFile = oldString === "" ? newString : applyEditToFile(originalFileContents, actualOldString || oldString, actualNewString, payload.replace_all === true);
   if (updatedFile === originalFileContents) throw new Error("Original and edited file match exactly. Failed to apply edit.");
   writeTextContent(filePath, updatedFile, encoding, lineEndings);
-  const message = payload.replace_all === true
-    ? `The file ${filePath} has been updated. All occurrences were successfully replaced.`
-    : `The file ${filePath} has been updated successfully.`;
-  return { type: "edit", file: { filePath, content: updatedFile }, meta: { mtimeMs: getFileModificationTime(filePath) }, message };
+  return { type: "edit", file: { filePath, content: updatedFile }, meta: { mtimeMs: getFileModificationTime(filePath) }, message: "OK" };
 }
 
 export function runGlobTool(payload) {

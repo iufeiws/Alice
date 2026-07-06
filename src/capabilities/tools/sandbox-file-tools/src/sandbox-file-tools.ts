@@ -212,7 +212,7 @@ export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; con
         limit: undefined
       });
     }
-    return { callId: call.id, ok: true, output: output.message };
+    return { callId: call.id, ok: true, output: "OK" };
   }
 
   async function searchSandboxFiles(call: ToolCall, toolName: "Glob" | "Grep"): Promise<ToolResult> {

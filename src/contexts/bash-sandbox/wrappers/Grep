@@ -1,0 +1,188 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+const VCS_DIRECTORIES_TO_EXCLUDE = [".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
+const DEFAULT_HEAD_LIMIT = 250;
+
+function normalizeContainerPath(value, cwd, name) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
+  return path.posix.normalize(value.startsWith("/") ? value : path.posix.join(cwd, value));
+}
+
+function isSameOrInside(value, root) {
+  const cleanRoot = root.replace(/\/+$/, "") || "/";
+  return value === cleanRoot || value.startsWith(`${cleanRoot}/`);
+}
+
+function assertAllowed(value, roots) {
+  if (!roots.some((root) => isSameOrInside(value, root))) throw new Error(`path is outside configured sandbox paths: ${value}`);
+}
+
+function toRelativePath(filePath, cwd) {
+  const relative = path.posix.relative(cwd, filePath);
+  if (!relative || relative.startsWith("..") || path.posix.isAbsolute(relative)) return filePath;
+  return relative;
+}
+
+function booleanValue(value, fallback) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return /^(1|true|yes|on)$/i.test(value);
+  return fallback;
+}
+
+function numberValue(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function applyHeadLimit(items, limit, offset = 0) {
+  if (limit === 0) return { items: items.slice(offset), appliedLimit: undefined };
+  const effectiveLimit = limit ?? DEFAULT_HEAD_LIMIT;
+  const sliced = items.slice(offset, offset + effectiveLimit);
+  return { items: sliced, appliedLimit: items.length - offset > effectiveLimit ? effectiveLimit : undefined };
+}
+
+function formatLimitInfo(appliedLimit, appliedOffset) {
+  const parts = [];
+  if (appliedLimit !== undefined) parts.push(`limit: ${appliedLimit}`);
+  if (appliedOffset) parts.push(`offset: ${appliedOffset}`);
+  return parts.join(", ");
+}
+
+function plural(count, noun) {
+  return count === 1 ? noun : `${noun}s`;
+}
+
+function splitGlobPatterns(glob) {
+  const patterns = [];
+  for (const raw of glob.split(/\s+/)) {
+    if (!raw) continue;
+    if (raw.includes("{") && raw.includes("}")) patterns.push(raw);
+    else patterns.push(...raw.split(",").filter(Boolean));
+  }
+  return patterns;
+}
+
+function main() {
+  const payload = JSON.parse(process.argv[2] || "{}");
+  const pattern = typeof payload.pattern === "string" ? payload.pattern : undefined;
+  if (!pattern) throw new Error("pattern is required");
+  const cwd = normalizeContainerPath(typeof payload.cwd === "string" ? payload.cwd : process.cwd(), "/", "cwd");
+  const absolutePath = payload.path === undefined ? cwd : normalizeContainerPath(payload.path, cwd, "path");
+  const roots = Array.isArray(payload.allowed_roots) ? payload.allowed_roots.map((root) => normalizeContainerPath(root, "/", "root")) : [];
+  assertAllowed(absolutePath, roots);
+  try {
+    fs.statSync(absolutePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`Path does not exist: ${payload.path ?? absolutePath}. Note: your current working directory is ${cwd}.`);
+    throw error;
+  }
+
+  const outputMode = typeof payload.output_mode === "string" ? payload.output_mode : "files_with_matches";
+  if (!["content", "files_with_matches", "count"].includes(outputMode)) throw new Error("unsupported output_mode");
+  const args = ["--hidden"];
+  for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) args.push("--glob", `!${dir}`);
+  args.push("--max-columns", "500");
+  if (booleanValue(payload.multiline, false)) args.push("-U", "--multiline-dotall");
+  if (booleanValue(payload["-i"], false)) args.push("-i");
+  if (outputMode === "files_with_matches") args.push("-l");
+  else if (outputMode === "count") args.push("-c");
+  if (booleanValue(payload["-n"], true) && outputMode === "content") args.push("-n");
+  if (outputMode === "content") {
+    const context = numberValue(payload.context);
+    const contextC = numberValue(payload["-C"]);
+    const before = numberValue(payload["-B"]);
+    const after = numberValue(payload["-A"]);
+    if (context !== undefined) args.push("-C", String(context));
+    else if (contextC !== undefined) args.push("-C", String(contextC));
+    else {
+      if (before !== undefined) args.push("-B", String(before));
+      if (after !== undefined) args.push("-A", String(after));
+    }
+  }
+  if (pattern.startsWith("-")) args.push("-e", pattern);
+  else args.push(pattern);
+  if (typeof payload.type === "string" && payload.type) args.push("--type", payload.type);
+  if (typeof payload.glob === "string" && payload.glob) for (const globPattern of splitGlobPatterns(payload.glob)) args.push("--glob", globPattern);
+  args.push(absolutePath);
+
+  const result = spawnSync(rgCommand(), args, { encoding: "utf8", maxBuffer: 20_000_000 });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.status !== 1) throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.status}`);
+  const results = result.stdout.trim() ? result.stdout.trim().split(/\r?\n/) : [];
+  const headLimit = numberValue(payload.head_limit);
+  const offset = numberValue(payload.offset) ?? 0;
+
+  if (outputMode === "content") {
+    const limited = applyHeadLimit(results, headLimit, offset);
+    const finalLines = limited.items.map((line) => {
+      const colonIndex = line.indexOf(":");
+      if (colonIndex <= 0) return line;
+      return `${toRelativePath(line.substring(0, colonIndex), cwd)}${line.substring(colonIndex)}`;
+    });
+    const limitInfo = formatLimitInfo(limited.appliedLimit, offset > 0 ? offset : undefined);
+    const resultContent = finalLines.join("\n") || "No matches found";
+    const content = limitInfo ? `${resultContent}\n\n[Showing results with pagination = ${limitInfo}]` : resultContent;
+    process.stdout.write(`${JSON.stringify({ type: "grep", mode: "content", content })}\n`);
+    return;
+  }
+
+  if (outputMode === "count") {
+    const limited = applyHeadLimit(results, headLimit, offset);
+    const finalLines = limited.items.map((line) => {
+      const colonIndex = line.lastIndexOf(":");
+      if (colonIndex <= 0) return line;
+      return `${toRelativePath(line.substring(0, colonIndex), cwd)}${line.substring(colonIndex)}`;
+    });
+    let totalMatches = 0;
+    let fileCount = 0;
+    for (const line of finalLines) {
+      const count = Number.parseInt(line.substring(line.lastIndexOf(":") + 1), 10);
+      if (!Number.isNaN(count)) {
+        totalMatches += count;
+        fileCount += 1;
+      }
+    }
+    const limitInfo = formatLimitInfo(limited.appliedLimit, offset > 0 ? offset : undefined);
+    const summary = `\n\nFound ${totalMatches} total ${totalMatches === 1 ? "occurrence" : "occurrences"} across ${fileCount} ${fileCount === 1 ? "file" : "files"}.${limitInfo ? ` with pagination = ${limitInfo}` : ""}`;
+    process.stdout.write(`${JSON.stringify({ type: "grep", mode: "count", content: (finalLines.join("\n") || "No matches found") + summary })}\n`);
+    return;
+  }
+
+  const sortedMatches = results
+    .map((entry) => {
+      const stat = statOrZero(entry);
+      return [entry, stat] ;
+    })
+    .sort((a, b) => {
+      if (process.env.NODE_ENV === "test") return a[0].localeCompare(b[0]);
+      const timeComparison = b[1] - a[1];
+      return timeComparison === 0 ? a[0].localeCompare(b[0]) : timeComparison;
+    })
+    .map((entry) => entry[0]);
+  const limited = applyHeadLimit(sortedMatches, headLimit, offset);
+  const filenames = limited.items.map((entry) => toRelativePath(entry, cwd));
+  const limitInfo = formatLimitInfo(limited.appliedLimit, offset > 0 ? offset : undefined);
+  const content = filenames.length === 0 ? "No files found" : `Found ${filenames.length} ${plural(filenames.length, "file")}${limitInfo ? ` ${limitInfo}` : ""}\n${filenames.join("\n")}`;
+  process.stdout.write(`${JSON.stringify({ type: "grep", mode: "files_with_matches", content })}\n`);
+}
+
+function statOrZero(filePath) {
+  try {
+    return fs.statSync(filePath).mtimeMs ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rgCommand() {
+  return fs.existsSync("/usr/bin/rg") ? "/usr/bin/rg" : "rg";
+}
+
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}

@@ -1,0 +1,226 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+const FILE_UNEXPECTEDLY_MODIFIED_ERROR = "File has been unexpectedly modified. Read it again before attempting to write it.";
+const FILE_NOT_FOUND_CWD_NOTE = "Note: your current working directory is";
+const MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024;
+
+const LEFT_SINGLE_CURLY_QUOTE = "‘";
+const RIGHT_SINGLE_CURLY_QUOTE = "’";
+const LEFT_DOUBLE_CURLY_QUOTE = "“";
+const RIGHT_DOUBLE_CURLY_QUOTE = "”";
+
+function normalizeQuotes(str) {
+  return str
+    .replaceAll(LEFT_SINGLE_CURLY_QUOTE, "'")
+    .replaceAll(RIGHT_SINGLE_CURLY_QUOTE, "'")
+    .replaceAll(LEFT_DOUBLE_CURLY_QUOTE, '"')
+    .replaceAll(RIGHT_DOUBLE_CURLY_QUOTE, '"');
+}
+
+function findActualString(fileContent, searchString) {
+  if (fileContent.includes(searchString)) return searchString;
+  const normalizedSearch = normalizeQuotes(searchString);
+  const normalizedFile = normalizeQuotes(fileContent);
+  const searchIndex = normalizedFile.indexOf(normalizedSearch);
+  return searchIndex === -1 ? null : fileContent.substring(searchIndex, searchIndex + searchString.length);
+}
+
+function isOpeningContext(chars, index) {
+  if (index === 0) return true;
+  const prev = chars[index - 1];
+  return prev === " " || prev === "\t" || prev === "\n" || prev === "\r" || prev === "(" || prev === "[" || prev === "{" || prev === "—" || prev === "–";
+}
+
+function applyCurlyDoubleQuotes(str) {
+  const chars = [...str];
+  return chars.map((char, index) => char === '"' ? (isOpeningContext(chars, index) ? LEFT_DOUBLE_CURLY_QUOTE : RIGHT_DOUBLE_CURLY_QUOTE) : char).join("");
+}
+
+function applyCurlySingleQuotes(str) {
+  const chars = [...str];
+  const result = [];
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    if (char !== "'") {
+      result.push(char);
+      continue;
+    }
+    const prev = index > 0 ? chars[index - 1] : undefined;
+    const next = index < chars.length - 1 ? chars[index + 1] : undefined;
+    if (prev !== undefined && next !== undefined && /\p{L}/u.test(prev) && /\p{L}/u.test(next)) result.push(RIGHT_SINGLE_CURLY_QUOTE);
+    else result.push(isOpeningContext(chars, index) ? LEFT_SINGLE_CURLY_QUOTE : RIGHT_SINGLE_CURLY_QUOTE);
+  }
+  return result.join("");
+}
+
+function preserveQuoteStyle(oldString, actualOldString, newString) {
+  if (oldString === actualOldString) return newString;
+  let result = newString;
+  if (actualOldString.includes(LEFT_DOUBLE_CURLY_QUOTE) || actualOldString.includes(RIGHT_DOUBLE_CURLY_QUOTE)) result = applyCurlyDoubleQuotes(result);
+  if (actualOldString.includes(LEFT_SINGLE_CURLY_QUOTE) || actualOldString.includes(RIGHT_SINGLE_CURLY_QUOTE)) result = applyCurlySingleQuotes(result);
+  return result;
+}
+
+function applyEditToFile(originalContent, oldString, newString, replaceAll = false) {
+  const replace = replaceAll
+    ? (content, search, value) => content.replaceAll(search, () => value)
+    : (content, search, value) => content.replace(search, () => value);
+  if (newString !== "") return replace(originalContent, oldString, newString);
+  const stripTrailingNewline = !oldString.endsWith("\n") && originalContent.includes(`${oldString}\n`);
+  return stripTrailingNewline ? replace(originalContent, `${oldString}\n`, newString) : replace(originalContent, oldString, newString);
+}
+
+function normalizeContainerPath(value) {
+  if (typeof value !== "string" || !value.trim() || !value.startsWith("/")) throw new Error("file_path must be an absolute sandbox path");
+  return path.posix.normalize(value);
+}
+
+function isSameOrInside(value, root) {
+  const cleanRoot = root.replace(/\/+$/, "") || "/";
+  return value === cleanRoot || value.startsWith(`${cleanRoot}/`);
+}
+
+function assertAllowed(filePath, roots) {
+  if (!roots.some((root) => isSameOrInside(filePath, root))) throw new Error(`path is outside configured sandbox paths: ${filePath}`);
+}
+
+function statOrUndefined(filePath) {
+  try {
+    return fs.statSync(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function readAllBytes(filePath) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = fs.readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0) break;
+      offset += read;
+    }
+    return buffer.subarray(0, offset);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function detectLineEndings(raw) {
+  let crlf = 0;
+  let lf = 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    if (raw[index] === "\n") {
+      if (index > 0 && raw[index - 1] === "\r") crlf += 1;
+      else lf += 1;
+    }
+  }
+  return crlf > lf ? "CRLF" : "LF";
+}
+
+function readFileForEdit(filePath) {
+  const stat = statOrUndefined(filePath);
+  if (!stat) return { content: "", fileExists: false, encoding: "utf8", lineEndings: "LF" };
+  if (stat.size > MAX_EDIT_FILE_SIZE) throw new Error(`File is too large to edit (${formatFileSize(stat.size)}). Maximum editable file size is ${formatFileSize(MAX_EDIT_FILE_SIZE)}.`);
+  const buffer = readAllBytes(filePath);
+  const encoding = buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe ? "utf16le" : "utf8";
+  const raw = buffer.toString(encoding);
+  return { content: raw.replaceAll("\r\n", "\n"), fileExists: true, encoding, lineEndings: detectLineEndings(raw) };
+}
+
+function writeTextContent(filePath, content, encoding, endings) {
+  const toWrite = endings === "CRLF" ? content.replaceAll("\r\n", "\n").split("\n").join("\r\n") : content;
+  const fd = fs.openSync(filePath, "w");
+  try {
+    fs.writeSync(fd, toWrite, 0, encoding);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function getFileModificationTime(filePath) {
+  return Math.floor(fs.statSync(filePath).mtimeMs);
+}
+
+function formatFileSize(size) {
+  if (size < 1024) return `${size}B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`;
+  return `${(size / 1024 / 1024 / 1024).toFixed(1)}GB`;
+}
+
+function findSimilarFile(filePath) {
+  const dir = path.posix.dirname(filePath);
+  const base = path.posix.basename(filePath, path.posix.extname(filePath));
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .find((entry) => path.posix.basename(entry.name, path.posix.extname(entry.name)) === base && path.posix.join(dir, entry.name) !== filePath)
+      ?.name;
+  } catch {
+    return undefined;
+  }
+}
+
+function fileNotFoundMessage(filePath, cwd) {
+  const similar = findSimilarFile(filePath);
+  return `File does not exist. ${FILE_NOT_FOUND_CWD_NOTE} ${cwd}.${similar ? ` Did you mean ${similar}?` : ""}`;
+}
+
+function validateReadState(filePath, readState, originalFileContents, fileExists) {
+  if (!fileExists) return;
+  if (!readState || readState.isPartialView) throw new Error("File has not been read yet. Read it first before writing to it.");
+  const lastWriteTime = getFileModificationTime(filePath);
+  if (lastWriteTime <= readState.timestamp) return;
+  const isFullRead = readState.offset === undefined && readState.limit === undefined;
+  if (isFullRead && originalFileContents === readState.content) return;
+  throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR);
+}
+
+function main() {
+  const payload = JSON.parse(process.argv[2] || "{}");
+  const filePath = normalizeContainerPath(payload.file_path);
+  const oldString = typeof payload.old_string === "string" ? payload.old_string : undefined;
+  const newString = typeof payload.new_string === "string" ? payload.new_string : undefined;
+  if (oldString === undefined) throw new Error("old_string is required");
+  if (newString === undefined) throw new Error("new_string is required");
+  if (oldString === newString) throw new Error("No changes to make: old_string and new_string are exactly the same.");
+  if (filePath.endsWith(".ipynb")) throw new Error("File is a Jupyter Notebook. Use the NotebookEdit to edit this file.");
+  const roots = Array.isArray(payload.allowed_roots) ? payload.allowed_roots.map(normalizeContainerPath) : [];
+  assertAllowed(filePath, roots);
+
+  const { content: originalFileContents, fileExists, encoding, lineEndings } = readFileForEdit(filePath);
+  if (!fileExists && oldString !== "") throw new Error(fileNotFoundMessage(filePath, typeof payload.cwd === "string" ? payload.cwd : "/"));
+  if (fileExists && oldString === "" && originalFileContents.trim() !== "") throw new Error("Cannot create new file - file already exists.");
+  validateReadState(filePath, payload.read_state, originalFileContents, fileExists);
+
+  const actualOldString = findActualString(originalFileContents, oldString);
+  if (oldString !== "" && !actualOldString) throw new Error(`String to replace not found in file.\nString: ${oldString}`);
+  const matches = actualOldString ? originalFileContents.split(actualOldString).length - 1 : 0;
+  if (matches > 1 && payload.replace_all !== true) {
+    throw new Error(`Found ${matches} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${oldString}`);
+  }
+
+  fs.mkdirSync(path.posix.dirname(filePath), { recursive: true });
+  const actualNewString = preserveQuoteStyle(oldString, actualOldString || oldString, newString);
+  const updatedFile = oldString === "" ? newString : applyEditToFile(originalFileContents, actualOldString || oldString, actualNewString, payload.replace_all === true);
+  if (updatedFile === originalFileContents) throw new Error("Original and edited file match exactly. Failed to apply edit.");
+  writeTextContent(filePath, updatedFile, encoding, lineEndings);
+  const message = payload.replace_all === true
+    ? `The file ${filePath} has been updated. All occurrences were successfully replaced.`
+    : `The file ${filePath} has been updated successfully.`;
+  process.stdout.write(`${JSON.stringify({ type: "edit", file: { filePath, content: updatedFile }, meta: { mtimeMs: getFileModificationTime(filePath) }, message })}\n`);
+}
+
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}

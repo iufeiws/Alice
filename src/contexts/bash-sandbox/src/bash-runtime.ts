@@ -37,6 +37,7 @@ export type BashSandboxRuntime = {
   setReporter(reporter: BashRunReporter | undefined): void;
   mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig;
   run(call: ToolCall): Promise<BashRuntimeResult>;
+  runFileTool(input: { toolName: "Read" | "Edit" | "Glob" | "Grep"; payload: Record<string, unknown>; timeoutMs?: number; outputLimitBytes?: number }): Promise<BashSandboxReadResult>;
   readFile(input: { payload: Record<string, unknown>; timeoutMs?: number; outputLimitBytes?: number }): Promise<BashSandboxReadResult>;
 };
 
@@ -91,9 +92,18 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
         throw error;
       }
     },
+    async runFileTool(toolInput) {
+      if (!executor.runFileTool) throw new Error(`bash sandbox executor does not support ${toolInput.toolName}`);
+      return await executor.runFileTool({
+        toolName: toolInput.toolName,
+        payload: toolInput.payload,
+        timeoutMs: toolInput.timeoutMs ?? input.config.timeoutMs,
+        outputLimitBytes: toolInput.outputLimitBytes ?? input.config.outputLimitBytes
+      });
+    },
     async readFile(readInput) {
-      if (!executor.readFile) throw new Error("bash sandbox executor does not support Read");
-      return await executor.readFile({
+      return await this.runFileTool({
+        toolName: "Read",
         payload: readInput.payload,
         timeoutMs: readInput.timeoutMs ?? input.config.timeoutMs,
         outputLimitBytes: readInput.outputLimitBytes ?? input.config.outputLimitBytes

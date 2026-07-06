@@ -29,6 +29,7 @@ export type DockerOutputFile = {
 
 export type DockerExecutor = {
   execute(input: { command: string; cwd: string; timeoutMs: number; outputLimitBytes: number; onStdout?(delta: string): void; onStderr?(delta: string): void }): Promise<DockerExecutorResult>;
+  runFileTool?(input: { toolName: "Read" | "Edit" | "Glob" | "Grep"; payload: Record<string, unknown>; timeoutMs: number; outputLimitBytes: number }): Promise<DockerExecutorResult>;
   readFile?(input: { payload: Record<string, unknown>; timeoutMs: number; outputLimitBytes: number }): Promise<DockerExecutorResult>;
 };
 
@@ -46,11 +47,14 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
       output.stderr && input.onStderr?.(output.stderr);
       return { ...output, exitCode: captured.exitCode, timedOut, durationMs: Date.now() - startedAt };
     },
-    async readFile(input) {
+    async runFileTool(input) {
       mountKey = await ensureContainer(config, mountKey);
       const startedAt = Date.now();
-      const result = await execFile("docker", ["exec", config.containerName, "/sandbox/bin/Read", JSON.stringify(input.payload)], input.timeoutMs, input.outputLimitBytes);
+      const result = await execFile("docker", ["exec", config.containerName, `/sandbox/bin/${input.toolName}`, JSON.stringify(input.payload)], input.timeoutMs, input.outputLimitBytes);
       return { ...result, durationMs: Date.now() - startedAt, truncated: false };
+    },
+    async readFile(input) {
+      return await this.runFileTool!({ toolName: "Read", ...input });
     }
   };
 }

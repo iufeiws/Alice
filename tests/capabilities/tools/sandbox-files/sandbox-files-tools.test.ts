@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSandboxReadTools } from "../../../../src/capabilities/tools/sandbox-read/src/index.js";
+import { createSandboxFileTools } from "../../../../src/capabilities/tools/sandbox-files/src/index.js";
 import type { BashSandboxRuntime } from "../../../../src/contexts/bash-sandbox/src/index.js";
 import { testConfig } from "../../../contexts/bash-sandbox/bash-sandbox-helpers.js";
 
 test("Read runs against an absolute sandbox path", async () => {
   const calls: Record<string, unknown>[] = [];
-  const tools = createSandboxReadTools({
+  const tools = createSandboxFileTools({
     config: testConfig(),
     runtime: fakeReadRuntime(async (payload) => {
       calls.push(payload);
@@ -24,7 +24,7 @@ test("Read runs against an absolute sandbox path", async () => {
 
 test("Read rejects paths outside the sandbox roots before calling runtime", async () => {
   let called = false;
-  const tools = createSandboxReadTools({
+  const tools = createSandboxFileTools({
     config: testConfig(),
     runtime: fakeReadRuntime(async () => {
       called = true;
@@ -41,7 +41,7 @@ test("Read rejects paths outside the sandbox roots before calling runtime", asyn
 
 test("Read returns file_unchanged for the same range and mtime", async () => {
   let calls = 0;
-  const tools = createSandboxReadTools({
+  const tools = createSandboxFileTools({
     config: testConfig(),
     runtime: fakeReadRuntime(async (payload) => {
       calls += 1;
@@ -50,8 +50,8 @@ test("Read returns file_unchanged for the same range and mtime", async () => {
     })
   });
 
-  const first = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 1, limit: 2 } });
-  const second = await tools.execute({ id: "read_2", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 1, limit: 2 } });
+  const first = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 1 } });
+  const second = await tools.execute({ id: "read_2", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 1 } });
 
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
@@ -64,7 +64,7 @@ test("Read dedup is controlled by tengu_read_dedup_killswitch", async () => {
   process.env.tengu_read_dedup_killswitch = "true";
   let calls = 0;
   try {
-    const tools = createSandboxReadTools({
+    const tools = createSandboxFileTools({
       config: testConfig(),
       runtime: fakeReadRuntime(async (payload) => {
         calls += 1;
@@ -85,7 +85,55 @@ test("Read dedup is controlled by tengu_read_dedup_killswitch", async () => {
   }
 });
 
-function fakeReadRuntime(read: (payload: Record<string, unknown>) => Promise<string> | string): BashSandboxRuntime {
+test("sandbox file tools exposes Edit Glob and Grep", () => {
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeReadRuntime(async () => readOutput("/workspace/notes.txt", "one", 1, 1))
+  });
+
+  assert.deepEqual(tools.listTools().map((tool) => tool.name), ["Read", "Edit", "Glob", "Grep"]);
+});
+
+test("Edit passes prior full Read state to the sandbox tool and updates state", async () => {
+  const calls: Array<{ toolName: string; payload: Record<string, unknown> }> = [];
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeReadRuntime(async (payload, toolName) => {
+      calls.push({ toolName, payload });
+      if (toolName === "Edit") {
+        assert.deepEqual(payload.read_state, { content: "old", timestamp: 123, offset: undefined, limit: undefined, isPartialView: false });
+        return JSON.stringify({ type: "edit", file: { filePath: payload.file_path, content: "new" }, meta: { mtimeMs: 124 }, message: `The file ${payload.file_path} has been updated successfully.` });
+      }
+      return readOutput(String(payload.file_path), "old", 1, 123);
+    })
+  });
+
+  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
+  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "old", new_string: "new" } });
+
+  assert.equal(edit.ok, true);
+  assert.equal(edit.output, "The file /workspace/notes.txt has been updated successfully.");
+  assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit"]);
+});
+
+test("Glob and Grep return sandbox formatted content", async () => {
+  const tools = createSandboxFileTools({
+    config: testConfig(),
+    runtime: fakeReadRuntime(async (_payload, toolName) => {
+      if (toolName === "Glob") return JSON.stringify({ type: "glob", content: "a.txt\nb.txt" });
+      if (toolName === "Grep") return JSON.stringify({ type: "grep", content: "Found 1 file\na.txt" });
+      return readOutput("/workspace/notes.txt", "one", 1, 1);
+    })
+  });
+
+  const glob = await tools.execute({ id: "glob", toolName: "Glob", input: { pattern: "**/*.txt", path: "/workspace" } });
+  const grep = await tools.execute({ id: "grep", toolName: "Grep", input: { pattern: "needle", path: "/workspace" } });
+
+  assert.equal(glob.output, "a.txt\nb.txt");
+  assert.equal(grep.output, "Found 1 file\na.txt");
+});
+
+function fakeReadRuntime(read: (payload: Record<string, unknown>, toolName: "Read" | "Edit" | "Glob" | "Grep") => Promise<string> | string): BashSandboxRuntime {
   return {
     setReporter() {},
     mountSkill(mount) {
@@ -94,15 +142,18 @@ function fakeReadRuntime(read: (payload: Record<string, unknown>) => Promise<str
     async run() {
       throw new Error("unused");
     },
-    async readFile(input) {
+    async runFileTool(input) {
       return {
-        stdout: await read(input.payload),
+        stdout: await read(input.payload, input.toolName),
         stderr: "",
         exitCode: 0,
         timedOut: false,
         durationMs: 1,
         truncated: false
       };
+    },
+    async readFile(input) {
+      return this.runFileTool({ toolName: "Read", ...input });
     }
   };
 }

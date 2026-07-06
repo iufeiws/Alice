@@ -91,6 +91,7 @@ test("sandbox file tools exposes Edit Glob and Grep", () => {
     runtime: fakeReadRuntime(async () => readOutput("/workspace/notes.txt", "one", 1, 1))
   });
 
+  assert.equal(tools.id, "sandbox-file-tools");
   assert.deepEqual(tools.listTools().map((tool) => tool.name), ["Read", "Edit", "Glob", "Grep"]);
 });
 

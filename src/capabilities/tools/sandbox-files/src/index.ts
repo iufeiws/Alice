@@ -53,7 +53,7 @@ type SandboxTextOutput = {
 export function createSandboxFileTools(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig }): ToolPlugin {
   const readFileState = new Map<string, ReadState>();
   return {
-    id: "sandbox-files",
+    id: "sandbox-file-tools",
     listTools() {
       return [readTool, editTool, globTool, grepTool];
     },

@@ -30,7 +30,6 @@ export type LLMRequestSender = (input: LLMRequestSenderInput) => Promise<LLMChat
 export type LLMToolLoopLimits = {
   maxRounds?: number;
   maxTotalToolCalls?: number;
-  maxRepeatedToolCalls?: number;
 };
 
 export type LLMToolLoopControl = {
@@ -126,17 +125,14 @@ export function executeRegisteredLLMTool(
 }
 
 export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
-  maxRounds: 20,
-  maxTotalToolCalls: 20,
-  maxRepeatedToolCalls: 3
+  maxRounds: 100,
+  maxTotalToolCalls: 100
 };
 
 export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLoopResult> {
   const limits = { ...defaultLLMToolLoopLimits, ...(input.limits ?? {}) };
   let messages = cloneLLMMessages(input.initialMessages);
-  let previousToolCallSignature: string | undefined;
   let previousAssistantMessageSignature: string | undefined;
-  let repeatedToolCallCount = 0;
   let totalToolCallCount = 0;
   let invalidateSession = false;
 
@@ -216,14 +212,6 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     for (const [callIndex, call] of calls.entries()) {
       totalToolCallCount += 1;
       if (totalToolCallCount >= limits.maxTotalToolCalls) reachedToolCallLimit = true;
-      const signature = toolCallSignature(call);
-      if (signature === previousToolCallSignature) {
-        repeatedToolCallCount += 1;
-      } else {
-        previousToolCallSignature = signature;
-        repeatedToolCallCount = 1;
-      }
-      if (repeatedToolCallCount >= limits.maxRepeatedToolCalls) reachedToolCallLimit = true;
 
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       await input.beforeTool?.({ round, call, callIndex });
@@ -434,10 +422,6 @@ export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
   }));
-}
-
-function toolCallSignature(call: LLMToolCall): string {
-  return `${call.function.name}:${stableJson(parseToolArguments(call.function.arguments))}`;
 }
 
 function assistantLoopMessageSignature(message: LLMMessage): string {

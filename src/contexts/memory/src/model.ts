@@ -183,4 +183,3 @@ export const targetDirectories: Record<MemoryTarget, string> = {
 };
 
 export const maxMessagesPerSummary = 10_000;
-export const memoryToolRoundLimit = 30;

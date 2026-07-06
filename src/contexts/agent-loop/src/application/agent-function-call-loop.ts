@@ -5,8 +5,7 @@ import type {
 
 export const defaultAgentFunctionCallLoopLimits: Required<LLMToolLoopLimits> = {
   maxRounds: 20,
-  maxTotalToolCalls: 20,
-  maxRepeatedToolCalls: 3
+  maxTotalToolCalls: 20
 };
 
 export type AgentFunctionCallLoopSpecInput = LLMToolLoopInput;

@@ -1,7 +1,7 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
 import { registerLLMToolLoopTools, runLLMToolLoop } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
 import type { MemoryInductionSession, MemoryRunResult, MemoryRunSummary, MemorySummaryDeps, MemoryTarget } from './model.js';
-import { maxMessagesPerSummary, memoryFileLimits, memoryToolRoundLimit, targetFiles, targetResultFiles } from './model.js';
+import { maxMessagesPerSummary, memoryFileLimits, targetFiles, targetResultFiles } from './model.js';
 import { latestMemorySleepWindow } from './sleep-window.js';
 import { buildMemoryErrorMessages, buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-build.js';
 import { createMemoryInductionSession } from './session.js';
@@ -363,7 +363,6 @@ async function runMemoryOrganizationInduction(
         const loopResult = await runLLMToolLoop({
           initialMessages: currentMessages,
           toolRegistryName,
-          limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
           buildRequest({ round, messages }) {
             const absoluteRound = roundBase + round;
             const extraParams = absoluteRound === 0 ? deps.config.extraParams : deps.config.followupExtraParams;

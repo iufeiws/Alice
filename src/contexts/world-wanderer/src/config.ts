@@ -59,7 +59,7 @@ function normalizeWorldWandererConfig(parsed: Record<string, unknown>): WorldWan
     initialLocation,
     targetLocation: locationValue(parsed.targetLocation, undefined),
     initialHeading: normalizeHeading(numberValue(parsed.initialHeading, 90)),
-    recentHistoryLimit: integerValue(parsed.recentHistoryLimit, 100),
+    recentHistoryLimit: integerValue(parsed.recentHistoryLimit, 500),
     maxPanosPerIdle: integerValue(parsed.maxPanosPerIdle, 10),
     noveltyWeight: numberValue(parsed.noveltyWeight, 6),
     forwardWeight: numberValue(parsed.forwardWeight, 2),

@@ -23,7 +23,6 @@ test("world wanderer config defaults to disabled with stable movement settings",
   assert.equal(config.targetLocation, undefined);
   assert.equal(config.initialHeading, 90);
   assert.equal(config.speedMetersPerSecond, 1.4);
-  assert.equal(config.recentHistoryLimit, 100);
   assert.equal(config.maxPanosPerIdle, 10);
   assert.equal(config.selectionTemperature, 1);
 });

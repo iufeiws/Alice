@@ -321,7 +321,7 @@ test("chat agent appends assistant tool call and tool result before the next llm
         return {
           message: {
             role: "assistant",
-            content: "checking history",
+            content: "",
             reasoningContent: "I should inspect messages first.",
             toolCalls: [{
               id: "tool_1",
@@ -335,7 +335,7 @@ test("chat agent appends assistant tool call and tool result before the next llm
           finishReason: "tool_calls"
         };
       }
-      return { message: { role: "assistant", content: "done" } };
+      return { message: { role: "assistant", content: "" } };
     }
   };
   const core = createChatAgent({
@@ -365,7 +365,7 @@ test("chat agent appends assistant tool call and tool result before the next llm
   assert.equal(requests.length, 2);
   const toolCallIndex = requests[1].messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.[0]?.id === "tool_1");
   assert.ok(toolCallIndex >= 0);
-  assert.equal(requests[1].messages[toolCallIndex]?.content, "checking history");
+  assert.equal(requests[1].messages[toolCallIndex]?.content, "");
   assert.equal(requests[1].messages[toolCallIndex]?.reasoningContent, "I should inspect messages first.");
   assert.equal(requests[1].messages[toolCallIndex]?.toolCalls?.[0].function.name, "Chat");
   assert.equal(requests[1].messages[toolCallIndex + 1]?.role, "tool");

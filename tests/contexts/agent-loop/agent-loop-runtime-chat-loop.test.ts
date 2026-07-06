@@ -64,7 +64,7 @@ test("chat loop exposes visible tools to LLM requests", async () => {
   assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
 });
 
-test("chat loop sends chat blocks through ToolPlugin.execute", async () => {
+test("chat loop sends assistant content through ToolPlugin.execute", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],
     requestTimestamps: [],
@@ -83,7 +83,15 @@ test("chat loop sends chat blocks through ToolPlugin.execute", async () => {
   }];
   registerLLMToolLoopTools("default", tools);
   const loop = buildChatAgentLoop({
-    llmInput: { messages: session.messages, toolNames: ["Chat"] },
+    llmInput: {
+      messages: session.messages,
+      toolNames: ["Chat"],
+      assistantContentToolCall: {
+        toolName: "Chat",
+        input: { action: "send", type: "message" },
+        contentInputKey: "content"
+      }
+    },
     event: textEvent("session-content-send"),
     session,
     ensureSession: async () => session,
@@ -113,5 +121,5 @@ test("chat loop sends chat blocks through ToolPlugin.execute", async () => {
 
   loop.complete(await runAgentFunctionCallLoop(loop.spec));
 
-  assert.deepEqual(sent, ["core:voice:prefix"]);
+  assert.deepEqual(sent, [":message:before\n<chat alice='core' type='voice'>\nprefix\n</chat ignored>"]);
 });

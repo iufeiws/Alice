@@ -531,7 +531,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             stream: llmConfig.stream,
             supportsImage: llmConfig.supportsImage,
             supportsAudio: llmConfig.supportsAudio,
-            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
+            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name)),
+            assistantContentToolCall: {
+              toolName: "Chat",
+              input: { action: "send", type: "message" },
+              contentInputKey: "content"
+            }
           };
           preparedLoop = buildChatAgentLoop({
             llmInput,

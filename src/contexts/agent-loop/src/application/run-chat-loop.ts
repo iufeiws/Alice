@@ -5,7 +5,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
@@ -64,6 +64,11 @@ export type ChatAgentLoopInput = {
     supportsImage?: boolean;
     supportsAudio?: boolean;
     toolNames: string[];
+    assistantContentToolCall?: {
+      toolName: string;
+      input: Record<string, unknown>;
+      contentInputKey: string;
+    };
   };
   event: AgentEvent;
   session: ChatAgentLoopSession;
@@ -174,11 +179,11 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         throw error;
       }
     },
-    async afterRequest({ round, result }) {
-      if (session.skipNextAppendLayers) {
-        session.skipNextAppendLayers = undefined;
-      }
-      await sendAssistantContentAsChat(round, result.message.content);
+    afterRequest() {
+      if (session.skipNextAppendLayers) session.skipNextAppendLayers = undefined;
+    },
+    transformAssistantMessage({ round, message }) {
+      return contentToolCallAssistantMessage(round, message, input.llmInput.assistantContentToolCall, visibleToolNames);
     },
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
@@ -246,27 +251,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     }
   };
 
-  async function sendAssistantContentAsChat(round: number, content: LLMChatInput["messages"][number]["content"]): Promise<boolean> {
-    const parts = parseAssistantChatBlocks(messageContentText(content));
-    if (parts.length === 0 || !visibleToolNames.includes(chatToolName)) return false;
-    let sent = false;
-    for (const [index, part] of parts.entries()) {
-      const result = await executeRegisteredLLMTool("default", {
-        id: `assistant_content_send_${round}_${index + 1}`,
-        toolName: chatToolName,
-        input: { action: "send", type: part.type, alice: part.alice, content: part.content },
-        requester: input.event.source,
-        externalSession: input.event.externalSession
-      }, {
-        lastCompletedToolName: input.getLastCompletedToolName(),
-        agentLoopRunSeq: input.agentLoopRunSeq,
-        llmSessionId: session.id,
-        llmCapabilities
-      });
-      sent = sent || result.ok;
-    }
-    return sent;
-  }
 }
 
 export { runPromptToolRequest } from "./agent-loop-tool-executor.js";
@@ -438,42 +422,32 @@ function messageContentText(content: LLMChatInput["messages"][number]["content"]
     .join("\n");
 }
 
-type AssistantChatBlock = {
-  type: "message" | "markdown" | "image" | "voice";
-  alice: "core" | "shell";
-  content: string;
-};
-
-function parseAssistantChatBlocks(text: string): AssistantChatBlock[] {
-  const blocks: AssistantChatBlock[] = [];
-  const openTag = /<\s*chat\b([^>]*)>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = openTag.exec(text))) {
-    const contentStart = openTag.lastIndex;
-    const closeMatch = /<\s*\/\s*chat\b[^>]*>/gi.exec(text.slice(contentStart));
-    const contentEnd = closeMatch ? contentStart + closeMatch.index : text.length;
-    const content = text.slice(contentStart, contentEnd).trim();
-    if (content) {
-      blocks.push({
-        type: normalizeChatType(readTagAttribute(match[1], "type")),
-        alice: normalizeAliceName(readTagAttribute(match[1], "alice")),
-        content
-      });
-    }
-    openTag.lastIndex = closeMatch ? contentEnd + closeMatch[0].length : text.length;
-  }
-  return blocks;
-}
-
-function readTagAttribute(raw: string, name: string): string | undefined {
-  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(raw);
-  return match?.[1] ?? match?.[2] ?? match?.[3];
-}
-
-function normalizeChatType(value: string | undefined): AssistantChatBlock["type"] {
-  return value === "markdown" || value === "image" || value === "voice" ? value : "message";
-}
-
-function normalizeAliceName(value: string | undefined): AssistantChatBlock["alice"] {
-  return value === "core" ? "core" : "shell";
+function contentToolCallAssistantMessage(
+  round: number,
+  message: LLMChatResult["message"],
+  config: ChatAgentLoopInput["llmInput"]["assistantContentToolCall"],
+  visibleToolNames: string[]
+): LLMChatResult["message"] | { message: LLMChatResult["message"]; completeAfterToolCalls: boolean } {
+  if (!config || !visibleToolNames.includes(config.toolName)) return message;
+  const content = messageContentText(message.content).trim();
+  if (!content) return message;
+  const hadToolCalls = (message.toolCalls?.length ?? 0) > 0;
+  return {
+    message: {
+      ...message,
+      content: "",
+      toolCalls: [{
+        id: `assistant_content_${round + 1}`,
+        type: "function",
+        function: {
+          name: config.toolName,
+          arguments: JSON.stringify({
+            ...config.input,
+            [config.contentInputKey]: content
+          })
+        }
+      }, ...(message.toolCalls ?? [])]
+    },
+    completeAfterToolCalls: !hadToolCalls
+  };
 }

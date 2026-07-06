@@ -50,6 +50,11 @@ export type LLMToolLoopRoundRequest = Omit<LLMRequestSenderInput, "round" | "mes
   messages?: LLMMessage[];
 };
 
+export type LLMToolLoopAssistantMessageTransform = LLMMessage | {
+  message: LLMMessage;
+  completeAfterToolCalls?: boolean;
+};
+
 export type LLMToolLoopStopReason = "completed" | "empty_messages" | "tool_limit" | "reset" | "invalidated" | "cancelled" | "yield_return";
 
 export type LLMToolLoopResult = {
@@ -76,6 +81,7 @@ export type LLMToolLoopInput = {
     call: LLMToolCall;
     callIndex: number;
   }): ToolExecutionContext;
+  transformAssistantMessage?(input: { round: number; message: LLMMessage }): LLMToolLoopAssistantMessageTransform;
   transformToolInput?(toolName: string, input: Record<string, unknown>): Record<string, unknown>;
   afterToolResult?(input: {
     round: number;
@@ -173,6 +179,10 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       if (input.shouldCancel?.()) return cancelledResult(round + 1);
       throw error;
     }
+    const transformed = input.transformAssistantMessage?.({ round, message: result.message });
+    const transformedMessage = isAssistantMessageTransformResult(transformed) ? transformed.message : transformed ?? result.message;
+    const completeAfterToolCalls = isAssistantMessageTransformResult(transformed) && transformed.completeAfterToolCalls === true;
+    result = transformedMessage === result.message ? result : { ...result, message: transformedMessage };
     const assistantMessageSignature = assistantLoopMessageSignature(result.message);
     if (assistantMessageSignature === previousAssistantMessageSignature) {
       throw new Error("llm_tool_loop_repeated_assistant_message");
@@ -255,8 +265,20 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       await input.onMessagesChanged?.({
         round,
         messages,
-        reason: reachedToolCallLimit || round + 1 >= limits.maxRounds ? "limit" : "tools"
+        reason: completeAfterToolCalls ? "completed" : reachedToolCallLimit || round + 1 >= limits.maxRounds ? "limit" : "tools"
       });
+    }
+
+    if (completeAfterToolCalls && !yieldReturn && !reachedToolCallLimit && !invalidateSession) {
+      return {
+        messages,
+        rounds: round + 1,
+        finalResult: result,
+        finalMessage: result.message,
+        stopReason: "completed",
+        invalidateSession,
+        toolCallCount: totalToolCallCount
+      };
     }
 
     if (resetSession) {
@@ -348,6 +370,10 @@ function consumePendingUserMessageInterruptMessages(input: LLMToolLoopInput, req
   if (input.runtimeInterrupts?.hasPendingUserMessage() !== true) return [];
   if (input.runtimeInterrupts.consumePendingUserMessage() !== true) return [];
   return [promptLayerToMessage(layer, request.toolVariables)];
+}
+
+function isAssistantMessageTransformResult(value: LLMToolLoopAssistantMessageTransform | undefined): value is Extract<LLMToolLoopAssistantMessageTransform, { message: LLMMessage }> {
+  return Boolean(value && typeof value === "object" && "message" in value);
 }
 
 async function executeTool(

@@ -82,8 +82,48 @@ test("chat agent continues after Chat until the next response has no tool calls"
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(sent, ["final"]);
+  assert.deepEqual(sent, ["need more 1", "need more 2", "final", "done"]);
   assert.equal(requests.length, 4);
+});
+
+test("chat agent converts assistant content to first Chat send tool call", async () => {
+  const requests: LLMChatInput[] = [];
+  const toolCalls: ToolCall[] = [];
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model" }),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        return requests.length === 1
+          ? {
+            message: {
+              role: "assistant",
+              content: "hello",
+              toolCalls: [{
+                id: "later_1",
+                type: "function",
+                function: { name: "later_tool", arguments: "{\"value\":1}" }
+              }]
+            }
+          }
+          : { message: { role: "assistant", content: "" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [chatTestTools((call) => toolCalls.push(call))]
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.deepEqual(toolCalls.map((call) => call.toolName), ["Chat", "later_tool"]);
+  assert.deepEqual(toolCalls[0]?.input, { action: "send", type: "message", content: "hello" });
+  const assistantMessage = requests[1].messages.find((message) => message.role === "assistant" && message.toolCalls?.length === 2);
+  assert.equal(assistantMessage?.content, "");
+  assert.equal(assistantMessage?.toolCalls?.[0]?.function.name, "Chat");
+  assert.equal(assistantMessage?.toolCalls?.[1]?.function.name, "later_tool");
 });
 
 test("chat agent uses first-call and follow-up extra params", async () => {
@@ -299,6 +339,7 @@ test("chat agent keeps an active transcript and appends fake Chat on the next he
         return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
+        if (call.input.action === "send") return { callId: call.id, ok: true, output: "sent" };
         appendCheckCount += 1;
         return { callId: call.id, ok: true, output: appendCheckCount === 1 ? "recent" : "new" };
       }
@@ -310,7 +351,7 @@ test("chat agent keeps an active transcript and appends fake Chat on the next he
 
   assert.equal(requests.length, 2);
   assert.equal(requests[0].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.name === "Chat"), false);
-  assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.content === "final 1"), true);
+  assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.toolCalls?.[0]?.function.arguments.includes("final 1")), true);
   assert.equal(requests[1].messages.at(-2)?.toolCalls?.[0].function.name, "Chat");
   assert.equal(requests[1].messages.at(-2)?.reasoningContent, "fake reason");
   assert.equal(requests[1].messages.at(-1)?.content, "recent");
@@ -346,6 +387,7 @@ test("chat agent reuses appended context after llm request failures", async () =
         return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
       },
       async execute(call) {
+        if (call.input.action === "send") return { callId: call.id, ok: true, output: "sent" };
         appendCheckCount += 1;
         return { callId: call.id, ok: true, output: `recent ${appendCheckCount}` };
       }

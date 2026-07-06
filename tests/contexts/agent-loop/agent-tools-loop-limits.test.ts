@@ -22,7 +22,7 @@ test("chat agent throws on repeated assistant tool-call responses", async () => 
       return {
         message: {
           role: "assistant",
-          content: "still checking",
+          content: "",
           toolCalls: [{
             id: `tool_view_${requests.length}`,
             type: "function",
@@ -69,7 +69,7 @@ test("chat agent falls back after max llm requests when tool calls alternate", a
       return {
         message: {
           role: "assistant",
-          content: "still looping",
+          content: "",
           toolCalls: [{
             id: `tool_${requests.length}`,
             type: "function",
@@ -118,7 +118,7 @@ test("chat agent throws on repeated assistant Chat send responses", async () => 
       return {
         message: {
           role: "assistant",
-          content: "still sending",
+          content: "",
           toolCalls: [{
             id: `tool_send_${requests.length}`,
             type: "function",
@@ -167,7 +167,7 @@ test("chat agent stops after the generic total tool call limit", async () => {
       return {
         message: {
           role: "assistant",
-          content: "still sending",
+          content: "",
           toolCalls: [{
             id: `tool_send_${requests.length}`,
             type: "function",
@@ -218,7 +218,7 @@ test("chat agent executes all exposed tools when Chat appears in the same round"
   const llm: LLMClient = {
     async chat(input) {
       if (input.messages.some((message) => message.role === "tool" && message.toolCallId === "tool_send")) {
-        return { message: { role: "assistant", content: "done" } };
+        return { message: { role: "assistant", content: "" } };
       }
       return {
         message: {
@@ -280,7 +280,7 @@ test("chat agent does not stream Chat when non-message type is explicit", async 
     },
     async chatStream(input, handlers) {
       if (input.messages.some((message) => message.role === "tool")) {
-        return { message: { role: "assistant", content: "done" } };
+        return { message: { role: "assistant", content: "" } };
       }
       await handlers?.onToolCallDelta?.({
         index: 0,

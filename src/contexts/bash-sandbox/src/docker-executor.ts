@@ -29,6 +29,7 @@ export type DockerOutputFile = {
 
 export type DockerExecutor = {
   execute(input: { command: string; cwd: string; timeoutMs: number; outputLimitBytes: number; onStdout?(delta: string): void; onStderr?(delta: string): void }): Promise<DockerExecutorResult>;
+  readFile?(input: { payload: Record<string, unknown>; timeoutMs: number; outputLimitBytes: number }): Promise<DockerExecutorResult>;
 };
 
 export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecutor {
@@ -44,6 +45,12 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
       output.stdout && input.onStdout?.(output.stdout);
       output.stderr && input.onStderr?.(output.stderr);
       return { ...output, exitCode: captured.exitCode, timedOut, durationMs: Date.now() - startedAt };
+    },
+    async readFile(input) {
+      mountKey = await ensureContainer(config, mountKey);
+      const startedAt = Date.now();
+      const result = await execFile("docker", ["exec", config.containerName, "/sandbox/bin/Read", JSON.stringify(input.payload)], input.timeoutMs, input.outputLimitBytes);
+      return { ...result, durationMs: Date.now() - startedAt, truncated: false };
     }
   };
 }
@@ -194,26 +201,21 @@ function containerMountKey(config: BashSandboxConfig): string {
   });
 }
 
-function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number, stream: Pick<Parameters<DockerExecutor["execute"]>[0], "onStdout" | "onStderr"> = {}): Promise<Omit<DockerExecutorResult, "durationMs">> {
+function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number): Promise<Omit<DockerExecutorResult, "durationMs" | "truncated">> {
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: dockerProcessEnv() });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
-    let truncated = false;
     let settled = false;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
-      stream.onStdout?.(chunk.toString("utf8"));
       const next = Buffer.concat([stdout, chunk]);
-      truncated ||= next.length > outputLimitBytes;
       stdout = next.subarray(0, outputLimitBytes);
     });
     child.stderr.on("data", (chunk) => {
-      stream.onStderr?.(chunk.toString("utf8"));
       const next = Buffer.concat([stderr, chunk]);
-      truncated ||= next.length > outputLimitBytes;
       stderr = next.subarray(0, outputLimitBytes);
     });
     child.on("error", reject);
@@ -225,8 +227,7 @@ function execFile(command: string, args: string[], timeoutMs: number, outputLimi
         stdout: stdout.toString("utf8"),
         stderr: stderr.toString("utf8"),
         exitCode: code,
-        timedOut: signal === "SIGKILL",
-        truncated
+        timedOut: signal === "SIGKILL"
       });
     });
   });

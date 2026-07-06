@@ -24,10 +24,20 @@ export type BashRuntimeResult = {
   denyReason?: string;
 };
 
+export type BashSandboxReadResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  truncated: boolean;
+};
+
 export type BashSandboxRuntime = {
   setReporter(reporter: BashRunReporter | undefined): void;
   mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig;
   run(call: ToolCall): Promise<BashRuntimeResult>;
+  readFile(input: { payload: Record<string, unknown>; timeoutMs?: number; outputLimitBytes?: number }): Promise<BashSandboxReadResult>;
 };
 
 export type BashRunReporter = {
@@ -80,6 +90,14 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
         await report?.fail(error);
         throw error;
       }
+    },
+    async readFile(readInput) {
+      if (!executor.readFile) throw new Error("bash sandbox executor does not support Read");
+      return await executor.readFile({
+        payload: readInput.payload,
+        timeoutMs: readInput.timeoutMs ?? input.config.timeoutMs,
+        outputLimitBytes: readInput.outputLimitBytes ?? input.config.outputLimitBytes
+      });
     }
   };
 }

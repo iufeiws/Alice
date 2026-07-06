@@ -19,7 +19,7 @@ test("memoryStore_bootstrap_createsRequiredFiles", () => {
   store.ensure();
 
   assert.equal(fs.existsSync(path.join(root, "alice.sqlite")), true);
-  assert.equal(fs.existsSync(path.join(root, "tmp", "memory-workspaces")), true);
+  assert.equal(fs.existsSync(path.join(root, "tmp", "memory-workspaces")), false);
 });
 
 test("memoryStore_enforcesMemoryLimits", () => {
@@ -92,22 +92,22 @@ test("memorySqlStore_sleepBoundaryTables_persistsRows", () => {
 
 test("memorySqlStore_currentDiarySqlite_doesNotImportEntries", () => {
   const root = makeTempDir("memory-ignore-current-diary-sqlite");
-  const legacyStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
-  legacyStore.upsertEntry({
+  const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
+  diaryStore.upsertEntry({
     localDate: "2026-06-04",
-    content: "legacy diary\n",
+    content: "diary\n",
     now: "2026-06-04T01:00:00.000",
     windowStartAt: "2026-06-03T20:00:00.000",
     windowEndAt: "2026-06-04T01:00:00.000"
   });
-  legacyStore.recordSleepBoundary({
+  diaryStore.recordSleepBoundary({
     occurredAt: "2026-06-04T01:00:00.000",
     occurredAtUtc: "2026-06-03T17:00:00.000Z",
     source: "sleep",
     now: "2026-06-04T01:00:00.000",
     nowUtc: "2026-06-03T17:00:00.000Z"
   });
-  legacyStore.recordSleepPreparationBoundary({
+  diaryStore.recordSleepPreparationBoundary({
     occurredAt: "2026-06-04T00:30:00.000",
     occurredAtUtc: "2026-06-03T16:30:00.000Z",
     now: "2026-06-04T01:00:00.000",

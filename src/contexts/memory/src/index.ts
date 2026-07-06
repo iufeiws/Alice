@@ -2,8 +2,7 @@ import type { MemorySummaryConfig } from "./contracts/memory-config.js";
 import { createDiaryStore, type DiaryStore, type SleepBoundary } from "../../../platform/storage/src/diary-store.js";
 import * as sqlite from "../../../platform/storage/src/sqlite-compat.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
-import { createWorkspaceFilesTools, formatReadOutput } from "../../../capabilities/tools/workspace-files/src/index.js";
+import type { ToolDefinition, ToolPlugin } from "../../agent-loop/src/contracts/agent-contracts.js";
 import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from "../../../contexts/llm-gateway/src/index.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { formatZonedIso, parseZonedIso } from "../../../platform/time/src/index.js";
@@ -64,21 +63,11 @@ export type MemoryStore = {
   readTarget(target: MemoryTarget): string;
   write(snapshot: MemorySnapshot): MemorySnapshot;
   writeTarget(target: MemoryTarget, content: string, options?: MemoryWriteOptions): string;
-  commitWorkspaceSnapshot?(snapshot: MemorySnapshot, options?: MemoryWriteOptions & { runId?: string }): MemorySnapshot;
-  createWorkspaceDraft?(options?: { now?: string; runId?: string }): MemoryWorkspaceDraft;
   deleteLatestEntry?(target: MemoryTarget): { id: number; target: MemoryTarget; localDate?: string; content: string } | undefined;
   deleteLatestDiaryEntry?(): { id: number; localDate: string; content: string } | undefined;
   createDiaryDraft(): string;
   commitDiaryDraft(draftPath: string, options?: MemoryWriteOptions): string;
   stats(): MemoryFileStats[];
-};
-
-export type MemoryWorkspaceDraft = {
-  runId: string;
-  root: string;
-  files: Record<MemoryTarget, string>;
-  cleanup(): void;
-  readSnapshot(): MemorySnapshot;
 };
 
 export type MemoryWriteOptions = {
@@ -322,9 +311,7 @@ export function createMarkdownMemoryStore(root: string): MemoryStore {
     fs.mkdirSync(path.join(root, "long-term-memory"), { recursive: true });
     fs.mkdirSync(path.join(root, "diary"), { recursive: true });
     fs.mkdirSync(path.join(root, "diary", "tmp"), { recursive: true });
-    fs.mkdirSync(path.join(root, "tmp", "memory-workspaces"), { recursive: true });
     db();
-    migrateLegacyLongTermMarkdown(root, db());
   }
 
   return {
@@ -364,22 +351,6 @@ export function createMarkdownMemoryStore(root: string): MemoryStore {
       }
       return appendLongTermTarget(target, limited, options);
     },
-    commitWorkspaceSnapshot(snapshot, options) {
-      this.ensure();
-      const limited = enforceMemoryLimits(snapshot);
-      const database = db();
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        appendLongTermTarget("persistent", limited.persistent, options);
-        appendLongTermTarget("userPreferences", limited.userPreferences, options);
-        upsertDiaryContent(limited.yesterdaySummary, options);
-        database.exec("COMMIT");
-        return limited;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    },
     deleteLatestEntry(target) {
       this.ensure();
       const database = db();
@@ -404,45 +375,6 @@ export function createMarkdownMemoryStore(root: string): MemoryStore {
     deleteLatestDiaryEntry() {
       const entry = this.deleteLatestEntry?.("yesterdaySummary");
       return entry ? { id: entry.id, localDate: entry.localDate ?? "", content: entry.content } : undefined;
-    },
-    createWorkspaceDraft(options) {
-      this.ensure();
-      const runId = sanitizeRunId(options?.runId ?? `${Date.now()}-${process.pid}`);
-      let draftRoot = path.join(root, "tmp", "memory-workspaces", runId);
-      let suffix = 2;
-      while (fs.existsSync(draftRoot)) {
-        draftRoot = path.join(root, "tmp", "memory-workspaces", `${runId}-${suffix}`);
-        suffix += 1;
-      }
-      fs.mkdirSync(draftRoot, { recursive: true });
-      const files = {
-        persistent: "persistent-memory.md",
-        userPreferences: "user-preferences.md",
-        yesterdaySummary: "diary.md"
-      } satisfies Record<MemoryTarget, string>;
-      const snapshot = this.read();
-      writeAtomic(path.join(draftRoot, files.persistent), snapshot.persistent);
-      writeAtomic(path.join(draftRoot, files.userPreferences), snapshot.userPreferences);
-      writeAtomic(path.join(draftRoot, files.yesterdaySummary), "");
-      return {
-        runId: path.basename(draftRoot),
-        root: draftRoot,
-        files,
-        cleanup() {
-          try {
-            if (fs.existsSync(draftRoot)) fs.rmSync(draftRoot, { recursive: true, force: true });
-          } catch {
-            // Workspace cleanup is best-effort after SQL commit has succeeded.
-          }
-        },
-        readSnapshot() {
-          return {
-            persistent: readFile(path.join(draftRoot, files.persistent)),
-            userPreferences: readFile(path.join(draftRoot, files.userPreferences)),
-            yesterdaySummary: readFile(path.join(draftRoot, files.yesterdaySummary))
-          };
-        }
-      };
     },
     createDiaryDraft() {
       this.ensure();
@@ -511,13 +443,9 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
     commonLayers: [
       layer("common_scope", "共同规则", "system", 10, [
         "你是 Alice 的记忆维护子系统。",
-        "只通过 Read / Edit / Glob / Grep / self_talk 工具工作。",
-        "当前记忆修改任务绑定到一个临时 workspace；所有 file_path 都必须使用 workspace-relative 路径，不要使用或输出本机绝对路径。",
-        "普通回复不会保存；必须用 Read 读取目标文件后，再用 Edit 精确替换文件内容。",
-        "本轮可编辑文件路径：",
-        "- 记忆 file_path={{memorize/files/persistent/filePath}}",
-        "- 用户记忆 file_path={{memorize/files/userPreferences/filePath}}",
-        "- 日记 file_path={{memorize/files/yesterdaySummary/filePath}}",
+        "只通过 Read / self_talk 工具工作。",
+        "普通回复不会保存。",
+        "本轮目标：{{memorize/target/fileName}}",
         "写入边界：",
         "- 记忆：长期有效的事实、关系连续性、项目长期背景、用户明确要求长期保留的信息；不要写单日流水账。",
         "- 用户记忆：稳定偏好、语言/语气/交互方式/实现习惯/明确禁忌/长期约束；不要把一次性任务需求误判为偏好。",
@@ -537,7 +465,7 @@ export function defaultMemoryInductionPrompts(): MemoryInductionPrompts {
         "{{memorize/messages/content}}"
       ].join("\n")),
       {
-        id: "common_read_memory",
+        id: "common_read",
         title: "Fake Read",
         role: "tool_request",
         enabled: true,
@@ -740,25 +668,13 @@ export async function runMemoryInductionForMessages(
     };
   }
 
-  const targets = ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
-  const memorySession = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, startedAt, {
-    name: "run",
-    windowStartAt: deps.windowStartAt,
-    windowEndAt: deps.windowEndAt,
-    timezone: deps.timezone,
-    nowIso: deps.nowIso
-  });
-  const ownsMemorySession = deps.memorySession === undefined;
-  const result = await runWorkspaceMemoryInductionWithRetry({ ...deps, memorySession }, targets);
-  results.push(...result);
-  for (const entry of result) {
+  const targets = targetFilter ? [targetFilter] : ["persistent", "userPreferences", "yesterdaySummary"] as MemoryTarget[];
+  const error = "Memorize temporary workspace induction has been removed";
+  results.push(...targets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error, toolCalls: [] })));
+  for (const entry of results) {
     if (entry.ok) deps.log("info", `Memorize ${entry.target} completed`);
     else deps.log("warn", `Memorize ${entry.target} failed: ${entry.error ?? "unknown"}`);
   }
-  if (ownsMemorySession) {
-    clearMemoryInductionSession(memorySession, startedAt, results.every((entry) => entry.ok) ? "complete" : "failed");
-  }
-
   return {
     ok: results.length === targets.length && results.every((entry) => entry.ok),
     startedAt,
@@ -769,278 +685,6 @@ export async function runMemoryInductionForMessages(
   };
 }
 
-async function runWorkspaceMemoryInductionWithRetry(
-  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
-    messages: StoredConversationMessage[];
-    windowStartAt?: string;
-    windowEndAt: string;
-    memorySession?: MemoryInductionSession;
-  },
-  targets: MemoryTarget[]
-): Promise<MemoryRunResult[]> {
-  let lastResult: MemoryRunResult[] | undefined;
-  for (let attempt = 1; attempt <= memoryInductionMaxAttempts; attempt += 1) {
-    try {
-      const result = await runWorkspaceMemoryInduction(deps, targets);
-      if (result.every((entry) => entry.ok) || attempt >= memoryInductionMaxAttempts) return result;
-      lastResult = result;
-      const error = result.find((entry) => !entry.ok)?.error ?? "unknown";
-      deps.log("warn", `Memorize workspace attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${error}, retrying`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      lastResult = targets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: message, toolCalls: [] }));
-      if (attempt >= memoryInductionMaxAttempts) return lastResult;
-      deps.log("warn", `Memorize workspace attempt ${attempt}/${memoryInductionMaxAttempts} failed: ${message}, retrying`);
-    }
-  }
-  return lastResult ?? targets.map((target) => ({ target, ok: false, edited: false, rounds: 0, error: "unknown Memorize failure", toolCalls: [] }));
-}
-
-async function runWorkspaceMemoryInduction(
-  deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
-    messages: StoredConversationMessage[];
-    windowStartAt?: string;
-    windowEndAt: string;
-    memorySession?: MemoryInductionSession;
-  },
-  targets: MemoryTarget[]
-): Promise<MemoryRunResult[]> {
-  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.nowIso(), {
-    name: targets.length === 1 ? targets[0] : "run",
-    windowStartAt: deps.windowStartAt,
-    windowEndAt: deps.windowEndAt,
-    timezone: deps.timezone,
-    nowIso: deps.nowIso
-  });
-  const draft = createMemoryWorkspaceDraft(deps.memoryStore, {
-    now: deps.nowIso(),
-    runId: String(Date.parse(deps.nowIso()) || Date.now())
-  });
-  const initialSnapshot = draft.readSnapshot();
-  const workspaceTools = createWorkspaceFilesTools({ root: draft.root });
-  const toolCalls: MemoryRunResult["toolCalls"] = [];
-  let edited = false;
-  const toolRegistryName = `memory_workspace_${memoryToolRegistrySeq += 1}`;
-  const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
-    workspaceTools,
-    createSingleToolPlugin(memoryToolDefinitions().find((tool) => tool.name === "self_talk")!, async (call) => {
-      const content = typeof call.input.content === "string" ? call.input.content : "";
-      const output = `爱丽丝听到自己说:\n${content}`;
-      toolCalls.push({ name: "self_talk", file: resultFileForToolInput(call.input, draft), input: call.input, ok: true, output });
-      return { callId: call.id, ok: true, output };
-    })
-  ]);
-  session.activeTarget = targets[0];
-  const promptMessages = buildWorkspaceMemoryPromptMessages({ ...deps, draft }, targets, {
-    includeCommonLayers: session.messages.length === 0
-  });
-  const messages = session.messages.length > 0
-    ? [...session.messages, ...promptMessages]
-    : promptMessages;
-
-  try {
-    const loopResult = await runLLMToolLoop({
-      initialMessages: messages,
-      toolRegistryName,
-      limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
-      buildRequest({ round, messages }) {
-        const request = {
-          model: deps.config.model,
-          temperature: deps.config.temperature,
-          maxTokens: 8192,
-          extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-          tools: memoryTools(),
-          messages
-        };
-        deps.onRound?.(targets[0], round + 1);
-        session.append?.({ type: "request", round: session.roundOffset + round, request });
-        return {
-          agentId: "memorize",
-          client: deps.llm,
-          messages,
-          model: deps.config.model,
-          temperature: deps.config.temperature,
-          maxTokens: 8192,
-          extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-          toolNames: [...memoryToolNames],
-          toolVariables: deps.promptContextRuntime,
-          stream: deps.config.stream === true,
-          metadata: { target: targets.length === 1 ? targets[0] : "workspace" }
-        };
-      },
-      sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
-      afterRequest({ round, result }) {
-        session.append?.({ type: "response", round: session.roundOffset + round, response: result });
-      },
-      beforeTool({ round, call }) {
-        deps.onRound?.(targets[0], round + 1, call.function.name);
-      },
-      async afterToolResult({ call, toolInput, toolResult }) {
-        if (isWorkspaceFileTool(call.function.name)) {
-          const result = toolResult;
-          const output = result.ok ? stringifyToolOutput(result.output) : `error: ${result.error ?? "unknown tool error"}`;
-          const file = resultFileForToolInput(toolInput, draft);
-          toolCalls.push({ name: call.function.name, file, input: toolInput, ok: result.ok, output: result.ok ? output : undefined, error: result.ok ? undefined : result.error });
-          if (result.ok && call.function.name === "Edit") edited = true;
-        }
-        return undefined;
-      },
-      onMessagesChanged({ messages }) {
-        session.messages = messages;
-        session.append?.({ type: "final_messages", messages });
-      }
-    });
-    session.roundOffset += loopResult.rounds;
-    for (const target of targets) {
-      if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
-    }
-    session.activeTarget = undefined;
-
-    if (loopResult.stopReason !== "completed") {
-      return targets.map((target) => ({
-        target,
-        ok: false,
-        edited,
-        rounds: loopResult.rounds,
-        error: "model did not finish memory induction within tool round limit",
-        toolCalls,
-        response: loopResult.finalResult?.message
-      }));
-    }
-
-    const finalSnapshot = enforceMemoryLimits(draft.readSnapshot());
-    const committed = deps.memoryStore.commitWorkspaceSnapshot
-      ? deps.memoryStore.commitWorkspaceSnapshot(finalSnapshot, {
-        now: deps.nowIso(),
-        localDate: deps.windowEndAt.slice(0, 10),
-        windowStartAt: deps.windowStartAt,
-        windowEndAt: deps.windowEndAt,
-        runId: draft.runId
-      })
-      : deps.memoryStore.write(finalSnapshot);
-    session.append?.({
-      type: "memory_workspace_commit",
-      files: Object.values(draft.files),
-      runId: draft.runId,
-      lines: {
-        persistent: lineCount(committed.persistent),
-        userPreferences: lineCount(committed.userPreferences),
-        yesterdaySummary: lineCount(committed.yesterdaySummary)
-      }
-    });
-    return targets.map((target) => ({
-      target,
-      ok: true,
-      edited: initialSnapshot[target] !== finalSnapshot[target],
-      rounds: loopResult.rounds,
-      toolCalls,
-      response: loopResult.finalResult?.message
-    }));
-  } finally {
-    unregisterTools();
-    draft.cleanup();
-  }
-}
-
-function createMemoryWorkspaceDraft(memoryStore: MemoryStore, options: { now?: string; runId?: string }): MemoryWorkspaceDraft {
-  if (memoryStore.createWorkspaceDraft) return memoryStore.createWorkspaceDraft(options);
-  const root = path.join("/tmp", `alice-memory-workspace-${sanitizeRunId(options.runId ?? `${Date.now()}-${process.pid}`)}`);
-  fs.mkdirSync(root, { recursive: true });
-  const files = {
-    persistent: "persistent-memory.md",
-    userPreferences: "user-preferences.md",
-    yesterdaySummary: "diary.md"
-  } satisfies Record<MemoryTarget, string>;
-  const snapshot = memoryStore.read();
-  writeAtomic(path.join(root, files.persistent), snapshot.persistent);
-  writeAtomic(path.join(root, files.userPreferences), snapshot.userPreferences);
-  writeAtomic(path.join(root, files.yesterdaySummary), "");
-  return {
-    runId: path.basename(root),
-    root,
-    files,
-    cleanup() {
-      try {
-        if (fs.existsSync(root)) fs.rmSync(root, { recursive: true, force: true });
-      } catch {
-        // Workspace cleanup is best-effort.
-      }
-    },
-    readSnapshot() {
-      return {
-        persistent: readFile(path.join(root, files.persistent)),
-        userPreferences: readFile(path.join(root, files.userPreferences)),
-        yesterdaySummary: readFile(path.join(root, files.yesterdaySummary))
-      };
-    }
-  };
-}
-
-function buildWorkspaceMemoryPromptMessages(
-  deps: {
-    memoryStore: MemoryStore;
-    promptStore: Pick<MemoryInductionPromptStore, "get">;
-    promptContextRuntime: PromptContextRuntime;
-    messages: StoredConversationMessage[];
-    windowStartAt?: string;
-    windowEndAt: string;
-    timezone: string;
-    userName?: string;
-    draft: MemoryWorkspaceDraft;
-  },
-  targets: MemoryTarget[],
-  options?: { includeCommonLayers?: boolean }
-): LLMMessage[] {
-  const prompts = deps.promptStore.get();
-  const layers = memoryPromptLayersForTargets(prompts, options);
-  const messages: LLMMessage[] = [];
-  for (const layer of layers) {
-    const message = promptLayerToMessage(layer, deps.promptContextRuntime, {
-      defaultToolName: "Read",
-      toolCallIdPrefix: "memory_prompt",
-      allowedToolNames: ["Read", "self_talk"]
-    });
-    messages.push(message);
-    if (layer.role !== "tool_request") continue;
-    const call = message.toolCalls?.[0];
-    if (!call) continue;
-    messages.push({
-      role: "tool",
-      name: call.function.name,
-      toolCallId: call.id,
-      content: memoryPromptToolResult({ memoryStore: deps.memoryStore, draft: deps.draft }, targets[0] ?? "persistent", call.function.name, call.function.arguments)
-    });
-  }
-  return messages;
-}
-
-function memoryPromptLayersForTargets(
-  prompts: MemoryInductionPrompts,
-  options?: { includeCommonLayers?: boolean }
-): MemoryPromptLayer[] {
-  const sortEnabled = (layers: MemoryPromptLayer[]) => layers
-    .filter((item) => item.enabled !== false)
-    .sort((left, right) => left.order - right.order);
-  return [
-    ...(options?.includeCommonLayers === false ? [] : sortEnabled(prompts.commonLayers))
-  ];
-}
-
-function isWorkspaceFileTool(name: string): boolean {
-  return name === "Read" || name === "Edit" || name === "Glob" || name === "Grep";
-}
-
-function stringifyToolOutput(output: unknown): string {
-  if (typeof output === "string") return output;
-  return output === undefined ? "" : JSON.stringify(output);
-}
-
-function resultFileForToolInput(input: Record<string, unknown>, draft: MemoryWorkspaceDraft): MemoryResultFile {
-  const filePath = typeof input.file_path === "string" ? input.file_path : "";
-  if (filePath === draft.files.userPreferences) return "user-preferences";
-  if (filePath === draft.files.yesterdaySummary) return "diary";
-  return "persistent-memory";
-}
 
 async function runSingleMemoryInductionWithRetry(
   deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
@@ -1379,7 +1023,7 @@ function memoryPromptLayers(
 }
 
 function memoryPromptToolResult(
-  deps: { memoryStore: MemoryStore; diaryDraftPath?: string; draft?: MemoryWorkspaceDraft },
+  deps: { memoryStore: MemoryStore; diaryDraftPath?: string },
   target: MemoryTarget,
   toolName: string,
   rawArguments = "{}"
@@ -1389,26 +1033,8 @@ function memoryPromptToolResult(
     const content = typeof input.content === "string" ? input.content : "";
     return `爱丽丝听到自己说:\n${content}`;
   }
-  if (toolName === "Read") {
-    const input = parsePromptToolArguments(rawArguments);
-    const filePath = typeof input.file_path === "string" ? input.file_path : targetFiles[target];
-    const content = deps.draft
-      ? readDraftFile(deps.draft, filePath)
-      : readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath);
-    const offset = typeof input.offset === "number" ? input.offset : undefined;
-    const limit = typeof input.limit === "number" ? input.limit : undefined;
-    return formatReadOutput(content, { offset, limit });
-  }
-  if (toolName !== "read_memory") return `error: unsupported prompt tool ${toolName}`;
+  if (toolName !== "Read") return `error: unsupported prompt tool ${toolName}`;
   return formatReadMemoryResult(target, readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath));
-}
-
-function readDraftFile(draft: MemoryWorkspaceDraft, filePath: string): string {
-  if (path.isAbsolute(filePath)) return "";
-  const resolved = path.resolve(draft.root, filePath);
-  const relative = path.relative(draft.root, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
-  return readFile(resolved);
 }
 
 function formatReadMemoryResult(target: MemoryTarget, content: string): string {
@@ -1439,62 +1065,32 @@ function cleanupDiaryDraft(draftPath?: string): void {
   }
 }
 
-export const memoryToolNames = ["Read", "Edit", "Glob", "Grep", "self_talk"] as const;
+export const memoryToolNames = ["Read", "self_talk"] as const;
 
 function currentMemoryEditInstructions(): string {
   return [
-    "Claude Code 风格文件工具规则：",
-    "- Read({ file_path, offset?, limit? }) 读取 workspace-relative 文件并返回带行号内容。",
-    "- Edit({ file_path, old_string, new_string, replace_all? }) 做精确字符串替换；必须先 Read 同一文件。",
-    "- old_string 必须完全匹配文件内容。多处匹配时请增加上下文，或确认全部替换时使用 replace_all。",
-    "- Glob/Grep 只用于在临时 workspace 内查找文件或内容。",
-    "- 完成前请确保 persistent-memory.md、user-preferences.md、diary.md 都是最终内容。"
-  ].join("\n");
-}
-
-function currentMemoryApplyPatchInstructions(): string {
-  return [
-    "apply_patch",
-    "Use the `apply_patch` tool to edit the current memory file. The patch language is a stripped-down, current-file diff format designed to be easy to parse and safe to apply.",
-    "",
-    "Envelope:",
-    "*** Begin Patch",
-    "[ one or more chunks for the current memory file ]",
-    "*** End Patch",
-    "",
-    "Do not include file operation headers such as `*** Add File:`, `*** Delete File:`, `*** Update File:`, or `*** Move to:`. This tool is already bound to the current memory file.",
-    "",
-    "Each chunk starts with `@@`, optionally followed by a context header. Within a chunk, every line starts with one of:",
-    "  context line",
-    "- removed line",
-    "+ added line",
-    "",
-    "The first character is the patch marker, not part of the file content. If the real file line itself starts with a marker-like character, include both the patch marker and the file content. Examples: to remove a Markdown bullet line `- old`, write `-- old`; to keep that bullet as context, write ` - old`; to keep a line that starts with one leading space, write two leading spaces.",
-    "",
-    "Context guidance:",
-    "By default, include about 3 lines of context immediately above and below each change. If that is not enough to uniquely identify the location, put a stable nearby heading or phrase after `@@`. If still ambiguous, use multiple `@@` chunks to move through the file by stable context.",
-    "",
-    "Grammar:",
-    "Patch := Begin { Hunk } End",
-    "Begin := \"*** Begin Patch\" NEWLINE",
-    "End := \"*** End Patch\" NEWLINE",
-    "Hunk := \"@@\" [ header ] NEWLINE { HunkLine } [ \"*** End of File\" NEWLINE ]",
-    "HunkLine := (\" \" | \"-\" | \"+\") text NEWLINE",
-    "",
-    "Example:",
-    "*** Begin Patch",
-    "@@ 用户偏好",
-    " - 旧的Markdown列表上下文",
-    "-- 旧的Markdown列表项",
-    "+- 新的Markdown列表项",
-    " - 后续Markdown列表上下文",
-    "*** End Patch"
+    "记忆工具规则：",
+    "- Read({ file_path, offset?, limit? }) 读取当前记忆目标。",
+    "- self_talk({ content }) 记录中间思考。"
   ].join("\n");
 }
 
 export function memoryToolDefinitions(): ToolDefinition[] {
   return [
-    ...createWorkspaceFilesTools({ root: process.cwd() }).listTools(),
+    {
+      name: "Read",
+      description: "Read the current memory file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          file_path: { type: "string" },
+          offset: { type: "number" },
+          limit: { type: "number" }
+        },
+        required: ["file_path"],
+        additionalProperties: false
+      }
+    },
     {
       name: "self_talk",
       description: "对自己说话",
@@ -1513,14 +1109,6 @@ export function memoryToolDefinitions(): ToolDefinition[] {
   ];
 }
 
-function createSingleToolPlugin(definition: ToolDefinition, execute: (call: ToolCall) => Promise<ToolResult> | ToolResult): ToolPlugin {
-  return {
-    id: definition.name,
-    listTools: () => [definition],
-    execute: async (call) => execute(call)
-  };
-}
-
 function createMemorySingleTargetToolPlugin(input: {
   target: MemoryTarget;
   readCurrentMemoryContent(): string;
@@ -1534,9 +1122,9 @@ function createMemorySingleTargetToolPlugin(input: {
     id: `memory_${input.target}`,
     listTools: () => memorySingleTargetToolDefinitions(),
     async execute(call) {
-      if (call.toolName === "read_memory") {
+      if (call.toolName === "Read") {
         const output = formatReadMemoryResult(input.target, input.readCurrentMemoryContent());
-        input.toolCalls.push({ name: "read_memory", file: targetResultFiles[input.target], input: call.input, ok: true, output });
+        input.toolCalls.push({ name: "Read", file: targetResultFiles[input.target], input: call.input, ok: true, output });
         return { callId: call.id, ok: true, output };
       }
       if (call.toolName === "self_talk") {
@@ -1545,54 +1133,13 @@ function createMemorySingleTargetToolPlugin(input: {
         input.toolCalls.push({ name: "self_talk", file: targetResultFiles[input.target], input: call.input, ok: true, output });
         return { callId: call.id, ok: true, output };
       }
-      if (call.toolName === "apply_patch") {
-        const patch = typeof call.input.patch === "string" ? call.input.patch : undefined;
-        if (patch === undefined) {
-          const error = "patch must be a string";
-          input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: call.input, ok: false, error });
-          return { callId: call.id, ok: false, error };
-        }
-        let nextContent: string;
-        try {
-          nextContent = applyMemoryPatch(input.readCurrentMemoryContent(), patch);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "invalid patch";
-          input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: { patch }, ok: false, error: message });
-          return { callId: call.id, ok: false, error: message };
-        }
-        const written = input.writeMemoryContentForRun(nextContent);
-        const writeMode = input.stageLongTerm ? "staged" : "wrote";
-        const output = `ok: ${writeMode} ${targetResultFiles[input.target]}${input.diaryDraftPath ? " draft" : ""}, ${lineCount(written)} line(s), ${utf8ByteLength(written)} byte(s)`;
-        input.toolCalls.push({ name: "apply_patch", file: targetResultFiles[input.target], input: { patch }, ok: true, output });
-        input.setEdited();
-        return { callId: call.id, ok: true, output };
-      }
       throw new Error(`unknown tool: ${call.toolName}`);
     }
   };
 }
 
 function memorySingleTargetToolDefinitions(): ToolDefinition[] {
-  return [
-    {
-      name: "read_memory",
-      description: "Read the current memory file.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false }
-    },
-    {
-      name: "apply_patch",
-      description: currentMemoryApplyPatchInstructions(),
-      inputSchema: {
-        type: "object",
-        properties: {
-          patch: { type: "string" }
-        },
-        required: ["patch"],
-        additionalProperties: false
-      }
-    },
-    memoryToolDefinitions().find((tool) => tool.name === "self_talk")!
-  ];
+  return memoryToolDefinitions();
 }
 
 function memoryTools(): LLMToolSpec[] {
@@ -1621,221 +1168,6 @@ function createMemoryLocalLLMRequestSender(llm: LLMClient | undefined): LLMReque
       ? llm.chatStream(request, input.streamHandlers)
       : llm.chat(request);
   };
-}
-
-function applyMemoryPatch(content: string, patch: string): string {
-  const originalLines = splitPatchContentLines(content);
-  const chunks = parseMemoryApplyPatchChunks(patch);
-  const replacements = computeMemoryPatchReplacements(originalLines, chunks);
-  const lines = applyMemoryPatchReplacements(originalLines, replacements);
-  return lines.length > 0 ? `${normalizeCommonHalfwidthCharacters(lines.join("\n"))}\n` : "";
-}
-
-function splitPatchContentLines(content: string): string[] {
-  if (!content) return [];
-  return content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
-}
-
-type MemoryPatchLine = {
-  kind: "context" | "addition" | "removal";
-  value: string;
-  patchLine: number;
-};
-
-type MemoryPatchChunk = {
-  changeContext?: string;
-  oldLines: string[];
-  newLines: string[];
-  isEndOfFile: boolean;
-  patchLine: number;
-  firstOldPatchLine: number;
-};
-
-function parseMemoryApplyPatchChunks(patch: string): MemoryPatchChunk[] {
-  const lines = normalizeApplyPatchText(patch).split("\n");
-  if (lines[0]?.trim() !== "*** Begin Patch") throw new Error("invalid patch: first line must be '*** Begin Patch'");
-  if (lines[lines.length - 1]?.trim() !== "*** End Patch") throw new Error("invalid patch: last line must be '*** End Patch'");
-
-  const chunks: MemoryPatchChunk[] = [];
-  let index = 1;
-  let parsedAnyChunk = false;
-  while (index < lines.length - 1) {
-    const line = lines[index];
-    if (line.trim().length === 0) {
-      index += 1;
-      continue;
-    }
-    if (line.startsWith("*** ")) {
-      throw new Error(`invalid patch hunk on line ${index + 1}: current-file apply_patch does not accept file operation headers`);
-    }
-    const parsed = parseMemoryApplyPatchChunk(lines, index, !parsedAnyChunk);
-    chunks.push(parsed.chunk);
-    parsedAnyChunk = true;
-    index = parsed.nextIndex;
-  }
-
-  if (chunks.length === 0) throw new Error("patch must include at least one update chunk");
-  return chunks;
-}
-
-function normalizeApplyPatchText(patch: string): string {
-  let text = patch.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-  const heredoc = /^<<'?EOF'?\n([\s\S]*)\nEOF$/u.exec(text);
-  if (heredoc) text = heredoc[1].trim();
-  return text;
-}
-
-function parseMemoryApplyPatchChunk(lines: string[], startIndex: number, allowMissingContext: boolean): { chunk: MemoryPatchChunk; nextIndex: number } {
-  const firstLine = lines[startIndex];
-  const lineNumber = startIndex + 1;
-  let changeContext: string | undefined;
-  let index = startIndex;
-
-  if (firstLine === "@@") {
-    index += 1;
-  } else if (firstLine.startsWith("@@ ")) {
-    changeContext = firstLine.slice(3);
-    index += 1;
-  } else if (!allowMissingContext) {
-    throw new Error(`invalid patch hunk on line ${lineNumber}: expected update chunk to start with '@@'`);
-  }
-
-  const patchLines: MemoryPatchLine[] = [];
-  let isEndOfFile = false;
-  while (index < lines.length - 1) {
-    const line = lines[index];
-    if (line === "*** End of File") {
-      isEndOfFile = true;
-      index += 1;
-      break;
-    }
-    if (line.startsWith("*** ") || line === "@@" || line.startsWith("@@ ")) break;
-    const nextLineNumber = index + 1;
-    const marker = line[0];
-    if (line.length === 0) {
-      patchLines.push({ kind: "context", value: "", patchLine: nextLineNumber });
-      index += 1;
-      continue;
-    }
-    if (marker === " ") patchLines.push({ kind: "context", value: line.slice(1), patchLine: nextLineNumber });
-    else if (marker === "+") patchLines.push({ kind: "addition", value: line.slice(1), patchLine: nextLineNumber });
-    else if (marker === "-") patchLines.push({ kind: "removal", value: line.slice(1), patchLine: nextLineNumber });
-    else if (patchLines.length === 0) {
-      throw new Error(
-        `invalid patch hunk on line ${nextLineNumber}: every update line should start with ' ', '+', or '-'; got ${formatPatchLineForError(line)}`
-      );
-    } else {
-      break;
-    }
-    index += 1;
-  }
-
-  if (patchLines.length === 0) throw new Error(`invalid patch hunk on line ${lineNumber}: update chunk does not contain any lines`);
-  return {
-    chunk: {
-      changeContext,
-      oldLines: patchLines.filter((line) => line.kind !== "addition").map((line) => line.value),
-      newLines: patchLines.filter((line) => line.kind !== "removal").map((line) => line.value),
-      isEndOfFile,
-      patchLine: lineNumber,
-      firstOldPatchLine: patchLines.find((line) => line.kind !== "addition")?.patchLine ?? lineNumber
-    },
-    nextIndex: index
-  };
-}
-
-function computeMemoryPatchReplacements(lines: string[], chunks: MemoryPatchChunk[]): Array<[number, number, string[]]> {
-  const replacements: Array<[number, number, string[]]> = [];
-  let lineIndex = 0;
-
-  for (const chunk of chunks) {
-    if (chunk.changeContext !== undefined) {
-      const contextIndex = seekMemoryPatchSequence(lines, [chunk.changeContext], lineIndex, false);
-      if (contextIndex === undefined) {
-        throw new Error(`patch does not apply at patch line ${chunk.patchLine}: failed to find context ${formatPatchLineForError(chunk.changeContext)}`);
-      }
-      lineIndex = contextIndex + 1;
-    }
-
-    if (chunk.oldLines.length === 0) {
-      replacements.push([lineIndex, 0, chunk.newLines]);
-      continue;
-    }
-
-    let oldLines = chunk.oldLines;
-    let newLines = chunk.newLines;
-    let startIndex = seekMemoryPatchSequence(lines, oldLines, lineIndex, chunk.isEndOfFile);
-    if (startIndex === undefined && oldLines.at(-1) === "") {
-      oldLines = oldLines.slice(0, -1);
-      if (newLines.at(-1) === "") newLines = newLines.slice(0, -1);
-      startIndex = seekMemoryPatchSequence(lines, oldLines, lineIndex, chunk.isEndOfFile);
-    }
-    if (startIndex === undefined) {
-      throwMemoryApplyPatchMismatch(lines, chunk, lineIndex);
-    }
-    replacements.push([startIndex, oldLines.length, newLines]);
-    lineIndex = startIndex + oldLines.length;
-  }
-
-  return replacements.sort((left, right) => left[0] - right[0]);
-}
-
-function applyMemoryPatchReplacements(lines: string[], replacements: Array<[number, number, string[]]>): string[] {
-  const output = [...lines];
-  for (const [startIndex, oldLength, newLines] of [...replacements].reverse()) {
-    output.splice(startIndex, oldLength, ...newLines);
-  }
-  return output;
-}
-
-function seekMemoryPatchSequence(lines: string[], pattern: string[], start: number, endOfFile: boolean): number | undefined {
-  if (pattern.length === 0) return start;
-  if (pattern.length > lines.length) return undefined;
-  const searchStart = endOfFile && lines.length >= pattern.length ? lines.length - pattern.length : start;
-  const modes: Array<(value: string) => string> = [
-    (value) => value,
-    (value) => value.trimEnd(),
-    (value) => value.trim(),
-    normalizePatchSearchText
-  ];
-
-  for (const normalize of modes) {
-    const candidates: number[] = [];
-    for (let index = searchStart; index <= lines.length - pattern.length; index += 1) {
-      if (pattern.every((line, offset) => normalize(lines[index + offset]) === normalize(line))) candidates.push(index);
-    }
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) throw new Error(`ambiguous patch match for expected lines:\n${pattern.join("\n")}`);
-  }
-  return undefined;
-}
-
-function throwMemoryApplyPatchMismatch(lines: string[], chunk: MemoryPatchChunk, lineIndex: number): never {
-  const expected = chunk.oldLines[0] ?? "";
-  const actual = lines[lineIndex];
-  if (actual === undefined) {
-    throw new Error(
-      `patch does not apply at patch line ${chunk.firstOldPatchLine}: expected original line ${lineIndex + 1}, ` +
-      `but the file only has ${lines.length} line(s); expected ${formatPatchLineForError(expected)}`
-    );
-  }
-  throw new Error(
-    `patch does not apply at patch line ${chunk.firstOldPatchLine}: expected lines starting at original line ${lineIndex + 1}; ` +
-    `expected ${formatPatchLineForError(expected)}, actual ${formatPatchLineForError(actual)}. ` +
-    `Remember that the first character of each hunk line is the patch marker; to match a file line starting with "-", write "--..." for a removal or " -..." for context.`
-  );
-}
-
-function normalizePatchSearchText(value: string): string {
-  return normalizeCommonHalfwidthCharacters(value).trim().replace(/[\u2010-\u2015\u2212]/gu, "-")
-    .replace(/[\u2018\u2019\u201A\u201B]/gu, "'")
-    .replace(/[\u201C\u201D\u201E\u201F]/gu, "\"")
-    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/gu, " ");
-}
-
-function formatPatchLineForError(line: string): string {
-  const compact = line.length > 120 ? `${line.slice(0, 117)}...` : line;
-  return JSON.stringify(compact);
 }
 
 export function normalizeCommonHalfwidthCharacters(text: string): string {
@@ -1871,23 +1203,11 @@ function writeMemoryInductionPrompts(filePath: string, prompts: MemoryInductionP
 function normalizeMemoryInductionPrompts(value: Partial<MemoryInductionPrompts>): MemoryInductionPrompts {
   const fallback = defaultMemoryInductionPrompts();
   return {
-    commonLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.commonLayers, fallback.commonLayers)),
-    persistentLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.persistentLayers, fallback.persistentLayers)),
-    userPreferencesLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.userPreferencesLayers, fallback.userPreferencesLayers)),
-    yesterdaySummaryLayers: migrateMemoryPromptLayers(normalizePromptLayers(value.yesterdaySummaryLayers, fallback.yesterdaySummaryLayers))
+    commonLayers: normalizePromptLayers(value.commonLayers, fallback.commonLayers),
+    persistentLayers: normalizePromptLayers(value.persistentLayers, fallback.persistentLayers),
+    userPreferencesLayers: normalizePromptLayers(value.userPreferencesLayers, fallback.userPreferencesLayers),
+    yesterdaySummaryLayers: normalizePromptLayers(value.yesterdaySummaryLayers, fallback.yesterdaySummaryLayers)
   };
-}
-
-function migrateMemoryPromptLayers(layers: MemoryPromptLayer[]): MemoryPromptLayer[] {
-  return layers.map((layer) => {
-    if (layer.role !== "tool_request") return layer;
-    return {
-      ...layer,
-      toolCalls: (layer.toolCalls ?? []).map((call) => call.toolName === "Read" && call.toolArguments === "{\"file_path\":\"persistent-memory.md\"}"
-        ? { ...call, toolArguments: "{\"file_path\":\"{{memorize/target/fileName}}\"}" }
-        : call)
-    };
-  });
 }
 
 function layer(id: string, title: string, role: MemoryPromptLayer["role"], order: number, content: string): MemoryPromptLayer {
@@ -1963,22 +1283,6 @@ function initializeLongTermMemoryDb(db: any): void {
 
 function longTermTableName(target: "persistent" | "userPreferences"): "persistent_memory_entries" | "user_preferences_entries" {
   return target === "persistent" ? "persistent_memory_entries" : "user_preferences_entries";
-}
-
-function migrateLegacyLongTermMarkdown(root: string, db: any): void {
-  for (const target of ["persistent", "userPreferences"] as const) {
-    const tableName = longTermTableName(target);
-    const existing = db.prepare(`SELECT id FROM ${tableName} LIMIT 1`).get();
-    if (existing) continue;
-    const legacyPath = path.join(root, "long-term-memory", targetFiles[target]);
-    if (!fs.existsSync(legacyPath)) continue;
-    const content = readFile(legacyPath);
-    if (!content) continue;
-    db.prepare(`
-      INSERT INTO ${tableName}(content, created_at, window_start_at, window_end_at, run_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(enforceTargetLimit(target, content), new Date().toISOString(), null, null, "legacy-markdown-import");
-  }
 }
 
 export function memoryDatabasePath(root: string): string {

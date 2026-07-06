@@ -9,6 +9,7 @@ import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
 import { createBashTools } from "../../bash/src/index.js";
+import { createSandboxReadTools } from "../../sandbox-read/src/index.js";
 import { createSkillsTools } from "../../skills/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
@@ -192,8 +193,12 @@ export function createToolRuntime(input: {
   const bashTools = createBashTools({
     runtime: bashRuntime
   });
+  const sandboxReadTools = createSandboxReadTools({
+    runtime: bashRuntime,
+    config: input.config.bashSandbox
+  });
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, skillsTools, bashTools];
+  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, sandboxReadTools, skillsTools, bashTools];
 
   return {
     messagingTools,

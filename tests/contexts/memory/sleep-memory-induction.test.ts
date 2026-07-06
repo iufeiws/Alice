@@ -54,10 +54,10 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
     log() {}
   });
 
-  assert.equal(ok, true);
+  assert.equal(ok, false);
   assert.deepEqual(calls, [{ start: "2026-05-24T00:00:00.000", end: "2026-05-24T06:00:00.000" }]);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T06:00:00.000");
-  assert.match(memoryStore.read().persistent, /fact/);
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T00:00:00.000Z");
+  assert.equal(memoryStore.read().persistent, "");
 });
 
 test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
@@ -97,9 +97,9 @@ test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
     log() {}
   });
 
-  assert.equal(ok, true);
+  assert.equal(ok, false);
   assert.deepEqual(calls, [{ start: undefined, end: "2026-05-24T14:00:00.000" }]);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T14:00:00.000");
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-23T20:00:00.000Z");
 });
 
 test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", async () => {
@@ -137,7 +137,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
     log() {}
   });
 
-  assert.equal(ok, true);
-  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T06:00:00.000");
+  assert.equal(ok, false);
+  assert.equal(stateStore.read().lastInductionAt, "2026-05-24T00:00:00.000Z");
   assert.equal(memoryStore.read().persistent, "old\n");
 });

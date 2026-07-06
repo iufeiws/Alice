@@ -141,13 +141,3 @@ export function makeTempDir(name: string): string {
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
-
-export function findSessionFiles(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...findSessionFiles(fullPath));
-    else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(fullPath);
-  }
-  return files.sort();
-}

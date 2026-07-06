@@ -179,7 +179,7 @@ export function createWorkspaceFilesTools(deps: WorkspaceFilesToolsDeps = {}): W
     const stat = await fsp.stat(resolved).catch(() => undefined);
     if (!stat) throw new Error(workspaceFilesToolText.fileNotFound);
     if (!stat.isFile()) throw new Error(workspaceFilesToolText.pathMustPointToFile);
-    return await fsp.readFile(resolved, "utf8");
+    return await readUtf8FileWithStream(resolved);
   }
 
   async function writeWorkspaceContent(resolved: string, content: string): Promise<void> {
@@ -229,6 +229,16 @@ function resolveWorkspacePath(filePath: string, root: string): string {
 function displayPath(filePath: string, root: string): string {
   const relative = toPosix(path.relative(root, filePath));
   return relative || ".";
+}
+
+function readUtf8FileWithStream(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: string[] = [];
+    const stream = fs.createReadStream(filePath, { encoding: "utf8" });
+    stream.on("data", (chunk) => chunks.push(String(chunk)));
+    stream.once("error", reject);
+    stream.once("end", () => resolve(chunks.join("")));
+  });
 }
 
 function formatGrepOutput(output: string): string {
@@ -332,13 +342,25 @@ function isFilePath(filePath: string): boolean {
 
 function readSimpleGitignorePatterns(filePath: string): string[] {
   try {
-    return fs.readFileSync(filePath, "utf8")
+    return readUtf8FileSyncWithoutReadFile(filePath)
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"))
       .map((line) => line.startsWith("/") ? line.slice(1) : line);
   } catch {
     return [];
+  }
+}
+
+function readUtf8FileSyncWithoutReadFile(filePath: string): string {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    const buffer = Buffer.alloc(stat.size);
+    fs.readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.toString("utf8");
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

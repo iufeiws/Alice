@@ -34,3 +34,4 @@ assets/generated/*
 .sandbox/*
 .agent/*
 assets/*
+ref/*

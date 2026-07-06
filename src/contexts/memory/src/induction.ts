@@ -7,7 +7,7 @@ import { buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-buil
 import { createMemoryInductionSession } from './session.js';
 import { createMemoryLocalLLMRequestSender, createMemorySelfTalkToolPlugin, memoryToolDefinitions, memoryToolNames, memoryTools } from './tools.js';
 import { lineCount, utf8ByteLength } from './text-utils.js';
-import { createSandboxFileTools } from '../../../capabilities/tools/sandbox-files/src/index.js';
+import { createSandboxFileTools } from '../../../capabilities/tools/sandbox-file-tools/src/sandbox-file-tools.js';
 import { readFile, writeAtomic } from './store.js';
 
 let memoryToolRegistrySeq = 0;

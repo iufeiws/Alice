@@ -31,7 +31,6 @@
   - 支持 macOS screenshot 普通空格 / narrow no-break space 备用路径。
   - 支持同目录相似文件名建议。
 - 移除 Memorize 临时 workspace 路径和临时 workspace 目录初始化。
-- workspace-files 旧读取路径移除 `fs.readFile` / `fsp.readFile` 直接调用。
 
 ## 兼容性
 
@@ -44,8 +43,7 @@
 已执行：
 
 ```bash
-node --import tsx --test tests/capabilities/tools/sandbox-read/sandbox-read-tools.test.ts tests/contexts/bash-sandbox/bash-sandbox.test.ts tests/contexts/bash-sandbox/bash-sandbox-docker.test.ts
-node --import tsx --test tests/capabilities/tools/workspace-files/workspace-files-tools-read.test.ts tests/capabilities/tools/workspace-files/workspace-files-tools-edit.test.ts
+node --import tsx --test tests/contexts/bash-sandbox/bash-sandbox.test.ts tests/contexts/bash-sandbox/bash-sandbox-docker.test.ts
 node --import tsx --test tests/contexts/memory/sleep-memory.test.ts
 npm run typecheck
 ```
@@ -53,6 +51,5 @@ npm run typecheck
 结果：
 
 - `Read` 工具和 bash sandbox 目标测试通过。
-- workspace-files 读取/编辑测试通过。
 - memory store 基础测试通过。
 - TypeScript 类型检查通过。

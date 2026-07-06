@@ -9,7 +9,7 @@ import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
 import { createBashTools } from "../../bash/src/index.js";
-import { createSandboxFileTools } from "../../sandbox-files/src/index.js";
+import { createSandboxFileTools } from "../../sandbox-file-tools/src/sandbox-file-tools.js";
 import { createSkillsTools } from "../../skills/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";

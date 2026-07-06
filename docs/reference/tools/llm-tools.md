@@ -37,7 +37,3 @@
 ## SleepCocoon
 
 `SleepCocoon` 控制睡眠茧状态，详见 `docs/reference/tools/sleep-cocoon.md`。
-
-## Workspace Files
-
-Workspace files 工具提供读、改、glob、grep 等本地 workspace 文件能力，详见 `docs/reference/tools/workspace-files.md`。

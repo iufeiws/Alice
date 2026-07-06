@@ -349,14 +349,6 @@
 - `src/sleep-cocoon-event-runtime.ts`: sleep cocoon event runtime。
 - `src/sleep-cocoon-math.ts`: 睡眠时间/概率计算。
 
-## `capabilities/tools/workspace-files/`
-
-职责：workspace 文件工具。提供 Read/Edit/Glob/Grep 给记忆归纳和 workspace 操作。
-
-关键模块：
-
-- `src/index.ts`: workspace file tools 实现。
-
 ## `capabilities/skills/`
 
 职责：skill 定义目录。当前只有 selfie external skill 已实际使用，其余目录是未来 skill 分类说明。

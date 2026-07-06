@@ -33,7 +33,7 @@ test("admin plugin config patch writes tts preset reference", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(saved.enabled, true);
   assert.equal(saved.activePresetName, "genie-jp");
-  assert.equal(saved.editPresetName, presetName);
+  assert.equal(saved.editPresetName, undefined);
   assert.equal(savedGenie.provider, "genie");
   assert.deepEqual(savedGenie.genie, { enabled: false, baseURL: "http://10.0.0.8:8767", localFallbackEnabled: false, language: "zh", modelDir: "assets/tts/preset/genie-jp/model", speed: 1.2, partSilenceSeconds: 0.45, splitText: false });
 });
@@ -59,6 +59,7 @@ test("admin plugin config patch does not persist edit fields", async () => {
   const { response, saved } = await patchTtsConfig();
 
   assert.equal(response.statusCode, 200);
+  assert.equal(saved.editPresetName, undefined);
   assert.equal(saved.newPresetName, undefined);
   assert.equal(saved.currentPreset, undefined);
 });
@@ -114,6 +115,74 @@ test("admin TTS config schema exposes group order", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.configSchema.groups.map((group: { key: string }) => group.key), ["translation", "model_genie", "conversion_openai_api", "conversion_bailian", "conversion_mimo", "general"]);
+  assert.equal(body.configSchema.groups.find((group: { key: string }) => group.key === "model_genie").label, "TTS Preset / Genie");
+});
+
+test("admin TTS public config only exposes fields for each preset provider", async () => {
+  const root = makeTempDir("admin-tts-public-provider-fields");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  writeTtsPluginConfig(root, {
+    configPath,
+    activePresetName: "mimo",
+    preset: {
+      provider: "mimo",
+      mimo: {
+        mode: "voicedesign",
+        baseURL: "https://api.xiaomimimo.com/v1",
+        voiceDesignPrompt: "soft voice"
+      }
+    }
+  });
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath } }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/tts/config", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.configValue.currentPreset.provider, "mimo");
+  assert.equal(body.configValue.currentPreset.genie, undefined);
+  assert.equal(body.configValue.currentPreset.mimo.mode, "voicedesign");
+  assert.equal(body.configValue.presets.mimo.genie, undefined);
+  assert.equal(body.configValue.presets.mimo.mimo.voiceDesignPrompt, "soft voice");
+});
+
+test("admin TTS config patch copies preset and preset assets", async () => {
+  const root = makeTempDir("admin-tts-copy-preset");
+  const assetRoot = path.join(root, "assets");
+  const configPath = path.join(root, "config", "plugin", "tts", "config.json");
+  writeTtsPluginConfig(root, { configPath, enabled: true });
+  const sourceAssetDir = path.join(assetRoot, "tts", "preset", "genie-jp");
+  fs.mkdirSync(sourceAssetDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceAssetDir, "reference.txt"), "source text");
+  fs.writeFileSync(path.join(sourceAssetDir, "reference.wav"), makeTinyWavBuffer());
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    pluginConfigs: { tts: { configPath, assetRoot } }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/tts/config", {
+    copyPresetName: "genie-jp",
+    newPresetName: "genie-copy"
+  }), response);
+  const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const copiedPreset = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), "presets", "genie-copy.json"), "utf8"));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.activePresetName, "genie-jp");
+  assert.equal(saved.editPresetName, undefined);
+  assert.equal(copiedPreset.provider, "genie");
+  assert.equal(copiedPreset.genie.modelDir, "assets/tts/preset/genie-jp/model");
+  assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", "genie-copy", "reference.txt"), "utf8"), "source text");
+  assert.equal(fs.existsSync(path.join(assetRoot, "tts", "preset", "genie-copy", "reference.wav")), true);
 });
 
 test("admin TTS config schema exposes Genie preset fields", async () => {
@@ -127,6 +196,8 @@ test("admin TTS config schema exposes Genie preset fields", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(configField.type, "select");
+  assert.equal(configField.label, "Preset Loaded In Editor");
+  assert.equal(configField.description, "Changing this loads that preset into the editor. It does not change runtime voice output.");
   assert.equal(configField.group, "model_genie");
   assert.deepEqual(configField.options.map((option: { value: string }) => option.value), ["genie-jp"]);
   assert.equal(languageField.type, "select");
@@ -145,10 +216,18 @@ test("admin TTS config schema exposes Genie preset fields", async () => {
 test("admin TTS config schema exposes provider selector", async () => {
   const { response, body } = await readTtsConfigSchema();
   const providerField = body.configSchema.fields.find((field: { key: string }) => field.key === "currentPreset.provider");
+  const activePresetField = body.configSchema.fields.find((field: { key: string }) => field.key === "activePresetName");
 
   assert.equal(response.statusCode, 200);
   assert.equal(providerField.type, "select");
   assert.equal(providerField.group, "general");
+  assert.equal(activePresetField.label, "Runtime Voice Preset");
+  assert.equal(activePresetField.description, "Preset used by the normal TTS route. Save Runtime Settings persists this field.");
+  assert.deepEqual(body.testSchema, {
+    input: "text",
+    label: "Voice Text",
+    buttonLabel: "Test active TTS preset"
+  });
 });
 
 test("admin TTS config schema exposes OpenAI conversion preset field", async () => {

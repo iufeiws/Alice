@@ -6,11 +6,9 @@ import { writeJson } from "../routes/admin-http.js";
 import { resolveLibrarySetting } from "../../../contexts/world-wanderer/src/admin-library-setting.js";
 import { publicLLMApiPresets, readLLMApiPresets, readPromptApiProfile } from "../../../contexts/llm-gateway/src/admin-presets.js";
 import { booleanFromUnknown, maskValue, numberFromUnknown, optionalString, requiredString } from "../../../shared/admin-input/src/index.js";
-import { resolveTtsAssetPath } from "../../../channels/tts/src/admin-assets.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "./admin-route-context.js";
 import QRCode from "qrcode";
 
-const fs = await import("node:fs");
 export const AGENT_STATES: AgentBehaviorState[] = [
   "idle",
   "waiting",
@@ -355,19 +353,13 @@ export function getAdminConfig(context: AdminRoutesContext): unknown {
       manualRunRequiresSleeping: context.config.memorySummary.manualRunRequiresSleeping !== false
     },
     tts: {
+      pluginConfigPath: context.pluginConfigs?.tts?.configPath ?? "config/plugin/tts/config.json",
       backend: context.config.tts.backend,
       genieBaseURL: context.config.tts.genieBaseURL,
       genieDataDir: context.config.tts.genieDataDir,
-      genieModelDir: context.config.tts.genieModelDir,
       genieCharacterName: context.config.tts.genieCharacterName,
       genieLanguage: context.config.tts.genieLanguage,
-      genieReferenceAudio: context.config.tts.genieReferenceAudio,
-      genieReferenceText: context.config.tts.genieReferenceText,
-      genieModelAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieModelDir)),
-      genieReferenceAudioAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieReferenceAudio)),
-      genieReferenceTextAvailable: fs.existsSync(resolveTtsAssetPath(context, context.config.tts.genieReferenceText)),
       mossBaseURL: context.config.tts.mossBaseURL,
-      mossReferenceAudio: context.config.tts.mossReferenceAudio,
       mossOutputDir: context.config.tts.mossOutputDir,
       mossTimeoutMs: context.config.tts.mossTimeoutMs,
       mossVoiceCloneMaxTextTokens: context.config.tts.mossVoiceCloneMaxTextTokens,

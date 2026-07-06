@@ -101,11 +101,6 @@ ${renderPromptsScript()}
           appearance: (config.coreProfile && config.coreProfile.appearanceDescription) || "",
           library: { content: (config.coreProfile && config.coreProfile.librarySetting) || "" }
         }, null, 2);
-        const tts = config.tts || {};
-        $("tts-reference-status").textContent = "Backend: " + (tts.backend || "genie-tts")
-          + " · Genie model: " + (tts.genieModelDir || "assets/tts/genie/models/alice") + (tts.genieModelAvailable ? " (found)" : " (missing, fallback to MOSS)")
-          + " · Reference: " + (tts.genieReferenceAudio || tts.mossReferenceAudio || "assets/tts/references/alice/reference.wav")
-          + " · Text: " + (tts.genieReferenceText || "assets/tts/references/alice/reference.txt") + (tts.genieReferenceTextAvailable ? " (found)" : " (missing)");
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "";
@@ -132,8 +127,6 @@ ${renderPromptsScript()}
         await refreshTerminal();
       }
 
-      $("tts-upload-reference").addEventListener("click", uploadTtsReferenceAudio);
-      $("tts-generate-preview").addEventListener("click", generateTtsPreview);
       $("toolPreviewSelect").addEventListener("change", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-reset").addEventListener("click", () => renderToolPreviewDefaultInput(true));
       $("tool-preview-run").addEventListener("click", runToolPreview);

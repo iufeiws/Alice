@@ -35,7 +35,7 @@ export function ttsPluginEntry(): AdminPluginRegistryEntry {
     configSchema: {
       groups: [
         { key: "translation", label: "Translation Presets" },
-        { key: "model_genie", label: "Model / Conversion / Genie" },
+        { key: "model_genie", label: "TTS Preset / Genie" },
         { key: "conversion_openai_api", label: "Conversion / OpenAI-API" },
         { key: "conversion_bailian", label: "Conversion / Bailian" },
         { key: "conversion_mimo", label: "Conversion / MiMo" },
@@ -47,21 +47,21 @@ export function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "currentTranslation.translationEnabled", label: "Translate Text", type: "switch", group: "general", description: "Translate text before TTS. Disable to send the original text directly to the selected voice model." },
         { key: "currentTranslation.apiPresetName", label: "API Preset", type: "apiPresetSelect", group: "translation", description: "Select a saved API preset. The plugin does not store API keys." },
         { key: "currentTranslation.prompt", label: "Prompt", type: "textarea", group: "translation", description: "Prompt used by this plugin before it calls the selected API preset." },
-        { key: "editPresetName", label: "Model Preset", type: "select", group: "model_genie", options: [], description: "Select the model preset to edit." },
-        { key: "newPresetName", label: "Create or Rename", type: "text", group: "model_genie", description: "Enter a model preset name and save to create/switch to it." },
+        { key: "editPresetName", label: "Preset Loaded In Editor", type: "select", group: "model_genie", options: [], description: "Changing this loads that preset into the editor. It does not change runtime voice output." },
+        { key: "newPresetName", label: "Save As Preset", type: "text", group: "model_genie", description: "Optional new preset name. Save TTS Preset writes the editor values under this name." },
         { key: "currentPreset.genie.language", label: "Voice Language", type: "select", group: "model_genie", options: [
           { value: "jp", label: "Japanese" },
           { value: "zh", label: "Chinese" },
           { value: "en", label: "English" }
         ], description: "Genie language used for this TTS voice route." },
-        { key: "currentPreset.genie.modelDir", label: "Model Folder", type: "folderUpload", group: "model_genie", assetKey: "model", description: "Genie model folder for the selected model config." },
-        { key: "currentPreset.genie.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model_genie", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected model config." },
-        { key: "currentPreset.genie.referenceText", label: "Reference Text", type: "textarea", group: "model_genie", description: "Reference text for the selected model preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
+        { key: "currentPreset.genie.modelDir", label: "Model Folder", type: "folderUpload", group: "model_genie", assetKey: "model", description: "Genie model folder for the selected TTS preset." },
+        { key: "currentPreset.genie.referenceAudio", label: "Reference Audio", type: "fileUpload", group: "model_genie", assetKey: "reference-audio", accept: "audio/*", description: "Reference audio for the selected TTS preset." },
+        { key: "currentPreset.genie.referenceText", label: "Reference Text", type: "textarea", group: "model_genie", description: "Reference text for the selected TTS preset. It is stored at assets/tts/preset/{preset}/reference.txt on save." },
         { key: "currentPreset.genie.speed", label: "Voice Speed", type: "number", group: "model_genie", min: 0.5, max: 2, step: 0.05, description: "Optional Genie playback speed multiplier from 0.5 to 2.0." },
         { key: "currentPreset.genie.splitText", label: "Split Text", type: "switch", group: "model_genie", description: "Whether this preset lets Genie split one TTS text into multiple synthesized parts. Default is off." },
         { key: "currentPreset.genie.partSilenceSeconds", label: "Part Silence", type: "number", group: "model_genie", min: 0, max: 3, step: 0.05, description: "Optional silence in seconds inserted between split Genie audio parts. Default is 0.67." },
         { key: "translationPresetName", label: "Active Translation Preset", type: "select", group: "general", options: [], description: "Translation preset used at runtime." },
-        { key: "activePresetName", label: "Active Model Preset", type: "select", group: "general", options: [], description: "Model preset used at runtime." },
+        { key: "activePresetName", label: "Runtime Voice Preset", type: "select", group: "general", options: [], description: "Preset used by the normal TTS route. Save Runtime Settings persists this field." },
         { key: "currentPreset.provider", label: "Conversion Backend", type: "select", group: "general", options: [
           { value: "genie", label: "Genie" },
           { value: "openai-api", label: "OpenAI-API" },
@@ -121,20 +121,21 @@ export function ttsPluginEntry(): AdminPluginRegistryEntry {
     },
     routePreview: [
       "send_chat.voice",
-      "plugin.translate_optional",
-      "default_tts.synthesize",
+      "tts plugin active preset",
+      "optional translation preset",
+      "selected provider synthesize",
       "channel.audio.send"
     ],
     runtimeAccess: [
-      "call selected API preset",
-      "read outgoing voice text before TTS",
-      "pass translated text to TTS",
-      "do not persist translated text to message log"
+      "read TTS plugin preset config",
+      "call optional translation API preset",
+      "call selected TTS provider",
+      "write generated voice asset"
     ],
     testSchema: {
       input: "text",
-      label: "Input",
-      buttonLabel: "Test translation and voice"
+      label: "Voice Text",
+      buttonLabel: "Test active TTS preset"
     }
   };
 }
@@ -151,7 +152,7 @@ function ttsPluginSummary(context: AdminRoutesContext, config = readTtsConfigFor
     kind: "voice",
     status: missingConfig ? "missing_config" : config.enabled ? "enabled" : "disabled",
     health: missingConfig ? "degraded" : config.enabled ? "healthy" : "unknown",
-    description: "Translate send_chat voice text through a selected API preset before the normal TTS route.",
+    description: "Select the active TTS preset and synthesize send_chat voice through its configured provider.",
     configurable: true,
     switchable: true,
     configSource: ttsConfigPath(context),

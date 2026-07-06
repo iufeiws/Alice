@@ -297,7 +297,6 @@ export function writeTtsPluginConfig(root: string, input: {
   configPath: string;
   enabled?: boolean;
   activePresetName?: string;
-  editPresetName?: string;
   preset?: Record<string, unknown>;
   translation?: Record<string, unknown>;
 }) {
@@ -309,7 +308,6 @@ export function writeTtsPluginConfig(root: string, input: {
   fs.writeFileSync(input.configPath, `${JSON.stringify({
     enabled: input.enabled ?? false,
     activePresetName,
-    editPresetName: input.editPresetName ?? activePresetName,
     translationPresetName,
     translationPresets: translationPresets ?? {
       [String(translationPresetName)]: {

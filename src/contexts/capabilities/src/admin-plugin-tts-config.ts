@@ -27,13 +27,19 @@ export function updateTtsConfig(
     apiPresetName: translationPatch.apiPresetName === undefined ? currentTranslation.apiPresetName ?? current.apiPresetName : optionalString(translationPatch.apiPresetName),
     prompt: translationPatch.prompt === undefined ? currentTranslation.prompt ?? current.prompt : requiredString(translationPatch.prompt)
   };
+  const requestedNewPresetName = optionalString(patch.newPresetName);
+  const requestedCopyPresetName = optionalString(patch.copyPresetName);
   const activePresetName = safeTtsPresetName(optionalString(patch.activePresetName) || current.activePresetName, current.activePresetName);
-  const editPresetName = safeTtsPresetName(optionalString(patch.newPresetName) || optionalString(patch.editPresetName) || current.editPresetName || activePresetName, activePresetName);
+  const editPresetName = safeTtsPresetName(requestedNewPresetName || optionalString(patch.editPresetName) || current.editPresetName || activePresetName, activePresetName);
+  const copyPresetName = requestedCopyPresetName ? safeTtsPresetName(requestedCopyPresetName, "") : undefined;
+  if (copyPresetName && !requestedNewPresetName?.trim()) return { error: "tts_copy_target_required" };
+  if (copyPresetName && !currentPresets[copyPresetName]) return { error: "tts_copy_preset_not_found" };
+  if (copyPresetName && currentPresets[editPresetName]) return { error: "tts_preset_already_exists" };
   const presetPatch = patch.currentPreset && typeof patch.currentPreset === "object" && !Array.isArray(patch.currentPreset)
     ? patch.currentPreset as Record<string, unknown>
     : {};
-  const shouldUpdatePreset = Object.keys(presetPatch).length > 0 || optionalString(patch.newPresetName) !== undefined;
-  const currentPreset = currentPresets[editPresetName] ?? currentPresets[current.editPresetName ?? ""] ?? currentPresets[activePresetName] ?? current.activePreset;
+  const shouldUpdatePreset = Boolean(copyPresetName) || Object.keys(presetPatch).length > 0 || requestedNewPresetName !== undefined;
+  const currentPreset = copyPresetName ? currentPresets[copyPresetName]! : currentPresets[editPresetName] ?? currentPresets[current.editPresetName ?? ""] ?? currentPresets[activePresetName] ?? current.activePreset;
   const presetResult = buildTtsPresetFromPatch(currentPreset, presetPatch);
   if ("error" in presetResult) return presetResult;
   const geniePatch = presetPatch.genie && typeof presetPatch.genie === "object" && !Array.isArray(presetPatch.genie)
@@ -71,6 +77,7 @@ export function updateTtsConfig(
     return { error: "invalid_openai_api_preset" };
   }
   writeTtsConfig(context, next);
+  if (copyPresetName) copyTtsPresetAssets(copyPresetName, editPresetName, context.pluginConfigs?.tts?.assetRoot);
   return { config: next };
 }
 
@@ -297,6 +304,14 @@ function ttsPresetRoot(presetName: string, assetRoot = "assets"): string {
   return path.join(assetRoot, "tts", "preset", safeTtsPresetName(presetName, "jp"));
 }
 
+function copyTtsPresetAssets(sourcePresetName: string, targetPresetName: string, assetRoot = "assets"): void {
+  const sourceRoot = ttsPresetRoot(sourcePresetName, assetRoot);
+  if (!fs.existsSync(sourceRoot)) return;
+  const targetRoot = ttsPresetRoot(targetPresetName, assetRoot);
+  fs.mkdirSync(path.dirname(targetRoot), { recursive: true });
+  fs.cpSync(sourceRoot, targetRoot, { recursive: true, force: true });
+}
+
 export function ttsPresetModelDir(presetName: string, assetRoot = "assets"): string {
   return normalizeAssetPath(path.join(ttsPresetRoot(presetName, assetRoot), "model"));
 }
@@ -386,7 +401,6 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
   return {
     enabled: config.enabled,
     activePresetName: config.activePresetName,
-    editPresetName: config.editPresetName,
     translationPresetName,
     translationPresets
   } as TtsPluginConfig;

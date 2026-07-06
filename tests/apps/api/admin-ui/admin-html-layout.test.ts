@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { assertIncludesAll, renderAdminHtml } from "./admin-html-helpers.js";
+import { assertExcludesAll, assertIncludesAll, renderAdminHtml } from "./admin-html-helpers.js";
 
 test("adminLayout_initialRender_exposesPrimaryNavigation", () => {
   const html = renderAdminHtml();
@@ -27,5 +27,21 @@ test("adminSidebar_initialRender_exposesSettingsSections", () => {
     "Agent Settings",
     "Messaging Tools",
     "Unique Bound Contact"
+  ]);
+});
+
+test("adminSidebar_initialRender_omitsDeprecatedTtsControls", () => {
+  const html = renderAdminHtml();
+
+  assertExcludesAll(html, [
+    'id="tts-reference-status"',
+    'id="ttsReferenceAudio"',
+    'id="ttsReferenceText"',
+    'id="tts-upload-reference"',
+    'id="ttsPreviewText"',
+    'id="tts-generate-preview"',
+    'id="ttsPreviewAudio"',
+    "/admin/api/tts/reference-audio",
+    "/admin/api/tts/generate"
   ]);
 });

@@ -81,18 +81,6 @@ ${renderWechatPluginPanel()}
               <button type="submit">Save Core Profile</button>
               <p class="muted" id="core-profile-status"></p>
             </form>
-            <h2>Voice Sample</h2>
-            <p class="muted" id="tts-reference-status">Loading...</p>
-            <label for="ttsReferenceAudio">Reference Audio</label>
-            <input id="ttsReferenceAudio" type="file" accept="audio/wav,audio/mpeg,audio/mp4,.wav,.mp3,.m4a" />
-            <label for="ttsReferenceText">Reference Text</label>
-            <textarea id="ttsReferenceText" rows="3" placeholder="输入参考音频对应的原文"></textarea>
-            <button type="button" id="tts-upload-reference">Upload Voice Sample</button>
-            <label for="ttsPreviewText">Preview Text</label>
-            <textarea id="ttsPreviewText" rows="3"></textarea>
-            <button type="button" id="tts-generate-preview">Generate Preview</button>
-            <audio id="ttsPreviewAudio" controls></audio>
-            <p class="muted" id="tts-preview-status"></p>
             <h2>Variables</h2>
             <pre id="coreProfilePreview">Loading...</pre>
           </div>

@@ -62,6 +62,12 @@ export function renderPluginsScript(): string {
       function setPluginFieldValue(field, value) {
         const input = document.querySelector('[data-plugin-field="' + cssEscape(field) + '"]');
         if (!input) return;
+        if (input.type === "file") {
+          input.value = "";
+          const current = document.querySelector('[data-plugin-current-field="' + cssEscape(field) + '"]');
+          if (current) current.textContent = "Current: " + (value || "(none)");
+          return;
+        }
         if (input.type === "checkbox") {
           input.checked = Boolean(value);
         } else {

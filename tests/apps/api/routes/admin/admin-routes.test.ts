@@ -301,7 +301,7 @@ test("admin shell runtime exposes shell config", async () => {
   assert.ok("todayVariables" in JSON.parse(response.body));
 });
 
-test("admin tts runtime rejects missing preview text", async () => {
+test("admin tts legacy preview route is not available", async () => {
   const root = makeTempDir("admin-tts-preview-missing-text");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
@@ -310,8 +310,8 @@ test("admin tts runtime rejects missing preview text", async () => {
   const response = createResponse();
   await handler(createRequest("POST", "/admin/api/tts/generate", {}), response);
 
-  assert.equal(response.statusCode, 400);
-  assert.equal(JSON.parse(response.body).error, "text_required");
+  assert.equal(response.statusCode, 404);
+  assert.equal(JSON.parse(response.body).error, "not_found");
 });
 
 test("initiated behavior config patch preserves tool request prompt layers", async () => {

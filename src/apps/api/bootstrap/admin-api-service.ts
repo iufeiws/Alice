@@ -8,7 +8,7 @@ import { deleteLLMApiPreset, getTokenUsagePayload, renameLLMApiPreset, saveLLMAp
 import { optionalString, requiredString } from "../../../shared/admin-input/src/index.js";
 import { handleAdminPluginApi } from "../../../contexts/capabilities/src/admin-plugin-runtime.js";
 import { handleAdminMessagingApi } from "../../../capabilities/tools/messaging/src/admin-runtime.js";
-import { generateTtsPreview, serveTtsAsset, uploadTtsReferenceAudio } from "../../../channels/tts/src/admin-runtime.js";
+import { serveTtsAsset } from "../../../channels/tts/src/admin-runtime.js";
 import { deleteShellOption, getShellConfig, readShellUiOrder, saveShellOption, saveShellSettings, saveShellUiOrder, serveShellAsset, uploadShellOutfitImage } from "../../../contexts/agent-profile/src/application/shell-admin-runtime.js";
 import { AGENT_STATES, getAdminConfig, handleAdminRuntimeApi, saveAgentConfig, saveAgentState, saveCoreProfile } from "./admin-runtime.js";
 import { getAdminTools, getMemoryAdminRuntime, getVisiblePromptTools, isMemoryTarget, previewToolResult, savePromptApiProfile, savePromptProfile, saveTalkPromptProfile, writeServiceResult } from "../../../contexts/agent-profile/src/application/admin-prompt-memory-runtime.js";
@@ -368,16 +368,6 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
 
   if (request.method === "GET" && request.url === "/admin/api/agent-state") {
     writeJson(response, 200, { state: context.agentState.getSnapshot(), states: AGENT_STATES });
-    return;
-  }
-
-  if (request.method === "POST" && request.url === "/admin/api/tts/reference-audio") {
-    await uploadTtsReferenceAudio(context, request, response);
-    return;
-  }
-
-  if (request.method === "POST" && request.url === "/admin/api/tts/generate") {
-    await generateTtsPreview(context, request, response);
     return;
   }
 

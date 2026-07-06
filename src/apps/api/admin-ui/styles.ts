@@ -157,6 +157,12 @@ export function renderAdminStyles(): string {
       .plugin-preset-editor.active { display: grid; gap: 10px; }
       .plugin-public-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
       .plugin-events { max-height: 280px; }
+      .tts-config-layout { display: grid; gap: 16px; }
+      .tts-provider-panels { display: grid; gap: 12px; margin-top: 14px; }
+      .tts-provider-panel { border-top: 1px solid #e4e7eb; padding-top: 12px; }
+      .tts-provider-panel h2 { margin-bottom: 8px; }
+      details.plugin-config-section summary { cursor: pointer; font-weight: 900; }
+      details.plugin-config-section summary h2 { display: inline; margin: 0; }
       #main-initiated-behaviors { max-width: 100%; overflow: hidden; }
       .behavior-layout { width: 100%; max-width: 100%; min-width: 0; display: grid; gap: 16px; align-items: start; }
       .behavior-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }

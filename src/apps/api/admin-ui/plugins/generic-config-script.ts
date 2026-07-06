@@ -77,7 +77,7 @@ export function renderGenericPluginConfigScript(): string {
       }
 
       function renderPluginTestBox(payload) {
-        const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Test translation and voice" };
+        const schema = payload.testSchema || { input: "text", label: "Input", buttonLabel: "Run test" };
         const input = schema.input === "audio"
           ? \`<label>\${escapeHtml(schema.label || "Audio")}<input id="pluginTestAudio" value="\${escapeAttr((payload.configValue && payload.configValue.testAudioPath) || schema.defaultValue || "")}" placeholder="assets/plugin/asr/test-audio/example.wav" /></label>\`
           : schema.input === "image"
@@ -126,7 +126,7 @@ export function renderGenericPluginConfigScript(): string {
         }
         if (field.type === "fileUpload" || field.type === "folderUpload") {
           const directoryAttrs = field.type === "folderUpload" ? "webkitdirectory directory multiple" : "";
-          return \`<label>\${escapeHtml(field.label)}<input type="file" data-plugin-upload="\${escapeAttr(field.assetKey || field.key)}" data-plugin-field="\${inputName}" accept="\${escapeAttr(field.accept || "")}" \${directoryAttrs} /></label><p class="muted">Current: \${escapeHtml(value || "(none)")}</p>\${description}\`;
+          return \`<label>\${escapeHtml(field.label)}<input type="file" data-plugin-upload="\${escapeAttr(field.assetKey || field.key)}" data-plugin-field="\${inputName}" accept="\${escapeAttr(field.accept || "")}" \${directoryAttrs} /></label><p class="muted" data-plugin-current-field="\${inputName}">Current: \${escapeHtml(value || "(none)")}</p>\${description}\`;
         }
         if (field.type === "readonly") {
           const displayValue = typeof value === "boolean" ? (value ? "Yes" : "No") : value ?? field.description ?? "";
@@ -200,7 +200,7 @@ export function renderGenericPluginConfigScript(): string {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ activePresetName: input.value })
         }).then((res) => res.json());
-        $("plugin-status").textContent = result.ok ? "Model config switched." : "Switch failed: " + (result.error || "unknown error");
+        $("plugin-status").textContent = result.ok ? "Preset switched." : "Switch failed: " + (result.error || "unknown error");
         if (result.ok) await openPluginConfig(pluginId);
       }
 
@@ -223,7 +223,14 @@ export function renderGenericPluginConfigScript(): string {
         if (!files.length) return;
         const pluginId = $("pluginConfigForm").dataset.pluginId;
         const assetKey = input.dataset.pluginUpload;
+        const newPresetName = document.querySelector('[data-plugin-field="newPresetName"]')?.value.trim() || "";
+        if (newPresetName) {
+          $("plugin-status").textContent = "Save the new preset before uploading assets.";
+          input.value = "";
+          return;
+        }
         const presetName = document.querySelector('[data-plugin-field="editPresetName"]')?.value || document.querySelector('[data-plugin-field="activePresetName"]')?.value || "";
+        let lastResult = null;
         for (const file of files) {
           const body = await pluginAssetBodyForUpload(pluginId, assetKey, file);
           const result = await fetch("/admin/api/plugins/" + encodeURIComponent(pluginId) + "/assets/" + encodeURIComponent(assetKey), {
@@ -240,9 +247,11 @@ export function renderGenericPluginConfigScript(): string {
             $("plugin-status").textContent = "Upload failed: " + (result.error || "unknown error");
             return;
           }
+          lastResult = result;
         }
+        const uploadedValue = valueAtPath(lastResult?.configValue || {}, input.dataset.pluginField) || lastResult?.assetPath || "";
+        setPluginFieldValue(input.dataset.pluginField, uploadedValue);
         $("plugin-status").textContent = "Asset uploaded.";
-        await openPluginConfig(pluginId);
       }
 
       async function loadPluginEvents(pluginId) {

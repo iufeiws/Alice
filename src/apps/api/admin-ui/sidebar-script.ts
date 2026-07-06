@@ -12,52 +12,6 @@ export function renderAdminSidebarScript(): string {
         const payload = await fetch("/admin/api/runtime/status").then((res) => res.json());
         $("runtimeStatus").textContent = JSON.stringify(payload, null, 2);
       }
-      async function uploadTtsReferenceAudio() {
-        const file = $("ttsReferenceAudio").files?.[0];
-        if (!file) {
-          $("tts-preview-status").textContent = "Choose a WAV, MP3, or M4A voice sample first.";
-          return;
-        }
-        const referenceText = $("ttsReferenceText").value.trim();
-        if (!referenceText) {
-          $("tts-preview-status").textContent = "Enter the text spoken in the reference audio first.";
-          return;
-        }
-        $("tts-preview-status").textContent = "Uploading voice sample...";
-        const result = await fetch("/admin/api/tts/reference-audio", {
-          method: "POST",
-          headers: {
-            "content-type": file.type || "application/octet-stream",
-            "x-file-name": encodeURIComponent(file.name || "reference.wav"),
-            "x-reference-text": encodeURIComponent(referenceText)
-          },
-          body: file
-        }).then((res) => res.json());
-        if (!result.ok) {
-          $("tts-preview-status").textContent = "Voice sample upload failed: " + (result.error || "unknown error");
-          return;
-        }
-        $("tts-reference-status").textContent = "Current reference: " + result.referenceAudio + " + " + result.referenceText + " (" + Math.round((result.size || 0) / 1024) + " KB)";
-        $("tts-preview-status").textContent = "Voice sample converted to " + result.sampleRate + " Hz / " + result.channels + " ch PCM WAV, first " + result.maxDurationSeconds + "s kept.";
-        await refreshLogs();
-      }
-
-      async function generateTtsPreview() {
-        $("tts-preview-status").textContent = "Generating preview...";
-        $("ttsPreviewAudio").removeAttribute("src");
-        const result = await fetch("/admin/api/tts/generate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: $("ttsPreviewText").value })
-        }).then((res) => res.json());
-        if (!result.ok) {
-          $("tts-preview-status").textContent = "Preview failed: " + (result.error || "unknown error");
-          return;
-        }
-        $("ttsPreviewAudio").src = result.audioUrl + (result.audioUrl.includes("?") ? "&" : "?") + "v=" + Date.now();
-        $("tts-preview-status").textContent = "Preview generated: " + result.assetId;
-        await refreshLogs();
-      }
 
       $("llm-form").addEventListener("submit", async (event) => {
         event.preventDefault();

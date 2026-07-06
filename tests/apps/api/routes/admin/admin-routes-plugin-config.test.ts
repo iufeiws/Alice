@@ -48,6 +48,7 @@ test("admin plugin list exposes tts config card state", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(tts.status, "enabled");
   assert.equal(tts.health, "healthy");
+  assert.equal(tts.description, "Select the active TTS preset and synthesize send_chat voice through its configured provider.");
   assert.equal(tts.configurable, true);
   assert.equal(tts.switchable, true);
 });

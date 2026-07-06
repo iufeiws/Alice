@@ -29,13 +29,11 @@ export function publicTtsConfig(config: TtsPluginConfig, assetRoot = "assets"): 
 }
 
 function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"): TtsAdminConfig["currentPreset"] {
-  const openaiApi = preset.openaiApi ?? {};
-  const bailian = preset.bailian ?? {};
-  const mimo = preset.mimo ?? {};
-  const genie = preset.genie ?? {};
-  return {
-    provider: preset.provider,
-    genie: {
+  if (preset.provider === "genie") {
+    const genie = preset.genie ?? {};
+    return {
+      provider: "genie",
+      genie: {
       enabled: genie.enabled ?? true,
       baseURL: genie.baseURL ?? "",
       localFallbackEnabled: genie.localFallbackEnabled ?? false,
@@ -47,8 +45,14 @@ function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"):
       partSilenceSeconds: genie.partSilenceSeconds,
       splitText: genie.splitText ?? false,
       ...(genie.textFilters?.length ? { textFilters: genie.textFilters } : {})
-    },
-    openaiApi: {
+      }
+    };
+  }
+  if (preset.provider === "openai-api") {
+    const openaiApi = preset.openaiApi ?? {};
+    return {
+      provider: "openai-api",
+      openaiApi: {
       apiPresetName: openaiApi.apiPresetName,
       model: openaiApi.model ?? "higgs-audio-v3-tts",
       voice: openaiApi.voice ?? "default",
@@ -57,8 +61,14 @@ function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"):
       channels: openaiApi.channels ?? 1,
       ...(openaiApi.textFilters?.length ? { textFilters: openaiApi.textFilters } : {}),
       extraParamsJson: JSON.stringify(openaiApi.extraParams ?? {}, null, 2)
-    },
-    bailian: {
+      }
+    };
+  }
+  if (preset.provider === "bailian") {
+    const bailian = preset.bailian ?? {};
+    return {
+      provider: "bailian",
+      bailian: {
       service: bailian.service ?? "qwen",
       endpoint: bailian.endpoint ?? defaultBailianTtsEndpoint(bailian.service),
       apiKey: "",
@@ -74,7 +84,12 @@ function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"):
       channels: bailian.channels ?? 1,
       ...(bailian.textFilters?.length ? { textFilters: bailian.textFilters } : {}),
       extraParamsJson: JSON.stringify(bailian.extraParams ?? {}, null, 2)
-    },
+      }
+    };
+  }
+  const mimo = preset.mimo ?? {};
+  return {
+    provider: "mimo",
     mimo: {
       mode: mimo.mode ?? "preset",
       baseURL: mimo.baseURL ?? defaultMimoTtsBaseURL,

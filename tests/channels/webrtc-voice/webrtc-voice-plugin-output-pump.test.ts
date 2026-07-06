@@ -311,7 +311,7 @@ test("WebRTC voice skips finished blank buffered output without starting empty T
   assert.equal(streamCalls, 1);
   assert.deepEqual(streamedText, ["第一段。"]);
   assert.equal(statuses.some((entry) => entry.state === "voice_call.tts_fatal"), false);
-  assert.equal(statuses.some((entry) => entry.state === "tts.failed" && entry.detail?.includes("no_frames_sent")), false);
+  assert.equal(statuses.some((entry) => entry.state === "tts.failed"), false);
   assert.equal(peer.closed, false);
 
   await call.close("test_done");

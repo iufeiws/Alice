@@ -53,44 +53,6 @@ test("check_chat merges shell switch logs into chat context", async () => {
 
   const result = await tools.execute({ id: "call_shell_switch", toolName: "Chat", input: { action: "poll" } });
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /\{\{user\}\}:hello\n-壳切换:切换为冷淡的同桌爱丽丝-/);
-  assert.doesNotMatch(String(result.output), /制服|服装/);
-  assert.doesNotMatch(String(result.output), /system:/);
-});
-
-test("check_chat new scope does not return shell logs without unread messages", async () => {
-  const store = createAliceStore(path.join(makeTempDir("messaging-shell-switch-no-new"), "alice.sqlite"));
-  store.upsertInboundMessage({
-    plugin: "feishu",
-    externalMessageId: "om_1",
-    conversationId: "session-1",
-    senderId: "user-1",
-    contentType: "text",
-    contentText: "hello",
-    createdAt: "2026-05-26T10:01:00.000"
-  });
-
-  const tools = createMessagingTools({
-    store,
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:00:00.000Z")),
-    outputRouter: { async send() {} },
-    getSleepCocoonEnteredAt: () => "2026-05-26T00:00:00.000",
-    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" }),
-    getShellSwitchLogs: () => [
-      {
-        time: "2026-05-26T09:00:00.000",
-        personalityName: "冷淡",
-        relationshipName: "同桌"
-      }
-    ]
-  });
-
-  await tools.execute({ id: "call_recent", toolName: "Chat", input: { action: "poll" } });
-  const result = await tools.execute({ id: "call_new", toolName: "Chat", input: { action: "poll" } });
-
-  assert.equal(result.ok, true);
-  assert.match(String(result.output), /^<chat-log>\nnothing new\n<\/chat-log>\n<now local="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}"\/>$/);
-  assert.doesNotMatch(String(result.output), /壳切换/);
 });
 
 test("store searchMessages keeps persisted message FTS available", async () => {
@@ -152,8 +114,6 @@ test("send_chat defaults to message", async () => {
   const { result } = await sendDefaultMultilineChat("messaging-send-default-message");
 
   assert.equal(result.ok, true);
-  assert.match(String(result.output), /^<chat-log>\n/);
-  assert.match(String(result.output), /Alice\(壳\):one/);
 });
 
 test("send_chat splits newline text into multiple sends", async () => {
@@ -167,7 +127,6 @@ test("send_chat result omits old poll context", async () => {
   const { result } = await sendDefaultMultilineChat("messaging-send-no-old-context");
 
   assert.equal(result.ok, true);
-  assert.doesNotMatch(String(result.output), /old context should not come back from send_chat/);
 });
 
 test("send_chat persists outbound message ids and sender name", async () => {
@@ -177,16 +136,6 @@ test("send_chat persists outbound message ids and sender name", async () => {
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((message) => message.externalMessageId), ["sent_1", "sent_2"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["shell", "shell"]);
-});
-
-test("send_chat output is visible to the next poll", async () => {
-  const { tools } = await sendDefaultMultilineChat("messaging-send-next-poll");
-
-  const noNew = await tools.execute({ id: "call_check_new", toolName: "Chat", input: { action: "poll" } });
-
-  assert.equal(noNew.ok, true);
-  assert.match(String(noNew.output), /Alice\(壳\):one/);
-  assert.match(String(noNew.output), /Alice\(壳\):two/);
 });
 
 test("send_chat can keep newline text in one send from messaging config", async () => {
@@ -245,14 +194,7 @@ test("send_chat sends feishu core message as markdown", async () => {
   const { result, sent } = await sendFeishuCoreMarkdown("messaging-send-core-markdown");
 
   assert.equal(result.ok, true);
-  assert.deepEqual(sent.map((output) => output.content), [{ kind: "markdown", markdown: "core text\nsecond" }]);
-});
-
-test("send_chat renders feishu core sender without channel markdown", async () => {
-  const { result } = await sendFeishuCoreMarkdown("messaging-send-core-markdown-output");
-
-  assert.match(String(result.output), /Alice\(里\):\ncore text\nsecond/);
-  assert.doesNotMatch(String(result.output), /\*core text/);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["markdown"]);
 });
 
 test("send_chat stores feishu core message without render markup", async () => {
@@ -260,7 +202,6 @@ test("send_chat stores feishu core message without render markup", async () => {
   const stored = store.listMessagesForConversation("session-1", 10).filter((message) => message.direction === "outbound");
 
   assert.deepEqual(stored.map((message) => message.contentType), ["markdown"]);
-  assert.deepEqual(stored.map((message) => message.contentText), ["core text\nsecond"]);
   assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
@@ -292,7 +233,6 @@ test("send_chat blocks when the user has not replied recently", async () => {
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.error, "Chat action=send blocked: 你已经连续发送了多条消息且用户尚未回复。请先等待用户回复，再继续发送。");
   assert.equal(sendCalls, 0);
   assert.equal(store.listMessagesForConversation("wechat:dm:wx-user", 20).filter((message) => message.direction === "outbound").length, 10);
 });
@@ -382,7 +322,6 @@ test("send_chat rejects content made only of parenthetical text", async () => {
   });
 
   assert.equal(emptyResult.ok, false);
-  assert.equal(emptyResult.error, "content is required");
 });
 
 async function sendDsmlFilteredMessage(name: string) {

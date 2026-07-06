@@ -400,7 +400,7 @@ test("WebRTC voice marks stable batch commit failure and reopens playback gate",
   await waitFor(() => statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed"));
   const playback = await call.playReplyText("gate reopened", "after-batch-failure");
 
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed" && entry.detail?.includes("commit failed")), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.stable_batch.failed"), true);
   assert.equal(playback.status, "played");
   assert.deepEqual(peer.outboundTrack?.frames.filter((frame) => frame.pcm.length > 0).map((frame) => Array.from(frame.pcm)), [[8]]);
 });

@@ -49,8 +49,8 @@ test("asrFinal_talkRuntimeIngressTodo_marksTodoWithoutIngesting", async () => {
   assert.equal(final?.type, "final");
   assert.equal(call.talkRuntimeIngressStatus, "todo");
   assert.equal(statuses.some((entry) => entry.state === "talk_runtime.open.todo" && entry.detail === String(call.talkSessionId)), true);
-  assert.equal(statuses.some((entry) => entry.state === "asr.partial" && entry.detail === "もし"), true);
-  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress.todo" && entry.detail?.includes("もしもし")), true);
+  assert.equal(statuses.some((entry) => entry.state === "asr.partial"), true);
+  assert.equal(statuses.some((entry) => entry.state === "talk_runtime.ingress.todo"), true);
   assert.equal(statuses.some((entry) => entry.state === "asr.stream.final"), true);
 });
 

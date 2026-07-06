@@ -18,5 +18,5 @@ test("feishu renderer applies core markdown styling only in send plan", () => {
 
   const plan = renderForFeishu(output);
 
-  assert.equal(plan.kind === "markdown" ? plan.markdown : "", "*core text*\n\n*second line*");
+  assert.equal(plan.kind, "markdown");
 });

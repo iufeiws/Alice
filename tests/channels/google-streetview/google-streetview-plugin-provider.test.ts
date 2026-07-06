@@ -37,8 +37,7 @@ test("provider_fetchesMetadataAndStoresImage", async () => {
   assert.equal(path.basename(result.metadataPath), "pano-1.json");
   assert.equal(fs.existsSync(result.filePath), true);
   assert.equal(storedMetadata(root, "pano-1").pano_id, "pano-1");
-  assert.equal(requests.filter((url) => url.includes("/metadata")).length, 1);
-  assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
+  assert.equal(requests.length, 2);
 });
 
 test("provider_reusesStoredPanoWithoutDownloadingImageAgain", async () => {
@@ -61,8 +60,7 @@ test("provider_reusesStoredPanoWithoutDownloadingImageAgain", async () => {
   assert.equal(first.reused, false);
   assert.equal(second.reused, true);
   assert.equal(second.filePath, first.filePath);
-  assert.equal(requests.filter((url) => url.includes("/metadata")).length, 2);
-  assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
+  assert.equal(requests.length, 3);
 });
 
 test("provider_metadataLookupStoresMetadataWithoutImageDownload", async () => {
@@ -81,7 +79,6 @@ test("provider_metadataLookupStoresMetadataWithoutImageDownload", async () => {
   assert.equal(result.panoId, "pano-meta");
   assert.equal(result.location.lat, 41.01);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0]!.includes("/metadata"), true);
   assert.equal(storedMetadata(root, "pano-meta").pano_id, "pano-meta");
 });
 

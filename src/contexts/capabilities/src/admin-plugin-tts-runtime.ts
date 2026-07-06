@@ -5,7 +5,7 @@ import type { AdminPluginRegistryEntry, AdminPluginSummary } from "./admin-plugi
 import { uploadGenericPluginAsset } from "./admin-plugin-tts-assets.js";
 import { readTtsConfigForAdmin, ttsConfigMtime, ttsConfigPath, updateTtsConfig } from "./admin-plugin-tts-config.js";
 import { publicTtsConfig } from "./admin-plugin-tts-public.js";
-import { testTtsPlugin } from "./admin-plugin-tts-test.js";
+import { testTtsPlugin } from "./admin-plugin-tts-check.js";
 
 export function ttsPluginEntry(): AdminPluginRegistryEntry {
   return {

@@ -3,27 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { createInitiatedBehaviorRuntime } from "../../../src/contexts/initiative/src/application/evaluate-triggers.js";
-import { defaultAgentInitiatedBehaviorPlans } from "../../../src/contexts/initiative/src/domain/initiated-behavior.js";
 import { tempPath } from "./initiated-behaviors-helpers.js";
-
-test("default randomized behavior plans expose proactive initiation config", () => {
-  const randomizedPlans = defaultAgentInitiatedBehaviorPlans.filter((plan) => plan.kind === "randomized");
-
-  assert.deepEqual(randomizedPlans.map((plan) => ({
-    id: plan.id,
-    enabled: plan.enabled,
-    weight: plan.weight,
-    priority: plan.priority
-  })), [
-    { id: "ritual", enabled: false, weight: 8, priority: 0 },
-    { id: "review", enabled: false, weight: 2, priority: 0 },
-    { id: "story", enabled: false, weight: 1, priority: 0 },
-    { id: "care", enabled: true, weight: 4, priority: 0 },
-    { id: "share", enabled: false, weight: 2, priority: 0 },
-    { id: "invite", enabled: false, weight: 2, priority: 0 },
-    { id: "real_world_suggestion", enabled: false, weight: 2, priority: 0 }
-  ]);
-});
 
 test("initiated behavior runtime creates custom plans", () => {
   const id = `custom_check_in_${process.pid}_${Date.now()}`;

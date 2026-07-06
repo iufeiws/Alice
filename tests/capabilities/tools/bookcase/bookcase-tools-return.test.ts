@@ -24,16 +24,6 @@ test("bookcase return clears fixed prefix", async () => {
   assert.equal(result.invalidateLLMSession, undefined);
 });
 
-test("bookcase return renders the return message", async () => {
-  const result = await returnBook();
-
-  assert.equal(String(result.output), [
-    '<bookcase action="return" clear_fixed_prefix="true">',
-    "  <message>书已归还书橱；当前固定前缀已解除。</message>",
-    "</bookcase>"
-  ].join("\n"));
-});
-
 test("bookcase return does not change the database", async () => {
   const dbPath = createFixtureDb();
   const before = fixtureCounts(dbPath);

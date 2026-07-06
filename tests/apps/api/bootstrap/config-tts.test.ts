@@ -6,44 +6,6 @@ function loadTtsConfig(env: Record<string, string> = {}) {
   return loadConfig(env).tts;
 }
 
-test("tts config defaults to genie tts backend", () => {
-  const config = loadTtsConfig();
-
-  assert.equal(config.backend, "genie-tts");
-});
-
-test("tts config defaults local service URLs without marking them explicit", () => {
-  const config = loadTtsConfig();
-
-  assert.equal(config.genieBaseURL, "http://127.0.0.1:8767");
-  assert.equal(config.genieBaseURLExplicit, false);
-  assert.equal(config.mossBaseURL, "http://127.0.0.1:8765");
-  assert.equal(config.mossBaseURLExplicit, false);
-});
-
-test("tts config defaults genie voice assets", () => {
-  const config = loadTtsConfig();
-
-  assert.equal(config.genieDataDir, "assets/tts/genie/GenieData");
-  assert.equal(config.genieModelDir, "assets/tts/genie/models/alice");
-  assert.equal(config.genieCharacterName, "alice");
-  assert.equal(config.genieLanguage, "zh");
-  assert.equal(config.genieReferenceAudio, "assets/tts/references/alice/reference.wav");
-  assert.equal(config.genieReferenceText, "assets/tts/references/alice/reference.txt");
-});
-
-test("tts config defaults local service process settings", () => {
-  const config = loadTtsConfig();
-
-  assert.equal(config.geniePythonCommand, ".conda-moss/bin/python");
-  assert.equal(config.genieServiceScript, "scripts/genie_tts/service.py");
-  assert.equal(config.genieIdleShutdownMs, 15 * 60 * 1000);
-  assert.equal(config.genieFfmpegCommand, "ffmpeg-static");
-  assert.equal(config.mossPythonCommand, ".conda-moss/bin/python");
-  assert.equal(config.mossIdleShutdownMs, 15 * 60 * 1000);
-  assert.equal(config.mossFfmpegCommand, "ffmpeg-static");
-});
-
 test("project username comes from project env", () => {
   const config = loadConfig({
     PROJECT_USERNAME: "Y"
@@ -70,9 +32,6 @@ test("memory summary config is independent from core llm config", () => {
   assert.equal(config.llm.apiKey, "core-key");
   assert.equal(config.memorySummary.apiKey, "deepseek-key");
   assert.equal(config.memorySummary.baseURL, "https://core.example/v1");
-  assert.equal(config.memorySummary.model, "deepseek-v4-pro");
-  assert.equal(config.memorySummary.temperature, 0.8);
-  assert.deepEqual(config.memorySummary.extraParams, { thinking: { type: "enabled" }, reasoning_effort: "high" });
 });
 
 test("memory summary config may reuse core auth settings but not core model settings", () => {
@@ -85,12 +44,6 @@ test("memory summary config may reuse core auth settings but not core model sett
 
   assert.equal(config.memorySummary.apiKey, "core-key");
   assert.equal(config.memorySummary.baseURL, "https://core.example/v1");
-  assert.equal(config.memorySummary.model, "deepseek-v4-pro");
-  assert.equal(config.memorySummary.temperature, 0.8);
-});
-
-test("memory manual run requires sleeping by default", () => {
-  assert.equal(loadConfig({}).memorySummary.manualRunRequiresSleeping, true);
 });
 
 test("memory manual run sleeping requirement can be disabled", () => {

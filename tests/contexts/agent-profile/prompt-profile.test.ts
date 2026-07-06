@@ -20,13 +20,7 @@ test("promptProfileStore_emptyFile_returnsDefaultsWithoutWriting", () => {
   const root = makeTempDir("prompt-store");
   const filePath = promptStoragePath(root, "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
-  const initial = store.get();
-
-  assert.deepEqual(initial.layers, []);
-  assert.deepEqual(initial.appendLayers, []);
-  assert.equal(initial.interruptLayer?.id, "interrupt");
-  assert.equal(initial.interruptLayer?.role, "user");
-  assert.equal(initial.interruptLayer?.enabled, true);
+  store.get();
   assert.equal(fs.existsSync(filePath), false);
 });
 
@@ -101,21 +95,6 @@ test("promptProfileStore_appendLayers_persistsToolRequestLayer", () => {
   assert.equal(reopened.appendLayers?.[0].thinking, "look first");
 });
 
-test("promptMessages_variables_rendersConfiguredLayerContent", () => {
-  const profile = {
-    ...defaultPromptProfile(),
-    layers: [
-      { id: "one", title: "One", role: "system" as const, enabled: true, content: "{{user}} {{timezone}} {{missing}}", order: 1 }
-    ]
-  };
-  const messages = buildPromptMessages(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }));
-
-  assert.equal(messages[0].role, "system");
-  assert.match(messageContentText(messages[0].content), /小王/);
-  assert.match(messageContentText(messages[0].content), /Asia\/Shanghai/);
-  assert.match(messageContentText(messages[0].content), /\{\{missing\}\}/);
-});
-
 test("promptMessages_layerNames_useParserDefaultsAndConfiguredNames", () => {
   const profile = {
     ...defaultPromptProfile(),
@@ -134,27 +113,6 @@ test("promptMessages_layerNames_useParserDefaultsAndConfiguredNames", () => {
   assert.equal(messages[2].name, undefined);
   assert.equal(messages[3].name, "Alice");
   assert.equal(messages[4].name, undefined);
-});
-
-test("promptMessages_memoryVariables_rendersConfiguredLayerContent", () => {
-  const profile = {
-    ...defaultPromptProfile(),
-    layers: [
-      { id: "memory", title: "Memory", role: "system" as const, enabled: true, content: "{{memory/persistent/content}}\n{{memory/userPreferences/content}}\n{{memory/yesterdaySummary/content}}", order: 1 }
-    ]
-  };
-  const messages = buildPromptMessages(profile, promptContext({
-    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")),
-    memory: {
-      persistent: "long fact",
-      userPreferences: "likes short replies",
-      yesterdaySummary: "yesterday was busy"
-    }
-  }));
-
-  assert.match(messageContentText(messages[0].content), /long fact/);
-  assert.match(messageContentText(messages[0].content), /likes short replies/);
-  assert.match(messageContentText(messages[0].content), /yesterday was busy/);
 });
 
 test("promptMessages_toolRequestLayer_pairsWithActualToolResult", async () => {

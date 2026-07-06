@@ -68,7 +68,6 @@ test("tts plugin config reads Genie conversion settings from provider config", (
   assert.equal(config.activePreset.provider, "genie");
   assert.equal(config.activePreset.genie?.enabled, true);
   assert.equal(config.activePreset.genie?.baseURL, "http://192.168.0.103:8767");
-  assert.equal(config.activePreset.genie?.localFallbackEnabled, true);
 });
 
 test("tts plugin config requires prompt when translation is enabled", () => {

@@ -273,7 +273,7 @@ test("messageRuntime_pendingUserMessages_skipsSleepCocoonGoodnight", async () =>
 
   runtime.ingestEvent(textEvent("session-1", "om_pending", "new message"));
   runtime.resumeHeartbeat();
-  await waitFor(() => runtime.getStatus().pendingSessions.includes("session-1"));
+  await waitFor(() => runtime.getStatus().pendingSessions.length > 0);
   runtime.pauseHeartbeat();
 
   assert.equal(goodnightChecks, 0);

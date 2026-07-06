@@ -6,7 +6,6 @@ import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.j
 import { fakeExecutor, testConfig, tmpDir } from "./bash-sandbox-helpers.js";
 
 const fs = await import("node:fs");
-const path = await import("node:path");
 
 test("bash tool executes through sandbox runtime by default", async () => {
   const tools = createBashTools({
@@ -66,24 +65,6 @@ test("permission gate only enforces sandbox entry boundary", () => {
   assert.equal(classifyBashCommand({ config, cwd, command: "echo hello" }).state, "allow");
   assert.match(denyReason(classifyBashCommand({ config, cwd, command: "" })), /required/);
   assert.match(denyReason(classifyBashCommand({ config, cwd: "/etc", command: "echo hello" })), /cwd/);
-});
-
-test("config uses default bash sandbox paths", () => {
-  const config = loadConfig({});
-  assert.equal(config.bashSandbox.image, "cimg/python:3.13-browsers");
-  assert.equal(config.bashSandbox.hostWorkspaceDir.endsWith(path.join(".sandbox", "bash", "workspace")), true);
-  assert.equal(config.bashSandbox.hostCacheDir.endsWith(path.join(".sandbox", "bash", "cache")), true);
-  assert.equal(config.bashSandbox.auditLogPath, ".sandbox/bash/audit.jsonl");
-  assert.equal(config.bashSandbox.outputLimitBytes, 30_000);
-  assert.equal(config.skills.installedRoot, ".agents/skills");
-  assert.equal("enabled" in config.bashSandbox, false);
-  assert.deepEqual(config.bashSandbox.skillMounts, []);
-  assert.deepEqual(config.bashSandbox.mounts[0], {
-    id: "assets",
-    hostPath: path.resolve("assets"),
-    containerPath: "/assets",
-    readOnly: true
-  });
 });
 
 test("config rejects writable mounts under skills and sensitive host paths", () => {

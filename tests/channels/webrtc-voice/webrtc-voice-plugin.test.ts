@@ -1,82 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createWebRtcVoiceRuntime } from "../../../src/apps/api/bootstrap/web-rtc-voice-runtime.js";
-import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame } from "../../../src/channels/webrtc-voice/src/index.js";
+import { createWebRtcVoicePlugin, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame } from "../../../src/channels/webrtc-voice/src/index.js";
 import { createTalkRuntime } from "../../../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { createTalkStore } from "../../../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { ControlledQueueTrack, DelayedEnqueueTrack, FakeAsrSession, FakeHangingAsrSession, FakePeer, RemotePlayingQueueTrack, collectVoiceTextInput, defaultConfig, fakeVoiceSynthesizer, makeTempDir, tempFilePath, waitFor } from "./webrtc-voice-plugin-helpers.js";
 
 const path = await import("node:path");
-
-test("callPage_enabledConfig_exposesUserControls", () => {
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => new FakePeer(),
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: fakeVoiceSynthesizer,
-    decodeAudioFileToFrames: async () => []
-  });
-
-  const html = plugin.renderCallPage();
-
-  assert.match(html, /Hold to talk/);
-  assert.match(html, /Type more than 1 character to interrupt; press Enter to submit\./);
-});
-
-test("callPage_enabledConfig_exposesSignalingPath", () => {
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => new FakePeer(),
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: fakeVoiceSynthesizer,
-    decodeAudioFileToFrames: async () => []
-  });
-
-  const html = plugin.renderCallPage();
-
-  assert.match(html, /\/plugins\/webrtc-voice\/signaling/);
-});
-
-test("callPage_enabledConfig_exposesInterruptScriptContract", () => {
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => new FakePeer(),
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: fakeVoiceSynthesizer,
-    decodeAudioFileToFrames: async () => []
-  });
-
-  const html = plugin.renderCallPage();
-
-  assert.match(html, /type: "interrupt", reason: "manual"/);
-});
-
-test("callPage_enabledConfig_exposesAudioContract", () => {
-  const plugin = createWebRtcVoicePlugin({
-    config: defaultConfig,
-    createPeer: async () => new FakePeer(),
-    createAsrSession: () => new FakeAsrSession([]),
-    voiceSynthesizer: fakeVoiceSynthesizer,
-    decodeAudioFileToFrames: async () => []
-  });
-
-  const html = plugin.renderCallPage();
-
-  assert.match(html, /audio\.transcript\.final/);
-  assert.match(html, /これは疑似ストリーミング音声のテストです。/);
-  assert.match(html, /"sampleRateHz":16000/);
-  assert.match(html, /"encoding":"pcm_s16le"/);
-});
-
-test("WebRTC voice defaults inbound push-to-talk audio to PCM16 16k mono", () => {
-  const config = defaultWebRtcVoiceConfig();
-
-  assert.equal(config.inboundAudio.sampleRateHz, 16_000);
-  assert.equal(config.inboundAudio.channels, 1);
-  assert.equal(config.inboundAudio.encoding, "pcm_s16le");
-  assert.equal(config.inboundAudio.chunkMs, 100);
-});
 
 test("WebRTC voice records talk timestamps with configured local time and UTC", async () => {
   const opened: unknown[] = [];

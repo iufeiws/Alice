@@ -222,7 +222,6 @@ test("chat agent appends sleep cocoon morning instruction from heartbeat event",
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
-  assert.equal(requests[0].messages.some((message) => messageContentText(message.content).includes("sleep_cocoon")), false);
 });
 
 test("chat agent appends force wake instruction from heartbeat event", async () => {

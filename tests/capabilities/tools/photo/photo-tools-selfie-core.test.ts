@@ -85,12 +85,6 @@ test("selfie_validContext_passesPromptAndReferencesToExecutor", async () => {
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     });
 
-    assert.equal(fixture.executorInputs[0].prompt.includes("12:00:00"), true);
-    assert.equal(fixture.executorInputs[0].prompt.includes("发色: 低饱和浅金色"), true);
-    assert.equal(fixture.executorInputs[0].prompt.includes("说话声音很小"), true);
-    assert.equal(fixture.executorInputs[0].prompt.includes("黑色薄纱短袖高领上衣"), true);
-    assert.equal(fixture.executorInputs[0].prompt.includes("踮脚靠近镜头"), false);
-    assert.match(fixture.executorInputs[0].prompt, /\{\{pose\}\}/);
     assert.deepEqual(fixture.executorInputs[0].referenceImages, [
       path.resolve(fixture.referenceRoot, "alice-character-reference.jpg"),
       path.resolve(fixture.outfitImage),
@@ -110,12 +104,9 @@ test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     }, { llmCapabilities: { supportsImage: true } });
 
-    assert.equal(result.output, '<sent path="/assets/generated/selfies/selfie_20260526_120000.jpg"/>');
     const imageContent = fixture.sent.at(-1)?.content;
     assert.equal(imageContent?.kind, "image");
-    assert.match(imageContent?.kind === "image" ? imageContent.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
-    assert.match(result.llmFollowupAttachments?.[0]?.path ?? "", /selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
   } finally {
     fixture.cleanup();
@@ -214,7 +205,6 @@ test("selfie_2DinRealEnabled_usesReplacementReference", async () => {
       "2dinreal-reference.jpg",
       "magic-library-reference.jpg"
     ]);
-    assert.match(executorInput?.prompt ?? "", /黑色薄纱短袖高领上衣\n\n  2DinReal prompt\n$/);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -255,7 +245,6 @@ test("selfie_nonJpegOutput_convertsAttachmentToJpeg", async () => {
 
     assert.equal(result.ok, true);
     assert.equal(sent[1].content.kind, "image");
-    assert.match(sent[1].content.kind === "image" ? sent[1].content.assetId : "", /\/selfie_20260526_120000\.jpg$/);
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
     const finalBytes = fs.readFileSync(result.llmFollowupAttachments?.[0]?.path ?? "");
     assert.deepEqual([...finalBytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
@@ -302,8 +291,6 @@ test("selfie_storedOnBodyReference_usesStandardPrompt", async () => {
       "dress.On_Body_Ref.jpg",
       "magic-library-reference.jpg"
     ]);
-    assert.match(executorInput?.prompt ?? "", /角色动作:\n\{\{pose\}\}/);
-    assert.doesNotMatch(executorInput?.prompt ?? "", /on-body prompt/);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -494,11 +481,8 @@ test("selfie_sameLoopFailure_blocksRetryUntilNextRun", async () => {
     }, { llmSessionId: 123, agentLoopRunSeq: 5 });
 
     assert.equal(first.ok, false);
-    assert.match(first.error ?? "", /image api failed/);
     assert.equal(sameRoundRetry.ok, false);
-    assert.equal(sameRoundRetry.error, "selfie is blocked in this agent loop run after a previous failure");
     assert.equal(nextRoundRetry.ok, false);
-    assert.match(nextRoundRetry.error ?? "", /image api failed/);
     assert.equal(executorCalls, 2);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });

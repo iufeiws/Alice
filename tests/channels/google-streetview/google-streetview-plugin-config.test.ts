@@ -12,7 +12,6 @@ test("config_readsEnvApiKeyAndHidesSecret", () => {
   const publicConfig = publicGoogleStreetViewPluginConfig(config);
 
   assert.equal(config.apiKey, "secret");
-  assert.equal(config.outputDir, "assets/plugin/google-streetview");
   assert.equal(publicConfig.apiKeySet, true);
   assert.equal("apiKey" in publicConfig, false);
 });

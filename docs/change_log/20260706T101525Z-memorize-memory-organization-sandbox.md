@@ -4,23 +4,24 @@
 
 ## 背景
 
-Memorize 旧流程依赖临时 workspace / 单目标串行归纳。项目正在迁移到 sandbox file tool，记忆归纳需要改为把三份记忆文件放入 sandbox 的 `/workspace/memory_organization/<run-id>/` 下，由同一次 LLM run 统一整理。
+Memorize 旧流程依赖临时 workspace / 单目标串行归纳。项目正在迁移到 sandbox file tool，记忆归纳需要改为把三份记忆文件放入 sandbox 的 `/workspace/memory_organization/` 临时目录下，由同一次 LLM run 统一整理。
 
 本次只接入 Memorize 到现有 sandbox file tool 运行路径，不修改 file tool 实现，也不新增隐藏 prompt 文案。
 
 ## 变更内容
 
-- Memorize 每次 run 会在宿主机 `bashSandbox.hostWorkspaceDir/memory_organization/<run-id>/` 准备三份文件：
+- Memorize 每次 run 会在宿主机 `bashSandbox.hostWorkspaceDir/memory_organization/` 准备三份临时文件：
   - `persistent-memory.md`
   - `user-preferences.md`
   - `diary.md`
 - Prompt context runtime 挂载 sandbox 内绝对路径：
-  - `/workspace/memory_organization/<run-id>/persistent-memory.md`
-  - `/workspace/memory_organization/<run-id>/user-preferences.md`
-  - `/workspace/memory_organization/<run-id>/diary.md`
+  - `/workspace/memory_organization/persistent-memory.md`
+  - `/workspace/memory_organization/user-preferences.md`
+  - `/workspace/memory_organization/diary.md`
 - 删除旧的单 target 串行归纳入口，改为一次 LLM run 处理三份文件。
 - Memorize run 注册现有 sandbox `Read` / `Edit` 工具定义和 memory 自有 `self_talk`。
 - LLM 完成后从宿主 workspace 读回三份文件；只有内容变化的目标才写入 memory store。
+- run 结束后删除 `memory_organization/` 临时目录。
 - Sleep induction、Admin 手动运行、Prompt 管理页预览都接入同一 sandbox 路径上下文。
 
 ## 兼容性

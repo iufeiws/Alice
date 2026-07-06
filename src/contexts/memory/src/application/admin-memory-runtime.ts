@@ -213,7 +213,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
 
   function memoryPreviewSandboxPaths(config: BashSandboxConfig | undefined) {
     if (!config) return undefined;
-    const workspacePath = path.posix.join(config.workspaceDir, "memory_organization", "preview");
+    const workspacePath = path.posix.join(config.workspaceDir, "memory_organization");
     return {
       workspacePath,
       files: {

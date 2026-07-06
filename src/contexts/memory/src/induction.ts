@@ -207,6 +207,7 @@ export function splitMessagesByLongGaps(messages: StoredConversationMessage[], g
 }
 
 type MemoryOrganizationWorkspace = {
+  hostRoot: string;
   containerRoot: string;
   hostFiles: Record<MemoryTarget, string>;
   containerFiles: Record<MemoryTarget, string>;
@@ -219,9 +220,9 @@ function createMemoryOrganizationWorkspace(
   }
 ): MemoryOrganizationWorkspace {
   if (!deps.sandbox) throw new Error("memory_sandbox_required");
-  const runId = sanitizeRunId(`${deps.windowEndAt}-${deps.nowIso()}`);
-  const hostRoot = path.join(deps.sandbox.config.hostWorkspaceDir, "memory_organization", runId);
-  const containerRoot = path.posix.join(deps.sandbox.config.workspaceDir, "memory_organization", runId);
+  const hostRoot = path.join(deps.sandbox.config.hostWorkspaceDir, "memory_organization");
+  const containerRoot = path.posix.join(deps.sandbox.config.workspaceDir, "memory_organization");
+  fs.rmSync(hostRoot, { recursive: true, force: true });
   fs.mkdirSync(hostRoot, { recursive: true });
 
   const hostFiles = Object.fromEntries(memoryTargets.map((target) => [target, path.join(hostRoot, targetFiles[target])])) as Record<MemoryTarget, string>;
@@ -229,7 +230,11 @@ function createMemoryOrganizationWorkspace(
   const initialContent = Object.fromEntries(memoryTargets.map((target) => [target, readMemoryTargetForRun(deps.memoryStore, target)])) as Record<MemoryTarget, string>;
   for (const target of memoryTargets) writeAtomic(hostFiles[target], initialContent[target]);
 
-  return { containerRoot, hostFiles, containerFiles, initialContent };
+  return { hostRoot, containerRoot, hostFiles, containerFiles, initialContent };
+}
+
+function cleanupMemoryOrganizationWorkspace(workspace: MemoryOrganizationWorkspace): void {
+  fs.rmSync(workspace.hostRoot, { recursive: true, force: true });
 }
 
 function commitMemoryOrganizationWorkspace(
@@ -302,10 +307,6 @@ function withMemoryPromptPaths(runtime: MemorySummaryDeps["promptContextRuntime"
   };
 }
 
-function sanitizeRunId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 120) || "run";
-}
-
 async function runMemoryOrganizationInduction(
   deps: Omit<MemorySummaryDeps, "messageStore" | "stateStore"> & {
     messages: StoredConversationMessage[];
@@ -318,110 +319,114 @@ async function runMemoryOrganizationInduction(
   if (!deps.sandbox) throw new Error("memory_sandbox_required");
   const toolCalls: MemoryRunResult["toolCalls"] = [];
   const workspace = createMemoryOrganizationWorkspace(deps);
-  const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.nowIso(), {
-    name: "memory_organization",
-    windowStartAt: deps.windowStartAt,
-    windowEndAt: deps.windowEndAt,
-    timezone: deps.timezone,
-    nowIso: deps.nowIso
-  });
-  session.activeTarget = promptTarget;
-  const promptRuntime = withMemoryPromptPaths(deps.promptContextRuntime, workspace);
-  const promptMessages = buildMemoryPromptMessages({ ...deps, promptContextRuntime: promptRuntime, sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles } }, promptTarget, {
-    includeCommonLayers: session.messages.length === 0
-  });
-  const messages = session.messages.length > 0
-    ? [...session.messages, ...promptMessages]
-    : promptMessages;
-  const toolRegistryName = `memory_organization_${memoryToolRegistrySeq += 1}`;
-  const sandboxFileTools = createSandboxFileTools({
-    runtime: deps.sandbox.runtime,
-    config: deps.sandbox.config
-  });
-  const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
-    sandboxFileTools,
-    createMemorySelfTalkToolPlugin({ toolCalls })
-  ]);
+  try {
+    const session = deps.memorySession ?? createMemoryInductionSession(deps.sessionRoot, deps.nowIso(), {
+      name: "memory_organization",
+      windowStartAt: deps.windowStartAt,
+      windowEndAt: deps.windowEndAt,
+      timezone: deps.timezone,
+      nowIso: deps.nowIso
+    });
+    session.activeTarget = promptTarget;
+    const promptRuntime = withMemoryPromptPaths(deps.promptContextRuntime, workspace);
+    const promptMessages = buildMemoryPromptMessages({ ...deps, promptContextRuntime: promptRuntime, sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles } }, promptTarget, {
+      includeCommonLayers: session.messages.length === 0
+    });
+    const messages = session.messages.length > 0
+      ? [...session.messages, ...promptMessages]
+      : promptMessages;
+    const toolRegistryName = `memory_organization_${memoryToolRegistrySeq += 1}`;
+    const sandboxFileTools = createSandboxFileTools({
+      runtime: deps.sandbox.runtime,
+      config: deps.sandbox.config
+    });
+    const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
+      sandboxFileTools,
+      createMemorySelfTalkToolPlugin({ toolCalls })
+    ]);
 
-  const loopResult = await (async () => {
-    try {
-      return await runLLMToolLoop({
-        initialMessages: messages,
-        toolRegistryName,
-        limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
-        buildRequest({ round, messages }) {
-          const request = {
-            model: deps.config.model,
-            temperature: deps.config.temperature,
-            maxTokens: 8192,
-            extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-            tools: memoryTools(),
-            messages
-          };
-          deps.onRound?.(promptTarget, round + 1);
-          session.append?.({ type: "request", round: session.roundOffset + round, request });
-          return {
-            agentId: "memorize",
-            client: deps.llm,
-            messages,
-            model: deps.config.model,
-            temperature: deps.config.temperature,
-            maxTokens: 8192,
-            extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
-            toolNames: [...memoryToolNames],
-            inlineTools: memoryToolDefinitions(),
-            toolVariables: promptRuntime,
-            stream: deps.config.stream === true,
-            metadata: { target: promptTarget }
-          };
-        },
-        sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
-        afterRequest({ round, result }) {
-          session.append?.({ type: "response", round: session.roundOffset + round, response: result });
-        },
-        beforeTool({ round, call }) {
-          deps.onRound?.(promptTarget, round + 1, call.function.name);
-        },
-        afterToolResult({ call, toolInput, toolResult }) {
-          if (call.function.name === "Read" || call.function.name === "Edit") {
-            const file = fileForSandboxPath(workspace, typeof toolInput.file_path === "string" ? toolInput.file_path : "");
-            toolCalls.push({
-              name: call.function.name,
-              file,
-              input: toolInput,
-              ok: toolResult.ok,
-              output: typeof toolResult.output === "string" ? toolResult.output : undefined,
-              error: toolResult.error
-            });
+    const loopResult = await (async () => {
+      try {
+        return await runLLMToolLoop({
+          initialMessages: messages,
+          toolRegistryName,
+          limits: { maxRounds: memoryToolRoundLimit, maxTotalToolCalls: memoryToolRoundLimit, maxRepeatedToolCalls: 3 },
+          buildRequest({ round, messages }) {
+            const request = {
+              model: deps.config.model,
+              temperature: deps.config.temperature,
+              maxTokens: 8192,
+              extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+              tools: memoryTools(),
+              messages
+            };
+            deps.onRound?.(promptTarget, round + 1);
+            session.append?.({ type: "request", round: session.roundOffset + round, request });
+            return {
+              agentId: "memorize",
+              client: deps.llm,
+              messages,
+              model: deps.config.model,
+              temperature: deps.config.temperature,
+              maxTokens: 8192,
+              extraParams: round === 0 ? deps.config.extraParams : deps.config.followupExtraParams,
+              toolNames: [...memoryToolNames],
+              inlineTools: memoryToolDefinitions(),
+              toolVariables: promptRuntime,
+              stream: deps.config.stream === true,
+              metadata: { target: promptTarget }
+            };
+          },
+          sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
+          afterRequest({ round, result }) {
+            session.append?.({ type: "response", round: session.roundOffset + round, response: result });
+          },
+          beforeTool({ round, call }) {
+            deps.onRound?.(promptTarget, round + 1, call.function.name);
+          },
+          afterToolResult({ call, toolInput, toolResult }) {
+            if (call.function.name === "Read" || call.function.name === "Edit") {
+              const file = fileForSandboxPath(workspace, typeof toolInput.file_path === "string" ? toolInput.file_path : "");
+              toolCalls.push({
+                name: call.function.name,
+                file,
+                input: toolInput,
+                ok: toolResult.ok,
+                output: typeof toolResult.output === "string" ? toolResult.output : undefined,
+                error: toolResult.error
+              });
+            }
+            return undefined;
+          },
+          onMessagesChanged({ messages }) {
+            session.messages = messages;
+            session.append?.({ type: "final_messages", messages });
           }
-          return undefined;
-        },
-        onMessagesChanged({ messages }) {
-          session.messages = messages;
-          session.append?.({ type: "final_messages", messages });
-        }
-      });
-    } finally {
-      unregisterTools();
+        });
+      } finally {
+        unregisterTools();
+      }
+    })();
+    session.roundOffset += loopResult.rounds;
+    for (const target of memoryTargets) {
+      if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
     }
-  })();
-  session.roundOffset += loopResult.rounds;
-  for (const target of memoryTargets) {
-    if (!session.completedTargets.includes(target)) session.completedTargets.push(target);
-  }
-  session.activeTarget = undefined;
+    session.activeTarget = undefined;
 
-  if (loopResult.stopReason === "completed") {
-    return commitMemoryOrganizationWorkspace(deps, workspace, toolCalls, loopResult.rounds, loopResult.finalResult?.message, session);
-  }
+    if (loopResult.stopReason === "completed") {
+      return commitMemoryOrganizationWorkspace(deps, workspace, toolCalls, loopResult.rounds, loopResult.finalResult?.message, session);
+    }
 
-  return memoryTargets.map((target) => ({
-    target,
-    ok: false,
-    edited: false,
-    rounds: loopResult.rounds,
-    error: "model did not finish memory induction within tool round limit",
-    toolCalls: toolCallsForTarget(toolCalls, target),
-    response: loopResult.finalResult?.message
-  }));
+    return memoryTargets.map((target) => ({
+      target,
+      ok: false,
+      edited: false,
+      rounds: loopResult.rounds,
+      error: "model did not finish memory induction within tool round limit",
+      toolCalls: toolCallsForTarget(toolCalls, target),
+      response: loopResult.finalResult?.message
+    }));
+  } finally {
+    cleanupMemoryOrganizationWorkspace(workspace);
+  }
 }

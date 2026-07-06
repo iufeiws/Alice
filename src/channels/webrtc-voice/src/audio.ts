@@ -263,41 +263,6 @@ function resolveFfmpegCommand(command: string): string {
   }
 }
 
-type OggOpusParserState = {
-  buffer: Buffer;
-  pending: Buffer;
-};
-
-function appendOggOpusPackets(state: OggOpusParserState, chunk: Buffer | Uint8Array): Uint8Array[] {
-  const packets: Uint8Array[] = [];
-  const buffer = nodeBuffer.concat([state.buffer, nodeBuffer.from(chunk)]);
-  let offset = 0;
-  while (offset + 27 <= buffer.length) {
-    if (buffer.subarray(offset, offset + 4).toString("ascii") !== "OggS") throw new Error("invalid ogg opus stream");
-    const pageSegments = buffer[offset + 26];
-    const segmentTableStart = offset + 27;
-    const dataStart = segmentTableStart + pageSegments;
-    if (dataStart > buffer.length) break;
-    const laces = Array.from(buffer.subarray(segmentTableStart, dataStart)) as number[];
-    const pageDataLength = laces.reduce((sum, value) => sum + value, 0);
-    const pageEnd = dataStart + pageDataLength;
-    if (pageEnd > buffer.length) break;
-    const pageData = buffer.subarray(dataStart, pageEnd);
-    let pageOffset = 0;
-    for (const lace of laces) {
-      state.pending = nodeBuffer.concat([state.pending, pageData.subarray(pageOffset, pageOffset + lace)]);
-      pageOffset += lace;
-      if (lace < 255) {
-        packets.push(new Uint8Array(state.pending));
-        state.pending = nodeBuffer.alloc(0);
-      }
-    }
-    offset = pageEnd;
-  }
-  state.buffer = buffer.subarray(offset);
-  return packets;
-}
-
 function parseOggOpusPackets(buffer: any): Uint8Array[] {
   const packets: Uint8Array[] = [];
   let offset = 0;

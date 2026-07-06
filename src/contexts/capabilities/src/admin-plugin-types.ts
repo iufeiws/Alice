@@ -60,7 +60,6 @@ export type TtsAdminConfig = {
       model?: string;
       voice?: string;
       languageType?: string;
-      mode?: "server_commit" | "commit";
       responseFormat?: string;
       timeoutMs?: number;
       sampleRate?: number;

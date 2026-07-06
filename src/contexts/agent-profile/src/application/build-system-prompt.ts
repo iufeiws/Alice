@@ -2,7 +2,7 @@ import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer, type PromptLayerRole } from "../domain/prompt-layer.js";
+import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../domain/prompt-layer.js";
 
 export type { PromptLayer, PromptLayerRole } from "../domain/prompt-layer.js";
 

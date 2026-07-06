@@ -828,7 +828,6 @@ function initialize(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS talk_output_interrupts_session_idx ON talk_output_interrupts(session_id, id);
   `);
-  migrateTalkBreakpointIndexColumns(db);
 }
 
 function getOutput(db: DatabaseSync, outputId: string): TalkOutput | undefined {
@@ -988,65 +987,4 @@ function payloadText(payload: unknown): string | undefined {
 
 function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
-}
-
-function migrateTalkBreakpointIndexColumns(db: DatabaseSync): void {
-  if (hasColumn(db, "talk_output_discards", "breakpoint_char_index")) {
-    db.exec(`
-      ALTER TABLE talk_output_discards RENAME TO talk_output_discards_old;
-      CREATE TABLE talk_output_discards (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        discard_id TEXT NOT NULL UNIQUE,
-        session_id INTEGER NOT NULL,
-        output_id TEXT NOT NULL,
-        interrupt_id TEXT NOT NULL,
-        discarded_text TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        created_at_utc TEXT,
-        metadata_json TEXT
-      );
-      INSERT INTO talk_output_discards(id, discard_id, session_id, output_id, interrupt_id, discarded_text, reason, created_at, created_at_utc, metadata_json)
-      SELECT id, discard_id, session_id, output_id, interrupt_id, discarded_text, reason, created_at, created_at_utc, metadata_json
-      FROM talk_output_discards_old;
-      DROP TABLE talk_output_discards_old;
-      CREATE INDEX IF NOT EXISTS talk_output_discards_session_idx ON talk_output_discards(session_id, id);
-    `);
-  }
-  if (hasColumn(db, "talk_output_interrupts", "breakpoint_char_index")) {
-    db.exec(`
-      ALTER TABLE talk_output_interrupts RENAME TO talk_output_interrupts_old;
-      CREATE TABLE talk_output_interrupts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interrupt_id TEXT NOT NULL UNIQUE,
-        session_id INTEGER NOT NULL,
-        output_id TEXT NOT NULL,
-        event_id INTEGER,
-        segment_id TEXT,
-        reason TEXT NOT NULL,
-        played_ms INTEGER,
-        total_ms INTEGER,
-        played_ratio REAL,
-        visible_text TEXT NOT NULL,
-        discard_id TEXT,
-        break_marker TEXT NOT NULL DEFAULT '...',
-        created_at TEXT NOT NULL,
-        created_at_utc TEXT,
-        final_user_segment_id TEXT,
-        resolved_at TEXT,
-        resolved_at_utc TEXT,
-        metadata_json TEXT
-      );
-      INSERT INTO talk_output_interrupts(id, interrupt_id, session_id, output_id, event_id, segment_id, reason, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, final_user_segment_id, resolved_at, resolved_at_utc, metadata_json)
-      SELECT id, interrupt_id, session_id, output_id, event_id, segment_id, reason, played_ms, total_ms, played_ratio, visible_text, discard_id, break_marker, created_at, created_at_utc, final_user_segment_id, resolved_at, resolved_at_utc, metadata_json
-      FROM talk_output_interrupts_old;
-      DROP TABLE talk_output_interrupts_old;
-      CREATE INDEX IF NOT EXISTS talk_output_interrupts_session_idx ON talk_output_interrupts(session_id, id);
-    `);
-  }
-}
-
-function hasColumn(db: DatabaseSync, tableName: string, columnName: string): boolean {
-  return db.prepare(`PRAGMA table_info(${tableName})`).all()
-    .some((row: unknown) => row && typeof row === "object" && (row as { name?: unknown }).name === columnName);
 }

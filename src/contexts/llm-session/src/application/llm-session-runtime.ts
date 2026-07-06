@@ -1,4 +1,4 @@
-import type { LLMSessionClearReason, LLMSessionSnapshot, TokenPressurePreviewBaseline } from "../domain/llm-session.js";
+import type { LLMSessionClearReason, LLMSessionSnapshot } from "../domain/llm-session.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";

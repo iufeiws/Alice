@@ -103,16 +103,6 @@ test("cleanupPreviousTtsFiles keeps non-tts files", () => {
   assert.equal(fs.existsSync(path.join(root, "note.txt")), true);
 });
 
-test("cleanupPreviousTtsFiles keeps legacy tts filenames", () => {
-  const fixture = makeAssetTempDir("scheduler-tts-cleanup-keep-legacy");
-  const root = fixture.ttsDir;
-  fs.writeFileSync(path.join(root, "voice_20260528_235959_abcd.opus"), "legacy");
-
-  cleanupPreviousTtsFiles([root], "2026-05-29T04:00:00.000", undefined, fixture.assetRoot);
-
-  assert.equal(fs.existsSync(path.join(root, "voice_20260528_235959_abcd.opus")), true);
-});
-
 test("cleanupPreviousTtsFiles skips directories outside assets", () => {
   const root = makeTempDir("scheduler-outside-assets");
   fs.writeFileSync(path.join(root, "20260527_120000_000.opus"), "old");

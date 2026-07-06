@@ -55,11 +55,10 @@ test("admin plugin config patch writes tts reference text asset", async () => {
   assert.equal(fs.readFileSync(path.join(assetRoot, "tts", "preset", presetName, "reference.txt"), "utf8"), "これは参照テキストです。");
 });
 
-test("admin plugin config patch removes legacy tts edit fields", async () => {
+test("admin plugin config patch does not persist edit fields", async () => {
   const { response, saved } = await patchTtsConfig();
 
   assert.equal(response.statusCode, 200);
-  assert.equal(saved.api_preset, undefined);
   assert.equal(saved.newPresetName, undefined);
   assert.equal(saved.currentPreset, undefined);
 });
@@ -71,7 +70,7 @@ async function patchTtsConfig() {
   writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "old", prompt: "Old prompt" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
@@ -189,7 +188,7 @@ async function readTtsConfigSchema() {
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -221,7 +220,7 @@ test("admin TTS config patch stores Bailian api key", async () => {
     }
   });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -266,7 +265,7 @@ test("admin TTS config patch preserves Bailian api key when blank", async () => 
     }
   });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -301,7 +300,7 @@ test("admin TTS config patch switches Bailian service default endpoint", async (
     preset: { provider: "bailian", bailian: { service: "qwen", model: "qwen3-tts-vc-2026-01-22", voice: "Cherry" } }
   });
   const context = {
-    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
+    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"))),
     pluginConfigs: { tts: { configPath } }
   };
   const handler = createAdminHandler(context);
@@ -336,7 +335,7 @@ test("admin plugin test can run tts with translation disabled", async () => {
   fs.mkdirSync(path.dirname(voicePath), { recursive: true });
   writeTtsPluginConfig(root, { configPath, enabled: true, translation: { prompt: "Translate:" } });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let llmCalls = 0;
   const context = {
     ...baseContext(root, memoryStore, promptStore),
@@ -381,7 +380,7 @@ test("admin plugin enable updates tts config", async () => {
   writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -400,7 +399,7 @@ test("admin plugin disable updates tts config", async () => {
   writeTtsPluginConfig(root, { configPath, enabled: true, translation: { apiPresetName: "voice" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }

@@ -114,7 +114,6 @@ test("tts plugin config reads Bailian conversion settings", () => {
     model: "qwen3-tts-vc-2026-01-22",
     voice: "custom-voice",
     languageType: "Chinese",
-    mode: "server_commit",
     responseFormat: "pcm",
     sampleRate: 24000,
     channels: 1,
@@ -135,7 +134,6 @@ test("tts plugin config reads Bailian conversion settings", () => {
   assert.equal(config.activePreset.bailian?.model, "qwen3-tts-vc-2026-01-22");
   assert.equal(config.activePreset.bailian?.voice, "custom-voice");
   assert.equal(config.activePreset.bailian?.languageType, "Chinese");
-  assert.equal(config.activePreset.bailian?.mode, "server_commit");
   assert.equal(config.activePreset.bailian?.sampleRate, 24000);
   assert.deepEqual(config.activePreset.bailian?.extraParams, { volume: 50 });
 });
@@ -417,7 +415,6 @@ function createBailianQwenFixture(name: string) {
         model: "qwen3-tts-vc-2026-01-22",
         voice: "custom-voice",
         languageType: "Chinese",
-        mode: "server_commit",
         responseFormat: "pcm",
         sampleRate: 24000,
         channels: 1,

@@ -65,28 +65,6 @@ test("provider_reusesStoredPanoWithoutDownloadingImageAgain", async () => {
   assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
 });
 
-test("provider_ignoresLegacyMonthSubdirectoryCache", async () => {
-  const root = tempOutputRoot();
-  writeStoredResult(path.join(root, "2026-06"), "legacy-pano.jpg", "legacy-pano");
-  const requests: string[] = [];
-  const plugin = createGoogleStreetViewPlugin({
-    config: configWithOutput(root),
-    fetch: async (url) => {
-      requests.push(String(url));
-      if (String(url).includes("/metadata")) {
-        return jsonResponse({ status: "OK", pano_id: "legacy-pano", location: { lat: 35.1, lng: 139.1 } });
-      }
-      return bytesResponse(new Uint8Array([6]));
-    }
-  });
-
-  const result = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
-
-  assert.equal(result.reused, false);
-  assert.equal(result.filePath, path.join(root, "legacy-pano.jpg"));
-  assert.equal(requests.filter((url) => !url.includes("/metadata")).length, 1);
-});
-
 test("provider_metadataLookupStoresMetadataWithoutImageDownload", async () => {
   const root = tempOutputRoot();
   const requests: string[] = [];

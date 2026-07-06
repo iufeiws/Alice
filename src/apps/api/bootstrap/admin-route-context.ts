@@ -7,7 +7,7 @@ import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-
 import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
 import type { CalendarStore } from "../../../platform/storage/src/calendar-store.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import type { AgentBehaviorState, AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
+import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapters/json-core-profile-store.js";
 import { type MemoryInductionPromptStore, type MemoryRunSummary, type MemoryStore, type MemoryTarget } from "../../../contexts/memory/src/memory.js";
 import type { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";

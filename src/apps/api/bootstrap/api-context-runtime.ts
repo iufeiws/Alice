@@ -32,7 +32,7 @@ export function createApiContextRuntime(input: {
     appendLog: input.appendLog
   });
 
-  const agentInitiatedBehaviorConfigPath = promptStoragePath(input.config.memoryFiles.root, "initiated-behaviors.config.json", ["config", "initiated-behaviors.config.json"]);
+  const agentInitiatedBehaviorConfigPath = promptStoragePath(input.config.memoryFiles.root, "initiated-behaviors.config.json");
   const initiatedBehaviorRuntime = createInitiatedBehaviorRuntime({
     configPath: agentInitiatedBehaviorConfigPath,
     appendLog: input.appendLog

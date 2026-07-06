@@ -1,4 +1,4 @@
-import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers, LLMToolSpec } from "./index.js";
+import type { LLMChatInput, LLMChatResult, LLMStreamHandlers, LLMToolSpec } from "./index.js";
 import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
 import {
   createParenthesizedContentStripper,

@@ -211,7 +211,7 @@ export function renderPromptsScript(): string {
       function renderPromptApiPresetPicker(mode) {
         const isMemorize = mode === "memorize";
         const isTalk = mode === "talk";
-        const selected = isMemorize ? promptApiProfile.memorizePresetName : isTalk ? promptApiProfile.talkPresetName : (promptApiProfile.chatPresetName || promptApiProfile.corePresetName);
+        const selected = isMemorize ? promptApiProfile.memorizePresetName : isTalk ? promptApiProfile.talkPresetName : promptApiProfile.chatPresetName;
         const label = isMemorize ? "Memorize API Preset" : isTalk ? "Talk API Preset" : "Chat API Preset";
         const buttonLabel = isMemorize ? "Save Memorize API Binding" : isTalk ? "Save Talk API Binding" : "Save Chat API Binding";
         return \`

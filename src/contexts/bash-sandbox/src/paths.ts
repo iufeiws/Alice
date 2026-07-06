@@ -26,17 +26,6 @@ export function isAllowedCwd(config: BashSandboxConfig, cwd: string): boolean {
   ].some((root) => isSameOrInside(cwd, root));
 }
 
-export function isReadOnlyPath(config: BashSandboxConfig, value: string): boolean {
-  if (config.skillMounts.some((mount) => mount.readOnly && isSameOrInside(value, mount.containerPath))) return true;
-  return config.mounts.some((mount) => mount.readOnly && isSameOrInside(value, mount.containerPath));
-}
-
-export function isWritablePath(config: BashSandboxConfig, value: string): boolean {
-  if (isSameOrInside(value, config.workspaceDir) || isSameOrInside(value, config.cacheDir) || isSameOrInside(value, config.tmpDir)) return true;
-  if (config.skillMounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath))) return true;
-  return config.mounts.some((mount) => !mount.readOnly && isSameOrInside(value, mount.containerPath));
-}
-
 function isSameOrInside(value: string, root: string): boolean {
   const cleanRoot = root.replace(/\/+$/, "") || "/";
   return value === cleanRoot || value.startsWith(`${cleanRoot}/`);

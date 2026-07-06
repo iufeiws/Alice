@@ -244,23 +244,10 @@ function initialize(db: DatabaseSync): void {
       created_at_utc TEXT
     );
     CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_idx ON wake_boundaries(occurred_at);
+    CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_utc_idx ON sleep_boundaries(occurred_at_utc);
+    CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc);
+    CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_utc_idx ON wake_boundaries(occurred_at_utc);
   `);
-  const columns = db.prepare("PRAGMA table_info(sleep_boundaries)").all().map((row: any) => row.name);
-  addColumnIfMissing(db, columns, "occurred_at_utc", "ALTER TABLE sleep_boundaries ADD COLUMN occurred_at_utc TEXT");
-  addColumnIfMissing(db, columns, "created_at_utc", "ALTER TABLE sleep_boundaries ADD COLUMN created_at_utc TEXT");
-  db.exec("CREATE INDEX IF NOT EXISTS sleep_boundaries_occurred_at_utc_idx ON sleep_boundaries(occurred_at_utc)");
-  const preparationColumns = db.prepare("PRAGMA table_info(sleep_preparation_boundaries)").all().map((row: any) => row.name);
-  addColumnIfMissing(db, preparationColumns, "occurred_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN occurred_at_utc TEXT");
-  addColumnIfMissing(db, preparationColumns, "created_at_utc", "ALTER TABLE sleep_preparation_boundaries ADD COLUMN created_at_utc TEXT");
-  db.exec("CREATE INDEX IF NOT EXISTS sleep_preparation_boundaries_occurred_at_utc_idx ON sleep_preparation_boundaries(occurred_at_utc)");
-  const wakeColumns = db.prepare("PRAGMA table_info(wake_boundaries)").all().map((row: any) => row.name);
-  addColumnIfMissing(db, wakeColumns, "occurred_at_utc", "ALTER TABLE wake_boundaries ADD COLUMN occurred_at_utc TEXT");
-  addColumnIfMissing(db, wakeColumns, "created_at_utc", "ALTER TABLE wake_boundaries ADD COLUMN created_at_utc TEXT");
-  db.exec("CREATE INDEX IF NOT EXISTS wake_boundaries_occurred_at_utc_idx ON wake_boundaries(occurred_at_utc)");
-}
-
-function addColumnIfMissing(db: DatabaseSync, columns: string[], name: string, statement: string): void {
-  if (!columns.includes(name)) db.exec(statement);
 }
 
 function normalizeEntry(row: unknown): DiaryEntry | undefined {

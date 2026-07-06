@@ -32,12 +32,6 @@ export function renderShellsScript(): string {
             <p class="muted">Created at: \${escapeHtml(shellData.daily?.createdAt || "")}</p>
             <pre>\${escapeHtml(JSON.stringify(shellData.todayVariables || {}, null, 2))}</pre>
           </details>
-          <details class="prompt-layer">
-            <summary>Shell Settings<span>daily refresh clock</span></summary>
-            <label for="shellRolloverHour">Daily Refresh Clock (0-23)</label>
-            <input id="shellRolloverHour" inputmode="numeric" value="\${escapeAttr(shellData.settings?.rolloverHour ?? 4)}" />
-            <button type="button" id="shell-settings-save">Save Shell Settings</button>
-          </details>
           <details class="prompt-layer" open>
             <summary>语气 / 称呼<span>top</span></summary>
             <div class="shell-grid">
@@ -50,7 +44,6 @@ export function renderShellsScript(): string {
           </details>
         \`;
         $("shell-reroll").addEventListener("click", rerollShell);
-        $("shell-settings-save").addEventListener("click", saveShellSettings);
         shellCategories.forEach((category) => bindShellCategory(category.key));
       }
 
@@ -398,19 +391,6 @@ export function renderShellsScript(): string {
         renderShellEditor();
         await refreshPromptProfile();
         await refreshLLMRequests();
-      }
-
-      async function saveShellSettings() {
-        const result = await fetch("/admin/api/shell-settings", {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ rolloverHour: Number($("shellRolloverHour").value) })
-        }).then((res) => res.json());
-        $("shell-status").textContent = result.ok ? "Shell settings saved." : "Shell settings save failed: " + (result.error || "unknown error");
-        if (result.ok) {
-          shellData = result;
-          renderShellEditor();
-        }
       }
 
       async function uploadShellOutfitImage(optionRoot, option, category, index, file) {

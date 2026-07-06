@@ -43,7 +43,6 @@ export function renderTtsPluginScript(): string {
             setPluginFieldValue("currentPreset.bailian.model", bailian.model || "");
             setPluginFieldValue("currentPreset.bailian.voice", bailian.voice || "");
             setPluginFieldValue("currentPreset.bailian.languageType", bailian.languageType || "");
-            setPluginFieldValue("currentPreset.bailian.mode", bailian.mode || "server_commit");
             setPluginFieldValue("currentPreset.bailian.responseFormat", bailian.responseFormat || "");
             setPluginFieldValue("currentPreset.bailian.timeoutMs", bailian.timeoutMs ?? "");
             setPluginFieldValue("currentPreset.bailian.sampleRate", bailian.sampleRate ?? "");

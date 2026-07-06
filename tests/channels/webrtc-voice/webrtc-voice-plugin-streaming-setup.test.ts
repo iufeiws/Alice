@@ -57,7 +57,7 @@ test("WebRTC voice uses streaming TTS audio chunks when available", async () => 
         yield {
           type: "audio" as const,
           sequence: 0,
-          text: "legacy text",
+          text: "stream text",
           textchunk: "ストリーム",
           chunk: new Uint8Array([9]),
           soundchunk: new Uint8Array([1, 2, 3, 4]),

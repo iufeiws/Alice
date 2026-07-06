@@ -115,7 +115,7 @@ function buildLLMSessionTurnsFromTranscript(session: LLMSessionRecord): LLMSessi
       latestRequest,
       latestResponse,
       messages: messages.slice(0, responseIndex),
-      response: transcriptResponseEntry(session, round, responseIndex, messages[responseIndex], latestResponse)
+      response: transcriptResponseEntry(session, responseIndex, messages[responseIndex], latestResponse)
     };
   });
 }
@@ -131,7 +131,6 @@ function isSyntheticPromptToolRequest(message: LLMChatInput["messages"][number])
 
 function transcriptResponseEntry(
   session: LLMSessionRecord,
-  round: number,
   responseIndex: number,
   message: LLMChatInput["messages"][number],
   latestResponse: LLMSessionResponseInfo | undefined

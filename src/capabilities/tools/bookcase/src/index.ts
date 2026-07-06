@@ -300,29 +300,6 @@ function formatBookAsXml(book: SelectedBook, promptContextRuntime: PromptContext
   return promptContextRuntime.renderText(template);
 }
 
-function staticMessagesForCall(call: ToolCall, output: string): NonNullable<ToolResult["llmSessionStaticMessages"]> {
-  return [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [{
-        id: call.id,
-        type: "function",
-        function: {
-          name: call.toolName,
-          arguments: JSON.stringify(call.input)
-        }
-      }]
-    },
-    {
-      role: "tool",
-      name: call.toolName,
-      toolCallId: call.id,
-      content: output
-    }
-  ];
-}
-
 function formatReturnAsXml(message: string): string {
   return [
     '<bookcase action="return" clear_fixed_prefix="true">',

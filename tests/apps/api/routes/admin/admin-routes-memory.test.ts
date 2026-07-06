@@ -1,8 +1,6 @@
 import { test } from "node:test";
-import { testPromptRuntime } from "../../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import {
-  addPatch,
   assertPatchError,
   baseContext,
   createAdminHandler,
@@ -15,7 +13,6 @@ import {
   createRawRequest,
   createRequest,
   createResponse,
-  editToolClient,
   fs,
   makeTempDir,
   makeTinyWavBuffer,
@@ -23,34 +20,21 @@ import {
   path,
   photoDefaults,
   promptStoragePath,
-  runMemoryInductionForMessages,
-  writePreset
 } from "./admin-routes-helpers.js";
-import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-helpers.js";
-
-test("memory run-day migrates legacy prompt api profile", async () => {
-  const fixture = createMemoryRunDayFixture();
-
-  const response = createResponse();
-  await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(fs.existsSync(path.join(fixture.root, "src", "contexts", "agent-profile", "prompts", "prompt-api-profile.json")), true);
-  assert.equal(fs.existsSync(path.join(fixture.root, "config", "prompt-api-profile.json")), false);
-});
+import type { StoredConversationMessage } from "./admin-routes-helpers.js";
 
 test("memory run-day uses Memorize preset api settings", async () => {
   const fixture = createMemoryRunDayFixture();
 
   const response = createResponse();
   await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
-  const firstRequest = fixture.seen[0];
+  const preset = fixture.capturedPreset();
 
   assert.equal(response.statusCode, 200);
-  assert.equal(fixture.capturedPreset()?.name, "Memorize Custom");
-  assert.equal(firstRequest.model, "memorize-model");
-  assert.equal(firstRequest.temperature, 0.65);
-  assert.deepEqual(firstRequest.extraParams, { top_p: 0.9 });
+  assert.equal(preset?.name, "Memorize Custom");
+  assert.equal(preset?.model, "memorize-model");
+  assert.equal(preset?.temperature, 0.65);
+  assert.deepEqual(preset?.extraParams, { top_p: 0.9 });
 });
 
 test("memory run-day runs memory targets in fixed order", async () => {
@@ -64,18 +48,15 @@ test("memory run-day runs memory targets in fixed order", async () => {
   assert.deepEqual(body.result.results.map((entry: any) => entry.target), ["persistent", "userPreferences", "yesterdaySummary"]);
 });
 
-test("memory run-day sends common prompt without target layers", async () => {
+test("memory run-day invokes induction without a single target", async () => {
   const fixture = createMemoryRunDayFixture();
 
   const response = createResponse();
   await fixture.handler(createRequest("POST", "/admin/api/memory/run-day", { date: "2026-05-24" }), response);
-  const promptText = fixture.seen[0].messages.map((entry) => entry.content).join("\n");
 
   assert.equal(response.statusCode, 200);
-  assert.match(promptText, /custom memorize common prompt/);
-  assert.doesNotMatch(promptText, /persistent-only prompt/);
-  assert.doesNotMatch(promptText, /user-preferences-only prompt/);
-  assert.doesNotMatch(promptText, /diary-only prompt/);
+  assert.equal(fixture.capturedTarget(), undefined);
+  assert.equal(fixture.capturedMessages().length, 1);
 });
 
 function createMemoryRunDayFixture() {
@@ -94,12 +75,12 @@ function createMemoryRunDayFixture() {
       followupExtraParams: {}
     }]
   })}\n`);
-  fs.writeFileSync(path.join(root, "config", "prompt-api-profile.json"), `${JSON.stringify({
+  fs.writeFileSync(promptStoragePath(root, "prompt-api-profile.json"), `${JSON.stringify({
     memorizePresetName: "Memorize Custom"
   })}\n`);
 
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   promptStore.save({
     commonLayers: [
       { id: "common", title: "Common", role: "system", enabled: true, order: 10, content: "custom memorize common prompt" }
@@ -115,8 +96,9 @@ function createMemoryRunDayFixture() {
     ]
   });
 
-  const seen: LLMChatInput[] = [];
   let capturedPreset: any;
+  let capturedMessages: StoredConversationMessage[] = [];
+  let capturedTarget: string | undefined;
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     store: {
@@ -127,44 +109,31 @@ function createMemoryRunDayFixture() {
         return [];
       }
     },
-    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string, windowEndAt: string, apiPreset: any) {
+    async runMemoryInductionForMessages(messages: StoredConversationMessage[], windowStartAt: string | undefined, windowEndAt: string, apiPreset: any, target?: string) {
       capturedPreset = apiPreset;
-      return runMemoryInductionForMessages({
-        memoryStore,
-        promptStore,
-            promptContextRuntime: testPromptRuntime(),
-        messages,
+      capturedMessages = messages;
+      capturedTarget = target;
+      return {
+        ok: true,
+        startedAt: "2026-05-24T06:00:00.000Z",
         windowStartAt,
         windowEndAt,
-        llm: editToolClient(seen, [
-          addPatch("memory\n"),
-          addPatch("user\n"),
-          addPatch("diary\n")
-        ]),
-        config: {
-          enabled: true,
-          baseURL: apiPreset.baseURL,
-          apiKey: apiPreset.apiKey,
-          model: apiPreset.model,
-          temperature: apiPreset.temperature,
-          timeoutMs: apiPreset.timeoutMs,
-          stream: apiPreset.stream,
-          extraParams: apiPreset.extraParams,
-          followupExtraParams: apiPreset.followupExtraParams
-        },
-        nowIso: () => "2026-05-24T06:00:00.000Z",
-        timezone: "Asia/Shanghai",
-        log() {}
-      });
+        messageCount: messages.length,
+        results: [
+          { target: "persistent", ok: true, edited: true, toolCalls: [] },
+          { target: "userPreferences", ok: true, edited: true, toolCalls: [] },
+          { target: "yesterdaySummary", ok: true, edited: true, toolCalls: [] }
+        ]
+      };
     }
   });
-  return { root, handler, seen, capturedPreset: () => capturedPreset };
+  return { root, handler, capturedPreset: () => capturedPreset, capturedMessages: () => capturedMessages, capturedTarget: () => capturedTarget };
 }
 
 test("memory run-day reads messages from the selected sleep window", async () => {
   const root = makeTempDir("admin-memory-run-window");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let capturedWindow: { startAt?: string; endAt?: string } = {};
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -195,7 +164,7 @@ test("memory run-day reads messages from the selected sleep window", async () =>
 test("memory run-target still processes all memory files in one workspace run", async () => {
   const root = makeTempDir("admin-memory-run-target");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let capturedTarget = "";
   let capturedMessages: StoredConversationMessage[] = [];
   const handler = createAdminHandler({
@@ -239,7 +208,7 @@ test("memory run-target still processes all memory files in one workspace run", 
 test("memory admin rejects concurrent run requests", async () => {
   const root = makeTempDir("admin-memory-run-concurrent");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let activeRuns = 0;
   let maxActiveRuns = 0;
   const calls: Array<{ target?: string }> = [];
@@ -305,7 +274,7 @@ test("memory admin rejects concurrent run requests", async () => {
 test("memory admin manual run requires paused heartbeat or sleeping state by default", async () => {
   const root = makeTempDir("admin-memory-run-paused-or-sleep");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let calls = 0;
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -337,7 +306,7 @@ test("memory admin manual run requires paused heartbeat or sleeping state by def
 test("memory admin manual run is allowed when heartbeat is paused", async () => {
   const root = makeTempDir("admin-memory-run-heartbeat-paused");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let calls = 0;
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -368,7 +337,7 @@ test("memory admin manual run is allowed when heartbeat is paused", async () => 
 test("memory clear-session clears the console memorize session", async () => {
   const root = makeTempDir("admin-memory-clear-session");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let cleared = false;
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -389,7 +358,7 @@ test("memory clear-session clears the console memorize session", async () => {
 test("memory windows do not reseed sleep boundaries from persisted sleep system messages", async () => {
   const root = makeTempDir("admin-memory-no-persisted-sleep-boundary-reseed");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const recorded: Array<{ occurredAt: string; source: string; now: string }> = [];
   const boundaries = [
     { occurredAt: "2026-05-31T03:46:02.806", source: "inferred_gap" }
@@ -433,7 +402,7 @@ test("memory windows do not reseed sleep boundaries from persisted sleep system 
 test("memory git undo is unavailable for SQL-backed memory", async () => {
   const root = makeTempDir("admin-memory-git-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
   memoryStore.writeTarget("persistent", "persistent v1\n");
 
@@ -447,7 +416,7 @@ test("memory git undo is unavailable for SQL-backed memory", async () => {
 test("memory git redo is unavailable for SQL-backed memory", async () => {
   const root = makeTempDir("admin-memory-git-redo-unavailable");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -459,7 +428,7 @@ test("memory git redo is unavailable for SQL-backed memory", async () => {
 test("memory delete-latest-sql removes the latest persistent entry", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql-persistent");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore)
   });
@@ -479,7 +448,7 @@ test("memory delete-latest-sql removes the latest persistent entry", async () =>
 test("memory delete-latest-sql removes the latest user preference entry", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql-user-pref");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore)
   });
@@ -499,7 +468,7 @@ test("memory delete-latest-sql removes the latest user preference entry", async 
 test("memory delete-latest-sql removes the latest diary entry by default", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql-diary");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore)
   });
@@ -521,7 +490,7 @@ test("memory delete-latest-sql removes the latest diary entry by default", async
 test("memory delete-latest-sql reports when no diary entry exists", async () => {
   const root = makeTempDir("admin-memory-delete-latest-sql-empty");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const diaryStore = createDiaryStore(path.join(root, "diary", "diary.sqlite"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),

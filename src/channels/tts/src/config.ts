@@ -1,29 +1,18 @@
 const fs = await import("node:fs");
 const path = await import("node:path");
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
-  MossOnnxVoiceSynthesizerDeps,
-  TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
   TtsBailianConversionConfig,
   TtsConversionProvider,
   TtsGeniePresetConfig,
   TtsMimoConversionConfig,
   TtsOpenAiApiConversionConfig,
   TtsPreset,
-  TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
   TtsRemoteConfig,
-  TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
   TtsTextFilter,
   TtsTranslationPreset,
   TtsVoiceModelConfig,
-  VoiceSynthesisInput,
   VoiceSynthesizer
 } from "./types.js";
 
@@ -34,7 +23,6 @@ import {
   optionalNumberValue,
   parseJsonObject,
   recordValue,
-  resolveAssetScopedPath,
   stringValue,
   ttsReferenceTextValue
 } from "./internal.js";
@@ -49,7 +37,6 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
   const resolved = path.resolve(configPath);
   const raw = fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}";
   const parsed = parseJsonObject(raw);
-  const preset = parseJsonObject(parsed.api_preset);
   const translationPresetName = stringValue(parsed.translationPresetName) || "default";
   const translationPresets = ttsTranslationPresetsValue(parsed.translationPresets, translationPresetName);
   const selectedTranslation = selectedTtsTranslationPreset({ translationPresetName, translationPresets });
@@ -71,16 +58,6 @@ export function readTtsPluginConfig(configPath = defaultConfigPath): TtsPluginCo
     translationPresets,
     translationEnabled,
     apiPresetName: selectedTranslation.apiPresetName,
-    api_preset: {
-      name: stringValue(preset.name),
-      baseURL: stringValue(preset.baseURL) || "",
-      apiKey: stringValue(preset.apiKey),
-      apiKeyEnv: stringValue(preset.apiKeyEnv),
-      model: stringValue(preset.model) || "flash",
-      temperature: numberValue(preset.temperature, 0.2),
-      timeoutMs: numberValue(preset.timeoutMs, 60_000),
-      extraParams: recordValue(preset.extraParams)
-    },
     prompt: selectedPrompt ?? ""
   };
 }
@@ -155,9 +132,8 @@ export function ttsPresetReferenceAudio(name: string, assetRoot = "assets"): str
   }
 }
 
-export function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginDeps): TtsApiPreset | undefined {
-  if (config.apiPresetName) return deps.resolveApiPreset?.(config.apiPresetName) ?? config.api_preset;
-  return config.api_preset;
+export function resolveEffectivePreset(config: TtsPluginConfig, deps: TtsPluginDeps) {
+  return config.apiPresetName ? deps.resolveApiPreset?.(config.apiPresetName) : undefined;
 }
 
 export function ttsPresetConfigDir(configPath = defaultConfigPath): string {
@@ -259,7 +235,6 @@ function ttsBailianConversionConfigValue(raw: Record<string, unknown>): TtsBaili
     model: stringValue(raw.model) || "qwen3-tts-vc-2026-01-22",
     voice: stringValue(raw.voice) || "Cherry",
     languageType: stringValue(raw.languageType) || "Chinese",
-    mode: raw.mode === "commit" ? "commit" : "server_commit",
     responseFormat: stringValue(raw.responseFormat) || "pcm",
     sampleRate: numberValue(raw.sampleRate, 24_000),
     channels: numberValue(raw.channels, 1),
@@ -339,19 +314,6 @@ function ttsTranslationPresetValue(value: unknown): TtsTranslationPreset {
     translationEnabled: raw.translationEnabled === undefined ? undefined : booleanValue(raw.translationEnabled, true),
     apiPresetName: stringValue(raw.apiPresetName),
     prompt: stringValue(raw.prompt)
-  };
-}
-
-function ttsVoiceModelConfigValue(value: unknown): TtsVoiceModelConfig {
-  const raw = parseJsonObject(value);
-  return {
-    language: ttsLanguageValue(raw.language),
-    speed: optionalNumberValue(raw.speed),
-    partSilenceSeconds: optionalNumberValue(raw.partSilenceSeconds),
-    splitText: raw.splitText === undefined ? undefined : booleanValue(raw.splitText, false),
-    modelDir: stringValue(raw.modelDir),
-    referenceAudio: stringValue(raw.referenceAudio),
-    referenceText: stringValue(raw.referenceText)
   };
 }
 

@@ -95,10 +95,6 @@ export function ttsPluginEntry(): AdminPluginRegistryEntry {
         { key: "currentPreset.bailian.model", label: "Model", type: "text", group: "conversion_bailian", description: "Bailian Qwen-TTS non-realtime model name." },
         { key: "currentPreset.bailian.voice", label: "Voice", type: "text", group: "conversion_bailian", description: "Bailian voice name or custom voice ID." },
         { key: "currentPreset.bailian.languageType", label: "Language Type", type: "text", group: "conversion_bailian", description: "Qwen-TTS language_type, for example Chinese, Japanese, English, or Auto." },
-        { key: "currentPreset.bailian.mode", label: "Mode", type: "select", group: "conversion_bailian", options: [
-          { value: "server_commit", label: "Server Commit" },
-          { value: "commit", label: "Commit" }
-        ], description: "Retained for older configs; non-realtime streaming uses HTTP SSE." },
         { key: "currentPreset.bailian.responseFormat", label: "Response Format", type: "text", group: "conversion_bailian", description: "Local PCM format label for playback; Bailian non-realtime SSE returns PCM audio data." },
         { key: "currentPreset.bailian.timeoutMs", label: "Timeout Ms", type: "number", group: "conversion_bailian", min: 1000, max: 300000, step: 1000, description: "Request timeout for Bailian non-realtime TTS." },
         { key: "currentPreset.bailian.sampleRate", label: "PCM Sample Rate", type: "number", group: "conversion_bailian", min: 8000, max: 48000, step: 1000, description: "PCM sample rate returned by Bailian. Default is 24000." },
@@ -275,7 +271,6 @@ function updateTtsConfig(
   patch: Record<string, unknown>
 ): { config: TtsPluginConfig } | { error: string } {
   const current = readTtsConfigForAdmin(context);
-  if ("api_preset" in patch) return { error: "invalid_plugin_config" };
   if (!current.activePresetName || !current.presets || !current.activePreset) return { error: "tts_active_preset_not_found" };
   const currentPresets = current.presets;
   const currentTranslationPresets = current.translationPresets ?? {};
@@ -322,7 +317,6 @@ function updateTtsConfig(
     translationPresets: nextTranslationPresets,
     translationEnabled: activeTranslation.translationEnabled ?? true,
     apiPresetName: activeTranslation.apiPresetName,
-    api_preset: current.api_preset,
     prompt: activeTranslation.prompt ?? current.prompt
   };
 
@@ -390,8 +384,6 @@ function buildTtsPresetFromPatch(current: TtsPreset, patch: Record<string, unkno
       : nextBailianService !== currentBailianService && submittedBailianEndpoint === defaultBailianTtsEndpoint(currentBailianService)
         ? defaultBailianTtsEndpoint(nextBailianService)
         : submittedBailianEndpoint;
-    const nextBailianMode = bailianPatch.mode === undefined ? currentBailian.mode ?? "server_commit" : bailianModeFromUnknown(bailianPatch.mode);
-    if (!nextBailianMode) return { error: "invalid_bailian_mode" };
     return {
       preset: {
         provider,
@@ -405,7 +397,6 @@ function buildTtsPresetFromPatch(current: TtsPreset, patch: Record<string, unkno
           model: bailianPatch.model === undefined ? currentBailian.model ?? "qwen3-tts-vc-2026-01-22" : requiredString(bailianPatch.model),
           voice: bailianPatch.voice === undefined ? currentBailian.voice ?? "Cherry" : requiredString(bailianPatch.voice),
           languageType: bailianPatch.languageType === undefined ? currentBailian.languageType ?? "Chinese" : optionalString(bailianPatch.languageType),
-          mode: nextBailianMode,
           responseFormat: bailianPatch.responseFormat === undefined ? currentBailian.responseFormat ?? "pcm" : requiredString(bailianPatch.responseFormat),
           timeoutMs: bailianPatch.timeoutMs === undefined ? currentBailian.timeoutMs ?? 60_000 : optionalNumberFromUnknown(bailianPatch.timeoutMs),
           sampleRate: bailianPatch.sampleRate === undefined ? currentBailian.sampleRate ?? 24_000 : optionalNumberFromUnknown(bailianPatch.sampleRate),
@@ -541,10 +532,6 @@ function bailianServiceFromUnknown(value: unknown): "qwen" | "cosy" | undefined 
   return value === "qwen" || value === "cosy" ? value : undefined;
 }
 
-function bailianModeFromUnknown(value: unknown): "commit" | "server_commit" | undefined {
-  return value === "commit" || value === "server_commit" ? value : undefined;
-}
-
 function mimoModeFromUnknown(value: unknown): "preset" | "voicedesign" | "voiceclone" | undefined {
   return value === "preset" || value === "voicedesign" || value === "voiceclone" ? value : undefined;
 }
@@ -651,7 +638,7 @@ async function uploadGenericPluginAsset(
     return result;
   }
   const assetPath = pluginId === "tts"
-    ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, relativeDir, presetName, context.pluginConfigs?.tts?.assetRoot)
+    ? resolveTtsModelAssetPathForUpload(config, assetKey, fileName, presetName, context.pluginConfigs?.tts?.assetRoot)
     : resolvePluginAssetPathForUpload(pluginId, assetKey, fileName, relativeDir);
   if (pluginId === "tts" && assetKey === "reference-audio") {
     const result = await writeTtsPresetReferenceAudioUpload(context, assetPath.fullPath, fileName, body);
@@ -724,7 +711,7 @@ function mimoVoiceCloneMimeType(fileName: string): string | undefined {
   return undefined;
 }
 
-function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, relativeDir: string, presetName?: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
+function resolveTtsModelAssetPathForUpload(config: TtsPluginConfig, assetKey: string, fileName: string, presetName?: string, assetRoot = "assets"): { fullPath: string; assetPath: string } {
   if (!config.activePresetName) throw new HttpJsonError(400, "tts_active_preset_not_found");
   const selectedPresetName = safeTtsPresetName(presetName || config.editPresetName || config.activePresetName, config.activePresetName);
   const root = path.resolve(assetRoot, "tts", "preset", selectedPresetName);
@@ -778,28 +765,6 @@ function ttsReferenceCodecConfig(context: AdminRoutesContext): { sampleRate: num
   } catch {
     return { sampleRate: 48_000, channels: 2 };
   }
-}
-
-function sanitizePluginAssetRelativePath(value: string): string {
-  if (!value) return "";
-  const normalized = path.normalize(value).replace(/^(\.\.(\/|\\|$))+/, "");
-  return normalized === "." ? "" : normalized;
-}
-
-function isPluginAssetPath(pluginId: string, value: string, assetRoot = "assets"): boolean {
-  const root = path.resolve(assetRoot, "plugin", pluginId);
-  const fullPath = resolvePluginAssetPath(pluginId, value, assetRoot);
-  const relative = path.relative(root, fullPath);
-  return !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-function resolvePluginAssetPath(pluginId: string, value: string, assetRoot = "assets"): string {
-  const normalized = path.normalize(value);
-  const prefix = path.join("assets", "plugin", pluginId);
-  if (normalized === prefix || normalized.startsWith(`${prefix}${path.sep}`)) {
-    return path.resolve(assetRoot, path.relative("assets", normalized));
-  }
-  return path.resolve(value);
 }
 
 function ttsConfigPath(context: AdminRoutesContext): string {
@@ -887,7 +852,6 @@ function publicTtsPreset(name: string, preset: TtsPreset, assetRoot = "assets"):
       model: bailian.model ?? "qwen3-tts-vc-2026-01-22",
       voice: bailian.voice ?? "Cherry",
       languageType: bailian.languageType ?? "Chinese",
-      mode: bailian.mode ?? "server_commit",
       responseFormat: bailian.responseFormat ?? "pcm",
       timeoutMs: bailian.timeoutMs ?? 60_000,
       sampleRate: bailian.sampleRate ?? 24_000,
@@ -929,8 +893,7 @@ function canonicalTtsConfig(config: TtsPluginConfig): TtsPluginConfig {
     activePresetName: config.activePresetName,
     editPresetName: config.editPresetName,
     translationPresetName,
-    translationPresets,
-    api_preset: undefined
+    translationPresets
   } as TtsPluginConfig;
 }
 

@@ -279,7 +279,7 @@ test("check_chat recent returns only the latest 50 messages from the 500 message
     store.upsertInboundMessage({
       plugin: "feishu",
       externalMessageId: `om_${index}`,
-      conversationId: index % 2 === 0 ? "session-1" : "legacy-session",
+      conversationId: index % 2 === 0 ? "session-1" : "other-session",
       senderId: "user-1",
       contentType: "text",
       contentText: `msg ${index}`,

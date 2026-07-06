@@ -29,7 +29,7 @@ import type { LLMChatInput, StoredConversationMessage } from "./admin-routes-hel
 test("voice call app page renders outside the plugin page", async () => {
   const root = makeTempDir("voice-call-page");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -47,7 +47,7 @@ test("voice call app page renders outside the plugin page", async () => {
 test("voice call app config defines frontend and signaling routes", async () => {
   const root = makeTempDir("voice-call-config");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -64,7 +64,7 @@ test("voice call app config defines frontend and signaling routes", async () => 
 test("llm api preset save stores extra params as part of the preset", async () => {
   const root = makeTempDir("admin-llm-preset-extra");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   const handler = createAdminHandler(context);
 
@@ -94,7 +94,7 @@ test("llm api preset save stores extra params as part of the preset", async () =
 test("llm api preset save accepts long timeout values", async () => {
   const root = makeTempDir("admin-llm-preset-timeout");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -117,7 +117,7 @@ test("llm api preset save accepts long timeout values", async () => {
 test("admin birthday save writes a birthday calendar entry", async () => {
   const root = makeTempDir("admin-birthday");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     calendarStore: createCalendarStore(path.join(root, "alice.sqlite"))
@@ -178,7 +178,7 @@ test("prompt api profile saves chat binding", async () => {
     ]
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -188,7 +188,7 @@ test("prompt api profile saves chat binding", async () => {
     memorizePresetName: "Memorize Custom"
   }), response);
   const body = JSON.parse(response.body);
-  const saved = JSON.parse(fs.readFileSync(promptStoragePath(root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]), "utf8"));
+  const saved = JSON.parse(fs.readFileSync(promptStoragePath(root, "prompt-api-profile.json"), "utf8"));
 
   assert.equal(response.statusCode, 200);
   assert.equal(body.ok, true);
@@ -199,41 +199,10 @@ test("prompt api profile saves chat binding", async () => {
   });
 });
 
-test("prompt api profile migrates legacy core binding to chat binding", async () => {
-  const root = makeTempDir("admin-prompt-api-profile-legacy-core");
-  fs.mkdirSync(path.join(root, "config"), { recursive: true });
-  fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
-    presets: [
-      {
-        name: "Chat Custom",
-        baseURL: "https://chat.example.test/v1",
-        model: "chat-custom",
-        temperature: 0.4,
-        timeoutMs: 90_000,
-        stream: true,
-        extraParams: {},
-        followupExtraParams: {}
-      }
-    ]
-  })}\n`);
-  const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
-
-  const response = createResponse();
-  await handler(createRequest("PUT", "/admin/api/prompt-api-profile", {
-    corePresetName: "Chat Custom"
-  }), response);
-  const saved = JSON.parse(fs.readFileSync(promptStoragePath(root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]), "utf8"));
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(saved.chatPresetName, "Chat Custom");
-});
-
 test("talk prompt profile saves independently from chat prompt profile", async () => {
   const root = makeTempDir("admin-talk-prompt-profile");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   context.promptProfileStore = createPromptProfileStore(path.join(root, "chat-prompt-profile.json"));
   context.talkPromptProfileStore = createPromptProfileStore(path.join(root, "talk-prompt-profile.json"));
@@ -253,7 +222,7 @@ test("talk prompt profile saves independently from chat prompt profile", async (
 test("agent state admin route exposes calling state", async () => {
   const root = makeTempDir("admin-agent-state-calling");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let currentState = "calling";
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -281,7 +250,7 @@ test("agent state admin route exposes calling state", async () => {
 test("agent state admin route accepts calling state", async () => {
   const root = makeTempDir("admin-agent-state-set-calling");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   let currentState = "idle";
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
@@ -309,7 +278,7 @@ test("agent state admin route accepts calling state", async () => {
 test("admin messaging runtime rejects missing Feishu target", async () => {
   const root = makeTempDir("admin-messaging-missing-target");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -322,7 +291,7 @@ test("admin messaging runtime rejects missing Feishu target", async () => {
 test("admin shell runtime exposes shell config", async () => {
   const root = makeTempDir("admin-shell-config");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -335,7 +304,7 @@ test("admin shell runtime exposes shell config", async () => {
 test("admin tts runtime rejects missing preview text", async () => {
   const root = makeTempDir("admin-tts-preview-missing-text");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
 
   const response = createResponse();
@@ -348,7 +317,7 @@ test("admin tts runtime rejects missing preview text", async () => {
 test("initiated behavior config patch preserves tool request prompt layers", async () => {
   const root = makeTempDir("admin-initiated-behavior-tool-layer");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   let receivedPatch: unknown;
   context.setAgentInitiatedBehaviorConfig = (_id: string, patch: unknown) => {
@@ -408,7 +377,7 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
 test("initiated behavior config patch rejects system prompt layers", async () => {
   const root = makeTempDir("admin-initiated-behavior-system-layer");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   context.setAgentInitiatedBehaviorConfig = () => {
     throw new Error("system layer should not reach setter");
@@ -436,7 +405,7 @@ test("initiated behavior config patch rejects system prompt layers", async () =>
 test("admin initiated behavior create route custom plans", async () => {
   const root = makeTempDir("admin-initiated-behavior-custom");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   let receivedCreate: unknown;
   context.createAgentInitiatedBehaviorConfig = (id: string, patch: unknown) => {
@@ -467,7 +436,7 @@ test("admin initiated behavior create route custom plans", async () => {
 test("admin initiated behavior delete route custom plans", async () => {
   const root = makeTempDir("admin-initiated-behavior-custom-delete");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
   let receivedDelete = "";
   context.deleteAgentInitiatedBehaviorConfig = (id: string) => {

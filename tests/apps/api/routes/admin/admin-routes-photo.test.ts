@@ -35,7 +35,7 @@ test("admin photo plugin config exposes selfie schema", async () => {
     selfieMode: "openai"
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
@@ -88,7 +88,7 @@ test("admin photo plugin config hides selfie api keys", async () => {
     selfieMode: "openai"
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
@@ -184,7 +184,7 @@ async function patchPhotoConfig() {
     selfieMode: "openai"
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
@@ -291,7 +291,7 @@ async function runSuccessfulOnBodyGeneration() {
     }));
   }) as typeof fetch;
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const dailyShellStore = createDailyShellStore(root);
   dailyShellStore.saveOption("outfits", {
     id: "dress_1",
@@ -424,7 +424,7 @@ function createOnBodyFailureFixture(fetchResponse: (prompt: string, readAttempte
     return fetchResponse(prompt, readOutfitAttempted);
   }) as typeof fetch;
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const dailyShellStore = createDailyShellStore(root);
   const blockedOnBodyImageUrl = path.relative(root, path.join(outfitDir, "blocked.On_Body_Ref.jpg"));
   const retryOnBodyImageUrl = path.relative(root, path.join(outfitDir, "retry.On_Body_Ref.jpg"));

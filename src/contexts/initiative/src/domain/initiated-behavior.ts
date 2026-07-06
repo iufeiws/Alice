@@ -190,7 +190,7 @@ function randomizedAgentInitiatedBehaviorPlans(plans: AgentInitiatedBehaviorPlan
 
 export async function buildAgentInitiatedBehaviorMessages(
   plan: AgentInitiatedBehaviorPlan | undefined,
-  promptProfile: PromptProfile,
+  _promptProfile: PromptProfile,
   context: PromptRenderContext,
   runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMChatInput["messages"]> {
@@ -584,10 +584,8 @@ function initializeRunDb(db: any): void {
     CREATE INDEX IF NOT EXISTS initiated_behavior_runs_behavior_idx ON initiated_behavior_runs(behavior_id, triggered_at);
     CREATE INDEX IF NOT EXISTS initiated_behavior_runs_session_response_idx ON initiated_behavior_runs(session_id, responded_within_15m, triggered_at);
     CREATE INDEX IF NOT EXISTS initiated_behavior_runs_random_bucket_idx ON initiated_behavior_runs(kind, result, triggered_at);
+    CREATE INDEX IF NOT EXISTS initiated_behavior_runs_triggered_at_utc_idx ON initiated_behavior_runs(triggered_at_utc);
   `);
-  const columns = db.prepare("PRAGMA table_info(initiated_behavior_runs)").all().map((row: any) => row.name);
-  if (!columns.includes("triggered_at_utc")) db.exec("ALTER TABLE initiated_behavior_runs ADD COLUMN triggered_at_utc TEXT");
-  db.exec("CREATE INDEX IF NOT EXISTS initiated_behavior_runs_triggered_at_utc_idx ON initiated_behavior_runs(triggered_at_utc)");
 }
 
 function pruneRuns(db: any, limit: number): void {

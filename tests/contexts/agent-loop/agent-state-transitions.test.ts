@@ -114,31 +114,6 @@ test("agent state applies documented post-message landing states", () => {
   assert.equal(controller.getSnapshot().state, "test");
 });
 
-test("working hooks are deprecated no-ops for current states", () => {
-  const controller = createAgentStateController({
-    store: memoryStore(),
-    random: () => 0
-  });
-
-  controller.setState("serious");
-  controller.noteWorkStarted({ serious: true });
-  assert.equal(controller.getSnapshot().state, "serious");
-
-  controller.setState("test");
-  controller.noteWorkStarted();
-  assert.equal(controller.getSnapshot().state, "test");
-  assert.equal(controller.getSnapshot().responseDelayMs, 8_000);
-
-  controller.setState("going_to_sleep", { reason: "sleep_cocoon_in" });
-  controller.noteWorkStarted();
-  assert.equal(controller.getSnapshot().state, "going_to_sleep");
-  assert.equal(controller.getSnapshot().reason, "sleep_cocoon_in");
-
-  controller.noteWorkFinished();
-  assert.equal(controller.getSnapshot().state, "going_to_sleep");
-  assert.equal(controller.getSnapshot().reason, "sleep_cocoon_in");
-});
-
 function assertDueIdleRoute(roll: number, expectedState: "waiting" | "away" | "idle"): void {
   const controller = createAgentStateController({
     store: memoryStore(persistedSnapshot({

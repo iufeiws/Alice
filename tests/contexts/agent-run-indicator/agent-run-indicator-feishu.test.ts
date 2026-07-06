@@ -30,7 +30,7 @@ test("Feishu agent run indicator creates a card on begin", async () => {
     client,
     cardStore: store,
     throttleMs: 10_000,
-    getState: () => ({ state: "working" })
+    getState: () => ({ state: "waiting" })
   });
 
   const session = await indicator.begin({ round: 0 });
@@ -46,7 +46,7 @@ test("Feishu agent run indicator streams and flushes final content", async () =>
     client,
     cardStore: store,
     throttleMs: 10_000,
-    getState: () => ({ state: "working" })
+    getState: () => ({ state: "waiting" })
   });
 
   const session = await indicator.begin({ round: 0 });
@@ -60,7 +60,7 @@ test("Feishu agent run indicator streams and flushes final content", async () =>
   assertStreamState(client, false);
   assertUpdateIncludes(client, "reasoning", "think");
   assertUpdateIncludes(client, "content", "hello");
-  assertUpdateIncludes(client, "state", "working");
+  assertUpdateIncludes(client, "state", "waiting");
 });
 
 test("Feishu agent run indicator saves final card content", async () => {
@@ -70,7 +70,7 @@ test("Feishu agent run indicator saves final card content", async () => {
     client,
     cardStore: store,
     throttleMs: 10_000,
-    getState: () => ({ state: "working" })
+    getState: () => ({ state: "waiting" })
   });
 
   const session = await indicator.begin({ round: 0 });
@@ -85,7 +85,7 @@ test("Feishu agent run indicator saves final card content", async () => {
     cardId: "card_new",
     layoutVersion: CARD_LAYOUT_VERSION,
     updatedAt: fixedNow,
-    state: "working",
+    state: "waiting",
     reasoning: "think",
     content: "hello",
     tools: ""
@@ -99,7 +99,7 @@ test("Feishu agent run indicator renders raw LLM tool calls below content", asyn
     client,
     cardStore: store,
     throttleMs: 10_000,
-    getState: () => ({ state: "working" })
+    getState: () => ({ state: "waiting" })
   });
 
   const session = await indicator.begin({ round: 0 });
@@ -123,7 +123,7 @@ test("Feishu agent run indicator renders raw LLM tool calls below content", asyn
     cardId: "card_new",
     layoutVersion: CARD_LAYOUT_VERSION,
     updatedAt: fixedNow,
-    state: "working",
+    state: "waiting",
     reasoning: "",
     content: "",
     tools

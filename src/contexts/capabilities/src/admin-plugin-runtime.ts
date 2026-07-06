@@ -99,7 +99,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
 function messagingPluginEntry(): AdminPluginRegistryEntry {
   return {
     summary(context) {
-      const config = readMessagingConfigForAdmin(context);
+      readMessagingConfigForAdmin(context);
       return {
         id: "messaging",
         name: "Messaging",

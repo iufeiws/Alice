@@ -12,7 +12,6 @@ import type {
   WebRtcVoiceInputAudio,
   WebRtcVoiceTtsArchiveInput
 } from "./types.js";
-import { WebRtcVoiceError } from "./errors.js";
 import { createRemoteVoicePlaybackConsumer } from "./remote-playback-consumer.js";
 import { createVoicePlaybackConsumer } from "./playback-consumer.js";
 import { createTtsProducer, type TtsReadyChunk } from "./tts-producer.js";
@@ -623,7 +622,6 @@ export async function createCallState(
       const targetOutputId = outputId ?? `manual:${input.callId}:${Date.now()}`;
       if (ttsProducer.currentOutput()) throw new Error("playReplyText is already active");
       const chunkId = playbackOptionString(options, "chunkId");
-      const originalText = playbackOptionString(options, "originalText") ?? (typeof text === "string" ? text : "");
       const settlements: Array<Promise<PlaybackResult>> = [];
       const generation = playbackGeneration;
       ttsProducer.openOutput({ outputId: targetOutputId, chunkId, originalText: "" });
@@ -857,27 +855,6 @@ function isRecoverableAsrError(error: string): boolean {
     || error === "stream_closed"
     || error === "empty_transcription"
     || error === "empty_stream";
-}
-
-function waitForPeerConnected(isConnected: () => boolean, waiters: Array<() => void>, timeoutMs: number): Promise<void> {
-  if (isConnected()) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    waiters.push(() => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
-
-function summarizeAudioSdp(sdp: string): string {
-  const sections = sdp.split(/\r?\nm=/);
-  const audioSections = sections.filter((section) => section.startsWith("audio ") || section.startsWith("m=audio "));
-  const directions = audioSections.map((section) => {
-    const match = section.match(/\r?\na=(sendrecv|sendonly|recvonly|inactive)(?:\r?\n|$)/);
-    return match?.[1] ?? "unknown";
-  });
-  return `${audioSections.length}:${directions.join(",") || "none"}`;
 }
 
 function createCallAsrSession(

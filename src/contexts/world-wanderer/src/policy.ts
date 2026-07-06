@@ -16,7 +16,7 @@ export function chooseNextLink(input: {
   config: WorldWandererConfig;
   targetLocation?: GoogleStreetViewLocation;
   random: () => number;
-}): { link: GoogleStreetViewPanoGraphLink; backtrack: boolean } | undefined {
+}): { link: GoogleStreetViewPanoGraphLink } | undefined {
   const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId);
   if (!links.length) return undefined;
   const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
@@ -31,8 +31,7 @@ export function chooseNextLink(input: {
   const selected = softmaxSelect(scored, input.config.selectionTemperature, input.random);
   if (!selected) return undefined;
   return {
-    link: selected.link,
-    backtrack: Boolean(reverseLink && selected.link.panoId === reverseLink.panoId)
+    link: selected.link
   };
 }
 

@@ -1,4 +1,4 @@
-import { formatZonedIso, parseZonedIso } from "../../../../platform/time/src/index.js";
+import { formatZonedIso } from "../../../../platform/time/src/index.js";
 import { promptStoragePath } from "../adapters/json-prompt-profile-store.js";
 import { findOutfit, pickOutfit } from "./outfit.js";
 
@@ -33,9 +33,7 @@ export type ShellSwitchLogEntry = {
   message: string;
 };
 
-export type ShellSettings = {
-  rolloverHour: number;
-};
+export type ShellSettings = Record<string, never>;
 
 export type ShellCategory = "personalities" | "relationships" | "outfits";
 
@@ -84,7 +82,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
     personalitiesDir: path.join(shellDir, "personalities"),
     relationshipsDir: path.join(shellDir, "relationships"),
     outfitsDir: path.join(shellDir, "outfits"),
-    promptTemplate: options.promptTemplatePath ?? promptStoragePath(rootDir, "shell-prompt-template.txt", ["shell", "prompt-template.txt"]),
+    promptTemplate: options.promptTemplatePath ?? promptStoragePath(rootDir, "shell-prompt-template.txt"),
     settings: path.join(shellDir, "settings.json"),
     daily: path.join(shellDir, "daily-shell.json"),
     switchLog: path.join(shellDir, "switch-log.jsonl")
@@ -559,42 +557,12 @@ function writeSettings(filePath: string, settings: ShellSettings): void {
   fs.writeFileSync(filePath, `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`);
 }
 
-function normalizeSettings(settings: Partial<ShellSettings>): ShellSettings {
-  const rolloverHour = Number(settings.rolloverHour);
-  return {
-    rolloverHour: Number.isInteger(rolloverHour) && rolloverHour >= 0 && rolloverHour <= 23 ? rolloverHour : defaultSettings().rolloverHour
-  };
+function normalizeSettings(_settings: Partial<ShellSettings>): ShellSettings {
+  return {};
 }
 
 function defaultSettings(): ShellSettings {
-  return { rolloverHour: 4 };
-}
-
-function isRecordExpired(record: DailyShellRecord, now: Date, timeZone: string, rolloverHour: number): boolean {
-  return isDailyShellExpired(record.createdAt ?? `${record.date}T00:00:00.000`, now, timeZone, rolloverHour, record.date);
-}
-
-function isDailyShellExpired(createdAt: string, now: Date, timeZone: string, rolloverHour: number, fallbackCreatedDate?: string): boolean {
-  const createdDate = fallbackCreatedDate ?? formatLocalDate(parseZonedIso(createdAt, timeZone), timeZone);
-  const expiryDate = addLocalDays(createdDate, 1);
-  const currentDate = formatLocalDate(now, timeZone);
-  const currentHour = localHour(now, timeZone);
-  return currentDate > expiryDate || (currentDate === expiryDate && currentHour >= rolloverHour);
-}
-
-function addLocalDays(localDate: string, days: number): string {
-  const date = new Date(`${localDate}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function localHour(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    hour: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  return Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  return {};
 }
 
 function readPromptTemplate(filePath: string): string {

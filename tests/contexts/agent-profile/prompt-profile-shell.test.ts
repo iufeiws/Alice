@@ -93,20 +93,6 @@ test("dailyShellPromptTemplate_savedTemplate_persistsConfig", () => {
   assert.equal(fs.readFileSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt"), "utf8"), "P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}\n");
 });
 
-test("dailyShellPromptTemplate_legacyShellTemplate_migratesToAgentProfileFolder", () => {
-  const root = makeTempDir("daily-shell-prompt-migrate");
-  const legacyPath = path.join(root, "shell", "prompt-template.txt");
-  fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-  fs.writeFileSync(legacyPath, "Legacy={{outfit_name}}\n");
-
-  const store = createDailyShellStore(root);
-  const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
-
-  assert.equal(config.promptTemplate, "Legacy={{outfit_name}}");
-  assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt")), true);
-  assert.equal(fs.existsSync(legacyPath), false);
-});
-
 test("dailyShellStore_activeOptionEdited_keepsSameDailyShell", () => {
   const root = makeTempDir("daily-shell-stable");
   const store = createDailyShellStore(root);
@@ -193,8 +179,6 @@ test("dailyShellStore_rolloverBeforeWake_keepsShellUntilReroll", () => {
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
   replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
-  store.saveSettings({ rolloverHour: 4 });
-
   const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   const before = store.get(new Date("2026-05-26T19:59:00.000Z"), "Asia/Shanghai");
   const after = store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");
@@ -248,8 +232,6 @@ test("dailyShellStore_shellSwitch_recordsLocalTimeLogs", () => {
   replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "冷淡", content: "personality one" }]);
   replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "同桌", content: "relationship one" }]);
   replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "制服", content: "outfit one" }]);
-  store.saveSettings({ rolloverHour: 4 });
-
   store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   store.get(new Date("2026-05-26T13:00:00.000Z"), "Asia/Shanghai");
   store.get(new Date("2026-05-26T20:00:00.000Z"), "Asia/Shanghai");

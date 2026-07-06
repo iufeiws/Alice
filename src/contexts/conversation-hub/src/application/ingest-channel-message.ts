@@ -989,26 +989,6 @@ function normalizeInboundEvent(event: AgentEvent): AgentEvent {
   return event;
 }
 
-function formatContextLine(entry: StoredConversationMessage): string {
-  const speaker = entry.direction === "inbound" ? "User" : "Assistant";
-  const recalled = entry.isRecalled ? " [recalled]" : "";
-  const read = entry.isRead ? " [read]" : "";
-  const reactions = summarizeReactions(entry.reactionsJson);
-  return `${speaker}${recalled}${read}${reactions ? ` [reactions: ${reactions}]` : ""}: ${entry.isRecalled ? "(message recalled)" : entry.contentText}`;
-}
-
-function summarizeReactions(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, { count?: unknown }>;
-    return Object.entries(parsed)
-      .map(([emoji, value]) => `${emoji}:${typeof value.count === "number" ? value.count : 0}`)
-      .filter((part) => !part.endsWith(":0"))
-      .join(", ");
-  } catch {
-    return "";
-  }
-}
-
 function lifecycleSummary(event: MessageLifecycleEvent): string {
   if (event.kind === "reaction.created" || event.kind === "reaction.deleted") {
     return `${event.kind} ${event.emoji} on ${event.externalMessageId}`;

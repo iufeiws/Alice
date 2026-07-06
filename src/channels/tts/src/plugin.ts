@@ -1,23 +1,8 @@
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
-  MossOnnxVoiceSynthesizerDeps,
-  TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
-  TtsBailianConversionConfig,
-  TtsConversionConfig,
-  TtsOpenAiApiConversionConfig,
   TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
-  TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
-  TtsTranslationPreset,
-  TtsVoiceModelConfig,
-  VoiceSynthesisInput,
-  VoiceSynthesizer
+  TtsSynthesizer
 } from "./types.js";
 
 import { readTtsPluginConfig, ttsGenieOverrides } from "./config.js";

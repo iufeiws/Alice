@@ -89,7 +89,7 @@ function updateGoogleStreetViewConfig(context: AdminRoutesContext, patch: Record
   const current = readGoogleStreetViewConfigForAdmin(context);
   let regions: GoogleStreetViewRegion[];
   try {
-    regions = patch.regions === undefined ? current.regions : googleStreetViewRegionsFromUnknown(patch.regions, current.regions);
+    regions = patch.regions === undefined ? current.regions : googleStreetViewRegionsFromUnknown(patch.regions);
   } catch {
     return { error: "invalid_regions" };
   }
@@ -127,7 +127,7 @@ function updateGoogleStreetViewConfig(context: AdminRoutesContext, patch: Record
   return { config: next };
 }
 
-function googleStreetViewRegionsFromUnknown(value: unknown, fallback: GoogleStreetViewRegion[]): GoogleStreetViewRegion[] {
+function googleStreetViewRegionsFromUnknown(value: unknown): GoogleStreetViewRegion[] {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   if (!Array.isArray(parsed)) throw new Error("invalid_regions");
   return parsed.map((entry) => {
@@ -252,7 +252,7 @@ function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<st
   const current = readWorldWandererConfigForAdmin(context);
   let initialLocation = current.initialLocation;
   try {
-    initialLocation = patch.initialLocation === undefined ? current.initialLocation : worldWandererLocationFromUnknown(patch.initialLocation, current.initialLocation);
+    initialLocation = patch.initialLocation === undefined ? current.initialLocation : worldWandererLocationFromUnknown(patch.initialLocation);
   } catch {
     return { error: "invalid_initial_location" };
   }
@@ -293,7 +293,7 @@ function updateWorldWandererConfig(context: AdminRoutesContext, patch: Record<st
   return { config: next };
 }
 
-function worldWandererLocationFromUnknown(value: unknown, fallback: { lat: number; lng: number }): { lat: number; lng: number } {
+function worldWandererLocationFromUnknown(value: unknown): { lat: number; lng: number } {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_initial_location");
   const object = parsed as Record<string, unknown>;

@@ -123,14 +123,11 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
         }
         return next;
       } catch (error) {
-        const lastFailure = {
-          message: error instanceof Error ? error.message : String(error),
-          at: updatedAt
-        };
+        const message = error instanceof Error ? error.message : String(error);
         const next = {
           ...previous
         };
-        deps.appendLog?.("warn", `world wanderer pano graph failed: ${lastFailure.message}`);
+        deps.appendLog?.("warn", `world wanderer pano graph failed: ${message}`);
         return next;
       }
     },

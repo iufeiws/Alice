@@ -10,7 +10,6 @@ import { createAllowAllPolicy } from "../../../src/contexts/agent-loop/src/ports
 import { createIntentRouter } from "../../../src/contexts/agent-loop/src/application/intent-router.js";
 import { createSessionResolver } from "../../../src/contexts/agent-loop/src/application/session-resolver.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore } from "./agent-tools-helpers.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
@@ -311,34 +310,6 @@ test("chat agent sends tool names to injected LLM sender without rendering schem
   await runPreparedChatEvent(core, textEvent());
 
   assert.deepEqual(senderInputs[0].toolNames, ["Chat"]);
-});
-
-test("chat agent ordinary chat does not enter deprecated working state", async () => {
-  const controller = createAgentStateController({
-    store: memoryStore(),
-    random: () => 0
-  });
-  const states: AgentBehaviorState[] = [];
-  controller.onChange((snapshot) => {
-    states.push(snapshot.state);
-  });
-  const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
-    llm: {
-      async chat() {
-        return { message: { role: "assistant", content: "done" } };
-      }
-    },
-    outputRouter: createOutputRouter(),
-    intentRouter: createIntentRouter(),
-    sessionResolver: createSessionResolver(),
-    policy: createAllowAllPolicy(),
-    state: controller
-  });
-
-  await runPreparedChatEvent(core, textEvent());
-
-  assert.equal(states.includes("working"), false);
 });
 
 test("chat agent appends assistant tool call and tool result before the next llm request", async () => {

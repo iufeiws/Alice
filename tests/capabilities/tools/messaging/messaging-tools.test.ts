@@ -124,10 +124,10 @@ async function pollDefaultUnreadMessages(name: string) {
   store.upsertInboundMessage({
     plugin: "feishu",
     externalMessageId: "om_2",
-    conversationId: "legacy-session",
+    conversationId: "other-session",
     senderId: "user-1",
     contentType: "text",
-    contentText: "hello from old session",
+    contentText: "hello from other session",
     createdAt: new Date(baseTime + 6 * 60 * 1000).toISOString()
   });
   store.upsertInboundMessage({
@@ -158,7 +158,7 @@ test("check_chat defaults to unread new messages", async () => {
 
   assert.equal(recent.ok, true);
   assert.match(String(recent.output), /hello today/);
-  assert.match(String(recent.output), /hello from old session/);
+  assert.match(String(recent.output), /hello from other session/);
   assert.match(String(recent.output), /hello from wechat/);
 });
 

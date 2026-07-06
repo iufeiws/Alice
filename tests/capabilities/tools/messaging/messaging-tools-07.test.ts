@@ -53,11 +53,6 @@ test("tts plugin does not expose direct backend streamAudio entrypoints", async 
   const synthesize = createTtsTranslationSynthesizer({
     enabled: true,
     translationEnabled: true,
-    api_preset: {
-      baseURL: "https://example.invalid/v1",
-      apiKey: "test-key",
-      model: "flash"
-    },
     prompt: "Translate to Japanese.\nText:"
   }, {
     baseSynthesizer: Object.assign(async () => {
@@ -151,10 +146,6 @@ test("tts passes Genie language and plugin voice assets as per-request overrides
     enabled: true,
     translationEnabled: true,
     apiPresetName: "fixed-flash",
-    api_preset: {
-      baseURL: "",
-      model: "flash"
-    },
     prompt: "Translate to Japanese.\nText:",
     preset: {
       provider: "genie",
@@ -182,10 +173,6 @@ test("tts passes configured voice language to Genie overrides", () => {
   const overrides = ttsGenieOverrides(ttsConfig({
     enabled: true,
     translationEnabled: false,
-    api_preset: {
-      baseURL: "",
-      model: "flash"
-    },
     prompt: "Read aloud.",
     preset: {
       provider: "genie",

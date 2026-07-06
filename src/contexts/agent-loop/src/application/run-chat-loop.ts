@@ -7,7 +7,6 @@ import type { PromptContextRuntime } from "../../../prompt-context/src/index.js"
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { executeRegisteredLLMTool, type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
-import { runPromptToolRequest } from "./agent-loop-tool-executor.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
@@ -201,7 +200,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       };
     },
     transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
-    async afterToolResult({ call, round, result, toolInput, toolResult, toolMessage }): Promise<AgentFunctionCallToolExecution> {
+    async afterToolResult({ call, result, toolInput, toolResult, toolMessage }): Promise<AgentFunctionCallToolExecution> {
       const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
       if (followup.toolNotices.length > 0) {
         toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");

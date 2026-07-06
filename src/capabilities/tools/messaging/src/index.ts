@@ -35,7 +35,6 @@ export type MessagingToolsDeps = {
     | "listMessagesForConversation"
     | "listMessages"
     | "listMessagesByCreatedAtRange"
-    | "searchMessages"
     | "markMessagesReadAndCoreProcessed"
     | "insertOutboundMessage"
     | "markOutboundMessageSent"
@@ -151,7 +150,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
     if (!target) return toolError(call, messagingToolText.noCurrentSession);
-    return viewMessagesForScope(call.id, target, resolveViewScope(call.input.scope ?? call.input.__scope), {
+    return viewMessagesForScope(call.id, resolveViewScope(call.input.scope ?? call.input.__scope), {
       readonly: call.input.__preview === true,
       from: optionalStringValue(call.input.from),
       to: optionalStringValue(call.input.to)
@@ -160,7 +159,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   function viewMessagesForScope(
     callId: string,
-    target: MessagingToolTarget,
     scope: "recent" | "today" | "todayold" | "new" | "range",
     options: { readonly?: boolean; from?: string; to?: string } = {}
   ): ToolResult {
@@ -230,45 +228,6 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       .map((message) => message.id);
     if (ids.length === 0) return;
     deps.store.markMessagesReadAndCoreProcessed(ids, time.now().iso, createId("check_read"));
-  }
-
-  async function searchMessages(call: ToolCall): Promise<ToolResult> {
-    const target = resolveTarget(call);
-    if (!target) return toolError(call, messagingToolText.noCurrentSession);
-    const content = stringValue(call.input.content).trim();
-    if (!content) return toolError(call, messagingToolText.contentRequired);
-    const direction = normalizeDirection(call.input.direction);
-    const limit = clampInt(call.input.limit, 3, 1, 20);
-    const contextCount = clampInt(call.input.contextCount, 10, 1, 50);
-    const hits = deps.store.searchMessages({
-      plugin: target.plugin,
-      query: content,
-      direction,
-      limit
-    });
-    const conversation = deps.store.listMessages(1000).filter((message) => message.plugin === target.plugin);
-    const currentDate = time.now().date;
-    const blocks = hits.map((hit) => {
-      const hitIndex = conversation.findIndex((message) => message.id === hit.id);
-      const context = hitIndex === -1 ? [hit] : contextSlice(conversation, hitIndex, contextCount);
-      return {
-        hitMessageId: hit.id,
-        hitTime: formatLocalDateTime(parseMessageTime(hit.createdAt, time.timeZone), time.timeZone),
-        direction,
-        messages: formatMessageBlocks(context, time.timeZone, userSpeakerPlaceholder, currentDate)
-      };
-    });
-
-    return {
-      callId: call.id,
-      ok: true,
-      output: blocks.length > 0
-        ? blocks.map((block, index) => [
-          `#${index + 1} hit=${block.hitMessageId} time=${block.hitTime}`,
-          block.messages
-        ].join("\n")).join("\n\n")
-        : messagingToolText.nothingFound
-    };
   }
 
   async function sendMessage(call: ToolCall): Promise<ToolResult> {
@@ -633,15 +592,6 @@ function formatTimelineBlocks(
   return formatTimelineEntries(entries, timeZone, userName);
 }
 
-function formatMessageBlocks(messages: StoredConversationMessage[], timeZone: string, userName: string, now: Date): string {
-  const entries: ChatContextEntry[] = messages.map((message) => ({
-    kind: "message" as const,
-    time: parseZonedIso(message.createdAt, timeZone),
-    message
-  }));
-  return formatTimelineEntries(entries, timeZone, userName);
-}
-
 function formatTimelineEntries(entries: ChatContextEntry[], timeZone: string, userName: string): string {
   const blocks: string[] = [];
   let currentLines: string[] = [];
@@ -879,12 +829,6 @@ function summarizeReactions(raw: string): string {
   }
 }
 
-function contextSlice(messages: StoredConversationMessage[], hitIndex: number, contextCount: number): StoredConversationMessage[] {
-  const before = Math.floor((contextCount - 1) / 2);
-  const start = Math.max(0, Math.min(hitIndex - before, messages.length - contextCount));
-  return messages.slice(start, start + contextCount);
-}
-
 function formatLocalDateTime(date: Date, timeZone: string): string {
   const values = localDateTimeParts(date, timeZone);
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
@@ -913,22 +857,8 @@ function localDateTimeParts(date: Date, timeZone: string): LocalDateTimeStringPa
   return Object.fromEntries(parts.map((part) => [part.type, part.value])) as LocalDateTimeStringParts;
 }
 
-function shiftLocalDateParts(parts: Pick<LocalDateTimeStringParts, "year" | "month" | "day">, deltaDays: number): Pick<LocalDateTimeStringParts, "year" | "month" | "day"> {
-  const shifted = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + deltaDays));
-  return {
-    year: String(shifted.getUTCFullYear()),
-    month: String(shifted.getUTCMonth() + 1).padStart(2, "0"),
-    day: String(shifted.getUTCDate()).padStart(2, "0")
-  };
-}
-
 function parseMessageTime(value: string, timeZone: string): Date {
   return parseZonedIso(value, timeZone);
-}
-
-function normalizeDirection(value: unknown): "forward" | "backward" {
-  const text = stringValue(value);
-  return text === "forward" || text === "从前到后" ? "forward" : "backward";
 }
 
 function normalizeSendType(value: unknown): SendType | undefined {
@@ -959,12 +889,6 @@ function filterParentheticalSendContent(content: string): string {
 
 function containsDsmlMarkup(value: string): boolean {
   return /<\s*[｜|]{2}\s*DSML\s*[｜|]{2}/i.test(value);
-}
-
-function clampInt(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
 function stringValue(value: unknown): string {
@@ -1098,11 +1022,6 @@ function delay(ms: number): Promise<void> {
 
 function toolError(call: ToolCall, error: string): ToolResult {
   return { callId: call.id, ok: false, error };
-}
-
-function integerValue(value: unknown): number | undefined {
-  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isInteger(numeric) ? numeric : undefined;
 }
 
 function missingVoiceSynthesizer(): VoiceSynthesizer {

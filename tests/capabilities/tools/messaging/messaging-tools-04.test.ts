@@ -225,14 +225,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
   const voiceSynthesizer = createTtsTranslationSynthesizer(ttsConfig({
     enabled: true,
     translationEnabled: true,
-    api_preset: {
-      baseURL: "https://example.invalid/v1",
-      apiKey: "test-key",
-      model: "flash",
-      temperature: 0,
-      timeoutMs: 1000,
-      extraParams: {}
-    },
+    apiPresetName: "fixed-flash",
     prompt: "Translate to Japanese.\nText:"
   }), {
     baseSynthesizer: async ({ text }) => {
@@ -245,6 +238,16 @@ test("tts plugin translates before tts while preserving original send_chat voice
       llmAgents.push(input.agentId);
       llmMessages.push(...input.messages.map((message) => ({ role: message.role, content: message.content })));
       return { message: { role: "assistant", content: "また後で会いましょう" } };
+    },
+    resolveApiPreset() {
+      return {
+        baseURL: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "flash",
+        temperature: 0,
+        timeoutMs: 1000,
+        extraParams: {}
+      };
     },
     promptRenderer: () => ({
       renderText: (text: string) => text,
@@ -294,10 +297,6 @@ test("tts plugin can skip translation and send original text to jp tts", async (
   const voiceSynthesizer = createTtsTranslationSynthesizer(ttsConfig({
     enabled: true,
     translationEnabled: false,
-    api_preset: {
-      baseURL: "",
-      model: "flash"
-    },
     prompt: "Translate to Japanese.\nText:"
   }), {
     baseSynthesizer: async ({ text }) => {
@@ -323,11 +322,6 @@ test("tts translation skips symbol-only text without calling llm", async () => {
   const translated = await resolveTtsText(" ... ", ttsConfig({
     enabled: true,
     translationEnabled: true,
-    api_preset: {
-      baseURL: "https://example.invalid/v1",
-      apiKey: "test-key",
-      model: "flash"
-    },
     prompt: "Translate to Japanese.\nText:"
   }), {
     baseSynthesizer: async () => {
@@ -351,10 +345,6 @@ test("tts router returns a silence file for symbol-only text before backend requ
   }, ttsConfig({
     enabled: true,
     translationEnabled: false,
-    api_preset: {
-      baseURL: "",
-      model: "flash"
-    },
     prompt: "Translate to Japanese.\nText:"
   }), {
     baseSynthesizer: async () => {
@@ -467,8 +457,6 @@ test("tts plugin config reads switch, api preset, and prompt from plugin folder 
   assert.equal(config.enabled, true);
   assert.equal(config.translationEnabled, true);
   assert.equal(config.apiPresetName, "fixed-flash");
-  assert.equal(config.api_preset?.apiKey, undefined);
-  assert.equal(config.api_preset?.baseURL, "");
   assert.equal(config.prompt, "Translate to Japanese.\nText:");
   assert.equal(config.activePresetName, "jp");
   assert.equal(config.activePreset?.genie?.splitText, false);

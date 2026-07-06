@@ -57,7 +57,7 @@ export function renderMemoryScript(): string {
             ? promptApiProfile.memorizePresetName
             : promptEditorMode === "talk"
               ? promptApiProfile.talkPresetName
-              : (promptApiProfile.chatPresetName || promptApiProfile.corePresetName);
+              : promptApiProfile.chatPresetName;
           $("promptApiPresetSelect").innerHTML = renderLLMApiPresetOptions(selected || "");
         }
       }
@@ -205,7 +205,7 @@ export function renderMemoryScript(): string {
       async function savePromptApiProfile(mode) {
         const selected = $("promptApiPresetSelect")?.value || undefined;
         const profile = {
-          chatPresetName: promptApiProfile.chatPresetName || promptApiProfile.corePresetName || undefined,
+          chatPresetName: promptApiProfile.chatPresetName || undefined,
           talkPresetName: promptApiProfile.talkPresetName || undefined,
           memorizePresetName: promptApiProfile.memorizePresetName || undefined
         };

@@ -216,7 +216,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
   }
 
   async function handleTextMessage(event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>): Promise<void> {
-      if (isPairingCommand(event, config)) {
+      if (isPairingCommand(event)) {
         const result = deps.pairingStore?.pairFromEvent(event);
         if (result && !result.ok) {
           deps.log?.("warn", `[feishu] pairing rejected: already bound to ${result.contact.id}`);
@@ -271,7 +271,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
 
       const decision = checkFeishuEventPolicy(config, event);
       if (decision.allowed && config.dmPolicy === "pairing" && event.externalSession.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
-        deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
+        deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand()}`);
         return;
       }
       if (!decision.allowed) {
@@ -328,7 +328,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId);
     const decision = checkFeishuEventPolicy(config, event);
     if (decision.allowed && config.dmPolicy === "pairing" && event.externalSession.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
-      deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand(config)}`);
+      deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand()}`);
       return;
     }
     if (!decision.allowed) {

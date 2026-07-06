@@ -2,24 +2,8 @@ const childProcess = await import("node:child_process");
 const fs = await import("node:fs");
 const path = await import("node:path");
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
   MossOnnxVoiceSynthesizerDeps,
   TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
-  TtsBailianConversionConfig,
-  TtsConversionConfig,
-  TtsOpenAiApiConversionConfig,
-  TtsPlugin,
-  TtsPluginConfig,
-  TtsPluginDeps,
-  TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
-  TtsTranslationPreset,
-  TtsVoiceModelConfig,
-  VoiceSynthesisInput,
   VoiceSynthesizer
 } from "./types.js";
 

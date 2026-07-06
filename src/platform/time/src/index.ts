@@ -1,5 +1,4 @@
 import type { CurrentTimeProvider, CurrentTimeRecord, MutableCurrentTimeProvider } from "../../../shared/clock/src/index.js";
-export type { CurrentTimeProvider, CurrentTimeRecord, MutableCurrentTimeProvider } from "../../../shared/clock/src/index.js";
 
 export function createCurrentTimeProvider(
   timeZone: string,
@@ -66,25 +65,6 @@ export function parseZonedIso(value: string, timeZone: string): Date {
       minute: Number(match[5]),
       second: Number(match[6]),
       millisecond: Number((match[7] ?? "0").padEnd(3, "0"))
-    },
-    timeZone
-  );
-}
-
-export function previousDailyAnchor(hour: number, timeZone: string, from: Date = new Date()): Date {
-  const safeHour = Math.max(0, Math.min(23, Math.trunc(hour)));
-  const zonedNow = zonedParts(from, timeZone);
-  const anchorDate = zonedNow.hour >= safeHour
-    ? { year: zonedNow.year, month: zonedNow.month, day: zonedNow.day }
-    : shiftLocalDate(zonedNow.year, zonedNow.month, zonedNow.day, -1);
-  return zonedDateTimeToDate(
-    {
-      year: anchorDate.year,
-      month: anchorDate.month,
-      day: anchorDate.day,
-      hour: safeHour,
-      minute: 0,
-      second: 0
     },
     timeZone
   );

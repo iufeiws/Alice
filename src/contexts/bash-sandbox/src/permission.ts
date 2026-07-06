@@ -5,7 +5,7 @@ export type BashPermissionDecision =
   | { state: "allow"; matchedRule: string; skillId?: string }
   | { state: "deny"; matchedRule: string; reason: string; skillId?: string };
 
-export type BashPermissionInput = {
+type BashPermissionInput = {
   command: string;
   cwd: string;
   config: BashSandboxConfig;

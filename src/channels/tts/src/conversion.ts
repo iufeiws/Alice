@@ -1,25 +1,10 @@
 const fs = await import("node:fs");
 const path = await import("node:path");
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
-  MossOnnxVoiceSynthesizerDeps,
-  TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
-  TtsBailianConversionConfig,
-  TtsConversionConfig,
   TtsConversionProvider,
   TtsMimoConversionConfig,
-  TtsPlugin,
   TtsPluginConfig,
   TtsPluginDeps,
-  TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
-  TtsTranslationPreset,
-  TtsVoiceModelConfig,
-  VoiceSynthesisInput,
   VoiceSynthesizer
 } from "./types.js";
 
@@ -390,7 +375,6 @@ type BailianTtsSettings = {
   model: string;
   voice: string;
   languageType: string;
-  mode: "server_commit" | "commit";
   responseFormat: string;
   sampleRate: number;
   channels: number;
@@ -416,7 +400,6 @@ function resolveBailianTtsSettings(
     model: conversion.model || "qwen3-tts-vc-2026-01-22",
     voice: conversion.voice || "Cherry",
     languageType: conversion.languageType || "Chinese",
-    mode: conversion.mode === "commit" ? "commit" : "server_commit",
     responseFormat: conversion.responseFormat || "pcm",
     sampleRate: conversion.sampleRate ?? 24_000,
     channels: conversion.channels ?? 1,

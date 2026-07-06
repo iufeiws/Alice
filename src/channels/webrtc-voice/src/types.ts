@@ -193,9 +193,7 @@ export type WebRtcVoiceDeps = {
   voiceSynthesizer: WebRtcVoiceSynthesizer;
   supportsAudioInput?(): boolean;
   decodeAudioFileToFrames(input: DecodeAudioFileInput): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
-  /** @deprecated WebRTC voice playback now decodes synthesized file blocks in the playback consumer. */
   encodePcmL16ToFrames?(input: EncodePcmL16Input): Promise<ServerAudioFrame[]> | ServerAudioFrame[];
-  /** @deprecated WebRTC voice playback now decodes synthesized file blocks in the playback consumer. */
   encodePcmL16StreamToFrames?(input: EncodePcmL16StreamInput): AsyncIterable<ServerAudioFrame>;
   talkRuntime?: WebRtcVoiceTalkRuntime;
   testAsr?(): Promise<{ ok: true } | { ok: false; error: string; message?: string }>;

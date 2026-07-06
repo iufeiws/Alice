@@ -8,7 +8,7 @@ import { createCurrentTimeProvider } from "../../../../platform/time/src/index.j
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, normalizePromptProfile, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
+import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import { deepSeekPriceForModel } from "../../../llm-gateway/src/token-pricing.js";
@@ -42,11 +42,9 @@ import {
 import {
   appendAgentLoopSessionContext,
   clearAgentLoopActiveSessionContext,
-  createAgentLoopActiveSessionContext,
   ensureAgentLoopChatSessionContext,
   prepareAgentLoopChatSessionContext,
   setAgentLoopActiveSessionContext,
-  type AgentFunctionCallLoopSpec,
   type AgentLoopAppendSessionContextInput,
   type AgentLoopAppendSessionContextResult,
   type AgentLoopClearActiveSessionContextInput,
@@ -256,9 +254,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
   });
   const clearActiveLoopSessionContext = deps.clearActiveLoopSessionContext ?? ((input: AgentLoopClearActiveSessionContextInput<LLMSessionRecord>) => {
     return clearAgentLoopActiveSessionContext(input);
-  });
-  const createActiveLoopSessionContext = deps.createActiveLoopSessionContext ?? ((input: AgentLoopCreateActiveSessionContextInput<LLMSessionRecord>) => {
-    return createAgentLoopActiveSessionContext(input);
   });
   const prepareChatLoopSessionContext = deps.prepareChatLoopSessionContext ?? ((input: AgentLoopPrepareChatSessionContextInput<LLMSessionRecord>) => {
     return prepareAgentLoopChatSessionContext({
@@ -739,7 +734,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
     }
   };
 
-  function buildTurnTextVariables(event: AgentEvent): PromptContextRuntime {
+  function buildTurnTextVariables(_event: AgentEvent): PromptContextRuntime {
     return requirePromptRenderer();
   }
 

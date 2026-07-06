@@ -89,20 +89,3 @@ test("agent state restores sleep cocoon fields", () => {
   assert.equal(controller.getSnapshot().sleepDurationMs, 27_000_000);
   assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, "2026-05-25T21:00:00.000");
 });
-
-test("persisted deprecated working state recovers to a safe state", () => {
-  const waiting = createAgentStateController({
-    store: memoryStore(persistedSnapshot({
-      state: "working"
-    }))
-  });
-  assert.equal(waiting.getSnapshot().state, "waiting");
-
-  const serious = createAgentStateController({
-    store: memoryStore(persistedSnapshot({
-      state: "working",
-      previousState: "serious"
-    }))
-  });
-  assert.equal(serious.getSnapshot().state, "serious");
-});

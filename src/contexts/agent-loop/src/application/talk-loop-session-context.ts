@@ -4,7 +4,7 @@ import type { PromptContextRuntime } from "../../../prompt-context/src/index.js"
 import type { AgentEvent, ToolCall, ToolPlugin } from "../contracts/agent-contracts.js";
 import { prepareAgentLoopSessionContext, type AgentLoopMessagePatch, type AgentLoopPreparedSessionContext, type AgentLoopSessionContextInput, type AgentLoopTranscriptSession } from "../runtime/agent-loop-runtime.js";
 import { runPromptToolRequest } from "./agent-loop-tool-executor.js";
-import { buildPromptMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "./prompts.js";
+import { buildPromptMessagesWithToolResults, promptRenderer, type PromptProfile } from "./prompts.js";
 
 export type TalkLoopMessagePatch = AgentLoopMessagePatch;
 

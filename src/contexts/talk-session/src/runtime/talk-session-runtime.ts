@@ -96,7 +96,7 @@ export function projectClosedTalkSessionToConversationHub(
   sessionId: number,
   talkStore: ReturnType<typeof createTalkStore>,
   conversationStore: Pick<AliceStore, "upsertInboundMessage">,
-  time: { now(): { iso: string } }
+  _time: { now(): { iso: string } }
 ): void {
   const session = talkStore.getSession(sessionId);
   if (!session) return;

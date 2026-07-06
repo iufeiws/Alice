@@ -8,7 +8,6 @@ const require = moduleApi.createRequire(import.meta.url);
 import type {
   InboundAudioStreamAbortFrame,
   InboundAudioStreamChunkFrame,
-  InboundAudioStreamEndFrame,
   InboundAudioStreamFrame,
   InboundAudioStreamStartFrame,
   ToolDefinition
@@ -252,7 +251,6 @@ export type AsrInboundStreamSession = {
 };
 
 const defaultConfigPath = "config/plugin/asr/config.json";
-const legacyConfigPath = "src/channels/asr/config.json";
 
 export function createAsrPlugin(deps: AsrPluginDeps = {}): AsrPlugin {
   return {
@@ -677,7 +675,7 @@ function voiceFormatForStream(start: InboundAudioStreamStartFrame): number {
 }
 
 export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginConfig {
-  const resolved = resolveAsrConfigReadPath(configPath);
+  const resolved = path.resolve(configPath);
   const parsed = parseJsonObject(fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : "{}");
   const providers = parseJsonObject(parsed.providers);
   return {
@@ -692,21 +690,6 @@ export function readAsrPluginConfig(configPath = defaultConfigPath): AsrPluginCo
       tencent: parseTencentConfig(providers.tencent)
     }
   };
-}
-
-function resolveAsrConfigReadPath(configPath = defaultConfigPath): string {
-  const resolved = path.resolve(configPath);
-  if (fs.existsSync(resolved)) return resolved;
-  const defaultResolved = path.resolve(defaultConfigPath);
-  const legacyResolved = path.resolve(legacyConfigPath);
-  if (resolved === defaultResolved && fs.existsSync(legacyResolved)) return legacyResolved;
-  const expectedSuffix = path.join("config", "plugin", "asr", "config.json");
-  if (resolved.endsWith(expectedSuffix)) {
-    const root = resolved.slice(0, -expectedSuffix.length);
-    const siblingLegacy = path.join(root || path.parse(resolved).root, "plugins", "asr", "config.json");
-    if (fs.existsSync(siblingLegacy)) return siblingLegacy;
-  }
-  return resolved;
 }
 
 export async function transcribeWithAsrPlugin(
@@ -890,14 +873,12 @@ async function transcribeTencentChunk(
   const pollIntervalMs = providerConfig.pollIntervalMs ?? 1000;
   const deadline = Date.now() + timeoutMs;
   let latestRequestId = stringValue(createResponse.RequestId);
-  let latestRaw: unknown = createRaw;
   while (Date.now() <= deadline) {
     await (deps.sleep ?? sleep)(pollIntervalMs);
     const describeRaw = await retryAsync(
       () => tencentRequest(resolved.endpoint, "DescribeTaskStatus", { TaskId: taskId }, { secretId: resolved.secretId, secretKey: resolved.secretKey, region: resolved.region }, deps, timeoutMs),
       retry
     );
-    latestRaw = describeRaw;
     const describeResponse = parseTencentEnvelope(describeRaw);
     latestRequestId = stringValue(describeResponse.RequestId) ?? latestRequestId;
     const data = parseJsonObject(describeResponse.Data);

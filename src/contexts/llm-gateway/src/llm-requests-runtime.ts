@@ -15,7 +15,6 @@ export function createLLMRequestsRuntime(input: {
 }) {
   const requestLogEntries = new WeakMap<object, LLMRequestLogEntry>();
   const subagentRequestSessions = new WeakMap<object, ReturnType<typeof createLLMSessionTranscriptLogger>>();
-  const subagentSessions = new Map<string, Set<ReturnType<typeof createLLMSessionTranscriptLogger>>>();
   return createLLMRequests({
     getTool: input.getTool,
     onRequestPrepared(requestInput, request) {
@@ -92,9 +91,6 @@ export function createLLMRequestsRuntime(input: {
       })
     });
     subagentRequestSessions.set(requestInput, logger);
-    const sessions = subagentSessions.get(agentId) ?? new Set();
-    sessions.add(logger);
-    subagentSessions.set(agentId, sessions);
     return logger;
   }
 
@@ -102,9 +98,5 @@ export function createLLMRequestsRuntime(input: {
     const logger = subagentRequestSessions.get(requestInput);
     if (!logger) return;
     subagentRequestSessions.delete(requestInput);
-    for (const [agentId, sessions] of subagentSessions) {
-      sessions.delete(logger);
-      if (sessions.size === 0) subagentSessions.delete(agentId);
-    }
   }
 }

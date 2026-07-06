@@ -183,8 +183,6 @@ function initialize(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS calendar_entries_lookup_idx
       ON calendar_entries(kind, calendar_system, month, day, time);
   `);
-  ensureColumn(db, "calendar_entries", "source", "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "calendar_entries", "meta", "TEXT NOT NULL DEFAULT ''");
 }
 
 function selectCalendarEntrySql(): string {
@@ -233,10 +231,4 @@ function normalizeCalendarEntry(row: unknown): CalendarEntry | undefined {
     createdAt: value.createdAt,
     createdAtUtc: value.createdAtUtc || undefined
   };
-}
-
-function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (columns.some((entry) => entry.name === column)) return;
-  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }

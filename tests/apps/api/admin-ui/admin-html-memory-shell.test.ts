@@ -39,9 +39,6 @@ test("shellEditor_initialRender_exposesShellWorkspace", () => {
   assertIncludesAll(html, [
     "Daily Shell",
     "Reroll Today",
-    "Shell Settings",
-    "Daily Refresh Clock (0-23)",
-    "Save Shell Settings",
     "语气 / 称呼",
     "服装",
     "拖入或粘贴图片自动上传"
@@ -56,7 +53,6 @@ test("shellEditor_clientContract_usesShellEndpoints", () => {
     "/admin/api/shell-ui/order",
     "/admin/api/shell-option",
     "/admin/api/shell/reroll",
-    "/admin/api/shell-settings",
     "/admin/api/shell/outfit-image"
   ]);
 });

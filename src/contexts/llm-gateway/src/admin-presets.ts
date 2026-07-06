@@ -21,8 +21,6 @@ export type LLMApiPreset = {
 
 export type PromptApiProfile = {
   chatPresetName?: string;
-  /** @deprecated accepted only for old prompt-api-profile.json/request bodies. */
-  corePresetName?: string;
   talkPresetName?: string;
   memorizePresetName?: string;
 };
@@ -54,8 +52,8 @@ export function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
   const filePath = llmApiPresetsPath(context);
   if (!fs.existsSync(filePath)) return [];
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: LLMApiPreset[] } | LLMApiPreset[];
-    const presets = Array.isArray(parsed) ? parsed : Array.isArray(parsed.presets) ? parsed.presets : [];
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: LLMApiPreset[] };
+    const presets = Array.isArray(parsed.presets) ? parsed.presets : [];
     return sortLLMApiPresets(presets.map(normalizeLLMApiPreset).filter((entry): entry is LLMApiPreset => Boolean(entry)));
   } catch {
     return [];
@@ -98,9 +96,8 @@ export function writePromptApiProfile(context: AdminRoutesContext, profile: Prom
 }
 
 export function normalizePromptApiProfile(value: Record<string, unknown>): PromptApiProfile {
-  const chatPresetName = optionalString(value.chatPresetName) ?? optionalString(value.corePresetName);
   return {
-    chatPresetName,
+    chatPresetName: optionalString(value.chatPresetName),
     talkPresetName: optionalString(value.talkPresetName),
     memorizePresetName: optionalString(value.memorizePresetName)
   };
@@ -109,7 +106,7 @@ export function normalizePromptApiProfile(value: Record<string, unknown>): Promp
 export function resolvePromptApiPreset(context: AdminRoutesContext, kind: "chat" | "talk" | "memorize"): LLMApiPreset | undefined {
   const profile = readPromptApiProfile(context);
   const name = kind === "chat"
-    ? profile.chatPresetName ?? profile.corePresetName
+    ? profile.chatPresetName
     : kind === "talk"
       ? profile.talkPresetName
       : profile.memorizePresetName;
@@ -161,5 +158,5 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
 }
 
 function promptApiProfilePath(context: AdminRoutesContext): string {
-  return promptStoragePath(context.config.memoryFiles.root, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]);
+  return promptStoragePath(context.config.memoryFiles.root, "prompt-api-profile.json");
 }

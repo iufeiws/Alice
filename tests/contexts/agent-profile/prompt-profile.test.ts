@@ -18,7 +18,7 @@ const path = await import("node:path");
 
 test("promptProfileStore_emptyFile_returnsDefaultsWithoutWriting", () => {
   const root = makeTempDir("prompt-store");
-  const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
+  const filePath = promptStoragePath(root, "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
   const initial = store.get();
 
@@ -32,7 +32,7 @@ test("promptProfileStore_emptyFile_returnsDefaultsWithoutWriting", () => {
 
 test("promptProfileStore_validProfile_persistsEditableLayers", () => {
   const root = makeTempDir("prompt-store-save");
-  const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
+  const filePath = promptStoragePath(root, "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
   const initial = store.get();
   const saved = store.save({
@@ -82,36 +82,6 @@ test("promptProfileStore_projectConfigUsername_rejectsProfileField", () => {
     ...defaultPromptProfile(),
     userName: "AliceUser"
   } as any), /invalid_prompt_profile_user_name/);
-});
-
-test("promptProfileStorage_legacyConfigFile_migratesToAgentProfileFolder", () => {
-  const root = makeTempDir("prompt-store-migrate");
-  const legacyPath = path.join(root, "config", "prompt-profile.json");
-  fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-  fs.writeFileSync(legacyPath, `${JSON.stringify(defaultPromptProfile(), null, 2)}\n`);
-
-  const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
-  const store = createPromptProfileStore(filePath);
-
-  assert.deepEqual(store.get().layers, []);
-  assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
-  assert.equal(fs.existsSync(filePath), true);
-  assert.equal(fs.existsSync(legacyPath), false);
-});
-
-test("promptProfileStorage_previousRootPromptFile_migratesToAgentProfileFolder", () => {
-  const root = makeTempDir("prompt-store-root-migrate");
-  const previousPath = path.join(root, "prompt", "prompt-profile.json");
-  fs.mkdirSync(path.dirname(previousPath), { recursive: true });
-  fs.writeFileSync(previousPath, `${JSON.stringify(defaultPromptProfile(), null, 2)}\n`);
-
-  const filePath = promptStoragePath(root, "prompt-profile.json", ["config", "prompt-profile.json"]);
-  const store = createPromptProfileStore(filePath);
-
-  assert.deepEqual(store.get().layers, []);
-  assert.equal(filePath, path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"));
-  assert.equal(fs.existsSync(filePath), true);
-  assert.equal(fs.existsSync(previousPath), false);
 });
 
 test("promptProfileStore_appendLayers_persistsToolRequestLayer", () => {

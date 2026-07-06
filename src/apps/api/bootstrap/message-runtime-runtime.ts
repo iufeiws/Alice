@@ -33,8 +33,7 @@ export function createMessageRuntimeRuntime(input: {
     startHeartbeatPaused: input.config.core.heartbeatPaused,
     onHeartbeatPausedChange(paused) {
       updateEnvFile(".env", {
-        AGENT_HEARTBEAT_PAUSED: String(paused),
-        AGENT_HEARTBEAT_START_PAUSED: null
+        AGENT_HEARTBEAT_PAUSED: String(paused)
       });
       input.config.core.heartbeatPaused = paused;
     },

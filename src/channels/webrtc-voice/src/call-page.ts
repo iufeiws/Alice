@@ -1,5 +1,3 @@
-const crypto = await import("node:crypto");
-
 import type { WebRtcVoiceConfig } from "./types.js";
 import { defaultWebRtcVoiceConfig } from "./config.js";
 

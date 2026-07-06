@@ -1,6 +1,6 @@
 import type { ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createAdminMemoryRuntime } from "../../../memory/src/application/admin-memory-runtime.js";
-import { defaultPromptRegistry, PromptProfileValidationError, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
+import { PromptProfileValidationError, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
 import { isToolVisibleInPromptProfile } from "../../../initiative/src/domain/initiated-behavior.js";
 import { HttpJsonError, readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";

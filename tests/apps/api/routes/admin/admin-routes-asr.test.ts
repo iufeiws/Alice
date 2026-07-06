@@ -65,7 +65,7 @@ async function patchAsrConfig() {
   })}\n`);
   writePreset(root, "asr-openai");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -110,7 +110,7 @@ test("admin photo plugin config rejects invalid selfie mode", async () => {
   fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
   fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const handler = createAdminHandler({
     ...base,
@@ -127,7 +127,7 @@ test("admin photo plugin config rejects invalid selfie timeout", async () => {
   fs.mkdirSync(path.dirname(photoConfigPath), { recursive: true });
   fs.writeFileSync(photoConfigPath, `${JSON.stringify({ enabled: true, selfieMode: "codex" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const handler = createAdminHandler({
     ...base,
@@ -144,7 +144,7 @@ test("admin ASR plugin config rejects invalid provider", async () => {
   fs.mkdirSync(path.dirname(asrConfigPath), { recursive: true });
   fs.writeFileSync(asrConfigPath, `${JSON.stringify({ enabled: true, defaultProvider: "openai_compatible", providers: { openaiCompatible: {} } })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath: asrConfigPath } }
@@ -159,7 +159,7 @@ test("admin world wanderer plugin config rejects invalid initial location", asyn
   fs.mkdirSync(path.dirname(worldConfigPath), { recursive: true });
   fs.writeFileSync(worldConfigPath, `${JSON.stringify({ enabled: true })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath: worldConfigPath } }
@@ -186,7 +186,7 @@ test("admin TTS plugin config rejects invalid Bailian service", async () => {
     }
   });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath: ttsConfigPath } }
@@ -199,7 +199,7 @@ test("admin bash sandbox plugin config rejects invalid network", async () => {
   const root = makeTempDir("admin-plugin-invalid-bash-network");
   const bashSandboxEnvPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath: bashSandboxEnvPath } }
@@ -212,7 +212,7 @@ test("admin bash sandbox plugin config rejects invalid mounts", async () => {
   const root = makeTempDir("admin-plugin-invalid-bash-mounts");
   const bashSandboxEnvPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath: bashSandboxEnvPath } }
@@ -231,7 +231,7 @@ async function readAsrConfigSchema(name: string) {
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -294,7 +294,7 @@ test("admin plugin enable updates ASR config", async () => {
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -317,7 +317,7 @@ test("admin plugin disable updates ASR config", async () => {
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -341,7 +341,7 @@ test("admin plugin ASR test audio upload stores plugin asset path", async () => 
     providers: {}
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath, assetRoot } }
@@ -385,7 +385,7 @@ test("admin plugin test runs ASR transcriber with uploaded audio", async () => {
   })}\n`);
   writePreset(root, "asr");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: {
@@ -475,7 +475,7 @@ async function runMultimodalLlmAsrTest() {
   })}\n`);
   writePreset(root, "asr");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: {

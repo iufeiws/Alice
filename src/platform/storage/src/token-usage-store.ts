@@ -111,11 +111,9 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
 
     CREATE INDEX IF NOT EXISTS token_usage_created_at_idx ON token_usage_events(created_at);
     CREATE INDEX IF NOT EXISTS token_usage_agent_model_idx ON token_usage_events(agent_id, model, created_at);
+    CREATE INDEX IF NOT EXISTS token_usage_created_at_utc_idx ON token_usage_events(created_at_utc);
     PRAGMA user_version = 1;
   `);
-  const columns = db.prepare("PRAGMA table_info(token_usage_events)").all().map((row: any) => row.name);
-  addColumnIfMissing(db, columns, "created_at_utc", "ALTER TABLE token_usage_events ADD COLUMN created_at_utc TEXT");
-  db.exec("CREATE INDEX IF NOT EXISTS token_usage_created_at_utc_idx ON token_usage_events(created_at_utc)");
 
   return {
     insert(input) {
@@ -206,13 +204,6 @@ function buildFilter(query: TokenUsageQuery): { where: string; values: unknown[]
     where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
     values
   };
-}
-
-function addColumnIfMissing(db: DatabaseSync, columns: string[], name: string, statement: string): void {
-  if (!columns.includes(name)) {
-    db.exec(statement);
-    columns.push(name);
-  }
 }
 
 function aggregateSelect(): string {

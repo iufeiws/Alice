@@ -24,8 +24,7 @@ import {
   type AgentLoopPrepareChatSessionContextInput,
   type AgentLoopPrepareChatSessionContextResult,
   type AgentLoopSessionContextInput,
-  type AgentLoopSetActiveSessionContextInput,
-  type AgentLoopTranscriptSession
+  type AgentLoopSetActiveSessionContextInput
 } from "./agent-loop-session-initializer.js";
 
 export type AgentLoopKind = "chat" | "talk";

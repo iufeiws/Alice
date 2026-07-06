@@ -4,14 +4,13 @@ import type { BashPermissionDecision } from "./permission.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type BashAuditEvent = {
+type BashAuditEvent = {
   command: string;
   cwd: string;
   caller?: string;
   toolCallId: string;
   permission: BashPermissionDecision;
   network: BashSandboxConfig["network"];
-  optionalMounts?: Array<{ id: string; containerPath: string; readOnly: boolean }>;
   durationMs: number;
   exitCode: number | null;
   timedOut: boolean;

@@ -17,7 +17,6 @@ export const AGENT_STATES: AgentBehaviorState[] = [
   "calling",
   "away",
   "curious",
-  "working",
   "going_to_sleep",
   "sleeping",
   "serious",
@@ -347,7 +346,7 @@ export function getAdminConfig(context: AdminRoutesContext): unknown {
     api: context.config.api,
     llm: {
       provider: "api-preset",
-      chatPresetName: apiProfile.chatPresetName ?? apiProfile.corePresetName,
+      chatPresetName: apiProfile.chatPresetName,
       talkPresetName: apiProfile.talkPresetName,
       memorizePresetName: apiProfile.memorizePresetName,
       presets: publicLLMApiPresets(readLLMApiPresets(context))

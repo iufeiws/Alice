@@ -70,11 +70,6 @@ function commonPrefixLength(left: string, right: string): number {
   return index;
 }
 
-function formatDiffValue(value: unknown): string {
-  const text = typeof value === "string" ? value : stableStringify(value);
-  return JSON.stringify(text.length > 160 ? `${text.slice(0, 160)}...` : text);
-}
-
 function diffValueExcerpt(previous: unknown, current: unknown): { index: number; previousExcerpt: string; currentExcerpt: string } {
   const previousText = typeof previous === "string" ? previous : stableStringify(previous);
   const currentText = typeof current === "string" ? current : stableStringify(current);
@@ -107,4 +102,3 @@ function estimateDeepSeekTokens(text: string): number {
   }
   return Math.round(tokens);
 }
-

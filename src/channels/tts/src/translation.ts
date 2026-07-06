@@ -1,23 +1,6 @@
 import type {
-  ConfiguredVoiceSynthesizerDeps,
-  FallbackVoiceSynthesizerDeps,
-  MossOnnxVoiceSynthesizerDeps,
-  TTSConfig,
-  TtsApiPreset,
-  TtsAudioTextChunk,
-  TtsBailianConversionConfig,
-  TtsConversionConfig,
-  TtsOpenAiApiConversionConfig,
-  TtsPlugin,
   TtsPluginConfig,
-  TtsPluginDeps,
-  TtsStreamChunk,
-  TtsStreamInput,
-  TtsSynthesizer,
-  TtsTranslationPreset,
-  TtsVoiceModelConfig,
-  VoiceSynthesisInput,
-  VoiceSynthesizer
+  TtsPluginDeps
 } from "./types.js";
 
 import { renderTtsPrompt, resolveEffectivePreset } from "./config.js";
@@ -46,6 +29,10 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
   }
   const preset = resolveEffectivePreset(config, deps);
   const client = deps.llm ?? (preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined);
+  if (!preset && deps.llmRequestSender) {
+    deps.appendLog?.("warn", "tts translation skipped: missing api preset");
+    return undefined;
+  }
   if (!client && !deps.llmRequestSender) {
     deps.appendLog?.("warn", "tts translation skipped: missing api preset baseURL or api key");
     return undefined;
@@ -53,7 +40,6 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
 
   try {
     deps.appendLog?.("info", `tts translation start: chars=${Array.from(text).length}`);
-    const legacyPreset = config.api_preset ?? { baseURL: "", model: "flash", temperature: 0.2, extraParams: {} };
     const request = {
       agentId: "tts",
       ...(client ? { client } : {}),
@@ -61,9 +47,9 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
         { role: "system" as const, content: renderTtsPrompt(config, deps) },
         { role: "user" as const, content: text }
       ],
-      model: preset?.model ?? legacyPreset.model,
-      temperature: preset?.temperature ?? legacyPreset.temperature,
-      extraParams: preset?.extraParams ?? legacyPreset.extraParams,
+      model: preset?.model,
+      temperature: preset?.temperature,
+      extraParams: preset?.extraParams,
       toolNames: [],
       round: 0,
       stream: false,

@@ -33,7 +33,7 @@ test("admin plugin list exposes tts config card state", async () => {
   writeTtsPluginConfig(root, { configPath, enabled: true });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath } }
@@ -67,7 +67,7 @@ test("admin plugin list exposes ASR config card state", async () => {
   })}\n`);
   writePreset(root, "asr");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { asr: { configPath } }
@@ -96,7 +96,7 @@ test("admin plugin list exposes photo selfie config card state", async () => {
     selfieMode: "codex"
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
@@ -126,7 +126,7 @@ test("admin plugin config exposes messaging config values", async () => {
   const root = makeTempDir("admin-messaging-plugin");
   const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { messaging: { configPath } }
@@ -147,7 +147,7 @@ test("admin plugin config exposes messaging config schema", async () => {
   const root = makeTempDir("admin-messaging-plugin-schema");
   const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { messaging: { configPath } }
@@ -169,7 +169,7 @@ test("admin plugin config patch returns messaging config values", async () => {
   const root = makeTempDir("admin-messaging-plugin-patch");
   const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { messaging: { configPath } }
@@ -195,7 +195,7 @@ test("admin plugin config patch persists messaging config", async () => {
   const root = makeTempDir("admin-messaging-plugin-save");
   const configPath = path.join(root, "config", "plugin", "messaging", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { messaging: { configPath } }
@@ -219,7 +219,7 @@ test("admin plugin list exposes bash sandbox config card state", async () => {
   const root = makeTempDir("admin-bash-sandbox-plugin");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath } }
@@ -242,7 +242,7 @@ test("admin plugin config exposes bash sandbox env settings", async () => {
   const root = makeTempDir("admin-bash-sandbox-plugin-schema");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath } }
@@ -275,7 +275,7 @@ async function patchBashSandboxConfig() {
   const root = makeTempDir("admin-bash-sandbox-plugin-patch");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
@@ -301,7 +301,7 @@ test("admin plugin config patch persists bash sandbox env settings", async () =>
   const root = makeTempDir("admin-bash-sandbox-plugin-save");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath } }
@@ -324,7 +324,7 @@ test("admin plugin config reads persisted bash sandbox env settings", async () =
   const root = makeTempDir("admin-bash-sandbox-plugin-read-save");
   const envPath = path.join(root, ".env");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { bashSandbox: { envPath } }
@@ -347,7 +347,7 @@ test("admin plugin list exposes world wanderer config card state", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
@@ -370,7 +370,7 @@ test("admin plugin config exposes world wanderer config values", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin-values");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
@@ -392,7 +392,7 @@ test("admin plugin config exposes world wanderer values without creating sqlite 
   const root = makeTempDir("admin-world-wanderer-plugin-values-no-sqlite");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
@@ -409,7 +409,7 @@ test("admin plugin config exposes world wanderer config schema", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin-schema");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
@@ -430,7 +430,7 @@ test("admin plugin config patch persists world wanderer config", async () => {
   const root = makeTempDir("admin-world-wanderer-plugin-save");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { worldWanderer: { configPath } }
@@ -476,7 +476,7 @@ test("prompt variables use empty world wanderer library prompt without fallback"
   const root = makeTempDir("admin-world-wanderer-library-variable");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "core library" }) },
@@ -516,7 +516,7 @@ test("admin plugin config exposes Google Street View radius schema", async () =>
     regions: []
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { googleStreetView: { configPath } }
@@ -551,7 +551,7 @@ test("admin plugin config patch stores Google Street View api key", async () => 
     regions: []
   })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { googleStreetView: { configPath } }
@@ -586,7 +586,7 @@ test("admin plugin config patch hides Google Street View api key", async () => {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiKey: "" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { googleStreetView: { configPath } }
@@ -608,7 +608,7 @@ test("admin plugin config patch preserves Google Street View api key when blank"
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ enabled: true, apiKey: "google-secret" })}\n`);
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const handler = createAdminHandler({
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { googleStreetView: { configPath } }

@@ -90,7 +90,6 @@ export type TtsPluginConfig = {
   translationPresets?: Record<string, TtsTranslationPreset>;
   translationEnabled: boolean;
   apiPresetName?: string;
-  api_preset?: TtsApiPreset;
   prompt: string;
   voice?: {
     modelConfigName?: string;
@@ -155,7 +154,6 @@ export type TtsBailianConversionConfig = {
   model?: string;
   voice?: string;
   languageType?: string;
-  mode?: "server_commit" | "commit";
   responseFormat?: string;
   sampleRate?: number;
   channels?: number;

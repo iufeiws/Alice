@@ -148,7 +148,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       defaultAgentProfile: "main",
       inboundDebounceMs: envNumber(env.AGENT_INBOUND_DEBOUNCE_MS, 1000),
       defaultTargetPlugin: normalizeDefaultTargetPlugin(env.AGENT_DEFAULT_TARGET_PLUGIN),
-      heartbeatPaused: envBool(env.AGENT_HEARTBEAT_PAUSED ?? env.AGENT_HEARTBEAT_START_PAUSED, true)
+      heartbeatPaused: envBool(env.AGENT_HEARTBEAT_PAUSED, true)
     },
     api: {
       host: env.API_HOST ?? "127.0.0.1",

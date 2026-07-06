@@ -35,7 +35,7 @@ export function sanitizeLLMRequestMessages(
     if (
       resolved.removeAssistantReasoningWithoutToolCall
       && sanitized.role === "assistant"
-      && !hasAssistantFunctionCall(sanitized)
+      && (!sanitized.toolCalls || sanitized.toolCalls.length === 0)
     ) {
       delete sanitized.reasoningContent;
     }
@@ -112,19 +112,10 @@ function mergeConsecutiveAssistantContent(messages: LLMMessage[]): LLMMessage[] 
 function canMergeAssistantContent(message: LLMMessage): boolean {
   return message.role === "assistant"
     && typeof message.content === "string"
-    && !hasAssistantFunctionCall(message)
+    && (!message.toolCalls || message.toolCalls.length === 0)
     && message.reasoningContent === undefined
     && message.name === undefined
     && message.toolCallId === undefined;
-}
-
-function hasAssistantFunctionCall(message: LLMMessage): boolean {
-  if (message.toolCalls && message.toolCalls.length > 0) return true;
-  const extra = message as LLMMessage & {
-    functionCall?: unknown;
-    function_call?: unknown;
-  };
-  return extra.functionCall !== undefined || extra.function_call !== undefined;
 }
 
 function isOpeningParenthesis(char: string): boolean {

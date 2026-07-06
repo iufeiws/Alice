@@ -18,17 +18,17 @@ export function createProfileMemoryRuntime(input: {
   config: MemoryFilesConfig;
   appendLog: AppendLog;
 }) {
-  const promptProfileStore = createPromptProfileStore(promptStoragePath(input.config.memoryFiles.root, "prompt-profile.json", ["config", "prompt-profile.json"]));
-  const talkPromptProfileStore = createPromptProfileStore(promptStoragePath(input.config.memoryFiles.root, "talk-prompt-profile.json", ["config", "talk-prompt-profile.json"]));
+  const promptProfileStore = createPromptProfileStore(promptStoragePath(input.config.memoryFiles.root, "prompt-profile.json"));
+  const talkPromptProfileStore = createPromptProfileStore(promptStoragePath(input.config.memoryFiles.root, "talk-prompt-profile.json"));
   const coreProfileStore = createCoreProfileStore(path.join(input.config.memoryFiles.root, "config", "core-profile.json"));
   const memoryStore = createMarkdownMemoryStore(input.config.memoryFiles.root);
   const diaryStore = createMemoryDiaryStore(input.config.memoryFiles.root);
   memoryStore.ensure();
-  const memoryInductionPromptStore = createMemoryInductionPromptStore(promptStoragePath(input.config.memoryFiles.root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
-  promptStoragePath(input.config.memoryFiles.root, "memory-induction-prompts.json", ["config", "memory-induction-prompts.json"]);
+  const memoryInductionPromptStore = createMemoryInductionPromptStore(promptStoragePath(input.config.memoryFiles.root, "memorize-prompts.json"));
+  promptStoragePath(input.config.memoryFiles.root, "memory-induction-prompts.json");
   const sleepMemoryStateStore = createSleepMemoryStateStore(path.join(input.config.memoryFiles.root, "state", "sleep-memory-state.json"));
   const dailyShellStore = createDailyShellStore(input.config.memoryFiles.root, {
-    promptTemplatePath: promptStoragePath(input.config.memoryFiles.root, "shell-prompt-template.txt", ["shell", "prompt-template.txt"]),
+    promptTemplatePath: promptStoragePath(input.config.memoryFiles.root, "shell-prompt-template.txt"),
     onSwitch(entry: {
       message: string;
       outfitName: string;

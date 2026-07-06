@@ -10,7 +10,6 @@ export type AgentBehaviorState =
   | "calling"
   | "away"
   | "curious"
-  | "working"
   | "going_to_sleep"
   | "sleeping"
   | "serious"
@@ -46,8 +45,6 @@ export type AgentStateController = {
   tick(): AgentStateSnapshot;
   noteInboundMessage(): AgentStateSnapshot;
   noteInboundProcessed(): AgentStateSnapshot;
-  noteWorkStarted(options?: { serious?: boolean }): AgentStateSnapshot;
-  noteWorkFinished(): AgentStateSnapshot;
   getInboundDelayMs(): number;
   canReplyToInbound(): boolean;
   canRunHeartbeat(): boolean;
@@ -142,10 +139,6 @@ export function createAgentStateController(options: AgentStateControllerOptions)
     }
 
     return commit(next);
-  }
-
-  function addMs(ms: number): Date {
-    return new Date(now().getTime() + Math.max(0, ms));
   }
 
   function addMsIso(ms: number): string {
@@ -244,12 +237,6 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       }
       return clone(snapshot);
     },
-    noteWorkStarted() {
-      return clone(snapshot);
-    },
-    noteWorkFinished() {
-      return clone(snapshot);
-    },
     getInboundDelayMs() {
       return snapshot.responseDelayMs;
     },
@@ -288,14 +275,14 @@ function normalizeSnapshot(raw: unknown, time: CurrentTimeProvider, random: () =
   const value = raw as Partial<AgentStateSnapshot> & { deadlineAt?: unknown; sleepUntil?: unknown };
   const rawState = isAgentBehaviorState(value.state) ? value.state : "waiting";
   const previousState = isAgentBehaviorState(value.previousState) ? value.previousState : undefined;
-  const state = recoverTransient && rawState === "working" ? (previousState === "serious" ? "serious" : "waiting") : rawState;
+  const state = rawState;
   return {
     state,
     intimacy: clampIntimacy(value.intimacy),
     updatedAt: validIso(value.updatedAt) ?? time.now().iso,
     lastInboundAt: validIso(value.lastInboundAt),
     nextTransitionAt: validIso(value.nextTransitionAt) ?? validIso(value.deadlineAt) ?? validIso(value.sleepUntil),
-    previousState: state === rawState ? previousState : undefined,
+    previousState,
     reason: typeof value.reason === "string" ? value.reason : undefined,
     responseDelayMs: positiveNumber(value.responseDelayMs) ?? responseDelayFor(state, random),
     sleepCocoonEnteredAt: validIso(value.sleepCocoonEnteredAt),
@@ -323,7 +310,6 @@ function isAgentBehaviorState(value: unknown): value is AgentBehaviorState {
     "calling",
     "away",
     "curious",
-    "working",
     "going_to_sleep",
     "sleeping",
     "serious",
@@ -374,9 +360,9 @@ function responseDelayFor(state: AgentBehaviorState, random: () => number): numb
 }
 
 function canReplyToInbound(state: AgentBehaviorState): boolean {
-  return state !== "away" && state !== "sleeping" && state !== "working";
+  return state !== "away" && state !== "sleeping";
 }
 
 function canRunHeartbeat(state: AgentBehaviorState): boolean {
-  return state !== "away" && state !== "sleeping" && state !== "working";
+  return state !== "away" && state !== "sleeping";
 }

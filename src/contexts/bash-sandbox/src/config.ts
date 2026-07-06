@@ -1,5 +1,4 @@
 const path = await import("node:path");
-const fs = await import("node:fs");
 
 export type BashSandboxMountConfig = {
   id: string;
@@ -74,20 +73,6 @@ export function parseBashSandboxMounts(value: unknown): BashSandboxMountConfig[]
   });
 }
 
-export function parseBashSandboxSkillMounts(value: unknown): BashSandboxSkillMountConfig[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((entry, index) => {
-    if (!entry || typeof entry !== "object") throw new Error(`invalid bashSandbox skill mount at index ${index}`);
-    const mount = entry as Record<string, unknown>;
-    return {
-      id: stringValue(mount.id) || `skill_${index}`,
-      hostPath: requiredString(mount.hostPath, `bashSandbox.skillMounts[${index}].hostPath`),
-      containerPath: requiredString(mount.containerPath, `bashSandbox.skillMounts[${index}].containerPath`),
-      readOnly: mount.readOnly !== false
-    };
-  });
-}
-
 export function addBashSandboxSkillMount(config: BashSandboxConfig, mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig {
   const normalized = {
     ...mount,
@@ -101,21 +86,7 @@ export function addBashSandboxSkillMount(config: BashSandboxConfig, mount: BashS
   return normalized;
 }
 
-export function defaultBashSandboxSkillMounts(skillsRoot: string): BashSandboxSkillMountConfig[] {
-  const root = path.resolve(skillsRoot);
-  if (!fs.existsSync(root)) return [];
-  return findSkillRoots(fs, root)
-    .map((hostPath) => ({ hostPath, relative: path.relative(root, hostPath).split(path.sep).join("/") }))
-    .filter((entry) => entry.relative && !entry.relative.split("/").includes("external"))
-    .map((entry) => ({
-      id: entry.relative,
-      hostPath: entry.hostPath,
-      containerPath: `/skills/${entry.relative}`,
-      readOnly: true
-    }));
-}
-
-export function rejectSensitiveHostPath(hostPath: string): void {
+function rejectSensitiveHostPath(hostPath: string): void {
   const resolved = path.resolve(hostPath);
   const sensitive = ["/root", "/etc", "/var/run", "/run", "/proc", "/sys", "/dev"];
   if (resolved === "/" || sensitive.some((entry) => resolved === entry || resolved.startsWith(`${entry}/`))) {
@@ -124,16 +95,6 @@ export function rejectSensitiveHostPath(hostPath: string): void {
   if (/(^|[/\\])(?:\.ssh|\.aws|\.config|\.docker|id_rsa|id_ed25519|credentials|token)([/\\]|$)/i.test(resolved)) {
     throw new Error(`credential-like host path is not allowed for bashSandbox mount: ${hostPath}`);
   }
-}
-
-function findSkillRoots(fs: typeof import("node:fs"), root: string): string[] {
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  const found: string[] = [];
-  if (entries.some((entry) => entry.isFile() && entry.name === "SKILL.md")) found.push(root);
-  for (const entry of entries) {
-    if (entry.isDirectory()) found.push(...findSkillRoots(fs, path.join(root, entry.name)));
-  }
-  return found;
 }
 
 function requiredString(value: unknown, name: string): string {

@@ -1,4 +1,3 @@
-import type { FeishuConfig } from "./types.js";
 import type { AgentEvent } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
@@ -88,12 +87,12 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
   };
 }
 
-export function getPairingCommand(config: FeishuConfig): string {
+export function getPairingCommand(): string {
   return process.env.FEISHU_PAIRING_COMMAND ?? "/pair alice";
 }
 
-export function isPairingCommand(event: AgentEvent, config: FeishuConfig): boolean {
-  return event.payload.kind === "text" && event.payload.text.trim() === getPairingCommand(config);
+export function isPairingCommand(event: AgentEvent): boolean {
+  return event.payload.kind === "text" && event.payload.text.trim() === getPairingCommand();
 }
 
 function readContacts(path: string, io: PairingFileIO): FeishuPairedContact[] {

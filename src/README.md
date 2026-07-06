@@ -378,16 +378,6 @@
 关键模块：
 
 - `src/index.ts`: envBool、envNumber、envJsonObject、trimTrailingSlashes。
-- `src/globals.d.ts`: global type declarations。
-- `src/node-http.d.ts`: Node HTTP type declarations。
-
-## `platform/event-bus/`
-
-职责：技术层 pub/sub。当前不是主事件链路，只提供 in-memory event bus。
-
-关键模块：
-
-- `src/index.ts`: createInMemoryEventBus。
 
 ## `platform/output-router/`
 
@@ -414,14 +404,6 @@
 - `src/diary-store.ts`: diary/sleep boundary SQLite store。
 - `src/sqlite-compat.ts`: sqlite/better-sqlite3 compatibility loader。
 - `src/token-usage-store.ts`: token usage SQLite store。
-
-## `platform/text-renderer/`
-
-职责：通用 text rendering helper。
-
-关键模块：
-
-- `src/index.ts`: text renderer。
 
 ## `platform/time/`
 

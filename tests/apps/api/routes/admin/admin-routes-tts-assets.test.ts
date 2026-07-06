@@ -34,7 +34,7 @@ test("admin plugin model folder upload flattens files under plugin model root", 
   writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice", prompt: "Translate:" } });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
@@ -66,7 +66,7 @@ test("admin plugin TTS reference audio upload converts to preset wav", async () 
   const configPath = path.join(root, "config", "plugin", "tts", "config.json");
   writeTtsPluginConfig(root, { configPath, translation: { apiPresetName: "voice" } });
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = {
     ...baseContext(root, memoryStore, promptStore),
     pluginConfigs: { tts: { configPath, assetRoot } }
@@ -98,7 +98,7 @@ test("admin plugin TTS MiMo voice clone upload stores data url in provider confi
     preset: { provider: "mimo", mimo: { mode: "preset", baseURL: "https://api.xiaomimimo.com/v1", voice: "mimo_default" } }
   });
   const context = {
-    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]))),
+    ...baseContext(root, createMarkdownMemoryStore(root), createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"))),
     pluginConfigs: { tts: { configPath } }
   };
   const handler = createAdminHandler(context);
@@ -187,7 +187,7 @@ async function runTtsPluginTest() {
   });
   writePreset(root, "voice");
   const memoryStore = createMarkdownMemoryStore(root);
-  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json", ["config", "memorize-prompts.json"]));
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const senderAgents: string[] = [];
   const context = {
     ...baseContext(root, memoryStore, promptStore),

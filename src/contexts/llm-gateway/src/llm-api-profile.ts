@@ -20,8 +20,6 @@ export type LLMApiPreset = {
 
 export type PromptApiProfile = {
   chatPresetName?: string;
-  /** @deprecated read-only compatibility for old prompt-api-profile.json files. */
-  corePresetName?: string;
   talkPresetName?: string;
   memorizePresetName?: string;
 };
@@ -36,7 +34,7 @@ export function createPromptApiPresetStore(memoryRoot: string) {
   function resolvePromptApiPreset(kind: "chat" | "talk" | "memorize"): LLMApiPreset | undefined {
     const profile = readPromptApiProfile();
     const name = kind === "chat"
-      ? profile.chatPresetName ?? profile.corePresetName
+      ? profile.chatPresetName
       : kind === "talk"
         ? profile.talkPresetName
         : profile.memorizePresetName;
@@ -45,18 +43,12 @@ export function createPromptApiPresetStore(memoryRoot: string) {
   }
 
   function readPromptApiProfile(): PromptApiProfile {
-    const filePath = promptStoragePath(memoryRoot, "prompt-api-profile.json", ["config", "prompt-api-profile.json"]);
+    const filePath = promptStoragePath(memoryRoot, "prompt-api-profile.json");
     if (!fs.existsSync(filePath)) return {};
     try {
       const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
-      const chatPresetName = typeof value.chatPresetName === "string" && value.chatPresetName
-        ? value.chatPresetName
-        : typeof value.corePresetName === "string" && value.corePresetName
-          ? value.corePresetName
-          : undefined;
       return {
-        chatPresetName,
-        corePresetName: typeof value.corePresetName === "string" && value.corePresetName ? value.corePresetName : undefined,
+        chatPresetName: typeof value.chatPresetName === "string" && value.chatPresetName ? value.chatPresetName : undefined,
         talkPresetName: typeof value.talkPresetName === "string" && value.talkPresetName ? value.talkPresetName : undefined,
         memorizePresetName: typeof value.memorizePresetName === "string" && value.memorizePresetName ? value.memorizePresetName : undefined
       };
@@ -69,8 +61,8 @@ export function createPromptApiPresetStore(memoryRoot: string) {
     const filePath = path.join(memoryRoot, "config", "llm-api-presets.json");
     if (!fs.existsSync(filePath)) return [];
     try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: Partial<LLMApiPreset>[] } | Partial<LLMApiPreset>[];
-      const presets = Array.isArray(parsed) ? parsed : Array.isArray(parsed.presets) ? parsed.presets : [];
+      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: Partial<LLMApiPreset>[] };
+      const presets = Array.isArray(parsed.presets) ? parsed.presets : [];
       return presets.map(normalizeLLMApiPreset).filter((entry): entry is LLMApiPreset => Boolean(entry));
     } catch {
       return [];

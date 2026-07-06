@@ -97,15 +97,4 @@ export function createPromptToolPreviewRuntime(input: {
     };
   }
 
-  function previewEvent(): Parameters<typeof buildPromptMessagesWithToolResults>[1]["event"] {
-    const now = input.time.now();
-    return {
-      id: "tool_preview",
-      source: { plugin: "preview", channelId: "preview", userId: "preview" },
-      externalSession: { scope: "dm", sessionId: "preview" },
-      type: "message.text",
-      payload: { kind: "text", text: "" },
-      meta: { receivedAt: now.iso, receivedAtUtc: now.date.toISOString() }
-    };
-  }
 }

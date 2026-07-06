@@ -60,14 +60,6 @@ test("core config can enable heartbeat auto start", () => {
   assert.equal(config.core.heartbeatPaused, false);
 });
 
-test("core config keeps legacy heartbeat start paused env fallback", () => {
-  const config = loadConfig({
-    AGENT_HEARTBEAT_START_PAUSED: "false"
-  });
-
-  assert.equal(config.core.heartbeatPaused, false);
-});
-
 test("memory summary config is independent from core llm config", () => {
   const config = loadConfig({
     LLM_API_KEY: "core-key",

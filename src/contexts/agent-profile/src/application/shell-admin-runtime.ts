@@ -1,7 +1,7 @@
 import type { ShellCategory, ShellOption } from "../domain/shell.js";
 import { readJsonBody, readRawBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
-import { numberFromUnknown, optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
+import { optionalString, requiredString } from "../../../../shared/admin-input/src/index.js";
 import { decodeHeaderFileName } from "../../../../channels/tts/src/admin-assets.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../../apps/api/bootstrap/admin-route-context.js";
 
@@ -64,14 +64,9 @@ function normalizeIdList(value: unknown): string[] {
 }
 
 export async function saveShellSettings(context: AdminRoutesContext, request: any, response: any): Promise<void> {
-  const body = await readJsonBody(request);
-  const rolloverHour = numberFromUnknown(body.rolloverHour, context.dailyShellStore.getSettings().rolloverHour);
-  if (!Number.isInteger(rolloverHour) || rolloverHour < 0 || rolloverHour > 23) {
-    writeJson(response, 400, { ok: false, error: "invalid_rollover_hour" });
-    return;
-  }
-  const settings = context.dailyShellStore.saveSettings({ rolloverHour });
-  context.appendLog("info", `shell settings saved: rolloverHour=${settings.rolloverHour}`);
+  await readJsonBody(request);
+  context.dailyShellStore.saveSettings({});
+  context.appendLog("info", "shell settings saved");
   writeJson(response, 200, { ok: true, ...context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone) });
 }
 

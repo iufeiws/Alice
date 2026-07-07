@@ -33,5 +33,6 @@ pnpm-debug.log*
 assets/generated/*
 .sandbox/*
 .agent/*
+.agents/skills/anchor-skill/
 assets/*
 ref/*

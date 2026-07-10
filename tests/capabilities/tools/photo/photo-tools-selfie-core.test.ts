@@ -269,7 +269,7 @@ test("selfie_storedOnBodyReference_usesStandardPrompt", async () => {
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
-      selfieOnBodyPrompt: "on-body prompt {{pose}} {{outfit/content}}",
+      selfieOnBodyPrompt: "on-body prompt {{pose}} {{wardrobe/content}}",
       selfieExecutor: async (input) => {
         executorInput = input;
         fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);

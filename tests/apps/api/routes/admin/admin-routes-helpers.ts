@@ -161,7 +161,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
     agentState: { getSnapshot: () => ({ state: "sleeping" }), setState() {} },
     messagingTools: emptyPlugin("messaging"),
     photoTools: emptyPlugin("photo"),
-    shellTools: emptyPlugin("shell"),
+    wardrobeTools: emptyPlugin("wardrobe"),
     bookcaseTools: emptyPlugin("bookcase"),
     sleepCocoonTools: emptyPlugin("sleep-cocoon"),
     calendarTools: emptyPlugin("calendar"),

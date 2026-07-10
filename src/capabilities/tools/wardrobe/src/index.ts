@@ -1,15 +1,14 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
-import type { DailyShellStore, ShellOption } from "../../../../contexts/agent-profile/src/ports/shell-store.js";
-import { filterOutfits, resolveOutfitByName, shouldAttemptOnBodyGeneration } from "../../../../contexts/agent-profile/src/domain/outfit.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { shellToolText, wardrobeTool } from "../profile.js";
+import { filterWardrobeItems, resolveWardrobeItemByName, shouldAttemptOnBodyGeneration, type WardrobeItem } from "../../../../contexts/wardrobe/src/index.js";
+import { wardrobeTool, wardrobeToolText } from "../profile.js";
 
-export type ShellToolTarget = {
+export type WardrobeToolTarget = {
   plugin: string;
   accountId?: string;
   channelId?: string;
@@ -17,13 +16,19 @@ export type ShellToolTarget = {
   sessionId: string;
 };
 
-export type ShellToolsDeps = {
-  dailyShellStore: DailyShellStore;
+export type WardrobeRuntime = {
+  getConfig(date: Date, timeZone: string): { daily: { outfit: WardrobeItem }; outfits: WardrobeItem[] };
+  get(date: Date, timeZone: string): { outfit: WardrobeItem };
+  switchOutfit(date: Date, timeZone: string, outfitId: string): { outfit: WardrobeItem };
+};
+
+export type WardrobeToolsDeps = {
+  wardrobeRuntime: WardrobeRuntime;
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
-  attemptOnBodyGeneration?(outfit: ShellOption): Promise<unknown> | unknown;
-  getDefaultTarget?(): ShellToolTarget | undefined;
+  attemptOnBodyGeneration?(item: WardrobeItem): Promise<unknown> | unknown;
+  getDefaultTarget?(): WardrobeToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?(input: {
     direction: "outbound";
@@ -37,17 +42,17 @@ export type ShellToolsDeps = {
   }): unknown;
 };
 
-export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
+export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
 
   return {
-    id: "shell",
+    id: "wardrobe",
     listTools() {
       return [wardrobeTool];
     },
     async execute(call) {
       if (call.toolName === wardrobeTool.name) return wardrobe(call);
-      return { callId: call.id, ok: false, error: shellToolText.unknownTool(call.toolName) };
+      return { callId: call.id, ok: false, error: wardrobeToolText.unknownTool(call.toolName) };
     }
   };
 
@@ -55,88 +60,88 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     const action = stringValue(call.input.action).trim();
     if (action === "list") return listWardrobe(call);
     if (action === "mirror") return mirrorWardrobe(call);
-    if (action === "switch") return switchOutfit(call);
-    if (action === "random") return randomOutfit(call);
-    return toolError(call, shellToolText.unsupportedAction);
+    if (action === "switch") return switchWardrobe(call);
+    if (action === "random") return randomWardrobe(call);
+    return toolError(call, wardrobeToolText.unsupportedAction);
   }
 
   function listWardrobe(call: ToolCall): ToolResult {
-    const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
+    const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
     const query = stringValue(call.input.name).trim();
     return {
       callId: call.id,
       ok: true,
-      output: query ? formatOutfits(filterOutfits(config.outfits, query)) : formatGroups(config.outfits)
+      output: query ? formatItems(filterWardrobeItems(config.outfits, query)) : formatGroups(config.outfits)
     };
   }
 
   function mirrorWardrobe(call: ToolCall): ToolResult {
-    const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
+    const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
     return {
       callId: call.id,
       ok: true,
-      output: formatOutfit(config.daily.outfit, false)
+      output: formatItem(config.daily.outfit, false)
     };
   }
 
-  async function switchOutfit(call: ToolCall): Promise<ToolResult> {
+  async function switchWardrobe(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return wardrobeError(call, shellToolText.noCurrentSession);
+    if (!target) return wardrobeError(call, wardrobeToolText.noCurrentSession);
     const name = stringValue(call.input.name).trim();
-    if (!name) return wardrobeError(call, shellToolText.nameRequired);
+    if (!name) return wardrobeError(call, wardrobeToolText.nameRequired);
 
-    const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
-    const match = resolveOutfitByName(config.outfits, name);
-    if (match.kind === "none") return wardrobeError(call, shellToolText.unknownOutfitName);
+    const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
+    const match = resolveWardrobeItemByName(config.outfits, name);
+    if (match.kind === "none") return wardrobeError(call, wardrobeToolText.unknownItemName);
     if (match.kind === "ambiguous") {
-      const error = xmlError(shellToolText.ambiguousOutfitName(name));
+      const error = xmlError(wardrobeToolText.ambiguousItemName(name));
       return {
         callId: call.id,
         ok: false,
         error,
-        output: `${error}\n<candidates>\n${formatOutfits(match.outfits)}\n</candidates>`
+        output: `${error}\n<candidates>\n${formatItems(match.items)}\n</candidates>`
       };
     }
 
-    return changeOutfit(call, target, match.outfit.id);
+    return changeWardrobe(call, target, match.item.id);
   }
 
-  async function randomOutfit(call: ToolCall): Promise<ToolResult> {
+  async function randomWardrobe(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
-    if (!target) return wardrobeError(call, shellToolText.noCurrentSession);
+    if (!target) return wardrobeError(call, wardrobeToolText.noCurrentSession);
 
-    const config = deps.dailyShellStore.getConfig(time.now().date, time.timeZone);
+    const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
     const query = stringValue(call.input.name).trim();
-    const outfits = query ? filterOutfits(config.outfits, query) : config.outfits;
-    if (outfits.length === 0) return wardrobeError(call, shellToolText.unknownOutfitName);
-    return changeOutfit(call, target, outfits[Math.floor(Math.random() * outfits.length)].id);
+    const items = query ? filterWardrobeItems(config.outfits, query) : config.outfits;
+    if (items.length === 0) return wardrobeError(call, wardrobeToolText.unknownItemName);
+    return changeWardrobe(call, target, items[Math.floor(Math.random() * items.length)].id);
   }
 
-  async function changeOutfit(call: ToolCall, target: ShellToolTarget, outfitId: string): Promise<ToolResult> {
-    let shell;
+  async function changeWardrobe(call: ToolCall, target: WardrobeToolTarget, itemId: string): Promise<ToolResult> {
+    let current;
     try {
-      shell = deps.dailyShellStore.switchOutfit(time.now().date, time.timeZone, outfitId);
+      current = deps.wardrobeRuntime.switchOutfit(time.now().date, time.timeZone, itemId);
     } catch (error) {
-      if (error instanceof Error && error.message === "unknown_outfit") return wardrobeError(call, shellToolText.unknownOutfitName);
+      if (error instanceof Error && error.message === "unknown_outfit") return wardrobeError(call, wardrobeToolText.unknownItemName);
       throw error;
     }
 
     const noticeResult = await sendChangingNotice(call.id, target);
     if (noticeResult.ok === false) return noticeResult.result;
-    if (shouldAttemptOnBodyGeneration(shell.outfit)) {
-      await deps.attemptOnBodyGeneration?.(shell.outfit);
-      shell = deps.dailyShellStore.get(time.now().date, time.timeZone);
+    if (shouldAttemptOnBodyGeneration(current.outfit)) {
+      await deps.attemptOnBodyGeneration?.(current.outfit);
+      current = deps.wardrobeRuntime.get(time.now().date, time.timeZone);
     }
 
     return {
       callId: call.id,
       ok: true,
-      output: shellToolText.switched
+      output: wardrobeToolText.switched
     };
   }
 
-  async function sendChangingNotice(callId: string, target: ShellToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
-    const text = shellToolText.changingNotice;
+  async function sendChangingNotice(callId: string, target: WardrobeToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
+    const text = wardrobeToolText.changingNotice;
     const now = time.now();
     const output: AgentOutput = {
       id: createId("tool_out"),
@@ -200,7 +205,7 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
     }
   }
 
-  function resolveTarget(call: ToolCall): ShellToolTarget | undefined {
+  function resolveTarget(call: ToolCall): WardrobeToolTarget | undefined {
     const resolved = deps.resolveOutputTarget?.(call);
     if (resolved) return resolved;
     if (call.requester?.plugin && call.externalSession?.sessionId) {
@@ -216,19 +221,19 @@ export function createShellTools(deps: ShellToolsDeps): ToolPlugin {
   }
 }
 
-function formatOutfit(outfit: ShellOption, compact: boolean): string {
-  const group = escapeXmlAttribute(outfit.group?.trim() || "root");
+function formatItem(item: WardrobeItem, compact: boolean): string {
+  const group = escapeXmlAttribute(item.group?.trim() || "root");
   return compact
-    ? `<${outfit.name} group="${group}" />`
-    : `<${outfit.name} group="${group}">\n${outfit.content}\n</${outfit.name}>`;
+    ? `<${item.name} group="${group}" />`
+    : `<${item.name} group="${group}">\n${item.content}\n</${item.name}>`;
 }
 
-function formatOutfits(outfits: ShellOption[]): string {
-  return outfits.map((outfit) => formatOutfit(outfit, outfits.length > 3)).join("\n");
+function formatItems(items: WardrobeItem[]): string {
+  return items.map((item) => formatItem(item, items.length > 3)).join("\n");
 }
 
-function formatGroups(outfits: ShellOption[]): string {
-  const groups = [...new Set(outfits.map((outfit) => outfit.group?.trim() || "root"))];
+function formatGroups(items: WardrobeItem[]): string {
+  const groups = [...new Set(items.map((item) => item.group?.trim() || "root"))];
   return `<groups>\n${groups.join("\n")}\n</groups>`;
 }
 

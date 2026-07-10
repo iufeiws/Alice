@@ -1,5 +1,4 @@
-import type { ShellOption } from "../../agent-profile/src/domain/shell.js";
-import { shouldAttemptOnBodyGeneration } from "../../agent-profile/src/domain/outfit.js";
+import { shouldAttemptOnBodyGeneration, type WardrobeItem } from "../../wardrobe/src/index.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 import { defaultPhotoPluginConfigPath, detectImageMime, normalizeGeneratedSelfieJpeg, readPhotoPluginConfig, runPhotoGateway, validateGeneratedImage } from "../../../channels/image-generation/src/index.js";
 import { optionalString, requiredString } from "../../../shared/admin-input/src/index.js";
@@ -21,7 +20,7 @@ export function createOutfitOnBodyGenerationAttempt(input: {
   photoConfigPath?: string;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
-  return async function attemptOutfitOnBodyGeneration(outfit: ShellOption): Promise<void> {
+  return async function attemptOutfitOnBodyGeneration(outfit: WardrobeItem): Promise<void> {
     if (!shouldAttemptOnBodyGeneration(outfit) || !outfit.imageUrl) return;
     const photoConfigPath = input.photoConfigPath ?? defaultPhotoPluginConfigPath;
     let photoConfig;
@@ -153,10 +152,10 @@ function safeFilePart(value: string): string {
   return value.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
-function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, outfitId: string, outfitImageUrl: string): ShellOption | undefined {
+function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, outfitId: string, outfitImageUrl: string): WardrobeItem | undefined {
   const shellConfig = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone);
   const stored = Array.isArray(shellConfig.outfits)
-    ? shellConfig.outfits.find((outfit: ShellOption) => outfit.id === outfitId)
+    ? shellConfig.outfits.find((outfit: WardrobeItem) => outfit.id === outfitId)
     : undefined;
   const name = stored?.name ?? optionalString(body.outfitName);
   const content = stored?.content ?? optionalString(body.outfitContent);
@@ -173,11 +172,11 @@ function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, o
   };
 }
 
-function renderPhotoOnBodyPrompt(context: any, template: string, outfit: ShellOption): string {
-  return context.getPromptRenderer().renderText(template, { targetOutfit: outfit });
+function renderPhotoOnBodyPrompt(context: any, template: string, outfit: WardrobeItem): string {
+  return context.getPromptRenderer().renderText(template, { targetWardrobe: outfit });
 }
 
-function savePhotoOnBodyAttempt(context: any, outfit: ShellOption, imageUrl?: string): void {
+function savePhotoOnBodyAttempt(context: any, outfit: WardrobeItem, imageUrl?: string): void {
   const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
   const onBodyImageUrl = imageUrl ?? current?.onBodyImageUrl ?? outfit.onBodyImageUrl;
   context.dailyShellStore.saveOption("outfits", {
@@ -187,7 +186,7 @@ function savePhotoOnBodyAttempt(context: any, outfit: ShellOption, imageUrl?: st
   }, outfit.id);
 }
 
-function clearPhotoOnBodyAttempt(context: any, outfit: ShellOption): void {
+function clearPhotoOnBodyAttempt(context: any, outfit: WardrobeItem): void {
   if (hasPhotoOnBodyImage(context, outfit)) return;
   const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
   context.dailyShellStore.saveOption("outfits", {
@@ -196,7 +195,7 @@ function clearPhotoOnBodyAttempt(context: any, outfit: ShellOption): void {
   }, outfit.id);
 }
 
-function hasPhotoOnBodyImage(context: any, outfit: Pick<ShellOption, "id" | "onBodyImageUrl">): boolean {
+function hasPhotoOnBodyImage(context: any, outfit: Pick<WardrobeItem, "id" | "onBodyImageUrl">): boolean {
   const current = context.dailyShellStore.getConfig(context.time.now().date, context.time.timeZone).outfits.find((entry: { id?: string }) => entry.id === outfit.id);
   return Boolean(current?.onBodyImageUrl || outfit.onBodyImageUrl);
 }

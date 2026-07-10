@@ -2,7 +2,7 @@ import { buildCalendarContext } from "../../../../capabilities/tools/calendar/sr
 import { formatAvailableSkillsXml } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { PromptContextRenderOptions, PromptContextRuntime, PromptContextShellOption, PromptContextValue } from "../contracts/prompt-context-runtime.js";
+import type { PromptContextContentOption, PromptContextRenderOptions, PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
 
 const memoryTargets = ["persistent", "userPreferences", "yesterdaySummary"] as const;
 const optionFields = ["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"] as const;
@@ -21,8 +21,8 @@ const variableNames = [
   "library/content",
   "dailyShell/date",
   "dailyShell/createdAt",
-  ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `outfit/${field}`]),
-  ...optionFields.map((field) => `targetOutfit/${field}`),
+  ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `wardrobe/${field}`]),
+  ...optionFields.map((field) => `targetWardrobe/${field}`),
   ...memoryTargets.flatMap((target) => [
     `memory/${target}/content`,
     `memory/${target}/limit/lines`,
@@ -67,8 +67,8 @@ export function createPromptContextRuntime(input: {
     if (name === "appearance") return coreProfile().appearanceDescription?.trim() || "";
     if (name === "library/content") return librarySetting();
     if (name.startsWith("dailyShell/")) return dailyShellVariable(name);
-    if (name.startsWith("outfit/")) return optionVariable(dailyShell()?.outfit, name.slice("outfit/".length));
-    if (name.startsWith("targetOutfit/")) return optionVariable(options?.targetOutfit, name.slice("targetOutfit/".length));
+    if (name.startsWith("wardrobe/")) return optionVariable(dailyShell()?.outfit, name.slice("wardrobe/".length));
+    if (name.startsWith("targetWardrobe/")) return optionVariable(options?.targetWardrobe, name.slice("targetWardrobe/".length));
     if (name.startsWith("memory/")) return memoryVariable(name);
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();
@@ -107,8 +107,8 @@ export function createPromptContextRuntime(input: {
     return worldWanderer.enabled ? worldWanderer.libraryPrompt : coreProfile().librarySetting ?? "";
   }
 
-  function dailyShell(): { date: string; createdAt: string; personality: PromptContextShellOption; relationship: PromptContextShellOption; outfit: PromptContextShellOption } | undefined {
-    return input.dailyShellStore.get(currentTime().dateObject, input.time.timeZone) as { date: string; createdAt: string; personality: PromptContextShellOption; relationship: PromptContextShellOption; outfit: PromptContextShellOption } | undefined;
+  function dailyShell(): { date: string; createdAt: string; personality: PromptContextContentOption; relationship: PromptContextContentOption; outfit: PromptContextContentOption } | undefined {
+    return input.dailyShellStore.get(currentTime().dateObject, input.time.timeZone) as { date: string; createdAt: string; personality: PromptContextContentOption; relationship: PromptContextContentOption; outfit: PromptContextContentOption } | undefined;
   }
 
   function dailyShellVariable(name: string): PromptContextValue {
@@ -121,9 +121,9 @@ export function createPromptContextRuntime(input: {
     return undefined;
   }
 
-  function optionVariable(option: PromptContextShellOption | undefined, field: string): PromptContextValue {
+  function optionVariable(option: PromptContextContentOption | undefined, field: string): PromptContextValue {
     if (!optionFields.includes(field as (typeof optionFields)[number])) return undefined;
-    const value = option?.[field as keyof PromptContextShellOption];
+    const value = option?.[field as keyof PromptContextContentOption];
     if (typeof value === "boolean") return value;
     return value ?? "";
   }

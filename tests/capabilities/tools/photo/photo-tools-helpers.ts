@@ -68,7 +68,7 @@ export function writeReferenceFiles(root: string): void {
     "{{appearance}}",
     "{{dailyShell/persona/content}}",
     "服装特征:",
-    "{{outfit/content}}"
+    "{{wardrobe/content}}"
   ].join("\n"));
   fs.writeFileSync(path.join(root, "alice-character-reference.jpg"), "alice-image");
   fs.writeFileSync(path.join(root, "magic-library-reference.jpg"), "library-image");

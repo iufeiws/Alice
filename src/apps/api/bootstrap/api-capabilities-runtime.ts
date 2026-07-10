@@ -91,7 +91,7 @@ export function createApiCapabilitiesRuntime(input: {
     finishAndWaitTools: toolRuntime.finishAndWaitTools,
     photoConfigPath: toolRuntime.photoConfigPath,
     photoTools: toolRuntime.photoTools,
-    shellTools: toolRuntime.shellTools,
+    wardrobeTools: toolRuntime.wardrobeTools,
     bookcaseTools: toolRuntime.bookcaseTools,
     sleepCocoonTools: toolRuntime.sleepCocoonTools,
     calendarTools: toolRuntime.calendarTools,

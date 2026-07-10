@@ -111,7 +111,7 @@ export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugi
 
 export function getVisiblePromptTools(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): Array<{ name: string; description?: string }> {
   const profile = store.get();
-  const plugins = [context.messagingTools, context.finishAndWaitTools, context.photoTools, context.shellTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
+  const plugins = [context.messagingTools, context.finishAndWaitTools, context.photoTools, context.wardrobeTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
   return plugins.flatMap((plugin) => plugin.listTools().filter((tool) => isToolVisibleInPromptProfile(profile, tool.name)).map((tool) => ({
     name: tool.name,
     description: tool.description
@@ -200,7 +200,7 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
 }
 
 export function getAdminToolPlugins(context: AdminRoutesContext): ToolPlugin[] {
-  return [context.messagingTools, context.finishAndWaitTools, context.photoTools, context.shellTools, context.bookcaseTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
+  return [context.messagingTools, context.finishAndWaitTools, context.photoTools, context.wardrobeTools, context.bookcaseTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
 }
 
 function unsafePreviewReason(toolName: string, input: Record<string, unknown>): string | undefined {

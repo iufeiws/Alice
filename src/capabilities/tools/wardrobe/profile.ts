@@ -14,13 +14,13 @@ export const wardrobeTool: ToolDefinition = {
   }
 };
 
-export const shellToolText = {
-  unknownTool: (toolName: string) => `Unknown shell tool: ${toolName}`,
+export const wardrobeToolText = {
+  unknownTool: (toolName: string) => `Unknown wardrobe tool: ${toolName}`,
   unsupportedAction: "unsupported action",
   noCurrentSession: "No current messaging session is available",
   nameRequired: "name is required",
-  unknownOutfitName: "unknown outfit name",
-  ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`,
+  unknownItemName: "unknown wardrobe item name",
+  ambiguousItemName: (name: string) => `ambiguous wardrobe item name: ${name}`,
   switched: "success",
   changingNotice: "-少女已更衣-"
 };

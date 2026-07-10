@@ -88,7 +88,7 @@ export function createApiAdminRuntime(input: {
     messagingTools: input.apiCapabilitiesRuntime.messagingTools,
     finishAndWaitTools: input.apiCapabilitiesRuntime.finishAndWaitTools,
     photoTools: input.apiCapabilitiesRuntime.photoTools,
-    shellTools: input.apiCapabilitiesRuntime.shellTools,
+    wardrobeTools: input.apiCapabilitiesRuntime.wardrobeTools,
     bookcaseTools: input.apiCapabilitiesRuntime.bookcaseTools,
     sleepCocoonTools: input.apiCapabilitiesRuntime.sleepCocoonTools,
     calendarTools: input.apiCapabilitiesRuntime.calendarTools,

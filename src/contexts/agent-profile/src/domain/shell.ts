@@ -1,5 +1,5 @@
 import { formatZonedIso } from "../../../../platform/time/src/index.js";
-import { findOutfit, pickOutfit } from "./outfit.js";
+import { findWardrobeItem, pickWardrobeItem } from "../../../wardrobe/src/index.js";
 import { defaultOutfits, defaultPersonalities, defaultPromptTemplate, defaultRelationships } from "./shell-defaults.js";
 import { findOption, formatLocalDate, normalizeOption, normalizeRecentRelationshipIds, normalizeSettings, pick, pickExcludingRecent, renderShellTemplate, sameStringArray, updateRecentRelationshipIds } from "./shell-normalizers.js";
 import { appendSwitchLog, deleteOptionFile, dirForCategory, ensureShellFiles, normalizeOutfitImage, readDailyShell, readOptions, readPromptTemplate, readRecentRelationshipIds, readSettings, readSwitchLogs, savePromptTemplate, shellPaths, writeDailyShell, writeOptionFile, writeSettings } from "./shell-store-files.js";
@@ -27,7 +27,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
           createdAt,
           personality: findOption(personalities, existing.personalityId) ?? pick(personalities),
           relationship: findOption(relationships, existing.relationshipId) ?? pick(relationships),
-          outfit: findOutfit(outfits, existing.outfitId) ?? pickOutfit(outfits)
+          outfit: findWardrobeItem(outfits, existing.outfitId) ?? pickWardrobeItem(outfits)
         };
         cachedRecentRelationshipIds = normalizeRecentRelationshipIds(existing.recentRelationshipIds, relationships);
         const nextRecentRelationshipIds = updateRecentRelationshipIds(
@@ -55,7 +55,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
         relationship,
-        outfit: pickOutfit(outfits)
+        outfit: pickWardrobeItem(outfits)
       };
       cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);
@@ -84,7 +84,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
     },
     switchOutfit(date, timeZone, outfitId) {
       const outfits = readOptions(paths.outfitsDir, defaultOutfits());
-      const outfit = findOutfit(outfits, outfitId);
+      const outfit = findWardrobeItem(outfits, outfitId);
       if (!outfit) throw new Error("unknown_outfit");
       const current = this.get(date, timeZone);
       const daily: DailyShell = {
@@ -150,7 +150,7 @@ export function createDailyShellStore(rootDir: string, options: DailyShellStoreO
         createdAt: formatZonedIso(date, timeZone),
         personality: pick(personalities),
         relationship,
-        outfit: pickOutfit(readOptions(paths.outfitsDir, defaultOutfits()))
+        outfit: pickWardrobeItem(readOptions(paths.outfitsDir, defaultOutfits()))
       };
       cachedRecentRelationshipIds = updateRecentRelationshipIds(relationship.id, cachedRecentRelationshipIds, relationships.length);
       writeDailyShell(paths.daily, daily, readPromptTemplate(paths.promptTemplate), cachedRecentRelationshipIds);

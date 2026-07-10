@@ -1,6 +1,6 @@
 export type PromptContextPrimitive = string | number | boolean | null | undefined;
 export type PromptContextValue = PromptContextPrimitive | PromptContextValue[] | { [key: string]: PromptContextValue };
-export type PromptContextShellOption = {
+export type PromptContextContentOption = {
   id: string;
   name: string;
   content: string;
@@ -12,7 +12,7 @@ export type PromptContextShellOption = {
 };
 
 export type PromptContextRenderOptions = {
-  targetOutfit?: PromptContextShellOption;
+  targetWardrobe?: PromptContextContentOption;
 };
 
 export type PromptContextRuntime = {

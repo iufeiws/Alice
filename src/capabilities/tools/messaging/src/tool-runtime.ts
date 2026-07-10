@@ -1,7 +1,7 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import { createMessagingTools, defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
-import { createShellTools } from "../../shell/src/index.js";
+import { createWardrobeTools } from "../../wardrobe/src/index.js";
 import { createBookcaseTools } from "../../bookcase/src/index.js";
 import { createSleepCocoonTools } from "../../sleep-cocoon/src/index.js";
 import { createLocationTools } from "../../location/src/index.js";
@@ -146,8 +146,8 @@ export function createToolRuntime(input: {
     appendMessageLog: input.appendMessageLog
   });
 
-  const shellTools = createShellTools({
-    dailyShellStore: input.dailyShellStore,
+  const wardrobeTools = createWardrobeTools({
+    wardrobeRuntime: input.dailyShellStore,
     store: input.store,
     outputRouter: input.outputRouter,
     time: input.time,
@@ -204,13 +204,13 @@ export function createToolRuntime(input: {
     config: input.config.bashSandbox
   });
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, shellTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
+  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
 
   return {
     messagingTools,
     photoConfigPath,
     photoTools,
-    shellTools,
+    wardrobeTools,
     bookcaseTools,
     sleepCocoonTools,
     calendarTools,

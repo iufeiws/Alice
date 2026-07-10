@@ -82,7 +82,7 @@ export function createAdminRequestHandlerRuntime(input: {
   messagingTools: any;
   finishAndWaitTools: any;
   photoTools: any;
-  shellTools: any;
+  wardrobeTools: any;
   bookcaseTools: any;
   sleepCocoonTools: any;
   calendarTools?: any;
@@ -160,7 +160,7 @@ export function createAdminRequestHandlerRuntime(input: {
     messagingTools: input.messagingTools,
     finishAndWaitTools: input.finishAndWaitTools,
     photoTools: input.photoTools,
-    shellTools: input.shellTools,
+    wardrobeTools: input.wardrobeTools,
     bookcaseTools: input.bookcaseTools,
     sleepCocoonTools: input.sleepCocoonTools,
     calendarTools: input.calendarTools,

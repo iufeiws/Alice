@@ -323,13 +323,13 @@
 - `src/image-files.ts`: 生成图校验、JPEG 归一化、mime 检测。
 - `src/process-exec.ts`: 子进程执行 helper，供 codex provider 和图像转换复用。
 
-## `capabilities/tools/shell/`
+## `capabilities/tools/wardrobe/`
 
-职责：shell/outfit 管理 tool，让 LLM 查询和切换当前外观/状态。
+职责：wardrobe 管理 tool，让 LLM 查询和切换当前服装。
 
 关键模块：
 
-- `src/index.ts`: shell tools。
+- `src/index.ts`: wardrobe tools。
 
 ## `capabilities/tools/bookcase/`
 

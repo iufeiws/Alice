@@ -111,7 +111,7 @@ export type AdminRuntimeContext = {
   messagingTools: ToolPlugin;
   finishAndWaitTools: ToolPlugin;
   photoTools: ToolPlugin;
-  shellTools: ToolPlugin;
+  wardrobeTools: ToolPlugin;
   bookcaseTools: ToolPlugin;
   sleepCocoonTools: ToolPlugin;
   calendarTools?: ToolPlugin;

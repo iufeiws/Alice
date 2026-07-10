@@ -260,7 +260,7 @@ async function runSuccessfulOnBodyGeneration() {
     selfieMode: "openai",
     selfieImageApiKey: "image-key",
     onBodyReferenceImage: path.relative(root, referencePath),
-    onBodyPrompt: "configured-prompt {{targetWardrobe/content}}"
+    onBodyPrompt: "configured-prompt {{targetOutfit/content}}"
   })}\n`);
   const previousFetch = globalThis.fetch;
   let renderedPrompt = "";
@@ -395,7 +395,7 @@ function createOnBodyFailureFixture(fetchResponse: (prompt: string, readAttempte
     selfieMode: "openai",
     selfieImageApiKey: "image-key",
     onBodyReferenceImage: path.relative(root, referencePath),
-    onBodyPrompt: "configured-prompt {{wardrobe/content}}"
+    onBodyPrompt: "configured-prompt {{outfit/content}}"
   })}\n`);
   const previousFetch = globalThis.fetch;
   let readOutfitAttempted = (_id: string) => undefined as boolean | undefined;

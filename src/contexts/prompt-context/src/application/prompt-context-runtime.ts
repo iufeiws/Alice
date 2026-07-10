@@ -21,8 +21,8 @@ const variableNames = [
   "library/content",
   "dailyShell/date",
   "dailyShell/createdAt",
-  ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `wardrobe/${field}`]),
-  ...optionFields.map((field) => `targetWardrobe/${field}`),
+  ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `outfit/${field}`]),
+  ...optionFields.map((field) => `targetOutfit/${field}`),
   ...memoryTargets.flatMap((target) => [
     `memory/${target}/content`,
     `memory/${target}/limit/lines`,
@@ -67,8 +67,8 @@ export function createPromptContextRuntime(input: {
     if (name === "appearance") return coreProfile().appearanceDescription?.trim() || "";
     if (name === "library/content") return librarySetting();
     if (name.startsWith("dailyShell/")) return dailyShellVariable(name);
-    if (name.startsWith("wardrobe/")) return optionVariable(dailyShell()?.outfit, name.slice("wardrobe/".length));
-    if (name.startsWith("targetWardrobe/")) return optionVariable(options?.targetWardrobe, name.slice("targetWardrobe/".length));
+    if (name.startsWith("outfit/")) return optionVariable(dailyShell()?.outfit, name.slice("outfit/".length));
+    if (name.startsWith("targetOutfit/")) return optionVariable(options?.targetOutfit, name.slice("targetOutfit/".length));
     if (name.startsWith("memory/")) return memoryVariable(name);
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();

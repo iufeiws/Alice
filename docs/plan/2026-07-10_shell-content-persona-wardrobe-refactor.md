@@ -53,11 +53,11 @@ src/contexts/wardrobe/
 
 `src/contexts/wardrobe` 负责当前原 outfit 侧资源：
 
-- wardrobe item 列表、分组、排序。
+- outfit 列表、分组、排序。
 - 当前穿搭选择。
 - 服装图片、on-body 图片、生成状态。
 - `Wardrobe` tool。
-- photo on-body 生成所需的 target wardrobe item。
+- photo on-body 生成所需的 target outfit。
 
 ### content
 
@@ -68,10 +68,10 @@ src/contexts/wardrobe/
 | 当前命名 | 目标命名 |
 | --- | --- |
 | shell | persona，或按语义拆到 wardrobe |
-| daily shell | daily persona + current wardrobe item |
+| daily shell | daily persona + current outfit |
 | personality | persona |
 | personalities | personas |
-| outfit | wardrobe item |
+| outfit | outfit |
 | outfits | wardrobe |
 | Shell tool 中的 wardrobe 行为 | Wardrobe tool |
 | shell assets 中的 outfit image | wardrobe assets |
@@ -79,7 +79,7 @@ src/contexts/wardrobe/
 命名迁移时按语义判断，不做机械全局替换：
 
 - 表示人格文本时改为 `persona`。
-- 表示服装资源时改为 `wardrobe` / `wardrobe item`。
+- 表示衣橱容器时改为 `wardrobe`；表示单件服装时保留 `outfit`。
 - 表示上层内容域时只作为文档概念，不新增 context 目录。
 - 表示命令行 shell 或 Bash sandbox 时保持原名，不参与本重构。
 
@@ -89,7 +89,7 @@ src/contexts/wardrobe/
 
 - `outfit.ts`
   - 已有 `pickOutfit`、`findOutfit`、`filterOutfits`、`resolveOutfitByName`、`shouldAttemptOnBodyGeneration`。
-  - 当前依赖 `ShellOption`，应迁到 `src/contexts/wardrobe` 并改为 wardrobe item 类型。
+  - 当前依赖 `ShellOption`，应迁到 `src/contexts/wardrobe` 并改为 outfit 类型。
 
 - `shell-types.ts`
   - `ShellCategory = "personalities" | "relationships" | "outfits"`。
@@ -141,8 +141,8 @@ src/contexts/wardrobe/
 
 5. 调整 prompt context
    - 原 `{{personality/...}}` 变量改为 `{{persona/...}}`。
-   - 原 `{{outfit/...}}` 变量改为 `{{wardrobe/...}}` 或 `{{currentWardrobe/...}}`，最终名称实施前确认。
-   - 原 `{{targetOutfit/...}}` 改为 `{{targetWardrobe/...}}`。
+   - `{{outfit/...}}` 保持表示当前服装。
+   - `{{targetOutfit/...}}` 保持表示本次 on-body 生成目标服装。
    - Preview 与实际 LLM request 必须使用同一 prompt context runtime。
    - 任何变量改名都不能隐藏追加 prompt 内容。
 
@@ -154,7 +154,7 @@ src/contexts/wardrobe/
 
 7. 调整 photo on-body
    - `outfit-on-body-runtime` 改为 wardrobe 命名。
-   - on-body prompt 目标变量改为 target wardrobe item。
+   - on-body prompt 目标变量保持为 target outfit。
    - 管理后台手动生成与自动生成都读取同一 target wardrobe 数据。
 
 8. 测试与验证
@@ -193,7 +193,7 @@ npm test
 
 - `src/contexts/agent-profile/src/domain/outfit.ts`
   - 整体迁到 `src/contexts/wardrobe`。
-  - `ShellOption` 类型改为 wardrobe item 类型。
+  - `ShellOption` 类型改为 outfit 类型。
 
 - `src/contexts/agent-profile/src/application/shell-admin-runtime.ts`
   - 拆成 persona admin runtime 与 wardrobe admin runtime。

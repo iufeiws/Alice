@@ -1,4 +1,4 @@
-export type WardrobeItem = {
+export type Outfit = {
   id: string;
   name: string;
   content: string;
@@ -9,44 +9,44 @@ export type WardrobeItem = {
   onBodyGenerationAttempted?: boolean;
 };
 
-export function pickWardrobeItem(items: WardrobeItem[]): WardrobeItem {
-  return items[Math.floor(Math.random() * items.length)] ?? items[0];
+export function pickOutfit(outfits: Outfit[]): Outfit {
+  return outfits[Math.floor(Math.random() * outfits.length)] ?? outfits[0];
 }
 
-export function findWardrobeItem(items: WardrobeItem[], id: string): WardrobeItem | undefined {
-  return items.find((item) => item.id === id);
+export function findOutfit(outfits: Outfit[], id: string): Outfit | undefined {
+  return outfits.find((outfit) => outfit.id === id);
 }
 
-export function filterWardrobeItems(items: WardrobeItem[], query: string): WardrobeItem[] {
+export function filterOutfits(outfits: Outfit[], query: string): Outfit[] {
   const normalizedQuery = normalizeSearchText(query);
-  return items.filter((item) => wardrobeSearchText(item).includes(normalizedQuery));
+  return outfits.filter((outfit) => outfitSearchText(outfit).includes(normalizedQuery));
 }
 
-export function resolveWardrobeItemByName(items: WardrobeItem[], name: string):
-  | { kind: "one"; item: WardrobeItem }
-  | { kind: "ambiguous"; items: WardrobeItem[] }
+export function resolveOutfitByName(outfits: Outfit[], name: string):
+  | { kind: "one"; outfit: Outfit }
+  | { kind: "ambiguous"; outfits: Outfit[] }
   | { kind: "none" } {
   const normalizedName = normalizeSearchText(name);
-  const exact = items.filter((item) => normalizeSearchText(item.name) === normalizedName);
-  if (exact.length === 1) return { kind: "one", item: exact[0] };
-  if (exact.length > 1) return { kind: "ambiguous", items: exact };
+  const exact = outfits.filter((outfit) => normalizeSearchText(outfit.name) === normalizedName);
+  if (exact.length === 1) return { kind: "one", outfit: exact[0] };
+  if (exact.length > 1) return { kind: "ambiguous", outfits: exact };
 
-  const matches = filterWardrobeItems(items, name);
-  if (matches.length === 1) return { kind: "one", item: matches[0] };
-  if (matches.length > 1) return { kind: "ambiguous", items: matches };
+  const matches = filterOutfits(outfits, name);
+  if (matches.length === 1) return { kind: "one", outfit: matches[0] };
+  if (matches.length > 1) return { kind: "ambiguous", outfits: matches };
   return { kind: "none" };
 }
 
-export function shouldAttemptOnBodyGeneration(item: WardrobeItem): boolean {
-  return item.outfitImageGenerated !== true && item.onBodyGenerationAttempted !== true;
+export function shouldAttemptOnBodyGeneration(outfit: Outfit): boolean {
+  return outfit.outfitImageGenerated !== true && outfit.onBodyGenerationAttempted !== true;
 }
 
-function wardrobeSearchText(item: WardrobeItem): string {
+function outfitSearchText(outfit: Outfit): string {
   return normalizeSearchText([
-    item.name,
-    item.id,
-    item.group ?? "",
-    item.content
+    outfit.name,
+    outfit.id,
+    outfit.group ?? "",
+    outfit.content
   ].join("\n"));
 }
 

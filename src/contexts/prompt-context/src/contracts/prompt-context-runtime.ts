@@ -12,7 +12,7 @@ export type PromptContextContentOption = {
 };
 
 export type PromptContextRenderOptions = {
-  targetWardrobe?: PromptContextContentOption;
+  targetOutfit?: PromptContextContentOption;
 };
 
 export type PromptContextRuntime = {

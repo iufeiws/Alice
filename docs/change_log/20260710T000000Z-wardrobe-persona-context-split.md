@@ -10,14 +10,14 @@
 - 删除旧 `src/contexts/agent-profile/src/domain/outfit.ts`。
 - 删除旧 `src/capabilities/tools/shell` tool 实现。
 - Admin / prompt preview 工具注册字段从 `shellTools` 改为 `wardrobeTools`。
-- Prompt context 变量改名：
-  - `{{outfit/...}}` 改为 `{{wardrobe/...}}`。
-  - `{{targetOutfit/...}}` 改为 `{{targetWardrobe/...}}`。
+- Prompt context 保留单件服装语义变量：
+  - `{{outfit/...}}` 表示当前服装。
+  - `{{targetOutfit/...}}` 表示本次 on-body 生成目标服装。
 
 ## 注意
 
-- 本次未修改 `config/plugin/photo/config.json`，该文件包含本地密钥；其中 prompt 如仍使用旧变量，需要手动改成 `{{targetWardrobe/...}}` 或 `{{wardrobe/...}}`。
-- `agent-profile` 的 daily shell store 仍保留当前 wardrobe item 的持久化字段，用于维持现有 daily shell 行为；后续完全迁出存储时再拆数据库/文件路径。
+- 本次未修改 `config/plugin/photo/config.json`，该文件包含本地密钥。
+- `agent-profile` 的 daily shell store 仍保留当前 outfit 的持久化字段，用于维持现有 daily shell 行为；后续完全迁出存储时再拆数据库/文件路径。
 
 ## 验证
 

@@ -5,7 +5,7 @@ import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports
 import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import { filterWardrobeItems, resolveWardrobeItemByName, shouldAttemptOnBodyGeneration, type WardrobeItem } from "../../../../contexts/wardrobe/src/index.js";
+import { filterOutfits, resolveOutfitByName, shouldAttemptOnBodyGeneration, type Outfit } from "../../../../contexts/wardrobe/src/index.js";
 import { wardrobeTool, wardrobeToolText } from "../profile.js";
 
 export type WardrobeToolTarget = {
@@ -17,9 +17,9 @@ export type WardrobeToolTarget = {
 };
 
 export type WardrobeRuntime = {
-  getConfig(date: Date, timeZone: string): { daily: { outfit: WardrobeItem }; outfits: WardrobeItem[] };
-  get(date: Date, timeZone: string): { outfit: WardrobeItem };
-  switchOutfit(date: Date, timeZone: string, outfitId: string): { outfit: WardrobeItem };
+  getConfig(date: Date, timeZone: string): { daily: { outfit: Outfit }; outfits: Outfit[] };
+  get(date: Date, timeZone: string): { outfit: Outfit };
+  switchOutfit(date: Date, timeZone: string, outfitId: string): { outfit: Outfit };
 };
 
 export type WardrobeToolsDeps = {
@@ -27,7 +27,7 @@ export type WardrobeToolsDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
   outputRouter: Pick<OutputRouter, "send">;
   time?: CurrentTimeProvider;
-  attemptOnBodyGeneration?(item: WardrobeItem): Promise<unknown> | unknown;
+  attemptOnBodyGeneration?(outfit: Outfit): Promise<unknown> | unknown;
   getDefaultTarget?(): WardrobeToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?(input: {
@@ -71,7 +71,7 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     return {
       callId: call.id,
       ok: true,
-      output: query ? formatItems(filterWardrobeItems(config.outfits, query)) : formatGroups(config.outfits)
+      output: query ? formatOutfits(filterOutfits(config.outfits, query)) : formatGroups(config.outfits)
     };
   }
 
@@ -80,7 +80,7 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     return {
       callId: call.id,
       ok: true,
-      output: formatItem(config.daily.outfit, false)
+      output: formatOutfit(config.daily.outfit, false)
     };
   }
 
@@ -91,19 +91,19 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     if (!name) return wardrobeError(call, wardrobeToolText.nameRequired);
 
     const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
-    const match = resolveWardrobeItemByName(config.outfits, name);
-    if (match.kind === "none") return wardrobeError(call, wardrobeToolText.unknownItemName);
+    const match = resolveOutfitByName(config.outfits, name);
+    if (match.kind === "none") return wardrobeError(call, wardrobeToolText.unknownOutfitName);
     if (match.kind === "ambiguous") {
-      const error = xmlError(wardrobeToolText.ambiguousItemName(name));
+      const error = xmlError(wardrobeToolText.ambiguousOutfitName(name));
       return {
         callId: call.id,
         ok: false,
         error,
-        output: `${error}\n<candidates>\n${formatItems(match.items)}\n</candidates>`
+        output: `${error}\n<candidates>\n${formatOutfits(match.outfits)}\n</candidates>`
       };
     }
 
-    return changeWardrobe(call, target, match.item.id);
+    return changeWardrobe(call, target, match.outfit.id);
   }
 
   async function randomWardrobe(call: ToolCall): Promise<ToolResult> {
@@ -112,17 +112,17 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
 
     const config = deps.wardrobeRuntime.getConfig(time.now().date, time.timeZone);
     const query = stringValue(call.input.name).trim();
-    const items = query ? filterWardrobeItems(config.outfits, query) : config.outfits;
-    if (items.length === 0) return wardrobeError(call, wardrobeToolText.unknownItemName);
-    return changeWardrobe(call, target, items[Math.floor(Math.random() * items.length)].id);
+    const outfits = query ? filterOutfits(config.outfits, query) : config.outfits;
+    if (outfits.length === 0) return wardrobeError(call, wardrobeToolText.unknownOutfitName);
+    return changeWardrobe(call, target, outfits[Math.floor(Math.random() * outfits.length)].id);
   }
 
-  async function changeWardrobe(call: ToolCall, target: WardrobeToolTarget, itemId: string): Promise<ToolResult> {
+  async function changeWardrobe(call: ToolCall, target: WardrobeToolTarget, outfitId: string): Promise<ToolResult> {
     let current;
     try {
-      current = deps.wardrobeRuntime.switchOutfit(time.now().date, time.timeZone, itemId);
+      current = deps.wardrobeRuntime.switchOutfit(time.now().date, time.timeZone, outfitId);
     } catch (error) {
-      if (error instanceof Error && error.message === "unknown_outfit") return wardrobeError(call, wardrobeToolText.unknownItemName);
+      if (error instanceof Error && error.message === "unknown_outfit") return wardrobeError(call, wardrobeToolText.unknownOutfitName);
       throw error;
     }
 
@@ -221,19 +221,19 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
   }
 }
 
-function formatItem(item: WardrobeItem, compact: boolean): string {
-  const group = escapeXmlAttribute(item.group?.trim() || "root");
+function formatOutfit(outfit: Outfit, compact: boolean): string {
+  const group = escapeXmlAttribute(outfit.group?.trim() || "root");
   return compact
-    ? `<${item.name} group="${group}" />`
-    : `<${item.name} group="${group}">\n${item.content}\n</${item.name}>`;
+    ? `<${outfit.name} group="${group}" />`
+    : `<${outfit.name} group="${group}">\n${outfit.content}\n</${outfit.name}>`;
 }
 
-function formatItems(items: WardrobeItem[]): string {
-  return items.map((item) => formatItem(item, items.length > 3)).join("\n");
+function formatOutfits(outfits: Outfit[]): string {
+  return outfits.map((outfit) => formatOutfit(outfit, outfits.length > 3)).join("\n");
 }
 
-function formatGroups(items: WardrobeItem[]): string {
-  const groups = [...new Set(items.map((item) => item.group?.trim() || "root"))];
+function formatGroups(outfits: Outfit[]): string {
+  const groups = [...new Set(outfits.map((outfit) => outfit.group?.trim() || "root"))];
   return `<groups>\n${groups.join("\n")}\n</groups>`;
 }
 

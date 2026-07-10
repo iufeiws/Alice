@@ -19,8 +19,8 @@ export const wardrobeToolText = {
   unsupportedAction: "unsupported action",
   noCurrentSession: "No current messaging session is available",
   nameRequired: "name is required",
-  unknownItemName: "unknown wardrobe item name",
-  ambiguousItemName: (name: string) => `ambiguous wardrobe item name: ${name}`,
+  unknownOutfitName: "unknown outfit name",
+  ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`,
   switched: "success",
   changingNotice: "-少女已更衣-"
 };

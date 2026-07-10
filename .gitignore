@@ -32,7 +32,7 @@ npm-debug.log*
 pnpm-debug.log*
 assets/generated/*
 .sandbox/*
-.agent/*
+.agents/*
 .agents/skills/anchor-skill/
 assets/*
 ref/*

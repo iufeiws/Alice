@@ -180,6 +180,66 @@ test("world wanderer clears target location when close enough", async () => {
   assert.equal(readWorldWandererConfig(configPath).targetLocation, undefined);
 });
 
+test("world wanderer retries failed link through google streetview then changes link", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({
+    initialHeading: 90,
+    initialLocation: { lat: 41, lng: 29 },
+    targetLocation: { lat: 41, lng: 29.01 },
+    speedMetersPerSecond: 10,
+    noveltyWeight: 0,
+    forwardWeight: 2,
+    roadContinuityWeight: 0,
+    uturnPenalty: 0,
+    loopPenalty: 0,
+    selectionTemperature: 0.01
+  }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [
+      { panoId: "bad", heading: 90, text: "Road" },
+      { panoId: "fallback", heading: 270, text: "Road" }
+    ])],
+    ["fallback", pano("fallback", 41, 28.999, [])]
+  ]);
+  writeWorldWandererState(dbPath, {
+    location: graph.get("a")!.location,
+    lastHeading: 90,
+    panoId: "a",
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "fallback", lat: graph.get("fallback")!.location.lat, lng: graph.get("fallback")!.location.lng, lastHeading: 270 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "a", lat: graph.get("a")!.location.lat, lng: graph.get("a")!.location.lng, lastHeading: 90 }
+    ]
+  });
+  let badCalls = 0;
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates() {
+        throw new Error("nearby probe should not discard moved pano");
+      },
+      async getPanoGraphByPanoId(input) {
+        if (input.panoId === "bad") {
+          badCalls += 1;
+          throw new Error("bad pano");
+        }
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 100_000 });
+
+  assert.ok(state);
+  assert.equal(state.panoId, "fallback");
+  assert.equal(badCalls, 1);
+});
+
 test("world wanderer probes nearby instead of backtracking at recent dead end", async () => {
   const { configPath, dbPath } = worldWandererPaths();
   writeWorldWandererConfig(configPath, worldWandererConfig());

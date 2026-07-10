@@ -118,17 +118,25 @@ async function getMapTilesPanoMetadata(input: {
   fetchImpl: typeof fetch;
 }): Promise<GoogleStreetViewPanoGraphMetadataResponse> {
   assertApiKey(input.config);
-  const response = await input.fetchImpl(mapTilesStreetViewMetadataUrl(input.config, input.sessionToken, input.searchParams));
-  if (!response.ok) throw new Error(`google streetview map tiles metadata request failed: HTTP ${response.status} ${response.statusText}`);
-  const metadata = await response.json() as GoogleStreetViewPanoGraphMetadataResponse;
-  if (metadata && typeof metadata === "object" && "error" in metadata) {
-    const error = metadata.error;
-    const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
-      ? error.message
-      : "unknown error";
-    throw new Error(`google streetview map tiles metadata request failed: ${message}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await input.fetchImpl(mapTilesStreetViewMetadataUrl(input.config, input.sessionToken, input.searchParams));
+      if (!response.ok) throw new Error(`google streetview map tiles metadata request failed: HTTP ${response.status} ${response.statusText}`);
+      const metadata = await response.json() as GoogleStreetViewPanoGraphMetadataResponse;
+      if (metadata && typeof metadata === "object" && "error" in metadata) {
+        const error = metadata.error;
+        const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
+          ? error.message
+          : "unknown error";
+        throw new Error(`google streetview map tiles metadata request failed: ${message}`);
+      }
+      return metadata;
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return metadata;
+  throw lastError;
 }
 
 export function normalizePanoGraphMetadata(

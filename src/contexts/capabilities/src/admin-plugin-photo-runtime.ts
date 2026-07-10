@@ -72,7 +72,7 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
           { value: "webp", label: "webp" }
         ] },
         { key: "selfieImageApiOutputCompression", label: "Output Compression", type: "number", group: "openai", min: 0, max: 100, step: 1 },
-        { key: "selfieImageApiTimeoutMs", label: "Timeout Ms", type: "number", group: "openai", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieImageApiTimeoutMs", label: "Timeout Ms", type: "number", group: "openai", min: 1000, step: 1000 },
         { key: "selfieImageApiRelayKeySet", label: "API Key Set", type: "readonly", group: "openai_relay" },
         { key: "selfieImageApiRelayKey", label: "API Key", type: "password", group: "openai_relay", description: "Leave blank to keep the current key." },
         { key: "selfieImageApiRelayBaseURL", label: "Base URL", type: "text", group: "openai_relay" },
@@ -89,7 +89,7 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
           { value: "webp", label: "webp" }
         ] },
         { key: "selfieImageApiRelayOutputCompression", label: "Output Compression", type: "number", group: "openai_relay", min: 0, max: 100, step: 1 },
-        { key: "selfieImageApiRelayTimeoutMs", label: "Timeout Ms", type: "number", group: "openai_relay", min: 1000, max: 600000, step: 1000 },
+        { key: "selfieImageApiRelayTimeoutMs", label: "Timeout Ms", type: "number", group: "openai_relay", min: 1000, step: 1000 },
         { key: "selfieCodexCommand", label: "Codex Command", type: "text", group: "codex" },
         { key: "selfieCodexExtraPrompt", label: "Extra Prompt", type: "textarea", group: "codex", description: "Prepended exactly before the rendered selfie prompt. Empty by default." },
         { key: "selfieCodexTimeoutMs", label: "Codex Timeout Ms", type: "number", group: "codex", min: 1000, max: 600000, step: 1000 },
@@ -240,14 +240,14 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (!["auto", "low"].includes(config.selfieImageApiModeration)) return "invalid_selfie_api_moderation";
   if (!["jpeg", "png", "webp"].includes(config.selfieImageApiOutputFormat)) return "invalid_selfie_output_format";
   if (invalidNumber(config.selfieImageApiOutputCompression, 0, 100)) return "invalid_selfie_output_compression";
-  if (invalidNumber(config.selfieImageApiTimeoutMs, 1000, 600_000)) return "invalid_selfie_api_timeout";
+  if (invalidNumber(config.selfieImageApiTimeoutMs, 1000)) return "invalid_selfie_api_timeout";
   if (!config.selfieImageApiRelayModel) return "missing_selfie_api_relay_model";
   if (!config.selfieImageApiRelaySize) return "missing_selfie_api_relay_size";
   if (!config.selfieImageApiRelayQuality) return "missing_selfie_api_relay_quality";
   if (!["auto", "low"].includes(config.selfieImageApiRelayModeration)) return "invalid_selfie_api_relay_moderation";
   if (!["jpeg", "png", "webp"].includes(config.selfieImageApiRelayOutputFormat)) return "invalid_selfie_relay_output_format";
   if (invalidNumber(config.selfieImageApiRelayOutputCompression, 0, 100)) return "invalid_selfie_relay_output_compression";
-  if (invalidNumber(config.selfieImageApiRelayTimeoutMs, 1000, 600_000)) return "invalid_selfie_api_relay_timeout";
+  if (invalidNumber(config.selfieImageApiRelayTimeoutMs, 1000)) return "invalid_selfie_api_relay_timeout";
   if (invalidNumber(config.selfieMaxBytes, 1024, 50 * 1024 * 1024)) return "invalid_selfie_max_bytes";
   if (!config.onBodyReferenceImage) return "missing_on_body_reference_image";
   if (config.selfie2DinRealEnabled && !config.selfie2DinRealReferenceImage) return "missing_2dinreal_reference_image";

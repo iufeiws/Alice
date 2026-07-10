@@ -2,6 +2,7 @@ import { test } from "node:test";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools } from "../../../../src/capabilities/tools/photo/src/index.js";
+import { runOpenAIAPISelfie } from "../../../../src/channels/image-generation/src/openai-api-provider.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import {
@@ -210,6 +211,55 @@ test("selfie_openaiRelayMode_sendsRelayRequestContract", async () => {
     fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
   }
 });
+
+test("selfie_openaiApiProvider_usesConfiguredFetchTimeouts", async () => {
+  const workDir = makeTempDir("selfie-api-timeouts");
+  const imagePath = path.join(workDir, "reference.jpg");
+  const previousFetch = globalThis.fetch;
+  let timeoutOptions: { headersTimeout?: number; bodyTimeout?: number } | undefined;
+  fs.writeFileSync(imagePath, "reference-image");
+  globalThis.fetch = (async (_url, init) => {
+    timeoutOptions = undiciDispatcherOptions((init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher);
+    return new Response(JSON.stringify({
+      data: [{ b64_json: fakeJpegBytes.toString("base64") }]
+    }), { status: 200, statusText: "OK" });
+  }) as typeof fetch;
+
+  try {
+    await runOpenAIAPISelfie({
+      command: "",
+      workDir,
+      fileName: "selfie.jpg",
+      prompt: "pose",
+      codexExtraPrompt: "",
+      referenceImages: [imagePath],
+      referenceImagePrompt: "",
+      timeoutMs: 600_000,
+      apiKey: "relay-key",
+      apiBaseURL: "https://relay.example.test/v1",
+      apiEndpoint: "relayEdits",
+      apiModel: "relay-image-model",
+      apiSize: "1024x1536",
+      apiQuality: "medium",
+      apiModeration: "auto",
+      apiOutputFormat: "webp",
+      apiOutputCompression: 77,
+      apiTimeoutMs: 600_000
+    });
+
+    assert.equal(timeoutOptions?.headersTimeout, 601_000);
+    assert.equal(timeoutOptions?.bodyTimeout, 601_000);
+  } finally {
+    globalThis.fetch = previousFetch;
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+function undiciDispatcherOptions(dispatcher: unknown): { headersTimeout?: number; bodyTimeout?: number } | undefined {
+  if (!dispatcher || typeof dispatcher !== "object") return undefined;
+  const optionsSymbol = Object.getOwnPropertySymbols(dispatcher).find((symbol) => symbol.description === "options");
+  return optionsSymbol ? (dispatcher as Record<symbol, { headersTimeout?: number; bodyTimeout?: number }>)[optionsSymbol] : undefined;
+}
 
 test("selfie_openaiRelayMode_sendsGeneratedImage", async () => {
   const outputRoot = makeAssetTempDir("selfie-api-relay-send");

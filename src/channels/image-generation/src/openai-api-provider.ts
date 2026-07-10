@@ -40,7 +40,7 @@ export async function runOpenAIAPISelfie(input: ImageGenerationProviderInput): P
         authorization: `Bearer ${input.apiKey}`
       },
       body: form,
-      ...dispatcherInit(input.proxyUrl)
+      ...dispatcherInit(input.proxyUrl, input.apiTimeoutMs)
     });
     const elapsedMs = Date.now() - started;
     const body = await response.text();
@@ -112,17 +112,18 @@ function describeErrorWithCause(error: Error): string {
   return details.join(" ");
 }
 
-function dispatcherInit(proxyUrl: string | undefined): RequestInit {
-  if (!proxyUrl) return {};
+function dispatcherInit(proxyUrl: string | undefined, timeoutMs: number): RequestInit {
+  const options = { headersTimeout: timeoutMs + 1_000, bodyTimeout: timeoutMs + 1_000 };
+  if (!proxyUrl) return { dispatcher: new (loadUndici().Agent)(options) } as unknown as RequestInit;
   const { ProxyAgent } = loadUndici();
-  return { dispatcher: new ProxyAgent(proxyUrl) } as unknown as RequestInit;
+  return { dispatcher: new ProxyAgent({ uri: proxyUrl, ...options }) } as unknown as RequestInit;
 }
 
-function loadUndici(): { ProxyAgent: new (url: string) => unknown } {
+function loadUndici(): { Agent: new (options: { headersTimeout: number; bodyTimeout: number }) => unknown; ProxyAgent: new (options: { uri: string; headersTimeout: number; bodyTimeout: number }) => unknown } {
   try {
-    return require("undici") as { ProxyAgent: new (url: string) => unknown };
+    return require("undici") as { Agent: new (options: { headersTimeout: number; bodyTimeout: number }) => unknown; ProxyAgent: new (options: { uri: string; headersTimeout: number; bodyTimeout: number }) => unknown };
   } catch {
-    return require("/usr/share/nodejs/undici") as { ProxyAgent: new (url: string) => unknown };
+    return require("/usr/share/nodejs/undici") as { Agent: new (options: { headersTimeout: number; bodyTimeout: number }) => unknown; ProxyAgent: new (options: { uri: string; headersTimeout: number; bodyTimeout: number }) => unknown };
   }
 }
 

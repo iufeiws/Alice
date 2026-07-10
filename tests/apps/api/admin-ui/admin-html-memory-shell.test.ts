@@ -45,6 +45,16 @@ test("shellEditor_initialRender_exposesShellWorkspace", () => {
   ]);
 });
 
+test("shellEditor_imagePasteTarget_supportsMobilePaste", () => {
+  const html = renderAdminHtml();
+
+  assertIncludesAll(html, [
+    'drop.contentEditable = "true"',
+    'drop.setAttribute("inputmode", "none")',
+    'drop.addEventListener("beforeinput"'
+  ]);
+});
+
 test("shellEditor_clientContract_usesShellEndpoints", () => {
   const html = renderAdminHtml();
 

@@ -68,6 +68,34 @@ test("panoGraph_cachesPanoMetadata", async () => {
   assert.equal(metadataCalls, 1);
 });
 
+test("panoGraph_retriesTransientMetadataFailure", async () => {
+  const root = tempOutputRoot();
+  let metadataCalls = 0;
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    fetch: async (url) => {
+      const text = String(url);
+      if (text.includes("/createSession")) {
+        return jsonResponse({ session: "session-1", expiry: "1780000000" });
+      }
+      metadataCalls += 1;
+      if (metadataCalls < 3) throw new Error("temporary metadata failure");
+      return jsonResponse({
+        panoId: "pano-retry",
+        lat: 35.1,
+        lng: 139.1,
+        heading: 94.5,
+        links: []
+      });
+    }
+  });
+
+  const result = await plugin.getPanoGraphByPanoId({ panoId: "pano-retry" });
+
+  assert.equal(result.panoId, "pano-retry");
+  assert.equal(metadataCalls, 3);
+});
+
 test("panoGraph_refreshesExpiredMapTilesSession", async () => {
   const root = tempOutputRoot();
   let nowMs = Date.parse("2026-06-17T00:00:00.000Z");

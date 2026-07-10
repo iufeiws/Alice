@@ -17,6 +17,8 @@ export function renderImageUploadScript(): string {
 
       function bindImageDropZone(drop, onFile, onMissing) {
         if (!drop) return;
+        drop.contentEditable = "true";
+        drop.setAttribute("inputmode", "none");
         ["dragenter", "dragover"].forEach((name) => {
           drop.addEventListener(name, (event) => {
             event.preventDefault();
@@ -45,6 +47,7 @@ export function renderImageUploadScript(): string {
           const file = imageFileFromTransfer(event.clipboardData?.files, event.clipboardData?.items);
           file ? onFile(file) : onMissing("paste");
         });
+        drop.addEventListener("beforeinput", (event) => event.preventDefault());
       }
 
       function convertImageToJpeg(file, quality = 0.92) {

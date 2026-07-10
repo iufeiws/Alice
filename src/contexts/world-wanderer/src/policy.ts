@@ -15,14 +15,15 @@ export function chooseNextLink(input: {
   state: Pick<WorldWandererState, "lastHeading" | "pathStack">;
   config: WorldWandererConfig;
   targetLocation?: GoogleStreetViewLocation;
+  avoidPanoIds?: Set<string>;
   random: () => number;
 }): { link: GoogleStreetViewPanoGraphLink } | undefined {
-  const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId);
+  const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId && !input.avoidPanoIds?.has(link.panoId));
   if (!links.length) return undefined;
   const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
   const reverseLink = visibleReverseLink(links, input.state.pathStack);
   const previousRoadText = reverseLink?.text;
-  if (links.every((link) => recentSet.has(link.panoId))) return undefined;
+  if (!input.avoidPanoIds?.size && links.every((link) => recentSet.has(link.panoId))) return undefined;
 
   const scored = links.map((link) => ({
     link,

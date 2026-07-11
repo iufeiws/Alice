@@ -27,7 +27,16 @@ test("chat loop exposes visible tools to LLM requests", async () => {
   registerLLMToolLoopTools("default", tools);
   const exposedToolNames: string[][] = [];
   const loop = buildChatAgentLoop({
-    llmInput: { messages: session.messages, toolNames: ["Chat", "test_tool"] },
+    llmInput: {
+      messages: session.messages,
+      toolNames: ["Chat", "test_tool"],
+      assistantContentToolCall: {
+        mode: "never",
+        toolName: "Chat",
+        input: { action: "send", type: "message" },
+        contentInputKey: "content"
+      }
+    },
     event: textEvent("session-content-send"),
     session,
     ensureSession: async () => session,
@@ -71,10 +80,14 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
     mode: "normal"
   };
   const sent: string[] = [];
+  let requests = 0;
   const tools: ToolPlugin[] = [{
     id: "messaging",
     listTools() {
-      return [{ name: "Chat", description: "send", inputSchema: {} }];
+      return [
+        { name: "Chat", description: "send", inputSchema: {} },
+        { name: "test_tool", description: "test", inputSchema: {} }
+      ];
     },
     async execute(call) {
       if (call.toolName === "Chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
@@ -85,8 +98,9 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
   const loop = buildChatAgentLoop({
     llmInput: {
       messages: session.messages,
-      toolNames: ["Chat"],
+      toolNames: ["Chat", "test_tool"],
       assistantContentToolCall: {
+        mode: "always",
         toolName: "Chat",
         input: { action: "send", type: "message" },
         contentInputKey: "content"
@@ -98,6 +112,8 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
     appendSessionContext: async () => {},
     llm: { async chat() { throw new Error("unused"); } },
     async llmRequestSender() {
+      requests += 1;
+      if (requests > 1) return { message: { role: "assistant", content: "" }, finishReason: "stop" };
       return {
         message: {
           role: "assistant",
@@ -106,7 +122,12 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
             "<chat alice='core' type='voice'>",
             "prefix",
             "</chat ignored>"
-          ].join("\n")
+          ].join("\n"),
+          toolCalls: [{
+            id: "call_test",
+            type: "function",
+            function: { name: "test_tool", arguments: "{\"action\":\"poll\"}" }
+          }]
         },
         finishReason: "stop"
       };

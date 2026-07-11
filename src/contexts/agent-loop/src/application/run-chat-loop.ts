@@ -64,7 +64,8 @@ export type ChatAgentLoopInput = {
     supportsImage?: boolean;
     supportsAudio?: boolean;
     toolNames: string[];
-    assistantContentToolCall?: {
+    assistantContentToolCall: {
+      mode: "always" | "when_no_tool_calls" | "never";
       toolName: string;
       input: Record<string, unknown>;
       contentInputKey: string;
@@ -428,10 +429,12 @@ function contentToolCallAssistantMessage(
   config: ChatAgentLoopInput["llmInput"]["assistantContentToolCall"],
   visibleToolNames: string[]
 ): LLMChatResult["message"] | { message: LLMChatResult["message"]; completeAfterToolCalls: boolean } {
-  if (!config || !visibleToolNames.includes(config.toolName)) return message;
+  if (config.mode === "never") return message;
+  if (!visibleToolNames.includes(config.toolName)) return message;
+  const hadToolCalls = (message.toolCalls?.length ?? 0) > 0;
+  if (config.mode === "when_no_tool_calls" && hadToolCalls) return message;
   const content = messageContentText(message.content).trim();
   if (!content) return message;
-  const hadToolCalls = (message.toolCalls?.length ?? 0) > 0;
   return {
     message: {
       ...message,

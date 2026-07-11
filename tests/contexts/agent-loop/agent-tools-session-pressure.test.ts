@@ -82,11 +82,11 @@ test("chat agent continues after Chat until the next response has no tool calls"
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.deepEqual(sent, ["need more 1", "need more 2", "final", "done"]);
+  assert.deepEqual(sent, ["final", "done"]);
   assert.equal(requests.length, 4);
 });
 
-test("chat agent converts assistant content to first Chat send tool call", async () => {
+test("chat agent leaves assistant content in place when tool calls exist", async () => {
   const requests: LLMChatInput[] = [];
   const toolCalls: ToolCall[] = [];
   const core = createChatAgent({
@@ -118,12 +118,10 @@ test("chat agent converts assistant content to first Chat send tool call", async
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.deepEqual(toolCalls.map((call) => call.toolName), ["Chat", "later_tool"]);
-  assert.deepEqual(toolCalls[0]?.input, { action: "send", type: "message", content: "hello" });
-  const assistantMessage = requests[1].messages.find((message) => message.role === "assistant" && message.toolCalls?.length === 2);
-  assert.equal(assistantMessage?.content, "");
-  assert.equal(assistantMessage?.toolCalls?.[0]?.function.name, "Chat");
-  assert.equal(assistantMessage?.toolCalls?.[1]?.function.name, "later_tool");
+  assert.deepEqual(toolCalls.map((call) => call.toolName), ["later_tool"]);
+  const assistantMessage = requests[1].messages.find((message) => message.role === "assistant" && message.toolCalls?.length === 1);
+  assert.equal(assistantMessage?.content, "hello");
+  assert.equal(assistantMessage?.toolCalls?.[0]?.function.name, "later_tool");
 });
 
 test("chat agent uses first-call and follow-up extra params", async () => {

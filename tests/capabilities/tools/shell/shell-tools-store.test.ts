@@ -42,6 +42,7 @@ test("wardrobe switch sends changing notice", async () => {
 
   assert.equal(result.ok, true);
   assert.equal((sent[0] as any).content.kind, "text");
+  assert.equal((sent[0] as any).content.text, "<-少女已更衣->");
 });
 
 test("wardrobe switch logs sent changing notice", async () => {
@@ -84,6 +85,7 @@ test("wardrobe switch stores sent changing notice in message state", async () =>
   const messages = store.listMessagesForConversation("session-1", 10);
   assert.equal(messages.length, 1);
   assert.equal(messages[0].senderRole, "system");
+  assert.equal(messages[0].contentText, "少女已更衣");
   assert.equal(messages[0].status, "sent");
 });
 
@@ -106,7 +108,7 @@ test("wardrobe switch keeps failed changing notice in message state", async () =
 
   const result = await tools.execute({ id: "call_send_failed", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
   const messages = store.listMessagesForConversation("session-1", 10);
   assert.equal(messages[0].status, "send_failed");
 });

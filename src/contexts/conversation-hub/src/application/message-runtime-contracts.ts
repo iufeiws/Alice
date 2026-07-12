@@ -91,9 +91,24 @@ export type MessageRuntimeDeps = {
   onHeartbeatPausedChange?: (paused: boolean) => void;
 };
 
+export type SystemNoticeTarget = {
+  plugin: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+  sessionId: string;
+};
+
+export type SendSystemNoticeInput = {
+  target: SystemNoticeTarget;
+  text: string;
+  writeLog?: boolean;
+};
+
 export type MessageRuntime = {
   ingestEvent(event: AgentEvent): Promise<void>;
   ingestLifecycle(event: MessageLifecycleEvent): void;
+  sendSystemNotice(input: SendSystemNoticeInput): Promise<void>;
   recoverPendingSessions(): void;
   pauseHeartbeat(): void;
   resumeHeartbeat(): void;

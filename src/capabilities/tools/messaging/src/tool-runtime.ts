@@ -175,6 +175,7 @@ export function createToolRuntime(input: {
   const sleepCocoonTools = createSleepCocoonTools({
     agentState: input.agentState,
     time: input.time,
+    store: input.store,
     outputRouter: input.outputRouter,
     getDefaultTarget() {
       return input.getDefaultTarget();

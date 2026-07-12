@@ -1,7 +1,9 @@
 import { summarizeAudioText } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
+import { normalizeSystemNoticeText } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import { messagingSystemPromptMessages, messagingToolText } from "../profile.js";
+import { escapeXml } from "./send-utils.js";
 import type { ShellSwitchContextEntry, VoiceCallTranscriptRow } from "./types.js";
 
 type ChatContextEntry =
@@ -128,7 +130,7 @@ function formatMessageContentLine(message: StoredConversationMessage, userName: 
       : "";
   const reactions = summarizeReactions(message.reactionsJson);
   const content = `${message.isRecalled ? messagingToolText.recalledMessage : formatMessageContent(message)}${sendStatus}${reactions ? `[reaction: ${reactions}]` : ""}${recalled}`;
-  if (isSystem) return content;
+  if (isSystem) return `< system message="${escapeXml(normalizeSystemNoticeText(content))}" />`;
   if (isImageMessage(message)) return `${speaker}: ${content}`;
   if (isMediaActionMessage(message)) return `${speaker}${content}`;
   return content.includes("\n") ? `${speaker}:\n${content}` : `${speaker}:${content}`;
@@ -263,7 +265,7 @@ export function optionalStringValue(value: unknown): string | undefined {
 
 function isSystemPromptMessage(message: StoredConversationMessage): boolean {
   if (message.senderRole === "system") return true;
-  return messagingSystemPromptMessages.includes(message.contentText);
+  return messagingSystemPromptMessages.includes(normalizeSystemNoticeText(message.contentText));
 }
 
 function summarizeReactions(raw: string): string {

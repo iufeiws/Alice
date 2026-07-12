@@ -9,7 +9,7 @@ const baseCall = {
   externalSession: { scope: "dm" as const, sessionId: "session-1" }
 };
 
-test("bookcase draw sends a transient notice", async () => {
+test("bookcase draw sends a system notice", async () => {
   const dbPath = createFixtureDb();
   const sent: string[] = [];
   const stored: Array<{ contentText: string; senderRole?: string }> = [];
@@ -42,10 +42,11 @@ test("bookcase draw sends a transient notice", async () => {
   });
 
   assert.equal(sent.length, 1);
-  assert.deepEqual(stored, []);
+  assert.equal(sent[0], "<-少女已取书->");
+  assert.deepEqual(stored, [{ contentText: "少女已取书", senderRole: "system" }]);
 });
 
-test("bookcase return sends a transient notice", async () => {
+test("bookcase return sends a system notice", async () => {
   const dbPath = createFixtureDb();
   const sent: string[] = [];
   const stored: Array<{ contentText: string; senderRole?: string }> = [];
@@ -78,15 +79,24 @@ test("bookcase return sends a transient notice", async () => {
   });
 
   assert.equal(sent.length, 1);
-  assert.deepEqual(stored, []);
+  assert.equal(sent[0], "<-少女已还书->");
+  assert.deepEqual(stored, [{ contentText: "少女已还书", senderRole: "system" }]);
 });
 
 test("bookcase sent notices are logged", async () => {
   const dbPath = createFixtureDb();
   const logs: Array<{ status?: string; summary: string }> = [];
+  const store = {
+    insertOutboundMessage(input: any) {
+      return { id: 1, ...input };
+    },
+    markOutboundMessageSent() {},
+    markOutboundMessageFailed() {}
+  };
   const tools = createBookcaseTools({ promptContextRuntime: testPromptRuntime(),
     dbPath,
     time: fixedTime(),
+    store,
     outputRouter: {
       async send() {
         return { messageId: "notice_1" };
@@ -143,7 +153,7 @@ test("bookcase draw continues when notice sending fails", async () => {
   assert.equal(draw.ok, true);
   assert.equal(draw.resetLLMSession, true);
   assert.equal(draw.fixedPrefixKind, "bookcase");
-  assert.deepEqual(stored, []);
+  assert.deepEqual(stored.map((entry: any) => ({ contentText: entry.contentText, senderRole: entry.senderRole })), [{ contentText: "少女已取书", senderRole: "system" }]);
   assert.deepEqual(logs.map((entry) => entry.status), ["send_failed"]);
 });
 
@@ -183,6 +193,6 @@ test("bookcase return continues when notice sending fails", async () => {
   assert.equal(returned.ok, true);
   assert.equal(returned.resetLLMSession, true);
   assert.equal(returned.clearFixedPrefix, true);
-  assert.deepEqual(stored, []);
+  assert.deepEqual(stored.map((entry: any) => ({ contentText: entry.contentText, senderRole: entry.senderRole })), [{ contentText: "少女已还书", senderRole: "system" }]);
   assert.deepEqual(logs.map((entry) => entry.status), ["send_failed"]);
 });

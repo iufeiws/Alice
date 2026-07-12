@@ -2,9 +2,9 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { createId } from "../../../../shared/uuid/src/index.js";
+import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { filterOutfits, resolveOutfitByName, shouldAttemptOnBodyGeneration, type Outfit } from "../../../../contexts/wardrobe/src/index.js";
 import { wardrobeTool, wardrobeToolText } from "../profile.js";
 
@@ -142,62 +142,16 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
 
   async function sendChangingNotice(callId: string, target: WardrobeToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
     const text = wardrobeToolText.changingNotice;
-    const now = time.now();
-    const output: AgentOutput = {
-      id: createId("tool_out"),
-      target: {
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId,
-        sessionId: target.sessionId
-      },
-      content: { kind: "text", text },
-      meta: {
-        createdAt: now.iso,
-        createdAtUtc: now.date.toISOString(),
-        urgency: "normal",
-        allowStreaming: false
-      }
-    };
-    const stored = deps.store.insertOutboundMessage({
-      plugin: output.target.plugin,
-      conversationId: output.target.sessionId,
-      senderRole: "system",
-      contentType: output.content.kind,
-      contentText: text,
-      contentJson: JSON.stringify(output.content),
-      createdAt: output.meta.createdAt,
-      createdAtUtc: output.meta.createdAtUtc
-    });
     try {
-      const sent = await deps.outputRouter.send(output);
-      const sentAtUtc = time.now().date.toISOString();
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), sentAtUtc, extractSentMessageCreatedAtUtc(sent));
-      deps.appendMessageLog?.({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "sent",
-        summary: text
-      });
+      await sendSystemNoticeFromRuntime({
+        time,
+        store: deps.store,
+        send: (output) => deps.outputRouter.send(output),
+        appendMessageLog: deps.appendMessageLog
+      }, { target, text });
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      const failedTime = time.now();
-      deps.store.markOutboundMessageFailed(stored.id, failedTime.iso, reason, failedTime.date.toISOString());
-      deps.appendMessageLog?.({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "send_failed",
-        summary: text,
-        error: reason
-      });
       return {
         ok: false,
         result: { callId, ok: false, error: xmlError(reason) }
@@ -258,22 +212,6 @@ function escapeXmlText(value: string): string {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function extractSentMessageId(value: unknown): string | undefined {
-  if (value && typeof value === "object" && "messageId" in value) {
-    const messageId = (value as { messageId?: unknown }).messageId;
-    return typeof messageId === "string" ? messageId : undefined;
-  }
-  return undefined;
-}
-
-function extractSentMessageCreatedAtUtc(value: unknown): string | undefined {
-  if (value && typeof value === "object" && "createdAtUtc" in value) {
-    const createdAtUtc = (value as { createdAtUtc?: unknown }).createdAtUtc;
-    return typeof createdAtUtc === "string" ? createdAtUtc : undefined;
-  }
-  return undefined;
 }
 
 function toolError(call: ToolCall, error: string): ToolResult {

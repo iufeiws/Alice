@@ -6,6 +6,17 @@ import { createSleepCocoonTools } from "../../../../src/capabilities/tools/sleep
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { memoryStore } from "./sleep-cocoon-tools-helpers.js";
 
+function noticeStore(stored: unknown[] = []) {
+  return {
+    insertOutboundMessage(input: unknown) {
+      stored.push(input);
+      return { id: stored.length };
+    },
+    markOutboundMessageSent() {},
+    markOutboundMessageFailed() {}
+  };
+}
+
 test("sleep_cocoon schema exposes in and out actions", () => {
   const tools = createSleepCocoonTools({
     agentState: createAgentStateController({ store: memoryStore() }),
@@ -65,8 +76,9 @@ test("sleep_cocoon in clears previous auto trigger pointers", async () => {
   assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, undefined);
 });
 
-test("sleep_cocoon in sends non-persisted sleep notice to current chat", async () => {
+test("sleep_cocoon in sends system sleep notice to current chat", async () => {
   const sent: AgentOutput[] = [];
+  const stored: unknown[] = [];
   const controller = createAgentStateController({
     store: memoryStore(),
     now: () => new Date("2026-05-25T00:00:00.000Z"),
@@ -75,6 +87,7 @@ test("sleep_cocoon in sends non-persisted sleep notice to current chat", async (
   const tools = createSleepCocoonTools({
     agentState: controller,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T00:00:00.000Z")),
+    store: noticeStore(stored),
     outputRouter: {
       async send(output) {
         sent.push(output);
@@ -99,6 +112,8 @@ test("sleep_cocoon in sends non-persisted sleep notice to current chat", async (
   assert.equal(sent[0].target.userId, "user-1");
   assert.equal(sent[0].target.sessionId, "session-1");
   assert.equal(sent[0].content.kind, "text");
+  assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "<-少女就寝中->");
+  assert.equal((stored[0] as { contentText?: string }).contentText, "少女就寝中");
 });
 
 test("sleep_cocoon in rejects repeated entry while going_to_sleep", async () => {
@@ -154,8 +169,9 @@ test("sleep_cocoon out returns going_to_sleep to waiting", async () => {
   assert.equal(snapshot.sleepDurationMs, undefined);
 });
 
-test("sleep_cocoon out sends non-persisted wake notice to current chat", async () => {
+test("sleep_cocoon out sends system wake notice to current chat", async () => {
   const sent: AgentOutput[] = [];
+  const stored: unknown[] = [];
   const controller = createAgentStateController({
     store: memoryStore(),
     random: () => 0
@@ -167,6 +183,7 @@ test("sleep_cocoon out sends non-persisted wake notice to current chat", async (
   const tools = createSleepCocoonTools({
     agentState: controller,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-25T08:00:00.000Z")),
+    store: noticeStore(stored),
     outputRouter: {
       async send(output) {
         sent.push(output);
@@ -189,6 +206,8 @@ test("sleep_cocoon out sends non-persisted wake notice to current chat", async (
   assert.equal(sent[0].target.userId, "user-1");
   assert.equal(sent[0].target.sessionId, "session-2");
   assert.equal(sent[0].content.kind, "text");
+  assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "<-少女起床->");
+  assert.equal((stored[0] as { contentText?: string }).contentText, "少女起床");
 });
 
 test("sleep_cocoon out does not wake sleeping state", async () => {

@@ -22,7 +22,7 @@ export const photoToolText = {
   poseRequired: "pose is required",
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",
-  takingNotice: "-少女拍照中-",
+  takingNotice: "少女拍照中",
   sent: (fileName: string) => `<sent path="/assets/generated/selfies/${fileName}"/>`,
   followupImageText: "这是上一步工具返回的图像",
   promptTemplateNotFound: "selfie prompt template was not found",
@@ -40,5 +40,5 @@ export const photoToolText = {
   jpegConversionFailed: "generated selfie JPEG conversion did not produce JPEG bytes",
   emptyDirectory: "(empty)",
   unreadableDirectory: "(unreadable)",
-  failureNotice: "-大失败-"
+  failureNotice: "大失败"
 };

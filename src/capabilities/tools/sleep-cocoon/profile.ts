@@ -25,6 +25,6 @@ export const sleepCocoonToolText = {
   alreadyEntered: "already entered sleep cocoon",
   alreadySleeping: "already sleeping",
   noCountdownToCancel: "no sleep cocoon countdown to cancel",
-  enterNotice: "-少女就寝中-",
-  exitNotice: "-少女起床-"
+  enterNotice: "少女就寝中",
+  exitNotice: "少女起床"
 };

@@ -145,6 +145,8 @@ test("selfie_validContext_persistsSentMessages", async () => {
 
     assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
     assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
+    assert.equal(fixture.store.listMessagesForConversation("session-1", 10)[0].contentText, "少女拍照中");
+    assert.equal(fixture.sent[0].content.kind === "text" ? fixture.sent[0].content.text : "", "<-少女拍照中->");
   } finally {
     fixture.cleanup();
   }

@@ -2,6 +2,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore, InsertOutboundMessageInput } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { PhotoToolTarget } from "./selfie-tool.js";
 import { photoToolText } from "../profile.js";
@@ -23,6 +24,14 @@ export type PhotoSendDeps = {
 };
 
 export async function sendText(deps: PhotoSendDeps, time: CurrentTimeProvider, target: PhotoToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
+  if (senderRole === "system") {
+    return sendSystemNoticeFromRuntime({
+      time,
+      store: deps.store,
+      send: (output) => deps.outputRouter.send(output),
+      appendMessageLog: deps.appendMessageLog
+    }, { target, text });
+  }
   const now = time.now();
   return sendOutput(deps, time, {
     id: createId("tool_out"),

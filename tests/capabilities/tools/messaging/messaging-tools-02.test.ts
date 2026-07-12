@@ -131,6 +131,10 @@ test("check_chat renders system prompts as system messages", async () => {
 
   const result = await tools.execute({ id: "call_system_prompt", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(result.ok, true);
+  const output = String(result.output ?? "");
+  assert.match(output, /< system message="少女拍照中" \/>/);
+  assert.match(output, /< system message="大失败" \/>/);
+  assert.doesNotMatch(output, /-少女拍照中-|\(大失败\.\.\.\)/);
 });
 
 test("check_chat renders voicecalltranscript as an embedded transcript block", async () => {

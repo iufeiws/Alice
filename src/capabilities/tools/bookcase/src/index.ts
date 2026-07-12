@@ -1,8 +1,8 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { createId } from "../../../../shared/uuid/src/index.js";
+import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import * as sqlite from "../../../../platform/storage/src/sqlite-compat.js";
@@ -135,50 +135,13 @@ export function createBookcaseTools(deps: BookcaseToolsDeps): ToolPlugin {
 
   async function sendBookcaseNotice(call: ToolCall, text: string): Promise<void> {
     const target = resolveTarget(call);
-    if (!target || !deps.outputRouter) return;
-    const output: AgentOutput = {
-      id: createId("tool_out"),
-      target: {
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId,
-        sessionId: target.sessionId
-      },
-      content: { kind: "text", text },
-      meta: {
-        createdAt: localIso(),
-        createdAtUtc: utcIso(),
-        urgency: "normal",
-        allowStreaming: false
-      }
-    };
-    try {
-      await deps.outputRouter.send(output);
-      deps.appendMessageLog?.({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "sent",
-        summary: text
-      });
-      return;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.appendMessageLog?.({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "send_failed",
-        summary: text,
-        error: reason
-      });
-      return;
-    }
+    if (!target || !deps.outputRouter || !deps.store || !deps.time) return;
+    await sendSystemNoticeFromRuntime({
+      time: deps.time,
+      store: deps.store,
+      send: (output) => deps.outputRouter!.send(output),
+      appendMessageLog: deps.appendMessageLog
+    }, { target, text });
   }
 
   function resolveTarget(call: ToolCall): BookcaseToolTarget | undefined {
@@ -196,13 +159,6 @@ export function createBookcaseTools(deps: BookcaseToolsDeps): ToolPlugin {
     return deps.getDefaultTarget?.();
   }
 
-  function localIso(): string {
-    return deps.time?.now().iso ?? new Date().toISOString();
-  }
-
-  function utcIso(): string {
-    return deps.time?.now().date.toISOString() ?? new Date().toISOString();
-  }
 }
 
 function candidateIds(db: DatabaseSync, input: Record<string, unknown>): number[] {

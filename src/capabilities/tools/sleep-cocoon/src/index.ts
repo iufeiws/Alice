@@ -1,8 +1,8 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentOutput, ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { createId } from "../../../../shared/uuid/src/index.js";
+import { sendSystemNoticeFromRuntime, type SystemNoticeStore } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { sleepCocoonTool, sleepCocoonToolText } from "../profile.js";
 
 type SleepCocoonAgentState = {
@@ -24,6 +24,7 @@ export type SleepCocoonToolTarget = {
 export type SleepCocoonToolsDeps = {
   agentState: SleepCocoonAgentState;
   time: CurrentTimeProvider;
+  store?: SystemNoticeStore;
   outputRouter?: Pick<OutputRouter, "send">;
   getDefaultTarget?(): SleepCocoonToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
@@ -90,32 +91,18 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
   }
 
   async function sendSuccessNotice(call: ToolCall, text: string): Promise<void> {
-    if (!deps.outputRouter) return;
+    if (!deps.outputRouter || !deps.store) return;
     const target = resolveTarget(call);
     if (!target) {
       deps.appendLog?.("warn", `sleep_cocoon success notice skipped: no current messaging session`);
       return;
     }
-    const now = deps.time.now();
-    const output: AgentOutput = {
-      id: createId("tool_out"),
-      target: {
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId,
-        sessionId: target.sessionId
-      },
-      content: { kind: "text", text },
-      meta: {
-        createdAt: now.iso,
-        createdAtUtc: now.date.toISOString(),
-        urgency: "normal",
-        allowStreaming: false
-      }
-    };
     try {
-      await deps.outputRouter.send(output);
+      await sendSystemNoticeFromRuntime({
+        time: deps.time,
+        store: deps.store,
+        send: (output) => deps.outputRouter!.send(output)
+      }, { target, text, writeLog: false });
     } catch (error) {
       deps.appendLog?.("warn", `sleep_cocoon success notice send failed: ${error instanceof Error ? error.message : String(error)}`);
     }

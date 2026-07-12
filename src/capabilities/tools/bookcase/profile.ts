@@ -27,8 +27,8 @@ export const bookcaseToolText = {
   unsupportedAction: "unsupported action",
   bookIdNotFound: (id: number) => `book id not found: ${id}`,
   noMatchingSummaries: "no matching book summaries found",
-  drawNotice: "-少女已取书-",
-  returnNotice: "-少女已还书-",
+  drawNotice: "少女已取书",
+  returnNotice: "少女已还书",
   returnMessage: "书已归还书橱；当前固定前缀已解除。"
 };
 

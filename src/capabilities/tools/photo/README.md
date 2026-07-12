@@ -16,7 +16,7 @@ Media tools 供 ChatAgent 使用。当前实现暴露一个 LLM 工具：
 
 调用后，工具会：
 
-1. 向当前会话发送 `-少女拍照中-`。
+1. 向当前会话发送 `<-少女拍照中->`，消息入库时保存为未包裹的系统通知文本。
 2. 从以下来源构造图片 prompt：
    - 主 prompt profile 中的 Alice 角色特征。
    - 当前日常 shell personality 与 outfit。

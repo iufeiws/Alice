@@ -13,8 +13,115 @@ import {
   buildRandomizedInitiatedBehaviorEvent
 } from "./message-event-builders.js";
 import { persistInboundAttachment } from "./inbound-attachments.js";
-import type { MessageRuntime, MessageRuntimeDeps } from "./message-runtime-contracts.js";
+import type { MessageRuntime, MessageRuntimeDeps, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
 import { extractSentMessageCreatedAtUtc, extractSentMessageId, isPromise, safeJson } from "./message-runtime-utils.js";
+
+export type SystemNoticeStore = {
+  insertOutboundMessage(input: {
+    plugin: string;
+    conversationId: string;
+    senderRole: "system";
+    contentType: "text";
+    contentText: string;
+    contentJson: string;
+    createdAt: string;
+    createdAtUtc?: string;
+  }): { id: number };
+  markOutboundMessageSent(id: number, externalMessageId: string | undefined, sentAtUtc: string, createdAtUtc?: string): void;
+  markOutboundMessageFailed(id: number, failedAt: string, failureReason: string, failedAtUtc?: string): void;
+};
+
+type SendSystemNoticeDeps = {
+  time: { now(): { iso: string; date: Date } };
+  store: SystemNoticeStore;
+  send(output: AgentOutput): Promise<unknown>;
+  appendMessageLog?(input: {
+    direction: "outbound";
+    plugin: string;
+    kind: string;
+    target?: string;
+    sessionId?: string;
+    status?: string;
+    processedAt?: string;
+    processedBatchId?: string;
+    error?: string;
+    summary: string;
+  }): unknown;
+};
+
+export function normalizeSystemNoticeText(value: string): string {
+  const text = value.trim();
+  const dashed = /^-(.+)-$/.exec(text);
+  if (dashed) return dashed[1].trim();
+  const parenthetical = /^\((.+?)(?:\.\.\.|…)\)$/.exec(text);
+  return parenthetical ? parenthetical[1].trim() : text;
+}
+
+export function formatSystemNoticeForSend(text: string): string {
+  return `<-${normalizeSystemNoticeText(text)}->`;
+}
+
+export async function sendSystemNoticeFromRuntime(deps: SendSystemNoticeDeps, input: SendSystemNoticeInput): Promise<void> {
+  const text = normalizeSystemNoticeText(input.text);
+  if (!text) return;
+  const now = deps.time.now();
+  const output: AgentOutput = {
+    id: createId("out"),
+    target: input.target,
+    content: { kind: "text", text: formatSystemNoticeForSend(text) },
+    meta: {
+      createdAt: now.iso,
+      createdAtUtc: now.date.toISOString(),
+      urgency: "normal",
+      allowStreaming: false
+    }
+  };
+  const stored = deps.store.insertOutboundMessage({
+    plugin: output.target.plugin,
+    conversationId: output.target.sessionId,
+    senderRole: "system",
+    contentType: "text",
+    contentText: text,
+    contentJson: JSON.stringify({ kind: "text", text }),
+    createdAt: output.meta.createdAt,
+    createdAtUtc: output.meta.createdAtUtc
+  });
+  try {
+    const sent = await deps.send(output);
+    deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(sent), deps.time.now().date.toISOString(), extractSentMessageCreatedAtUtc(sent));
+    if (input.writeLog !== false) {
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "sent",
+        summary: text
+      });
+    }
+  } catch (error) {
+    const failedTime = deps.time.now();
+    const failedAt = failedTime.iso;
+    const failedAtUtc = failedTime.date.toISOString();
+    const reason = error instanceof Error ? error.message : String(error);
+    deps.store.markOutboundMessageFailed(stored.id, failedAt, reason, failedAtUtc);
+    if (input.writeLog !== false) {
+      deps.appendMessageLog?.({
+        direction: "outbound",
+        plugin: output.target.plugin,
+        kind: output.content.kind,
+        target: output.target.channelId ?? output.target.userId,
+        sessionId: output.target.sessionId,
+        status: "send_failed",
+        processedAt: failedAt,
+        processedBatchId: "send_failed",
+        error: reason,
+        summary: text
+      });
+    }
+  }
+}
 
 export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const latestSessionEvents = new Map<string, AgentEvent>();
@@ -23,7 +130,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
-  const llmFailureNotice = "-星界信号丢失-";
+  const llmFailureNotice = "星界信号丢失";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
     prepareChat: ({ event, agentLoopRunSeq }) => deps.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
@@ -134,6 +241,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         });
       }
     },
+    sendSystemNotice,
     recoverPendingSessions() {
       recoverPendingSessionsFromStore();
     },
@@ -286,12 +394,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       return true;
     } catch (error) {
       await sendSystemNotice({
-        plugin: target.plugin,
-        accountId: target.accountId,
-        channelId: target.channelId,
-        userId: target.userId,
-        sessionId: target.sessionId
-      }, llmFailureNotice);
+        target: {
+          plugin: target.plugin,
+          accountId: target.accountId,
+          channelId: target.channelId,
+          userId: target.userId,
+          sessionId: target.sessionId
+        },
+        text: llmFailureNotice
+      });
       deps.appendLog("error", `manual process now failed: ${describeError(error)}`);
       return false;
     } finally {
@@ -434,7 +545,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
           deps.appendLog("warn", `chat session skipped: agent loop busy ${sessionId}`);
           return;
         }
-        await sendSystemNotice(typingTargetFromPending(sessionId, pending, agentEvent, false), llmFailureNotice);
+        await sendSystemNotice({ target: typingTargetFromPending(sessionId, pending, agentEvent, false), text: llmFailureNotice });
         markPendingCoreFailed(pending, error);
         throw error;
       }
@@ -517,67 +628,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
   }
 
-  async function sendSystemNotice(target: {
-    plugin: string;
-    accountId?: string;
-    channelId?: string;
-    userId?: string;
-    sessionId: string;
-  }, text: string): Promise<void> {
-    const now = time.now();
-    const output: AgentOutput = {
-      id: createId("out"),
-      target,
-      content: { kind: "text", text },
-      meta: {
-        createdAt: now.iso,
-        createdAtUtc: now.date.toISOString(),
-        urgency: "normal",
-        allowStreaming: false
-      }
-    };
-    const stored = deps.store.insertOutboundMessage({
-      plugin: output.target.plugin,
-      conversationId: output.target.sessionId,
-      senderRole: "system",
-      contentType: output.content.kind,
-      contentText: summarizeOutput(output.content),
-      contentJson: safeJson(output.content),
-      createdAt: output.meta.createdAt,
-      createdAtUtc: output.meta.createdAtUtc
-    });
-    try {
-      const sendResults = await deps.outputRouter.sendAll([output]);
-      const resultList = Array.isArray(sendResults) ? sendResults : [];
-      deps.store.markOutboundMessageSent(stored.id, extractSentMessageId(resultList[0]), time.now().date.toISOString(), extractSentMessageCreatedAtUtc(resultList[0]));
-      deps.appendMessageLog({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "sent",
-        summary: summarizeOutput(output.content)
-      });
-    } catch (error) {
-      const failedTime = time.now();
-      const failedAt = failedTime.iso;
-      const failedAtUtc = failedTime.date.toISOString();
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.store.markOutboundMessageFailed(stored.id, failedAt, reason, failedAtUtc);
-      deps.appendMessageLog({
-        direction: "outbound",
-        plugin: output.target.plugin,
-        kind: output.content.kind,
-        target: output.target.channelId ?? output.target.userId,
-        sessionId: output.target.sessionId,
-        status: "send_failed",
-        processedAt: failedAt,
-        processedBatchId: "send_failed",
-        error: reason,
-        summary: summarizeOutput(output.content)
-      });
-    }
+  async function sendSystemNotice(input: { target: SystemNoticeTarget; text: string; writeLog?: boolean }): Promise<void> {
+    return sendSystemNoticeFromRuntime({
+      time,
+      store: deps.store,
+      send: async (output) => {
+        const sendResults = await deps.outputRouter.sendAll([output]);
+        return Array.isArray(sendResults) ? sendResults[0] : sendResults;
+      },
+      appendMessageLog: deps.appendMessageLog
+    }, input);
   }
 
   function typingTargetFromPending(sessionId: string, pending: StoredConversationMessage[], event: AgentEvent, typing: boolean) {

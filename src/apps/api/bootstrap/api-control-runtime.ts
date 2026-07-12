@@ -40,7 +40,7 @@ export function createApiControlRuntime(input: {
     getCalendarStore: () => apiContextRuntime.calendarStore,
     getDailyShellStore: () => apiContextRuntime.dailyShellStore,
     clearLLMSession: () => input.getChatAgent().clearLLMSession("mode_transition"),
-    sendSleepNotice: () => apiNoticeRuntime.outboundNoticeRuntime.sendSystemNoticeToDefaultTarget("-少女已入眠-"),
+    sendSleepNotice: () => apiNoticeRuntime.outboundNoticeRuntime.sendSystemNoticeToDefaultTarget("少女已入眠"),
     triggerSleepMemoryInduction: input.triggerSleepMemoryInduction,
     getDefaultTarget: () => apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,
     attemptDailyOutfitOnBodyGeneration: (daily) => attemptOutfitOnBodyGeneration(daily.outfit),

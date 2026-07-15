@@ -26,3 +26,4 @@ export {
   moveLocation
 } from "./geo.js";
 export { createWorldWandererRuntime } from "./runtime.js";
+export { buildWorldWandererTargetReachedEvent, createWorldWandererHeartbeatTick } from "./event.js";

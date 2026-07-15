@@ -39,3 +39,22 @@ test("sleep cocoon goodnight event only runs from idle state", () => {
   assert.equal(event?.meta.raw.agentInitiatedTriggerEvent, "sleep_cocoon.auto_goodnight_check");
   assert.equal(autoChecked, 1);
 });
+
+test("sleep cocoon wake events are queued in FIFO order", () => {
+  const runtime = createSleepCocoonEventRuntime({
+    agentState: {
+      getSnapshot: () => ({ state: "idle" }),
+      setState() {},
+      canRunHeartbeat: () => true,
+      noteSleepCocoonAutoChecked() {}
+    },
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
+  });
+
+  runtime.queueMorningEvent({ order: 1 });
+  runtime.queueForceWakeEvent({ order: 2 });
+
+  assert.equal(runtime.consumeMorningEvent()?.meta.raw.order, 1);
+  assert.equal(runtime.consumeMorningEvent()?.meta.raw.order, 2);
+});

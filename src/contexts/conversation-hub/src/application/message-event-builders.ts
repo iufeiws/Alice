@@ -1,95 +1,9 @@
 import type { AgentEvent } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
-import {
-  defaultAgentInitiatedBehaviorPlans,
-  hasRandomizedAgentInitiatedBehaviorPlan
-} from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
-import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { MessageRuntimeDeps } from "./message-runtime-contracts.js";
 
-type AgentInitiatedTarget = {
-  plugin: string;
-  accountId?: string;
-  channelId?: string;
-  userId?: string;
-  sessionId: string;
-};
-
-export function buildRandomizedInitiatedBehaviorEvent(input: {
-  deps: MessageRuntimeDeps;
-  now: () => Date;
-  random: () => number;
-  time: CurrentTimeProvider;
-}): AgentEvent | undefined {
-  const { deps, now, random, time } = input;
-  const lastMessage = deps.store.listMessages(1).at(-1);
-  if (!lastMessage) return undefined;
-  const lastMessageAt = messageTimestamp(lastMessage, time.timeZone);
-  if (lastMessageAt === undefined) return undefined;
-  const elapsedMs = Math.max(0, now().getTime() - lastMessageAt);
-  const probability = Math.min(elapsedMs / (4 * 60 * 60 * 1000), 1) / 2;
-  if (random() >= probability) return undefined;
-  if (!hasRandomizedAgentInitiatedBehaviorPlan(deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans)) return undefined;
-  const target = deps.getRandomInitiatedBehaviorTarget?.() ?? deps.getProcessNowTarget?.();
-  if (!target) return undefined;
-  const receivedTime = time.now();
-  return {
-    id: createId("evt"),
-    source: {
-      plugin: target.plugin,
-      accountId: target.accountId,
-      channelId: target.channelId,
-      userId: target.userId
-    },
-    externalSession: {
-      scope: "dm",
-      sessionId: target.sessionId
-    },
-    type: "system.heartbeat",
-    payload: {
-      kind: "text",
-      text: "A randomized proactive event was triggered. Use messaging tools to inspect context before sending a short, low-interruption message."
-    },
-    meta: {
-      receivedAt: receivedTime.iso,
-      receivedAtUtc: receivedTime.date.toISOString(),
-      raw: {
-        agentInitiatedTriggerEvent: "randomized"
-      }
-    }
-  };
-}
-
-export function buildWorldWandererTargetReachedEvent(target: AgentInitiatedTarget, time: CurrentTimeProvider): AgentEvent {
-  const receivedTime = time.now();
-  return {
-    id: createId("world_wanderer_target_reached"),
-    source: {
-      plugin: target.plugin,
-      accountId: target.accountId,
-      channelId: target.channelId,
-      userId: target.userId
-    },
-    externalSession: {
-      scope: "dm",
-      sessionId: target.sessionId
-    },
-    type: "system.heartbeat",
-    payload: {
-      kind: "text",
-      text: ""
-    },
-    meta: {
-      receivedAt: receivedTime.iso,
-      receivedAtUtc: receivedTime.date.toISOString(),
-      raw: {
-        agentInitiatedTriggerEvent: "world_wanderer.target_reached"
-      }
-    }
-  };
-}
 
 export function buildAgentEventFromMessageLog(input: {
   sessionId: string;
@@ -183,12 +97,6 @@ export function buildManualProcessEvent(
   };
 }
 
-function messageTimestamp(message: StoredConversationMessage, timeZone: string): number | undefined {
-  const utcTimestamp = message.createdAtUtc ? Date.parse(message.createdAtUtc) : Number.NaN;
-  if (Number.isFinite(utcTimestamp)) return utcTimestamp;
-  const localTimestamp = parseZonedIso(message.createdAt, timeZone).getTime();
-  return Number.isFinite(localTimestamp) ? localTimestamp : undefined;
-}
 
 function channelIdFromRecoveredMessage(message: StoredConversationMessage): string {
   if (message.plugin === "wechat") return userIdFromWechatConversationId(message.conversationId);

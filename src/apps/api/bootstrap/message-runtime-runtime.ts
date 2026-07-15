@@ -1,5 +1,5 @@
 import { createMessageRuntime } from "../../../contexts/conversation-hub/src/application/ingest-channel-message.js";
-import { buildWorldWandererTargetReachedEvent } from "../../../contexts/conversation-hub/src/application/message-event-builders.js";
+import { buildWorldWandererTargetReachedEvent } from "../../../contexts/world-wanderer/src/index.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";

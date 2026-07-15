@@ -1,4 +1,5 @@
 import { createMessageRuntime } from "../../../contexts/conversation-hub/src/application/ingest-channel-message.js";
+import { buildWorldWandererTargetReachedEvent } from "../../../contexts/conversation-hub/src/application/message-event-builders.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
@@ -22,7 +23,7 @@ export function createMessageRuntimeRuntime(input: {
   getSleepCocoonGoodnightEvent(): any;
   getSleepCocoonWakeEvent(): any;
   getCalendarReminderEvent(): any;
-  worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<unknown> | unknown };
+  worldWandererRuntime?: { runIdleTransition(input: { delayMs: number }): Promise<{ targetReached?: true } | undefined> | { targetReached?: true } | undefined };
   agentRunIndicator?: { createFreshCard?(): Promise<void> | void; setTyping?(input: { typing: boolean }): Promise<void> | void };
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -71,7 +72,14 @@ export function createMessageRuntimeRuntime(input: {
       input.initiatedBehaviorRunStore.finalizeExpiredResponses(input.time.now().date);
     },
     async onIdleTimerTransition(transitionInput) {
-      await input.worldWandererRuntime?.runIdleTransition(transitionInput);
+      const result = await input.worldWandererRuntime?.runIdleTransition(transitionInput);
+      if (!result?.targetReached) return undefined;
+      const target = input.getDefaultMessagingTarget();
+      if (!target) {
+        input.appendLog("warn", "world wanderer target reached event skipped: no default messaging target");
+        return undefined;
+      }
+      return buildWorldWandererTargetReachedEvent(target, input.time);
     },
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     getRandomInitiatedBehaviorTarget() {

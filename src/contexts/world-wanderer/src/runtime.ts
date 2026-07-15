@@ -43,6 +43,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
         let newPathEntries: ReturnType<typeof pathEntryFromPano>[] = [];
         let replacePath = false;
         let pathStack = previous.pathStack;
+        let targetReached = false;
         if (!pathStack.length) {
           const entry = pathEntryFromPano({ pano: currentPano, lastHeading: previous.lastHeading, time: updatedAt });
           pathStack = [entry];
@@ -52,6 +53,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
         if (targetLocation && distanceMeters(currentPano.location, targetLocation) <= targetArrivalRadiusMeters) {
           config = clearTargetLocation(config);
           targetLocation = undefined;
+          targetReached = true;
         }
         if (!hasMovableLinks(currentPano)) {
           const nearbyPano = await findNearbyLinkedPano(currentPano.location);
@@ -115,6 +117,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           if (targetLocation && distanceMeters(currentPano.location, targetLocation) <= targetArrivalRadiusMeters) {
             config = clearTargetLocation(config);
             targetLocation = undefined;
+            targetReached = true;
             break;
           }
         }
@@ -133,7 +136,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
         } else {
           deps.appendLog?.("warn", `world wanderer stuck: pano=${next.panoId ?? "unknown"} has no linked nearby pano`);
         }
-        return next;
+        return targetReached ? { ...next, targetReached } : next;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const next = {

@@ -36,9 +36,13 @@ export type WorldWandererState = {
   pathStack: WorldWandererPathEntry[];
 };
 
+export type WorldWandererIdleTransitionResult = WorldWandererState & {
+  targetReached?: true;
+};
+
 export type WorldWandererRuntime = {
   isEnabled(): boolean;
-  runIdleTransition(input: { delayMs: number }): Promise<WorldWandererState | undefined>;
+  runIdleTransition(input: { delayMs: number }): Promise<WorldWandererIdleTransitionResult | undefined>;
   getState(): WorldWandererState;
 };
 

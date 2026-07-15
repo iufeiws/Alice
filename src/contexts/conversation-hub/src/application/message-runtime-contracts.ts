@@ -16,7 +16,7 @@ export type MessageRuntimeDeps = {
   getHeartbeatIntervalMs?: () => number;
   startHeartbeatPaused?: boolean;
   onHeartbeatTick?: () => void;
-  onIdleTimerTransition?: (input: { delayMs: number }) => Promise<void> | void;
+  onIdleTimerTransition?: (input: { delayMs: number }) => Promise<AgentEvent | undefined> | AgentEvent | undefined;
   getSleepCocoonGoodnightEvent?: () => AgentEvent | undefined;
   getSleepCocoonWakeEvent?: () => AgentEvent | undefined;
   getSleepCocoonMorningEvent?: () => AgentEvent | undefined;

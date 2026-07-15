@@ -9,6 +9,14 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { MessageRuntimeDeps } from "./message-runtime-contracts.js";
 
+type AgentInitiatedTarget = {
+  plugin: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+  sessionId: string;
+};
+
 export function buildRandomizedInitiatedBehaviorEvent(input: {
   deps: MessageRuntimeDeps;
   now: () => Date;
@@ -49,6 +57,35 @@ export function buildRandomizedInitiatedBehaviorEvent(input: {
       receivedAtUtc: receivedTime.date.toISOString(),
       raw: {
         agentInitiatedTriggerEvent: "randomized"
+      }
+    }
+  };
+}
+
+export function buildWorldWandererTargetReachedEvent(target: AgentInitiatedTarget, time: CurrentTimeProvider): AgentEvent {
+  const receivedTime = time.now();
+  return {
+    id: createId("world_wanderer_target_reached"),
+    source: {
+      plugin: target.plugin,
+      accountId: target.accountId,
+      channelId: target.channelId,
+      userId: target.userId
+    },
+    externalSession: {
+      scope: "dm",
+      sessionId: target.sessionId
+    },
+    type: "system.heartbeat",
+    payload: {
+      kind: "text",
+      text: ""
+    },
+    meta: {
+      receivedAt: receivedTime.iso,
+      receivedAtUtc: receivedTime.date.toISOString(),
+      raw: {
+        agentInitiatedTriggerEvent: "world_wanderer.target_reached"
       }
     }
   };

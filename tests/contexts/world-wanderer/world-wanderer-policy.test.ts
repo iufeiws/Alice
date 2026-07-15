@@ -175,8 +175,9 @@ test("world wanderer clears target location when close enough", async () => {
     ]))
   });
 
-  await runtime.runIdleTransition({ delayMs: 1 });
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
 
+  assert.equal(state?.targetReached, true);
   assert.equal(readWorldWandererConfig(configPath).targetLocation, undefined);
 });
 

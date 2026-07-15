@@ -19,7 +19,7 @@ export type AgentHeartbeatRunOptions = {
 export type AgentHeartbeatRunTaskDeps = {
   isIdleTransitionDue?(): boolean;
   getIdleTransitionDelayMs?(): number | undefined;
-  onIdleTimerTransition?(input: { delayMs: number }): Promise<void> | void;
+  onIdleTimerTransition?(input: { delayMs: number }): Promise<unknown> | unknown;
   canRunHeartbeat(): boolean;
   tickAgentState?(): void;
   onHeartbeatTick?(): void;
@@ -129,12 +129,19 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
   const force = options.force ?? false;
   let processed = 0;
   const idleTransitionDue = !force && tasks.isIdleTransitionDue?.() === true;
+  let idleTransitionEvent: unknown;
   if (idleTransitionDue && tasks.canRunHeartbeat()) {
     try {
-      await tasks.onIdleTimerTransition?.({ delayMs: tasks.getIdleTransitionDelayMs?.() ?? 0 });
+      idleTransitionEvent = await tasks.onIdleTimerTransition?.({ delayMs: tasks.getIdleTransitionDelayMs?.() ?? 0 });
     } catch (error) {
       tasks.appendLog("warn", `idle timer transition hook failed: ${describeError(error)}`);
     }
+  }
+  if (idleTransitionEvent && tasks.canRunHeartbeat()) {
+    const handled = await tasks.runGeneratedSession(idleTransitionEvent, "idle timer transition");
+    if (handled) processed += 1;
+    tasks.setAgentWaiting?.("idle_timer_transition");
+    return processed;
   }
   const randomizedInitiatedEvent = idleTransitionDue
     && tasks.canRunHeartbeat()

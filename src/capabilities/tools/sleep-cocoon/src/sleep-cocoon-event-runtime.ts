@@ -3,9 +3,6 @@ import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { sleepCocoonHazardProbability } from "./sleep-cocoon-math.js";
 import type { MessagingToolTarget } from "../../messaging/src/index.js";
-import type { AgentHeartbeatTick } from "../../../../contexts/agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import type { ProactiveEvent } from "../../../../contexts/initiative/src/application/proactive-event-queue.js";
-import type { AgentEvent } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 type SleepCocoonAgentState = {
   getSnapshot(): { state: string; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; sleepCocoonAutoCheckedAt?: string };
@@ -21,20 +18,20 @@ export function createSleepCocoonEventRuntime(input: {
   random?: () => number;
 }) {
   const random = input.random ?? Math.random;
-  const pendingMorningEvents: Array<NonNullable<ReturnType<typeof buildGeneratedEvent>>> = [];
+  let pendingMorningEvent: ReturnType<typeof buildGeneratedEvent> | undefined;
 
   return {
     maybeBuildGoodnightEvent,
     queueMorningEvent(raw: Record<string, unknown>) {
-      const event = buildGeneratedEvent("sleep_cocoon_morning", raw);
-      if (event) pendingMorningEvents.push(event);
+      pendingMorningEvent = buildGeneratedEvent("sleep_cocoon_morning", raw);
     },
     queueForceWakeEvent(raw: Record<string, unknown>) {
-      const event = buildGeneratedEvent("sleep_cocoon_force_wake", raw);
-      if (event) pendingMorningEvents.push(event);
+      pendingMorningEvent = buildGeneratedEvent("sleep_cocoon_force_wake", raw);
     },
     consumeMorningEvent() {
-      return pendingMorningEvents.shift();
+      const event = pendingMorningEvent;
+      pendingMorningEvent = undefined;
+      return event;
     },
     buildGeneratedEvent
   };
@@ -92,21 +89,4 @@ export function createSleepCocoonEventRuntime(input: {
       }
     };
   }
-}
-
-export function createSleepCocoonHeartbeatTick(input: {
-  canRun(): boolean;
-  hasPendingUserMessages(): boolean;
-  getWakeEvent(): AgentEvent | undefined;
-  getGoodnightEvent(): AgentEvent | undefined;
-  enqueue(event: ProactiveEvent): void;
-}): AgentHeartbeatTick {
-  return (options) => {
-    if (options.force || !input.canRun()) return;
-    const wake = input.getWakeEvent();
-    if (wake) input.enqueue({ event: wake, label: "sleep cocoon wake" });
-    if (input.hasPendingUserMessages()) return;
-    const goodnight = input.getGoodnightEvent();
-    if (goodnight) input.enqueue({ event: goodnight, label: "sleep cocoon goodnight" });
-  };
 }

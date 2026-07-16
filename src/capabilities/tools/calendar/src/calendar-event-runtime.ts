@@ -3,9 +3,6 @@ import { formatZonedIso } from "../../../../platform/time/src/index.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { CalendarDueDate, CalendarStore } from "../../../../platform/storage/src/calendar-store.js";
 import type { MessagingToolTarget } from "../../messaging/src/index.js";
-import type { AgentHeartbeatTick } from "../../../../contexts/agent-loop/src/runtime/agent-heartbeat-runtime.js";
-import type { ProactiveEvent } from "../../../../contexts/initiative/src/application/proactive-event-queue.js";
-import type { AgentEvent } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 const scanWindowMs = 2 * 60 * 1000;
 
@@ -65,19 +62,6 @@ export function createCalendarEventRuntime(input: {
       }
     };
   }
-}
-
-export function createCalendarHeartbeatTick(input: {
-  canRun(): boolean;
-  hasPendingUserMessages(): boolean;
-  getEvent(): AgentEvent | undefined;
-  enqueue(event: ProactiveEvent): void;
-}): AgentHeartbeatTick {
-  return (options) => {
-    if (options.force || !input.canRun() || input.hasPendingUserMessages()) return;
-    const event = input.getEvent();
-    if (event) input.enqueue({ event, label: "calendar reminder" });
-  };
 }
 
 export function dueDatesInWindow(fromExclusiveMs: number, toInclusiveMs: number, timeZone: string): CalendarDueDate[] {

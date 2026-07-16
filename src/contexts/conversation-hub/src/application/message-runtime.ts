@@ -1,20 +1,17 @@
 import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
-import { createAgentHeartbeatRuntime, type AgentHeartbeatTick } from "../../../agent-loop/src/runtime/agent-heartbeat-runtime.js";
+import { createAgentHeartbeatRuntime } from "../../../agent-loop/src/runtime/agent-heartbeat-runtime.js";
 import { createAgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
-import { createProactiveEventConsumerTick, createProactiveEventQueue } from "../../../initiative/src/application/proactive-event-queue.js";
-import { createRandomizedInitiativeHeartbeatTick } from "../../../initiative/src/application/randomized-event.js";
-import { createWorldWandererHeartbeatTick } from "../../../world-wanderer/src/event.js";
-import { createSleepCocoonHeartbeatTick } from "../../../../capabilities/tools/sleep-cocoon/src/sleep-cocoon-event-runtime.js";
-import { createCalendarHeartbeatTick } from "../../../../capabilities/tools/calendar/src/calendar-event-runtime.js";
-import { createTalkHeartbeatTick } from "../../../talk-session/src/application/talk-heartbeat-tick.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createCurrentTimeProvider, parseZonedIso } from "../../../../platform/time/src/index.js";
 import { describeError } from "../../../../shared/errors/src/index.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { lifecycleSummary, normalizeInboundEvent, summarizeEventPayload, summarizeOutput } from "./message-content.js";
-import { buildAgentEventFromMessageLog, buildManualProcessEvent } from "./message-event-builders.js";
-import { buildRandomizedInitiatedBehaviorEvent } from "../../../initiative/src/application/randomized-event.js";
+import {
+  buildAgentEventFromMessageLog,
+  buildManualProcessEvent,
+  buildRandomizedInitiatedBehaviorEvent
+} from "./message-event-builders.js";
 import { persistInboundAttachment } from "./inbound-attachments.js";
 import type { MessageRuntime, MessageRuntimeDeps, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
 import { extractSentMessageCreatedAtUtc, extractSentMessageId, isPromise, safeJson } from "./message-runtime-utils.js";
@@ -134,7 +131,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "星界信号丢失";
-  const proactiveEvents = createProactiveEventQueue();
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
     prepareChat: ({ event, agentLoopRunSeq }) => deps.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
@@ -142,69 +138,53 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,
     startPaused: deps.startHeartbeatPaused,
-    ticks: heartbeatTicks(),
+    tasks: {
+      isIdleTransitionDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
+      getIdleTransitionDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
+      onIdleTimerTransition: deps.onIdleTimerTransition,
+      canRunHeartbeat,
+      tickAgentState: () => {
+        deps.agentState?.tick();
+      },
+      onHeartbeatTick: deps.onHeartbeatTick,
+      hasPendingUserMessages,
+      buildRandomizedInitiatedBehaviorEvent: () => buildRandomizedInitiatedBehaviorEvent({ deps, now, random, time }),
+      runGeneratedSession,
+      runManualSession,
+      setAgentWaiting: (reason) => {
+        deps.agentState?.setState?.("waiting", { reason });
+      },
+      claimReadyTalkSession: () => deps.talkRuntime?.claimReadyAgentLoopSession?.(),
+      runTalkSession: runTalkSession,
+      markTalkSessionReady: (sessionId) => {
+        deps.talkRuntime?.markAgentLoopReady?.(sessionId);
+      },
+      getPendingSessionIds: () => [...pendingSessions],
+      isProcessingSession: (sessionId) => processingSessions.has(sessionId),
+      beginProcessingSession: (sessionId) => {
+        processingSessions.add(sessionId);
+      },
+      finishProcessingSession: (sessionId) => {
+        processingSessions.delete(sessionId);
+      },
+      getPendingMessageCount: (sessionId) => deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER).length,
+      shouldProcessPendingSession: (sessionId) => {
+        const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
+        return pending.length > 0 && shouldProcessPending(pending);
+      },
+      markSessionNotPending: (sessionId) => {
+        pendingSessions.delete(sessionId);
+      },
+      processPendingSession: handleDirtySession,
+      getSleepCocoonWakeEvent: () => deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.(),
+      beforeSleepCocoonWakeSession: (event) => deps.beforeSleepCocoonWakeSession?.(event as AgentEvent),
+      getSleepCocoonGoodnightEvent: deps.getSleepCocoonGoodnightEvent,
+      getCalendarReminderEvent: deps.getCalendarReminderEvent,
+      appendLog: deps.appendLog
+    },
     onPausedChange: deps.onHeartbeatPausedChange,
     appendLog: deps.appendLog
   });
-
-  function heartbeatTicks(): AgentHeartbeatTick[] {
-    const consumeProactiveEvent = createProactiveEventConsumerTick({
-      queue: proactiveEvents,
-      canRun: canRunHeartbeat,
-      beforeRun: ({ event }) => isSleepCocoonWakeEvent(event) ? deps.beforeSleepCocoonWakeSession?.(event) : undefined,
-      run: ({ event, label }) => runGeneratedSession(event, label),
-      setWaiting: (reason) => deps.agentState?.setState?.("waiting", { reason })
-    });
-    return [
-      createWorldWandererHeartbeatTick({
-        isDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
-        canRun: canRunHeartbeat,
-        getDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
-        poll: async (delayMs) => deps.onIdleTimerTransition?.({ delayMs }),
-        enqueue: proactiveEvents.enqueue,
-        appendLog: deps.appendLog
-      }),
-      createRandomizedInitiativeHeartbeatTick({
-        isDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
-        canRun: canRunHeartbeat,
-        hasPendingUserMessages,
-        hasQueuedEvent: () => !proactiveEvents.isEmpty(),
-        build: () => buildRandomizedInitiatedBehaviorEvent({
-          listMessages: (limit) => deps.store.listMessages(limit),
-          getPlans: deps.getAgentInitiatedBehaviorPlans,
-          getTarget: () => deps.getRandomInitiatedBehaviorTarget?.() ?? deps.getProcessNowTarget?.(),
-          now,
-          random,
-          time
-        }),
-        enqueue: proactiveEvents.enqueue
-      }),
-      consumeProactiveEvent,
-      stateHeartbeatTick,
-      createTalkHeartbeatTick({
-        canRun: canRunHeartbeat,
-        claimReadySession: () => deps.talkRuntime?.claimReadyAgentLoopSession?.(),
-        runSession: runTalkSession,
-        markReady: (sessionId) => deps.talkRuntime?.markAgentLoopReady?.(sessionId),
-        appendLog: deps.appendLog
-      }),
-      createSleepCocoonHeartbeatTick({
-        canRun: canRunHeartbeat,
-        hasPendingUserMessages,
-        getWakeEvent: () => deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.(),
-        getGoodnightEvent: () => deps.getSleepCocoonGoodnightEvent?.(),
-        enqueue: proactiveEvents.enqueue
-      }),
-      createCalendarHeartbeatTick({
-        canRun: canRunHeartbeat,
-        hasPendingUserMessages,
-        getEvent: () => deps.getCalendarReminderEvent?.(),
-        enqueue: proactiveEvents.enqueue
-      }),
-      consumeProactiveEvent,
-      pendingMessagesHeartbeatTick
-    ];
-  }
   let previousAgentState = deps.agentState?.getSnapshot?.().state;
   const unsubscribeState = deps.agentState?.onChange((snapshot: AgentStateSnapshot | undefined) => {
     if (!snapshot) return;
@@ -212,6 +192,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.clearLLMSession?.("mode_transition");
     }
     previousAgentState = snapshot.state;
+    heartbeat.schedule(0);
   });
   heartbeat.schedule(0);
 
@@ -272,7 +253,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     },
     async processNow() {
       recoverPendingSessionsFromStore();
-      if (await heartbeat.run({ force: true }) === 0) await runManualSession();
+      await heartbeat.run({ force: true, runManualSessionWhenIdle: true });
     },
     getStatus() {
       return {
@@ -341,46 +322,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
 
   function markPending(sessionId: string): void {
     pendingSessions.add(sessionId);
-  }
-
-  function stateHeartbeatTick(options: Parameters<AgentHeartbeatTick>[0]) {
-    deps.agentState?.tick();
-    if (!options.force && !canRunHeartbeat()) return { stop: true };
-    if (canRunHeartbeat()) deps.onHeartbeatTick?.();
-  }
-
-  async function pendingMessagesHeartbeatTick(options: Parameters<AgentHeartbeatTick>[0]) {
-    let processed = 0;
-    for (const sessionId of [...pendingSessions]) {
-      if (processingSessions.has(sessionId)) continue;
-      const pendingCount = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER).length;
-      if (pendingCount === 0) {
-        pendingSessions.delete(sessionId);
-        continue;
-      }
-      const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
-      if (!options.force && !(pending.length > 0 && shouldProcessPending(pending))) continue;
-      processingSessions.add(sessionId);
-      try {
-        await handleDirtySession(sessionId);
-        processed += 1;
-        if (deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER).length === 0) {
-          pendingSessions.delete(sessionId);
-        }
-      } catch (error) {
-        deps.appendLog("error", `agent session failed: ${describeError(error)}`);
-      } finally {
-        processingSessions.delete(sessionId);
-      }
-    }
-    return { processed };
-  }
-
-  function isSleepCocoonWakeEvent(event: AgentEvent): boolean {
-    const raw = event.meta.raw;
-    return Boolean(raw && typeof raw === "object"
-      && "agentInitiatedTriggerEvent" in raw
-      && raw.agentInitiatedTriggerEvent === "sleep_cocoon.wake");
+    heartbeat.schedule(0);
   }
 
   function shouldProcessInboundWithCore(event: AgentEvent): boolean {

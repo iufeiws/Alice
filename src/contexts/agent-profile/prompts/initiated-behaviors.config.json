@@ -1,23 +1,43 @@
 {
   "behaviors": {
     "review": {
-      "enabled": true
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 2,
+      "priority": 0
     },
     "real_world_suggestion": {
-      "enabled": true,
+      "enabled": false,
       "kind": "randomized",
       "weight": 2,
       "priority": 0
     },
     "calendar_reminder": {
       "enabled": true,
-      "kind": "event"
+      "kind": "event",
+      "triggerEvent": "calendar.schedule_due"
     },
     "selfie": {
       "custom": true,
       "enabled": true,
       "kind": "randomized",
       "weight": 2,
+      "priority": 0
+    },
+    "sleep_morning": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "sleep_cocoon.wake"
+    },
+    "sleep_goodnight": {
+      "enabled": true,
+      "kind": "event",
+      "triggerEvent": "sleep_cocoon.auto_goodnight_check"
+    },
+    "care": {
+      "enabled": true,
+      "kind": "randomized",
+      "weight": 4,
       "priority": 0
     }
   }

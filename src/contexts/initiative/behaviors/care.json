@@ -3,11 +3,12 @@
     {
       "id": "instruction",
       "title": "Care Initiation",
-      "role": "user",
+      "role": "assistant",
       "name": "Cheshire Cat",
       "enabled": true,
       "content": "来问一下{{user}}现在在做什么吧",
-      "order": 10
+      "order": 10,
+      "thinking": ""
     }
   ]
 }

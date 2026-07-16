@@ -3,10 +3,10 @@
     {
       "id": "layer_1",
       "title": "Layer 1",
-      "role": "user",
+      "role": "assistant",
       "name": "Cheshire Cat",
       "enabled": true,
-      "content": "问问{{user}}想不想让你拍张照给他看吧",
+      "content": "问问{{user}}想不想让我拍张照给他看吧",
       "order": 10
     }
   ]

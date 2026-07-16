@@ -3,10 +3,10 @@
     {
       "id": "instruction",
       "title": "Morning Reply",
-      "role": "user",
+      "role": "assistant",
       "name": "Cheshire Cat",
       "enabled": true,
-      "content": "爱丽丝你醒了。对{{user}}说句早安吧",
+      "content": "我醒了。对{{user}}说句早安吧",
       "order": 10
     }
   ]

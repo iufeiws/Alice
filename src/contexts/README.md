@@ -51,8 +51,6 @@
   - 构建 talk function-call loop 启动参数、runtime transcript patch、stream output adapter 和完成写回 adapter。
 - `agent-loop/src/application/agent-loop-tool-executor.ts`
   - 统一 `toolName -> plugin`、JSON args、`plugin.execute`、error result 和 LLM tool message formatting；chat/talk 只保留各自的 adapter hook。
-- `agent-loop/src/application/agent-function-call-loop.ts`
-  - 统一 function-call loop spec 构筑入口和默认 loop limits；chat/talk adapter 只提供各自 request、tool、stream、writeback 回调。
 - `agent-loop/src/application/chat-loop-tool-control.ts`
   - 将 chat tool result 到 loop control / session rebuild mode 的转换从 `run-chat-loop.ts` 移出，降低 chat loop adapter 内部业务分支。
 - `llm-gateway/src/llm-requests.ts`

@@ -1,7 +1,6 @@
 import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent } from "../contracts/agent-contracts.js";
-import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
 import { defaultTalkOutputReadyChars } from "../../../talk-session/src/application/talk-session-runtime.js";
 import {
@@ -134,7 +133,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
     signal?: AbortSignal;
   }): PreparedTalkAgentLoop {
     const roundOutputs = new Map<number, { outputId: string; streamedContent: string }>();
-    const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
+    const spec: AgentFunctionCallLoopSpec = {
       initialMessages: input.session.messages,
       promptProfile: input.promptProfile,
       buildRequest({ round, messages }) {
@@ -211,7 +210,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           deps.log("info", `talk loop output ready: session=${input.sessionId} output=${outputId}`);
         }
       }
-    });
+    };
     return {
       spec,
       complete(result) {

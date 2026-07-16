@@ -6,7 +6,6 @@ import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSessi
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
-import { buildAgentFunctionCallLoopSpec } from "./agent-function-call-loop.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
@@ -129,7 +128,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     isCancelled: input.isLLMRunCancelled,
     onError: input.onAgentRunIndicatorError
   });
-  const spec: AgentFunctionCallLoopSpec = buildAgentFunctionCallLoopSpec({
+  const spec: AgentFunctionCallLoopSpec = {
     initialMessages: session.messages,
     promptProfile: input.promptProfile,
     async beforeRound({ round }) {
@@ -236,7 +235,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       session.messages = messages;
       input.noteSessionUpdated();
     }
-  });
+  };
   return {
     spec,
     complete(loopResult) {

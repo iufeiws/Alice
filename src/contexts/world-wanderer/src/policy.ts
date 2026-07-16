@@ -23,8 +23,6 @@ export function chooseNextLink(input: {
   const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
   const reverseLink = visibleReverseLink(links, input.state.pathStack);
   const previousRoadText = reverseLink?.text;
-  if (!input.avoidPanoIds?.size && links.every((link) => recentSet.has(link.panoId))) return undefined;
-
   const scored = links.map((link) => ({
     link,
     score: scoreLink(link, input.currentPano.location, input.state, recentSet, input.config, previousRoadText, input.targetLocation)

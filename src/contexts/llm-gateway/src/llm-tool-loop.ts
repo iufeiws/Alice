@@ -140,7 +140,10 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
   let messages = cloneLLMMessages(input.initialMessages);
   let previousAssistantMessageSignature: string | undefined;
   let totalToolCallCount = 0;
+  let replyToolCallCount = 0;
   let invalidateSession = false;
+  let round = 0;
+  let replyRound = 0;
 
   const cancelledResult = (rounds: number, finalResult?: LLMChatResult): LLMToolLoopResult => ({
     messages,
@@ -152,7 +155,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     toolCallCount: totalToolCallCount
   });
 
-  for (let round = 0; round < limits.maxRounds; round += 1) {
+  for (; replyRound < limits.maxRounds; round += 1, replyRound += 1) {
     if (input.shouldCancel?.()) return cancelledResult(round);
     const before = await input.beforeRound?.({ round, messages });
     if (before?.messages) messages = cloneLLMMessages(before.messages);
@@ -221,7 +224,8 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     const toolMessages: LLMMessage[] = [];
     for (const [callIndex, call] of calls.entries()) {
       totalToolCallCount += 1;
-      if (totalToolCallCount >= limits.maxTotalToolCalls) reachedToolCallLimit = true;
+      replyToolCallCount += 1;
+      if (replyToolCallCount >= limits.maxTotalToolCalls) reachedToolCallLimit = true;
 
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       await input.beforeTool?.({ round, call, callIndex });
@@ -246,11 +250,16 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
     }
 
     if (!resetSession) {
-      const willContinueAfterTools = !yieldReturn
-        && !reachedToolCallLimit
-        && round + 1 < limits.maxRounds
-        && !invalidateSession;
-      const interruptMessages = willContinueAfterTools ? consumePendingUserMessageInterruptMessages(input, request) : [];
+      const interruptMessages = !yieldReturn && !invalidateSession
+        ? consumePendingUserMessageInterruptMessages(input, request)
+        : [];
+      const replyBudgetRenewed = interruptMessages.length > 0;
+      if (replyBudgetRenewed) {
+        replyRound = -1;
+        replyToolCallCount = 0;
+        reachedToolCallLimit = false;
+        previousAssistantMessageSignature = undefined;
+      }
       messages = [
         ...messages,
         {
@@ -265,24 +274,24 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       await input.onMessagesChanged?.({
         round,
         messages,
-        reason: completeAfterToolCalls ? "completed" : reachedToolCallLimit || round + 1 >= limits.maxRounds ? "limit" : "tools"
+        reason: completeAfterToolCalls && !replyBudgetRenewed ? "completed" : reachedToolCallLimit || replyRound + 1 >= limits.maxRounds ? "limit" : "tools"
       });
-    }
 
-    if (completeAfterToolCalls && !yieldReturn && !reachedToolCallLimit && !invalidateSession) {
-      return {
-        messages,
-        rounds: round + 1,
-        finalResult: result,
-        finalMessage: result.message,
-        stopReason: "completed",
-        invalidateSession,
-        toolCallCount: totalToolCallCount
-      };
+      if (completeAfterToolCalls && !replyBudgetRenewed && !reachedToolCallLimit && !invalidateSession) {
+        return {
+          messages,
+          rounds: round + 1,
+          finalResult: result,
+          finalMessage: result.message,
+          stopReason: "completed",
+          invalidateSession,
+          toolCallCount: totalToolCallCount
+        };
+      }
     }
 
     if (resetSession) {
-      if (continueAfterReset && !reachedToolCallLimit && round + 1 < limits.maxRounds) continue;
+      if (continueAfterReset && !reachedToolCallLimit && replyRound + 1 < limits.maxRounds) continue;
       return {
         messages,
         rounds: round + 1,
@@ -298,6 +307,10 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         ? await Promise.resolve(input.buildYieldResumeMessages?.({ round, messages, result }) ?? [])
         : [];
       if (resumeMessages.length > 0 && input.runtimeInterrupts?.consumePendingUserMessage() === true) {
+        replyRound = -1;
+        replyToolCallCount = 0;
+        reachedToolCallLimit = false;
+        previousAssistantMessageSignature = undefined;
         messages = [
           ...messages,
           ...cloneLLMMessages(resumeMessages)
@@ -305,9 +318,9 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         await input.onMessagesChanged?.({
           round,
           messages,
-          reason: reachedToolCallLimit || round + 1 >= limits.maxRounds ? "limit" : "tools"
+          reason: "tools"
         });
-        if (!reachedToolCallLimit && round + 1 < limits.maxRounds && !invalidateSession) continue;
+        if (!invalidateSession) continue;
         return {
           messages,
           rounds: round + 1,
@@ -328,7 +341,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         toolCallCount: totalToolCallCount
       };
     }
-    if (reachedToolCallLimit || round + 1 >= limits.maxRounds) {
+    if (reachedToolCallLimit || replyRound + 1 >= limits.maxRounds) {
       return {
         messages,
         rounds: round + 1,
@@ -354,7 +367,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
 
   return {
     messages,
-    rounds: limits.maxRounds,
+    rounds: round,
     finalMessage: messages.at(-1) ?? { role: "assistant", content: "" },
     stopReason: "tool_limit",
     invalidateSession,

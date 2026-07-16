@@ -124,6 +124,66 @@ test("agent loop runtime appends pending interrupt after completed tool result b
   assert.equal(requests[1].at(-1).role, "user");
 });
 
+test("pending inbound starts a fresh function-call loop budget after a single output", async () => {
+  const runtime = createAgentLoopRuntime();
+  const requests: any[][] = [];
+  registerLLMToolLoopTools("agent-loop-runtime-interrupt-budget", [{
+    id: "interrupt-budget-test",
+    listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
+    async execute(call) {
+      if (call.id === "call_2") runtime.noteInboundUserMessageInterrupt("session-budget");
+      return { callId: call.id, ok: true, output: "tool ok" };
+    }
+  }]);
+  runtime.setRunners({
+    prepareChat() {
+      return {
+        prepare() {
+          return {
+            ...interruptTestSpec(requests, "agent-loop-runtime-interrupt-budget", false),
+            limits: { maxRounds: 2, maxTotalToolCalls: 2 },
+            transformAssistantMessage({ message }: { message: any }) {
+              return {
+                message,
+                completeAfterToolCalls: message.toolCalls?.[0]?.id === "call_2"
+              };
+            },
+            async sendRequest({ round }: { round: number }) {
+              if (round < 3) {
+                return {
+                  message: {
+                    role: "assistant" as const,
+                    content: "",
+                    toolCalls: [{
+                      id: `call_${round + 1}`,
+                      type: "function" as const,
+                      function: { name: "test_tool", arguments: `{\"round\":${round}}` }
+                    }]
+                  },
+                  finishReason: "tool_calls"
+                };
+              }
+              return { message: { role: "assistant" as const, content: "finished" }, finishReason: "stop" };
+            }
+          };
+        },
+        complete: () => []
+      };
+    }
+  });
+
+  await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-budget",
+    reason: "test",
+    event: textEvent("session-budget")
+  });
+
+  assert.equal(requests.length, 4);
+  assert.equal(requests[2].at(-1).role, "user");
+  assert.equal(requests[2].at(-1).name, "Alert");
+});
+
 test("agent loop runtime resumes yield directly when a user message arrives during yield", async () => {
   const runtime = createAgentLoopRuntime();
   const requests: any[][] = [];
@@ -170,6 +230,47 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
   assert.equal(requests.length, 2);
   assert.equal(requests[1].at(-1).role, "tool");
   assert.equal(requests[1].at(-1).toolCallId, "call_1");
+  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
+});
+
+test("pending inbound starts a fresh function-call loop budget after Yield", async () => {
+  const runtime = createAgentLoopRuntime();
+  const requests: any[][] = [];
+  registerLLMToolLoopTools("agent-loop-runtime-yield-budget", [{
+    id: "yield-budget-test",
+    listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
+    async execute(call) {
+      runtime.noteInboundUserMessageInterrupt("session-yield-budget");
+      return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
+    }
+  }]);
+  runtime.setRunners({
+    prepareChat() {
+      return {
+        prepare() {
+          return {
+            ...interruptTestSpec(requests, "agent-loop-runtime-yield-budget", true),
+            limits: { maxRounds: 1, maxTotalToolCalls: 1 },
+            buildYieldResumeMessages() {
+              return [{ role: "tool" as const, name: "Yield", toolCallId: "call_1", content: "resume" }];
+            }
+          };
+        },
+        complete: () => []
+      };
+    }
+  });
+
+  await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-yield-budget",
+    reason: "test",
+    event: textEvent("session-yield-budget")
+  });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].at(-1).role, "tool");
+  assert.equal(requests[1].at(-1).name, "Yield");
   assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
 });
 

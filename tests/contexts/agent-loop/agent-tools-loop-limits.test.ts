@@ -201,8 +201,8 @@ test("chat agent stops after the generic total tool call limit", async () => {
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.equal(requests.length, 20);
-  assert.equal(sent.length, 20);
+  assert.equal(requests.length, 100);
+  assert.equal(sent.length, 100);
   assert.deepEqual(sent.slice(0, 5), [
     "tool_send_1:odd",
     "tool_send_2:even",
@@ -210,7 +210,7 @@ test("chat agent stops after the generic total tool call limit", async () => {
     "tool_send_4:even",
     "tool_send_5:odd"
   ]);
-  assert.equal(sent.at(-1), "tool_send_20:even");
+  assert.equal(sent.at(-1), "tool_send_100:even");
 });
 
 test("chat agent executes all exposed tools when Chat appears in the same round", async () => {

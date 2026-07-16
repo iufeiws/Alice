@@ -104,7 +104,7 @@ async function sendDefaultMultilineChat(name: string) {
   await tools.execute({ id: "call_check_today", toolName: "Chat", input: { action: "poll" } });
   const result = await tools.execute({
     id: "call_send",
-    toolName: "Chat", input: { action: "send",  content: "one\n\ntwo", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  content: "one\n\ntwo" }
   });
 
   return { result, sent, store, tools };

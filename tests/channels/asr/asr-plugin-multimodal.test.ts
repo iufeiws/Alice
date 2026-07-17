@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { transcribeWithAsrPlugin, type AsrPluginConfig } from "../../../src/channels/asr/src/index.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 import { assertAsrError, assertAsrSuccess } from "./asr-plugin-helpers.js";
 
 function multimodalPreset(name = "mimo") {
@@ -43,6 +44,7 @@ test("multimodalLlm_toolCall_returnsSpeechTextAndRequestContract", async () => {
     mimeType: "audio/wav",
     metadata: { source: "unit-test" }
   }, config, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset(name: string) {
       assert.equal(name, "mimo");
       return multimodalPreset(name);
@@ -110,6 +112,7 @@ test("multimodalLlm_emptySpeech_returnsDescriptionText", async () => {
       }
     }
   }, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset() {
       return multimodalPreset();
     },
@@ -152,6 +155,7 @@ test("multimodalLlm_defaultConfig_sendsToolRequestAndReturnsText", async () => {
       }
     }
   }, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset() {
       return multimodalPreset();
     },
@@ -197,6 +201,7 @@ test("multimodalLlm_missingPrompt_returnsProviderConfigError", async () => {
       }
     }
   }, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset() {
       return multimodalPreset();
     },
@@ -208,7 +213,7 @@ test("multimodalLlm_missingPrompt_returnsProviderConfigError", async () => {
     }
   });
   assertAsrError(result);
-  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing_provider_config");
 });
 
 test("multimodalLlm_missingToolCall_returnsProviderRequestError", async () => {
@@ -225,6 +230,7 @@ test("multimodalLlm_missingToolCall_returnsProviderRequestError", async () => {
       }
     }
   }, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset() {
       return multimodalPreset();
     },
@@ -236,5 +242,6 @@ test("multimodalLlm_missingToolCall_returnsProviderRequestError", async () => {
     }
   });
   assertAsrError(result);
-  assert.equal(result.ok, false);
+  assert.equal(result.error, "provider_request_failed");
+  assert.equal(result.message, "multimodal_llm_asr_missing_tool_call");
 });

@@ -45,6 +45,11 @@ export function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot, nowMs: n
     waitChatStartedAt: typeof snapshot.waitChatStartedAt === "string" && Number.isFinite(Date.parse(snapshot.waitChatStartedAt))
       ? Date.parse(snapshot.waitChatStartedAt)
       : undefined,
+    waitChatMode: snapshot.waitChatMode === "wait" ? snapshot.waitChatMode : undefined,
+    waitChatUntil: typeof snapshot.waitChatUntil === "string" && Number.isFinite(Date.parse(snapshot.waitChatUntil))
+      ? Date.parse(snapshot.waitChatUntil)
+      : undefined,
+    waitChatTarget: snapshot.waitChatTarget,
     skipNextAppendLayers: snapshot.skipNextAppendLayers === true ? true : undefined
   };
 }
@@ -103,6 +108,9 @@ export function createLLMSessionSnapshot(session: LLMSessionRecord): LLMSessionS
     fixedPrefixStartedAt: session.fixedPrefixStartedAt,
     loopStartedAt: session.loopStartedAt,
     waitChatStartedAt: typeof session.waitChatStartedAt === "number" ? new Date(session.waitChatStartedAt).toISOString() : undefined,
+    waitChatMode: session.waitChatMode,
+    waitChatUntil: typeof session.waitChatUntil === "number" ? new Date(session.waitChatUntil).toISOString() : undefined,
+    waitChatTarget: session.waitChatTarget,
     skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined
   };
 }

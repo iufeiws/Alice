@@ -200,8 +200,11 @@ export type ToolResult = {
   llmFollowupAttachments?: ToolResultLLMAttachment[];
   meta?: {
     yieldReturn?: boolean;
+    yieldAction?: "wait" ;
+    yieldSeconds?: number;
   };
   invalidateLLMSession?: boolean;
+  llmSessionClearReason?: "yield_end";
   resetLLMSession?: boolean;
   llmSessionMode?: string;
   llmSessionStaticMessages?: ToolResultLLMMessage[];

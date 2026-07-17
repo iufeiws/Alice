@@ -27,6 +27,7 @@ import {
   cloneLLMMessages,
   fixedPrefixToolInput,
   findToolPlugin,
+  hasPendingWaitChatToolCall,
   buildChatAgentLoop,
   runPromptToolRequest,
   type ChatAgentLoopInput,
@@ -419,11 +420,17 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         buildTextVariables: buildTurnTextVariables,
         onLLMLog: deps.onLLMLog
       });
+      const clearWaitState = (session: LLMSessionRecord): void => {
+        session.waitChatStartedAt = undefined;
+        session.waitChatMode = undefined;
+        session.waitChatUntil = undefined;
+        session.waitChatTarget = undefined;
+      };
       const appendSessionContext = async (session: LLMSessionRecord): Promise<void> => {
         if (session.skipNextAppendLayers) return;
         const waitChatResumeMessages = await buildWaitResumeMessages(session);
         if (waitChatResumeMessages.length > 0) {
-          session.waitChatStartedAt = undefined;
+          clearWaitState(session);
           const result = appendLoopSessionContext({
             session,
             messages: waitChatResumeMessages,
@@ -435,6 +442,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           }
           return;
         }
+        if (hasPendingWaitChatToolCall(session.messages)) return;
         const promptContext = buildPromptContext();
         if (createdSessionThisRun) return;
         const appendProfile = {
@@ -509,6 +517,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           loopSession.loopStartedAt = currentLoopStartedAt;
           noteLLMSessionUpdated(loopSession);
           await appendSessionContext(loopSession);
+          if (hasPendingWaitChatToolCall(loopSession.messages)) return [];
           const llmConfig = deps.getLLMConfig?.() ?? {
             client: deps.llm,
             model: deps.config.llm.model,
@@ -569,7 +578,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             async buildYieldResumeMessages(session) {
               const waitChatResumeMessages = await buildWaitResumeMessages(session as LLMSessionRecord);
               if (waitChatResumeMessages.length > 0) {
-                session.waitChatStartedAt = undefined;
+                clearWaitState(session as LLMSessionRecord);
                 session.skipNextAppendLayers = true;
                 noteLLMSessionUpdated(session as LLMSessionRecord);
               }
@@ -641,7 +650,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             return [];
           }
           if (llmResult.invalidateSession) {
-            clearLoopSession(() => deps.onLLMSessionCleared?.("prompt_static_changed"));
+            clearLoopSession(() => deps.onLLMSessionCleared?.(llmResult.clearReason ?? "prompt_static_changed"));
           }
           const usage = llmResult.finalResult?.usage;
           const usageModel = llmResult.finalResult?.model ?? llmInput?.model;

@@ -43,6 +43,7 @@ export type AgentHeartbeatRunTaskDeps = {
   beforeSleepCocoonWakeSession?(event: unknown): Promise<void> | void;
   getSleepCocoonGoodnightEvent?(): unknown;
   getCalendarReminderEvent?(): unknown;
+  getTimedYieldEvent?(): unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 };
 
@@ -158,6 +159,15 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
   tasks.tickAgentState?.();
   if (!force && !tasks.canRunHeartbeat()) return 0;
   if (tasks.canRunHeartbeat()) tasks.onHeartbeatTick?.();
+
+  const timedYieldEvent = !force && tasks.canRunHeartbeat() && !tasks.hasPendingUserMessages()
+    ? tasks.getTimedYieldEvent?.()
+    : undefined;
+  if (timedYieldEvent) {
+    const handled = await tasks.runGeneratedSession(timedYieldEvent, "timed yield");
+    if (handled) processed += 1;
+    return processed;
+  }
 
   const talkSessionId = !force && tasks.canRunHeartbeat() ? tasks.claimReadyTalkSession?.() : undefined;
   if (talkSessionId) {

@@ -91,6 +91,33 @@ export function buildWorldWandererTargetReachedEvent(target: AgentInitiatedTarge
   };
 }
 
+export function buildTimedYieldEvent(snapshot: unknown, time: CurrentTimeProvider): AgentEvent | undefined {
+  if (!snapshot || typeof snapshot !== "object") return undefined;
+  const wait = snapshot as {
+    waitChatUntil?: unknown;
+    waitChatTarget?: { source?: unknown; externalSession?: unknown };
+  };
+  const waitUntil = typeof wait.waitChatUntil === "string" ? Date.parse(wait.waitChatUntil) : Number.NaN;
+  if (!Number.isFinite(waitUntil) || waitUntil > time.now().epochMs) return undefined;
+  const source = wait.waitChatTarget?.source;
+  const externalSession = wait.waitChatTarget?.externalSession;
+  if (!source || typeof source !== "object" || typeof (source as AgentEvent["source"]).plugin !== "string") return undefined;
+  if (!externalSession || typeof externalSession !== "object" || typeof (externalSession as AgentEvent["externalSession"]).sessionId !== "string") return undefined;
+  const received = time.now();
+  return {
+    id: createId("yield_timeout"),
+    source: { ...(source as AgentEvent["source"]) },
+    externalSession: { ...(externalSession as AgentEvent["externalSession"]) },
+    type: "system.heartbeat",
+    payload: { kind: "text", text: "" },
+    meta: {
+      receivedAt: received.iso,
+      receivedAtUtc: received.date.toISOString(),
+      raw: { agentInitiatedTriggerEvent: "yield.timeout" }
+    }
+  };
+}
+
 export function buildAgentEventFromMessageLog(input: {
   sessionId: string;
   pending: StoredConversationMessage[];

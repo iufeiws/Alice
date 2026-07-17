@@ -44,7 +44,15 @@ export type ChatAgentLoopSession = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: number;
+  waitChatMode?: "wait";
+  waitChatUntil?: number;
+  waitChatTarget?: YieldResumeTarget;
   skipNextAppendLayers?: boolean;
+};
+
+export type YieldResumeTarget = {
+  source: AgentEvent["source"];
+  externalSession: AgentEvent["externalSession"];
 };
 
 export type ChatAgentLoopInput = {
@@ -107,6 +115,7 @@ export type ChatAgentLoopResult = {
   invalidateSession?: boolean;
   cancelled?: boolean;
   finalResult?: LLMChatResult;
+  clearReason?: "yield_end";
 };
 
 export type PreparedChatAgentLoop = {
@@ -116,6 +125,7 @@ export type PreparedChatAgentLoop = {
 
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
+  let clearReason: "yield_end" | undefined;
   const llmCapabilities: LLMCapabilityFlags = {
     supportsImage: input.llmInput.supportsImage,
     supportsAudio: input.llmInput.supportsAudio
@@ -212,8 +222,22 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       }
 
       if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
-        session.waitChatStartedAt = input.time.now().epochMs;
+        const nowMs = input.time.now().epochMs;
+        const yieldSeconds = Number(toolResult.meta.yieldSeconds);
+        session.waitChatStartedAt = nowMs;
+        session.waitChatMode = toolResult.meta.yieldAction;
+        session.waitChatUntil = toolResult.meta.yieldAction === "wait"
+          && Number.isFinite(yieldSeconds)
+          ? nowMs + yieldSeconds * 1000
+          : undefined;
+        session.waitChatTarget = toolResult.meta.yieldAction === "wait"
+          ? {
+              source: { ...input.event.source },
+              externalSession: { ...input.event.externalSession }
+            }
+          : undefined;
       }
+      if (toolResult.llmSessionClearReason === "yield_end") clearReason = "yield_end";
       input.setLastCompletedToolName(call.function.name);
       const execution = resolveChatLoopToolControl({
         call,
@@ -246,7 +270,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         message: loopResult.finalMessage,
         invalidateSession: loopResult.invalidateSession,
         cancelled: loopResult.stopReason === "cancelled",
-        finalResult: loopResult.finalResult
+        finalResult: loopResult.finalResult,
+        clearReason
       };
     }
   };
@@ -262,6 +287,7 @@ export {
   estimateTextTokens,
   fixedPrefixToolInput,
   findToolPlugin,
+  hasPendingWaitChatToolCall,
   toolResultText
 } from "./chat-loop-session-context.js";
 

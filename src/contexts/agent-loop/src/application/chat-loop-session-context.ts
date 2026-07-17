@@ -14,6 +14,7 @@ export async function buildWaitChatResumeMessages(input: {
 }): Promise<LLMChatInput["messages"]> {
   const pending = pendingWaitChatToolCalls(input.session.messages);
   if (!pending) return [];
+  if (!shouldResumeWait(input.session, input.event, input.time.now().epochMs)) return [];
   const messages: LLMChatInput["messages"] = [];
   const textVariables = input.buildTextVariables(input.event);
   let waitChatCheckResult: ToolResult | undefined;
@@ -48,6 +49,14 @@ export async function buildWaitChatResumeMessages(input: {
     });
   }
   return messages;
+}
+
+function shouldResumeWait(session: ChatAgentLoopSession, event: AgentEvent, nowMs: number): boolean {
+  if (event.type.startsWith("message.")) return session.waitChatMode === "wait" ;
+  if (session.waitChatMode !== "wait" || !Number.isFinite(session.waitChatUntil) || nowMs < Number(session.waitChatUntil)) return false;
+  const raw = event.meta.raw;
+  return Boolean(raw && typeof raw === "object" && "agentInitiatedTriggerEvent" in raw
+    && raw.agentInitiatedTriggerEvent === "yield.timeout");
 }
 
 export function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {
@@ -121,10 +130,13 @@ function pendingWaitChatToolCalls(messages: LLMChatInput["messages"]): { calls: 
         .map((entry) => entry.toolCallId as string)
     );
     const missingCalls = message.toolCalls.filter((call) => !followingToolCallIds.has(call.id));
-    if (!missingCalls.some((call) => isWaitChatToolName(call.function.name))) return undefined;
-    return { calls: missingCalls };
+    if (missingCalls.some((call) => isWaitChatToolName(call.function.name))) return { calls: missingCalls };
   }
   return undefined;
+}
+
+export function hasPendingWaitChatToolCall(messages: LLMChatInput["messages"]): boolean {
+  return Boolean(pendingWaitChatToolCalls(messages));
 }
 
 async function runWaitChatResumeCheck(
@@ -173,6 +185,7 @@ function formatWaitChatResumeOutput(
 
 function formatWaitChatDuration(durationMs: number): string | undefined {
   if (!Number.isFinite(durationMs) || durationMs < 0) return undefined;
+  if (durationMs < 60_000) return `${Math.max(0, Math.round(durationMs / 1000))}s`;
   const totalMinutes = Math.max(0, Math.round(durationMs / 60_000));
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;

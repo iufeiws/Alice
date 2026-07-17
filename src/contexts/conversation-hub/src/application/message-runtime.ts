@@ -10,7 +10,8 @@ import { lifecycleSummary, normalizeInboundEvent, summarizeEventPayload, summari
 import {
   buildAgentEventFromMessageLog,
   buildManualProcessEvent,
-  buildRandomizedInitiatedBehaviorEvent
+  buildRandomizedInitiatedBehaviorEvent,
+  buildTimedYieldEvent
 } from "./message-event-builders.js";
 import { persistInboundAttachment } from "./inbound-attachments.js";
 import type { MessageRuntime, MessageRuntimeDeps, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
@@ -180,6 +181,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       beforeSleepCocoonWakeSession: (event) => deps.beforeSleepCocoonWakeSession?.(event as AgentEvent),
       getSleepCocoonGoodnightEvent: deps.getSleepCocoonGoodnightEvent,
       getCalendarReminderEvent: deps.getCalendarReminderEvent,
+      getTimedYieldEvent: () => buildTimedYieldEvent(agentLoopRuntime.getCurrentLLMSessionSnapshot(), time),
       appendLog: deps.appendLog
     },
     onPausedChange: deps.onHeartbeatPausedChange,

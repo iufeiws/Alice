@@ -456,7 +456,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
           toolCalls: [{
             id: "tool_wait",
             type: "function",
-            function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
+            function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
           }]
         },
         finishReason: "tool_calls"
@@ -490,4 +490,42 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
   assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.role, "assistant");
   assert.equal(sessionUpdates.at(-1)?.messages.at(-1)?.toolCalls?.[0]?.function.name, "Yield");
   assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "Yield"), false);
+});
+
+test("chat agent ends and clears the current LLM session after Yield end", async () => {
+  const requests: LLMChatInput[] = [];
+  const clearReasons: string[] = [];
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        if (requests.length > 1) throw new Error("unexpected follow-up llm request");
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_end",
+              type: "function",
+              function: { name: "Yield", arguments: "{\"action\":\"end\"}" }
+            }]
+          }
+        };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [chatTestTools()],
+    onLLMSessionCleared(reason) {
+      clearReasons.push(reason);
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(clearReasons, ["yield_end"]);
 });

@@ -1,7 +1,7 @@
 import type { LLMChatInput, LLMChatResult } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestDiff } from "../../../llm-gateway/src/llm-request-diff.js";
 
-export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout";
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout" | "yield_end";
 export type LLMSessionSnapshot = {
   id?: number;
   messages: LLMChatInput["messages"];
@@ -23,6 +23,12 @@ export type LLMSessionSnapshot = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: string;
+  waitChatMode?: "wait" ;
+  waitChatUntil?: string;
+  waitChatTarget?: {
+    source: { plugin: string; accountId?: string; channelId?: string; userId?: string; rawMessageId?: string };
+    externalSession: { scope: "dm" | "group" | "topic" | "admin" | "desktop"; sessionId: string; threadId?: string };
+  };
   skipNextAppendLayers?: boolean;
 };
 
@@ -104,6 +110,9 @@ export type LLMSessionRecord = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: string;
+  waitChatMode?: "wait" ;
+  waitChatUntil?: string;
+  waitChatTarget?: LLMSessionSnapshot["waitChatTarget"];
   skipNextAppendLayers?: boolean;
   currentRound?: LLMSessionRoundInfo;
   latestRequestInfo?: LLMSessionRequestInfo;

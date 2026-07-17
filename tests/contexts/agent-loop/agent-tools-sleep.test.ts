@@ -179,51 +179,6 @@ test("chat agent skips sleep cocoon goodnight when sleep tool is hidden", async 
   assert.deepEqual(behaviorRuns.map((run) => ({ result: run.result, error: run.error })), [{ result: "skipped", error: "tool_hidden:sleep_cocoon" }]);
 });
 
-test("chat agent appends sleep cocoon morning instruction from heartbeat event", async () => {
-  const requests: LLMChatInput[] = [];
-  const llm: LLMClient = {
-    async chat(input) {
-      requests.push(input);
-      return { message: { role: "assistant", content: "早安" } };
-    }
-  };
-  const event = {
-    ...textEvent(),
-    type: "system.heartbeat" as const,
-    meta: {
-      receivedAt: "2026-05-26T08:00:00.000Z",
-      raw: { agentInitiatedTriggerEvent: "sleep_cocoon.wake" }
-    }
-  };
-  const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
-    llm,
-    outputRouter: createOutputRouter(),
-    intentRouter: createIntentRouter(),
-    sessionResolver: createSessionResolver(),
-    policy: createAllowAllPolicy(),
-    tools: [],
-    getPromptProfile: () => ({
-      userName: "YY",
-      visibleTools: { feishu: true },
-      layers: [{
-        id: "base",
-        title: "Base",
-        role: "system",
-        enabled: true,
-        order: 1,
-        content: "base prompt"
-      }],
-      appendLayers: []
-    })
-  });
-
-  await runPreparedChatEvent(core, event);
-
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.some((message) => message.role === "user"), true);
-});
-
 test("chat agent appends force wake instruction from heartbeat event", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {

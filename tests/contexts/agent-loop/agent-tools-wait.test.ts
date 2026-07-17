@@ -13,7 +13,7 @@ import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.
 import { createAgentStateController, type AgentBehaviorState } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createChatAgent, runPreparedChatEvent, textEvent, chatTestTools, memoryStore, messageContentText } from "./agent-tools-helpers.js";
 
-test("chat agent resumes pending finish_and_wait with Chat result on heartbeat", async () => {
+test("chat agent resumes pending finish_and_wait with Chat result on new message", async () => {
   const requests: LLMChatInput[] = [];
   const checkInputs: Record<string, unknown>[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
@@ -30,7 +30,7 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
             }]
           },
           finishReason: "tool_calls"
@@ -66,8 +66,11 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
   });
 
   await runPreparedChatEvent(core, textEvent());
+  nowMs = Date.parse("2026-05-26T00:04:00.000Z");
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_heartbeat", type: "system.heartbeat" });
+  assert.equal(requests.length, 1);
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_2", type: "system.heartbeat" });
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_2" });
 
   assert.equal(requests.length, 2);
   assert.deepEqual(checkInputs, [{ action: "poll" }]);
@@ -80,6 +83,82 @@ test("chat agent resumes pending finish_and_wait with Chat result on heartbeat",
   assert.equal(checkChatAfterWait, undefined);
   assert.equal(sessionUpdates.at(-1)?.waitChatStartedAt, undefined);
 });
+
+test("chat agent resumes wait once after its deadline", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        if (requests.length === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: "tool_wait",
+                type: "function",
+                function: { name: "Yield", arguments: "{\"action\":\"wait\",\"timer\":10}" }
+              }]
+            }
+          };
+        }
+        return { message: { role: "assistant", content: "" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools()],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "wait");
+  assert.equal(sessionUpdates.at(-1)?.waitChatUntil, "2026-05-26T00:00:10.000Z");
+  assert.equal(sessionUpdates.at(-1)?.waitChatTarget?.externalSession.sessionId, "session-1");
+
+  nowMs += 9_000;
+  await runPreparedChatEvent(core, timedYieldEvent());
+  assert.equal(requests.length, 1);
+
+  nowMs += 1_000;
+  await runPreparedChatEvent(core, timedYieldEvent());
+  assert.equal(requests.length, 2);
+  assert.match(String(requests[1].messages.find((message) => message.name === "Yield")?.content), /<wait-duration>10s<\/wait-duration>/);
+  assert.equal(sessionUpdates.at(-1)?.waitChatUntil, undefined);
+  assert.equal(sessionUpdates.at(-1)?.waitChatTarget, undefined);
+});
+
+function timedYieldEvent() {
+  return {
+    ...textEvent(),
+    id: "evt_timeout",
+    type: "system.heartbeat" as const,
+    meta: {
+      ...textEvent().meta,
+      raw: { agentInitiatedTriggerEvent: "yield.timeout" }
+    }
+  };
+}
 
 test("chat agent executes same-round tools when finish_and_wait appears", async () => {
   const requests: LLMChatInput[] = [];
@@ -103,7 +182,7 @@ test("chat agent executes same-round tools when finish_and_wait appears", async 
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
             },
             {
               id: "tool_later",
@@ -151,7 +230,7 @@ test("chat agent executes same-round tools when finish_and_wait appears", async 
   assert.equal(latestMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_later"), true);
 });
 
-test("chat agent resumes same-round finish_and_wait result on heartbeat", async () => {
+test("chat agent resumes same-round finish_and_wait result on new message", async () => {
   const requests: LLMChatInput[] = [];
   let persistedSession: LLMSessionSnapshot | undefined;
   let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
@@ -172,7 +251,7 @@ test("chat agent resumes same-round finish_and_wait result on heartbeat", async 
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"poll\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
             },
             {
               id: "tool_later",
@@ -211,7 +290,7 @@ test("chat agent resumes same-round finish_and_wait result on heartbeat", async 
   await runPreparedChatEvent(core, textEvent());
 
   nowMs = Date.parse("2026-05-26T00:05:00.000Z");
-  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_resume", type: "system.heartbeat" });
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_resume" });
 
   const resumedMessages = requests[1].messages;
   assert.equal(resumedMessages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), true);

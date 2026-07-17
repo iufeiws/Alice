@@ -39,10 +39,38 @@ test("finishAndWaitTools_yieldCalled_returnsYieldMeta", async () => {
   const tools = createFinishAndWaitTools();
   const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
   assert.ok(waitTool);
-  const result = await tools.execute({ id: "call_wait", toolName: "Yield", input: {} });
+  const result = await tools.execute({ id: "call_wait", toolName: "Yield", input: { action: "wait" } });
   assert.equal(result.ok, true);
   assert.equal(result.meta?.yieldReturn, true);
+  assert.equal(result.meta?.yieldAction, "wait");
   assert.equal(result.output, undefined);
+});
+
+test("finishAndWaitTools validates actions and wait range", async () => {
+  const tools = createFinishAndWaitTools();
+  for (const timer of [10, 900]) {
+    const result = await tools.execute({ id: `wait_${timer}`, toolName: "Yield", input: { action: "wait", timer } });
+    assert.equal(result.ok, true);
+    assert.equal(result.meta?.yieldSeconds, timer);
+  }
+  for (const input of [
+    {},
+    { action: "poll" },
+    { action: "wait_for", timer: 10 },
+    { action: "end", timer: 10 },
+    { action: "wait", timer: 9 },
+    { action: "wait", timer: 901 },
+    { action: "wait", timer: 10.5 },
+    { action: "wait", timer: 10, extra: true }
+  ]) {
+    const result = await tools.execute({ id: "invalid", toolName: "Yield", input });
+    assert.equal(result.ok, false, JSON.stringify(input));
+  }
+  const end = await tools.execute({ id: "end", toolName: "Yield", input: { action: "end" } });
+  assert.equal(end.invalidateLLMSession, true);
+  assert.equal(end.llmSessionClearReason, "yield_end");
+  assert.equal(tools.listTools()[0].description.includes("关闭"), false);
+  assert.equal(tools.listTools()[0].description.includes("会话"), false);
 });
 
 test("check_chat range scope filters with from and to", async () => {

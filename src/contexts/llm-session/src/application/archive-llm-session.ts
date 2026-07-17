@@ -116,6 +116,9 @@ export function createLLMSessionArchive(input: {
       fixedPrefixStartedAt: session.fixedPrefixStartedAt,
       loopStartedAt: session.loopStartedAt,
       waitChatStartedAt: session.waitChatStartedAt,
+      waitChatMode: session.waitChatMode,
+      waitChatUntil: session.waitChatUntil,
+      waitChatTarget: session.waitChatTarget,
       skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined,
       agentLoopRunSeq: session.agentLoopRunSeq,
       currentRound: session.currentRound,
@@ -244,6 +247,9 @@ export function createLLMSessionArchive(input: {
         fixedPrefixStartedAt: typeof metadata.fixedPrefixStartedAt === "string" ? metadata.fixedPrefixStartedAt : undefined,
         loopStartedAt: typeof metadata.loopStartedAt === "string" ? metadata.loopStartedAt : undefined,
         waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
+        waitChatMode: metadata.waitChatMode === "wait" ? metadata.waitChatMode : undefined,
+        waitChatUntil: typeof metadata.waitChatUntil === "string" ? metadata.waitChatUntil : undefined,
+        waitChatTarget: parseWaitChatTarget(metadata.waitChatTarget),
         skipNextAppendLayers: metadata.skipNextAppendLayers === true ? true : undefined,
         currentRound: parseRoundInfo(metadata.currentRound),
         latestRequestInfo: parseRequestInfo(metadata.latestRequest),
@@ -270,6 +276,15 @@ function numberArray(value: unknown): number[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry))
     : [];
+}
+
+function parseWaitChatTarget(value: unknown): LLMSessionRecord["waitChatTarget"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const target = value as NonNullable<LLMSessionRecord["waitChatTarget"]>;
+  if (!target.source || typeof target.source.plugin !== "string") return undefined;
+  if (!target.externalSession || typeof target.externalSession.sessionId !== "string") return undefined;
+  if (!["dm", "group", "topic", "admin", "desktop"].includes(target.externalSession.scope)) return undefined;
+  return target;
 }
 
 function staticPromptFingerprintFromMetadata(

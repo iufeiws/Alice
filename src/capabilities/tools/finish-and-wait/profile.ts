@@ -1,11 +1,18 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
+export const minYieldWaitSeconds = 10;
+export const maxYieldWaitSeconds = 15 * 60;
+
 export const finishAndWaitTool: ToolDefinition = {
   name: "Yield",
-  description: "结束当前回复并等待聊天记录更新。当有新消息时会收到提醒并返回新消息；如果等待过一段时间，返回内容会包含 <wait-duration>...</wait-duration> 表示等待时长。没有新消息的话就干自己的事情",
+  description: "等待回复或结束聊天。action=wait 等待新消息, 有新消息时提醒, timer接受秒数, 如果设定timer则没有收到新消息时在时间到时提醒；action=end 结束聊天",
   inputSchema: {
     type: "object",
-    properties: {},
+    properties: {
+      action: { type: "string", enum: ["wait", "end"], default: "wait" },
+      timer: { type: "integer", minimum: minYieldWaitSeconds, maximum: maxYieldWaitSeconds},
+    },
+    required: ["action"],
     additionalProperties: false
   }
 };

@@ -179,6 +179,9 @@ export function createLLMSessionRuntime(input: {
     const nextFixedPrefixStartedAt = nextMode === "fixed_prefix" ? sessionInput.fixedPrefixStartedAt : undefined;
     const nextLoopStartedAt = sessionInput.loopStartedAt;
     const nextWaitChatStartedAt = sessionInput.waitChatStartedAt;
+    const nextWaitChatMode = sessionInput.waitChatMode;
+    const nextWaitChatUntil = sessionInput.waitChatUntil;
+    const nextWaitChatTarget = sessionInput.waitChatTarget;
     const nextSkipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
     const nextTokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines);
     const tokenUsageChanged = session.lastTotalTokens !== sessionInput.lastTotalTokens
@@ -194,6 +197,9 @@ export function createLLMSessionRuntime(input: {
       || session.fixedPrefixStartedAt !== nextFixedPrefixStartedAt
       || session.loopStartedAt !== nextLoopStartedAt
       || session.waitChatStartedAt !== nextWaitChatStartedAt
+      || session.waitChatMode !== nextWaitChatMode
+      || session.waitChatUntil !== nextWaitChatUntil
+      || stableStringify(session.waitChatTarget) !== stableStringify(nextWaitChatTarget)
       || session.skipNextAppendLayers !== nextSkipNextAppendLayers
       || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
     if (!isAppend) {
@@ -223,6 +229,9 @@ export function createLLMSessionRuntime(input: {
     session.fixedPrefixStartedAt = nextFixedPrefixStartedAt;
     session.loopStartedAt = nextLoopStartedAt;
     session.waitChatStartedAt = nextWaitChatStartedAt;
+    session.waitChatMode = nextWaitChatMode;
+    session.waitChatUntil = nextWaitChatUntil;
+    session.waitChatTarget = nextWaitChatTarget;
     session.skipNextAppendLayers = nextSkipNextAppendLayers;
     if (delta.length > 0) input.archive.appendMessages(session, delta);
     if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
@@ -255,6 +264,9 @@ export function createLLMSessionRuntime(input: {
     session.fixedPrefixStartedAt = sessionInput.fixedPrefixStartedAt;
     session.loopStartedAt = sessionInput.loopStartedAt;
     session.waitChatStartedAt = sessionInput.waitChatStartedAt;
+    session.waitChatMode = sessionInput.waitChatMode;
+    session.waitChatUntil = sessionInput.waitChatUntil;
+    session.waitChatTarget = sessionInput.waitChatTarget;
     session.skipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
     if (commonMessagePrefixLength(previousMessages, session.messages) === previousMessages.length) {
       const delta = session.messages.slice(previousMessages.length);
@@ -317,6 +329,9 @@ export function createLLMSessionRuntime(input: {
       fixedPrefixStartedAt: latest.fixedPrefixStartedAt,
       loopStartedAt: latest.loopStartedAt,
       waitChatStartedAt: latest.waitChatStartedAt,
+      waitChatMode: latest.waitChatMode,
+      waitChatUntil: latest.waitChatUntil,
+      waitChatTarget: latest.waitChatTarget,
       skipNextAppendLayers: latest.skipNextAppendLayers === true ? true : undefined
     };
   }

@@ -129,10 +129,22 @@ export function chatTestTools(onCall?: (call: ToolCall) => void) {
     async execute(call: ToolCall) {
       onCall?.(call);
       if (call.toolName === "Yield") {
+        if (call.input.action === "end") {
+          return {
+            callId: call.id,
+            ok: true,
+            invalidateLLMSession: true,
+            llmSessionClearReason: "yield_end" as const
+          };
+        }
         return {
           callId: call.id,
           ok: true,
-          meta: { yieldReturn: true }
+          meta: {
+            yieldReturn: true,
+            yieldAction: "wait" as const,
+            yieldSeconds: call.input.action === "wait" ? Number(call.input.timer) : undefined
+          }
         };
       }
       if (call.toolName === "Chat") {

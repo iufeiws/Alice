@@ -181,7 +181,7 @@ async function readImageInput(input: ImageRecognitionInput): Promise<{ bytes: Ui
 }
 
 function renderPrompt(prompt: string, deps: ImageRecognitionDeps): string {
-  if (!deps.promptRenderer) return prompt;
+  if (!deps.promptRenderer) throw new Error("prompt_context_runtime_required");
   const renderer = typeof deps.promptRenderer === "function" ? deps.promptRenderer() : deps.promptRenderer;
   return renderer.renderText(prompt);
 }

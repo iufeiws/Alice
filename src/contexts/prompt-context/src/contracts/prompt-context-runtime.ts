@@ -11,12 +11,9 @@ export type PromptContextContentOption = {
   onBodyGenerationAttempted?: boolean;
 };
 
-export type PromptContextRenderOptions = {
-  targetOutfit?: PromptContextContentOption;
-};
-
 export type PromptContextRuntime = {
-  renderText(content: string, options?: PromptContextRenderOptions): string;
-  getVariable(name: string, options?: PromptContextRenderOptions): PromptContextValue;
+  renderText(content: string): string;
+  getVariable(name: string): PromptContextValue;
   listVariables(): string[];
+  withVariables(variables: Readonly<Record<string, PromptContextPrimitive>>): PromptContextRuntime;
 };

@@ -1,39 +1,27 @@
-import type { PromptContextRuntime, PromptContextValue } from "../../src/contexts/prompt-context/src/index.js";
+import { createPromptContextRuntime, type PromptContextPrimitive, type PromptContextRuntime, type PromptContextValue } from "../../src/contexts/prompt-context/src/index.js";
+import { createCurrentTimeProvider } from "../../src/platform/time/src/index.js";
 
 export function testPromptRuntime(variables: Record<string, PromptContextValue> = {}): PromptContextRuntime {
-  return {
-    renderText(content) {
-      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
-        const resolved = getByPath(variables, key);
-        return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
-      });
-    },
-    getVariable(name) {
-      return getByPath(variables, name);
-    },
-    listVariables() {
-      return flattenVariableNames(variables);
-    }
-  };
+  const runtime = createPromptContextRuntime({
+    username: "user",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+    dailyShellStore: { get: () => undefined },
+    coreProfileStore: { get: () => ({}) },
+    memoryStore: { read: () => ({}) },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    calendarStore: { listEntries: () => [] },
+    skillsRegistry: { available: () => [] },
+    worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
+  });
+  const flattened: Record<string, PromptContextPrimitive> = {};
+  collectVariables(variables, "", flattened);
+  return runtime.withVariables(flattened);
 }
 
-function getByPath(variables: Record<string, PromptContextValue>, path: string): PromptContextValue {
-  return path.split("/").reduce<PromptContextValue>((current, segment) => {
-    if (!segment || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
-    return current[segment];
-  }, variables);
-}
-
-function flattenVariableNames(variables: Record<string, PromptContextValue>): string[] {
-  const names: string[] = [];
-  collectVariableNames(variables, "", names);
-  return names;
-}
-
-function collectVariableNames(value: PromptContextValue, prefix: string, names: string[]): void {
+function collectVariables(value: PromptContextValue, prefix: string, variables: Record<string, PromptContextPrimitive>): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    if (prefix) names.push(prefix);
+    if (prefix) variables[prefix] = value as PromptContextPrimitive;
     return;
   }
-  for (const [key, child] of Object.entries(value)) collectVariableNames(child, prefix ? `${prefix}/${key}` : key, names);
+  for (const [key, child] of Object.entries(value)) collectVariables(child, prefix ? `${prefix}/${key}` : key, variables);
 }

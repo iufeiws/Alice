@@ -1,12 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFileTools } from "../../../../src/capabilities/tools/file/src/index.js";
+import { createFileTools as createFileToolsRuntime } from "../../../../src/capabilities/tools/file/src/index.js";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import type { BashSandboxRuntime } from "../../../../src/contexts/bash-sandbox/src/index.js";
 import { testConfig } from "../../../contexts/bash-sandbox/bash-sandbox-helpers.js";
 
 const fs = await import("node:fs");
 const os = await import("node:os");
 const path = await import("node:path");
+
+function createFileTools(input: Omit<Parameters<typeof createFileToolsRuntime>[0], "promptContextRuntime">) {
+  return createFileToolsRuntime({ ...input, promptContextRuntime: testPromptRuntime() });
+}
 
 // @ts-expect-error file tool wrappers are runtime .mjs entry modules.
 const { runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrappers/file-tool-core.mjs");

@@ -2,7 +2,7 @@ import { buildCalendarContext } from "../../../../capabilities/tools/calendar/sr
 import { formatAvailableSkillsXml } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { PromptContextContentOption, PromptContextRenderOptions, PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
+import type { PromptContextContentOption, PromptContextPrimitive, PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
 
 const memoryTargets = ["persistent", "userPreferences", "yesterdaySummary"] as const;
 const optionFields = ["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"] as const;
@@ -22,7 +22,6 @@ const variableNames = [
   "dailyShell/date",
   "dailyShell/createdAt",
   ...optionFields.flatMap((field) => [`dailyShell/persona/${field}`, `dailyShell/relationship/${field}`, `outfit/${field}`]),
-  ...optionFields.map((field) => `targetOutfit/${field}`),
   ...memoryTargets.flatMap((target) => [
     `memory/${target}/content`,
     `memory/${target}/limit/lines`,
@@ -48,19 +47,9 @@ export function createPromptContextRuntime(input: {
   skillsRegistry: any;
   worldWandererConfigPath?: string;
 }): PromptContextRuntime {
-  const runtime: PromptContextRuntime = {
-    renderText(content, options) {
-      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
-        const resolved = runtime.getVariable(key, options);
-        return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
-      });
-    },
-    getVariable,
-    listVariables: () => [...variableNames]
-  };
-  return runtime;
+  return createRuntime(getVariable, () => [...variableNames]);
 
-  function getVariable(name: string, options?: PromptContextRenderOptions): PromptContextValue {
+  function getVariable(name: string): PromptContextValue {
     if (name === "user") return input.username.trim() || "user";
     const time = timeVariable(name);
     if (time !== undefined) return time;
@@ -68,7 +57,6 @@ export function createPromptContextRuntime(input: {
     if (name === "library/content") return librarySetting();
     if (name.startsWith("dailyShell/")) return dailyShellVariable(name);
     if (name.startsWith("outfit/")) return optionVariable(dailyShell()?.outfit, name.slice("outfit/".length));
-    if (name.startsWith("targetOutfit/")) return optionVariable(options?.targetOutfit, name.slice("targetOutfit/".length));
     if (name.startsWith("memory/")) return memoryVariable(name);
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();
@@ -165,6 +153,37 @@ export function createPromptContextRuntime(input: {
       userName: input.username
     });
   }
+}
+
+function createRuntime(
+  getVariable: (name: string) => PromptContextValue,
+  listVariables: () => string[]
+): PromptContextRuntime {
+  const runtime: PromptContextRuntime = {
+    renderText(content) {
+      const unresolved = new Set<string>();
+      const rendered = content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (_match, key: string) => {
+        const resolved = runtime.getVariable(key);
+        if (resolved === undefined || resolved === null || typeof resolved === "object") {
+          unresolved.add(key);
+          return `{{${key}}}`;
+        }
+        return String(resolved);
+      });
+      if (unresolved.size) throw new Error(`unresolved prompt variable: ${[...unresolved].join(", ")}`);
+      return rendered;
+    },
+    getVariable,
+    listVariables,
+    withVariables(variables) {
+      const values = new Map<string, PromptContextPrimitive>(Object.entries(variables));
+      return createRuntime(
+        (name) => values.has(name) ? values.get(name) : runtime.getVariable(name),
+        () => [...new Set([...runtime.listVariables(), ...values.keys()])]
+      );
+    }
+  };
+  return runtime;
 }
 
 function formatWeekday(date: Date, timeZone: string): string {

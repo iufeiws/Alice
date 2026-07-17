@@ -6,6 +6,7 @@ import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/fin
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -231,11 +232,7 @@ test("tts stream buffers input into takeable segments before translation and chu
       translatedInputs.push(text);
       return { message: { role: "assistant", content: translatedOutputs[translatedInputs.length - 1] ?? "" } };
     },
-    promptRenderer: () => ({
-      renderText: (text: string) => text,
-      getVariable: () => "",
-      listVariables: () => []
-    }),
+    promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
       return {
         baseURL: "https://example.invalid/v1",
@@ -291,11 +288,7 @@ async function streamTranslatedTts(name: string) {
       translatedInputs.push(text);
       return { message: { role: "assistant", content: `ja:${translatedInputs.length}` } };
     },
-    promptRenderer: () => ({
-      renderText: (text: string) => text,
-      getVariable: () => "",
-      listVariables: () => []
-    }),
+    promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
       return {
         baseURL: "https://example.invalid/v1",
@@ -375,11 +368,7 @@ test("tts stream maps returned translated audio text back to source punctuation"
     llmRequestSender: async () => ({
       message: { role: "assistant", content: "これは一文目です。二文目です。" }
     }),
-    promptRenderer: () => ({
-      renderText: (text: string) => text,
-      getVariable: () => "",
-      listVariables: () => []
-    }),
+    promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
       return {
         baseURL: "https://example.invalid/v1",

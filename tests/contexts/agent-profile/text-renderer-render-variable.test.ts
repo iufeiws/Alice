@@ -32,3 +32,18 @@ test("prompt variable tree reads through runtime", () => {
   assert.equal(typeof (tree.dailyShell as any).persona.content, "string");
   assert.equal(typeof (tree.memory as any).userPreferences.content, "string");
 });
+
+test("prompt runtime isolates scoped variables and rejects unresolved variables", () => {
+  const base = runtime();
+  const loop = base.withVariables({ pose: "看镜头", round: 2 });
+
+  assert.equal(loop.renderText("{{user}} {{pose}} round={{round}}"), "小王 看镜头 round=2");
+  assert.equal(loop.getVariable("pose"), "看镜头");
+  assert.equal(base.getVariable("pose"), undefined);
+  assert.throws(() => base.renderText("{{pose}}"), /unresolved prompt variable: pose/);
+
+  const nested = loop.withVariables({ pose: "挥手", user: null });
+  assert.equal(nested.renderText("{{pose}}"), "挥手");
+  assert.equal(nested.getVariable("user"), null);
+  assert.throws(() => nested.renderText("{{user}}"), /unresolved prompt variable: user/);
+});

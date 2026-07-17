@@ -6,6 +6,7 @@ import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/fin
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, selectedTtsPresetName, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -209,11 +210,7 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
         return { message: { role: "assistant", content: "日本語" } };
       }
     },
-    promptRenderer: () => ({
-      renderText: (text: string) => text,
-      getVariable: () => "",
-      listVariables: () => []
-    }),
+    promptRenderer: () => testPromptRuntime(),
     resolveApiPreset(name) {
       assert.equal(name, "fixed-flash");
       return {

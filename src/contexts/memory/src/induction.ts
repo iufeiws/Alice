@@ -300,20 +300,7 @@ function fileForSandboxPath(workspace: MemoryOrganizationWorkspace, filePath: st
 
 function withMemoryPromptPaths(runtime: MemorySummaryDeps["promptContextRuntime"], workspace: MemoryOrganizationWorkspace): MemorySummaryDeps["promptContextRuntime"] {
   const variables = Object.fromEntries(memoryTargets.map((target) => [`memorize/files/${target}/filePath`, workspace.containerFiles[target]])) as Record<string, string>;
-  return {
-    renderText(content, options) {
-      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
-        const value = variables[key] ?? runtime.getVariable(key, options);
-        return value === undefined || value === null || typeof value === "object" ? match : String(value);
-      });
-    },
-    getVariable(name, options) {
-      return variables[name] ?? runtime.getVariable(name, options);
-    },
-    listVariables() {
-      return [...new Set([...runtime.listVariables(), ...Object.keys(variables)])];
-    }
-  };
+  return runtime.withVariables(variables);
 }
 
 async function runMemoryOrganizationInduction(
@@ -347,7 +334,8 @@ async function runMemoryOrganizationInduction(
     const toolRegistryName = `memory_organization_${memoryToolRegistrySeq += 1}`;
     const fileTools = createFileTools({
       runtime: deps.sandbox.runtime,
-      config: deps.sandbox.config
+      config: deps.sandbox.config,
+      promptContextRuntime: promptRuntime
     });
     const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
       fileTools,

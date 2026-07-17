@@ -173,7 +173,16 @@ function resolvePhotoOnBodyOutfit(context: any, body: Record<string, unknown>, o
 }
 
 function renderPhotoOnBodyPrompt(context: any, template: string, outfit: Outfit): string {
-  return context.getPromptRenderer().renderText(template, { targetOutfit: outfit });
+  return context.getPromptRenderer().withVariables({
+    "targetOutfit/id": outfit.id,
+    "targetOutfit/name": outfit.name,
+    "targetOutfit/content": outfit.content,
+    "targetOutfit/group": outfit.group ?? "",
+    "targetOutfit/imageUrl": outfit.imageUrl ?? "",
+    "targetOutfit/onBodyImageUrl": outfit.onBodyImageUrl ?? "",
+    "targetOutfit/outfitImageGenerated": outfit.outfitImageGenerated ?? false,
+    "targetOutfit/onBodyGenerationAttempted": outfit.onBodyGenerationAttempted ?? false
+  }).renderText(template);
 }
 
 function savePhotoOnBodyAttempt(context: any, outfit: Outfit, imageUrl?: string): void {

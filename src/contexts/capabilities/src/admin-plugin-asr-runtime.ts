@@ -162,6 +162,7 @@ async function testAsrPlugin(context: AdminRoutesContext, input: Record<string, 
         });
       },
       llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
+      promptRenderer: () => context.getPromptRenderer(),
       appendLog: context.appendLog
     }));
   if (isAsrTranscribeError(result)) return { error: result.error };

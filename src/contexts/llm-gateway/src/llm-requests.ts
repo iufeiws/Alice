@@ -147,10 +147,7 @@ function renderJsonSchemaNode(value: unknown, runtime: PromptContextRuntime): un
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
     if ((key === "description" || key === "title") && typeof entry === "string") return [key, runtime.renderText(entry)];
-    if (key === "properties" || key === "$defs" || key === "definitions" || key === "items" || key === "anyOf" || key === "oneOf" || key === "allOf") {
-      return [key, renderJsonSchemaNode(entry, runtime)];
-    }
-    return [key, entry];
+    return [key, renderJsonSchemaNode(entry, runtime)];
   }));
 }
 

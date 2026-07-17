@@ -1,6 +1,6 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
 import type { LLMMessage } from '../../../contexts/llm-gateway/src/index.js';
-import type { PromptContextRuntime, PromptContextValue } from '../../../contexts/prompt-context/src/index.js';
+import type { PromptContextPrimitive, PromptContextRuntime } from '../../../contexts/prompt-context/src/index.js';
 import type { MemorySummaryConfig } from './contracts/memory-config.js';
 import { parsePromptToolArguments, promptLayerToMessage } from '../../../contexts/agent-profile/src/domain/prompt-layer.js';
 import type { MemoryInductionPrompts, MemoryInductionPromptStore, MemoryPromptLayer, MemoryPromptPreview, MemoryStore, MemoryTarget } from './model.js';
@@ -139,21 +139,7 @@ function memoryPromptRuntime(
   },
   target: MemoryTarget
 ): PromptContextRuntime {
-  const localVariables = memoryPromptVariables(deps, target);
-  return {
-    renderText(content, options) {
-      return content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
-        const resolved = localVariables[key] ?? deps.promptContextRuntime.getVariable(key, options);
-        return resolved === undefined || resolved === null || typeof resolved === "object" ? match : String(resolved);
-      });
-    },
-    getVariable(name, options) {
-      return localVariables[name] ?? deps.promptContextRuntime.getVariable(name, options);
-    },
-    listVariables() {
-      return [...new Set([...deps.promptContextRuntime.listVariables(), ...Object.keys(localVariables)])];
-    }
-  };
+  return deps.promptContextRuntime.withVariables(memoryPromptVariables(deps, target));
 }
 
 function memoryPromptVariables(
@@ -167,8 +153,8 @@ function memoryPromptVariables(
     memorizeErrorDetail?: string;
   },
   target: MemoryTarget
-): Record<string, PromptContextValue> {
-  const variables: Record<string, PromptContextValue> = {
+): Record<string, PromptContextPrimitive> {
+  const variables: Record<string, PromptContextPrimitive> = {
     "memorize/target/fileName": deps.sandboxPaths?.files[target] ?? targetResultFiles[target],
     "memorize/ErrorDetail": deps.memorizeErrorDetail ?? "",
     "memorize/window/startAt": deps.windowStartAt ?? "",

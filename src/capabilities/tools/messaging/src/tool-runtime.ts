@@ -202,7 +202,8 @@ export function createToolRuntime(input: {
   });
   const fileTools = createFileTools({
     runtime: bashRuntime,
-    config: input.config.bashSandbox
+    config: input.config.bashSandbox,
+    promptContextRuntime: input.promptContextRuntime
   });
 
   const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];

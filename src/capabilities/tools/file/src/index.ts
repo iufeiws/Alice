@@ -3,6 +3,7 @@ import { isAllowedCwd, normalizeContainerPath } from "../../../../contexts/bash-
 import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createOpenAICompatibleClient } from "../../../../contexts/llm-gateway/src/index.js";
 import { createPromptApiPresetStore } from "../../../../contexts/llm-gateway/src/llm-api-profile.js";
+import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../../channels/image-recognition/src/index.js";
 import { editTool, globTool, grepTool, readTool } from "../profile.js";
 
@@ -74,7 +75,7 @@ type SandboxSearchOutput = {
   content: string;
 };
 
-export function createFileTools(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig }): ToolPlugin {
+export function createFileTools(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig; promptContextRuntime: PromptContextRuntime }): ToolPlugin {
   const readFileState = new Map<string, ReadState>();
   return {
     id: "file-tools",
@@ -181,7 +182,8 @@ export function createFileTools(input: { runtime: BashSandboxRuntime; config: Ba
           extraParams: request.extraParams,
           signal: request.signal
         });
-      }
+      },
+      promptRenderer: input.promptContextRuntime
     });
     if ("ok" in recognition) throw new Error(recognition.error);
     return { callId: call.id, ok: true, output: `Image recognition result:\n${recognition.text}` };

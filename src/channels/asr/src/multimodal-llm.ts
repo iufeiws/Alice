@@ -97,7 +97,7 @@ export async function transcribeMultimodalLlm(input: AsrTranscribeInput, config:
 }
 
 function renderAsrPrompt(prompt: string, deps: AsrPluginDeps): string {
-  if (!deps.promptRenderer) return prompt;
+  if (!deps.promptRenderer) throw new Error("prompt_context_runtime_required");
   const renderer = typeof deps.promptRenderer === "function" ? deps.promptRenderer() : deps.promptRenderer;
   return renderer.renderText(prompt);
 }

@@ -104,7 +104,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
       await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const references = await resolveReferenceImages(context);
-      const prompt = buildSelfiePrompt();
+      const prompt = buildSelfiePrompt(pose);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -198,19 +198,16 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(): string {
+  function buildSelfiePrompt(pose: string): string {
     const photoConfig = runtimePhotoConfig();
     const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
-    const prompt = renderSelfiePrompt(fs.readFileSync(templatePath, "utf8"));
+    const runtime = deps.promptContextRuntime.withVariables({ pose });
+    const prompt = runtime.renderText(fs.readFileSync(templatePath, "utf8"));
     return photoConfig.selfie2DinRealEnabled && photoConfig.selfie2DinRealPrompt
-      ? `${prompt}\n\n${renderSelfiePrompt(photoConfig.selfie2DinRealPrompt)}`
+      ? `${prompt}\n\n${runtime.renderText(photoConfig.selfie2DinRealPrompt)}`
       : prompt;
-  }
-
-  function renderSelfiePrompt(template: string): string {
-    return deps.promptContextRuntime.renderText(template);
   }
 
   async function resolveReferenceImages(context: SelfieContext): Promise<{ images: string[]; prompt: string; missingOutfitImage: boolean; usesOnBodyReference: boolean; worldWandererStreetViewImage?: string }> {

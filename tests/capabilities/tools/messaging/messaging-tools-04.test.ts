@@ -6,6 +6,7 @@ import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/fin
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -249,11 +250,7 @@ test("tts plugin translates before tts while preserving original send_chat voice
         extraParams: {}
       };
     },
-    promptRenderer: () => ({
-      renderText: (text: string) => text,
-      getVariable: () => "",
-      listVariables: () => []
-    }),
+    promptRenderer: () => testPromptRuntime(),
     llm: {
       async chat(input) {
         llmMessages.push(...input.messages.map((message) => ({ role: message.role, content: message.content })));

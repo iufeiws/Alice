@@ -79,12 +79,15 @@ function makeSuccessfulSelfieFixture(name: string) {
 test("selfie_validContext_passesPromptAndReferencesToExecutor", async () => {
   const fixture = makeSuccessfulSelfieFixture("selfie-success-prompt");
   try {
-    await fixture.tools.execute({
+    const result = await fixture.tools.execute({
       id: "call_selfie",
       toolName: "Selfie",
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     });
 
+    assert.equal(result.ok, true);
+    assert.match(fixture.executorInputs[0].prompt, /踮脚靠近镜头/);
+    assert.doesNotMatch(fixture.executorInputs[0].prompt, /\{\{[a-zA-Z0-9_/]+\}\}/);
     assert.deepEqual(fixture.executorInputs[0].referenceImages, [
       path.resolve(fixture.referenceRoot, "alice-character-reference.jpg"),
       path.resolve(fixture.outfitImage),

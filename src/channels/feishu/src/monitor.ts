@@ -22,9 +22,9 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     updateAgentRunCard: client.updateAgentRunCard,
     setAgentRunCardStreaming: client.setAgentRunCardStreaming,
     resolveAgentRunCardId: client.resolveAgentRunCardId,
-    createBashRunCard: client.createBashRunCard,
-    appendBashRunCardPanel: client.appendBashRunCardPanel,
-    updateBashRunCard: client.updateBashRunCard,
-    setBashRunCardStreaming: client.setBashRunCardStreaming
+    createToolExecutionCard: client.createToolExecutionCard,
+    appendToolExecutionCardPanel: client.appendToolExecutionCardPanel,
+    updateToolExecutionCard: client.updateToolExecutionCard,
+    setToolExecutionCardStreaming: client.setToolExecutionCardStreaming
   };
 }

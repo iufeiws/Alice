@@ -1,5 +1,5 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
-import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutionReporter, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
 import { promptMessageToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
@@ -112,7 +112,14 @@ export type LLMToolLoopInput = {
 };
 
 const defaultToolRegistryName = "default";
-const toolRegistries = new Map<string, Map<string, ToolPlugin>>();
+type RegisteredTool = { plugin: ToolPlugin; definition: ToolDefinition };
+
+const toolRegistries = new Map<string, Map<string, RegisteredTool>>();
+let toolExecutionReporter: ToolExecutionReporter | undefined;
+
+export function setLLMToolExecutionReporter(reporter: ToolExecutionReporter | undefined): void {
+  toolExecutionReporter = reporter;
+}
 
 export function registerLLMToolLoopTools(name: string, plugins: readonly ToolPlugin[]): () => void {
   const registry = buildToolPluginMap(plugins);
@@ -127,7 +134,7 @@ export function executeRegisteredLLMTool(
   call: ToolCall,
   context?: ToolExecutionContext
 ): Promise<ToolResult> {
-  return toolPluginForCall(registryName, call.toolName).execute(call, context);
+  return executeToolPlugin(toolForCall(registryName, call.toolName), call, context);
 }
 
 export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
@@ -401,10 +408,10 @@ async function executeTool(
     reachedToolCallLimit: boolean;
   }
 ): Promise<LLMToolLoopExecution> {
-  const plugin = toolPluginForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
+  const tool = toolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
   const parsedInput = parseToolInput(call.function.arguments);
   const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
-  const toolResult = await plugin.execute({
+  const toolResult = await executeToolPlugin(tool, {
     id: call.id,
     toolName: call.function.name,
     input: toolInput,
@@ -443,18 +450,33 @@ function formatToolMessageContent(result: ToolResult, runtime: PromptContextRunt
   return JSON.stringify(result.output);
 }
 
-function toolPluginForCall(registryName: string, toolName: string): ToolPlugin {
-  const plugin = toolRegistries.get(registryName)?.get(toolName);
-  if (!plugin) throw new Error(`llm_tool_unavailable:${toolName}`);
-  return plugin;
+function toolForCall(registryName: string, toolName: string): RegisteredTool {
+  const tool = toolRegistries.get(registryName)?.get(toolName);
+  if (!tool) throw new Error(`llm_tool_unavailable:${toolName}`);
+  return tool;
 }
 
-function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, ToolPlugin> {
-  const map = new Map<string, ToolPlugin>();
+function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, RegisteredTool> {
+  const map = new Map<string, RegisteredTool>();
   for (const plugin of plugins) {
-    for (const tool of plugin.listTools()) map.set(tool.name, plugin);
+    for (const definition of plugin.listTools()) map.set(definition.name, { plugin, definition });
   }
   return map;
+}
+
+async function executeToolPlugin(tool: RegisteredTool, call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {
+  const report = tool.definition.suppressExecutionCard ? undefined : await toolExecutionReporter?.begin(call);
+  try {
+    const result = await tool.plugin.execute(call, {
+      ...context,
+      reportProgress: report ? (content) => void report.appendProgress(content) : context?.reportProgress
+    });
+    await report?.finish(result);
+    return result;
+  } catch (error) {
+    await report?.fail(error);
+    throw error;
+  }
 }
 
 export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {

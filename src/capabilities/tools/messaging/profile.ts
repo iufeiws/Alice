@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const chatTool: ToolDefinition = {
   name: "Chat",
+  suppressExecutionCard: true,
   description: "聊天工具。action=poll 查看新增聊天记录；action=send 给{{user}}发送消息。send 需要 type、alice、content，alice 省略时为 shell",
   inputSchema: {
     type: "object",

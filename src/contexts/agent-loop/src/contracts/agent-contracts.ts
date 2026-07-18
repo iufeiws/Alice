@@ -182,6 +182,7 @@ export type ToolDefinition = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  suppressExecutionCard?: boolean;
 };
 
 export type ToolCall = {
@@ -246,6 +247,17 @@ export type ToolExecutionContext = {
     supportsImage?: boolean;
     supportsAudio?: boolean;
   };
+  reportProgress?(content: string): void;
+};
+
+export type ToolExecutionReporter = {
+  begin(call: ToolCall): Promise<ToolExecutionReportSession | undefined> | ToolExecutionReportSession | undefined;
+};
+
+export type ToolExecutionReportSession = {
+  appendProgress(content: string): Promise<void> | void;
+  finish(result: ToolResult): Promise<void> | void;
+  fail(error: unknown): Promise<void> | void;
 };
 
 export interface ToolPlugin {

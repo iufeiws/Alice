@@ -11,9 +11,9 @@ export function createBashTools(input: {
     listTools() {
       return [bashTool];
     },
-    async execute(call) {
+    async execute(call, context) {
       if (call.toolName !== bashTool.name) return { callId: call.id, ok: false, error: `Unknown bash tool: ${call.toolName}` };
-      const result = await input.runtime.run(call);
+      const result = await input.runtime.run(call, context);
       const submission = await input.handleResult?.(result);
       return {
         callId: call.id,

@@ -4,6 +4,7 @@ const childProcess = await import("node:child_process");
 const crypto = await import("node:crypto");
 const fs = await import("node:fs");
 const path = await import("node:path");
+const { StringDecoder } = await import("node:string_decoder");
 
 const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
 const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
@@ -40,11 +41,9 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
       mountKey = await ensureContainer(config, mountKey);
       const startedAt = Date.now();
       const seconds = Math.max(1, Math.ceil(input.timeoutMs / 1000));
-      const captured = await runCapturedCommand(config, input.command, input.cwd, seconds, input.timeoutMs + 2000);
+      const captured = await runCapturedCommand(config, input.command, input.cwd, seconds, input.timeoutMs + 2000, input.onStdout, input.onStderr);
       const output = await readCapturedOutput(config, captured.stdoutPath, captured.stderrPath, input.outputLimitBytes);
       const timedOut = captured.timedOut || captured.exitCode === 124 || captured.exitCode === 137;
-      output.stdout && input.onStdout?.(output.stdout);
-      output.stderr && input.onStderr?.(output.stderr);
       return { ...output, exitCode: captured.exitCode, timedOut, durationMs: Date.now() - startedAt };
     },
     async runFileTool(input) {
@@ -59,15 +58,15 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
   };
 }
 
-async function runCapturedCommand(config: BashSandboxConfig, command: string, cwd: string, seconds: number, timeoutMs: number): Promise<{ stdoutPath: string; stderrPath: string; exitCode: number | null; timedOut: boolean }> {
+async function runCapturedCommand(config: BashSandboxConfig, command: string, cwd: string, seconds: number, timeoutMs: number, onStdout?: (delta: string) => void, onStderr?: (delta: string) => void): Promise<{ stdoutPath: string; stderrPath: string; exitCode: number | null; timedOut: boolean }> {
   const id = crypto.randomUUID();
   const stdoutPath = containerTmpPath(config, `alice-bash-output-${id}.stdout`);
   const stderrPath = containerTmpPath(config, `alice-bash-output-${id}.stderr`);
   const script = [
     "mkdir -p \"$(dirname \"$2\")\" \"$(dirname \"$3\")\"",
-    "timeout -k 1s \"${4}s\" bash -lc \"$1\" >\"$2\" 2>\"$3\""
+    "timeout -k 1s \"${4}s\" bash -lc \"$1\" > >(tee \"$2\") 2> >(tee \"$3\" >&2)"
   ].join("\n");
-  const result = await execFile("docker", ["exec", "-w", cwd, config.containerName, "bash", "-lc", script, "alice-bash-capture", command, stdoutPath, stderrPath, String(seconds)], timeoutMs, 8192);
+  const result = await execFile("docker", ["exec", "-w", cwd, config.containerName, "bash", "-lc", script, "alice-bash-capture", command, stdoutPath, stderrPath, String(seconds)], timeoutMs, 8192, onStdout, onStderr);
   return { stdoutPath, stderrPath, exitCode: result.exitCode, timedOut: result.timedOut };
 }
 
@@ -205,11 +204,13 @@ function containerMountKey(config: BashSandboxConfig): string {
   });
 }
 
-function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number): Promise<Omit<DockerExecutorResult, "durationMs" | "truncated">> {
+function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number, onStdout?: (delta: string) => void, onStderr?: (delta: string) => void): Promise<Omit<DockerExecutorResult, "durationMs" | "truncated">> {
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: dockerProcessEnv() });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -217,16 +218,20 @@ function execFile(command: string, args: string[], timeoutMs: number, outputLimi
     child.stdout.on("data", (chunk) => {
       const next = Buffer.concat([stdout, chunk]);
       stdout = next.subarray(0, outputLimitBytes);
+      onStdout?.(stdoutDecoder.write(chunk));
     });
     child.stderr.on("data", (chunk) => {
       const next = Buffer.concat([stderr, chunk]);
       stderr = next.subarray(0, outputLimitBytes);
+      onStderr?.(stderrDecoder.write(chunk));
     });
     child.on("error", reject);
     child.on("close", (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      onStdout?.(stdoutDecoder.end());
+      onStderr?.(stderrDecoder.end());
       resolve({
         stdout: stdout.toString("utf8"),
         stderr: stderr.toString("utf8"),

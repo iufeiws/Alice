@@ -2,8 +2,8 @@ import { createWebRtcVoiceRuntime } from "./web-rtc-voice-runtime.js";
 import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
-import { createFeishuDynamicCardAgentRunIndicator, createJsonFeishuAgentRunIndicatorCardStore } from "../../../contexts/agent-run-indicator/src/index.js";
-import { createFeishuBashRunReporter, type BashRunReporter } from "../../../contexts/bash-sandbox/src/index.js";
+import { createFeishuDynamicCardAgentRunIndicator, createFeishuToolExecutionReporter, createJsonFeishuAgentRunIndicatorCardStore } from "../../../contexts/agent-run-indicator/src/index.js";
+import { setLLMToolExecutionReporter } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createFeishuApprovalService } from "../../../contexts/approval/src/index.js";
@@ -34,7 +34,6 @@ export function createApiCommunicationRuntime(input: {
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
-  bashRuntime?: { setReporter(reporter: BashRunReporter | undefined): void };
 }) {
   let messageRuntime: any;
   let approvalService: ReturnType<typeof createFeishuApprovalService>;
@@ -74,7 +73,7 @@ export function createApiCommunicationRuntime(input: {
   void agentRunIndicator.ensureReady?.().catch((error: unknown) => {
     input.appendLog("warn", `agent run indicator ensure failed: ${error instanceof Error ? error.message : String(error)}`);
   });
-  input.bashRuntime?.setReporter(createFeishuBashRunReporter({
+  setLLMToolExecutionReporter(createFeishuToolExecutionReporter({
     client: feishu.agentRunCardClient,
     pairingStore: input.apiContextRuntime.feishuPairingStore,
     log: input.appendLog

@@ -71,7 +71,6 @@ export function makeMemorySandbox(root: string): { config: BashSandboxConfig; ru
     auditLogPath: path.join(root, "audit.jsonl")
   };
   const runtime: BashSandboxRuntime = {
-    setReporter() {},
     mountSkill(mount) {
       config.skillMounts.push(mount);
       return mount;

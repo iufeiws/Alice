@@ -1,4 +1,4 @@
-import type { ToolCall } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext } from "../../agent-loop/src/contracts/agent-contracts.js";
 import type { BashSandboxConfig, BashSandboxSkillMountConfig } from "./config.js";
 import { addBashSandboxSkillMount } from "./config.js";
 import type { DockerExecutor } from "./docker-executor.js";
@@ -34,63 +34,39 @@ export type BashSandboxReadResult = {
 };
 
 export type BashSandboxRuntime = {
-  setReporter(reporter: BashRunReporter | undefined): void;
   mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig;
-  run(call: ToolCall): Promise<BashRuntimeResult>;
+  run(call: ToolCall, context?: ToolExecutionContext): Promise<BashRuntimeResult>;
   runFileTool(input: { toolName: "Read" | "Edit" | "Glob" | "Grep"; payload: Record<string, unknown>; timeoutMs?: number; outputLimitBytes?: number }): Promise<BashSandboxReadResult>;
   readFile(input: { payload: Record<string, unknown>; timeoutMs?: number; outputLimitBytes?: number }): Promise<BashSandboxReadResult>;
 };
 
-export type BashRunReporter = {
-  begin(input: { call: ToolCall; command: string; cwd: string }): Promise<BashRunReportSession | undefined> | BashRunReportSession | undefined;
-};
-
-export type BashRunReportSession = {
-  appendStdout(delta: string): Promise<void> | void;
-  appendStderr(delta: string): Promise<void> | void;
-  finish(result: BashRuntimeResult): Promise<void> | void;
-  fail(error: unknown): Promise<void> | void;
-};
-
 export function createBashSandboxRuntime(input: { config: BashSandboxConfig; executor?: DockerExecutor }): BashSandboxRuntime {
   const executor = input.executor ?? createDockerBashExecutor(input.config);
-  let reporter: BashRunReporter | undefined;
   return {
-    setReporter(nextReporter) {
-      reporter = nextReporter;
-    },
     mountSkill(mount) {
       return addBashSandboxSkillMount(input.config, mount);
     },
-    async run(call) {
+    async run(call, context) {
       const command = stringValue(call.input.command);
       const cwd = normalizeContainerPath(stringValue(call.input.cwd) || input.config.defaultCwd, input.config.defaultCwd) ?? input.config.defaultCwd;
       const timeoutMs = numberValue(call.input.timeoutMs, input.config.timeoutMs);
-      const report = await reporter?.begin({ call, command, cwd });
       const permission = classifyBashCommand({ command, cwd, config: input.config, skillId: stringValue(call.input.skillId) || undefined });
       if (permission.state === "deny") {
         const denied = result(command, cwd, "", "", null, false, 0, false, true, permission.reason);
         appendBashAuditEvent(input.config, audit(call, denied, permission, input.config));
-        await report?.finish(denied);
         return denied;
       }
-      try {
-        const executed = await executor.execute({
-          command,
-          cwd,
-          timeoutMs,
-          outputLimitBytes: input.config.outputLimitBytes,
-          onStdout: (delta) => void report?.appendStdout(delta),
-          onStderr: (delta) => void report?.appendStderr(delta)
-        });
-        const output = result(command, cwd, executed.stdout, executed.stderr, executed.exitCode, executed.timedOut, executed.durationMs, executed.truncated, false, undefined, executed.outputFiles);
-        appendBashAuditEvent(input.config, audit(call, output, permission, input.config));
-        await report?.finish(output);
-        return output;
-      } catch (error) {
-        await report?.fail(error);
-        throw error;
-      }
+      const executed = await executor.execute({
+        command,
+        cwd,
+        timeoutMs,
+        outputLimitBytes: input.config.outputLimitBytes,
+        onStdout: (delta) => context?.reportProgress?.(delta),
+        onStderr: (delta) => context?.reportProgress?.(`[stderr] ${delta}`)
+      });
+      const output = result(command, cwd, executed.stdout, executed.stderr, executed.exitCode, executed.timedOut, executed.durationMs, executed.truncated, false, undefined, executed.outputFiles);
+      appendBashAuditEvent(input.config, audit(call, output, permission, input.config));
+      return output;
     },
     async runFileTool(toolInput) {
       if (!executor.runFileTool) throw new Error(`bash sandbox executor does not support ${toolInput.toolName}`);

@@ -1,7 +1,7 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuCardActionEvent, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuCardActionEvent, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset, FeishuToolExecutionCardBlock } from "./types.js";
 
 const FEISHU_CARD_MAX_BYTES = 30 * 1024;
 
@@ -11,9 +11,10 @@ const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   content: "agent_run_content",
   tools: "agent_run_tools"
 };
-const BASH_RUN_CARD_ELEMENT_IDS: Record<FeishuBashRunCardBlock, string> = {
-  title: "bash_run_title",
-  content: "bash_run_content"
+const TOOL_EXECUTION_CARD_ELEMENT_IDS = {
+  title: "tool_execution_title",
+  call: "tool_execution_call",
+  result: "tool_execution_result"
 };
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -356,19 +357,20 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         cardId: converted?.data?.card_id ?? converted?.card_id
       };
     },
-    async createBashRunCard(input) {
+    async createToolExecutionCard(input) {
       assertStarted(client);
       const card = await client.cardkit.v1.card.create({
         data: {
           type: "card_json",
-          data: JSON.stringify(buildBashRunCard(input.command, input.content, {
-            titleElementId: input.titleElementId ?? BASH_RUN_CARD_ELEMENT_IDS.title,
-            contentElementId: input.contentElementId ?? BASH_RUN_CARD_ELEMENT_IDS.content
+          data: JSON.stringify(buildToolExecutionCard(input.toolName, input.call, input.result, {
+            titleElementId: input.titleElementId ?? TOOL_EXECUTION_CARD_ELEMENT_IDS.title,
+            callElementId: input.callElementId ?? TOOL_EXECUTION_CARD_ELEMENT_IDS.call,
+            resultElementId: input.resultElementId ?? TOOL_EXECUTION_CARD_ELEMENT_IDS.result
           }))
         }
       });
       const cardId = card?.data?.card_id ?? card?.card_id;
-      if (!cardId) throw new Error("Feishu cardkit bash card create did not return card_id");
+      if (!cardId) throw new Error("Feishu cardkit tool execution card create did not return card_id");
       const message = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
@@ -378,14 +380,14 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           data: { card_id: cardId }
         }
       }, time);
-      if (!message.messageId) throw new Error("Feishu bash card message create did not return message_id");
-      deps.log?.("info", `[feishu] created bash run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      if (!message.messageId) throw new Error("Feishu tool execution card message create did not return message_id");
+      deps.log?.("info", `[feishu] created tool execution card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return {
         messageId: message.messageId,
         cardId
       };
     },
-    async appendBashRunCardPanel(input) {
+    async appendToolExecutionCardPanel(input) {
       assertStarted(client);
       await client.cardkit.v1.cardElement.create({
         path: {
@@ -393,17 +395,18 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         },
         data: {
           type: "append",
-          elements: JSON.stringify([buildBashRunPanel(input.command, input.content, {
+          elements: JSON.stringify([buildToolExecutionPanel(input.toolName, input.call, input.result, {
             titleElementId: input.titleElementId,
-            contentElementId: input.contentElementId
+            callElementId: input.callElementId,
+            resultElementId: input.resultElementId
           })]),
           sequence: input.sequence,
-          uuid: `bash_run_append_${input.cardId}_${input.sequence}`
+          uuid: `tool_execution_append_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] appended bash run panel ${input.cardId} sequence=${input.sequence}`);
+      deps.log?.("info", `[feishu] appended tool execution panel ${input.cardId} sequence=${input.sequence}`);
     },
-    async updateBashRunCard(input) {
+    async updateToolExecutionCard(input) {
       assertStarted(client);
       if (input.block === "title") {
         await client.cardkit.v1.cardElement.patch({
@@ -421,7 +424,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
               }
             }),
             sequence: input.sequence,
-            uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+            uuid: `tool_execution_${input.block}_${input.cardId}_${input.sequence}`
           }
         });
       } else {
@@ -433,13 +436,13 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           data: {
             content: cardMarkdownContent(input.content),
             sequence: input.sequence,
-            uuid: `bash_run_${input.block}_${input.cardId}_${input.sequence}`
+            uuid: `tool_execution_${input.block}_${input.cardId}_${input.sequence}`
           }
         });
       }
-      deps.log?.("info", `[feishu] updated bash run card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
+      deps.log?.("info", `[feishu] updated tool execution card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
     },
-    async setBashRunCardStreaming(input) {
+    async setToolExecutionCardStreaming(input) {
       assertStarted(client);
       await client.cardkit.v1.card.settings({
         path: {
@@ -448,10 +451,10 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         data: {
           settings: JSON.stringify({ config: { streaming_mode: input.enabled } }),
           sequence: input.sequence,
-          uuid: `bash_run_streaming_${input.cardId}_${input.sequence}`
+          uuid: `tool_execution_streaming_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] set bash run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
+      deps.log?.("info", `[feishu] set tool execution card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     }
   };
 }
@@ -659,9 +662,10 @@ function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unk
   };
 }
 
-export function buildBashRunCard(command: string, content: string, ids = {
-  titleElementId: BASH_RUN_CARD_ELEMENT_IDS.title,
-  contentElementId: BASH_RUN_CARD_ELEMENT_IDS.content
+export function buildToolExecutionCard(toolName: string, call: string, result: string, ids = {
+  titleElementId: TOOL_EXECUTION_CARD_ELEMENT_IDS.title,
+  callElementId: TOOL_EXECUTION_CARD_ELEMENT_IDS.call,
+  resultElementId: TOOL_EXECUTION_CARD_ELEMENT_IDS.result
 }): Record<string, unknown> {
   return {
     schema: "2.0",
@@ -675,13 +679,13 @@ export function buildBashRunCard(command: string, content: string, ids = {
     },
     body: {
       elements: [
-        buildBashRunPanel(command, content, ids)
+        buildToolExecutionPanel(toolName, call, result, ids)
       ]
     }
   };
 }
 
-function buildBashRunPanel(command: string, content: string, ids: { titleElementId: string; contentElementId: string }): Record<string, unknown> {
+function buildToolExecutionPanel(toolName: string, call: string, result: string, ids: { titleElementId: string; callElementId: string; resultElementId: string }): Record<string, unknown> {
   return {
     tag: "collapsible_panel",
     element_id: ids.titleElementId,
@@ -689,14 +693,19 @@ function buildBashRunPanel(command: string, content: string, ids: { titleElement
     header: {
       title: {
         tag: "plain_text",
-        content: `running: ${command}`
+        content: `${toolName}: running`
       }
     },
     elements: [
       {
         tag: "markdown",
-        element_id: ids.contentElementId,
-        content: cardMarkdownContent(content)
+        element_id: ids.callElementId,
+        content: cardMarkdownContent(call)
+      },
+      {
+        tag: "markdown",
+        element_id: ids.resultElementId,
+        content: cardMarkdownContent(result)
       }
     ]
   };

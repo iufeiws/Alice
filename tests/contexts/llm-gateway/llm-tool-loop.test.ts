@@ -1,8 +1,49 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerLLMToolLoopTools, runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { executeRegisteredLLMTool, registerLLMToolLoopTools, runLLMToolLoop, setLLMToolExecutionReporter } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatResult } from "../../../src/contexts/llm-gateway/src/index.js";
+import { finishAndWaitTool } from "../../../src/capabilities/tools/finish-and-wait/profile.js";
+import { chatTool } from "../../../src/capabilities/tools/messaging/profile.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
+
+test("Chat and Yield profiles suppress execution cards", () => {
+  assert.equal(chatTool.suppressExecutionCard, true);
+  assert.equal(finishAndWaitTool.suppressExecutionCard, true);
+});
+
+test("registered tool execution reports progress unless its profile suppresses the card", async () => {
+  const events: string[] = [];
+  setLLMToolExecutionReporter({
+    begin(call) {
+      events.push(`begin:${call.toolName}`);
+      return {
+        appendProgress(content) { events.push(`progress:${content}`); },
+        finish(result) { events.push(`finish:${result.callId}`); },
+        fail(error) { events.push(`fail:${String(error)}`); }
+      };
+    }
+  });
+  registerLLMToolLoopTools("tool-report-test", [{
+    id: "test",
+    listTools: () => [
+      { name: "Visible", description: "visible", inputSchema: {} },
+      { name: "Hidden", description: "hidden", inputSchema: {}, suppressExecutionCard: true }
+    ],
+    async execute(call, context) {
+      context?.reportProgress?.("working");
+      return { callId: call.id, ok: true };
+    }
+  }]);
+
+  try {
+    await executeRegisteredLLMTool("tool-report-test", { id: "visible", toolName: "Visible", input: {} });
+    await executeRegisteredLLMTool("tool-report-test", { id: "hidden", toolName: "Hidden", input: {} });
+  } finally {
+    setLLMToolExecutionReporter(undefined);
+  }
+
+  assert.deepEqual(events, ["begin:Visible", "progress:working", "finish:visible"]);
+});
 
 test("LLM tool loop throws on repeated assistant messages ignoring tool call id", async () => {
   let requests = 0;

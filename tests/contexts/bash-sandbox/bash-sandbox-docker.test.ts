@@ -15,7 +15,8 @@ test("docker executor prepares a missing image", async () => {
 });
 
 test("docker executor runs with configured sandbox contract", async () => {
-  const { calls, result } = await runWithFakeDocker();
+  const progress: string[] = [];
+  const { calls, result } = await runWithFakeDocker((delta) => progress.push(delta));
   const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
 
   assert.match(runCall, /--network bridge/);
@@ -26,12 +27,16 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);
   assert.equal(result.stdout.trim(), "docker-ok");
+  assert.equal(progress.join(""), "docker-ok");
+  assert.equal(result.streamedBeforeCommandFinished, true);
 });
 
-async function runWithFakeDocker() {
+async function runWithFakeDocker(onStdout?: (delta: string) => void) {
   const root = tmpDir("fake-docker");
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
+  const commandDone = path.join(root, "command.done");
+  const streamAck = path.join(root, "stream.ack");
   fs.mkdirSync(bin, { recursive: true });
   const docker = path.join(bin, "docker");
   fs.writeFileSync(docker, `#!/bin/sh
@@ -51,7 +56,9 @@ if [ "$1" = "exec" ]; then
       if [ "$state" = "3" ]; then stderr_file="$arg"; state=4; continue; fi
       if [ "$arg" = "alice-bash-capture" ]; then state=1; fi
     done
-    printf docker-ok > "$stdout_file"
+    printf docker-ok | tee "$stdout_file"
+    while [ ! -f "${streamAck}" ]; do sleep 0.01; done
+    touch "${commandDone}"
     : > "$stderr_file"
     exit 0
   fi
@@ -75,9 +82,22 @@ exit 64
       hostCacheDir: path.join(root, "cache"),
       mounts: [{ id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }]
     });
-    const result = await createDockerBashExecutor(config).execute({ command: "echo ok", cwd: config.workspaceDir, timeoutMs: 1000, outputLimitBytes: 1024 });
+    let streamedBeforeCommandFinished = false;
+    const result = await createDockerBashExecutor(config).execute({
+      command: "echo ok",
+      cwd: config.workspaceDir,
+      timeoutMs: 1000,
+      outputLimitBytes: 1024,
+      onStdout(delta) {
+        if (delta && !fs.existsSync(commandDone)) {
+          streamedBeforeCommandFinished = true;
+          fs.writeFileSync(streamAck, "");
+        }
+        onStdout?.(delta);
+      }
+    });
     const calls = fs.readFileSync(log, "utf8").trim().split(/\r?\n/);
-    return { calls, result };
+    return { calls, result: { ...result, streamedBeforeCommandFinished } };
   } finally {
     process.env.PATH = previousPath;
     if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;

@@ -28,10 +28,10 @@ export type CardCall =
   | { kind: "update"; cardId: string; block: string; content: string; sequence: number }
   | { kind: "stream"; cardId: string; enabled: boolean; sequence: number }
   | { kind: "convert"; messageId: string }
-  | { kind: "bash-create"; receiveId: string; command: string; content: string }
-  | { kind: "bash-append"; cardId: string; command: string; sequence: number }
-  | { kind: "bash-update"; cardId: string; block: string; content: string; sequence: number }
-  | { kind: "bash-stream"; cardId: string; enabled: boolean; sequence: number };
+  | { kind: "tool-create"; receiveId: string; toolName: string }
+  | { kind: "tool-append"; cardId: string; toolName: string; sequence: number }
+  | { kind: "tool-update"; cardId: string; block: string; content: string; sequence: number }
+  | { kind: "tool-stream"; cardId: string; enabled: boolean; sequence: number };
 
 export function loopInput(overrides: {
   llmRequestSender?: ChatAgentLoopInput["llmRequestSender"];
@@ -131,24 +131,24 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
       calls.push({ kind: "convert", messageId: input.messageId });
       return { cardId: "card_converted" };
     },
-    async createBashRunCard(input) {
-      calls.push({ kind: "bash-create", receiveId: input.receiveId, command: input.command, content: input.content });
-      return { messageId: "om_bash", cardId: "card_bash" };
+    async createToolExecutionCard(input) {
+      calls.push({ kind: "tool-create", receiveId: input.receiveId, toolName: input.toolName });
+      return { messageId: "om_tool", cardId: "card_tool" };
     },
-    async appendBashRunCardPanel(input) {
-      calls.push({ kind: "bash-append", cardId: input.cardId, command: input.command, sequence: input.sequence });
+    async appendToolExecutionCardPanel(input) {
+      calls.push({ kind: "tool-append", cardId: input.cardId, toolName: input.toolName, sequence: input.sequence });
     },
-    async updateBashRunCard(input) {
+    async updateToolExecutionCard(input) {
       calls.push({
-        kind: "bash-update",
+        kind: "tool-update",
         cardId: input.cardId,
         block: input.block,
         content: input.content,
         sequence: input.sequence
       });
     },
-    async setBashRunCardStreaming(input) {
-      calls.push({ kind: "bash-stream", cardId: input.cardId, enabled: input.enabled, sequence: input.sequence });
+    async setToolExecutionCardStreaming(input) {
+      calls.push({ kind: "tool-stream", cardId: input.cardId, enabled: input.enabled, sequence: input.sequence });
     }
   };
 }

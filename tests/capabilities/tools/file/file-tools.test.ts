@@ -253,7 +253,6 @@ test("Glob and Grep return sandbox formatted content", async () => {
 
 function fakeRuntime(read: (payload: Record<string, unknown>, toolName: "Read" | "Edit" | "Glob" | "Grep") => Promise<string> | string): BashSandboxRuntime {
   return {
-    setReporter() {},
     mountSkill(mount) {
       return mount;
     },

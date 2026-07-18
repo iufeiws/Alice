@@ -280,8 +280,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       const card = await client.cardkit.v1.card.create({
         data: { type: "card_json", data: cardJson }
       });
-      const cardId = card?.data?.card_id ?? card?.card_id;
-      if (!cardId) throw new Error("Feishu approval card create did not return card_id");
+      const cardId = requireFeishuCardId(card, "Feishu approval card create");
       const message = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
@@ -300,8 +299,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           data: JSON.stringify(buildAgentRunCard(input.blocks))
         }
       });
-      const cardId = card?.data?.card_id ?? card?.card_id;
-      if (!cardId) throw new Error("Feishu cardkit card create did not return card_id");
+      const cardId = requireFeishuCardId(card, "Feishu cardkit card create");
       const message = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
@@ -369,8 +367,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           }))
         }
       });
-      const cardId = card?.data?.card_id ?? card?.card_id;
-      if (!cardId) throw new Error("Feishu cardkit tool execution card create did not return card_id");
+      const cardId = requireFeishuCardId(card, "Feishu cardkit tool execution card create");
       const message = await sendMessage(client, {
         receiveIdType: input.receiveIdType,
         receiveId: input.receiveId,
@@ -588,6 +585,13 @@ export function buildFeishuApprovalCard(input: { requestId: string; title: strin
       ]
     }
   };
+}
+
+export function requireFeishuCardId(card: any, operation: string): string {
+  const cardId = card?.data?.card_id ?? card?.card_id;
+  if (cardId) return cardId;
+  const detail = [card?.code === undefined ? "" : `code=${card.code}`, card?.msg ? `msg=${card.msg}` : ""].filter(Boolean).join(" ");
+  throw new Error(`${operation} did not return card_id${detail ? ` (${detail})` : ""}`);
 }
 
 export function serializeFeishuApprovalCard(input: { requestId: string; title: string; content: string }): string {

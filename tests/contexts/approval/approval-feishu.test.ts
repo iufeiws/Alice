@@ -58,6 +58,12 @@ test("approval resolves approved and replaces the card", async () => {
 
   const response = service.handleCardAction(event(calls[0], "approved")) as any;
   assert.equal(response.card.data.body.elements[0].content, "已同意");
+  assert.deepEqual(response.card.data.body.elements[1], {
+    tag: "collapsible_panel",
+    expanded: false,
+    header: { title: { tag: "plain_text", content: "原审批内容" } },
+    elements: [{ tag: "markdown", content: "proposed diff" }]
+  });
   assert.deepEqual(await result, { status: "approved" });
 });
 

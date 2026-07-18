@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildFeishuApprovalCard, normalizeFeishuCardActionEvent, serializeFeishuApprovalCard } from "../../../src/channels/feishu/src/client.js";
+import { buildFeishuApprovalCard, normalizeFeishuCardActionEvent, requireFeishuCardId, serializeFeishuApprovalCard } from "../../../src/channels/feishu/src/client.js";
 
 test("Feishu approval card contains content, revision input, and three decisions", () => {
   const card = buildFeishuApprovalCard({ requestId: "req_1", title: "审批标题", content: "**候选内容**" }) as any;
@@ -17,10 +17,19 @@ test("Feishu approval card contains content, revision input, and three decisions
     { kind: "approval", requestId: "req_1", decision: "rejected" },
     { kind: "approval", requestId: "req_1", decision: "revision_requested" }
   ]);
+  assert.deepEqual(buttons.map((button: any) => button.action_type), ["form_submit", "form_submit", "form_submit"]);
+  assert.deepEqual(buttons.map((button: any) => button.behaviors), [undefined, undefined, undefined]);
 });
 
 test("Feishu approval card enforces the 30 KB serialized limit", () => {
   assert.throws(() => serializeFeishuApprovalCard({ requestId: "req_1", title: "A", content: "x".repeat(31 * 1024) }), /exceeds 30 KB/);
+});
+
+test("Feishu card create errors preserve the API code and message", () => {
+  assert.throws(
+    () => requireFeishuCardId({ code: 300123, msg: "there is no submit button", data: { card_id: "" } }, "Feishu approval card create"),
+    /Feishu approval card create did not return card_id \(code=300123 msg=there is no submit button\)/
+  );
 });
 
 test("Feishu card action callback is normalized", () => {

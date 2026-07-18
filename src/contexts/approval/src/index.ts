@@ -84,7 +84,8 @@ export function createFeishuApprovalService(input: {
     return completedCard(
       approval.title,
       decision.status === "approved" ? "已同意" : decision.status === "rejected" ? "已拒绝" : `已要求修改\n\n${decision.comment}`,
-      decision.status === "approved" ? "green" : decision.status === "rejected" ? "red" : "orange"
+      decision.status === "approved" ? "green" : decision.status === "rejected" ? "red" : "orange",
+      approval.content
     );
   }
 }
@@ -101,7 +102,7 @@ function toast(content: string, type: "error" | "warning") {
   return { toast: { type, content } };
 }
 
-function completedCard(title: string, content: string, template: "green" | "red" | "orange" | "grey") {
+function completedCard(title: string, content: string, template: "green" | "red" | "orange" | "grey", originalContent?: string) {
   return {
     toast: { type: "success", content },
     card: {
@@ -109,7 +110,17 @@ function completedCard(title: string, content: string, template: "green" | "red"
       data: {
         schema: "2.0",
         header: { title: { tag: "plain_text", content: title }, template },
-        body: { elements: [{ tag: "markdown", content }] }
+        body: {
+          elements: [
+            { tag: "markdown", content },
+            ...(originalContent ? [{
+              tag: "collapsible_panel",
+              expanded: false,
+              header: { title: { tag: "plain_text", content: "原审批内容" } },
+              elements: [{ tag: "markdown", content: originalContent }]
+            }] : [])
+          ]
+        }
       }
     }
   };

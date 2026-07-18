@@ -27,13 +27,42 @@ test("Feishu tool execution reporter streams progress then writes the result", a
 
   assert.ok(session);
   await session.appendProgress("ok\n");
-  await session.finish({ callId: "bash", ok: true, output: "done" });
+  await session.finish({ callId: "bash", ok: true, output: JSON.stringify({ done: true }), error: "ignored error" });
 
-  assert.equal(client.calls.some((call) => call.kind === "create" && call.receiveId === "ou_user"), true);
+  const created = client.calls.find((call) => call.kind === "create");
+  assert.ok(created?.kind === "create");
+  assert.equal(created.call.includes('"command": "npm test"'), true);
+  assert.equal(created.call.includes('"toolName"'), false);
+  assert.equal(created.call.includes('"id"'), false);
   assert.equal(client.calls.some((call) => call.kind === "stream" && call.enabled), true);
   assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes("ok")), true);
-  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes("done")), true);
+  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes('"done": true')), true);
+  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes("ignored error")), false);
+  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes('"callId"')), false);
   assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "title" && call.content === "Bash: finished"), true);
+});
+
+test("Feishu tool execution reporter selects output or error from ok state", async () => {
+  const client = fakeFeishuCardClient();
+  const reporter = createFeishuToolExecutionReporter({
+    client,
+    pairingStore: { list: () => [{ userId: "ou_user" }] } as any
+  });
+  const session = await reporter.begin({ id: "failed", toolName: "Read", input: {} });
+
+  assert.ok(session);
+  await session.finish({ callId: "failed", ok: false, output: "ignored output", error: "formatted error" });
+
+  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes("formatted error")), true);
+  assert.equal(client.calls.some((call) => call.kind === "update" && call.block === "result" && call.content.includes("ignored output")), false);
+
+  const crashed = await reporter.begin({ id: "crashed", toolName: "Read", input: {} });
+  assert.ok(crashed);
+  await crashed.fail(new Error("crashed tool"));
+  const crashResult = client.calls.filter((call) => call.kind === "update" && call.block === "result").at(-1);
+  assert.ok(crashResult?.kind === "update");
+  assert.equal(crashResult.content.includes("crashed tool"), true);
+  assert.equal(crashResult.content.includes('"error"'), false);
 });
 
 test("Feishu tool execution reporter keeps markdown fences inside progress", async () => {

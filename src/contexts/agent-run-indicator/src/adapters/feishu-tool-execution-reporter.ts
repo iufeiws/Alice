@@ -34,7 +34,7 @@ export function createFeishuToolExecutionReporter(input: {
       clearTimeout(currentCard.idleTimer);
       currentCard.idleTimer = undefined;
     }
-    const renderedCall = renderCode(call);
+    const renderedCall = renderCode(call.input);
     const initialResult = renderCode("");
     if (!currentCard) {
       const ids = firstPanelIds();
@@ -127,10 +127,10 @@ export function createFeishuToolExecutionReporter(input: {
         }, throttleMs);
       },
       async finish(result: ToolResult) {
-        await finish(result.ok ? "finished" : "failed", result);
+        await finish(result.ok ? "finished" : "failed", result.ok ? result.output : result.error);
       },
       async fail(error) {
-        await finish("failed", { error: errorMessage(error) });
+        await finish("failed", errorMessage(error));
       }
     };
   }
@@ -191,10 +191,20 @@ function takeSequence(card: ToolExecutionCardState): number {
 }
 
 function renderCode(value: unknown): string {
-  const content = typeof value === "string" ? value || " " : JSON.stringify(value, null, 2);
+  const content = formatCodeValue(value);
   const runs = content.match(/`+/g) ?? [];
   const fence = "`".repeat(Math.max(3, runs.reduce((max, run) => Math.max(max, run.length), 0) + 1));
   return `${fence}json\n${content}\n${fence}`;
+}
+
+function formatCodeValue(value: unknown): string {
+  if (typeof value !== "string") return value === undefined ? " " : JSON.stringify(value, null, 2);
+  if (!value) return " ";
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
 }
 
 function errorMessage(error: unknown): string {

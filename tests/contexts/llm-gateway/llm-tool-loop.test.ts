@@ -14,6 +14,7 @@ test("Chat and Yield profiles suppress execution cards", () => {
 test("registered tool execution reports progress unless its profile suppresses the card", async () => {
   const events: string[] = [];
   setLLMToolExecutionReporter({
+    endSequence() {},
     begin(call) {
       events.push(`begin:${call.toolName}`);
       return {
@@ -148,4 +149,43 @@ test("LLM tool loop transforms assistant content before tool execution", async (
   assert.equal(assistantMessage?.content, "");
   assert.equal(assistantMessage?.toolCalls?.[0]?.function.name, "Chat");
   assert.equal(assistantMessage?.toolCalls?.[1]?.function.name, "Later");
+});
+
+test("LLM tool loop returns tool execution errors to the LLM and continues", async () => {
+  let requests = 0;
+  registerLLMToolLoopTools("llm-tool-loop-tool-error-test", [{
+    id: "test",
+    listTools: () => [{ name: "Bash", description: "bash", inputSchema: { type: "object" } }],
+    async execute() {
+      throw new Error("sandbox failed");
+    }
+  }]);
+
+  const result = await runLLMToolLoop({
+    initialMessages: [{ role: "user", content: "run it" }],
+    buildRequest({ messages }) {
+      return { agentId: "chat", messages, toolNames: ["Bash"], toolVariables: testPromptRuntime() };
+    },
+    async sendRequest(input) {
+      requests += 1;
+      if (input.round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "bash_1",
+              type: "function",
+              function: { name: "Bash", arguments: "{}" }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "I got the tool error." } };
+    },
+    toolRegistryName: "llm-tool-loop-tool-error-test"
+  });
+
+  assert.equal(requests, 2);
+  assert.equal(result.stopReason, "completed");
 });

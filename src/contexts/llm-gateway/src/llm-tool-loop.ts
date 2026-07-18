@@ -411,17 +411,26 @@ async function executeTool(
   const tool = toolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
   const parsedInput = parseToolInput(call.function.arguments);
   const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
-  const toolResult = await executeToolPlugin(tool, {
-    id: call.id,
-    toolName: call.function.name,
-    input: toolInput,
-    requester: input.toolCallSource?.requester,
-    externalSession: input.toolCallSource?.externalSession
-  }, input.buildToolExecutionContext?.({
-    round: context.round,
-    call,
-    callIndex: context.callIndex
-  }));
+  let toolResult: ToolResult;
+  try {
+    toolResult = await executeToolPlugin(tool, {
+      id: call.id,
+      toolName: call.function.name,
+      input: toolInput,
+      requester: input.toolCallSource?.requester,
+      externalSession: input.toolCallSource?.externalSession
+    }, input.buildToolExecutionContext?.({
+      round: context.round,
+      call,
+      callIndex: context.callIndex
+    }));
+  } catch (error) {
+    toolResult = {
+      callId: call.id,
+      ok: false,
+      output: `<error type="tool crash">${escapeXmlText(error instanceof Error ? error.message : String(error))}</error>`
+    };
+  }
   const toolMessage = {
     role: "tool" as const,
     toolCallId: call.id,
@@ -448,6 +457,10 @@ function formatToolMessageContent(result: ToolResult, runtime: PromptContextRunt
   if (result.output === undefined || result.output === null) return "ok";
   if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
   return JSON.stringify(result.output);
+}
+
+function escapeXmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 function toolForCall(registryName: string, toolName: string): RegisteredTool {

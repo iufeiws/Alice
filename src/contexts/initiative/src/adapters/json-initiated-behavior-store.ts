@@ -96,7 +96,7 @@ export function applyAgentInitiatedBehaviorOverrides(
     };
   });
   const customs = Object.entries(overrides)
-    .filter(([id, override]) => override.custom === true && !builtInIds.has(id) && /^[A-Za-z0-9_-]+$/.test(id))
+    .filter(([id, override]) => override.custom === true && override.kind !== "randomized" && !builtInIds.has(id) && /^[A-Za-z0-9_-]+$/.test(id))
     .map(([id, override]) => customAgentInitiatedBehaviorPlan(id, override, customPromptProfileDir));
   return [...builtIns, ...customs];
 }
@@ -109,13 +109,8 @@ export function customAgentInitiatedBehaviorPlan(id: string, override: AgentInit
     id,
     custom: true,
     enabled: override.enabled !== false,
-    kind: override.kind === "randomized" ? "randomized" : "event",
-    ...(override.kind === "randomized" ? {
-      weight: typeof override.weight === "number" ? override.weight : 0,
-      priority: typeof override.priority === "number" ? override.priority : 0
-    } : {
-      triggerEvent: typeof override.triggerEvent === "string" ? override.triggerEvent : ""
-    }),
+    kind: "event",
+    triggerEvent: typeof override.triggerEvent === "string" ? override.triggerEvent : "",
     promptProfilePath,
     steps: [{ kind: "llm_instruction", promptProfilePath }]
   };

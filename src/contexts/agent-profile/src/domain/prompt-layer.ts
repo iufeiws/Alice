@@ -1,126 +1,131 @@
-import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMContentPart, LLMMessage, LLMRole, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 
-export type PromptLayerRole = "system" | "user" | "assistant" | "tool_request";
-
-export type PromptLayerToolCall = {
-  toolName: string;
-  toolCallId?: string;
-  toolArguments: string;
-};
-
-export type PromptLayer = {
-  id: string;
+export type PromptMessageMeta = {
   title: string;
-  role: PromptLayerRole;
-  name?: string;
   enabled: boolean;
-  content: string;
-  order: number;
-  toolCalls?: PromptLayerToolCall[];
-  thinking?: string;
 };
 
-export type PromptLayerParserOptions = {
-  defaultToolName?: string;
-  toolCallIdPrefix?: string;
-  allowedToolNames?: string[];
+export type PromptMessage = LLMMessage & {
+  meta: PromptMessageMeta;
 };
 
-export function normalizePromptLayers(
+export type PromptLayer<TMeta extends Record<string, unknown> = Record<string, unknown>> = {
+  meta: TMeta;
+  messages: PromptMessage[];
+};
+
+export function normalizePromptLayer(
   value: unknown,
-  fallback: PromptLayer[] = []
-): PromptLayer[] {
-  const layers = Array.isArray(value) ? value : fallback;
-  return layers.map((entry, index) => {
-    const raw = entry && typeof entry === "object" ? entry as Partial<PromptLayer> : {};
-    const role = normalizePromptLayerRole(raw.role);
-    return {
-      id: nonEmptyString(raw.id) ?? `layer_${index + 1}`,
-      title: nonEmptyString(raw.title) ?? `Layer ${index + 1}`,
-      role,
-      name: nonEmptyString(raw.name) ?? defaultPromptLayerName(role),
-      enabled: raw.enabled !== false,
-      content: typeof raw.content === "string" ? raw.content : "",
-      order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : (index + 1) * 10,
-      toolCalls: role === "tool_request" ? normalizePromptLayerToolCalls(raw.toolCalls) : undefined,
-      thinking: (role === "assistant" || role === "tool_request") && typeof raw.thinking === "string" ? raw.thinking : undefined
-    };
-  });
+  fallback: PromptLayer = { meta: {}, messages: [] }
+): PromptLayer {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return cloneLayer(fallback);
+  const raw = value as { meta?: unknown; messages?: unknown };
+  if (!raw.meta || typeof raw.meta !== "object" || Array.isArray(raw.meta) || !Array.isArray(raw.messages)) {
+    return cloneLayer(fallback);
+  }
+  return {
+    meta: { ...raw.meta as Record<string, unknown> },
+    messages: raw.messages.map(normalizePromptMessage)
+  };
 }
 
-export function promptLayerToMessage(
-  layer: PromptLayer,
-  renderer: PromptContextRuntime,
-  options: PromptLayerParserOptions = {}
-): LLMMessage {
-  if (layer.role === "tool_request") {
-    const prefix = options.toolCallIdPrefix ?? "prompt";
-    const name = renderPromptLayerName(layer, renderer);
-    return {
-      role: "assistant",
-      ...(name ? { name } : {}),
-      content: renderer.renderText(layer.content || ""),
-      reasoningContent: renderer.renderText(layer.thinking ?? layer.content ?? ""),
-      toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
-        id: call.toolCallId || `${prefix}_${layer.id}_${index + 1}`,
-        type: "function",
+export function promptMessageToMessage(message: PromptMessage, renderer: PromptContextRuntime): LLMMessage {
+  return {
+    role: message.role,
+    content: renderContent(message.content, renderer),
+    ...(message.name ? { name: renderer.renderText(message.name) } : {}),
+    ...(message.reasoningContent !== undefined ? { reasoningContent: renderer.renderText(message.reasoningContent) } : {}),
+    ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
+    ...(message.toolCalls ? {
+      toolCalls: message.toolCalls.map((call) => ({
+        ...call,
         function: {
-          name: normalizePromptToolName(call.toolName, options),
-          arguments: renderer.renderText(call.toolArguments)
+          name: call.function.name,
+          arguments: renderer.renderText(call.function.arguments)
         }
       }))
-    };
-  }
-  const name = renderPromptLayerName(layer, renderer);
-  return {
-    role: layer.role,
-    ...(name ? { name } : {}),
-    content: renderer.renderText(layer.content),
-    reasoningContent: layer.role === "assistant" && layer.thinking ? renderer.renderText(layer.thinking) : undefined
+    } : {})
   };
 }
 
 export function parsePromptToolArguments(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("prompt_tool_arguments_object_required");
+  return parsed as Record<string, unknown>;
 }
 
-function normalizePromptLayerRole(value: unknown): PromptLayerRole {
-  if (value === "user" || value === "assistant" || value === "tool_request") return value;
+function normalizePromptMessage(value: unknown, index: number): PromptMessage {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<PromptMessage>
+    : {};
+  const meta = raw.meta && typeof raw.meta === "object" && !Array.isArray(raw.meta)
+    ? raw.meta as Partial<PromptMessageMeta>
+    : {};
+  return {
+    meta: {
+      title: typeof meta.title === "string" ? meta.title : `Message ${index + 1}`,
+      enabled: meta.enabled !== false
+    },
+    role: normalizeRole(raw.role),
+    content: normalizeContent(raw.content),
+    ...(typeof raw.name === "string" && raw.name ? { name: raw.name } : {}),
+    ...(typeof raw.reasoningContent === "string" ? { reasoningContent: raw.reasoningContent } : {}),
+    ...(typeof raw.toolCallId === "string" && raw.toolCallId ? { toolCallId: raw.toolCallId } : {}),
+    ...(Array.isArray(raw.toolCalls) ? { toolCalls: raw.toolCalls.map(normalizeToolCall) } : {})
+  };
+}
+
+function normalizeRole(value: unknown): LLMRole {
+  if (value === "system" || value === "user" || value === "assistant" || value === "tool") return value;
   return "system";
 }
 
-function defaultPromptLayerName(role: PromptLayerRole): string | undefined {
-  return role === "user" ? "{{user}}" : undefined;
-}
-
-function renderPromptLayerName(layer: PromptLayer, renderer: PromptContextRuntime): string | undefined {
-  return layer.name ? renderer.renderText(layer.name) : undefined;
-}
-
-function normalizePromptToolName(value: unknown, options: PromptLayerParserOptions): string {
-  const fallback = options.defaultToolName ?? "";
-  const name = nonEmptyString(value) ?? fallback;
-  return options.allowedToolNames && !options.allowedToolNames.includes(name) ? fallback : name;
-}
-
-function normalizePromptLayerToolCalls(value: unknown): PromptLayerToolCall[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((entry) => {
-    const raw = entry && typeof entry === "object" ? entry as Partial<PromptLayerToolCall> : {};
-    return {
-      toolName: nonEmptyString(raw.toolName) ?? "",
-      toolCallId: nonEmptyString(raw.toolCallId),
-      toolArguments: typeof raw.toolArguments === "string" ? raw.toolArguments : "{}"
-    };
+function normalizeContent(value: unknown): LLMMessage["content"] {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.flatMap((part): LLMContentPart[] => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return [];
+    const raw = part as Record<string, unknown>;
+    if (raw.type === "text" && typeof raw.text === "string") return [{ type: "text", text: raw.text }];
+    if (raw.type === "image_url" && raw.image_url && typeof raw.image_url === "object") {
+      const url = (raw.image_url as { url?: unknown }).url;
+      return typeof url === "string" ? [{ type: "image_url", image_url: { url } }] : [];
+    }
+    if (raw.type === "input_audio" && raw.input_audio && typeof raw.input_audio === "object") {
+      const audio = raw.input_audio as { data?: unknown; format?: unknown };
+      return typeof audio.data === "string" && typeof audio.format === "string"
+        ? [{ type: "input_audio", input_audio: { data: audio.data, format: audio.format } }]
+        : [];
+    }
+    return [];
   });
 }
 
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
+function normalizeToolCall(value: unknown): LLMToolCall {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<LLMToolCall>
+    : {};
+  const fn = raw.function && typeof raw.function === "object" ? raw.function : { name: "", arguments: "{}" };
+  return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    type: "function",
+    function: {
+      name: typeof fn.name === "string" ? fn.name : "",
+      arguments: typeof fn.arguments === "string" ? fn.arguments : "{}"
+    }
+  };
+}
+
+function renderContent(content: LLMMessage["content"], renderer: PromptContextRuntime): LLMMessage["content"] {
+  if (typeof content === "string") return renderer.renderText(content);
+  return content.map((part) => {
+    if (part.type === "text") return { ...part, text: renderer.renderText(part.text) };
+    if (part.type === "image_url") return { ...part, image_url: { url: renderer.renderText(part.image_url.url) } };
+    return part;
+  });
+}
+
+function cloneLayer(layer: PromptLayer): PromptLayer {
+  return JSON.parse(JSON.stringify(layer)) as PromptLayer;
 }

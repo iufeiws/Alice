@@ -1,13 +1,14 @@
 {
-  "layers": [
+  "meta": {},
+  "messages": [
     {
-      "id": "instruction",
-      "title": "Morning Reply",
+      "meta": {
+        "title": "Morning Reply",
+        "enabled": true
+      },
       "role": "assistant",
       "name": "Cheshire Cat",
-      "enabled": true,
-      "content": "我醒了。对{{user}}说句早安吧",
-      "order": 10
+      "content": "我醒了。对{{user}}说句早安吧"
     }
   ]
 }

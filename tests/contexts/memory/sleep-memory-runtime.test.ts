@@ -5,10 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   createMarkdownMemoryStore,
-  createMemoryInductionPromptStore,
   runMemoryInductionForMessages
 } from "../../../src/contexts/memory/src/memory.js";
-import { makeMemorySandbox, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
+import { createTestMemoryPromptStore, makeMemorySandbox, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
 
 test("memorizeLoop_failedCompletion_doesNotCommitWorkspace", async () => {
   const root = makeTempDir("memory-long-term-stage");
@@ -19,7 +18,7 @@ test("memorizeLoop_failedCompletion_doesNotCommitWorkspace", async () => {
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
     windowStartAt: "2026-05-24T00:00:00.000Z",
@@ -62,7 +61,7 @@ test("memorizeSender_streamEnabled_passesStreamFlag", async () => {
 
   await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -94,7 +93,7 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
 
   await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -144,7 +143,7 @@ test("memorizeLocalSender_streamEnabled_usesChatStream", async () => {
 
   await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -178,7 +177,7 @@ test("memorizeLoop_firstWorkspaceFailureDoesNotRetry", async () => {
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -219,7 +218,7 @@ test("memorizeLoop_oversizedWorkspaceFile_returnsErrorToModelBeforeCommit", asyn
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],
@@ -241,7 +240,11 @@ test("memorizeLoop_oversizedWorkspaceFile_returnsErrorToModelBeforeCommit", asyn
       assert.ok(errorMessage);
       const errorContent = errorMessage.content;
       if (typeof errorContent !== "string") throw new Error("expected text error message");
-      assert.equal(errorContent.length > 0, true);
+      assert.equal(errorContent, [
+        "<Error>",
+        `${sandboxPersistentPath}: lines=101 > 100, bytes=30695 > 10240`,
+        "</Error>"
+      ].join("\n"));
       fs.writeFileSync(hostPersistentPath, "fixed\n");
       return { message: { role: "assistant", content: "done" } };
     },

@@ -35,6 +35,7 @@ export function createApiContextRuntime(input: {
   const agentInitiatedBehaviorConfigPath = promptStoragePath(input.config.memoryFiles.root, "initiated-behaviors.config.json");
   const initiatedBehaviorRuntime = createInitiatedBehaviorRuntime({
     configPath: agentInitiatedBehaviorConfigPath,
+    randomEventDir: "src/contexts/initiative/random-events",
     appendLog: input.appendLog
   });
   const initiatedBehaviorRunStore = createAgentInitiatedBehaviorRunStore({
@@ -78,6 +79,7 @@ export function createApiContextRuntime(input: {
     deleteAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.deleteCustom,
     setAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.setConfig,
     setAgentInitiatedBehaviorEnabled: initiatedBehaviorRuntime.setEnabled,
+    randomEventStore: initiatedBehaviorRuntime.randomEvents,
     initiatedBehaviorRunStore
   };
 }

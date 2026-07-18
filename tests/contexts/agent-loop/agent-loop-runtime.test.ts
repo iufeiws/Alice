@@ -376,15 +376,15 @@ function interruptTestSpec(requests: any[][], toolRegistryName: string, yieldRet
     initialMessages: [{ role: "user" as const, content: "use tool" }],
     promptProfile: {
       visibleTools: { feishu: true },
-      layers: [],
+      layers: { meta: {}, messages: [] },
       interruptLayer: {
-        id: "interrupt",
-        title: "Interrupt Layer",
-        role: "user" as const,
-        name: "Alert",
-        enabled: true,
-        content: "<Alert info=\"have a new message\" />",
-        order: 0
+        meta: {},
+        messages: [{
+          meta: { title: "Interrupt Layer", enabled: true },
+          role: "user" as const,
+          name: "Alert",
+          content: "<Alert info=\"have a new message\" />"
+        }]
       }
     },
     buildRequest({ messages }: { messages: any[] }) {

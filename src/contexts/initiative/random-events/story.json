@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "id": "story",
+    "enabled": false,
+    "weight": 1,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Story Initiation",
+        "enabled": true
+      },
+      "role": "user",
+      "name": "Cheshire Cat",
+      "content": "以第一人称视角讲述一小段名作故事, 末尾简短注明出处。只发一小段, 不要长篇复述。"
+    }
+  ]
+}

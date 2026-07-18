@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "id": "care",
+    "enabled": true,
+    "weight": 4,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Care Initiation",
+        "enabled": true
+      },
+      "role": "assistant",
+      "name": "Cheshire Cat",
+      "content": "来问一下{{user}}现在在做什么吧"
+    }
+  ]
+}

@@ -32,8 +32,19 @@ export function initiatedBehaviorPlan(promptProfilePath: string): AgentInitiated
   };
 }
 
+export function randomizedBehaviorPlan(id = "care"): AgentInitiatedBehaviorPlan {
+  return {
+    id,
+    kind: "randomized",
+    enabled: true,
+    weight: 1,
+    priority: 0,
+    steps: []
+  };
+}
+
 export function visiblePromptProfile(visibleTools: PromptProfile["visibleTools"] = { feishu: true }): PromptProfile {
-  return { visibleTools, layers: [], appendLayers: [] };
+  return { visibleTools, layers: { meta: {}, messages: [] }, appendLayers: { meta: {}, messages: [] } };
 }
 
 export function promptRenderContext(userName = "YY"): PromptRenderContext {

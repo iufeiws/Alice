@@ -82,17 +82,9 @@ function createMemoryRunDayFixture() {
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   promptStore.save({
-    commonLayers: [
-      { id: "common", title: "Common", role: "system", enabled: true, order: 10, content: "custom memorize common prompt" }
-    ],
-    persistentLayers: [
-      { id: "persistent", title: "Persistent", role: "user", enabled: true, order: 10, content: "persistent-only prompt" }
-    ],
-    userPreferencesLayers: [
-      { id: "user", title: "User", role: "user", enabled: true, order: 10, content: "user-preferences-only prompt" }
-    ],
-    yesterdaySummaryLayers: [
-      { id: "diary", title: "Diary", role: "user", enabled: true, order: 10, content: "diary-only prompt" }
+    meta: {},
+    messages: [
+      { meta: { title: "Memorize", enabled: true }, role: "system", content: "custom memorize prompt" }
     ]
   });
 

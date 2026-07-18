@@ -19,6 +19,7 @@ export function createApiToolingRuntime(input: {
   sendMemoryFailureNotice(): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
+  getApprovalService(): any;
 }) {
   const apiCapabilitiesRuntime = createApiCapabilitiesRuntime({
     config: input.config,
@@ -43,7 +44,9 @@ export function createApiToolingRuntime(input: {
     appendLLMUsageLog: input.apiLLMRuntime.appendLLMUsageLog,
     recordTokenUsageEvent: input.apiLLMRuntime.recordTokenUsageEvent,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
-    memoryStore: input.apiContextRuntime.memoryStore
+    memoryStore: input.apiContextRuntime.memoryStore,
+    randomEventStore: input.apiContextRuntime.randomEventStore,
+    getApprovalService: input.getApprovalService
   });
   const apiSupportRuntime = createApiSupportRuntime({
     config: input.config,

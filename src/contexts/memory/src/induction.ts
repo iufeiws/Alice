@@ -325,9 +325,9 @@ async function runMemoryOrganizationInduction(
     });
     session.activeTarget = promptTarget;
     const promptRuntime = withMemoryPromptPaths(deps.promptContextRuntime, workspace);
-    const promptMessages = buildMemoryPromptMessages({ ...deps, promptContextRuntime: promptRuntime, sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles } }, promptTarget, {
-      includeCommonLayers: session.messages.length === 0
-    });
+    const promptMessages = session.messages.length === 0
+      ? buildMemoryPromptMessages({ ...deps, promptContextRuntime: promptRuntime, sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles } }, promptTarget)
+      : [];
     const messages = session.messages.length > 0
       ? [...session.messages, ...promptMessages]
       : promptMessages;
@@ -421,11 +421,7 @@ async function runMemoryOrganizationInduction(
         }
 
         const errorDetail = formatMemoryLimitError(violations);
-        const errorMessages = buildMemoryErrorMessages({
-          ...deps,
-          promptContextRuntime: promptRuntime,
-          sandboxPaths: { workspacePath: workspace.containerRoot, files: workspace.containerFiles }
-        }, promptTarget, errorDetail);
+        const errorMessages = buildMemoryErrorMessages(errorDetail);
         currentMessages = [...currentMessages, ...errorMessages];
         session.messages = currentMessages;
         session.append?.({ type: "memory_limit_error", error: errorDetail });

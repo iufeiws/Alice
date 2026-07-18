@@ -30,7 +30,6 @@ export async function buildWaitChatResumeMessages(input: {
     } else {
       const toolInput = fixedPrefixToolInput(call.function.name, parseToolArguments(call.function.arguments), input.session);
       result = await executePromptToolRequest(
-        { id: `finish_and_wait_resume_${call.id}`, title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: call.function.name, toolArguments: call.function.arguments }], order: 0 },
         {
           id: call.id,
           toolName: call.function.name,
@@ -148,7 +147,6 @@ async function runWaitChatResumeCheck(
     ? fixedPrefixToolInput("Chat", { action: "poll" }, session)
     : { action: "poll" };
   return await executePromptToolRequest(
-    { id: "finish_and_wait_resume_chat_poll", title: "finish_and_wait resume", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 0 },
     {
       id: callId,
       toolName: "Chat",

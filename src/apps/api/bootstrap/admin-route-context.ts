@@ -17,6 +17,7 @@ import {
   type AgentInitiatedBehaviorPlan,
   type AgentInitiatedBehaviorRunStore
 } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
+import type { AgentInitiatedBehaviorConfigPatch } from "../../../contexts/initiative/src/adapters/json-initiated-behavior-store.js";
 import type { DailyShellStore } from "../../../contexts/agent-profile/src/domain/shell.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/admin-presets.js";
 import type { VoiceSynthesizer } from "../../../channels/tts/src/index.js";
@@ -33,30 +34,6 @@ export type AdminRoutesContext = {
 };
 
 export type PromptVariableTree = Record<string, PromptContextValue>;
-
-type AgentInitiatedBehaviorConfigPatch = {
-  enabled?: boolean;
-  kind?: AgentInitiatedBehaviorPlan["kind"];
-  triggerEvent?: string;
-  weight?: number;
-  priority?: number;
-  promptProfile?: {
-    layers: Array<{
-      id: string;
-      title: string;
-      role: "user" | "assistant" | "tool_request";
-      enabled: boolean;
-      content: string;
-      order: number;
-      toolCalls?: Array<{
-        toolName: string;
-        toolCallId?: string;
-        toolArguments: string;
-      }>;
-      thinking?: string;
-    }>;
-  };
-};
 
 export type AdminRuntimeContext = {
   config: AppConfig;

@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import { assertExcludesAll, assertIncludesAll, renderAdminHtml } from "./admin-html-helpers.js";
+import { renderPromptLayerScript } from "../../../../src/apps/api/admin-ui/shared/prompt-layer-script.js";
+import { renderPromptsScript } from "../../../../src/apps/api/admin-ui/tabs/prompts-script.js";
+import { renderInitiatedBehaviorsScript } from "../../../../src/apps/api/admin-ui/tabs/initiated-behaviors-script.js";
 
 test("promptEditor_initialRender_exposesPromptWorkspace", () => {
   const html = renderAdminHtml();
@@ -39,9 +42,10 @@ test("memorizePromptEditor_initialRender_exposesMemoryPromptControls", () => {
   assertIncludesAll(html, [
     "Memorize API Preset",
     "Save Memorize API Binding",
-    "Save a Memorize group to refresh its preview.",
+    "Save the Memorize prompt to refresh its preview.",
     "Current Memorize Prompt Preview"
   ]);
+  assertExcludesAll(html, ["Memorize Error Layer", "memoryPrompts.errorLayer"]);
   assertExcludesAll(html, [
     "<h2>Memorize Layers</h2>",
     "{{memorize/window/startAt}}"
@@ -56,5 +60,27 @@ test("promptPreview_clientContract_usesLlmRequestPreviewEndpoint", () => {
     "Current Prompt Profile Prebuild",
     "Current Talk Prompt Profile Prebuild",
     "Loading preview..."
+  ]);
+});
+
+test("layerEditor_usesUnifiedMessageProtocol", () => {
+  const shared = renderPromptLayerScript();
+  const consumers = renderPromptsScript() + renderInitiatedBehaviorsScript();
+
+  assertIncludesAll(shared, [
+    "renderLayerDocument",
+    "bindLayerDocument",
+    "message.meta.title",
+    "reasoningContent",
+    "toolCallId",
+    "call?.function?.name"
+  ]);
+  assertExcludesAll(shared + consumers, [
+    "renderPromptLayerDetails",
+    "commonLayers",
+    ".order",
+    "toolArguments",
+    "toolName: String",
+    'role === "tool_request"'
   ]);
 });

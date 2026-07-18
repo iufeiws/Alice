@@ -1,299 +1,202 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildPromptMessages,
   buildAppendPromptMessagesWithToolResults,
+  buildPromptMessages,
   buildPromptMessagesWithToolResults,
   createPromptProfileStore,
   defaultPromptProfile,
-  staticPromptFingerprint
+  staticPromptFingerprint,
+  type PromptLayer,
+  type PromptMessage
 } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createPromptToolPreviewRuntime } from "../../../src/contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
 import { promptStoragePath } from "../../../src/contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import { makeTempDir, messageContentText, promptContext, textEvent } from "./prompt-profile-helpers.js";
+import { makeTempDir, promptContext, textEvent } from "./prompt-profile-helpers.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
+const layer = (...messages: PromptMessage[]): PromptLayer => ({ meta: {}, messages });
+const message = (title: string, role: PromptMessage["role"], content: string, enabled = true): PromptMessage => ({
+  meta: { title, enabled }, role, content
+});
+
 test("promptProfileStore_emptyFile_returnsDefaultsWithoutWriting", () => {
-  const root = makeTempDir("prompt-store");
-  const filePath = promptStoragePath(root, "prompt-profile.json");
-  const store = createPromptProfileStore(filePath);
-  store.get();
+  const filePath = promptStoragePath(makeTempDir("prompt-store"), "prompt-profile.json");
+  createPromptProfileStore(filePath).get();
   assert.equal(fs.existsSync(filePath), false);
 });
 
-test("promptProfileStore_validProfile_persistsEditableLayers", () => {
+test("promptProfileStore_validProfile_persistsLayerDocuments", () => {
   const root = makeTempDir("prompt-store-save");
   const filePath = promptStoragePath(root, "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
-  const initial = store.get();
   const saved = store.save({
-    ...initial,
+    ...store.get(),
     visibleTools: { feishu: false },
-    layers: [
-      { id: "custom", title: "Custom", role: "system", enabled: true, content: "Hi {{user}} at {{date_time}}", order: 1 }
-    ]
+    layers: layer(message("Custom", "system", "Hi {{user}} at {{date_time}}"))
   });
 
   assert.equal(saved.visibleTools.feishu, false);
-  assert.equal(createPromptProfileStore(filePath).get().layers[0].content, "Hi {{user}} at {{date_time}}");
+  assert.equal(createPromptProfileStore(filePath).get().layers.messages[0].content, "Hi {{user}} at {{date_time}}");
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json")), true);
   assert.equal(fs.existsSync(path.join(root, "config", "prompt-profile.json")), false);
 });
 
-test("promptProfileStore_interruptLayer_persistsEditableLayer", () => {
+test("promptProfileStore_interruptLayer_persistsMessages", () => {
   const filePath = path.join(makeTempDir("prompt-store-interrupt"), "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
-  const initial = store.get();
-  const saved = store.save({
-    ...initial,
-    interruptLayer: {
-      id: "interrupt_custom",
-      title: "Interrupt",
-      role: "user",
-      name: "CustomName",
-      enabled: true,
-      content: "custom interrupt content",
-      order: 0
-    }
-  });
+  const interrupt = { ...message("Interrupt", "user", "custom interrupt content"), name: "CustomName" };
+  store.save({ ...store.get(), interruptLayer: layer(interrupt) });
 
-  assert.equal(saved.interruptLayer?.id, "interrupt_custom");
-  assert.equal(saved.interruptLayer?.role, "user");
-  assert.equal(saved.interruptLayer?.enabled, true);
-  const reopened = createPromptProfileStore(filePath).get();
-  assert.equal(reopened.interruptLayer?.id, "interrupt_custom");
-  assert.equal(reopened.interruptLayer?.role, "user");
-  assert.equal(reopened.interruptLayer?.enabled, true);
+  const reopened = createPromptProfileStore(filePath).get().interruptLayer!;
+  assert.equal(reopened.messages[0].meta.title, "Interrupt");
+  assert.equal(reopened.messages[0].name, "CustomName");
 });
 
 test("promptProfileStore_projectConfigUsername_rejectsProfileField", () => {
   const filePath = path.join(makeTempDir("prompt-store-no-username"), "prompt-profile.json");
-  const store = createPromptProfileStore(filePath);
-  assert.throws(() => store.save({
-    ...defaultPromptProfile(),
-    userName: "AliceUser"
+  assert.throws(() => createPromptProfileStore(filePath).save({
+    ...defaultPromptProfile(), userName: "AliceUser"
   } as any), /invalid_prompt_profile_user_name/);
 });
 
-test("promptProfileStore_appendLayers_persistsToolRequestLayer", () => {
+test("promptProfileStore_appendLayers_persistsAssistantToolCalls", () => {
   const filePath = path.join(makeTempDir("prompt-store-append"), "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
-  const initial = store.get();
-  const saved = store.save({
-    ...initial,
-    appendLayers: [
-      { id: "append", title: "Append", role: "tool_request", enabled: true, content: "", thinking: "look first", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 1 }
-    ]
-  });
+  const toolMessage: PromptMessage = {
+    ...message("Append", "assistant", ""),
+    reasoningContent: "look first",
+    toolCalls: [{ id: "call_append_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
+  };
+  store.save({ ...store.get(), appendLayers: layer(toolMessage) });
 
-  assert.equal(saved.appendLayers?.[0].thinking, "look first");
-  const reopened = createPromptProfileStore(filePath).get();
-  assert.equal(reopened.appendLayers?.[0].role, "tool_request");
-  assert.equal(reopened.appendLayers?.[0].thinking, "look first");
+  const reopened = createPromptProfileStore(filePath).get().appendLayers!.messages[0];
+  assert.equal(reopened.role, "assistant");
+  assert.equal(reopened.reasoningContent, "look first");
+  assert.equal(reopened.toolCalls?.[0].function.name, "Chat");
 });
 
-test("promptMessages_layerNames_useParserDefaultsAndConfiguredNames", () => {
+test("promptMessages_names_areStoredMessageFields", () => {
   const profile = {
     ...defaultPromptProfile(),
-    layers: [
-      { id: "default_name", title: "Default Name", role: "user" as const, enabled: true, content: "hello", order: 1 },
-      { id: "named", title: "Named", role: "user" as const, name: "{{user}}_speaker", enabled: true, content: "hello", order: 2 },
-      { id: "assistant_default", title: "Assistant Default", role: "assistant" as const, enabled: true, content: "", order: 3 },
-      { id: "assistant_named", title: "Assistant Named", role: "assistant" as const, name: "Alice", enabled: true, content: "", order: 4 },
-      { id: "tool_request_default", title: "Tool Request Default", role: "tool_request" as const, enabled: true, content: "", order: 5, toolCalls: [] }
-    ]
+    layers: layer(
+      message("Unnamed", "user", "hello"),
+      { ...message("Named", "user", "hello"), name: "{{user}}_speaker" },
+      { ...message("Assistant", "assistant", ""), name: "Alice" }
+    )
   };
   const messages = buildPromptMessages(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }));
 
-  assert.equal(messages[0].name, "小王");
+  assert.equal(messages[0].name, undefined);
   assert.equal(messages[1].name, "小王_speaker");
-  assert.equal(messages[2].name, undefined);
-  assert.equal(messages[3].name, "Alice");
-  assert.equal(messages[4].name, undefined);
+  assert.equal(messages[2].name, "Alice");
 });
 
-test("promptMessages_toolRequestLayer_pairsWithActualToolResult", async () => {
-  const profile = {
-    ...defaultPromptProfile(),
-    layers: [
-      {
-        id: "request",
-        title: "Tool Request",
-        role: "tool_request" as const,
-        enabled: true,
-        content: "",
-        thinking: "thinking for {{user}}",
-        toolCalls: [{
-          toolName: "Chat",
-          toolCallId: "call_prompt_1",
-          toolArguments: "{\"action\":\"poll\"}"
-        }],
-        order: 1
-      }
-    ]
+test("promptMessages_assistantToolCalls_pairWithActualToolResults", async () => {
+  const toolMessage: PromptMessage = {
+    ...message("Tool Request", "assistant", ""),
+    reasoningContent: "thinking for {{user}}",
+    toolCalls: [{ id: "call_prompt_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
   };
+  const messages = await buildPromptMessagesWithToolResults(
+    { ...defaultPromptProfile(), layers: layer(toolMessage) },
+    promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }),
+    async (_message, call) => ({ callId: call.id, ok: true, output: "recent" })
+  );
 
-  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (_layer, call) => {
-    return {
-      callId: call.id,
-      ok: true,
-      output: "recent"
-    };
-  });
-
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].content, "");
   assert.equal(messages[0].reasoningContent, "thinking for 小王");
   assert.equal(messages[0].toolCalls?.[0].id, "call_prompt_1");
-  assert.equal(messages[0].toolCalls?.[0].function.name, "Chat");
-  assert.equal(messages[1].role, "tool");
-  assert.equal(messages[1].toolCallId, "call_prompt_1");
-  assert.equal(messages[1].name, "Chat");
-  assert.equal(messages[1].content, "recent");
+  assert.deepEqual(messages[1], { role: "tool", name: "Chat", toolCallId: "call_prompt_1", content: "recent" });
 });
 
-test("promptMessages_multipleToolCalls_preservesCallOrder", async () => {
-  const profile = {
-    ...defaultPromptProfile(),
-    layers: [{
-      id: "request",
-      title: "Tool Request",
-      role: "tool_request" as const,
-      enabled: true,
-      content: "",
-      toolCalls: [
-        { toolName: "Chat", toolCallId: "call_prompt_1", toolArguments: "{\"action\":\"poll\"}" },
-        { toolName: "Chat", toolCallId: "call_prompt_2", toolArguments: "{\"query\":\"hi\"}" }
-      ],
-      order: 1
-    }]
+test("promptMessages_multipleToolCalls_preserveArrayOrder", async () => {
+  const toolMessage: PromptMessage = {
+    ...message("Tool Request", "assistant", ""),
+    toolCalls: [
+      { id: "call_prompt_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } },
+      { id: "call_prompt_2", type: "function", function: { name: "Chat", arguments: "{\"query\":\"hi\"}" } }
+    ]
   };
-
   const calls: string[] = [];
-  const messages = await buildPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai") }), async (_layer, call) => {
-    calls.push(`${call.id}:${call.toolName}`);
-    return { callId: call.id, ok: true, output: call.toolName };
-  });
+  const messages = await buildPromptMessagesWithToolResults(
+    { ...defaultPromptProfile(), layers: layer(toolMessage) },
+    promptContext(),
+    async (_message, call) => {
+      calls.push(call.id);
+      return { callId: call.id, ok: true, output: call.toolName };
+    }
+  );
 
-  assert.deepEqual(calls, ["call_prompt_1:Chat", "call_prompt_2:Chat"]);
-  assert.deepEqual(messages[0].toolCalls?.map((call) => call.id), ["call_prompt_1", "call_prompt_2"]);
-  assert.deepEqual(messages.slice(1).map((message) => message.toolCallId), ["call_prompt_1", "call_prompt_2"]);
+  assert.deepEqual(calls, ["call_prompt_1", "call_prompt_2"]);
+  assert.deepEqual(messages.slice(1).map((entry) => entry.toolCallId), calls);
 });
 
-test("appendPromptMessages_toolRequestLayer_pairsWithActualToolResult", async () => {
-  const profile = {
-    ...defaultPromptProfile(),
-    layers: [],
-    appendLayers: [
-      {
-        id: "append_request",
-        title: "Append Tool Request",
-        role: "tool_request" as const,
-        enabled: true,
-        content: "",
-        thinking: "append thinking for {{user}}",
-        toolCalls: [{
-          toolName: "Chat",
-          toolCallId: "call_append_1",
-          toolArguments: "{\"action\":\"poll\"}"
-        }],
-        order: 1
-      }
-    ]
+test("appendPromptMessages_executeAssistantToolCalls", async () => {
+  const append: PromptMessage = {
+    ...message("Append Tool Request", "assistant", ""),
+    reasoningContent: "append thinking for {{user}}",
+    toolCalls: [{ id: "call_append_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
   };
+  const messages = await buildAppendPromptMessagesWithToolResults(
+    { ...defaultPromptProfile(), appendLayers: layer(append) },
+    promptContext(),
+    async (_message, call) => ({ callId: call.id, ok: true, output: "recent" })
+  );
 
-  const messages = await buildAppendPromptMessagesWithToolResults(profile, promptContext({ time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z")) }), async (_layer, call) => {
-    return {
-      callId: call.id,
-      ok: true,
-      output: "recent"
-    };
-  });
-
-  assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].reasoningContent, "append thinking for 小王");
-  assert.equal(messages[1].role, "tool");
   assert.equal(messages[1].content, "recent");
 });
 
-test("promptMessages_ordersEnabledLayers", () => {
+test("promptMessages_useArrayOrderAndFilterDisabledMessages", () => {
   const profile = {
     ...defaultPromptProfile(),
-    layers: [
-      { id: "second", title: "Second", role: "user" as const, enabled: true, content: "hello", order: 2 },
-      { id: "disabled", title: "Disabled", role: "system" as const, enabled: false, content: "look first", order: 0 },
-      { id: "first", title: "First", role: "system" as const, enabled: true, content: "static", order: 1 }
-    ]
+    layers: layer(
+      message("Second", "user", "second"),
+      message("Disabled", "system", "disabled", false),
+      message("First", "system", "first")
+    )
   };
-  const messages = buildPromptMessages(profile, promptContext());
-
-  assert.deepEqual(messages.map((message) => message.content), ["static", "hello"]);
+  assert.deepEqual(buildPromptMessages(profile, promptContext()).map((entry) => entry.content), ["second", "first"]);
 });
 
-test("promptPreview_toolRequestLayer_includesToolResult", async () => {
-  const time = createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"));
-  const context = promptContext({ time });
+test("promptPreview_assistantToolCall_includesToolResult", async () => {
+  const context = promptContext();
   const profile = {
     ...defaultPromptProfile(),
-    layers: [{
-      id: "request",
-      title: "Tool Request",
-      role: "tool_request" as const,
-      enabled: true,
-      content: "",
-      thinking: "thinking for {{user}}",
-      toolCalls: [{ toolName: "Chat", toolCallId: "call_prompt_1", toolArguments: "{\"action\":\"poll\"}" }],
-      order: 1
-    }]
+    layers: layer({
+      ...message("Tool Request", "assistant", ""),
+      toolCalls: [{ id: "call_prompt_1", type: "function" as const, function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
+    })
   };
-  const runTool = async (_layer: unknown, call: any) => ({ callId: call.id, ok: true, output: "recent" });
   const runtime = createPromptToolPreviewRuntime({
-    time,
+    time: context.time,
     getPromptRenderer: () => context.renderer,
     toolPlugins: [{
       id: "messaging",
       listTools: () => [{ name: "Chat", description: "", inputSchema: {} }],
-      execute: (call: any) => runTool(undefined, call)
+      execute: (call: any) => ({ callId: call.id, ok: true, output: "recent" })
     }],
     llmRequests: { buildTools: () => [] },
     messagingTools: { execute: () => undefined }
   });
 
   const messages = await runtime.buildPromptPreviewMessages(profile, textEvent());
-
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].toolCalls?.[0]?.function.name, "Chat");
-  assert.equal(messages[1].role, "tool");
+  assert.equal(messages[0].toolCalls?.[0].function.name, "Chat");
   assert.equal(messages[1].content, "recent");
 });
 
-test("staticPromptFingerprint_appendLayers_ignoresAppendChanges", () => {
-  const time = createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T12:34:56.000Z"));
-  const context = promptContext({ time });
+test("staticPromptFingerprint_ignoresAppendLayerChanges", () => {
+  const context = promptContext();
   const base = {
     ...defaultPromptProfile(),
-    layers: [
-      { id: "static", title: "Static", role: "system" as const, enabled: true, content: "static", order: 1 }
-    ],
-    appendLayers: [
-      { id: "append", title: "Append", role: "user" as const, enabled: true, content: "append one", order: 1 }
-    ]
+    layers: layer(message("Static", "system", "static")),
+    appendLayers: layer(message("Append", "user", "append one"))
   };
-  const changedAppend = {
-    ...base,
-    appendLayers: [
-      { ...base.appendLayers[0], content: "append two" }
-    ]
-  };
-  const changedStatic = {
-    ...base,
-    layers: [
-      { ...base.layers[0], content: "static changed" }
-    ]
-  };
+  const changedAppend = { ...base, appendLayers: layer(message("Append", "user", "append two")) };
+  const changedStatic = { ...base, layers: layer(message("Static", "system", "static changed")) };
 
   assert.equal(staticPromptFingerprint(base, context), staticPromptFingerprint(changedAppend, context));
   assert.notEqual(staticPromptFingerprint(base, context), staticPromptFingerprint(changedStatic, context));

@@ -12,7 +12,9 @@ import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer">>;
+export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "getPromptProfile"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer">> & {
+  getPromptProfile?: () => PromptProfile | Record<string, any>;
+};
 
 export function createChatAgent(deps: TestChatAgentDeps) {
   registerLLMToolLoopTools("default", deps.tools ?? []);
@@ -42,8 +44,8 @@ export function createChatAgent(deps: TestChatAgentDeps) {
     }
   }).send;
   return createChatAgentUnderTest({
-    getPromptProfile: testPromptProfile,
     ...deps,
+    getPromptProfile: () => normalizeTestPromptProfile(getPromptProfile()),
     getPromptRenderer: deps.getPromptRenderer ?? (() => {
       const time = (deps.time ?? createCurrentTimeProvider("UTC")).now();
       return testPromptRuntime({
@@ -73,8 +75,37 @@ export function testPromptProfile(): PromptProfile {
   const profile = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src", "contexts", "agent-profile", "prompts", "prompt-profile.json"), "utf8")) as PromptProfile;
   return {
     ...profile,
-    layers: profile.layers.filter((layer) => layer.role !== "tool_request"),
-    appendLayers: (profile.appendLayers ?? []).filter((layer) => layer.role !== "tool_request")
+    layers: { ...profile.layers, messages: profile.layers.messages.filter((message) => !message.toolCalls?.length) },
+    appendLayers: { ...profile.appendLayers!, messages: profile.appendLayers!.messages.filter((message) => !message.toolCalls?.length) }
+  };
+}
+
+function normalizeTestPromptProfile(profile: PromptProfile | Record<string, any>): PromptProfile {
+  if (!Array.isArray(profile.layers)) return profile as PromptProfile;
+  const convert = (items: any[] = [], prefix: string) => ({
+    meta: {},
+    messages: items.sort((left, right) => (left.order ?? 0) - (right.order ?? 0)).map((item, itemIndex) => ({
+      meta: { title: item.title ?? `Message ${itemIndex + 1}`, enabled: item.enabled !== false },
+      role: item.role === "tool_request" ? "assistant" : item.role,
+      content: item.content ?? "",
+      ...(item.name ? { name: item.name } : {}),
+      ...((item.thinking !== undefined || item.role === "tool_request") ? { reasoningContent: item.thinking ?? item.content ?? "" } : {}),
+      ...(Array.isArray(item.toolCalls) ? {
+        toolCalls: item.toolCalls.map((call: any, callIndex: number) => ({
+          id: call.toolCallId ?? `${prefix}_${item.id ?? itemIndex + 1}_${callIndex + 1}`,
+          type: "function",
+          function: { name: call.toolName, arguments: call.toolArguments }
+        }))
+      } : {})
+    }))
+  });
+  return {
+    visibleTools: profile.visibleTools ?? { feishu: true },
+    layers: convert(profile.layers, "prompt"),
+    appendLayers: convert(profile.appendLayers, "append"),
+    interruptLayer: profile.interruptLayer && !Array.isArray(profile.interruptLayer.messages)
+      ? convert([profile.interruptLayer], "interrupt")
+      : profile.interruptLayer ?? { meta: {}, messages: [] }
   };
 }
 

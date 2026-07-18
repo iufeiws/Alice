@@ -6,10 +6,10 @@ import {
   resolveAgentInitiatedBehaviorAvailability,
   selectRandomizedAgentInitiatedBehaviorPlan
 } from "../../../src/contexts/initiative/src/domain/initiated-behavior.js";
-import { textEvent, visiblePromptProfile } from "./initiated-behaviors-helpers.js";
+import { randomizedBehaviorPlan, textEvent, visiblePromptProfile } from "./initiated-behaviors-helpers.js";
 
 test("randomized behavior selection uses only enabled positive weight plans", () => {
-  const base = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const base = randomizedBehaviorPlan();
   const disabled = { ...base, id: "disabled", enabled: false, weight: 100 };
   const dryRun = { ...base, id: "dry_run", enabled: true, dryRun: true, weight: 100 };
   const zero = { ...base, id: "zero", enabled: true, weight: 0 };
@@ -22,7 +22,7 @@ test("randomized behavior selection uses only enabled positive weight plans", ()
 });
 
 test("randomized initiated event selects a plan inside resolver", () => {
-  const base = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const base = randomizedBehaviorPlan();
   const first = { ...base, id: "first", enabled: true, dryRun: false, weight: 1 };
   const second = { ...base, id: "second", enabled: true, dryRun: false, weight: 3 };
 

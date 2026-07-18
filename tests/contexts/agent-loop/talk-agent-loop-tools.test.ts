@@ -30,11 +30,19 @@ test("talk loop includes prompt tool result in first llm request", async () => {
     isForegroundPlaybackIdle: () => true,
     getTalkPromptProfile: () => ({
       ...defaultPromptProfile(),
-      layers: [
-        { id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 },
-        { id: "prompt_tool", title: "Prompt Tool", role: "tool_request", enabled: true, content: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }], order: 2 }
-      ],
-      appendLayers: []
+      layers: {
+        meta: {},
+        messages: [
+          { meta: { title: "Static", enabled: true }, role: "system", content: "static prompt" },
+          {
+            meta: { title: "Prompt Tool", enabled: true },
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "call_prompt_tool", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
+          }
+        ]
+      },
+      appendLayers: { meta: {}, messages: [] }
     }),
     getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
@@ -92,7 +100,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
-    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: { meta: {}, messages: [] }, appendLayers: { meta: {}, messages: [] } }),
     getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     setLoopPrefixMessageCount: () => {},
@@ -166,7 +174,7 @@ test("talk loop reuses active session prefix and replaces runtime transcript tai
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
-    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: { meta: {}, messages: [] }, appendLayers: { meta: {}, messages: [] } }),
     getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     setLoopPrefixMessageCount: (_sessionId, count) => {
@@ -215,7 +223,7 @@ test("talk loop logs llm cancellation without error severity", async () => {
     isTalkSessionOpen: () => true,
     pendingVoiceOutputCharCount: () => 0,
     isForegroundPlaybackIdle: () => true,
-    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: [], appendLayers: [] }),
+    getTalkPromptProfile: () => ({ ...defaultPromptProfile(), layers: { meta: {}, messages: [] }, appendLayers: { meta: {}, messages: [] } }),
     getPromptRenderer: testPromptRenderer,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-06-08T00:00:00.000Z")),
     setLoopPrefixMessageCount: () => {},

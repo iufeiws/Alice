@@ -1,8 +1,7 @@
 import type { AgentEvent, ToolCall, ToolPlugin, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import type { PromptLayer } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { buildLayerMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { normalizePromptLayers } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
+import { normalizePromptLayer, type PromptLayer, type PromptMessage } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -38,9 +37,7 @@ export type AgentInitiatedBehaviorPlan = {
   steps: AgentInitiatedBehaviorStep[];
 };
 
-export type AgentInitiatedBehaviorPromptProfile = {
-  layers: PromptLayer[];
-};
+export type AgentInitiatedBehaviorPromptProfile = PromptLayer;
 
 export type AgentInitiatedBehaviorRun = {
   id: string;
@@ -91,16 +88,6 @@ export type AgentInitiatedBehaviorRunStoreOptions = {
 };
 
 const responseWindowMs = 15 * 60 * 1000;
-const proactiveInitiationTypes = [
-  { id: "ritual", weight: 8, enabled: false },
-  { id: "review", weight: 2, enabled: false },
-  { id: "story", weight: 1, enabled: false },
-  { id: "care", weight: 4, enabled: true },
-  { id: "share", weight: 2, enabled: false },
-  { id: "invite", weight: 2, enabled: false },
-  { id: "real_world_suggestion", weight: 2, enabled: false }
-] as const;
-
 export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = [
   {
     id: "sleep_goodnight",
@@ -135,8 +122,7 @@ export const defaultAgentInitiatedBehaviorPlans: AgentInitiatedBehaviorPlan[] = 
     triggerEvent: "calendar.schedule_due",
     promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json",
     steps: [{ kind: "llm_instruction", promptProfilePath: "src/contexts/initiative/behaviors/calendar_reminder.json" }]
-  },
-  ...proactiveInitiationTypes.map((entry) => randomizedPlan(entry.id, entry.weight, entry.enabled))
+  }
 ];
 
 export function agentInitiatedBehaviorPlanFromEvent(
@@ -192,49 +178,32 @@ export async function buildAgentInitiatedBehaviorMessages(
   plan: AgentInitiatedBehaviorPlan | undefined,
   _promptProfile: PromptProfile,
   context: PromptRenderContext,
-  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMChatInput["messages"]> {
   if (!plan || !plan.enabled || plan.dryRun) return [];
   const renderer = promptRenderer(context);
   const messages: LLMChatInput["messages"] = [];
   for (const step of plan.steps) {
     if (step.kind !== "llm_instruction") continue;
-    const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
-    const layers = normalizePromptLayers(profile.layers)
-      .filter((layer) => layer.enabled)
-      .sort((left, right) => left.order - right.order);
-    messages.push(...await buildLayerMessagesWithToolResults(layers, renderer, context, runTool, { toolCallIdPrefix: `initiated_${plan.id}` }));
+    const layer = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath);
+    if (!layer) throw new Error(`initiated_behavior_prompt_profile_not_found:${plan.id}`);
+    messages.push(...await buildLayerMessagesWithToolResults(layer, renderer, context, runTool));
   }
   return messages;
 }
 
 export function readAgentInitiatedBehaviorPromptProfile(filePath: string): AgentInitiatedBehaviorPromptProfile | undefined {
-  try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
-    if (!fs.existsSync(resolved)) return undefined;
-    return normalizeAgentInitiatedBehaviorPromptProfile(JSON.parse(fs.readFileSync(resolved, "utf8")));
-  } catch {
-    return undefined;
-  }
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+  if (!fs.existsSync(resolved)) return undefined;
+  return normalizeAgentInitiatedBehaviorPromptProfile(JSON.parse(fs.readFileSync(resolved, "utf8")));
 }
 
-export function defaultAgentInitiatedBehaviorPromptProfile(id: string): AgentInitiatedBehaviorPromptProfile {
-  const content = defaultAgentInitiatedBehaviorPromptContent(id);
-  return {
-    layers: [{
-      id: "instruction",
-      title: "Instruction",
-      role: "user",
-      enabled: true,
-      order: 10,
-      content
-    }]
-  };
+export function defaultAgentInitiatedBehaviorPromptProfile(_id: string): AgentInitiatedBehaviorPromptProfile {
+  return { meta: {}, messages: [] };
 }
 
 export function normalizeAgentInitiatedBehaviorPromptProfile(value: unknown): AgentInitiatedBehaviorPromptProfile {
-  const raw = value && typeof value === "object" ? value as Partial<AgentInitiatedBehaviorPromptProfile> : {};
-  return { layers: normalizePromptLayers(raw.layers ?? [], []) };
+  return normalizePromptLayer(value);
 }
 
 export function resolveAgentInitiatedBehaviorAvailability(
@@ -244,10 +213,11 @@ export function resolveAgentInitiatedBehaviorAvailability(
 ): AgentInitiatedBehaviorAvailability {
   const steps = plan.steps.map((step) => {
     if (step.kind === "llm_instruction") {
-      const profile = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath) ?? defaultAgentInitiatedBehaviorPromptProfile(plan.id);
-      const unavailableTool = normalizePromptLayers(profile.layers)
-        .filter((layer) => layer.enabled && layer.role === "tool_request")
-        .flatMap((layer) => (layer.toolCalls ?? []).map((call) => call.toolName))
+      const layer = readAgentInitiatedBehaviorPromptProfile(step.promptProfilePath);
+      if (!layer) return { kind: step.kind, status: "unavailable" as const, reason: "prompt_profile_missing" };
+      const unavailableTool = layer.messages
+        .filter((message) => message.meta.enabled && message.role === "assistant")
+        .flatMap((message) => (message.toolCalls ?? []).map((call) => call.function.name))
         .find((toolName) => !isToolVisibleInPromptProfile(promptProfile, toolName) || !findToolByName(tools, toolName));
       if (!unavailableTool) return { kind: step.kind, status: "available" as const };
       const reason = !isToolVisibleInPromptProfile(promptProfile, unavailableTool)
@@ -499,63 +469,6 @@ export function createAgentInitiatedBehaviorRun(input: {
     sessionId: input.sessionId,
     steps: input.steps ?? [],
     error: input.error
-  };
-}
-
-function defaultAgentInitiatedBehaviorPromptContent(id: string): string {
-  if (id === "sleep_goodnight") {
-    return "爱丽丝你已经开始入睡流程了。对{{user}}说晚安，语气简短温柔。不要要求或声称自己还需要执行额外动作。";
-  }
-  if (id === "sleep_morning") {
-    return "爱丽丝你醒了。对{{user}}说句早安，语气自然。";
-  }
-  if (id === "sleep_force_wake") {
-    return "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊，避免普通晨间问候。";
-  }
-  if (id === "idle_check_in") {
-    return "用户已经有一段时间没有互动。低打扰地向{{user}}发起一句轻量问候。";
-  }
-  if (id === "memory_reflection") {
-    return "根据当前上下文，轻量发起一条与近期记忆或回顾有关的自然消息。";
-  }
-  if (id === "topic_followup") {
-    return "对最近尚未结束的话题做一句自然、轻量的追问。";
-  }
-  if (id === "ritual") {
-    return "判断当前是否适合发起一句仪式型问候, 例如生日、节日或周末问候。若适合, 给{{user}}发一句短促自然、有边界感的话。";
-  }
-  if (id === "review") {
-    return "根据最近对话里未闭环的话题、计划或情绪线索, 向{{user}}发起一句轻量回访。不要制造压力。";
-  }
-  if (id === "story") {
-    return "以第一人称视角讲述一小段名作故事, 末尾简短注明出处。只发一小段, 不要长篇复述。";
-  }
-  if (id === "care") {
-    return "对{{user}}发起一句低打扰的关怀型问候, 关注生活状态但不要追问过重。";
-  }
-  if (id === "share") {
-    return "结合{{user}}近期兴趣, 发起一句内容分享型消息。只在内容确实相关时分享, 不要随机热点。";
-  }
-  if (id === "invite") {
-    return "邀请{{user}}一起做一个轻任务或小活动, 语气自然, 允许对方轻松拒绝。";
-  }
-  if (id === "real_world_suggestion") {
-    return "给{{user}}一句现实世界里的轻量提议, 如吃饭、休息、散步或睡前提醒。不要替用户做决定。";
-  }
-  return "";
-}
-
-function randomizedPlan(id: string, weight: number, enabled = false): AgentInitiatedBehaviorPlan {
-  const promptProfilePath = `src/contexts/initiative/behaviors/${id}.json`;
-  return {
-    id,
-    kind: "randomized",
-    enabled,
-    weight,
-    priority: 0,
-    dryRun: false,
-    promptProfilePath,
-    steps: [{ kind: "llm_instruction", promptProfilePath }]
   };
 }
 

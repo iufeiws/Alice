@@ -1,4 +1,4 @@
-import { defaultAgentInitiatedBehaviorPlans, defaultAgentInitiatedBehaviorPromptProfile, readAgentInitiatedBehaviorPromptProfile, resolveAgentInitiatedBehaviorAvailability, type AgentInitiatedBehaviorPlan } from "../domain/initiated-behavior.js";
+import { defaultAgentInitiatedBehaviorPlans, defaultAgentInitiatedBehaviorPromptProfile, normalizeAgentInitiatedBehaviorPromptProfile, readAgentInitiatedBehaviorPromptProfile, resolveAgentInitiatedBehaviorAvailability, type AgentInitiatedBehaviorPlan, type AgentInitiatedBehaviorPromptProfile } from "../domain/initiated-behavior.js";
 import { HttpJsonError, readJsonBody } from "../../../../apps/api/middleware/http-utils.js";
 import { writeJson } from "../../../../apps/api/routes/admin-http.js";
 import { getAdminToolPlugins } from "../../../agent-profile/src/application/admin-prompt-memory-runtime.js";
@@ -43,7 +43,7 @@ export async function createInitiatedBehavior(context: AdminRoutesContext, reque
 export function deleteInitiatedBehavior(context: AdminRoutesContext, response: any, id: string): void {
   if (!id) throw new HttpJsonError(400, "behavior_id_required");
   const plan = context.deleteAgentInitiatedBehaviorConfig?.(id);
-  if (!plan) throw new HttpJsonError(404, "custom_behavior_not_found");
+  if (!plan) throw new HttpJsonError(404, "behavior_not_found");
   writeJson(response, 200, { ok: true, id });
 }
 
@@ -61,23 +61,7 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
     triggerEvent?: string;
     weight?: number;
     priority?: number;
-    promptProfile?: {
-      layers: Array<{
-        id: string;
-        title: string;
-        role: "user" | "assistant" | "tool_request";
-        name?: string;
-        enabled: boolean;
-        content: string;
-        order: number;
-        toolCalls?: Array<{
-          toolName: string;
-          toolCallId?: string;
-          toolArguments: string;
-        }>;
-        thinking?: string;
-      }>;
-    };
+    promptProfile?: AgentInitiatedBehaviorPromptProfile;
   } = {};
   if ("enabled" in body) {
     if (typeof body.enabled !== "boolean") throw new HttpJsonError(400, "enabled_boolean_required");
@@ -101,61 +85,40 @@ function parseInitiatedBehaviorConfigPatch(body: Record<string, unknown>) {
   }
   if ("promptProfile" in body) {
     const profile = body.promptProfile;
-    if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new HttpJsonError(400, "invalid_prompt_profile");
-    const rawLayers = (profile as { layers?: unknown }).layers;
-    if (!Array.isArray(rawLayers)) throw new HttpJsonError(400, "prompt_layers_array_required");
-    patch.promptProfile = {
-      layers: rawLayers.map((raw, index) => {
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new HttpJsonError(400, "invalid_prompt_layer");
-        const layer = raw as Record<string, unknown>;
-        if (layer.role !== "user" && layer.role !== "assistant" && layer.role !== "tool_request") {
-          throw new HttpJsonError(400, "invalid_initiated_behavior_prompt_layer_role");
-        }
-        const role: "user" | "assistant" | "tool_request" = layer.role;
-        const normalized = {
-          id: typeof layer.id === "string" && layer.id ? layer.id : `layer_${index + 1}`,
-          title: typeof layer.title === "string" ? layer.title : "",
-          role,
-          name: typeof layer.name === "string" && layer.name ? layer.name : "{{user}}",
-          enabled: layer.enabled !== false,
-          content: typeof layer.content === "string" ? layer.content : "",
-          order: typeof layer.order === "number" && Number.isFinite(layer.order) ? layer.order : (index + 1) * 10
-        };
-        if ((role === "assistant" || role === "tool_request") && typeof layer.thinking === "string") {
-          return {
-            ...normalized,
-            thinking: layer.thinking,
-            ...(role === "tool_request" ? {
-              toolCalls: normalizeAdminPromptToolCalls(layer.toolCalls)
-            } : {})
-          };
-        }
-        if (role === "tool_request") {
-          return {
-            ...normalized,
-            toolCalls: normalizeAdminPromptToolCalls(layer.toolCalls)
-          };
-        }
-        return normalized;
-      })
-    };
+    validateAdminPromptLayer(profile);
+    patch.promptProfile = normalizeAgentInitiatedBehaviorPromptProfile(profile);
   }
   if (Object.keys(patch).length === 0) throw new HttpJsonError(400, "empty_behavior_patch");
   return patch;
 }
 
-function normalizeAdminPromptToolCalls(value: unknown): Array<{ toolName: string; toolCallId?: string; toolArguments: string }> {
-  if (!Array.isArray(value)) throw new HttpJsonError(400, "prompt_tool_calls_array_required");
-  return value.map((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new HttpJsonError(400, "invalid_prompt_tool_call");
-    const call = raw as Record<string, unknown>;
-    if (typeof call.toolName !== "string" || !call.toolName) throw new HttpJsonError(400, "tool_name_string_required");
-    return {
-      toolName: call.toolName,
-      toolCallId: typeof call.toolCallId === "string" ? call.toolCallId : undefined,
-      toolArguments: typeof call.toolArguments === "string" ? call.toolArguments : "{}"
-    };
-  });
+function validateAdminPromptLayer(value: unknown): asserts value is AgentInitiatedBehaviorPromptProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpJsonError(400, "invalid_prompt_layer");
+  const layer = value as Record<string, unknown>;
+  if (!layer.meta || typeof layer.meta !== "object" || Array.isArray(layer.meta)) throw new HttpJsonError(400, "prompt_meta_object_required");
+  if (!Array.isArray(layer.messages)) throw new HttpJsonError(400, "prompt_messages_array_required");
+  for (const value of layer.messages) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpJsonError(400, "invalid_prompt_message");
+    const message = value as Record<string, unknown>;
+    if (!message.meta || typeof message.meta !== "object" || Array.isArray(message.meta)) throw new HttpJsonError(400, "prompt_message_meta_object_required");
+    if (message.role !== "system" && message.role !== "user" && message.role !== "assistant" && message.role !== "tool") {
+      throw new HttpJsonError(400, "invalid_prompt_message_role");
+    }
+    if (message.toolCalls === undefined) continue;
+    if (message.role !== "assistant" || !Array.isArray(message.toolCalls)) throw new HttpJsonError(400, "invalid_prompt_tool_calls");
+    for (const value of message.toolCalls) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpJsonError(400, "invalid_prompt_tool_call");
+      const call = value as Record<string, unknown>;
+      const fn = call.function;
+      if (typeof call.id !== "string" || !call.id || call.type !== "function" || !fn || typeof fn !== "object" || Array.isArray(fn)) {
+        throw new HttpJsonError(400, "invalid_prompt_tool_call");
+      }
+      const definition = fn as Record<string, unknown>;
+      if (typeof definition.name !== "string" || !definition.name || typeof definition.arguments !== "string") {
+        throw new HttpJsonError(400, "invalid_prompt_tool_call");
+      }
+    }
+  }
 }
 
 function initiatedBehaviorPlanView(context: AdminRoutesContext, plan: AgentInitiatedBehaviorPlan) {

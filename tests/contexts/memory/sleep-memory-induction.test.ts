@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   createMarkdownMemoryStore,
-  createMemoryInductionPromptStore,
   createSleepMemoryStateStore,
   runSleepMemoryInduction
 } from "../../../src/contexts/memory/src/memory.js";
@@ -13,6 +12,7 @@ import { createDiaryStore } from "../../../src/platform/storage/src/diary-store.
 import {
   makeMemorySandbox,
   makeTempDir,
+  createTestMemoryPromptStore,
   memoryConfig,
   message
 } from "./sleep-memory-helpers.js";
@@ -28,10 +28,19 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
   diaryStore.recordSleepBoundary({ occurredAt: "2026-05-24T06:00:00.000", source: "sleep", now: "2026-05-24T06:00:00.000" });
   stateStore.write({ lastInductionAt: "2026-05-24T00:00:00.000Z" });
   const calls: Array<{ start?: string; end: string }> = [];
+  const promptStore = createTestMemoryPromptStore(root);
+  promptStore.save({
+    meta: {},
+    messages: [{
+      meta: { title: "Files", enabled: true },
+      role: "user",
+      content: "{{memorize/files/persistent/filePath}}"
+    }]
+  });
 
   const ok = await runSleepMemoryInduction({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore,
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     stateStore,
@@ -80,7 +89,7 @@ test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {
 
   const ok = await runSleepMemoryInduction({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     stateStore,
@@ -125,7 +134,7 @@ test("sleepInduction_noEditCompletion_advancesCursorWithoutChangingMemory", asyn
 
   const ok = await runSleepMemoryInduction({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     stateStore,

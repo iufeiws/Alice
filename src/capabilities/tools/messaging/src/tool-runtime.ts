@@ -18,6 +18,7 @@ import { createSkillLoader, type SkillRegistry } from "../../../../contexts/skil
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
+import { createRandomEventSandboxRuntime } from "../../../../contexts/initiative/src/application/random-event-sandbox-runtime.js";
 
 const path = await import("node:path");
 
@@ -41,6 +42,8 @@ export function createToolRuntime(input: {
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   skillsRegistry: SkillRegistry;
   promptContextRuntime: PromptContextRuntime;
+  randomEventStore: any;
+  getApprovalService(): any;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
 }) {
@@ -195,10 +198,17 @@ export function createToolRuntime(input: {
     getGoogleStreetView: input.getGoogleStreetView,
     now: () => input.time.now().date
   });
-  const skillsLoader = createSkillLoader(input.skillsRegistry, bashRuntime);
+  const randomEventSandbox = createRandomEventSandboxRuntime({
+    store: input.randomEventStore,
+    hostWorkspaceRoot: input.config.bashSandbox.hostWorkspaceDir,
+    sandbox: bashRuntime,
+    getApprovalService: input.getApprovalService
+  });
+  const skillsLoader = createSkillLoader(input.skillsRegistry, bashRuntime, (skill) => randomEventSandbox.prepareSkill(skill));
   const skillsTools = createSkillsTools({ loader: skillsLoader });
   const bashTools = createBashTools({
-    runtime: bashRuntime
+    runtime: bashRuntime,
+    handleResult: randomEventSandbox.handleBashResult
   });
   const fileTools = createFileTools({
     runtime: bashRuntime,

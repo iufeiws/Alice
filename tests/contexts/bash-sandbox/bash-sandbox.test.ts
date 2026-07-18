@@ -40,6 +40,25 @@ test("bash tool returns docker result without throwing on non-zero exit", async 
   assert.equal(output.stderr, "nope");
 });
 
+test("bash tool includes host submission results without changing sandbox output", async () => {
+  const tools = createBashTools({
+    runtime: createBashSandboxRuntime({
+      config: testConfig(),
+      executor: fakeExecutor(async () => ({ stdout: "marker\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
+    }),
+    async handleResult(result) {
+      assert.equal(result.stdout, "marker\n");
+      return { type: "test", status: "approved" };
+    }
+  });
+
+  const result = await tools.execute({ id: "bash_submission", toolName: "Bash", input: { command: "submit" } });
+  const output = JSON.parse(String(result.output));
+
+  assert.equal(output.stdout, "marker\n");
+  assert.deepEqual(output.submission, { type: "test", status: "approved" });
+});
+
 test("bash runtime writes audit events for sandbox execution", async () => {
   const config = testConfig({ outputLimitBytes: 5, mounts: [{ id: "data", hostPath: tmpDir("data"), containerPath: "/mnt/data", readOnly: true }] });
   const runtime = createBashSandboxRuntime({

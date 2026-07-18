@@ -2,14 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createAgentInitiatedBehaviorRun,
-  createAgentInitiatedBehaviorRunStore,
-  defaultAgentInitiatedBehaviorPlans
+  createAgentInitiatedBehaviorRunStore
 } from "../../../src/contexts/initiative/src/domain/initiated-behavior.js";
-import { tempPath } from "./initiated-behaviors-helpers.js";
+import { randomizedBehaviorPlan, tempPath } from "./initiated-behaviors-helpers.js";
 
 test("initiated behavior run store aggregates randomized thirty minute buckets", () => {
   const store = createAgentInitiatedBehaviorRunStore();
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const plan = randomizedBehaviorPlan();
   const run = createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T00:10:00.000Z",
@@ -26,7 +25,7 @@ test("initiated behavior run store aggregates randomized thirty minute buckets",
 
 test("initiated behavior run store persists and marks 15 minute responses", () => {
   const dbPath = tempPath("initiated-behavior-runs", "runs.sqlite");
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const plan = randomizedBehaviorPlan();
   const store = createAgentInitiatedBehaviorRunStore({ dbPath });
   store.record(createAgentInitiatedBehaviorRun({
     plan,
@@ -49,7 +48,7 @@ test("initiated behavior run store persists and marks 15 minute responses", () =
 
 test("initiated behavior run store does not count pending responses as missed in buckets", () => {
   const store = createAgentInitiatedBehaviorRunStore({ dbPath: tempPath("initiated-behavior-runs-pending", "runs.sqlite") });
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const plan = randomizedBehaviorPlan();
   store.record(createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T08:10:00.000",
@@ -68,7 +67,7 @@ test("initiated behavior run store does not count pending responses as missed in
 
 test("initiated behavior run store marks expired responses as missed", () => {
   const store = createAgentInitiatedBehaviorRunStore();
-  const plan = defaultAgentInitiatedBehaviorPlans.find((entry) => entry.id === "care")!;
+  const plan = randomizedBehaviorPlan();
   store.record(createAgentInitiatedBehaviorRun({
     plan,
     triggeredAt: "2026-06-06T00:00:00.000Z",

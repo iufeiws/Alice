@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "id": "review",
+    "enabled": true,
+    "weight": 2,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Review Initiation",
+        "enabled": true
+      },
+      "role": "assistant",
+      "name": "Cheshire Cat",
+      "content": "好久没有消息了, 根据最近对话里未闭环的话题、计划或情绪, 向{{user}}发起一次callback吧"
+    }
+  ]
+}

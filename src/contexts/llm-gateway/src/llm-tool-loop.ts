@@ -1,7 +1,7 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
 import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
-import { promptLayerToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
+import { promptMessageToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
@@ -377,12 +377,13 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
 
 function consumePendingUserMessageInterruptMessages(input: LLMToolLoopInput, request: LLMToolLoopRoundRequest): LLMMessage[] {
   if (!input.promptProfile) return [];
-  const layer = normalizePromptProfile(input.promptProfile).interruptLayer;
-  if (!layer?.enabled) return [];
+  const layer = normalizePromptProfile(input.promptProfile).interruptLayer!;
+  const messages = layer.messages.filter((message) => message.meta.enabled);
+  if (messages.length === 0) return [];
   if (!request.toolVariables) throw new Error("prompt_context_runtime_required");
   if (input.runtimeInterrupts?.hasPendingUserMessage() !== true) return [];
   if (input.runtimeInterrupts.consumePendingUserMessage() !== true) return [];
-  return [promptLayerToMessage(layer, request.toolVariables)];
+  return messages.map((message) => promptMessageToMessage(message, request.toolVariables!));
 }
 
 function isAssistantMessageTransformResult(value: LLMToolLoopAssistantMessageTransform | undefined): value is Extract<LLMToolLoopAssistantMessageTransform, { message: LLMMessage }> {

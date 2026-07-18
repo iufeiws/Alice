@@ -204,13 +204,17 @@ test("talk prompt profile saves independently from chat prompt profile", async (
 
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/talk-prompt-profile", {
+    ...context.talkPromptProfileStore.get(),
     visibleTools: {},
-    layers: [{ id: "talk-role", title: "Talk Role", role: "system", enabled: true, order: 10, content: "talk" }]
+    layers: {
+      meta: {},
+      messages: [{ meta: { title: "Talk Role", enabled: true }, role: "system", content: "talk" }]
+    }
   }), response);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(context.talkPromptProfileStore.get().layers[0]?.id, "talk-role");
-  assert.equal(context.promptProfileStore.get().layers[0]?.id, undefined);
+  assert.equal(context.talkPromptProfileStore.get().layers.messages[0]?.meta.title, "Talk Role");
+  assert.equal(context.promptProfileStore.get().layers.messages[0], undefined);
 });
 
 test("agent state admin route exposes calling state", async () => {
@@ -308,7 +312,7 @@ test("admin tts legacy preview route is not available", async () => {
   assert.equal(typeof JSON.parse(response.body).error, "string");
 });
 
-test("initiated behavior config patch preserves tool request prompt layers", async () => {
+test("initiated behavior config patch preserves assistant tool-call messages", async () => {
   const root = makeTempDir("admin-initiated-behavior-tool-layer");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
@@ -329,18 +333,16 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
     promptProfile: {
-      layers: [{
-        id: "fake_check",
-        title: "Fake Check",
-        role: "tool_request",
-        enabled: true,
+      meta: {},
+      messages: [{
+        meta: { title: "Fake Check", enabled: true },
+        role: "assistant",
         content: "",
-        order: 10,
-        thinking: "check first",
+        reasoningContent: "check first",
         toolCalls: [{
-          toolName: "Chat",
-          toolCallId: "call_check",
-          toolArguments: "{\"target\":\"dm\"}"
+          id: "call_check",
+          type: "function",
+          function: { name: "Chat", arguments: "{\"target\":\"dm\"}" }
         }]
       }]
     }
@@ -349,51 +351,53 @@ test("initiated behavior config patch preserves tool request prompt layers", asy
   assert.equal(response.statusCode, 200);
   assert.deepEqual(receivedPatch, {
     promptProfile: {
-      layers: [{
-        id: "fake_check",
-        title: "Fake Check",
-        role: "tool_request",
-        name: "{{user}}",
-        enabled: true,
+      meta: {},
+      messages: [{
+        meta: { title: "Fake Check", enabled: true },
+        role: "assistant",
         content: "",
-        order: 10,
-        thinking: "check first",
+        reasoningContent: "check first",
         toolCalls: [{
-          toolName: "Chat",
-          toolCallId: "call_check",
-          toolArguments: "{\"target\":\"dm\"}"
+          id: "call_check",
+          type: "function",
+          function: { name: "Chat", arguments: "{\"target\":\"dm\"}" }
         }]
       }]
     }
   });
 });
 
-test("initiated behavior config patch rejects system prompt layers", async () => {
+test("initiated behavior config patch accepts system messages", async () => {
   const root = makeTempDir("admin-initiated-behavior-system-layer");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
   const context = baseContext(root, memoryStore, promptStore);
-  context.setAgentInitiatedBehaviorConfig = () => {
-    throw new Error("system layer should not reach setter");
+  let receivedPatch: unknown;
+  context.setAgentInitiatedBehaviorConfig = (_id: string, patch: unknown) => {
+    receivedPatch = patch;
+    return { id: "sleep_morning", kind: "event", enabled: true, triggerEvent: "sleep_cocoon.wake", steps: [] };
   };
   const handler = createAdminHandler(context);
 
   const response = createResponse();
   await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/sleep_morning", {
     promptProfile: {
-      layers: [{
-        id: "bad",
-        title: "Bad",
+      meta: {},
+      messages: [{
+        meta: { title: "System", enabled: true },
         role: "system",
-        enabled: true,
-        content: "break prefix",
-        order: 10
+        content: "system context"
       }]
     }
   }), response);
 
-  assert.equal(response.statusCode, 400);
-  assert.equal(typeof JSON.parse(response.body).error, "string");
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(receivedPatch, {
+    promptProfile: {
+      meta: {},
+      messages: [{ meta: { title: "System", enabled: true }, role: "system", content: "system context" }]
+    }
+  });
 });
 
 test("admin initiated behavior create route custom plans", async () => {
@@ -413,7 +417,7 @@ test("admin initiated behavior create route custom plans", async () => {
     id: "custom_check",
     kind: "event",
     triggerEvent: "custom.check",
-    promptProfile: { layers: [] }
+    promptProfile: { meta: {}, messages: [] }
   }), createResponseBody);
 
   assert.equal(createResponseBody.statusCode, 200);
@@ -422,7 +426,7 @@ test("admin initiated behavior create route custom plans", async () => {
     patch: {
       kind: "event",
       triggerEvent: "custom.check",
-      promptProfile: { layers: [] }
+      promptProfile: { meta: {}, messages: [] }
     }
   });
 });

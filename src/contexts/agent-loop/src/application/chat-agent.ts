@@ -361,14 +361,14 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               buildMessages: async () => {
                 if (mode.mode === "fixed_prefix") return cloneLLMMessages(mode.modeStaticMessages);
                 const initiatedMessages = await buildAgentInitiatedBehaviorMessages(initiatedBehavior, promptProfile, promptContext, async (layer, call) => {
-                  const result = await runPromptToolRequest(layer, call);
+                  const result = await runPromptToolRequest(call);
                   initiatedBehaviorPromptToolResult = result;
                   return result;
                 });
                 initiatedBehaviorMessageCount = initiatedMessages.length;
                 return [
                   ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
-                    return runPromptToolRequest(layer, call);
+                    return runPromptToolRequest(call);
                   }),
                   ...initiatedMessages,
                   ...mode.modeStaticMessages
@@ -445,25 +445,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         if (hasPendingWaitChatToolCall(session.messages)) return;
         const promptContext = buildPromptContext();
         if (createdSessionThisRun) return;
-        const appendProfile = {
-          ...promptProfile,
-          appendLayers: (promptProfile.appendLayers ?? []).map((layer) => {
-            if (layer.role !== "tool_request") return layer;
-            return {
-              ...layer,
-              toolCalls: (layer.toolCalls ?? []).map((call, index) => ({
-                ...call,
-                toolCallId: call.toolCallId ?? `append_${layer.id}_${index + 1}`
-              }))
-            };
-          })
-        };
-        const appendMessages = await buildAppendPromptMessagesWithToolResults(appendProfile, promptContext, (layer, call) => {
+        const appendMessages = await buildAppendPromptMessagesWithToolResults(promptProfile, promptContext, (message, call) => {
           const preparedCall = {
             ...call,
             input: fixedPrefixToolInput(call.toolName, call.input, session)
           };
-          return runPromptToolRequest(layer, preparedCall, {
+          return runPromptToolRequest(preparedCall, {
             context: {
               lastCompletedToolName,
               agentLoopRunSeq: session.agentLoopRunSeq,

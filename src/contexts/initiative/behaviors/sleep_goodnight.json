@@ -1,30 +1,34 @@
 {
-  "layers": [
+  "meta": {},
+  "messages": [
     {
-      "id": "instruction",
-      "title": "Goodnight Reply",
+      "meta": {
+        "title": "Goodnight Reply",
+        "enabled": true
+      },
       "role": "assistant",
       "name": "Cheshire Cat",
-      "enabled": true,
-      "content": "感觉有点困了。进入睡眠茧, 然后对{{user}}说晚安吧",
-      "order": 10
+      "content": "感觉有点困了。进入睡眠茧, 然后对{{user}}说晚安吧"
     },
     {
-      "id": "layer_2",
-      "title": "Layer 2",
-      "role": "tool_request",
+      "meta": {
+        "title": "Layer 2",
+        "enabled": true
+      },
+      "role": "assistant",
       "name": "{{user}}",
-      "enabled": true,
       "content": "",
-      "order": 20,
+      "reasoningContent": "(我要使用睡眠茧)",
       "toolCalls": [
         {
-          "toolName": "sleep_cocoon",
-          "toolCallId": "call_00_eeEDr3C59Y0KCgjTkUZv1319",
-          "toolArguments": "{\"action\":\"in\"}"
+          "id": "call_00_eeEDr3C59Y0KCgjTkUZv1319",
+          "type": "function",
+          "function": {
+            "name": "sleep_cocoon",
+            "arguments": "{\"action\":\"in\"}"
+          }
         }
-      ],
-      "thinking": "(我要使用睡眠茧)"
+      ]
     }
   ]
 }

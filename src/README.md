@@ -143,8 +143,9 @@
 
 关键模块：
 
-- `behaviors/*.json`: 每个主动行为的 prompt profile，例如 `sleep_goodnight`、`care`、`review`。
-- `behaviors/initiated-behaviors.config.json`: 行为开关、kind、triggerEvent、weight、priority 覆盖配置。
+- `behaviors/*.json`: 事件驱动主动行为的 prompt profile，例如 `sleep_goodnight`。
+- `random-events/*.json`: 可创建、修改和删除的完整 Random Event 定义。
+- `behaviors/initiated-behaviors.config.json`: 事件驱动行为的开关、kind 和 triggerEvent 覆盖配置。
 - `domain/initiated-behavior.ts`: 主动行为领域模型、默认 plans、availability 判断、run store。
 - `adapters/json-initiated-behavior-store.ts`: 行为配置和 prompt profile JSON 读写。
 - `application/evaluate-triggers.ts`: 读取配置、合并 overrides、修改行为配置。

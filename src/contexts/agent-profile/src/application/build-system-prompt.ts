@@ -1,10 +1,16 @@
-import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import type { LLMContentPart, LLMMessage, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import { normalizePromptLayers, parsePromptToolArguments, promptLayerToMessage, type PromptLayer } from "../domain/prompt-layer.js";
+import {
+  normalizePromptLayer,
+  parsePromptToolArguments,
+  promptMessageToMessage,
+  type PromptLayer,
+  type PromptMessage
+} from "../domain/prompt-layer.js";
 
-export type { PromptLayer, PromptLayerRole } from "../domain/prompt-layer.js";
+export type { PromptLayer, PromptMessage, PromptMessageMeta } from "../domain/prompt-layer.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -18,17 +24,19 @@ export type PromptDefinition = {
   content: string;
 };
 
+export type VisibleTools = {
+  feishu: boolean;
+  photo?: boolean;
+  media?: boolean;
+  shell?: boolean;
+  [toolName: string]: boolean | undefined;
+};
+
 export type PromptProfile = {
-  layers: PromptLayer[];
-  appendLayers?: PromptLayer[];
+  visibleTools: VisibleTools;
+  layers: PromptLayer;
+  appendLayers?: PromptLayer;
   interruptLayer?: PromptLayer;
-  visibleTools: {
-    feishu: boolean;
-    photo?: boolean;
-    media?: boolean;
-    shell?: boolean;
-    [toolName: string]: boolean | undefined;
-  };
 };
 
 export type PromptRenderContext = {
@@ -63,25 +71,23 @@ export const defaultPromptRegistry: PromptDefinition[] = [
     name: "Default Agent Prompt Profile",
     scope: "agent",
     description: "Default editable prompt layers used by ChatAgent.",
-    content: defaultPromptProfile().layers.map((layer) => `[${layer.role}] ${layer.title}\n${layer.content}`).join("\n\n")
+    content: defaultPromptProfile().layers.messages
+      .map((message) => `[${message.role}] ${message.meta.title}\n${contentText(message.content)}`)
+      .join("\n\n")
   },
   {
     id: "router.codex.not_implemented",
     name: "Codex Command Placeholder",
     scope: "router",
     description: "Response used when a /codex command is routed before the Codex worker exists.",
-    content:
-      "Codex command accepted by router, but Codex worker is not implemented yet."
+    content: "Codex command accepted by router, but Codex worker is not implemented yet."
   }
 ];
 
 export function createPromptProfileStore(filePath: string): PromptProfileStore {
   let current: PromptProfile = readPromptProfile(filePath) ?? defaultPromptProfile();
-
   return {
-    get() {
-      return cloneProfile(current);
-    },
+    get: () => cloneProfile(current),
     save(profile) {
       current = validatePromptProfile(profile);
       writePromptProfile(filePath, current);
@@ -92,37 +98,28 @@ export function createPromptProfileStore(filePath: string): PromptProfileStore {
 
 export function defaultPromptProfile(): PromptProfile {
   return {
-    visibleTools: {
-      feishu: true,
-      photo: true,
-      shell: true
-    },
-    layers: [
-    ],
-    appendLayers: [
-    ],
+    visibleTools: { feishu: true, photo: true, shell: true },
+    layers: { meta: {}, messages: [] },
+    appendLayers: { meta: {}, messages: [] },
     interruptLayer: defaultInterruptLayer()
   };
 }
 
 export function defaultInterruptLayer(): PromptLayer {
   return {
-    id: "interrupt",
-    title: "Interrupt Layer",
-    role: "user",
-    name: "Alert",
-    enabled: true,
-    content: "<Alert info=\"have a new message\" />",
-    order: 0
+    meta: {},
+    messages: [{
+      meta: { title: "Interrupt Layer", enabled: true },
+      role: "user",
+      name: "Alert",
+      content: "<Alert info=\"have a new message\" />"
+    }]
   };
 }
 
 export function buildPromptMessages(profile: PromptProfile, context: PromptRenderContext): LLMMessage[] {
-  const renderer = promptRenderer(context);
-  return normalizePromptProfile(profile).layers
-    .filter((layer) => layer.enabled)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => promptLayerToMessage(layer, renderer));
+  return enabledMessages(normalizePromptProfile(profile).layers)
+    .map((message) => promptMessageToMessage(message, promptRenderer(context)));
 }
 
 export function staticPromptFingerprint(profile: PromptProfile, context: PromptRenderContext): string {
@@ -140,57 +137,48 @@ export function staticPromptFingerprintForText(text: string): string {
 export async function buildPromptMessagesWithToolResults(
   profile: PromptProfile,
   context: PromptRenderContext,
-  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const renderer = promptRenderer(context);
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, renderer, context, runTool);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, promptRenderer(context), context, runTool);
 }
 
 export async function buildAppendPromptMessagesWithToolResults(
   profile: PromptProfile,
   context: PromptRenderContext,
-  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const renderer = promptRenderer(context);
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers ?? [], renderer, context, runTool);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers!, promptRenderer(context), context, runTool);
 }
 
 export async function buildLayerMessagesWithToolResults(
-  inputLayers: PromptLayer[],
+  layer: PromptLayer,
   renderer: PromptContextRuntime,
   context: PromptRenderContext,
-  runTool: (layer: PromptLayer, call: ToolCall) => Promise<ToolResult>,
-  options: { toolCallIdPrefix?: string } = {}
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
 ): Promise<LLMMessage[]> {
-  const messages: LLMMessage[] = [];
-  const layers = inputLayers
-    .filter((layer) => layer.enabled)
-    .sort((left, right) => left.order - right.order);
-
-  for (const layer of layers) {
-    const message = promptLayerToMessage(layer, renderer, options);
-    messages.push(message);
-    if (layer.role !== "tool_request") continue;
-
-    for (const toolCall of message.toolCalls ?? []) {
+  const result: LLMMessage[] = [];
+  for (const storedMessage of enabledMessages(layer)) {
+    const message = promptMessageToMessage(storedMessage, renderer);
+    result.push(message);
+    if (message.role !== "assistant" || !message.toolCalls?.length) continue;
+    for (const toolCall of message.toolCalls) {
       const toolInput = parsePromptToolArguments(toolCall.function.arguments);
-      const result = await runTool(layer, {
+      const toolResult = await runTool(storedMessage, {
         id: toolCall.id,
         toolName: toolCall.function.name,
         input: context.preview ? { ...toolInput, __preview: true } : toolInput,
         requester: context.event.source,
         externalSession: context.event.externalSession
       });
-      messages.push({
+      result.push({
         role: "tool",
         name: toolCall.function.name,
         toolCallId: toolCall.id,
-        content: formatPromptToolMessageContent(result, renderer)
+        content: formatPromptToolMessageContent(toolResult, renderer)
       });
     }
   }
-
-  return messages;
+  return result;
 }
 
 export function promptRenderer(context: PromptRenderContext): PromptContextRuntime {
@@ -198,12 +186,7 @@ export function promptRenderer(context: PromptRenderContext): PromptContextRunti
 }
 
 export function makePromptContext(input: PromptContextDeps): PromptRenderContext {
-  return {
-    renderer: input.renderer,
-    event: input.event,
-    time: input.time,
-    preview: input.preview
-  };
+  return { renderer: input.renderer, event: input.event, time: input.time, preview: input.preview };
 }
 
 export function renderTemplate(content: string, renderer: PromptContextRuntime): string {
@@ -212,26 +195,25 @@ export function renderTemplate(content: string, renderer: PromptContextRuntime):
 
 export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
   const fallback = defaultPromptProfile();
-  const layers = Array.isArray(profile.layers) ? profile.layers : fallback.layers;
-  const rawProfile = profile as PromptProfile & { fakeCheckChatReasoningContent?: unknown };
-  const appendLayers = Array.isArray(profile.appendLayers)
-    ? profile.appendLayers
-    : typeof rawProfile.fakeCheckChatReasoningContent === "string"
-      ? (fallback.appendLayers ?? []).map((layer) => ({ ...layer, thinking: rawProfile.fakeCheckChatReasoningContent as string }))
-      : [];
-  const visibleTools = {
-    ...profile.visibleTools,
-    feishu: profile.visibleTools?.feishu !== false,
-    photo: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
-    media: profile.visibleTools?.photo !== false && profile.visibleTools?.media !== false,
-    shell: profile.visibleTools?.shell !== false
-  };
+  const visibleTools = profile?.visibleTools && typeof profile.visibleTools === "object"
+    ? profile.visibleTools
+    : fallback.visibleTools;
   return {
-    visibleTools,
-    layers: normalizePromptLayers(layers),
-    appendLayers: normalizePromptLayers(appendLayers ?? []),
-    interruptLayer: normalizeInterruptLayer(profile.interruptLayer, fallback.interruptLayer)
+    visibleTools: {
+      ...visibleTools,
+      feishu: visibleTools.feishu !== false,
+      photo: visibleTools.photo !== false && visibleTools.media !== false,
+      media: visibleTools.photo !== false && visibleTools.media !== false,
+      shell: visibleTools.shell !== false
+    },
+    layers: normalizePromptLayer(profile?.layers, fallback.layers),
+    appendLayers: normalizePromptLayer(profile?.appendLayers, fallback.appendLayers),
+    interruptLayer: normalizePromptLayer(profile?.interruptLayer, fallback.interruptLayer)
   };
+}
+
+function enabledMessages(layer: PromptLayer): PromptMessage[] {
+  return layer.messages.filter((message) => message.meta.enabled);
 }
 
 function stableJson(value: unknown): string {
@@ -256,10 +238,7 @@ function formatPromptToolMessageContent(result: ToolResult, runtime: PromptConte
 
 export function getPromptContent(id: string): string {
   const prompt = defaultPromptRegistry.find((item) => item.id === id);
-  if (!prompt) {
-    throw new Error(`Prompt not found: ${id}`);
-  }
-
+  if (!prompt) throw new Error(`Prompt not found: ${id}`);
   return prompt.content;
 }
 
@@ -279,59 +258,70 @@ function cloneProfile(profile: PromptProfile): PromptProfile {
 
 function validatePromptProfile(value: unknown): PromptProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError("invalid_prompt_profile");
-  const profile = value as PromptProfile;
-  if ("userName" in profile) throw new PromptProfileValidationError("invalid_prompt_profile_user_name");
-  if (!profile.visibleTools || typeof profile.visibleTools !== "object" || Array.isArray(profile.visibleTools)) throw new PromptProfileValidationError("invalid_prompt_profile_visible_tools");
-  validatePromptLayersForStorage(profile.layers, "layers");
-  if (profile.appendLayers !== undefined) validatePromptLayersForStorage(profile.appendLayers, "appendLayers");
-  if (profile.interruptLayer !== undefined) validateInterruptLayerForStorage(profile.interruptLayer);
-  return cloneProfile({
-    visibleTools: profile.visibleTools,
-    layers: profile.layers,
-    appendLayers: profile.appendLayers,
-    interruptLayer: profile.interruptLayer ?? defaultInterruptLayer()
-  });
+  const profile = value as PromptProfile & { userName?: unknown };
+  if (profile.userName !== undefined) throw new PromptProfileValidationError("invalid_prompt_profile_user_name");
+  if (!profile.visibleTools || typeof profile.visibleTools !== "object" || Array.isArray(profile.visibleTools)) {
+    throw new PromptProfileValidationError("invalid_prompt_profile_visible_tools");
+  }
+  validatePromptLayerForStorage(profile.layers, "layers");
+  validatePromptLayerForStorage(profile.appendLayers, "appendLayers");
+  validatePromptLayerForStorage(profile.interruptLayer, "interruptLayer");
+  return cloneProfile(profile);
 }
 
-function normalizeInterruptLayer(value: unknown, fallback: PromptLayer | undefined): PromptLayer | undefined {
-  if (value === undefined) return fallback;
-  const layer = normalizePromptLayers([value], fallback ? [fallback] : [])[0];
-  if (!layer || layer.role === "tool_request") return fallback;
-  return layer;
-}
-
-function validateInterruptLayerForStorage(value: unknown): void {
-  validatePromptLayerForStorage(value, "interruptLayer");
-  const layer = value as PromptLayer;
-  if (layer.role === "tool_request") throw new PromptProfileValidationError("invalid_prompt_interrupt_layer_role");
-}
-
-function validatePromptLayersForStorage(value: unknown, key: string): void {
-  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_profile_${key}`);
-  value.forEach((entry, index) => validatePromptLayerForStorage(entry, `${key}_${index + 1}`));
-}
-
-function validatePromptLayerForStorage(value: unknown, key: string): void {
+export function validatePromptLayerForStorage(value: unknown, key = "layer"): asserts value is PromptLayer {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_layer_${key}`);
-  const layer = value as PromptLayer;
-  if (typeof layer.id !== "string" || !layer.id.trim()) throw new PromptProfileValidationError(`invalid_prompt_layer_id_${key}`);
-  if (typeof layer.title !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_title_${key}`);
-  if (!["system", "user", "assistant", "tool_request"].includes(String(layer.role))) throw new PromptProfileValidationError(`invalid_prompt_layer_role_${key}`);
-  if (layer.name !== undefined && typeof layer.name !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_name_${key}`);
-  if (typeof layer.enabled !== "boolean") throw new PromptProfileValidationError(`invalid_prompt_layer_enabled_${key}`);
-  if (typeof layer.content !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_content_${key}`);
-  if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) throw new PromptProfileValidationError(`invalid_prompt_layer_order_${key}`);
-  if (layer.thinking !== undefined && typeof layer.thinking !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_thinking_${key}`);
-  if (layer.toolCalls !== undefined) validatePromptToolCallsForStorage(layer.toolCalls, key);
+  const layer = value as { meta?: unknown; messages?: unknown };
+  if (!layer.meta || typeof layer.meta !== "object" || Array.isArray(layer.meta)) throw new PromptProfileValidationError(`invalid_prompt_layer_meta_${key}`);
+  if (!Array.isArray(layer.messages)) throw new PromptProfileValidationError(`invalid_prompt_layer_messages_${key}`);
+  layer.messages.forEach((message, index) => validatePromptMessageForStorage(message, `${key}_${index + 1}`));
 }
 
-function validatePromptToolCallsForStorage(value: unknown, key: string): void {
-  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_layer_tool_calls_${key}`);
+function validatePromptMessageForStorage(value: unknown, key: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_message_${key}`);
+  const message = value as Partial<PromptMessage>;
+  if (!message.meta || typeof message.meta !== "object" || Array.isArray(message.meta)) throw new PromptProfileValidationError(`invalid_prompt_message_meta_${key}`);
+  if (typeof message.meta.title !== "string") throw new PromptProfileValidationError(`invalid_prompt_message_title_${key}`);
+  if (typeof message.meta.enabled !== "boolean") throw new PromptProfileValidationError(`invalid_prompt_message_enabled_${key}`);
+  if (!messageRole(message.role)) throw new PromptProfileValidationError(`invalid_prompt_message_role_${key}`);
+  validateMessageContent(message.content, key);
+  if (message.name !== undefined && typeof message.name !== "string") throw new PromptProfileValidationError(`invalid_prompt_message_name_${key}`);
+  if (message.reasoningContent !== undefined && typeof message.reasoningContent !== "string") throw new PromptProfileValidationError(`invalid_prompt_message_reasoning_${key}`);
+  if (message.toolCallId !== undefined && typeof message.toolCallId !== "string") throw new PromptProfileValidationError(`invalid_prompt_message_tool_call_id_${key}`);
+  if (message.toolCalls !== undefined) validatePromptToolCallsForStorage(message.toolCalls, key);
+}
+
+function messageRole(role: unknown): boolean {
+  return role === "system" || role === "user" || role === "assistant" || role === "tool";
+}
+
+function validateMessageContent(value: unknown, key: string): void {
+  if (typeof value === "string") return;
+  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_message_content_${key}`);
+  for (const part of value) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) throw new PromptProfileValidationError(`invalid_prompt_message_content_part_${key}`);
+    const typed = part as LLMContentPart;
+    if (typed.type === "text" && typeof typed.text === "string") continue;
+    if (typed.type === "image_url" && typeof typed.image_url?.url === "string") continue;
+    if (typed.type === "input_audio" && typeof typed.input_audio?.data === "string" && typeof typed.input_audio?.format === "string") continue;
+    throw new PromptProfileValidationError(`invalid_prompt_message_content_part_${key}`);
+  }
+}
+
+function validatePromptToolCallsForStorage(value: unknown, key: string): asserts value is LLMToolCall[] {
+  if (!Array.isArray(value)) throw new PromptProfileValidationError(`invalid_prompt_message_tool_calls_${key}`);
   value.forEach((entry, index) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new PromptProfileValidationError(`invalid_prompt_layer_tool_call_${key}_${index + 1}`);
-    const call = entry as { toolName?: unknown; toolCallId?: unknown; toolArguments?: unknown };
-    if (typeof call.toolName !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_name_${key}_${index + 1}`);
-    if (call.toolCallId !== undefined && typeof call.toolCallId !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_call_id_${key}_${index + 1}`);
-    if (typeof call.toolArguments !== "string") throw new PromptProfileValidationError(`invalid_prompt_layer_tool_arguments_${key}_${index + 1}`);
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new PromptProfileValidationError(`invalid_prompt_message_tool_call_${key}_${index + 1}`);
+    const call = entry as Partial<LLMToolCall>;
+    if (typeof call.id !== "string" || !call.id) throw new PromptProfileValidationError(`invalid_prompt_message_tool_call_id_${key}_${index + 1}`);
+    if (call.type !== "function") throw new PromptProfileValidationError(`invalid_prompt_message_tool_call_type_${key}_${index + 1}`);
+    if (!call.function || typeof call.function.name !== "string" || !call.function.name) throw new PromptProfileValidationError(`invalid_prompt_message_tool_name_${key}_${index + 1}`);
+    if (typeof call.function.arguments !== "string") throw new PromptProfileValidationError(`invalid_prompt_message_tool_arguments_${key}_${index + 1}`);
   });
+}
+
+function contentText(content: LLMMessage["content"]): string {
+  return typeof content === "string"
+    ? content
+    : content.filter((part) => part.type === "text").map((part) => (part as { text: string }).text).join("\n");
 }

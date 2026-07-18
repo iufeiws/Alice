@@ -1,13 +1,14 @@
 {
-  "layers": [
+  "meta": {},
+  "messages": [
     {
-      "id": "layer_1",
-      "title": "Layer 1",
+      "meta": {
+        "title": "Layer 1",
+        "enabled": true
+      },
       "role": "assistant",
       "name": "Cheshire Cat",
-      "enabled": true,
-      "content": "有一个日程的时间到了, 我需要确认一下",
-      "order": 10
+      "content": "有一个日程的时间到了, 我需要确认一下"
     }
   ]
 }

@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "id": "share",
+    "enabled": false,
+    "weight": 2,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Share Initiation",
+        "enabled": true
+      },
+      "role": "user",
+      "name": "Cheshire Cat",
+      "content": "结合{{user}}近期兴趣, 发起一句内容分享型消息。只在内容确实相关时分享, 不要随机热点。"
+    }
+  ]
+}

@@ -1,9 +1,7 @@
 export function renderInitiatedBehaviorsScript(): string {
   return `      let initiatedBehaviorPayload = { plans: [], runs: [], buckets: [] };
       let behaviorConfigId = "";
-      let behaviorConfigLayers = [];
-      let behaviorConfigLayerIndex = 0;
-      const behaviorLayerRoles = ["user", "assistant", "tool_request"];
+      let behaviorConfigLayerDocument = { meta: {}, messages: [] };
       const initiatedBehaviorSummaries = {
         sleep_goodnight: "Event behavior with backend sleep_cocoon action=in before the LLM prompt.",
         sleep_morning: "Event behavior for the normal wake transition.",
@@ -50,7 +48,7 @@ export function renderInitiatedBehaviorsScript(): string {
             '<td>' + escapeHtml(responseRatio) + '</td>' +
             '<td>' + escapeHtml(lastRun ? formatAdminTime(lastRun.triggeredAt) : "never") + '</td>' +
             '<td><span class="behavior-status ' + (health === "ok" ? "on" : "") + '">' + escapeHtml(health) + '</span></td>' +
-            '<td><div class="behavior-table-actions"><button type="button" data-behavior-config="' + escapeAttr(plan.id) + '">Config</button>' + (plan.custom ? '<button type="button" class="secondary" data-behavior-delete="' + escapeAttr(plan.id) + '">Delete</button>' : "") + '</div></td>' +
+            '<td><div class="behavior-table-actions"><button type="button" data-behavior-config="' + escapeAttr(plan.id) + '">Config</button>' + (plan.custom || plan.kind === "randomized" ? '<button type="button" class="secondary" data-behavior-delete="' + escapeAttr(plan.id) + '">Delete</button>' : "") + '</div></td>' +
           '</tr>';
         }).join("") || '<tr><td colspan="10" class="muted">No initiated behavior plans.</td></tr>';
         document.querySelectorAll("[data-behavior-config]").forEach((button) => button.addEventListener("click", () => openInitiatedBehaviorConfig(button.dataset.behaviorConfig)));
@@ -69,8 +67,8 @@ export function renderInitiatedBehaviorsScript(): string {
         $("behaviorAdd").disabled = true;
         try {
           const body = kind === "randomized"
-            ? { id, kind, enabled: true, weight: 0, priority: 0, promptProfile: { layers: [] } }
-            : { id, kind, enabled: true, triggerEvent: "", promptProfile: { layers: [] } };
+            ? { id, kind, enabled: true, weight: 0, priority: 0, promptProfile: { meta: {}, messages: [] } }
+            : { id, kind, enabled: true, triggerEvent: "", promptProfile: { meta: {}, messages: [] } };
           const response = await fetch("/admin/api/initiated-behaviors", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -87,7 +85,7 @@ export function renderInitiatedBehaviorsScript(): string {
         }
       }
       async function deleteInitiatedBehavior(id) {
-        if (!id || !confirm("Delete custom behavior " + id + "?")) return;
+        if (!id || !confirm("Delete behavior " + id + "?")) return;
         try {
           const response = await fetch("/admin/api/initiated-behaviors/" + encodeURIComponent(id), { method: "DELETE" });
           if (!response.ok) throw new Error(await response.text());
@@ -134,8 +132,7 @@ export function renderInitiatedBehaviorsScript(): string {
         const detail = (initiatedBehaviorPayload.plans || []).find((plan) => plan.id === id);
         if (!detail) return;
         behaviorConfigId = id;
-        behaviorConfigLayers = cloneBehaviorLayers(detail.promptProfile?.layers || []);
-        behaviorConfigLayerIndex = 0;
+        behaviorConfigLayerDocument = cloneLayerDocument(detail.promptProfile);
         $("behaviorListPanel").style.display = "none";
         $("behaviorConfigPanel").classList.add("active");
         $("behaviorConfigPanel").style.display = "block";
@@ -160,116 +157,28 @@ export function renderInitiatedBehaviorsScript(): string {
           ? '<h2>Event</h2><label for="behaviorConfigTriggerEvent">triggerEvent</label><input id="behaviorConfigTriggerEvent" value="' + escapeAttr(current.triggerEvent || "") + '" />'
           : '<h2>Randomized</h2><label for="behaviorConfigWeight">Weight</label><input id="behaviorConfigWeight" type="number" step="0.01" value="' + escapeAttr(valueOrDash(current.weight) === "-" ? "0" : valueOrDash(current.weight)) + '" /><label for="behaviorConfigPriority">Priority</label><input id="behaviorConfigPriority" type="number" step="1" value="' + escapeAttr(valueOrDash(current.priority) === "-" ? "0" : valueOrDash(current.priority)) + '" />';
       }
-      function cloneBehaviorLayers(layers) {
-        return (layers || []).map((layer, index) => ({
-          id: layer.id || "layer_" + (index + 1),
-          title: layer.title || layer.id || "Layer " + (index + 1),
-          role: behaviorLayerRoles.includes(layer.role) ? layer.role : "user",
-          name: layer.name || "",
-          enabled: layer.enabled !== false,
-          content: layer.content || "",
-          order: Number.isFinite(Number(layer.order)) ? Number(layer.order) : (index + 1) * 10,
-          toolCalls: layer.role === "tool_request" ? cloneToolCalls(layer.toolCalls) : undefined,
-          thinking: (layer.role === "assistant" || layer.role === "tool_request") ? (layer.thinking || "") : undefined
-        }));
-      }
-      function syncCurrentBehaviorLayerFromEditor() {
-        // Behavior prompt layers are edited directly in their details blocks, matching the main Prompt page.
-      }
       function renderBehaviorLayerEditor() {
-        const layers = [...behaviorConfigLayers].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
-        $("behaviorPromptLayerList").innerHTML = layers.map((layer, index) => renderBehaviorPromptLayer(layer, index, layers.length)).join("") || '<p class="muted">No prompt layers yet.</p>';
-        layers.forEach((layer, index) => bindBehaviorPromptLayer(layer, index, layers));
+        $("behaviorPromptLayerList").innerHTML = renderLayerDocument(behaviorConfigLayerDocument, { editorId: "behavior", roles: ["user", "assistant", "tool"] }) || '<p class="muted">No prompt messages yet.</p>';
+        bindLayerDocument(behaviorConfigLayerDocument, {
+          editorId: "behavior",
+          render: renderBehaviorLayerEditor,
+          onInput: renderBehaviorPromptPreview
+        });
         renderBehaviorPromptPreview();
       }
-      function addBehaviorLayer(role = "user") {
-        const nextIndex = behaviorConfigLayers.length + 1;
-        const normalizedRole = role === "tool_request" ? "tool_request" : "user";
-        const layer = {
-          id: "layer_" + nextIndex,
-          title: "Layer " + nextIndex,
-          role: normalizedRole,
-          enabled: true,
-          order: nextIndex * 10
-        };
-        if (normalizedRole === "tool_request") {
-          behaviorConfigLayers.push({ ...layer, content: "", thinking: "", toolCalls: [{ toolName: "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }] });
-        } else {
-          behaviorConfigLayers.push({ ...layer, content: "" });
-        }
-        renderBehaviorLayerEditor();
-      }
-      function renderBehaviorPromptLayer(layer, index, count) {
-        const role = behaviorLayerRoles.includes(layer.role) ? layer.role : "user";
-        return renderPromptLayerDetails({
-          attributes: 'data-behavior-layer-id="' + escapeAttr(layer.id) + '"',
-          title: layer.title,
-          role,
-          name: layer.name,
-          roleOptions: behaviorLayerRoles,
-          enabled: layer.enabled,
-          toolCalls: layer.toolCalls,
-          thinking: layer.thinking,
-          content: layer.content,
-          index,
-          count
+      function addBehaviorLayer(toolCall = false) {
+        addLayerMessage(behaviorConfigLayerDocument, {
+          title: "Message " + (behaviorConfigLayerDocument.messages.length + 1),
+          role: "user",
+          toolCall,
+          toolName: "Chat"
         });
-      }
-      function bindBehaviorPromptLayer(layer, index, sortedLayers) {
-        const root = document.querySelector('[data-behavior-layer-id="' + cssEscape(layer.id) + '"]');
-        if (!root) return;
-        root.querySelector('[data-field="title"]').addEventListener("input", (event) => {
-          layer.title = event.target.value;
-          renderBehaviorPromptPreview();
-        });
-        root.querySelector('[data-field="name"]').addEventListener("input", (event) => {
-          layer.name = event.target.value;
-          renderBehaviorPromptPreview();
-        });
-        root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
-          layer.role = behaviorLayerRoles.includes(event.target.value) ? event.target.value : "user";
-          if (layer.role !== "tool_request") {
-            delete layer.toolCalls;
-          } else {
-            layer.toolCalls = cloneToolCalls(layer.toolCalls);
-            if (!layer.toolCalls.length) layer.toolCalls = [{ toolName: "Chat", toolArguments: "{\\"action\\":\\"poll\\"}" }];
-          }
-          if (layer.role !== "assistant" && layer.role !== "tool_request") delete layer.thinking;
-          renderBehaviorLayerEditor();
-        });
-        root.querySelector('[data-field="enabled"]').addEventListener("change", (event) => {
-          layer.enabled = event.target.checked;
-          renderBehaviorPromptPreview();
-        });
-        root.querySelector('[data-field="thinking"]')?.addEventListener("input", (event) => {
-          layer.thinking = event.target.value;
-          renderBehaviorPromptPreview();
-        });
-        root.querySelector('[data-field="toolCalls"]')?.addEventListener("input", (event) => updateToolCallsFromTextarea(layer, event.target.value, renderBehaviorPromptPreview));
-        root.querySelector('[data-field="content"]')?.addEventListener("input", (event) => {
-          layer.content = event.target.value;
-          renderBehaviorPromptPreview();
-        });
-        root.querySelector('[data-action="delete"]').addEventListener("click", () => {
-          behaviorConfigLayers = behaviorConfigLayers.filter((item) => item.id !== layer.id);
-          renderBehaviorLayerEditor();
-        });
-        root.querySelector('[data-action="up"]').addEventListener("click", () => moveBehaviorPromptLayer(index, -1, sortedLayers));
-        root.querySelector('[data-action="down"]').addEventListener("click", () => moveBehaviorPromptLayer(index, 1, sortedLayers));
-      }
-      function moveBehaviorPromptLayer(index, delta, sortedLayers) {
-        const nextIndex = index + delta;
-        if (nextIndex < 0 || nextIndex >= sortedLayers.length) return;
-        const currentOrder = sortedLayers[index].order;
-        sortedLayers[index].order = sortedLayers[nextIndex].order;
-        sortedLayers[nextIndex].order = currentOrder;
         renderBehaviorLayerEditor();
       }
       function renderBehaviorPromptPreview() {
-        const messages = behaviorConfigLayers
-          .filter((layer) => layer.enabled !== false)
-          .sort((left, right) => (Number(left.order) || 0) - (Number(right.order) || 0))
-          .map((layer) => behaviorLayerToPreviewMessage(layer));
+        const messages = behaviorConfigLayerDocument.messages
+          .filter((message) => message.meta?.enabled !== false)
+          .map((message) => behaviorMessageToPreview(message));
         $("behaviorPromptPreview").innerHTML = messages.length
           ? renderLLMRequestBlock("Initiated Behavior Prompt · " + behaviorConfigId, {
             source: "initiated-behavior-config",
@@ -278,31 +187,24 @@ export function renderInitiatedBehaviorsScript(): string {
             messages,
             tools: []
           })
-          : "No enabled prompt layers.";
+          : "No enabled prompt messages.";
       }
-      function behaviorLayerToPreviewMessage(layer) {
-        if (layer.role === "tool_request") {
-          return {
-            role: "assistant",
-            name: layer.name || undefined,
-            content: renderPromptPreviewText(layer.content || ""),
-            reasoningContent: renderPromptPreviewText(layer.thinking || layer.content || ""),
-            toolCalls: cloneToolCalls(layer.toolCalls).map((call, index) => ({
-              id: call.toolCallId || "initiated_" + behaviorConfigId + "_" + layer.id + "_" + (index + 1),
-              type: "function",
-              function: {
-                name: call.toolName,
-                arguments: renderPromptPreviewText(call.toolArguments)
-              }
-            }))
-          };
-        }
-        return {
-          role: layer.role === "assistant" ? "assistant" : "user",
-          name: layer.name || undefined,
-          content: renderPromptPreviewText(layer.content || ""),
-          reasoningContent: layer.role === "assistant" && layer.thinking ? renderPromptPreviewText(layer.thinking) : undefined
+      function behaviorMessageToPreview(message) {
+        const { meta, ...preview } = message;
+        const rendered = {
+          ...preview,
+          name: message.name ? renderPromptPreviewText(message.name) : undefined,
+          content: typeof message.content === "string" ? renderPromptPreviewText(message.content) : message.content,
+          reasoningContent: message.reasoningContent ? renderPromptPreviewText(message.reasoningContent) : undefined
         };
+        if (Array.isArray(message.toolCalls)) rendered.toolCalls = cloneToolCalls(message.toolCalls).map((call) => ({
+            ...call,
+            function: {
+              name: call.function.name,
+              arguments: renderPromptPreviewText(call.function.arguments)
+            }
+          }));
+        return rendered;
       }
       function renderPromptPreviewText(value) {
         return String(value || "").replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (_, key) => {
@@ -316,12 +218,11 @@ export function renderInitiatedBehaviorsScript(): string {
       }
       async function saveBehaviorConfig() {
         if (!behaviorConfigId) return;
-        syncCurrentBehaviorLayerFromEditor();
         const detail = (initiatedBehaviorPayload.plans || []).find((plan) => plan.id === behaviorConfigId);
         const kind = $("behaviorConfigType").value === "randomized" ? "randomized" : "event";
         const body = {
           kind,
-          promptProfile: { layers: behaviorConfigLayers }
+          promptProfile: behaviorConfigLayerDocument
         };
         if (typeof detail?.enabled === "boolean") body.enabled = detail.enabled;
         if (kind === "event") {

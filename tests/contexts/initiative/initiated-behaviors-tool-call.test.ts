@@ -9,12 +9,13 @@ import {
   writeInitiatedBehaviorProfile
 } from "./initiated-behaviors-helpers.js";
 
-test("initiated behavior prompt layers use enabled order", async () => {
+test("initiated behavior messages use array order and meta enabled", async () => {
   const filePath = writeInitiatedBehaviorProfile("initiated-behavior-order", {
-    layers: [
-      { id: "second", title: "Second", role: "user", enabled: true, content: "", order: 20 },
-      { id: "disabled", title: "Disabled", role: "user", enabled: false, content: "", order: 5 },
-      { id: "first", title: "First", role: "system", enabled: true, content: "", order: 10 }
+    meta: {},
+    messages: [
+      { meta: { title: "First", enabled: true }, role: "system", content: "" },
+      { meta: { title: "Disabled", enabled: false }, role: "user", content: "" },
+      { meta: { title: "Second", enabled: true }, role: "user", content: "" }
     ]
   });
 
@@ -30,20 +31,18 @@ test("initiated behavior prompt layers use enabled order", async () => {
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
 });
 
-test("initiated behavior prompt layers execute assistant tool request layers", async () => {
+test("initiated behavior assistant messages execute tool calls", async () => {
   const filePath = writeInitiatedBehaviorProfile("initiated-behavior-tool", {
-    layers: [{
-      id: "fake_tool",
-      title: "Fake Tool",
-      role: "tool_request",
-      enabled: true,
+    meta: {},
+    messages: [{
+      meta: { title: "Fake Tool", enabled: true },
+      role: "assistant",
       content: "",
       toolCalls: [{
-        toolName: "Chat",
-        toolCallId: "call_Chat",
-        toolArguments: "{\"target\":\"{{user}}\"}"
-      }],
-      order: 10
+        id: "call_Chat",
+        type: "function",
+        function: { name: "Chat", arguments: "{\"target\":\"{{user}}\"}" }
+      }]
     }]
   });
   const toolCalls: ToolCall[] = [];
@@ -66,17 +65,15 @@ test("initiated behavior prompt layers execute assistant tool request layers", a
 
 test("initiated behavior prompt layers execute every assistant tool call", async () => {
   const filePath = writeInitiatedBehaviorProfile("initiated-behavior-tools", {
-    layers: [{
-      id: "fake_tools",
-      title: "Fake Tools",
-      role: "tool_request",
-      enabled: true,
+    meta: {},
+    messages: [{
+      meta: { title: "Fake Tools", enabled: true },
+      role: "assistant",
       content: "",
       toolCalls: [
-        { toolName: "Chat", toolCallId: "call_one", toolArguments: "{\"target\":\"{{user}}\"}" },
-        { toolName: "Chat", toolCallId: "call_two", toolArguments: "{\"query\":\"{{user}}\"}" }
-      ],
-      order: 10
+        { id: "call_one", type: "function", function: { name: "Chat", arguments: "{\"target\":\"{{user}}\"}" } },
+        { id: "call_two", type: "function", function: { name: "Chat", arguments: "{\"query\":\"{{user}}\"}" } }
+      ]
     }]
   });
   const toolCalls: ToolCall[] = [];

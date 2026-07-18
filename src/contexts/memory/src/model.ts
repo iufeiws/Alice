@@ -26,18 +26,11 @@ export type MemoryFileStats = {
   maxBytes: number;
 };
 
-export type MemoryPromptLayer = PromptLayer;
-
-export type MemoryInductionPrompts = {
-  commonLayers: MemoryPromptLayer[];
-  persistentLayers: MemoryPromptLayer[];
-  userPreferencesLayers: MemoryPromptLayer[];
-  yesterdaySummaryLayers: MemoryPromptLayer[];
-};
+export type MemoryInductionPrompts = PromptLayer;
 
 export type MemoryInductionPromptStore = {
   get(): MemoryInductionPrompts;
-  save(prompts: Partial<MemoryInductionPrompts>): MemoryInductionPrompts;
+  save(prompts: unknown): MemoryInductionPrompts;
 };
 
 export type SleepMemoryState = {

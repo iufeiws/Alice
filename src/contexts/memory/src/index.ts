@@ -3,7 +3,6 @@ export type {
   MemoryInductionPrompts,
   MemoryInductionPromptStore,
   MemoryInductionSession,
-  MemoryPromptLayer,
   MemoryPromptPreview,
   MemoryRunResult,
   MemoryRunSummary,

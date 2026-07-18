@@ -17,7 +17,6 @@ export type AgentLoopPromptToolRequest = {
 };
 
 export async function runPromptToolRequest(
-  _layer: unknown,
   call: AgentLoopPromptToolRequest,
   options: AgentLoopToolExecutionOptions = {}
 ): Promise<ToolResult> {

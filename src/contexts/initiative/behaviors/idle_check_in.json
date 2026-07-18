@@ -1,13 +1,14 @@
 {
-  "layers": [
+  "meta": {},
+  "messages": [
     {
-      "id": "instruction",
-      "title": "Idle Check In",
+      "meta": {
+        "title": "Idle Check In",
+        "enabled": true
+      },
       "role": "user",
       "name": "Cheshire Cat",
-      "enabled": true,
-      "content": "用户已经有一段时间没有互动。低打扰地向{{user}}发起一句轻量问候。",
-      "order": 10
+      "content": "用户已经有一段时间没有互动。低打扰地向{{user}}发起一句轻量问候。"
     }
   ]
 }

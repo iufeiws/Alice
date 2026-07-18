@@ -29,6 +29,8 @@ export function createApiCapabilitiesRuntime(input: {
   recordTokenUsageEvent(event: any): void;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   memoryStore: any;
+  randomEventStore: any;
+  getApprovalService(): any;
 }) {
   let getLLMRequestToolDefinition: (name: string) => any = () => undefined;
   const llmRequests = createLLMRequestsRuntime({
@@ -65,6 +67,8 @@ export function createApiCapabilitiesRuntime(input: {
     coreProfileStore: input.coreProfileStore,
     skillsRegistry: input.skillsRegistry,
     promptContextRuntime: input.promptContextRuntime,
+    randomEventStore: input.randomEventStore,
+    getApprovalService: input.getApprovalService,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,

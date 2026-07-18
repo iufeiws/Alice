@@ -1,13 +1,14 @@
 {
-  "layers": [
+  "meta": {},
+  "messages": [
     {
-      "id": "instruction",
-      "title": "Force Wake Reply",
+      "meta": {
+        "title": "Force Wake Reply",
+        "enabled": true
+      },
       "role": "user",
       "name": "Cheshire Cat",
-      "enabled": true,
-      "content": "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊。",
-      "order": 10
+      "content": "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊。"
     }
   ]
 }

@@ -13,7 +13,7 @@ const path = await import("node:path");
 export async function savePromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.promptProfileStore, body as PromptProfile);
-  context.appendLog("info", `prompt profile saved: layers=${profile.layers.length}`);
+  context.appendLog("info", `prompt profile saved: messages=${profile.layers.messages.length}`);
   writeJson(response, 200, {
     ok: true,
     profile,
@@ -24,7 +24,7 @@ export async function savePromptProfile(context: AdminRoutesContext, request: an
 export async function saveTalkPromptProfile(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const profile = savePromptProfileOrThrow(context.talkPromptProfileStore, body as PromptProfile);
-  context.appendLog("info", `talk prompt profile saved: layers=${profile.layers.length}`);
+  context.appendLog("info", `talk prompt profile saved: messages=${profile.layers.messages.length}`);
   writeJson(response, 200, {
     ok: true,
     profile,

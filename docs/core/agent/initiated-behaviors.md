@@ -22,9 +22,9 @@
 | `llm_instruction` | 读取指定 prompt profile layer 并加入本次 LLM 请求 |
 | `record_only` | 只记录运行结果 |
 
-## 默认配置
+## 配置来源
 
-默认行为定义在 `src/contexts/initiative/src/domain/initiated-behavior.ts`，默认 prompt profile 文件在 `src/contexts/initiative/behaviors/`。
+事件驱动行为定义在 `src/contexts/initiative/src/domain/initiated-behavior.ts`，prompt profile 文件位于 `src/contexts/initiative/behaviors/`。
 
 当前事件驱动行为包括：
 
@@ -33,7 +33,7 @@
 - `sleep_force_wake`
 - `calendar_reminder`
 
-当前随机行为类型包括：
+Random Events 位于 `src/contexts/initiative/random-events/`。每个 JSON 文件使用统一 Layer 协议 `{ meta, messages }`：事件的 id、enabled、weight、priority 位于顶层 `meta`，消息编辑元数据位于各 message 的 `meta`；不存在内置/自定义之分，文件可创建、修改或删除。当前数据包括：
 
 - `ritual`
 - `review`
@@ -43,7 +43,7 @@
 - `invite`
 - `real_world_suggestion`
 
-随机行为只有启用、非 dry run、权重大于 0 时才会进入抽样。
+Random Event 只有启用且权重大于 0 时才会进入抽样。messages 按数组顺序构筑，`message.meta.enabled: false` 的消息不会发送；assistant message 中持久化的 `toolCalls` 会通过统一工具执行链执行并紧邻追加 tool result。Agent 可加载 `manage-random-events` skill，在 sandbox 快照中编辑这些文件；只有逐文件审批通过的修改才会写入正式目录并立即生效。
 
 ## 执行流程
 

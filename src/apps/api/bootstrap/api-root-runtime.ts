@@ -55,6 +55,7 @@ export function createApiRootRuntime() {
       return streetView.filePath;
     },
     sendMemoryFailureNotice: () => apiControlRuntime.outboundNoticeRuntime.sendMemoryFailureNoticeToFeishu(),
+    getApprovalService: () => apiServerStackRuntime.apiCommunicationRuntime.approvalService,
     appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendMessageLog: foundation.appendMessageLog

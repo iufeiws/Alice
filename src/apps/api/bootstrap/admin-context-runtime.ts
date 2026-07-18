@@ -2,6 +2,7 @@ import type { AppConfig } from "./app-config-runtime.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
+import type { AgentInitiatedBehaviorConfigPatch } from "../../../contexts/initiative/src/adapters/json-initiated-behavior-store.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { createAdminRouteServices } from "./admin-api-service.js";
@@ -9,30 +10,6 @@ import type { AdminRuntimeContext, PromptVariableTree } from "./admin-route-cont
 import { createApiRequestHandler } from "../routes/admin-routes.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
-type AgentInitiatedBehaviorConfigPatch = {
-  enabled?: boolean;
-  kind?: AgentInitiatedBehaviorPlan["kind"];
-  triggerEvent?: string;
-  weight?: number;
-  priority?: number;
-  promptProfile?: {
-    layers: Array<{
-      id: string;
-      title: string;
-      role: "user" | "assistant" | "tool_request";
-      enabled: boolean;
-      content: string;
-      order: number;
-      toolCalls?: Array<{
-        toolName: string;
-        toolCallId?: string;
-        toolArguments: string;
-      }>;
-      thinking?: string;
-    }>;
-  };
-};
-
 export function createAdminRequestHandlerRuntime(input: {
   config: AppConfig;
   logs: unknown[];

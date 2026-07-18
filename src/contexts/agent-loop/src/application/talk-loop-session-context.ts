@@ -75,7 +75,7 @@ export async function prepareTalkLoopSessionContext(input: {
   };
   const renderer = promptRenderer(context);
   const runPromptTool = async (_layer: unknown, call: ToolCall) => {
-    const result = await runPromptToolRequest(_layer, call, {
+    const result = await runPromptToolRequest(call, {
       context: { lastCompletedToolName: session?.lastCompletedToolName }
     });
     if (session) {

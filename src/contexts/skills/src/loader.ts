@@ -21,7 +21,11 @@ export class SkillLoadError extends Error {
   }
 }
 
-export function createSkillLoader(registry: SkillRegistry, sandbox?: { mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig }) {
+export function createSkillLoader(
+  registry: SkillRegistry,
+  sandbox?: { mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig },
+  onLoad?: (skill: SkillMetadata) => void
+) {
   return {
     load(name: string, args = ""): LoadedSkill {
       const skill = registry.get(name);
@@ -35,6 +39,7 @@ export function createSkillLoader(registry: SkillRegistry, sandbox?: { mountSkil
         containerPath: skill.sandboxRoot,
         readOnly: false
       });
+      onLoad?.(skill);
       return {
         id: skill.id,
         name: skill.name,

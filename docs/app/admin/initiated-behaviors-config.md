@@ -29,7 +29,7 @@
 
 ## Prompt Layers
 
-行为 prompt profile 文件位于 `src/contexts/initiative/behaviors/`。页面编辑的是可见 layer 数据；运行时使用公共 prompt layer 解析入口构筑 LLM messages。
+事件驱动行为的 prompt profile 位于 `src/contexts/initiative/behaviors/`；Random Events 的完整定义位于 `src/contexts/initiative/random-events/`。两者都使用统一 `{ meta, messages }` Layer 协议，页面通过公共 LayerEdit 编辑；运行时使用同一个 prompt layer 解析入口构筑 LLM messages。
 
 任何新增固定说明都必须先成为可见 layer，不能在运行时隐藏拼接。
 
@@ -47,4 +47,4 @@
 
 ## 边界
 
-后台页面只负责配置和展示，不负责生成行为语义、不绕过 ToolPlugin、不决定 tool 是否可用。
+后台页面只负责配置和展示，不负责生成行为语义、不绕过 ToolPlugin、不决定 tool 是否可用。所有 Random Events 均可删除；事件驱动内置行为仍不可删除。

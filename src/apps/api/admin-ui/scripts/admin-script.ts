@@ -56,8 +56,8 @@ ${renderPromptsScript()}
       $("behaviorTypeFilter").addEventListener("change", renderInitiatedBehaviorList);
       $("behaviorConfigSave").addEventListener("click", saveBehaviorConfig);
       $("behaviorConfigReset").addEventListener("click", resetBehaviorConfig);
-      $("behaviorLayerAdd").addEventListener("click", () => addBehaviorLayer("user"));
-      $("behaviorToolLayerAdd").addEventListener("click", () => addBehaviorLayer("tool_request"));
+      $("behaviorLayerAdd").addEventListener("click", () => addBehaviorLayer(false));
+      $("behaviorToolLayerAdd").addEventListener("click", () => addBehaviorLayer(true));
       bindBehaviorLayerEditorEvents();
       document.querySelectorAll("[data-main-tab]").forEach((button) => button.addEventListener("click", async () => {
         setTabs("main", button.dataset.mainTab);

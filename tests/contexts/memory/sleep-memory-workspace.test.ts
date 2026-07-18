@@ -4,11 +4,10 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import {
   createMarkdownMemoryStore,
-  createMemoryInductionPromptStore,
   runMemoryInductionForMessages
 } from "../../../src/contexts/memory/src/memory.js";
 import type { LLMChatInput } from "../../../src/contexts/llm-gateway/src/index.js";
-import { makeMemorySandbox, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
+import { createTestMemoryPromptStore, makeMemorySandbox, makeTempDir, memoryConfig, message } from "./sleep-memory-helpers.js";
 
 test("memorySelfTalk_validContent_returnsToolResult", async () => {
   const root = makeTempDir("memory-self-talk");
@@ -19,7 +18,7 @@ test("memorySelfTalk_validContent_returnsToolResult", async () => {
 
   const result = await runMemoryInductionForMessages({
     memoryStore,
-    promptStore: createMemoryInductionPromptStore(path.join(root, "prompts.json")),
+    promptStore: createTestMemoryPromptStore(root),
     promptContextRuntime: testPromptRuntime(),
     sandbox,
     messages: [message("2026-05-24T01:00:00.000Z", "hello")],

@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import type { StoredConversationMessage } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { BashSandboxConfig, BashSandboxRuntime } from "../../../src/contexts/bash-sandbox/src/index.js";
+import { createMemoryInductionPromptStore } from "../../../src/contexts/memory/src/memory.js";
 
 export function memoryConfig() {
   return {
@@ -40,6 +41,15 @@ export function makeTempDir(name: string): string {
   const dir = path.join(os.tmpdir(), "alice-tests", `alice-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+export function createTestMemoryPromptStore(root: string) {
+  const store = createMemoryInductionPromptStore(path.join(root, "prompts.json"));
+  store.save({
+    meta: {},
+    messages: [{ meta: { title: "Test", enabled: true }, role: "user", content: "" }]
+  });
+  return store;
 }
 
 export function makeMemorySandbox(root: string): { config: BashSandboxConfig; runtime: BashSandboxRuntime } {

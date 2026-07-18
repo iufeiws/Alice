@@ -43,7 +43,7 @@ Random Events 位于 `src/contexts/initiative/random-events/`。每个 JSON 文�
 - `invite`
 - `real_world_suggestion`
 
-Random Event 只有启用且权重大于 0 时才会进入抽样。messages 按数组顺序构筑，`message.meta.enabled: false` 的消息不会发送；assistant message 中持久化的 `toolCalls` 会通过统一工具执行链执行并紧邻追加 tool result。Agent 可加载 `manage-random-events` skill，在 sandbox 快照中编辑这些文件；只有逐文件审批通过的修改才会写入正式目录并立即生效。
+Random Event 只有启用且权重大于 0 时才会进入抽样。messages 按数组顺序构筑，`message.meta.enabled: false` 的消息不会发送；assistant message 中持久化的 `toolCalls` 会通过统一工具执行链执行并紧邻追加 tool result。Agent 可加载 `initiated-behavior-managing` skill，在 sandbox 快照中编辑这些文件；只有逐文件审批通过的修改才会写入正式目录并立即生效。
 
 ## 执行流程
 

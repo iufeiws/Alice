@@ -1,0 +1,4 @@
+interface:
+  display_name: "管理 Initiated Behaviors"
+  short_description: "在 sandbox 中设计并审批提交主动行为"
+  default_prompt: "使用 $initiated-behavior-managing 创建或管理主动行为。"

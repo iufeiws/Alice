@@ -11,9 +11,9 @@ import {
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export const randomEventSubmissionMarker = "ALICE_RANDOM_EVENTS_SUBMIT_V1";
-export const randomEventSkillName = "manage-random-events";
-export const randomEventSkillWorkspacePath = `/skills/${randomEventSkillName}/events`;
+export const initiatedBehaviorManagingSubmissionMarker = "ALICE_INITIATED_BEHAVIORS_SUBMIT_V1";
+export const initiatedBehaviorManagingSkillName = "initiated-behavior-managing";
+export const initiatedBehaviorManagingWorkspacePath = `/skills/${initiatedBehaviorManagingSkillName}/events`;
 
 export type RandomEventSubmissionResult = {
   type: "random_events";
@@ -31,11 +31,11 @@ export function createRandomEventSandboxRuntime(input: {
   sandbox: BashSandboxRuntime;
   getApprovalService(): ApprovalService;
 }) {
-  const workspaceRoot = path.resolve(input.hostWorkspaceRoot, ".skills", randomEventSkillName, "events");
+  const workspaceRoot = path.resolve(input.hostWorkspaceRoot, ".skills", initiatedBehaviorManagingSkillName, "events");
 
   return {
     prepareSkill(skill: { name: string; hostRoot: string; sandboxRoot: string }): void {
-      if (skill.name !== randomEventSkillName) return;
+      if (skill.name !== initiatedBehaviorManagingSkillName) return;
       resetWorkspace(workspaceRoot, input.store.list());
       input.sandbox.mountSkill({
         id: skill.name,
@@ -44,14 +44,14 @@ export function createRandomEventSandboxRuntime(input: {
         readOnly: true
       });
       input.sandbox.mountSkill({
-        id: `${randomEventSkillName}-events`,
+        id: `${initiatedBehaviorManagingSkillName}-events`,
         hostPath: workspaceRoot,
-        containerPath: randomEventSkillWorkspacePath,
+        containerPath: initiatedBehaviorManagingWorkspacePath,
         readOnly: false
       });
     },
     async handleBashResult(result: BashRuntimeResult): Promise<RandomEventSubmissionResult | undefined> {
-      if (result.exitCode !== 0 || result.timedOut || result.denied || result.stdout.trim() !== randomEventSubmissionMarker) return undefined;
+      if (result.exitCode !== 0 || result.timedOut || result.denied || result.stdout.trim() !== initiatedBehaviorManagingSubmissionMarker) return undefined;
       return await submitWorkspace({
         workspaceRoot,
         store: input.store,

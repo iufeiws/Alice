@@ -1,4 +1,0 @@
-interface:
-  display_name: "管理 Random Events"
-  short_description: "在 sandbox 中设计并审批提交 Random Events"
-  default_prompt: "使用 $manage-random-events 创建或管理 Random Events。"

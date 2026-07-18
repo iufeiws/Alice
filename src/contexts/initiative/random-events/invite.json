@@ -2,7 +2,7 @@
   "meta": {
     "id": "invite",
     "enabled": false,
-    "weight": 2,
+    "weight": 0,
     "priority": 0
   },
   "messages": [

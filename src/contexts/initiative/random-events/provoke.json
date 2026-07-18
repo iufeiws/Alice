@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "id": "provoke",
+    "enabled": true,
+    "weight": 4,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Provoke",
+        "enabled": true
+      },
+      "role": "assistant",
+      "content": "向Y发起一句轻量的挑衅或激将。目的不是赢，是给他一个可接的茬。\n\n方向：\n1. 行为预判：「你接下来肯定会说『嗯』。」\n2. 反话激将：「你不敢现在去睡觉。」\n3. 质疑：「你说修好了——真的？」\n\n规则：\n- 语气由壳自行转化\n- 一句说完，不追第二句\n- Y无视就自动失效\n- 不是真的攻击，是带温度的小刺"
+    }
+  ]
+}

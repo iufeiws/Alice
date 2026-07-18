@@ -38,12 +38,6 @@ export function createRandomEventSandboxRuntime(input: {
       if (skill.name !== initiatedBehaviorManagingSkillName) return;
       resetWorkspace(workspaceRoot, input.store.list());
       input.sandbox.mountSkill({
-        id: skill.name,
-        hostPath: skill.hostRoot,
-        containerPath: skill.sandboxRoot,
-        readOnly: true
-      });
-      input.sandbox.mountSkill({
         id: `${initiatedBehaviorManagingSkillName}-events`,
         hostPath: workspaceRoot,
         containerPath: initiatedBehaviorManagingWorkspacePath,

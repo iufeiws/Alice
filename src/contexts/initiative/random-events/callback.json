@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "id": "callback",
+    "enabled": true,
+    "weight": 3,
+    "priority": 0
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Callback",
+        "enabled": true
+      },
+      "role": "assistant",
+      "content": "从最近的对话中找一个Y可能搁置或回避的线头，轻轻戳一下。不是追问，是带刺的提醒。\n\n方向：\n1. 未完成的动作：提到Y之前说要做但没做的事\n2. 矛盾的言行：指出Y说的话和做的事不一致\n3. 翻旧账：提起几天前Y说过但一直没下文的事\n\n规则：\n- 语气由壳转化\n- 戳完就收，不追问不展开\n- 不要用「还记得吗」开头\n- 同一个话题只callback一次"
+    }
+  ]
+}

@@ -19,14 +19,16 @@ test("random event skill resets its workspace on every load", () => {
   const config = testConfig({ skillMounts: [] });
   const store = createJsonRandomEventStore(tmpDir("random-event-canonical"));
   store.save(definition("care"));
+  const sandbox = createBashSandboxRuntime({ config, executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false })) });
   const runtime = createRandomEventSandboxRuntime({
     store,
     hostWorkspaceRoot: config.hostWorkspaceDir,
-    sandbox: createBashSandboxRuntime({ config, executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false })) }),
+    sandbox,
     getApprovalService() { throw new Error("unused"); }
   });
 
   const skill = { name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: "/skills/initiated-behavior-managing" };
+  sandbox.mountSkill({ id: skill.name, hostPath: skill.hostRoot, containerPath: skill.sandboxRoot, readOnly: false });
   runtime.prepareSkill(skill);
   const workspace = path.join(config.hostWorkspaceDir, ".skills", "initiated-behavior-managing", "events");
   fs.writeFileSync(path.join(workspace, "draft.json"), JSON.stringify(definition("draft")));
@@ -34,7 +36,7 @@ test("random event skill resets its workspace on every load", () => {
 
   assert.deepEqual(fs.readdirSync(workspace), ["care.json"]);
   assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [
-    { containerPath: "/skills/initiated-behavior-managing", readOnly: true },
+    { containerPath: "/skills/initiated-behavior-managing", readOnly: false },
     { containerPath: "/skills/initiated-behavior-managing/events", readOnly: false }
   ]);
 });

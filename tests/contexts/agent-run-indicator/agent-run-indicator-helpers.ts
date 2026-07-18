@@ -111,6 +111,9 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
     async createApprovalCard() {
       throw new Error("unused");
     },
+    async deleteMessage() {
+      throw new Error("unused");
+    },
     async createAgentRunCard(input) {
       calls.push({ kind: "create", receiveId: input.receiveId, blocks: { ...input.blocks } });
       return { messageId: "om_new", cardId: "card_new" };
@@ -135,8 +138,8 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
       calls.push({ kind: "tool-create", receiveId: input.receiveId, toolName: input.toolName });
       return { messageId: "om_tool", cardId: "card_tool" };
     },
-    async appendToolExecutionCardPanel(input) {
-      calls.push({ kind: "tool-append", cardId: input.cardId, toolName: input.toolName, sequence: input.sequence });
+    async groupToolExecutionCard(input) {
+      calls.push({ kind: "tool-append", cardId: input.cardId, toolName: input.panels.at(-1)?.toolName ?? "", sequence: input.sequence });
     },
     async updateToolExecutionCard(input) {
       calls.push({

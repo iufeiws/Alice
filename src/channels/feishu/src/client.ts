@@ -1,7 +1,7 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuCardActionEvent, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset, FeishuToolExecutionCardBlock } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuCardActionEvent, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset, FeishuToolExecutionCardBlock, FeishuToolExecutionPanel } from "./types.js";
 
 const FEISHU_CARD_MAX_BYTES = 30 * 1024;
 
@@ -291,6 +291,12 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       deps.log?.("info", `[feishu] created approval card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return { messageId: message.messageId, cardId };
     },
+    async deleteMessage(input) {
+      assertStarted(client);
+      const result = await client.im.v1.message.delete({ path: { message_id: input.messageId } });
+      if (result?.code && result.code !== 0) throw new Error(`Feishu message delete failed (code=${result.code} msg=${result.msg ?? "unknown"})`);
+      deps.log?.("info", `[feishu] deleted message ${input.messageId}`);
+    },
     async createAgentRunCard(input) {
       assertStarted(client);
       const card = await client.cardkit.v1.card.create({
@@ -384,24 +390,20 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         cardId
       };
     },
-    async appendToolExecutionCardPanel(input) {
+    async groupToolExecutionCard(input) {
       assertStarted(client);
-      await client.cardkit.v1.cardElement.create({
+      await client.cardkit.v1.cardElement.update({
         path: {
-          card_id: input.cardId
+          card_id: input.cardId,
+          element_id: input.rootElementId
         },
         data: {
-          type: "append",
-          elements: JSON.stringify([buildToolExecutionPanel(input.toolName, input.call, input.result, {
-            titleElementId: input.titleElementId,
-            callElementId: input.callElementId,
-            resultElementId: input.resultElementId
-          })]),
+          element: JSON.stringify(buildToolExecutionGroup(input.panels, input.rootElementId)),
           sequence: input.sequence,
-          uuid: `tool_execution_append_${input.cardId}_${input.sequence}`
+          uuid: `tool_execution_group_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] appended tool execution panel ${input.cardId} sequence=${input.sequence}`);
+      deps.log?.("info", `[feishu] grouped ${input.panels.length} tool execution panels ${input.cardId} sequence=${input.sequence}`);
     },
     async updateToolExecutionCard(input) {
       assertStarted(client);
@@ -542,7 +544,7 @@ function buildMarkdownCard(markdown: string): Record<string, unknown> {
 }
 
 export function buildFeishuApprovalCard(input: { requestId: string; title: string; content: string }): Record<string, unknown> {
-  const button = (decision: "approved" | "rejected" | "revision_requested", text: string, type: "primary" | "danger" | "default") => ({
+  const button = (decision: "approved" | "rejected", text: string, type: "primary" | "danger") => ({
     tag: "button",
     text: { tag: "plain_text", content: text },
     type,
@@ -564,20 +566,19 @@ export function buildFeishuApprovalCard(input: { requestId: string; title: strin
           elements: [
             {
               tag: "input",
-              name: "revisionComment",
+              name: "comment",
               input_type: "multiline_text",
               rows: 3,
               max_length: 1000,
               required: false,
-              placeholder: { tag: "plain_text", content: "如需修改，请填写修改意见" }
+              placeholder: { tag: "plain_text", content: "可填写审批意见" }
             },
             {
               tag: "column_set",
               horizontal_spacing: "8px",
               columns: [
                 { tag: "column", width: "auto", elements: [button("approved", "同意", "primary")] },
-                { tag: "column", width: "auto", elements: [button("rejected", "拒绝", "danger")] },
-                { tag: "column", width: "auto", elements: [button("revision_requested", "修改", "default")] }
+                { tag: "column", width: "auto", elements: [button("rejected", "不同意", "danger")] }
               ]
             }
           ]
@@ -689,7 +690,22 @@ export function buildToolExecutionCard(toolName: string, call: string, result: s
   };
 }
 
-function buildToolExecutionPanel(toolName: string, call: string, result: string, ids: { titleElementId: string; callElementId: string; resultElementId: string }): Record<string, unknown> {
+export function buildToolExecutionGroup(panels: FeishuToolExecutionPanel[], rootElementId: string): Record<string, unknown> {
+  return {
+    tag: "collapsible_panel",
+    element_id: rootElementId,
+    expanded: false,
+    header: {
+      title: {
+        tag: "plain_text",
+        content: `Tool Calls [${panels.length}]`
+      }
+    },
+    elements: panels.map((panel) => buildToolExecutionPanel(panel.toolName, panel.call, panel.result, panel, panel.state))
+  };
+}
+
+function buildToolExecutionPanel(toolName: string, call: string, result: string, ids: { titleElementId: string; callElementId: string; resultElementId: string }, state: "running" | "finished" | "failed" = "running"): Record<string, unknown> {
   return {
     tag: "collapsible_panel",
     element_id: ids.titleElementId,
@@ -697,7 +713,7 @@ function buildToolExecutionPanel(toolName: string, call: string, result: string,
     header: {
       title: {
         tag: "plain_text",
-        content: `${toolName}: running`
+        content: `${toolName}: ${state}`
       }
     },
     elements: [

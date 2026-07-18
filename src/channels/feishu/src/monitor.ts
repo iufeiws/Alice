@@ -18,12 +18,13 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     addReaction: client.addReaction,
     removeReaction: client.removeReaction,
     createApprovalCard: client.createApprovalCard,
+    deleteMessage: client.deleteMessage,
     createAgentRunCard: client.createAgentRunCard,
     updateAgentRunCard: client.updateAgentRunCard,
     setAgentRunCardStreaming: client.setAgentRunCardStreaming,
     resolveAgentRunCardId: client.resolveAgentRunCardId,
     createToolExecutionCard: client.createToolExecutionCard,
-    appendToolExecutionCardPanel: client.appendToolExecutionCardPanel,
+    groupToolExecutionCard: client.groupToolExecutionCard,
     updateToolExecutionCard: client.updateToolExecutionCard,
     setToolExecutionCardStreaming: client.setToolExecutionCardStreaming
   };

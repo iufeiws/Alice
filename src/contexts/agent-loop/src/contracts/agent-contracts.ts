@@ -252,6 +252,7 @@ export type ToolExecutionContext = {
 
 export type ToolExecutionReporter = {
   begin(call: ToolCall): Promise<ToolExecutionReportSession | undefined> | ToolExecutionReportSession | undefined;
+  endSequence(): Promise<void> | void;
 };
 
 export type ToolExecutionReportSession = {

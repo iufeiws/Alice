@@ -2,7 +2,7 @@ import type { FeishuDynamicCardClient } from "../../../src/channels/feishu/src/t
 
 export type FakeToolExecutionCardCall =
   | { kind: "create"; receiveId: string; toolName: string; call: string; result: string }
-  | { kind: "append"; cardId: string; toolName: string; call: string; result: string; sequence: number }
+  | { kind: "group"; cardId: string; count: number; toolNames: string[]; sequence: number }
   | { kind: "update"; cardId: string; block: "title" | "result"; content: string; sequence: number }
   | { kind: "stream"; cardId: string; enabled: boolean; sequence: number };
 
@@ -14,6 +14,7 @@ export function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: FakeT
     contents,
     isStarted: () => true,
     async createApprovalCard() { throw new Error("unused"); },
+    async deleteMessage() { throw new Error("unused"); },
     async createAgentRunCard() { throw new Error("unused"); },
     async updateAgentRunCard() { throw new Error("unused"); },
     async setAgentRunCardStreaming() { throw new Error("unused"); },
@@ -23,9 +24,9 @@ export function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: FakeT
       contents.push(input.call, input.result);
       return { messageId: "om_tool", cardId: "card_tool" };
     },
-    async appendToolExecutionCardPanel(input) {
-      calls.push({ kind: "append", cardId: input.cardId, toolName: input.toolName, call: input.call, result: input.result, sequence: input.sequence });
-      contents.push(input.call, input.result);
+    async groupToolExecutionCard(input) {
+      calls.push({ kind: "group", cardId: input.cardId, count: input.panels.length, toolNames: input.panels.map((panel) => panel.toolName), sequence: input.sequence });
+      contents.push(...input.panels.flatMap((panel) => [panel.call, panel.result]));
     },
     async updateToolExecutionCard(input) {
       calls.push({ kind: "update", cardId: input.cardId, block: input.block, content: input.content, sequence: input.sequence });

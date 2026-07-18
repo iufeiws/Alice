@@ -20,7 +20,7 @@ export type RandomEventSubmissionResult = {
   results: Array<{
     id: string;
     operation: "create" | "update" | "delete";
-    status: "approved" | "rejected" | "revision_requested" | "stale";
+    status: "approved" | "rejected" | "stale";
     comment?: string;
   }>;
 };
@@ -87,11 +87,7 @@ async function submitWorkspace(input: {
       content: approvalContent(change.operation, change.before, change.after)
     });
     if (decision.status === "rejected") {
-      results.push({ id: change.id, operation: change.operation, status: "rejected" });
-      continue;
-    }
-    if (decision.status === "revision_requested") {
-      results.push({ id: change.id, operation: change.operation, status: "revision_requested", comment: decision.comment });
+      results.push({ id: change.id, operation: change.operation, status: "rejected", comment: decision.comment });
       continue;
     }
     const live = input.store.get(change.id);
@@ -101,7 +97,7 @@ async function submitWorkspace(input: {
     }
     if (change.after) input.store.save(change.after);
     else input.store.delete(change.id);
-    results.push({ id: change.id, operation: change.operation, status: "approved" });
+    results.push({ id: change.id, operation: change.operation, status: "approved", comment: decision.comment });
   }
   return { type: "random_events", results };
 }

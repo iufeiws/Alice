@@ -161,16 +161,26 @@ export type FeishuCardActionEvent = {
 export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content" | "tools";
 export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
 export type FeishuToolExecutionCardBlock = "title" | "result";
+export type FeishuToolExecutionPanel = {
+  toolName: string;
+  state: "running" | "finished" | "failed";
+  call: string;
+  result: string;
+  titleElementId: string;
+  callElementId: string;
+  resultElementId: string;
+};
 
 export type FeishuDynamicCardClient = {
   isStarted(): boolean;
   createApprovalCard(input: { receiveIdType: "open_id"; receiveId: string; requestId: string; title: string; content: string }): Promise<{ messageId: string; cardId: string }>;
+  deleteMessage(input: { messageId: string }): Promise<void>;
   createAgentRunCard(input: { receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
   updateAgentRunCard(input: { cardId: string; block: FeishuAgentRunCardBlock; content: string; sequence: number }): Promise<void>;
   setAgentRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
   resolveAgentRunCardId(input: { messageId: string }): Promise<{ cardId?: string }>;
   createToolExecutionCard(input: { receiveIdType: "open_id"; receiveId: string; toolName: string; call: string; result: string; titleElementId?: string; callElementId?: string; resultElementId?: string }): Promise<{ messageId: string; cardId: string }>;
-  appendToolExecutionCardPanel(input: { cardId: string; toolName: string; call: string; result: string; titleElementId: string; callElementId: string; resultElementId: string; sequence: number }): Promise<void>;
+  groupToolExecutionCard(input: { cardId: string; rootElementId: string; panels: FeishuToolExecutionPanel[]; sequence: number }): Promise<void>;
   updateToolExecutionCard(input: { cardId: string; block: FeishuToolExecutionCardBlock; elementId: string; content: string; sequence: number }): Promise<void>;
   setToolExecutionCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
 };

@@ -73,11 +73,15 @@ export function createApiCommunicationRuntime(input: {
   void agentRunIndicator.ensureReady?.().catch((error: unknown) => {
     input.appendLog("warn", `agent run indicator ensure failed: ${error instanceof Error ? error.message : String(error)}`);
   });
-  setLLMToolExecutionReporter(createFeishuToolExecutionReporter({
+  const toolExecutionReporter = createFeishuToolExecutionReporter({
     client: feishu.agentRunCardClient,
     pairingStore: input.apiContextRuntime.feishuPairingStore,
     log: input.appendLog
-  }));
+  });
+  input.outputRouter.onSent(async (output: { target: { plugin: string } }) => {
+    if (output.target.plugin === "feishu") await toolExecutionReporter.endSequence();
+  });
+  setLLMToolExecutionReporter(toolExecutionReporter);
   const worldWandererRuntime = createWorldWandererRuntime({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles.root, "alice.sqlite"),

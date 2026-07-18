@@ -1,4 +1,4 @@
-import type { FeishuDynamicCardClient } from "../../../../channels/feishu/src/types.js";
+import type { FeishuDynamicCardClient, FeishuToolExecutionPanel } from "../../../../channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../../channels/feishu/src/pairing.js";
 import type { ToolCall, ToolExecutionReporter, ToolExecutionReportSession, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 
@@ -12,6 +12,7 @@ export function createFeishuToolExecutionReporter(input: {
   const throttleMs = input.throttleMs ?? 500;
   const outputLimitChars = input.outputLimitChars ?? 12_000;
   const cardIdleMs = 5_000;
+  const rootElementId = "tool_calls_root";
   let currentCard: ToolExecutionCardState | undefined;
 
   return {
@@ -20,16 +21,25 @@ export function createFeishuToolExecutionReporter(input: {
       const receiveId = pairedFeishuUserId();
       if (!receiveId) return undefined;
       try {
-        const panel = await ensureCard(receiveId, call);
-        return createSession(panel.card, panel.ids, call.toolName);
+        const created = await ensureCard(receiveId, call);
+        return createSession(created.card, created.panel);
       } catch (error) {
         input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
         return undefined;
       }
+    },
+    async endSequence() {
+      const card = currentCard;
+      if (!card) return;
+      currentCard = undefined;
+      card.closed = true;
+      if (card.idleTimer) clearTimeout(card.idleTimer);
+      card.idleTimer = undefined;
+      if (card.activeSessions === 0) await finalizeCard(card);
     }
   };
 
-  async function ensureCard(receiveId: string, call: ToolCall): Promise<{ card: ToolExecutionCardState; ids: ToolExecutionPanelIds }> {
+  async function ensureCard(receiveId: string, call: ToolCall): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
     if (currentCard?.idleTimer) {
       clearTimeout(currentCard.idleTimer);
       currentCard.idleTimer = undefined;
@@ -38,36 +48,44 @@ export function createFeishuToolExecutionReporter(input: {
     const initialResult = renderCode("");
     if (!currentCard) {
       const ids = firstPanelIds();
+      const panel = createPanel(call.toolName, renderedCall, initialResult, ids);
       const created = await input.client.createToolExecutionCard({
         receiveIdType: "open_id",
         receiveId,
-        toolName: call.toolName,
-        call: renderedCall,
-        result: initialResult,
-        ...ids
+        toolName: panel.toolName,
+        call: panel.call,
+        result: panel.result,
+        titleElementId: rootElementId,
+        callElementId: panel.callElementId,
+        resultElementId: panel.resultElementId
       });
-      currentCard = { cardId: created.cardId, nextPanelIndex: 2, nextSequence: 1, activeSessions: 0, queue: Promise.resolve() };
+      currentCard = { cardId: created.cardId, panels: [panel], nextPanelIndex: 2, nextSequence: 1, activeSessions: 0, streaming: false, closed: false, queue: Promise.resolve() };
       await setStreaming(currentCard, true);
       currentCard.activeSessions += 1;
-      return { card: currentCard, ids };
+      return { card: currentCard, panel };
     }
 
     const card = currentCard;
     const ids = nextPanelIds(card);
-    await enqueue(card, () => input.client.appendToolExecutionCardPanel({
-      cardId: card.cardId,
-      toolName: call.toolName,
-      call: renderedCall,
-      result: initialResult,
-      ...ids,
-      sequence: takeSequence(card)
-    }));
+    const panel = createPanel(call.toolName, renderedCall, initialResult, ids);
+    card.panels.push(panel);
+    try {
+      await enqueue(card, () => input.client.groupToolExecutionCard({
+        cardId: card.cardId,
+        rootElementId,
+        panels: card.panels,
+        sequence: takeSequence(card)
+      }));
+    } catch (error) {
+      card.panels.pop();
+      throw error;
+    }
     await setStreaming(card, true);
     card.activeSessions += 1;
-    return { card, ids };
+    return { card, panel };
   }
 
-  function createSession(card: ToolExecutionCardState, ids: ToolExecutionPanelIds, toolName: string): ToolExecutionReportSession {
+  function createSession(card: ToolExecutionCardState, panel: FeishuToolExecutionPanel): ToolExecutionReportSession {
     let progress = "";
     let flushedProgress = "";
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -75,10 +93,11 @@ export function createFeishuToolExecutionReporter(input: {
     let failed = false;
 
     const updateResult = async (content: string): Promise<void> => {
+      panel.result = content;
       await enqueue(card, () => input.client.updateToolExecutionCard({
         cardId: card.cardId,
         block: "result",
-        elementId: ids.resultElementId,
+        elementId: panel.resultElementId,
         content,
         sequence: takeSequence(card)
       }));
@@ -101,11 +120,12 @@ export function createFeishuToolExecutionReporter(input: {
         if (!failed) {
           await flush();
           await updateResult(renderCode(result));
+          panel.state = state;
           await enqueue(card, () => input.client.updateToolExecutionCard({
             cardId: card.cardId,
             block: "title",
-            elementId: ids.titleElementId,
-            content: `${toolName}: ${state}`,
+            elementId: card.panels.length === 1 ? rootElementId : panel.titleElementId,
+            content: `${panel.toolName}: ${state}`,
             sequence: takeSequence(card)
           }));
         }
@@ -136,7 +156,9 @@ export function createFeishuToolExecutionReporter(input: {
   }
 
   async function setStreaming(card: ToolExecutionCardState, enabled: boolean): Promise<void> {
+    if (card.streaming === enabled) return;
     await enqueue(card, () => input.client.setToolExecutionCardStreaming({ cardId: card.cardId, enabled, sequence: takeSequence(card) }));
+    card.streaming = enabled;
   }
 
   async function enqueue(card: ToolExecutionCardState, run: () => Promise<void>): Promise<void> {
@@ -148,12 +170,24 @@ export function createFeishuToolExecutionReporter(input: {
   function releaseCard(card: ToolExecutionCardState): void {
     card.activeSessions -= 1;
     if (card.activeSessions > 0) return;
+    if (card.closed) {
+      void finalizeCard(card);
+      return;
+    }
     card.idleTimer = setTimeout(() => {
-      if (currentCard !== card || card.activeSessions !== 0) return;
-      currentCard = undefined;
+      if (currentCard !== card || card.activeSessions !== 0 || card.closed) return;
+      card.idleTimer = undefined;
       void setStreaming(card, false).catch((error) => input.log?.("warn", `[tool-execution] Feishu card finalize failed: ${errorMessage(error)}`));
     }, cardIdleMs);
     card.idleTimer.unref?.();
+  }
+
+  async function finalizeCard(card: ToolExecutionCardState): Promise<void> {
+    try {
+      await setStreaming(card, false);
+    } catch (error) {
+      input.log?.("warn", `[tool-execution] Feishu card finalize failed: ${errorMessage(error)}`);
+    }
   }
 
   function pairedFeishuUserId(): string | undefined {
@@ -168,9 +202,12 @@ export function createFeishuToolExecutionReporter(input: {
 
 type ToolExecutionCardState = {
   cardId: string;
+  panels: FeishuToolExecutionPanel[];
   nextPanelIndex: number;
   nextSequence: number;
   activeSessions: number;
+  streaming: boolean;
+  closed: boolean;
   queue: Promise<void>;
   idleTimer?: ReturnType<typeof setTimeout>;
 };
@@ -190,21 +227,48 @@ function takeSequence(card: ToolExecutionCardState): number {
   return card.nextSequence++;
 }
 
+function createPanel(toolName: string, call: string, result: string, ids: ToolExecutionPanelIds): FeishuToolExecutionPanel {
+  return { toolName, state: "running", call, result, ...ids };
+}
+
 function renderCode(value: unknown): string {
   const content = formatCodeValue(value);
   const runs = content.match(/`+/g) ?? [];
   const fence = "`".repeat(Math.max(3, runs.reduce((max, run) => Math.max(max, run.length), 0) + 1));
-  return `${fence}json\n${content}\n${fence}`;
+  return `${fence}text\n${content}\n${fence}`;
 }
 
 function formatCodeValue(value: unknown): string {
-  if (typeof value !== "string") return value === undefined ? " " : JSON.stringify(value, null, 2);
+  if (typeof value !== "string") return formatStructuredValue(value, 0);
   if (!value) return " ";
   try {
-    return JSON.stringify(JSON.parse(value), null, 2);
+    return formatStructuredValue(JSON.parse(value), 0);
   } catch {
     return value;
   }
+}
+
+function formatStructuredValue(value: unknown, depth: number): string {
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return indent("{}", depth);
+    return entries.map(([key, child]) => {
+      const header = `${"  ".repeat(depth)}[${key}]`;
+      return `${header}\n${formatStructuredValue(child, typeof child === "object" && child !== null ? depth + 1 : depth)}`;
+    }).join("\n\n");
+  }
+  if (value === undefined || value === "") return indent(" ", depth);
+  if (typeof value === "string") return indent(value, depth);
+  return indent(JSON.stringify(value, null, 2) ?? String(value), depth);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function indent(value: string, depth: number): string {
+  const prefix = "  ".repeat(depth);
+  return value.split("\n").map((line) => `${prefix}${line}`).join("\n");
 }
 
 function errorMessage(error: unknown): string {

@@ -45,9 +45,9 @@ test("random event submission approves files independently and applies only appr
   store.save(definition("change"));
   store.save(definition("remove"));
   const decisions = [
-    { status: "approved" as const },
-    { status: "revision_requested" as const, comment: "请缩短" },
-    { status: "rejected" as const }
+    { status: "approved" as const, comment: "已核对" },
+    { status: "rejected" as const, comment: "请缩短" },
+    { status: "rejected" as const, comment: "不要删除" }
   ];
   const calls: string[] = [];
   const runtime = createRandomEventSandboxRuntime({
@@ -70,7 +70,11 @@ test("random event submission approves files independently and applies only appr
   assert.equal(store.get("change")?.meta.weight, 5);
   assert.equal(store.get("create"), undefined);
   assert.equal(store.get("remove")?.meta.id, "remove");
-  assert.deepEqual(result?.results.map((entry) => entry.status), ["approved", "revision_requested", "rejected"]);
+  assert.deepEqual(result?.results.map((entry) => ({ status: entry.status, comment: entry.comment })), [
+    { status: "approved", comment: "已核对" },
+    { status: "rejected", comment: "请缩短" },
+    { status: "rejected", comment: "不要删除" }
+  ]);
 });
 
 test("random event submission detects concurrent changes after approval", async () => {
@@ -82,7 +86,7 @@ test("random event submission detects concurrent changes after approval", async 
     hostWorkspaceRoot: config.hostWorkspaceDir,
     sandbox: createBashSandboxRuntime({ config, executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false })) }),
     getApprovalService() {
-      return { async request() { store.save(definition("care", 9)); return { status: "approved" as const }; } };
+      return { async request() { store.save(definition("care", 9)); return { status: "approved" as const, comment: "" }; } };
     }
   });
   runtime.prepareSkill({ name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: "/skills/initiated-behavior-managing" });

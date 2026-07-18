@@ -17,6 +17,7 @@ export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps
     downloadMessageResource: client.downloadMessageResource,
     addReaction: client.addReaction,
     removeReaction: client.removeReaction,
+    createApprovalCard: client.createApprovalCard,
     createAgentRunCard: client.createAgentRunCard,
     updateAgentRunCard: client.updateAgentRunCard,
     setAgentRunCardStreaming: client.setAgentRunCardStreaming,

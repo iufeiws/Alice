@@ -150,12 +150,21 @@ export type FeishuReactionClient = {
   removeReaction(input: { messageId: string; reactionId: string }): Promise<void>;
 };
 
+export type FeishuCardActionEvent = {
+  messageId: string;
+  chatId?: string;
+  operatorOpenId: string;
+  value: unknown;
+  formValue: Record<string, unknown>;
+};
+
 export type FeishuAgentRunCardBlock = "state" | "reasoning" | "content" | "tools";
 export type FeishuAgentRunCardBlocks = Record<FeishuAgentRunCardBlock, string>;
 export type FeishuBashRunCardBlock = "title" | "content";
 
 export type FeishuDynamicCardClient = {
   isStarted(): boolean;
+  createApprovalCard(input: { receiveIdType: "open_id"; receiveId: string; requestId: string; title: string; content: string }): Promise<{ messageId: string; cardId: string }>;
   createAgentRunCard(input: { receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
   updateAgentRunCard(input: { cardId: string; block: FeishuAgentRunCardBlock; content: string; sequence: number }): Promise<void>;
   setAgentRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
@@ -206,6 +215,7 @@ export type FeishuAsrTranscriber = {
 export type FeishuPluginDeps = {
   onEvent(event: AgentEvent): Promise<void>;
   onLifecycleEvent?(event: FeishuMessageLifecycleEvent): Promise<void>;
+  onCardAction?(event: FeishuCardActionEvent): Promise<unknown>;
   log?(level: "info" | "warn" | "error", message: string): void;
   outbound?: FeishuOutboundClient;
   reactionClient?: FeishuReactionClient;

@@ -43,6 +43,9 @@ export function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: FakeB
     calls,
     contents,
     isStarted: () => true,
+    async createApprovalCard() {
+      throw new Error("unused");
+    },
     async createAgentRunCard() {
       throw new Error("unused");
     },

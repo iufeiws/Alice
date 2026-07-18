@@ -10,6 +10,7 @@ export function createChannelPluginRuntime(input: {
   time: any;
   asrPlugin: any;
   getMessageRuntime(): any;
+  onFeishuCardAction?(event: any): Promise<unknown>;
 }) {
   const feishu = createFeishuPlugin(input.config.plugins.feishu, {
     log: input.appendLog,
@@ -21,6 +22,9 @@ export function createChannelPluginRuntime(input: {
     },
     async onLifecycleEvent(event) {
       input.getMessageRuntime().ingestLifecycle({ plugin: "feishu", ...event });
+    },
+    async onCardAction(event) {
+      return await input.onFeishuCardAction?.(event);
     }
   });
 

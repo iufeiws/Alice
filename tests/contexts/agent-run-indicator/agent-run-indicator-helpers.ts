@@ -108,6 +108,9 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
   return {
     calls,
     isStarted: () => true,
+    async createApprovalCard() {
+      throw new Error("unused");
+    },
     async createAgentRunCard(input) {
       calls.push({ kind: "create", receiveId: input.receiveId, blocks: { ...input.blocks } });
       return { messageId: "om_new", cardId: "card_new" };

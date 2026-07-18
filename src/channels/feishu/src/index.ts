@@ -49,6 +49,9 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     },
     async onLifecycle(kind, raw) {
       await receiveLifecycleEvent(kind, raw);
+    },
+    async onCardAction(event) {
+      return await deps.onCardAction?.(event);
     }
   });
 

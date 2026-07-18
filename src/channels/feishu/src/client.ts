@@ -1,7 +1,9 @@
 import type { FeishuConfig } from "./types.js";
 import { createCurrentTimeProvider } from "../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+import type { FeishuAgentRunCardBlock, FeishuAgentRunCardBlocks, FeishuBashRunCardBlock, FeishuCardActionEvent, FeishuDynamicCardClient, FeishuInboundResourceType, FeishuReactionClient, FeishuSendResult, FeishuStoredAudioAsset } from "./types.js";
+
+const FEISHU_CARD_MAX_BYTES = 30 * 1024;
 
 const AGENT_RUN_CARD_ELEMENT_IDS: Record<FeishuAgentRunCardBlock, string> = {
   state: "agent_run_state",
@@ -31,6 +33,7 @@ export type FeishuClient = {
 export type FeishuClientDeps = {
   onMessage(data: unknown): Promise<void>;
   onLifecycle?(kind: "reaction.created" | "reaction.deleted" | "message.read" | "message.recalled", data: unknown): Promise<void>;
+  onCardAction?(event: FeishuCardActionEvent): Promise<unknown>;
   log?(level: "info" | "warn" | "error", message: string): void;
   time?: CurrentTimeProvider;
 };
@@ -38,7 +41,7 @@ export type FeishuClientDeps = {
 type LarkModule = {
   Client: new (config: Record<string, unknown>) => any;
   WSClient: new (config: Record<string, unknown>) => any;
-  EventDispatcher: new (config: Record<string, unknown>) => { register(handlers: Record<string, (data: any) => Promise<void>>): unknown };
+  EventDispatcher: new (config: Record<string, unknown>) => { register(handlers: Record<string, (data: any) => Promise<unknown>>): unknown };
   LoggerLevel?: Record<string, unknown>;
   Domain?: Record<string, unknown>;
 };
@@ -102,6 +105,11 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         "im.message.recalled_v1": async (data: any) => {
           deps.log?.("info", `[feishu] received im.message.recalled_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
           await deps.onLifecycle?.("message.recalled", data);
+        },
+        "card.action.trigger": async (data: any) => {
+          const event = normalizeFeishuCardActionEvent(data);
+          deps.log?.("info", `[feishu] received card.action.trigger ${event.messageId}`);
+          return await deps.onCardAction?.(event);
         }
       });
 
@@ -264,6 +272,24 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         }
       });
       deps.log?.("info", `[feishu] removed reaction ${input.reactionId} from ${input.messageId}`);
+    },
+    async createApprovalCard(input) {
+      assertStarted(client);
+      const cardJson = serializeFeishuApprovalCard(input);
+      const card = await client.cardkit.v1.card.create({
+        data: { type: "card_json", data: cardJson }
+      });
+      const cardId = card?.data?.card_id ?? card?.card_id;
+      if (!cardId) throw new Error("Feishu approval card create did not return card_id");
+      const message = await sendMessage(client, {
+        receiveIdType: input.receiveIdType,
+        receiveId: input.receiveId,
+        msgType: "interactive",
+        content: { type: "card", data: { card_id: cardId } }
+      }, time);
+      if (!message.messageId) throw new Error("Feishu approval card message create did not return message_id");
+      deps.log?.("info", `[feishu] created approval card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      return { messageId: message.messageId, cardId };
     },
     async createAgentRunCard(input) {
       assertStarted(client);
@@ -513,6 +539,76 @@ function buildMarkdownCard(markdown: string): Record<string, unknown> {
       }
     ]
   };
+}
+
+export function buildFeishuApprovalCard(input: { requestId: string; title: string; content: string }): Record<string, unknown> {
+  const button = (decision: "approved" | "rejected" | "revision_requested", text: string, type: "primary" | "danger" | "default") => ({
+    tag: "button",
+    text: { tag: "plain_text", content: text },
+    type,
+    action_type: "form_submit",
+    value: { kind: "approval", requestId: input.requestId, decision }
+  });
+  return {
+    schema: "2.0",
+    header: {
+      title: { tag: "plain_text", content: input.title },
+      template: "blue"
+    },
+    body: {
+      elements: [
+        { tag: "markdown", content: cardMarkdownContent(input.content) },
+        {
+          tag: "form",
+          name: "approval_form",
+          elements: [
+            {
+              tag: "input",
+              name: "revisionComment",
+              input_type: "multiline_text",
+              rows: 3,
+              max_length: 1000,
+              required: false,
+              placeholder: { tag: "plain_text", content: "如需修改，请填写修改意见" }
+            },
+            {
+              tag: "column_set",
+              horizontal_spacing: "8px",
+              columns: [
+                { tag: "column", width: "auto", elements: [button("approved", "同意", "primary")] },
+                { tag: "column", width: "auto", elements: [button("rejected", "拒绝", "danger")] },
+                { tag: "column", width: "auto", elements: [button("revision_requested", "修改", "default")] }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  };
+}
+
+export function serializeFeishuApprovalCard(input: { requestId: string; title: string; content: string }): string {
+  const cardJson = JSON.stringify(buildFeishuApprovalCard(input));
+  if (Buffer.byteLength(cardJson, "utf8") > FEISHU_CARD_MAX_BYTES) throw new Error("Feishu approval card exceeds 30 KB");
+  return cardJson;
+}
+
+export function normalizeFeishuCardActionEvent(data: any): FeishuCardActionEvent {
+  return {
+    messageId: String(data?.context?.open_message_id ?? data?.open_message_id ?? ""),
+    chatId: stringOrUndefined(data?.context?.open_chat_id ?? data?.open_chat_id),
+    operatorOpenId: String(data?.operator?.open_id ?? data?.open_id ?? ""),
+    value: data?.action?.value,
+    formValue: isRecord(data?.action?.form_value) ? data.action.form_value : {}
+  };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function buildAgentRunCard(blocks: FeishuAgentRunCardBlocks): Record<string, unknown> {

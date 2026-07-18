@@ -6,6 +6,7 @@ import { createFeishuDynamicCardAgentRunIndicator, createJsonFeishuAgentRunIndic
 import { createFeishuBashRunReporter, type BashRunReporter } from "../../../contexts/bash-sandbox/src/index.js";
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createFeishuApprovalService } from "../../../contexts/approval/src/index.js";
 
 const path = await import("node:path");
 
@@ -36,6 +37,7 @@ export function createApiCommunicationRuntime(input: {
   bashRuntime?: { setReporter(reporter: BashRunReporter | undefined): void };
 }) {
   let messageRuntime: any;
+  let approvalService: ReturnType<typeof createFeishuApprovalService>;
   const webRtcVoiceRuntime = createWebRtcVoiceRuntime({
     config: input.config,
     time: input.time,
@@ -53,7 +55,12 @@ export function createApiCommunicationRuntime(input: {
     wechatStateStore: input.apiContextRuntime.wechatStateStore,
     time: input.time,
     asrPlugin: input.asrPlugin,
-    getMessageRuntime: () => messageRuntime
+    getMessageRuntime: () => messageRuntime,
+    onFeishuCardAction: async (event) => await approvalService.handleCardAction(event)
+  });
+  approvalService = createFeishuApprovalService({
+    client: feishu.agentRunCardClient,
+    pairingStore: input.apiContextRuntime.feishuPairingStore
   });
   const agentRunIndicator = createFeishuDynamicCardAgentRunIndicator({
     enabled: () => isFeishuConfigured(input.config.plugins.feishu),
@@ -106,5 +113,5 @@ export function createApiCommunicationRuntime(input: {
     appendMessageLog: input.appendMessageLog
   });
 
-  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime, agentRunIndicator };
+  return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime, agentRunIndicator, approvalService };
 }

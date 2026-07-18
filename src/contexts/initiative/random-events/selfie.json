@@ -12,7 +12,6 @@
         "enabled": true
       },
       "role": "assistant",
-      "name": "Cheshire Cat",
       "content": "问问{{user}}想不想让我拍张照给他看吧"
     }
   ]

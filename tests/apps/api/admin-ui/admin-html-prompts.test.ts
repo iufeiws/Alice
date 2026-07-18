@@ -84,3 +84,13 @@ test("layerEditor_usesUnifiedMessageProtocol", () => {
     'role === "tool_request"'
   ]);
 });
+
+test("randomEventEditor_usesAssistantSelfRemindersWithoutNames", () => {
+  const script = renderInitiatedBehaviorsScript();
+
+  assertIncludesAll(script, [
+    'roles: randomized ? ["assistant"]',
+    "showName: !randomized",
+    'role: randomized ? "assistant" : "user"'
+  ]);
+});

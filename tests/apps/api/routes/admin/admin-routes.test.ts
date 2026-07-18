@@ -400,6 +400,38 @@ test("initiated behavior config patch accepts system messages", async () => {
   });
 });
 
+test("randomized behavior config rejects non-assistant and named messages", async () => {
+  const root = makeTempDir("admin-random-event-self-reminder");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const context = baseContext(root, memoryStore, promptStore);
+  context.setAgentInitiatedBehaviorConfig = () => ({ id: "care", kind: "randomized", enabled: true, steps: [] });
+  const handler = createAdminHandler(context);
+
+  const userResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/care", {
+    kind: "randomized",
+    promptProfile: {
+      meta: {},
+      messages: [{ meta: { title: "Instruction", enabled: true }, role: "user", content: "hello" }]
+    }
+  }), userResponse);
+
+  const namedResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/initiated-behaviors/care", {
+    kind: "randomized",
+    promptProfile: {
+      meta: {},
+      messages: [{ meta: { title: "Instruction", enabled: true }, role: "assistant", name: "Alice", content: "hello" }]
+    }
+  }), namedResponse);
+
+  assert.equal(userResponse.statusCode, 400);
+  assert.equal(JSON.parse(userResponse.body).error, "random_event_message_role_assistant_required");
+  assert.equal(namedResponse.statusCode, 400);
+  assert.equal(JSON.parse(namedResponse.body).error, "random_event_message_name_forbidden");
+});
+
 test("admin initiated behavior create route custom plans", async () => {
   const root = makeTempDir("admin-initiated-behavior-custom");
   const memoryStore = createMarkdownMemoryStore(root);

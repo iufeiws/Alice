@@ -8,7 +8,7 @@ import { tempPath } from "./initiated-behaviors-helpers.js";
 function definition(id: string, content = "hello") {
   return {
     meta: { id, enabled: true, weight: 2, priority: 0 },
-    messages: [{ meta: { title: "Instruction", enabled: true }, role: "user" as const, content }]
+    messages: [{ meta: { title: "Instruction", enabled: true }, role: "assistant" as const, content }]
   };
 }
 
@@ -30,6 +30,8 @@ test("random event store rejects invalid definitions and symbolic links", () => 
   const store = createJsonRandomEventStore(root);
   assert.throws(() => store.save(definition("../escape")), /invalid_random_event_id/);
   assert.throws(() => store.save({ ...definition("bad"), meta: { ...definition("bad").meta, weight: Number.NaN } }), /weight/);
+  assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "user" as any }] }), /message_role/);
+  assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], name: "Alice" }] } as any), /message_name/);
   assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "tool_request" as any }] }), /message_role/);
   assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "assistant", toolCalls: [{ id: "", type: "function", function: { name: "Chat", arguments: "{}" } }] }] }), /tool_call/);
 
@@ -37,4 +39,17 @@ test("random event store rejects invalid definitions and symbolic links", () => 
   fs.writeFileSync(target, JSON.stringify(definition("link")));
   fs.symlinkSync(target, path.join(root, "link.json"));
   assert.throws(() => store.list(), /invalid_random_event_file/);
+});
+
+test("built-in random events are assistant self-reminders without names", () => {
+  const store = createJsonRandomEventStore(path.resolve("src/contexts/initiative/random-events"));
+
+  assert.equal(store.list().length, 8);
+  for (const event of store.list()) {
+    assert.ok(event.messages.length > 0, `${event.meta.id} must contain a self-reminder`);
+    for (const message of event.messages) {
+      assert.equal(message.role, "assistant", `${event.meta.id} must use assistant messages`);
+      assert.equal(message.name, undefined, `${event.meta.id} must not set a message name`);
+    }
+  }
 });

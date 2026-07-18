@@ -11,8 +11,7 @@
         "title": "Ritual Initiation",
         "enabled": true
       },
-      "role": "user",
-      "name": "Cheshire Cat",
+      "role": "assistant",
       "content": "判断当前是否适合发起一句仪式型问候, 例如生日、节日或周末问候。若适合, 给{{user}}发一句短促自然、有边界感的话。"
     }
   ]

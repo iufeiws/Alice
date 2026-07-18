@@ -12,7 +12,6 @@
         "enabled": true
       },
       "role": "assistant",
-      "name": "Cheshire Cat",
       "content": "来问一下{{user}}现在在做什么吧"
     }
   ]

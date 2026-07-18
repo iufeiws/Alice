@@ -73,7 +73,7 @@ test("initiated behavior runtime manages every random event as a deletable file"
     enabled: true,
     weight: 2,
     priority: 1,
-    promptProfile: { meta: {}, messages: [{ meta: { title: "Instruction", enabled: true }, role: "user", content: "hello" }] }
+    promptProfile: { meta: {}, messages: [{ meta: { title: "Instruction", enabled: true }, role: "assistant", content: "hello" }] }
   });
   const updated = runtime.setConfig("ordinary_random", { weight: 5 });
 

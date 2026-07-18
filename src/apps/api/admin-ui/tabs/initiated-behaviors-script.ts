@@ -139,7 +139,10 @@ export function renderInitiatedBehaviorsScript(): string {
         $("behaviorConfigTitle").textContent = detail.id;
         $("behaviorConfigSummary").textContent = initiatedBehaviorSummaries[detail.id] || "";
         $("behaviorConfigType").value = detail.kind;
-        $("behaviorConfigType").onchange = renderBehaviorConfigSpecific;
+        $("behaviorConfigType").onchange = () => {
+          renderBehaviorConfigSpecific();
+          renderBehaviorLayerEditor();
+        };
         const triggerLabel = detail.kind === "event" ? (detail.triggerEvent || "event") : "randomized";
         renderBehaviorConfigSpecific(detail);
         $("behaviorConfigSteps").innerHTML = (detail.steps || []).map((step, index) => {
@@ -158,7 +161,12 @@ export function renderInitiatedBehaviorsScript(): string {
           : '<h2>Randomized</h2><label for="behaviorConfigWeight">Weight</label><input id="behaviorConfigWeight" type="number" step="0.01" value="' + escapeAttr(valueOrDash(current.weight) === "-" ? "0" : valueOrDash(current.weight)) + '" /><label for="behaviorConfigPriority">Priority</label><input id="behaviorConfigPriority" type="number" step="1" value="' + escapeAttr(valueOrDash(current.priority) === "-" ? "0" : valueOrDash(current.priority)) + '" />';
       }
       function renderBehaviorLayerEditor() {
-        $("behaviorPromptLayerList").innerHTML = renderLayerDocument(behaviorConfigLayerDocument, { editorId: "behavior", roles: ["user", "assistant", "tool"] }) || '<p class="muted">No prompt messages yet.</p>';
+        const randomized = $("behaviorConfigType").value === "randomized";
+        $("behaviorPromptLayerList").innerHTML = renderLayerDocument(behaviorConfigLayerDocument, {
+          editorId: "behavior",
+          roles: randomized ? ["assistant"] : ["user", "assistant", "tool"],
+          showName: !randomized
+        }) || '<p class="muted">No prompt messages yet.</p>';
         bindLayerDocument(behaviorConfigLayerDocument, {
           editorId: "behavior",
           render: renderBehaviorLayerEditor,
@@ -167,9 +175,10 @@ export function renderInitiatedBehaviorsScript(): string {
         renderBehaviorPromptPreview();
       }
       function addBehaviorLayer(toolCall = false) {
+        const randomized = $("behaviorConfigType").value === "randomized";
         addLayerMessage(behaviorConfigLayerDocument, {
           title: "Message " + (behaviorConfigLayerDocument.messages.length + 1),
-          role: "user",
+          role: randomized ? "assistant" : "user",
           toolCall,
           toolName: "Chat"
         });

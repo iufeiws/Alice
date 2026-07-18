@@ -18,6 +18,10 @@ export async function patchInitiatedBehavior(context: AdminRoutesContext, reques
   const body = await readJsonBody(request);
   if (!id) throw new HttpJsonError(400, "behavior_id_required");
   const patch = parseInitiatedBehaviorConfigPatch(body);
+  const existing = context.getAgentInitiatedBehaviorPlans?.().find((plan) => plan.id === id);
+  if (patch.promptProfile && (patch.kind === "randomized" || existing?.kind === "randomized")) {
+    validateRandomEventMessages(patch.promptProfile);
+  }
   const plan = context.setAgentInitiatedBehaviorConfig?.(id, patch)
     ?? (typeof patch.enabled === "boolean" && Object.keys(patch).length === 1
       ? context.setAgentInitiatedBehaviorEnabled?.(id, patch.enabled)
@@ -32,7 +36,9 @@ export async function patchInitiatedBehavior(context: AdminRoutesContext, reques
 export async function createInitiatedBehavior(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
   const id = parseInitiatedBehaviorId(body.id);
-  const plan = context.createAgentInitiatedBehaviorConfig?.(id, parseInitiatedBehaviorConfigPatch(body));
+  const patch = parseInitiatedBehaviorConfigPatch(body);
+  if (patch.kind === "randomized" && patch.promptProfile) validateRandomEventMessages(patch.promptProfile);
+  const plan = context.createAgentInitiatedBehaviorConfig?.(id, patch);
   if (!plan) throw new HttpJsonError(400, "behavior_create_failed");
   writeJson(response, 200, {
     ok: true,
@@ -118,6 +124,13 @@ function validateAdminPromptLayer(value: unknown): asserts value is AgentInitiat
         throw new HttpJsonError(400, "invalid_prompt_tool_call");
       }
     }
+  }
+}
+
+function validateRandomEventMessages(profile: AgentInitiatedBehaviorPromptProfile): void {
+  for (const message of profile.messages) {
+    if (message.role !== "assistant") throw new HttpJsonError(400, "random_event_message_role_assistant_required");
+    if (Object.prototype.hasOwnProperty.call(message, "name")) throw new HttpJsonError(400, "random_event_message_name_forbidden");
   }
 }
 

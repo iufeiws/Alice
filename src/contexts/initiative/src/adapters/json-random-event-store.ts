@@ -4,6 +4,11 @@ import type { AgentInitiatedBehaviorPlan } from "../domain/initiated-behavior.js
 const fs = await import("node:fs");
 const path = await import("node:path");
 
+export type AgentRandomEventMessage = Omit<PromptMessage, "role" | "name"> & {
+  role: "assistant";
+  name?: never;
+};
+
 export type AgentRandomEventDefinition = {
   meta: {
     id: string;
@@ -11,7 +16,7 @@ export type AgentRandomEventDefinition = {
     weight: number;
     priority: number;
   };
-  messages: PromptMessage[];
+  messages: AgentRandomEventMessage[];
 };
 
 export type AgentRandomEventStore = {
@@ -95,7 +100,7 @@ export function normalizeAgentRandomEventDefinition(value: unknown, expectedId?:
       weight: meta.weight,
       priority: meta.priority
     },
-    messages: layer.messages
+    messages: layer.messages as AgentRandomEventMessage[]
   };
 }
 
@@ -130,11 +135,10 @@ function validateStoredMessages(messages: unknown[]): void {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_random_event_message");
     const message = value as Record<string, unknown>;
     if (!message.meta || typeof message.meta !== "object" || Array.isArray(message.meta)) throw new Error("random_event_message_meta_object_required");
-    if (message.role !== "system" && message.role !== "user" && message.role !== "assistant" && message.role !== "tool") {
-      throw new Error("invalid_random_event_message_role");
-    }
+    if (message.role !== "assistant") throw new Error("invalid_random_event_message_role");
+    if (Object.prototype.hasOwnProperty.call(message, "name")) throw new Error("random_event_message_name_forbidden");
     if (message.toolCalls === undefined) continue;
-    if (message.role !== "assistant" || !Array.isArray(message.toolCalls)) throw new Error("invalid_random_event_tool_calls");
+    if (!Array.isArray(message.toolCalls)) throw new Error("invalid_random_event_tool_calls");
     for (const value of message.toolCalls) {
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_random_event_tool_call");
       const call = value as Record<string, unknown>;

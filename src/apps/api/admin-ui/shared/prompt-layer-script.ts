@@ -23,10 +23,7 @@ export function renderPromptLayerScript(): string {
                   \${(options.roles || layerMessageRoles).map((item) => \`<option value="\${item}" \${role === item ? "selected" : ""}>\${item}</option>\`).join("")}
                 </select>
               </div>
-              <div>
-                <label>Name</label>
-                <input data-field="name" value="\${escapeAttr(message.name || "")}" />
-              </div>
+              \${options.showName === false ? "" : '<div><label>Name</label><input data-field="name" value="' + escapeAttr(message.name || "") + '" /></div>'}
               <label><input data-field="enabled" type="checkbox" \${meta.enabled === false ? "" : "checked"} /> Enabled</label>
             </div>
             \${role === "assistant" ? \`<label>Reasoning Content</label>
@@ -54,7 +51,7 @@ export function renderPromptLayerScript(): string {
           if (!message) return;
           if (!message.meta) message.meta = {};
           root.querySelector('[data-field="title"]').addEventListener("input", (event) => { message.meta.title = event.target.value; options.onInput?.(); });
-          root.querySelector('[data-field="name"]').addEventListener("input", (event) => { if (event.target.value) message.name = event.target.value; else delete message.name; options.onInput?.(); });
+          root.querySelector('[data-field="name"]')?.addEventListener("input", (event) => { if (event.target.value) message.name = event.target.value; else delete message.name; options.onInput?.(); });
           root.querySelector('[data-field="enabled"]').addEventListener("change", (event) => { message.meta.enabled = event.target.checked; options.onInput?.(); });
           root.querySelector('[data-field="role"]').addEventListener("change", (event) => {
             message.role = event.target.value;

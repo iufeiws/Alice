@@ -11,7 +11,7 @@ import {
   writeAgentInitiatedBehaviorPromptProfile,
   type AgentInitiatedBehaviorConfigPatch
 } from "../adapters/json-initiated-behavior-store.js";
-import { createJsonRandomEventStore, type AgentRandomEventStore } from "../adapters/json-random-event-store.js";
+import { createJsonRandomEventStore, normalizeAgentRandomEventDefinition, type AgentRandomEventStore } from "../adapters/json-random-event-store.js";
 
 export function createInitiatedBehaviorRuntime(input: {
   configPath: string;
@@ -66,7 +66,7 @@ export function createInitiatedBehaviorRuntime(input: {
   function createCustom(id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined {
     if (!isCustomInitiatedBehaviorId(id) || getPlans().some((plan) => plan.id === id)) return undefined;
     if (patch.kind === "randomized") {
-      const definition = randomEvents.create({
+      const definition = randomEvents.create(normalizeAgentRandomEventDefinition({
         meta: {
           id,
           enabled: patch.enabled !== false,
@@ -74,7 +74,7 @@ export function createInitiatedBehaviorRuntime(input: {
           priority: typeof patch.priority === "number" ? patch.priority : 0
         },
         messages: patch.promptProfile?.messages ?? []
-      });
+      }));
       return definition ? randomEvents.plan(definition) : undefined;
     }
     overrides = {
@@ -116,7 +116,7 @@ export function createInitiatedBehaviorRuntime(input: {
 function updateRandomEvent(store: AgentRandomEventStore, id: string, patch: AgentInitiatedBehaviorConfigPatch): AgentInitiatedBehaviorPlan | undefined {
   const current = store.get(id);
   if (!current || (patch.kind !== undefined && patch.kind !== "randomized")) return undefined;
-  const saved = store.save({
+  const saved = store.save(normalizeAgentRandomEventDefinition({
     ...current,
     meta: {
       ...current.meta,
@@ -125,7 +125,7 @@ function updateRandomEvent(store: AgentRandomEventStore, id: string, patch: Agen
       ...(typeof patch.priority === "number" ? { priority: patch.priority } : {})
     },
     ...(patch.promptProfile ? { messages: patch.promptProfile.messages } : {})
-  });
+  }));
   return store.plan(saved);
 }
 

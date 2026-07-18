@@ -11,8 +11,7 @@
         "title": "Invite Initiation",
         "enabled": true
       },
-      "role": "user",
-      "name": "Cheshire Cat",
+      "role": "assistant",
       "content": "邀请{{user}}一起做一个轻任务或小活动, 语气自然, 允许对方轻松拒绝。"
     }
   ]

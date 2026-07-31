@@ -40,15 +40,6 @@ export function providerInput(prompt: string, referenceImages: string[]): Selfie
 
 export function selfieContext() {
   return {
-    mainPrompt: [
-      "你是爱丽丝",
-      "",
-      "外貌特征:",
-      "发色: 低饱和浅金色",
-      "眼睛: 浅金色",
-      "",
-      "你与 <user> 的根关系是造物和造主"
-    ].join("\n"),
     personalityName: "弱气",
     personalityContent: "说话声音很小",
     outfitId: "gothic_lolita_black",

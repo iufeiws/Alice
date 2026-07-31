@@ -119,9 +119,7 @@ export function createToolRuntime(input: {
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     getSelfieContext() {
       const daily = input.dailyShellStore.get(input.time.now().date, input.time.timeZone);
-      const profile = input.promptProfileStore.get();
       return {
-        mainPrompt: profile.layers.map((layer: any) => layer.content).join("\n\n"),
         personalityName: daily.personality.name,
         personalityContent: daily.personality.content,
         outfitId: daily.outfit.id,

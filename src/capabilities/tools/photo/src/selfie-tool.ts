@@ -21,7 +21,6 @@ export type PhotoToolTarget = {
 };
 
 export type SelfieContext = {
-  mainPrompt: string;
   appearanceDescription?: string;
   personalityName: string;
   personalityContent: string;

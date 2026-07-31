@@ -11,8 +11,10 @@ function definition(id: string, weight = 1) {
   return { meta: { id, enabled: true, weight, priority: 0 }, messages: [] };
 }
 
+const skillSandboxRoot = "/alice/skills/initiated-behavior-managing";
+
 function bashResult() {
-  return { command: "submit", cwd: "/skills/initiated-behavior-managing", stdout: `${initiatedBehaviorManagingSubmissionMarker}\n`, stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false };
+  return { command: "submit", cwd: skillSandboxRoot, stdout: `${initiatedBehaviorManagingSubmissionMarker}\n`, stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false };
 }
 
 test("random event skill resets its workspace on every load", () => {
@@ -27,7 +29,7 @@ test("random event skill resets its workspace on every load", () => {
     getApprovalService() { throw new Error("unused"); }
   });
 
-  const skill = { name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: "/skills/initiated-behavior-managing" };
+  const skill = { name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: skillSandboxRoot };
   sandbox.mountSkill({ id: skill.name, hostPath: skill.hostRoot, containerPath: skill.sandboxRoot, readOnly: false });
   runtime.prepareSkill(skill);
   const workspace = path.join(config.hostWorkspaceDir, ".skills", "initiated-behavior-managing", "events");
@@ -36,8 +38,8 @@ test("random event skill resets its workspace on every load", () => {
 
   assert.deepEqual(fs.readdirSync(workspace), ["care.json"]);
   assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [
-    { containerPath: "/skills/initiated-behavior-managing", readOnly: false },
-    { containerPath: "/skills/initiated-behavior-managing/events", readOnly: false }
+    { containerPath: skillSandboxRoot, readOnly: false },
+    { containerPath: `${skillSandboxRoot}/events`, readOnly: false }
   ]);
 });
 
@@ -60,7 +62,7 @@ test("random event submission approves files independently and applies only appr
       return { async request(input) { calls.push(input.content); return decisions.shift()!; } };
     }
   });
-  runtime.prepareSkill({ name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: "/skills/initiated-behavior-managing" });
+  runtime.prepareSkill({ name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: skillSandboxRoot });
   const workspace = path.join(config.hostWorkspaceDir, ".skills", "initiated-behavior-managing", "events");
   fs.writeFileSync(path.join(workspace, "change.json"), randomEventDefinitionJson(definition("change", 5)));
   fs.writeFileSync(path.join(workspace, "create.json"), randomEventDefinitionJson(definition("create")));
@@ -91,7 +93,7 @@ test("random event submission detects concurrent changes after approval", async 
       return { async request() { store.save(definition("care", 9)); return { status: "approved" as const, comment: "" }; } };
     }
   });
-  runtime.prepareSkill({ name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: "/skills/initiated-behavior-managing" });
+  runtime.prepareSkill({ name: "initiated-behavior-managing", hostRoot: tmpDir("initiated-behavior-managing-skill"), sandboxRoot: skillSandboxRoot });
   const workspace = path.join(config.hostWorkspaceDir, ".skills", "initiated-behavior-managing", "events");
   fs.writeFileSync(path.join(workspace, "care.json"), randomEventDefinitionJson(definition("care", 2)));
 

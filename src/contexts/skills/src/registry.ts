@@ -26,18 +26,19 @@ export type SkillRegistry = {
 export type SkillRootConfig = {
   root: string;
   source: SkillMetadata["source"];
+  sandboxRoot?: string;
 };
 
 export function createSkillRegistry(input: { roots: SkillRootConfig[] }): SkillRegistry {
-  const scanned = input.roots.flatMap((root) => scanSkillRoot(root));
-  const duplicatedNames = duplicated(scanned.map((skill) => skill.name));
-  const skills = scanned.filter((skill) => !duplicatedNames.has(skill.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const scan = () => {
+    const scanned = input.roots.flatMap((root) => scanSkillRoot(root));
+    const duplicatedNames = duplicated(scanned.map((skill) => skill.name));
+    return scanned.filter((skill) => !duplicatedNames.has(skill.name)).sort((a, b) => a.name.localeCompare(b.name));
+  };
   return {
-    list: () => [...skills],
-    available: () => skills.filter(isAvailableSkill),
-    get(name) {
-      return skills.find((skill) => skill.name === name);
-    }
+    list: scan,
+    available: () => scan().filter(isAvailableSkill),
+    get: (name) => scan().find((skill) => skill.name === name)
   };
 }
 
@@ -70,11 +71,12 @@ function scanSkillRoot(config: SkillRootConfig): SkillMetadata[] {
     const relativeRoot = path.relative(root, hostRoot).split(path.sep).join("/");
     if (config.source === "first-party" && relativeRoot.split("/")[0] === "external") continue;
     const frontmatter = parseFrontmatter(fs.readFileSync(instructionPath, "utf8"));
-    if (!frontmatter.name || !frontmatter.description) continue;
-    const sandboxRoot = `/skills/${frontmatter.name}`;
+    const name = frontmatter.name || path.basename(hostRoot);
+    if (!name || !frontmatter.description) continue;
+    const sandboxRoot = `${(config.sandboxRoot ?? "/alice/skills").replace(/\/+$/, "")}/${name}`;
     found.push({
-      id: relativeRoot || frontmatter.name,
-      name: frontmatter.name,
+      id: relativeRoot || name,
+      name,
       description: frontmatter.description,
       version: frontmatter.version,
       allowedTools: frontmatter.allowedTools,

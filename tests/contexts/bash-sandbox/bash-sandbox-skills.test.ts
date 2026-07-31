@@ -29,11 +29,33 @@ test("skills registry formats first-party and third-party available skills only"
   assert.equal(typeof xml, "string");
 });
 
+test("skills registry derives a missing name from the skill directory", () => {
+  const root = tmpDir("skills-directory-name");
+  const skillRoot = writeSkill(root, "lark-shared", "description: Installed skill without a name.", "Use it\n");
+  const registry = createSkillRegistry({ roots: [{ root, source: "third-party" }] });
+
+  const skill = registry.get("lark-shared");
+
+  assert.equal(skill?.id, "lark-shared");
+  assert.equal(skill?.name, "lark-shared");
+  assert.equal(skill?.hostRoot, skillRoot);
+  assert.equal(skill?.sandboxRoot, "/alice/skills/lark-shared");
+  assert.match(formatAvailableSkillsXml(registry), /<name>lark-shared<\/name>/);
+});
+
+test("skills registry hot reloads installed and removed skills", () => {
+  const root = tmpDir("hot-reload-skills");
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+
+  assert.equal(registry.get("hot"), undefined);
+  const skillRoot = writeSkill(root, "hot", "name: hot\ndescription: Hot-installed skill.", "Use it\n");
+  assert.equal(registry.get("hot")?.sandboxRoot, "/alice/skills/hot");
+  fs.rmSync(skillRoot, { recursive: true });
+  assert.equal(registry.get("hot"), undefined);
+});
+
 test("Skill tool loads by exact name and renders args without host paths", async () => {
   const root = tmpDir("skills-tools");
-  const skillRoot = writeSkill(root, "demo", "name: demo\ndescription: demo skill", "Run $0 then $ARGUMENTS[1]\n");
-  fs.mkdirSync(path.join(skillRoot, "scripts"), { recursive: true });
-  fs.writeFileSync(path.join(skillRoot, "scripts", "run.sh"), "echo demo\n");
   const config = testConfig({ skillMounts: [] });
   const runtime = createBashSandboxRuntime({
     config,
@@ -42,6 +64,9 @@ test("Skill tool loads by exact name and renders args without host paths", async
   const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
   const loader = createSkillLoader(registry, runtime);
   const tools = createSkillsTools({ loader });
+  const skillRoot = writeSkill(root, "demo", "name: demo\ndescription: demo skill", "Run $0 then $ARGUMENTS[1]\n");
+  fs.mkdirSync(path.join(skillRoot, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, "scripts", "run.sh"), "echo demo\n");
 
   const loaded = await tools.execute({ id: "load", toolName: "Skill", input: { skill: "demo", args: "'one arg' $HOME" } });
 
@@ -65,8 +90,8 @@ test("Skill tool mounts loaded skill resources read-write", async () => {
 
   await tools.execute({ id: "load", toolName: "Skill", input: { skill: "demo" } });
 
-  assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/skills/demo", readOnly: false }]);
-  assert.equal(loader.load("demo").resolveResource("scripts/run.sh"), "/skills/demo/scripts/run.sh");
+  assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/alice/skills/demo", readOnly: false }]);
+  assert.equal(loader.load("demo").resolveResource("scripts/run.sh"), "/alice/skills/demo/scripts/run.sh");
   assert.throws(() => loader.load("demo").resolveResource("../escape"), /escapes/);
 });
 

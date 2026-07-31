@@ -51,8 +51,9 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
     rejectSensitiveHostPath(entry.hostPath);
     if (!entry.containerPath.startsWith("/")) throw new Error(`bashSandbox mount ${entry.containerPath} must be absolute`);
   }
+  const skillsRoot = `${normalized.workspaceDir.replace(/\/+$/, "")}/skills`;
   for (const mount of normalized.mounts) {
-    if (!mount.readOnly && (isSameOrInside(mount.containerPath, "/skills") || normalized.skillMounts.some((skill) => isSameOrInside(mount.containerPath, skill.containerPath)))) {
+    if (!mount.readOnly && mount.containerPath !== skillsRoot && isSameOrInside(mount.containerPath, skillsRoot)) {
       throw new Error("bashSandbox optional mounts cannot write under skills mount");
     }
   }
@@ -79,7 +80,10 @@ export function addBashSandboxSkillMount(config: BashSandboxConfig, mount: BashS
     hostPath: path.resolve(mount.hostPath)
   };
   rejectSensitiveHostPath(normalized.hostPath);
-  if (!normalized.containerPath.startsWith("/skills/")) throw new Error(`skill mount must be under /skills: ${normalized.containerPath}`);
+  const skillsRoot = `${config.workspaceDir.replace(/\/+$/, "")}/skills`;
+  if (!isSameOrInside(normalized.containerPath, skillsRoot) || normalized.containerPath === skillsRoot) {
+    throw new Error(`skill mount must be under ${skillsRoot}: ${normalized.containerPath}`);
+  }
   const existing = config.skillMounts.findIndex((entry) => entry.id === normalized.id || entry.containerPath === normalized.containerPath);
   if (existing >= 0) config.skillMounts[existing] = normalized;
   else config.skillMounts.push(normalized);

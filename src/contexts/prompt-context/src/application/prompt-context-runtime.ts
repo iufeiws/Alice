@@ -33,6 +33,7 @@ const variableNames = [
   "wakeBoundary/date",
   "wakeBoundary/weekday",
   "calendar/context",
+  "skills/dirPath",
   "available_skills"
 ];
 
@@ -45,6 +46,7 @@ export function createPromptContextRuntime(input: {
   diaryStore: any;
   calendarStore: any;
   skillsRegistry: any;
+  skillsDirPath: string;
   worldWandererConfigPath?: string;
 }): PromptContextRuntime {
   return createRuntime(getVariable, () => [...variableNames]);
@@ -60,6 +62,7 @@ export function createPromptContextRuntime(input: {
     if (name.startsWith("memory/")) return memoryVariable(name);
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();
+    if (name === "skills/dirPath") return input.skillsDirPath;
     if (name === "available_skills") return formatAvailableSkillsXml(input.skillsRegistry);
     return undefined;
   }

@@ -86,9 +86,21 @@ test("permission gate only enforces sandbox entry boundary", () => {
   assert.match(denyReason(classifyBashCommand({ config, cwd: "/etc", command: "echo hello" })), /cwd/);
 });
 
-test("config rejects writable mounts under skills and sensitive host paths", () => {
+test("config mounts installed skills read-write at the sandbox home", () => {
+  const config = loadConfig({});
+
+  assert.deepEqual(config.bashSandbox.mounts.slice(0, 1).map((mount) => ({
+    hostPath: mount.hostPath,
+    containerPath: mount.containerPath,
+    readOnly: mount.readOnly
+  })), [
+    { hostPath: fs.realpathSync(".agents/skills"), containerPath: "/alice/skills", readOnly: false }
+  ]);
+});
+
+test("config rejects sensitive host paths", () => {
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
-  assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/skills/generated", readOnly: false }]) }), /skills mount/);
+  assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/alice/skills/generated", readOnly: false }]) }), /skills mount/);
 });
 
 function denyReason(value: ReturnType<typeof classifyBashCommand>): string {

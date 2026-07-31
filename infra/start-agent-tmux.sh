@@ -18,6 +18,38 @@ require_tmux() {
   fi
 }
 
+sandbox_container_name() {
+  if [ -n "${BASH_SANDBOX_CONTAINER_NAME:-}" ]; then
+    printf '%s\n' "$BASH_SANDBOX_CONTAINER_NAME"
+    return 0
+  fi
+
+  local env_path="$WORKDIR/.env"
+  if [ -f "$env_path" ]; then
+    node -e 'const fs = require("node:fs"); const { parseEnv } = require("node:util"); const env = parseEnv(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(env.BASH_SANDBOX_CONTAINER_NAME || "alice-bash-sandbox")' "$env_path"
+    return 0
+  fi
+
+  printf '%s\n' 'alice-bash-sandbox'
+}
+
+stop_sandbox() {
+  if ! command -v docker >/dev/null 2>&1; then
+    printf 'docker is required to stop the Alice sandbox container\n' >&2
+    return 1
+  fi
+
+  local container_name
+  container_name="$(sandbox_container_name)"
+  if [ "$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null || true)" != "true" ]; then
+    printf 'sandbox container is not running: %s\n' "$container_name"
+    return 0
+  fi
+
+  docker stop "$container_name" >/dev/null
+  printf 'stopped sandbox container: %s\n' "$container_name"
+}
+
 start_agent() {
   require_tmux
 
@@ -38,13 +70,14 @@ start_agent() {
 stop_agent() {
   require_tmux
 
-  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    tmux kill-session -t "$SESSION_NAME"
+    printf 'stopped tmux session: %s\n' "$SESSION_NAME"
+  else
     printf 'tmux session is not running: %s\n' "$SESSION_NAME"
-    return 0
   fi
 
-  tmux kill-session -t "$SESSION_NAME"
-  printf 'stopped tmux session: %s\n' "$SESSION_NAME"
+  stop_sandbox
 }
 
 status_agent() {

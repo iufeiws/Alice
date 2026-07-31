@@ -213,7 +213,7 @@ test("memorizeLoop_oversizedWorkspaceFile_returnsErrorToModelBeforeCommit", asyn
   const memoryStore = createMarkdownMemoryStore(root);
   const sandbox = makeMemorySandbox(root);
   const hostPersistentPath = path.join(sandbox.config.hostWorkspaceDir, "memory_organization", "persistent-memory.md");
-  const sandboxPersistentPath = "/workspace/memory_organization/persistent-memory.md";
+  const sandboxPersistentPath = "/alice/memory_organization/persistent-memory.md";
   let calls = 0;
 
   const result = await runMemoryInductionForMessages({

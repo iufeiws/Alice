@@ -7,7 +7,8 @@ description: 管理和修改Alice的主动行为。
 Alice的主动行为本质为一段llm提示词, 这些提示词为JSON格式, 你可以通过创建/修改/删除文件从而创建/修改/删除提示词
 
 ## 目录
-当前行为配置位于 `/skills/initiated-behavior-managing/events/`
+当前行为配置位于该skill挂载位置的 `events/`下
+每次加载会重建该目录, 可能导致之前的修改丢失
 
 ## 格式
 每个直接子级 JSON 文件表示一个Initiated Behavior：

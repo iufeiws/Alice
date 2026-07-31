@@ -19,7 +19,7 @@ const { runReadTool } = await import("../../../../src/contexts/bash-sandbox/wrap
 test("file tools exposes Read Edit Glob and Grep", () => {
   const tools = createFileTools({
     config: testConfig(),
-    runtime: fakeRuntime(async () => readOutput("/workspace/notes.txt", "one", 1, 1))
+    runtime: fakeRuntime(async () => readOutput("/alice/notes.txt", "one", 1, 1))
   });
 
   assert.equal(tools.id, "file-tools");
@@ -36,11 +36,11 @@ test("Read runs against an absolute sandbox path", async () => {
     })
   });
 
-  const result = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 1, limit: 2 } });
+  const result = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/alice/notes.txt", offset: 1, limit: 2 } });
 
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.file_path, "/workspace/notes.txt");
+  assert.equal(calls[0]?.file_path, "/alice/notes.txt");
 });
 
 test("Read does not count an empty file as one line", async () => {
@@ -58,10 +58,10 @@ test("Read does not count an empty file as one line", async () => {
 test("Read reports empty files as empty instead of shorter than offset", async () => {
   const tools = createFileTools({
     config: testConfig(),
-    runtime: fakeRuntime(async () => readOutput("/workspace/empty.txt", "", 0, 123))
+    runtime: fakeRuntime(async () => readOutput("/alice/empty.txt", "", 0, 123))
   });
 
-  const result = await tools.execute({ id: "read_empty", toolName: "Read", input: { file_path: "/workspace/empty.txt" } });
+  const result = await tools.execute({ id: "read_empty", toolName: "Read", input: { file_path: "/alice/empty.txt" } });
 
   assert.equal(result.ok, true);
 });
@@ -84,7 +84,7 @@ test("Read asks sandbox for base64 when reading supported image files", async ()
 
   try {
     process.chdir(root);
-    const result = await tools.execute({ id: "read_image", toolName: "Read", input: { file_path: "/workspace/photo.png" } });
+    const result = await tools.execute({ id: "read_image", toolName: "Read", input: { file_path: "/alice/photo.png" } });
 
     assert.equal(result.ok, false);
     assert.equal(calls[0]?.operation, "base64");
@@ -116,8 +116,8 @@ test("Read returns file_unchanged for the same full read and mtime", async () =>
     })
   });
 
-  const first = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
-  const second = await tools.execute({ id: "read_2", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
+  const first = await tools.execute({ id: "read_1", toolName: "Read", input: { file_path: "/alice/notes.txt" } });
+  const second = await tools.execute({ id: "read_2", toolName: "Read", input: { file_path: "/alice/notes.txt" } });
 
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
@@ -156,9 +156,9 @@ test("Edit passes prior full Read state to sandbox tool and updates state", asyn
     })
   });
 
-  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
-  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "old", new_string: "new" } });
-  await tools.execute({ id: "edit2", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "new", new_string: "newer" } });
+  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/alice/notes.txt" } });
+  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/alice/notes.txt", old_string: "old", new_string: "new" } });
+  await tools.execute({ id: "edit2", toolName: "Edit", input: { file_path: "/alice/notes.txt", old_string: "new", new_string: "newer" } });
 
   assert.equal(edit.ok, true);
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Edit"]);
@@ -178,8 +178,8 @@ test("Edit accepts state from a ranged Read", async () => {
     })
   });
 
-  await tools.execute({ id: "read_range", toolName: "Read", input: { file_path: "/workspace/notes.txt", offset: 2, limit: 1 } });
-  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "target", new_string: "updated" } });
+  await tools.execute({ id: "read_range", toolName: "Read", input: { file_path: "/alice/notes.txt", offset: 2, limit: 1 } });
+  const edit = await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/alice/notes.txt", old_string: "target", new_string: "updated" } });
 
   assert.equal(edit.ok, true);
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit"]);
@@ -199,9 +199,9 @@ test("Read does not return file_unchanged from Edit-updated state", async () => 
     })
   });
 
-  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
-  await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "old", new_string: "new" } });
-  const reread = await tools.execute({ id: "reread", toolName: "Read", input: { file_path: "/workspace/notes.txt" } });
+  await tools.execute({ id: "read", toolName: "Read", input: { file_path: "/alice/notes.txt" } });
+  await tools.execute({ id: "edit", toolName: "Edit", input: { file_path: "/alice/notes.txt", old_string: "old", new_string: "new" } });
+  const reread = await tools.execute({ id: "reread", toolName: "Read", input: { file_path: "/alice/notes.txt" } });
 
   assert.equal(reread.ok, true);
   assert.deepEqual(calls.map((call) => call.toolName), ["Read", "Edit", "Read"]);
@@ -223,8 +223,8 @@ test("Edit allows empty old_string and empty new_string", async () => {
     })
   });
 
-  const create = await tools.execute({ id: "edit_create", toolName: "Edit", input: { file_path: "/workspace/empty.txt", old_string: "", new_string: "hello" } });
-  const deleteText = await tools.execute({ id: "edit_delete", toolName: "Edit", input: { file_path: "/workspace/notes.txt", old_string: "hello", new_string: "" } });
+  const create = await tools.execute({ id: "edit_create", toolName: "Edit", input: { file_path: "/alice/empty.txt", old_string: "", new_string: "hello" } });
+  const deleteText = await tools.execute({ id: "edit_delete", toolName: "Edit", input: { file_path: "/alice/notes.txt", old_string: "hello", new_string: "" } });
 
   assert.equal(create.ok, true);
   assert.equal(deleteText.ok, true);
@@ -240,12 +240,12 @@ test("Glob and Grep return sandbox formatted content", async () => {
     runtime: fakeRuntime(async (_payload, toolName) => {
       if (toolName === "Glob") return JSON.stringify({ type: "glob", content: "a.txt\nb.txt" });
       if (toolName === "Grep") return JSON.stringify({ type: "grep", content: "Found 1 file\na.txt" });
-      return readOutput("/workspace/notes.txt", "one", 1, 1);
+      return readOutput("/alice/notes.txt", "one", 1, 1);
     })
   });
 
-  const glob = await tools.execute({ id: "glob", toolName: "Glob", input: { pattern: "**/*.txt", path: "/workspace" } });
-  const grep = await tools.execute({ id: "grep", toolName: "Grep", input: { pattern: "needle", path: "/workspace" } });
+  const glob = await tools.execute({ id: "glob", toolName: "Glob", input: { pattern: "**/*.txt", path: "/alice" } });
+  const grep = await tools.execute({ id: "grep", toolName: "Grep", input: { pattern: "needle", path: "/alice" } });
 
   assert.equal(glob.ok, true);
   assert.equal(grep.ok, true);

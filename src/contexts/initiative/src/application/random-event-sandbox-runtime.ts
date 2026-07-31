@@ -13,7 +13,6 @@ const path = await import("node:path");
 
 export const initiatedBehaviorManagingSubmissionMarker = "ALICE_INITIATED_BEHAVIORS_SUBMIT_V1";
 export const initiatedBehaviorManagingSkillName = "initiated-behavior-managing";
-export const initiatedBehaviorManagingWorkspacePath = `/skills/${initiatedBehaviorManagingSkillName}/events`;
 
 export type RandomEventSubmissionResult = {
   type: "random_events";
@@ -40,7 +39,7 @@ export function createRandomEventSandboxRuntime(input: {
       input.sandbox.mountSkill({
         id: `${initiatedBehaviorManagingSkillName}-events`,
         hostPath: workspaceRoot,
-        containerPath: initiatedBehaviorManagingWorkspacePath,
+        containerPath: path.posix.join(skill.sandboxRoot, "events"),
         readOnly: false
       });
     },

@@ -38,6 +38,10 @@ npm run dev:api
 
 在 tmux 里按 `Ctrl-C` 只会停止当前 app，不会退出 tmux session。
 
+停止或重启 `alice-agent-tmux.service` 时，`ExecStop` 还会停止 Alice 配置的 Bash
+sandbox Docker 容器。容器名称读取 `BASH_SANDBOX_CONTAINER_NAME`，未配置时使用
+`alice-bash-sandbox`；停止操作只停止容器，不删除容器及其数据。
+
 因为需要机器开机但用户未登录时也启动，安装脚本会尝试启用 linger：
 
 ```bash

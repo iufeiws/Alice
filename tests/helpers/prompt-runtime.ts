@@ -10,6 +10,7 @@ export function testPromptRuntime(variables: Record<string, PromptContextValue> 
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
+    skillsDirPath: "/alice/skills",
     skillsRegistry: { available: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
   });

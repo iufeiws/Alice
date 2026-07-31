@@ -24,8 +24,11 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
   assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
   assert.match(runCall, /PATH=\/sandbox\/bin:/);
+  assert.match(runCall, /HOME=\/alice/);
+  assert.match(runCall, /-w \/alice/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);
+  assert.ok(runCall.indexOf(":/alice/skills:rw") < runCall.indexOf(":/alice/skills/demo:ro"));
   assert.equal(result.stdout.trim(), "docker-ok");
   assert.equal(progress.join(""), "docker-ok");
   assert.equal(result.streamedBeforeCommandFinished, true);
@@ -78,9 +81,12 @@ exit 64
   try {
     const config = testConfig({
       network: "configured",
-      hostWorkspaceDir: path.join(root, "workspace"),
+      hostWorkspaceDir: path.join(root, "alice"),
       hostCacheDir: path.join(root, "cache"),
-      mounts: [{ id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }]
+      mounts: [
+        { id: "skills", hostPath: path.join(root, "installed-skills"), containerPath: "/alice/skills", readOnly: false },
+        { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }
+      ]
     });
     let streamedBeforeCommandFinished = false;
     const result = await createDockerBashExecutor(config).execute({

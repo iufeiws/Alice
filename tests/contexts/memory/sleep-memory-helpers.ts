@@ -57,9 +57,9 @@ export function makeMemorySandbox(root: string): { config: BashSandboxConfig; ru
   const config: BashSandboxConfig = {
     containerName: "test",
     image: "test",
-    defaultCwd: "/workspace",
+    defaultCwd: "/alice",
     hostWorkspaceDir,
-    workspaceDir: "/workspace",
+    workspaceDir: "/alice",
     hostCacheDir: path.join(root, "sandbox", "cache"),
     cacheDir: "/cache",
     tmpDir: "/tmp",

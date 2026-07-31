@@ -7,6 +7,7 @@ import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
 import { createPromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
+import { addBashSandboxSkillMount } from "../../../contexts/bash-sandbox/src/index.js";
 
 const path = await import("node:path");
 
@@ -42,12 +43,26 @@ export function createApiContextRuntime(input: {
     dbPath: path.join(input.config.memoryFiles.root, "state", "initiated-behavior-runs.sqlite")
   });
   const calendarStore = createCalendarStore(path.join(input.config.memoryFiles.root, "alice.sqlite"));
+  const skillsDirPath = path.posix.join(input.config.bashSandbox.workspaceDir, "skills");
+  const firstPartySkillsRoot = {
+    root: input.config.skills?.root ?? "src/capabilities/skills",
+    source: "first-party" as const,
+    sandboxRoot: skillsDirPath
+  };
   const skillsRegistry = createSkillRegistry({
     roots: [
-      { root: input.config.skills?.root ?? "src/capabilities/skills", source: "first-party" },
-      { root: input.config.skills?.installedRoot ?? ".agents/skills", source: "third-party" }
+      firstPartySkillsRoot,
+      { root: input.config.skills?.installedRoot ?? ".agents/skills", source: "third-party", sandboxRoot: skillsDirPath }
     ]
   });
+  for (const skill of createSkillRegistry({ roots: [firstPartySkillsRoot] }).list()) {
+    addBashSandboxSkillMount(input.config.bashSandbox, {
+      id: skill.name,
+      hostPath: skill.hostRoot,
+      containerPath: skill.sandboxRoot,
+      readOnly: false
+    });
+  }
   const promptContextRuntime = createPromptContextRuntime({
     username: input.config.project.username,
     time: input.time,
@@ -56,7 +71,8 @@ export function createApiContextRuntime(input: {
     memoryStore: profileMemoryRuntime.memoryStore,
     diaryStore: profileMemoryRuntime.diaryStore,
     calendarStore,
-    skillsRegistry
+    skillsRegistry,
+    skillsDirPath
   });
 
   return {

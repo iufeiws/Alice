@@ -74,9 +74,9 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
       bashSandbox: {
         containerName: "alice-bash-sandbox",
         image: "cimg/python:3.13-browsers",
-        defaultCwd: "/workspace",
-        hostWorkspaceDir: path.join(root, "sandbox", "workspace"),
-        workspaceDir: "/workspace",
+        defaultCwd: "/alice",
+        hostWorkspaceDir: path.join(root, "sandbox", "alice"),
+        workspaceDir: "/alice",
         hostCacheDir: path.join(root, "sandbox", "cache"),
         cacheDir: "/cache",
         tmpDir: "/tmp",
@@ -110,6 +110,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         memoryStore: this.memoryStore,
         diaryStore: this.diaryStore,
         calendarStore: this.calendarStore,
+        skillsDirPath: `${this.config.bashSandbox.workspaceDir.replace(/\/+$/, "")}/skills`,
         skillsRegistry: { available: () => [] },
         worldWandererConfigPath: this.pluginConfigs?.worldWanderer?.configPath
       });

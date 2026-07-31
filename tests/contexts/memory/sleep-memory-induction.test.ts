@@ -70,7 +70,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
   assert.equal(ok, true);
   assert.deepEqual(calls, [{ start: "2026-05-24T00:00:00.000", end: "2026-05-24T06:00:00.000" }]);
   assert.equal(stateStore.read().lastInductionAt, "2026-05-24T06:00:00.000");
-  assert.match(seen[0] ?? "", /\/workspace\/memory_organization\/persistent-memory\.md/);
+  assert.match(seen[0] ?? "", /\/alice\/memory_organization\/persistent-memory\.md/);
   assert.equal(memoryStore.read().persistent, "");
   assert.equal(memoryStore.read().userPreferences, "");
   assert.equal(memoryStore.read().yesterdaySummary, "");

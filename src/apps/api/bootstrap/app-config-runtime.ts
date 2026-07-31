@@ -138,6 +138,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
   const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
   const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".agents/skills";
+  const sandboxWorkspaceDir = env.BASH_SANDBOX_WORKSPACE_DIR ?? "/alice";
 
   return {
     project: {
@@ -227,14 +228,18 @@ export function loadConfig(env: Env = process.env): AppConfig {
     bashSandbox: validateBashSandboxConfig({
       containerName: env.BASH_SANDBOX_CONTAINER_NAME ?? "alice-bash-sandbox",
       image: env.BASH_SANDBOX_IMAGE ?? "cimg/python:3.13-browsers",
-      defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? "/workspace",
-      hostWorkspaceDir: env.BASH_SANDBOX_HOST_WORKSPACE_DIR ?? ".sandbox/bash/workspace",
-      workspaceDir: env.BASH_SANDBOX_WORKSPACE_DIR ?? "/workspace",
+      defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? "/alice",
+      hostWorkspaceDir: env.BASH_SANDBOX_HOST_WORKSPACE_DIR ?? ".sandbox/bash/alice",
+      workspaceDir: sandboxWorkspaceDir,
       hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? ".sandbox/bash/cache",
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
       skillMounts: [],
-      mounts: withDefaultAssetsMount(parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : [])),
+      mounts: withDefaultMounts(
+        parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
+        installedSkillsRoot,
+        sandboxWorkspaceDir
+      ),
       network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
       outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 30_000),
@@ -312,15 +317,16 @@ export function loadConfig(env: Env = process.env): AppConfig {
   };
 }
 
-function withDefaultAssetsMount(mounts: BashSandboxMountConfig[]): BashSandboxMountConfig[] {
-  if (mounts.some((mount) => mount.containerPath === "/assets")) return mounts;
-  return [
-    {
-      id: "assets",
-      hostPath: "assets",
-      containerPath: "/assets",
-      readOnly: true
-    },
-    ...mounts
-  ];
+function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot: string, workspaceDir: string): BashSandboxMountConfig[] {
+  const skillsMount: BashSandboxMountConfig = {
+    id: "skills",
+    hostPath: installedSkillsRoot,
+    containerPath: `${workspaceDir.replace(/\/+$/, "")}/skills`,
+    readOnly: false
+  };
+  const optional = mounts.filter((mount) => mount.containerPath !== skillsMount.containerPath);
+  if (!mounts.some((mount) => mount.containerPath === "/assets")) {
+    optional.unshift({ id: "assets", hostPath: "assets", containerPath: "/assets", readOnly: true });
+  }
+  return [skillsMount, ...optional];
 }

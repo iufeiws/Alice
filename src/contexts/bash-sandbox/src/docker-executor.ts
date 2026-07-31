@@ -174,8 +174,8 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
   if (config.cpuLimit) args.push("--cpus", config.cpuLimit);
   if (config.memoryLimit) args.push("--memory", config.memoryLimit);
   if (config.pidsLimit) args.push("--pids-limit", String(config.pidsLimit));
-  for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
+  for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   args.push(config.image, "sleep", "infinity");
   return args;
 }

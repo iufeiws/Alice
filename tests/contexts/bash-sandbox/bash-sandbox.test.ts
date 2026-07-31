@@ -98,6 +98,18 @@ test("config mounts installed skills read-write at the sandbox home", () => {
   ]);
 });
 
+test("config mounts the project codebase read-write inside the sandbox", () => {
+  const config = loadConfig({});
+
+  assert.deepEqual(config.bashSandbox.mounts.filter((mount) => mount.containerPath.startsWith("/alice/codebase/")), [
+    { id: "codebase_src", hostPath: fs.realpathSync("src"), containerPath: "/alice/codebase/src", readOnly: false },
+    { id: "codebase_memory_files", hostPath: fs.realpathSync("memory-files"), containerPath: "/alice/codebase/memory-files", readOnly: false },
+    { id: "codebase_tests", hostPath: fs.realpathSync("tests"), containerPath: "/alice/codebase/tests", readOnly: false },
+    { id: "codebase_scripts", hostPath: fs.realpathSync("scripts"), containerPath: "/alice/codebase/scripts", readOnly: false },
+    { id: "codebase_docs", hostPath: fs.realpathSync("docs"), containerPath: "/alice/codebase/docs", readOnly: false }
+  ]);
+});
+
 test("config rejects sensitive host paths", () => {
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/alice/skills/generated", readOnly: false }]) }), /skills mount/);

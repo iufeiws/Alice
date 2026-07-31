@@ -156,6 +156,7 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "--tmpfs", config.tmpDir,
     "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
     "-e", `HOME=${config.workspaceDir}`,
+    "-e", "BASH_ENV=/alice/.bashrc",
     "-e", `NPM_CONFIG_CACHE=${config.cacheDir}/npm`,
     "-e", `PIP_CACHE_DIR=${config.cacheDir}/pip`,
     "-e", `PATH=${WRAPPER_CONTAINER_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,

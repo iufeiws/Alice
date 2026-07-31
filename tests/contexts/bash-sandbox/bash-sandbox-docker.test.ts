@@ -25,6 +25,7 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
   assert.match(runCall, /PATH=\/sandbox\/bin:/);
   assert.match(runCall, /HOME=\/alice/);
+  assert.match(runCall, /BASH_ENV=\/alice\/\.bashrc/);
   assert.match(runCall, /-w \/alice/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);

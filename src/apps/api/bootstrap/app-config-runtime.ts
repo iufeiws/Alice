@@ -318,15 +318,24 @@ export function loadConfig(env: Env = process.env): AppConfig {
 }
 
 function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot: string, workspaceDir: string): BashSandboxMountConfig[] {
+  const workspaceRoot = workspaceDir.replace(/\/+$/, "");
   const skillsMount: BashSandboxMountConfig = {
     id: "skills",
     hostPath: installedSkillsRoot,
-    containerPath: `${workspaceDir.replace(/\/+$/, "")}/skills`,
+    containerPath: `${workspaceRoot}/skills`,
     readOnly: false
   };
-  const optional = mounts.filter((mount) => mount.containerPath !== skillsMount.containerPath);
+  const codebaseMounts: BashSandboxMountConfig[] = [
+    { id: "codebase_src", hostPath: "src", containerPath: `${workspaceRoot}/codebase/src`, readOnly: false },
+    { id: "codebase_memory_files", hostPath: "memory-files", containerPath: `${workspaceRoot}/codebase/memory-files`, readOnly: false },
+    { id: "codebase_tests", hostPath: "tests", containerPath: `${workspaceRoot}/codebase/tests`, readOnly: false },
+    { id: "codebase_scripts", hostPath: "scripts", containerPath: `${workspaceRoot}/codebase/scripts`, readOnly: false },
+    { id: "codebase_docs", hostPath: "docs", containerPath: `${workspaceRoot}/codebase/docs`, readOnly: false }
+  ];
+  const defaultContainerPaths = new Set([skillsMount, ...codebaseMounts].map((mount) => mount.containerPath));
+  const optional = mounts.filter((mount) => !defaultContainerPaths.has(mount.containerPath));
   if (!mounts.some((mount) => mount.containerPath === "/assets")) {
     optional.unshift({ id: "assets", hostPath: "assets", containerPath: "/assets", readOnly: true });
   }
-  return [skillsMount, ...optional];
+  return [skillsMount, ...codebaseMounts, ...optional];
 }

@@ -93,6 +93,7 @@ export function createApiCapabilitiesRuntime(input: {
     asrPlugin: voicePluginRuntime.asrPlugin,
     messagingTools: toolRuntime.messagingTools,
     finishAndWaitTools: toolRuntime.finishAndWaitTools,
+    restartTools: toolRuntime.restartTools,
     photoConfigPath: toolRuntime.photoConfigPath,
     photoTools: toolRuntime.photoTools,
     wardrobeTools: toolRuntime.wardrobeTools,

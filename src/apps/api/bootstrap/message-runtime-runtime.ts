@@ -28,6 +28,7 @@ export function createMessageRuntimeRuntime(input: {
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
+  processRestartContinuationStore?: any;
 }) {
   return createMessageRuntime({
     getDelayMs: () => input.config.core.inboundDebounceMs,
@@ -106,6 +107,7 @@ export function createMessageRuntimeRuntime(input: {
     },
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
+    processRestartContinuationStore: input.processRestartContinuationStore,
     downloadInboundAttachment(downloadInput) {
       if (downloadInput.event.source.plugin === "feishu") {
         return input.feishu.downloadInboundAttachment(downloadInput);

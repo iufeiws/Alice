@@ -247,6 +247,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     recoverPendingSessions() {
       recoverPendingSessionsFromStore();
     },
+    async recoverProcessRestartContinuation() {
+      const record = deps.processRestartContinuationStore?.read();
+      if (!record) return;
+      const recovered = await runGeneratedSession(record.event, "process restart recovery");
+      if (!recovered) return;
+      const pendingIds = pendingMessageIds(record.event);
+      if (pendingIds.length > 0) {
+        const processedAt = time.now().iso;
+        deps.store.markMessagesCoreProcessed(pendingIds, processedAt, createId("restart_recovery"));
+        deps.agentState?.noteInboundProcessed?.();
+      }
+    },
     pauseHeartbeat() {
       heartbeat.pause();
     },
@@ -676,4 +688,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     deps.appendLog("error", `chat agent failed; marked ${pending.length} inbound message(s) processed as failed, batch=${batchId}`);
   }
+}
+
+function pendingMessageIds(event: AgentEvent): number[] {
+  if (!event.meta.raw || typeof event.meta.raw !== "object") return [];
+  const value = (event.meta.raw as { pendingIds?: unknown }).pendingIds;
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is number => Number.isInteger(id));
 }

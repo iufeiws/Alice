@@ -12,7 +12,12 @@ export function createApiStartupRuntime(input: {
   runtimeState: ApiRuntimeState;
   chatAgent: { start(): Promise<void> | void };
   scheduler: { start(): void };
-  messageRuntime: { recoverPendingSessions(): void };
+  messageRuntime: {
+    recoverProcessRestartContinuation?(): Promise<void> | void;
+    recoverPendingSessions(): void;
+    pauseHeartbeat?(): void;
+    resumeHeartbeat?(): void;
+  };
   appendLog: AppendLog;
 }) {
   return {
@@ -20,9 +25,12 @@ export function createApiStartupRuntime(input: {
   };
 
   async function start(): Promise<void> {
+    input.messageRuntime.pauseHeartbeat?.();
     await input.chatAgent.start();
+    await input.messageRuntime.recoverProcessRestartContinuation?.();
     input.scheduler.start();
     input.messageRuntime.recoverPendingSessions();
+    if (input.config.core?.heartbeatPaused !== true) input.messageRuntime.resumeHeartbeat?.();
     input.runtimeState.feishuStarted = input.config.plugins.feishu.enabled && Object.keys(input.config.plugins.feishu.accounts).length > 0;
     input.runtimeState.wechatStarted = input.config.plugins.wechat.enabled && Boolean(input.config.plugins.wechat.botToken);
     input.appendLog("info", `chat agent started: llm=api-preset feishu=${input.runtimeState.feishuStarted ? "started" : "stopped"} wechat=${input.runtimeState.wechatStarted ? "started" : "stopped"}`);

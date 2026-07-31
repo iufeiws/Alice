@@ -3,6 +3,7 @@ import type { AgentLoopRuntime, PreparedAgentLoopRun } from "../../../agent-loop
 import type { AgentStateController } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { ProcessRestartContinuationStore } from "../../../agent-loop/src/adapters/json-process-restart-continuation-store.js";
 import type {
   InsertOutboundMessageInput,
   StoredConversationMessage,
@@ -89,6 +90,7 @@ export type MessageRuntimeDeps = {
   chatFilesRoot?: string;
   chatFilesOutputRoot?: string;
   onHeartbeatPausedChange?: (paused: boolean) => void;
+  processRestartContinuationStore?: ProcessRestartContinuationStore;
 };
 
 export type SystemNoticeTarget = {
@@ -110,6 +112,7 @@ export type MessageRuntime = {
   ingestLifecycle(event: MessageLifecycleEvent): void;
   sendSystemNotice(input: SendSystemNoticeInput): Promise<void>;
   recoverPendingSessions(): void;
+  recoverProcessRestartContinuation(): Promise<void>;
   pauseHeartbeat(): void;
   resumeHeartbeat(): void;
   processNow(): Promise<void>;

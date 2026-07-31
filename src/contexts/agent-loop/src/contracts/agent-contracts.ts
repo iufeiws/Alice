@@ -248,6 +248,8 @@ export type ToolExecutionContext = {
     supportsAudio?: boolean;
   };
   reportProgress?(content: string): void;
+  prepareProcessRestart?(): Promise<void>;
+  cancelProcessRestart?(): Promise<void>;
 };
 
 export type ToolExecutionReporter = {

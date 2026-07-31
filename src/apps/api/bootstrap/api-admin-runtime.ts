@@ -87,6 +87,7 @@ export function createApiAdminRuntime(input: {
     agentState: input.agentState,
     messagingTools: input.apiCapabilitiesRuntime.messagingTools,
     finishAndWaitTools: input.apiCapabilitiesRuntime.finishAndWaitTools,
+    restartTools: input.apiCapabilitiesRuntime.restartTools,
     photoTools: input.apiCapabilitiesRuntime.photoTools,
     wardrobeTools: input.apiCapabilitiesRuntime.wardrobeTools,
     bookcaseTools: input.apiCapabilitiesRuntime.bookcaseTools,

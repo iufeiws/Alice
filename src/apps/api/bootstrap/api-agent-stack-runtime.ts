@@ -16,6 +16,7 @@ export function createApiAgentStackRuntime(input: {
   time: any;
   resolvePromptApiPreset(kind: any): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  processRestartContinuationStore?: any;
 }) {
   const agentRunIndicatorRuntime = createAgentRunIndicatorRuntime();
   const apiAgentRuntime = createApiAgentRuntime({
@@ -40,7 +41,8 @@ export function createApiAgentStackRuntime(input: {
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     visibleToolNames: input.apiToolingRuntime.visibleToolNames,
     agentRunIndicator: agentRunIndicatorRuntime,
-    appendLog: input.appendLog
+    appendLog: input.appendLog,
+    processRestartContinuationStore: input.processRestartContinuationStore
   });
 
   return {

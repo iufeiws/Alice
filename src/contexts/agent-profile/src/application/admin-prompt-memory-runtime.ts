@@ -109,10 +109,15 @@ export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugi
   return { plugin: "wechat", accountId: "main", channelId: "preview", userId: "preview", sessionId: "preview" };
 }
 
-export function getVisiblePromptTools(context: AdminRoutesContext, store: PromptProfileStore = context.promptProfileStore): Array<{ name: string; description?: string }> {
+export function getVisiblePromptTools(
+  context: AdminRoutesContext,
+  store: PromptProfileStore = context.promptProfileStore,
+  excludedToolNames: readonly string[] = []
+): Array<{ name: string; description?: string }> {
   const profile = store.get();
-  const plugins = [context.messagingTools, context.finishAndWaitTools, context.photoTools, context.wardrobeTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
-  return plugins.flatMap((plugin) => plugin.listTools().filter((tool) => isToolVisibleInPromptProfile(profile, tool.name)).map((tool) => ({
+  const excluded = new Set(excludedToolNames);
+  const plugins = [context.messagingTools, context.finishAndWaitTools, context.restartTools, context.photoTools, context.wardrobeTools, context.sleepCocoonTools, context.calendarTools].filter(Boolean) as ToolPlugin[];
+  return plugins.flatMap((plugin) => plugin.listTools().filter((tool) => !excluded.has(tool.name) && isToolVisibleInPromptProfile(profile, tool.name)).map((tool) => ({
     name: tool.name,
     description: tool.description
   })));

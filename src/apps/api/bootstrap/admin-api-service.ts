@@ -12,6 +12,7 @@ import { serveTtsAsset } from "../../../channels/tts/src/admin-runtime.js";
 import { deleteShellOption, getShellConfig, readShellUiOrder, saveShellOption, saveShellSettings, saveShellUiOrder, serveShellAsset, uploadShellOutfitImage } from "../../../contexts/agent-profile/src/application/shell-admin-runtime.js";
 import { AGENT_STATES, getAdminConfig, handleAdminRuntimeApi, saveAgentConfig, saveAgentState, saveCoreProfile } from "./admin-runtime.js";
 import { getAdminTools, getMemoryAdminRuntime, getVisiblePromptTools, isMemoryTarget, previewToolResult, savePromptApiProfile, savePromptProfile, saveTalkPromptProfile, writeServiceResult } from "../../../contexts/agent-profile/src/application/admin-prompt-memory-runtime.js";
+import { restartToolName } from "../../../capabilities/tools/restart/profile.js";
 import { createInitiatedBehavior, deleteInitiatedBehavior, patchInitiatedBehavior, writeInitiatedBehaviors } from "../../../contexts/initiative/src/application/admin-runtime.js";
 import type { AdminRouteServices, AdminRuntimeContext as AdminRoutesContext } from "./admin-route-context.js";
 
@@ -78,7 +79,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     writeJson(response, 200, {
       profile: context.talkPromptProfileStore.get(),
       variables: context.getPromptVariableTree(),
-      tools: getVisiblePromptTools(context, context.talkPromptProfileStore)
+      tools: getVisiblePromptTools(context, context.talkPromptProfileStore, [restartToolName])
     });
     return;
   }

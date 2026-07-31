@@ -1,11 +1,11 @@
-import type { AgentEvent } from "../contracts/agent-contracts.js";
+import type { AgentEvent, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { type LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { type LLMRequestSender, type LLMToolLoopContinuation } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
@@ -96,6 +96,15 @@ export type ChatAgentLoopInput = {
   promptProfile?: PromptProfile;
   buildYieldResumeMessages?(session: ChatAgentLoopSession): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
   agentLoopRunSeq?: number;
+  processRestartContinuation?: {
+    snapshot: LLMToolLoopContinuation;
+    interruptedToolResult?: ToolResult;
+  };
+  onProcessRestartCheckpoint?(continuation: LLMToolLoopContinuation): Promise<void> | void;
+  onProcessRestartProgress?(continuation: LLMToolLoopContinuation): Promise<void> | void;
+  onProcessRestartCancelled?(): Promise<void> | void;
+  processRestartRecoveryActive?: boolean;
+  onProcessRestartResponseReceived?(): Promise<void> | void;
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   agentRunIndicator?: AgentRunIndicator;
@@ -132,6 +141,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   };
   const visibleToolNames = input.llmInput.toolNames;
   const baseSendRequest = input.llmRequestSender;
+  let processRestartRecoveryPending = input.processRestartRecoveryActive === true;
   const sendRequest = createAgentRunIndicatorRequestSender({
     indicator: input.agentRunIndicator,
     sendRequest: baseSendRequest,
@@ -140,6 +150,10 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   });
   const spec: AgentFunctionCallLoopSpec = {
     initialMessages: session.messages,
+    continuation: input.processRestartContinuation,
+    onProcessRestartCheckpoint: input.onProcessRestartCheckpoint,
+    onProcessRestartProgress: input.onProcessRestartProgress,
+    onProcessRestartCancelled: input.onProcessRestartCancelled,
     promptProfile: input.promptProfile,
     async beforeRound({ round }) {
       if (input.isLLMRunCancelled?.()) return { stop: true, messages: session.messages };
@@ -189,8 +203,12 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         throw error;
       }
     },
-    afterRequest() {
+    async afterRequest() {
       if (session.skipNextAppendLayers) session.skipNextAppendLayers = undefined;
+      if (processRestartRecoveryPending) {
+        processRestartRecoveryPending = false;
+        await input.onProcessRestartResponseReceived?.();
+      }
     },
     transformAssistantMessage({ round, message }) {
       return contentToolCallAssistantMessage(round, message, input.llmInput.assistantContentToolCall, visibleToolNames);

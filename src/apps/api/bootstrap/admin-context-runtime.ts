@@ -58,6 +58,7 @@ export function createAdminRequestHandlerRuntime(input: {
   agentState: any;
   messagingTools: any;
   finishAndWaitTools: any;
+  restartTools: any;
   photoTools: any;
   wardrobeTools: any;
   bookcaseTools: any;
@@ -136,6 +137,7 @@ export function createAdminRequestHandlerRuntime(input: {
     agentState: input.agentState,
     messagingTools: input.messagingTools,
     finishAndWaitTools: input.finishAndWaitTools,
+    restartTools: input.restartTools,
     photoTools: input.photoTools,
     wardrobeTools: input.wardrobeTools,
     bookcaseTools: input.bookcaseTools,

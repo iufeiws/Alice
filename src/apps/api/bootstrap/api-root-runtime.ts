@@ -6,11 +6,16 @@ import { createApiServerStackRuntime } from "../server/api-server-stack-runtime.
 import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
 import { createApiControlRuntime } from "./api-control-runtime.js";
 import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { createJsonProcessRestartContinuationStore } from "../../../contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
+const path = await import("node:path");
 
 export function createApiRootRuntime() {
   const apiRuntimeState = createApiRuntimeState();
   const agentLoopRuntime = createAgentLoopRuntime();
   const foundation = createApiFoundationRuntime();
+  const processRestartContinuationStore = createJsonProcessRestartContinuationStore(
+    path.join(foundation.config.memoryFiles.root, "agent-loop", "process-restart-continuation.json")
+  );
   const apiLLMRuntime = createApiLLMRuntime({
     config: foundation.config,
     time: foundation.currentTime,
@@ -74,7 +79,8 @@ export function createApiRootRuntime() {
     agentState: apiControlRuntime.agentState,
     time: foundation.currentTime,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
-    appendLog: foundation.appendLog
+    appendLog: foundation.appendLog,
+    processRestartContinuationStore
   });
   agentLoopRuntime.setRunners({
     prepareChat: ({ event, agentLoopRunSeq }) => apiAgentStackRuntime.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
@@ -104,7 +110,8 @@ export function createApiRootRuntime() {
     activeLLM: foundation.activeLLM,
     agentRunIndicatorRuntime: apiAgentStackRuntime.agentRunIndicatorRuntime,
     appendLog: foundation.appendLog,
-    appendMessageLog: foundation.appendMessageLog
+    appendMessageLog: foundation.appendMessageLog,
+    processRestartContinuationStore
   });
 
   return {

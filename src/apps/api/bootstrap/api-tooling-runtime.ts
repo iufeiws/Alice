@@ -72,6 +72,7 @@ export function createApiToolingRuntime(input: {
     asrPlugin: apiCapabilitiesRuntime.asrPlugin,
     messagingTools: apiCapabilitiesRuntime.messagingTools,
     finishAndWaitTools: apiCapabilitiesRuntime.finishAndWaitTools,
+    restartTools: apiCapabilitiesRuntime.restartTools,
     bashRuntime: apiCapabilitiesRuntime.bashRuntime,
     toolPlugins: apiCapabilitiesRuntime.toolPlugins,
     llmRequests: apiCapabilitiesRuntime.llmRequests,

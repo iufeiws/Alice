@@ -67,8 +67,32 @@ export type LLMToolLoopResult = {
   toolCallCount: number;
 };
 
+export type LLMToolLoopContinuation = {
+  version: 1;
+  messages: LLMMessage[];
+  round: number;
+  replyRound: number;
+  previousAssistantMessageSignature?: string;
+  totalToolCallCount: number;
+  replyToolCallCount: number;
+  invalidateSession: boolean;
+  result: LLMChatResult;
+  completeAfterToolCalls: boolean;
+  interruptedCallIndex: number;
+  executedCalls: LLMToolCall[];
+  toolMessages: LLMMessage[];
+  reachedToolCallLimit: boolean;
+  resetSession: boolean;
+  continueAfterReset: boolean;
+  yieldReturn: boolean;
+};
+
 export type LLMToolLoopInput = {
   initialMessages: LLMMessage[];
+  continuation?: {
+    snapshot: LLMToolLoopContinuation;
+    interruptedToolResult?: ToolResult;
+  };
   buildRequest(input: { round: number; messages: LLMMessage[] }): Promise<LLMToolLoopRoundRequest> | LLMToolLoopRoundRequest;
   sendRequest: LLMRequestSender;
   toolRegistryName?: string;
@@ -108,6 +132,9 @@ export type LLMToolLoopInput = {
     result: LLMChatResult;
   }): Promise<LLMMessage[]> | LLMMessage[];
   onMessagesChanged?(input: { round: number; messages: LLMMessage[]; reason: "completed" | "tools" | "limit" }): Promise<void> | void;
+  onProcessRestartCheckpoint?(continuation: LLMToolLoopContinuation): Promise<void> | void;
+  onProcessRestartProgress?(continuation: LLMToolLoopContinuation): Promise<void> | void;
+  onProcessRestartCancelled?(): Promise<void> | void;
   limits?: LLMToolLoopLimits;
 };
 
@@ -144,13 +171,14 @@ export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
 
 export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLoopResult> {
   const limits = { ...defaultLLMToolLoopLimits, ...(input.limits ?? {}) };
-  let messages = cloneLLMMessages(input.initialMessages);
-  let previousAssistantMessageSignature: string | undefined;
-  let totalToolCallCount = 0;
-  let replyToolCallCount = 0;
-  let invalidateSession = false;
-  let round = 0;
-  let replyRound = 0;
+  let pendingContinuation = input.continuation?.snapshot;
+  let messages = cloneLLMMessages(pendingContinuation?.messages ?? input.initialMessages);
+  let previousAssistantMessageSignature = pendingContinuation?.previousAssistantMessageSignature;
+  let totalToolCallCount = pendingContinuation?.totalToolCallCount ?? 0;
+  let replyToolCallCount = pendingContinuation?.replyToolCallCount ?? 0;
+  let invalidateSession = pendingContinuation?.invalidateSession ?? false;
+  let round = pendingContinuation?.round ?? 0;
+  let replyRound = pendingContinuation?.replyRound ?? 0;
 
   const cancelledResult = (rounds: number, finalResult?: LLMChatResult): LLMToolLoopResult => ({
     messages,
@@ -164,9 +192,11 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
 
   for (; replyRound < limits.maxRounds; round += 1, replyRound += 1) {
     if (input.shouldCancel?.()) return cancelledResult(round);
-    const before = await input.beforeRound?.({ round, messages });
+    const resumedContinuation = pendingContinuation;
+    const resumingToolRound = resumedContinuation !== undefined;
+    const before = resumingToolRound ? undefined : await input.beforeRound?.({ round, messages });
     if (before?.messages) messages = cloneLLMMessages(before.messages);
-    if (before?.stop || messages.length === 0) {
+    if (before?.stop || (!resumingToolRound && messages.length === 0)) {
       return {
         messages,
         rounds: round,
@@ -179,27 +209,33 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
 
     const request = await input.buildRequest({ round, messages });
     let result: LLMChatResult;
-    try {
-      result = await input.sendRequest({
-        ...request,
-        round,
-        messages: cloneLLMMessages(request.messages ?? messages)
-      });
-    } catch (error) {
-      if (input.shouldCancel?.()) return cancelledResult(round + 1);
-      throw error;
+    let completeAfterToolCalls = false;
+    if (resumedContinuation) {
+      result = cloneLLMChatResult(resumedContinuation.result);
+      completeAfterToolCalls = resumedContinuation.completeAfterToolCalls;
+    } else {
+      try {
+        result = await input.sendRequest({
+          ...request,
+          round,
+          messages: cloneLLMMessages(request.messages ?? messages)
+        });
+      } catch (error) {
+        if (input.shouldCancel?.()) return cancelledResult(round + 1);
+        throw error;
+      }
+      const transformed = input.transformAssistantMessage?.({ round, message: result.message });
+      const transformedMessage = isAssistantMessageTransformResult(transformed) ? transformed.message : transformed ?? result.message;
+      completeAfterToolCalls = isAssistantMessageTransformResult(transformed) && transformed.completeAfterToolCalls === true;
+      result = transformedMessage === result.message ? result : { ...result, message: transformedMessage };
+      const assistantMessageSignature = assistantLoopMessageSignature(result.message);
+      if (assistantMessageSignature === previousAssistantMessageSignature) {
+        throw new Error("llm_tool_loop_repeated_assistant_message");
+      }
+      previousAssistantMessageSignature = assistantMessageSignature;
+      await input.afterRequest?.({ round, result, messages });
+      if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
     }
-    const transformed = input.transformAssistantMessage?.({ round, message: result.message });
-    const transformedMessage = isAssistantMessageTransformResult(transformed) ? transformed.message : transformed ?? result.message;
-    const completeAfterToolCalls = isAssistantMessageTransformResult(transformed) && transformed.completeAfterToolCalls === true;
-    result = transformedMessage === result.message ? result : { ...result, message: transformedMessage };
-    const assistantMessageSignature = assistantLoopMessageSignature(result.message);
-    if (assistantMessageSignature === previousAssistantMessageSignature) {
-      throw new Error("llm_tool_loop_repeated_assistant_message");
-    }
-    previousAssistantMessageSignature = assistantMessageSignature;
-    await input.afterRequest?.({ round, result, messages });
-    if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
 
     const calls = result.message.toolCalls ?? [];
     if (calls.length === 0) {
@@ -223,26 +259,54 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       };
     }
 
-    let reachedToolCallLimit = false;
-    let resetSession = false;
-    let continueAfterReset = false;
-    let yieldReturn = false;
-    const executedCalls: LLMToolCall[] = [];
-    const toolMessages: LLMMessage[] = [];
-    for (const [callIndex, call] of calls.entries()) {
-      totalToolCallCount += 1;
-      replyToolCallCount += 1;
+    let reachedToolCallLimit = resumedContinuation?.reachedToolCallLimit ?? false;
+    let resetSession = resumedContinuation?.resetSession ?? false;
+    let continueAfterReset = resumedContinuation?.continueAfterReset ?? false;
+    let yieldReturn = resumedContinuation?.yieldReturn ?? false;
+    const executedCalls: LLMToolCall[] = cloneLLMToolCalls(resumedContinuation?.executedCalls ?? []);
+    const toolMessages: LLMMessage[] = cloneLLMMessages(resumedContinuation?.toolMessages ?? []);
+    const firstCallIndex = resumedContinuation?.interruptedCallIndex ?? 0;
+    pendingContinuation = undefined;
+    for (let callIndex = firstCallIndex; callIndex < calls.length; callIndex += 1) {
+      const call = calls[callIndex];
+      const recoveringInterruptedCall = resumedContinuation !== undefined
+        && input.continuation?.interruptedToolResult !== undefined
+        && callIndex === firstCallIndex;
+      if (!recoveringInterruptedCall) {
+        totalToolCallCount += 1;
+        replyToolCallCount += 1;
+      }
       if (replyToolCallCount >= limits.maxTotalToolCalls) reachedToolCallLimit = true;
 
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
       await input.beforeTool?.({ round, call, callIndex });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
-      executedCalls.push(call);
+      if (!recoveringInterruptedCall) executedCalls.push(call);
       const execution = await executeTool(input, call, request, {
         round,
         result,
         callIndex,
-        reachedToolCallLimit
+        reachedToolCallLimit,
+        continuation: () => ({
+          version: 1,
+          messages: cloneLLMMessages(messages),
+          round,
+          replyRound,
+          previousAssistantMessageSignature,
+          totalToolCallCount,
+          replyToolCallCount,
+          invalidateSession,
+          result: cloneLLMChatResult(result),
+          completeAfterToolCalls,
+          interruptedCallIndex: callIndex,
+          executedCalls: cloneLLMToolCalls(executedCalls),
+          toolMessages: cloneLLMMessages(toolMessages),
+          reachedToolCallLimit,
+          resetSession,
+          continueAfterReset,
+          yieldReturn
+        }),
+        recoveredToolResult: recoveringInterruptedCall ? input.continuation?.interruptedToolResult : undefined
       });
       if (execution.control?.yieldReturn !== true) {
         if (execution.message) toolMessages.push(execution.message);
@@ -253,6 +317,27 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       continueAfterReset = continueAfterReset || execution.control?.continueAfterReset === true;
       yieldReturn = yieldReturn || execution.control?.yieldReturn === true;
       reachedToolCallLimit = reachedToolCallLimit || execution.control?.reachedToolCallLimit === true;
+      if (resumedContinuation) {
+        await input.onProcessRestartProgress?.({
+          version: 1,
+          messages: cloneLLMMessages(messages),
+          round,
+          replyRound,
+          previousAssistantMessageSignature,
+          totalToolCallCount,
+          replyToolCallCount,
+          invalidateSession,
+          result: cloneLLMChatResult(result),
+          completeAfterToolCalls,
+          interruptedCallIndex: callIndex + 1,
+          executedCalls: cloneLLMToolCalls(executedCalls),
+          toolMessages: cloneLLMMessages(toolMessages),
+          reachedToolCallLimit,
+          resetSession,
+          continueAfterReset,
+          yieldReturn
+        });
+      }
       if (resetSession) break;
     }
 
@@ -406,24 +491,47 @@ async function executeTool(
     result: LLMChatResult;
     callIndex: number;
     reachedToolCallLimit: boolean;
+    continuation(): LLMToolLoopContinuation;
+    recoveredToolResult?: ToolResult;
   }
 ): Promise<LLMToolLoopExecution> {
   const tool = toolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
   const parsedInput = parseToolInput(call.function.arguments);
   const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
   let toolResult: ToolResult;
-  try {
+  let processRestartPrepared = false;
+  const cancelProcessRestart = async (): Promise<void> => {
+    if (!processRestartPrepared) return;
+    processRestartPrepared = false;
+    await input.onProcessRestartCancelled?.();
+  };
+  if (context.recoveredToolResult) {
+    if (context.recoveredToolResult.callId !== call.id) throw new Error("llm_tool_loop_continuation_call_mismatch");
+    toolResult = context.recoveredToolResult;
+  } else try {
+    const baseExecutionContext = input.buildToolExecutionContext?.({
+      round: context.round,
+      call,
+      callIndex: context.callIndex
+    });
     toolResult = await executeToolPlugin(tool, {
       id: call.id,
       toolName: call.function.name,
       input: toolInput,
       requester: input.toolCallSource?.requester,
       externalSession: input.toolCallSource?.externalSession
-    }, input.buildToolExecutionContext?.({
-      round: context.round,
-      call,
-      callIndex: context.callIndex
-    }));
+    }, {
+      ...baseExecutionContext,
+      prepareProcessRestart: input.onProcessRestartCheckpoint
+        ? async () => {
+          await input.onProcessRestartCheckpoint?.(context.continuation());
+          processRestartPrepared = true;
+        }
+        : baseExecutionContext?.prepareProcessRestart,
+      cancelProcessRestart: input.onProcessRestartCancelled
+        ? cancelProcessRestart
+        : baseExecutionContext?.cancelProcessRestart
+    });
   } catch (error) {
     toolResult = {
       callId: call.id,
@@ -431,6 +539,7 @@ async function executeTool(
       output: `<error type="tool crash">${escapeXmlText(error instanceof Error ? error.message : String(error))}</error>`
     };
   }
+  await cancelProcessRestart();
   const toolMessage = {
     role: "tool" as const,
     toolCallId: call.id,
@@ -497,6 +606,17 @@ export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
   }));
+}
+
+function cloneLLMToolCalls(calls: LLMToolCall[]): LLMToolCall[] {
+  return calls.map((call) => ({ ...call, function: { ...call.function } }));
+}
+
+function cloneLLMChatResult(result: LLMChatResult): LLMChatResult {
+  return {
+    ...result,
+    message: cloneLLMMessages([result.message])[0]
+  };
 }
 
 function assistantLoopMessageSignature(message: LLMMessage): string {

@@ -11,6 +11,7 @@ import { createDiceTools } from "../../dice/src/index.js";
 import { createBashTools } from "../../bash/src/index.js";
 import { createFileTools } from "../../file/src/index.js";
 import { createSkillsTools } from "../../skills/src/index.js";
+import { createRestartTools, createSystemdRestartController } from "../../restart/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
 import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
@@ -213,8 +214,9 @@ export function createToolRuntime(input: {
     config: input.config.bashSandbox,
     promptContextRuntime: input.promptContextRuntime
   });
+  const restartTools = createRestartTools(createSystemdRestartController());
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
+  const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
 
   return {
     messagingTools,
@@ -225,6 +227,7 @@ export function createToolRuntime(input: {
     sleepCocoonTools,
     calendarTools,
     finishAndWaitTools,
+    restartTools,
     diceTools,
     locationTools,
     bashTools,

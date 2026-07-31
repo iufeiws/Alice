@@ -67,6 +67,8 @@ import {
 } from "./chat-agent-session.js";
 import { shouldResetSessionForTokenPressure } from "./chat-agent-tools.js";
 import type { LLMSessionClearReason, LLMSessionRecord, LLMSessionSnapshot } from "./chat-agent-types.js";
+import type { ProcessRestartContinuationRecord, ProcessRestartContinuationStore } from "../adapters/json-process-restart-continuation-store.js";
+import { restartSuccessOutput } from "../../../../capabilities/tools/restart/profile.js";
 
 type ModeState = ChatAgentModeState;
 
@@ -148,6 +150,7 @@ export type ChatAgentDeps = {
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
   recordAgentInitiatedBehaviorRun?(run: AgentInitiatedBehaviorRun): void;
   random?: () => number;
+  processRestartContinuationStore?: ProcessRestartContinuationStore;
 };
 
 export interface ChatAgent {
@@ -233,6 +236,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       const promptProfile = requirePromptProfile();
       const allToolPlugins = deps.tools ?? [];
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
+      const persistedProcessRestart = deps.processRestartContinuationStore?.read();
+      let activeProcessRestartToolCallId = persistedProcessRestart?.toolCallId;
       let loopSession = deps.initialLLMSession?.staticPromptFingerprint
         ? hydrateLLMSessionSnapshot(deps.initialLLMSession, time.now().epochMs)
         : undefined;
@@ -427,6 +432,13 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         session.waitChatTarget = undefined;
       };
       const appendSessionContext = async (session: LLMSessionRecord): Promise<void> => {
+        if (persistedProcessRestart) {
+          if (persistedProcessRestart.sessionId !== session.id) throw new Error("process_restart_session_mismatch");
+          if (persistedProcessRestart.event.externalSession.sessionId !== event.externalSession.sessionId) {
+            throw new Error("process_restart_external_session_mismatch");
+          }
+          return;
+        }
         if (session.skipNextAppendLayers) return;
         const waitChatResumeMessages = await buildWaitResumeMessages(session);
         if (waitChatResumeMessages.length > 0) {
@@ -535,6 +547,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               contentInputKey: "content"
             }
           };
+          const processRestartContinuation = matchingProcessRestartContinuation({
+            record: persistedProcessRestart,
+            session: loopSession,
+            event
+          });
           preparedLoop = buildChatAgentLoop({
             llmInput,
             event,
@@ -572,6 +589,41 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               return waitChatResumeMessages;
             },
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
+            processRestartContinuation,
+            onProcessRestartCheckpoint: deps.processRestartContinuationStore ? (continuation) => {
+              const interruptedCall = continuation.result.message.toolCalls?.[continuation.interruptedCallIndex];
+              if (!interruptedCall) throw new Error("process_restart_interrupted_call_missing");
+              const checkpointTime = time.now();
+              activeProcessRestartToolCallId = interruptedCall.id;
+              deps.processRestartContinuationStore!.save({
+                version: 1,
+                sessionId: loopSession!.id,
+                toolCallId: interruptedCall.id,
+                restartCompleted: false,
+                event,
+                continuation,
+                createdAt: checkpointTime.iso
+              });
+            } : undefined,
+            onProcessRestartProgress: deps.processRestartContinuationStore && persistedProcessRestart ? (continuation) => {
+              deps.processRestartContinuationStore!.save({
+                ...persistedProcessRestart,
+                restartCompleted: true,
+                continuation
+              });
+            } : undefined,
+            onProcessRestartCancelled: deps.processRestartContinuationStore ? () => {
+              if (activeProcessRestartToolCallId) {
+                deps.processRestartContinuationStore!.clear(activeProcessRestartToolCallId);
+              }
+            } : undefined,
+            processRestartRecoveryActive: persistedProcessRestart !== undefined,
+            onProcessRestartResponseReceived: deps.processRestartContinuationStore ? () => {
+              if (activeProcessRestartToolCallId) {
+                deps.processRestartContinuationStore!.clear(activeProcessRestartToolCallId);
+                activeProcessRestartToolCallId = undefined;
+              }
+            } : undefined,
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,
             agentRunIndicator: deps.agentRunIndicator,
@@ -599,6 +651,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         complete(loopResult) {
           if (!preparedLoop) return [];
           const llmResult = preparedLoop.complete(loopResult);
+          if (!llmResult.cancelled && activeProcessRestartToolCallId) {
+            deps.processRestartContinuationStore?.clear(activeProcessRestartToolCallId);
+          }
           if (initiatedBehaviorRunPlan && initiatedBehaviorExecution?.result === "completed") {
             if (llmResult.cancelled) {
               recordInitiatedBehaviorRun({
@@ -674,4 +729,34 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
   function noteLLMSessionUpdated(session: LLMSessionRecord): void {
     deps.onLLMSessionUpdated?.(createLLMSessionSnapshot(session));
   }
+}
+
+function matchingProcessRestartContinuation(input: {
+  record: ProcessRestartContinuationRecord | undefined;
+  session: LLMSessionRecord;
+  event: AgentEvent;
+}): ChatAgentLoopInput["processRestartContinuation"] | undefined {
+  const { record, session, event } = input;
+  if (!record) return undefined;
+  if (record.sessionId !== session.id) throw new Error("process_restart_session_mismatch");
+  if (record.event.externalSession.sessionId !== event.externalSession.sessionId) {
+    throw new Error("process_restart_external_session_mismatch");
+  }
+  const completedToolCallIds = new Set(session.messages
+    .filter((message) => message.role === "tool" && typeof message.toolCallId === "string")
+    .map((message) => message.toolCallId));
+  const allCallsCompleted = (record.continuation.result.message.toolCalls ?? [])
+    .every((call) => completedToolCallIds.has(call.id));
+  if (record.restartCompleted && allCallsCompleted) return undefined;
+  if (record.restartCompleted) return { snapshot: record.continuation };
+  const interruptedCall = record.continuation.result.message.toolCalls?.[record.continuation.interruptedCallIndex];
+  if (interruptedCall?.id !== record.toolCallId) throw new Error("process_restart_tool_call_mismatch");
+  return {
+    snapshot: record.continuation,
+    interruptedToolResult: {
+      callId: record.toolCallId,
+      ok: true,
+      output: restartSuccessOutput
+    }
+  };
 }

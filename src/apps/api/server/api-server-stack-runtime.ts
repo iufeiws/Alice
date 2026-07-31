@@ -28,6 +28,7 @@ export function createApiServerStackRuntime(input: {
   agentRunIndicatorRuntime?: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
+  processRestartContinuationStore?: any;
 }) {
   const apiCommunicationRuntime = createApiCommunicationRuntime({
     config: input.config,
@@ -52,7 +53,8 @@ export function createApiServerStackRuntime(input: {
     getCalendarReminderEvent: () => input.calendarEventRuntime.consumeDueReminderEvent(),
     queueForceWakeEvent: () => input.sleepCocoonEventRuntime.queueForceWakeEvent({ agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }),
     appendLog: input.appendLog,
-    appendMessageLog: input.appendMessageLog
+    appendMessageLog: input.appendMessageLog,
+    processRestartContinuationStore: input.processRestartContinuationStore
   });
   input.agentRunIndicatorRuntime?.setDelegate(apiCommunicationRuntime.agentRunIndicator);
   const apiAdminRuntime = createApiAdminRuntime({

@@ -34,6 +34,7 @@ export function createApiCommunicationRuntime(input: {
   queueForceWakeEvent(): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
+  processRestartContinuationStore?: any;
 }) {
   let messageRuntime: any;
   let approvalService: ReturnType<typeof createFeishuApprovalService>;
@@ -113,7 +114,8 @@ export function createApiCommunicationRuntime(input: {
     agentRunIndicator,
     queueForceWakeEvent: input.queueForceWakeEvent,
     appendLog: input.appendLog,
-    appendMessageLog: input.appendMessageLog
+    appendMessageLog: input.appendMessageLog,
+    processRestartContinuationStore: input.processRestartContinuationStore
   });
 
   return { webRtcVoiceRuntime, feishu, wechat, googleStreetView, worldWandererRuntime, messageRuntime, agentRunIndicator, approvalService };

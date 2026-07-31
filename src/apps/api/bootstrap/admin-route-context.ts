@@ -87,6 +87,7 @@ export type AdminRuntimeContext = {
   agentState: AgentStateController;
   messagingTools: ToolPlugin;
   finishAndWaitTools: ToolPlugin;
+  restartTools: ToolPlugin;
   photoTools: ToolPlugin;
   wardrobeTools: ToolPlugin;
   bookcaseTools: ToolPlugin;

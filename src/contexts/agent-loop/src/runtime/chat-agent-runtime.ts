@@ -28,6 +28,7 @@ export function createChatAgentRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
   agentRunIndicator?: any;
+  processRestartContinuationStore?: any;
 }) {
   return createChatAgent({
     config: input.config,
@@ -104,6 +105,7 @@ export function createChatAgentRuntime(input: {
     onLLMSessionCompleted() {
       input.llmRequests.resetCancel();
     },
-    initialLLMSession: input.initialLLMSession
+    initialLLMSession: input.initialLLMSession,
+    processRestartContinuationStore: input.processRestartContinuationStore
   });
 }

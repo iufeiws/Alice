@@ -7,7 +7,6 @@
         "enabled": true
       },
       "role": "assistant",
-      "name": "Cheshire Cat",
       "content": "感觉有点困了。进入睡眠茧, 然后对{{user}}说晚安吧"
     },
     {
@@ -16,8 +15,8 @@
         "enabled": true
       },
       "role": "assistant",
-      "name": "{{user}}",
       "content": "",
+      "name": "{{user}}",
       "reasoningContent": "(我要使用睡眠茧)",
       "toolCalls": [
         {

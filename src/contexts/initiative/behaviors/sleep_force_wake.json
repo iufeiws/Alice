@@ -7,7 +7,6 @@
         "enabled": true
       },
       "role": "user",
-      "name": "Cheshire Cat",
       "content": "爱丽丝你被{{user}}强制唤醒了。短短回应{{user}}，语气带一点刚醒的迷糊。"
     }
   ]

@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "id": "free-roam",
+    "enabled": true,
+    "weight": 10,
+    "priority": 5
+  },
+  "messages": [
+    {
+      "meta": {
+        "title": "Message 1",
+        "enabled": true
+      },
+      "role": "assistant",
+      "content": ""
+    }
+  ]
+}

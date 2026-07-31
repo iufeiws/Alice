@@ -1,7 +1,7 @@
 {
   "meta": {
     "id": "share",
-    "enabled": true,
+    "enabled": false,
     "weight": 2,
     "priority": 0
   },

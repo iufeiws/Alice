@@ -12,6 +12,7 @@ test("prompt context runtime exposes available_skills from the actual variable t
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
+    skillsDirPath: "/custom-home/skills",
     skillsRegistry: {
       available: () => [{
         name: "weather",
@@ -24,5 +25,6 @@ test("prompt context runtime exposes available_skills from the actual variable t
 
   assert.equal(runtime.listVariables().length > 0, true);
   assert.equal(runtime.renderText("{{available_skills}}"), availableSkills);
+  assert.equal(runtime.renderText("{{skills/dirPath}}"), "/custom-home/skills");
   assert.ok(availableSkills);
 });

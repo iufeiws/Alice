@@ -20,6 +20,7 @@ function runtime() {
     memoryStore: { read: () => ({ persistent: "p", userPreferences: "u", yesterdaySummary: "y" }) },
     diaryStore: { latestWakeBoundary: () => ({ occurredAt: "2026-06-03T07:30:00.000" }) },
     calendarStore: { listEntries: () => [{ title: "买药", startAt: "2026-06-04T09:30:00.000" }] },
+    skillsDirPath: "/alice/skills",
     skillsRegistry: { available: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
   } as any);

@@ -7,8 +7,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "name": "Cheshire Cat",
-      "content": "我醒了。对{{user}}说句早安吧"
+      "content": "我醒了。对{{user}}说句早安吧。顺带拍个照片给他看看"
     }
   ]
 }

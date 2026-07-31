@@ -1,7 +1,7 @@
 {
   "meta": {
     "id": "role_invasion",
-    "enabled": true,
+    "enabled": false,
     "weight": 5,
     "priority": 0
   },

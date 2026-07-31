@@ -1,7 +1,7 @@
 {
   "meta": {
     "id": "tease",
-    "enabled": true,
+    "enabled": false,
     "weight": 3,
     "priority": 0
   },

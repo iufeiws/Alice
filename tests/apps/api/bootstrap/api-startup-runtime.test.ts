@@ -4,8 +4,12 @@ import { createApiStartupRuntime } from "../../../../src/apps/api/bootstrap/api-
 
 test("API startup resumes an interrupted restart tool round before recovering ordinary pending messages", async () => {
   const events: string[] = [];
+  const config = {
+    core: { heartbeatPaused: false },
+    plugins: { feishu: { enabled: false, accounts: {} }, wechat: { enabled: false } }
+  } as any;
   const runtime = createApiStartupRuntime({
-    config: { plugins: { feishu: { enabled: false, accounts: {} }, wechat: { enabled: false } } } as any,
+    config,
     runtimeState: { feishuStarted: false, wechatStarted: false },
     chatAgent: {
       async start() {
@@ -20,6 +24,7 @@ test("API startup resumes an interrupted restart tool round before recovering or
     messageRuntime: {
       pauseHeartbeat() {
         events.push("heartbeat-paused");
+        config.core.heartbeatPaused = true;
       },
       async recoverProcessRestartContinuation() {
         events.push("restart-resumed");

@@ -7,7 +7,7 @@ import type { PromptContextRuntime } from "../../../prompt-context/src/index.js"
 export function createChatAgentRuntime(input: {
   config: any;
   activeLLM: any;
-  agentLoopRuntime?: any;
+  agentLoopRuntime: any;
   llmRequests: any;
   currentChatLLMConfig(): any;
   outputRouter: any;
@@ -104,6 +104,11 @@ export function createChatAgentRuntime(input: {
     },
     onLLMSessionCompleted() {
       input.llmRequests.resetCancel();
+    },
+    createLLMSessionId(occurredAt) {
+      const sessionId = input.agentLoopRuntime.ensureCurrentLLMSession(occurredAt, "chat").id;
+      if (typeof sessionId !== "number" || !Number.isFinite(sessionId)) throw new Error("chat_llm_session_id_invalid");
+      return sessionId;
     },
     initialLLMSession: input.initialLLMSession,
     processRestartContinuationStore: input.processRestartContinuationStore

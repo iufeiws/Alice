@@ -1,4 +1,5 @@
 import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../llm-gateway/src/index.js";
+import { isDeepStrictEqual } from "node:util";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { PolicyEngine } from "../ports/policy.js";
@@ -68,7 +69,7 @@ import {
 import { shouldResetSessionForTokenPressure } from "./chat-agent-tools.js";
 import type { LLMSessionClearReason, LLMSessionRecord, LLMSessionSnapshot } from "./chat-agent-types.js";
 import type { ProcessRestartContinuationRecord, ProcessRestartContinuationStore } from "../adapters/json-process-restart-continuation-store.js";
-import { restartSuccessOutput } from "../../../../capabilities/tools/restart/profile.js";
+import { restartSuccessOutput, restartToolName } from "../../../../capabilities/tools/restart/profile.js";
 
 type ModeState = ChatAgentModeState;
 
@@ -145,6 +146,7 @@ export type ChatAgentDeps = {
   onLLMSessionCleared?(reason: LLMSessionClearReason): void;
   onLLMSessionRebuilt?(): void;
   onLLMSessionCompleted?(): void;
+  createLLMSessionId(occurredAt: string): number;
   initialLLMSession?: LLMSessionSnapshot;
   loadLLMSession?(): LLMSessionSnapshot | undefined;
   getAgentInitiatedBehaviorPlans?: () => AgentInitiatedBehaviorPlan[];
@@ -236,7 +238,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       const promptProfile = requirePromptProfile();
       const allToolPlugins = deps.tools ?? [];
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
-      const persistedProcessRestart = deps.processRestartContinuationStore?.read();
+      let persistedProcessRestart = deps.processRestartContinuationStore?.read();
       let activeProcessRestartToolCallId = persistedProcessRestart?.toolCallId;
       let loopSession = deps.initialLLMSession?.staticPromptFingerprint
         ? hydrateLLMSessionSnapshot(deps.initialLLMSession, time.now().epochMs)
@@ -268,6 +270,17 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         setLoopSession(persistedSession?.staticPromptFingerprint
           ? hydrateLLMSessionSnapshot(persistedSession, time.now().epochMs)
           : undefined);
+      }
+      if (persistedProcessRestart) {
+        if (!loopSession || !matchesPersistedProcessRestartTranscript(persistedProcessRestart, loopSession, event)) {
+          deps.processRestartContinuationStore?.clear(persistedProcessRestart.toolCallId);
+          activeProcessRestartToolCallId = undefined;
+          persistedProcessRestart = undefined;
+          clearLoopSession(() => deps.onLLMSessionCleared?.("process_restart_recovery_failed"));
+        } else if (persistedProcessRestart.sessionId !== loopSession.id) {
+          persistedProcessRestart = { ...persistedProcessRestart, sessionId: loopSession.id };
+          deps.processRestartContinuationStore?.save(persistedProcessRestart);
+        }
       }
       const buildPromptContext = () => makePromptContext({
         renderer: requirePromptRenderer(),
@@ -380,8 +393,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
                 ];
               },
               createSession(promptMessages): LLMSessionRecord {
+                const sessionTime = time.now();
                 return {
-                  id: time.now().epochMs,
+                  id: deps.createLLMSessionId(sessionTime.iso),
                   messages: promptMessages,
                   staticPromptFingerprint: fingerprint,
                   staticPromptMessageCount: promptMessages.length,
@@ -759,4 +773,19 @@ function matchingProcessRestartContinuation(input: {
       output: restartSuccessOutput
     }
   };
+}
+
+function matchesPersistedProcessRestartTranscript(
+  record: ProcessRestartContinuationRecord,
+  session: LLMSessionRecord,
+  event: AgentEvent
+): boolean {
+  if (record.event.externalSession.sessionId !== event.externalSession.sessionId) return false;
+  const interruptedCall = record.continuation.result.message.toolCalls?.[record.continuation.interruptedCallIndex];
+  if (interruptedCall?.id !== record.toolCallId || interruptedCall.function.name !== restartToolName) return false;
+  const expectedMessages = [
+    ...record.continuation.messages,
+    record.continuation.result.message
+  ];
+  return isDeepStrictEqual(session.messages, expectedMessages);
 }

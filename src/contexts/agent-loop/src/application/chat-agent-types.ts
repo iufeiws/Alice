@@ -2,7 +2,7 @@ import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { ChatAgentLoopSession } from "./run-chat-loop.js";
 import type { TokenPressurePreviewBaseline } from "./chat-agent-token-pressure.js";
 
-export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout" | "yield_end";
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed";
 
 export type LLMSessionSnapshot = {
   id?: number;

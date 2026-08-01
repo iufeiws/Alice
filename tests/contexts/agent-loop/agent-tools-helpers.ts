@@ -12,7 +12,7 @@ import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "getPromptProfile"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer">> & {
+export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "getPromptProfile" | "createLLMSessionId"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "createLLMSessionId">> & {
   getPromptProfile?: () => PromptProfile | Record<string, any>;
 };
 
@@ -45,6 +45,7 @@ export function createChatAgent(deps: TestChatAgentDeps) {
   }).send;
   return createChatAgentUnderTest({
     ...deps,
+    createLLMSessionId: deps.createLLMSessionId ?? (() => (deps.time ?? createCurrentTimeProvider("UTC")).now().epochMs),
     getPromptProfile: () => normalizeTestPromptProfile(getPromptProfile()),
     getPromptRenderer: deps.getPromptRenderer ?? (() => {
       const time = (deps.time ?? createCurrentTimeProvider("UTC")).now();

@@ -22,7 +22,8 @@ test("chat agent requires an injected prompt profile", async () => {
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
     sessionResolver: createSessionResolver(),
-    policy: createAllowAllPolicy()
+    policy: createAllowAllPolicy(),
+    createLLMSessionId: () => 1
   });
 
   await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /requires getPromptProfile/);

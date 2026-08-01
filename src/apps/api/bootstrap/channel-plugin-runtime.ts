@@ -11,6 +11,7 @@ export function createChannelPluginRuntime(input: {
   asrPlugin: any;
   getMessageRuntime(): any;
   onFeishuCardAction?(event: any): Promise<unknown>;
+  recognizeImage(filePath: string): Promise<any>;
 }) {
   const feishu = createFeishuPlugin(input.config.plugins.feishu, {
     log: input.appendLog,
@@ -39,6 +40,7 @@ export function createChannelPluginRuntime(input: {
 
   const googleStreetView = createGoogleStreetViewPlugin({
     configPath: "config/plugin/google-streetview/config.json",
+    recognizeImage: input.recognizeImage,
     appendLog: input.appendLog
   });
 

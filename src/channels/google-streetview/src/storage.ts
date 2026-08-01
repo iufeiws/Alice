@@ -3,6 +3,7 @@ const path = await import("node:path");
 
 import type {
   GoogleStreetViewLocation,
+  GoogleStreetViewImageRecognition,
   GoogleStreetViewMetadataResponse,
   GoogleStreetViewPanoGraphMetadataResponse,
   GoogleStreetViewPluginConfig,
@@ -65,12 +66,27 @@ export function storeStreetViewMetadata(config: GoogleStreetViewPluginConfig, me
   const panoId = metadataPanoId(metadata);
   if (!panoId) throw new Error("google streetview metadata returned no panoId");
   const metadataPath = metadataPathForPanoId(config, panoId);
-  if (fs.existsSync(metadataPath) && typeof (metadata as GoogleStreetViewMetadataResponse).pano_id === "string") {
-    const existing = parseJsonObject(fs.readFileSync(metadataPath, "utf8"));
+  const existing = fs.existsSync(metadataPath)
+    ? parseJsonObject(fs.readFileSync(metadataPath, "utf8"))
+    : undefined;
+  if (existing && typeof (metadata as GoogleStreetViewMetadataResponse).pano_id === "string") {
     if (existing.panoId === panoId) return;
   }
+  const imageRecognition = imageRecognitionValue(existing?.imageRecognition);
+  const storedMetadata = imageRecognition ? { ...metadata, imageRecognition } : metadata;
   fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  fs.writeFileSync(metadataPath, `${JSON.stringify(storedMetadata, null, 2)}\n`);
+}
+
+export function readStreetViewImageRecognitionCache(metadataPath: string): GoogleStreetViewImageRecognition | undefined {
+  if (!fs.existsSync(metadataPath)) return undefined;
+  return imageRecognitionValue(parseJsonObject(fs.readFileSync(metadataPath, "utf8")).imageRecognition);
+}
+
+export function storeStreetViewImageRecognitionCache(metadataPath: string, recognition: GoogleStreetViewImageRecognition): void {
+  if (!fs.existsSync(metadataPath)) throw new Error("google streetview metadata cache is missing");
+  const metadata = parseJsonObject(fs.readFileSync(metadataPath, "utf8"));
+  fs.writeFileSync(metadataPath, `${JSON.stringify({ ...metadata, imageRecognition: recognition }, null, 2)}\n`);
 }
 
 export function readPanoGraphMetadataCache(config: GoogleStreetViewPluginConfig, panoId: string): GoogleStreetViewPanoGraphMetadataResponse | undefined {
@@ -163,4 +179,18 @@ function assetIdForPath(filePath: string): string {
   const relative = path.relative(path.resolve("assets"), path.resolve(filePath));
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("google streetview asset path is outside assets");
   return relative.split(path.sep).join("/");
+}
+
+function imageRecognitionValue(value: unknown): GoogleStreetViewImageRecognition | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const recognition = value as Record<string, unknown>;
+  if (typeof recognition.text !== "string" || !recognition.text.trim()) return undefined;
+  if (recognition.provider !== "multimodal_llm") return undefined;
+  return {
+    text: recognition.text,
+    provider: recognition.provider,
+    model: typeof recognition.model === "string" ? recognition.model : undefined,
+    durationMs: typeof recognition.durationMs === "number" ? recognition.durationMs : undefined,
+    requestId: typeof recognition.requestId === "string" ? recognition.requestId : undefined
+  };
 }

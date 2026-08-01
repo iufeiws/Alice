@@ -3,6 +3,8 @@ import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
+import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../channels/image-recognition/src/index.js";
 const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
@@ -42,7 +44,8 @@ export function createApiCapabilitiesRuntime(input: {
     time: input.time,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,
-    subagentSessionRoot: path.join(input.config.memoryFiles.root, "llm-sessions", "sub_agent")
+    subagentSessionRoot: path.join(input.config.memoryFiles.root, "llm-sessions", "sub_agent"),
+    agentState: input.agentState
   });
 
   const voicePluginRuntime = createVoicePluginRuntime({
@@ -53,6 +56,36 @@ export function createApiCapabilitiesRuntime(input: {
     recordTokenUsageEvent: input.recordTokenUsageEvent,
     appendLog: input.appendLog
   });
+
+  const recognizeImage = async (filePath: string) => {
+    const result = await recognizeImageWithPlugin({ imageFile: filePath }, readImageRecognitionConfig(), {
+      resolveApiPreset(name) {
+        return input.readLLMApiPresets().find((entry: { name?: string }) => entry.name === name);
+      },
+      createLlmClientFromPreset(preset) {
+        if (!preset.baseURL || !preset.apiKey) return undefined;
+        return createOpenAICompatibleClient({
+          baseURL: preset.baseURL,
+          apiKey: preset.apiKey,
+          model: preset.model,
+          temperature: preset.temperature,
+          timeoutMs: preset.timeoutMs,
+          extraParams: preset.extraParams
+        });
+      },
+      llmRequestSender: (request) => llmRequests.send(request),
+      promptRenderer: input.promptContextRuntime,
+      appendLog: input.appendLog
+    });
+    if ("ok" in result) throw new Error(`image recognition failed: ${result.error}`);
+    return {
+      text: result.text,
+      provider: result.provider,
+      model: result.model,
+      durationMs: result.durationMs,
+      requestId: result.requestId
+    };
+  };
 
   const toolRuntime = createToolRuntime({
     config: input.config,
@@ -107,6 +140,7 @@ export function createApiCapabilitiesRuntime(input: {
     skillsLoader: toolRuntime.skillsLoader,
     toolPlugins: toolRuntime.toolPlugins,
     llmRequests,
+    recognizeImage,
     visibleToolSpecs: promptToolPreviewRuntime.visibleToolSpecs,
     visibleToolNames: promptToolPreviewRuntime.visibleToolNames,
     buildPromptPreviewMessages: promptToolPreviewRuntime.buildPromptPreviewMessages

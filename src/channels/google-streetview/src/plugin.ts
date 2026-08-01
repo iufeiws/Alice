@@ -25,7 +25,13 @@ import {
   type GoogleStreetViewMapTilesSession
 } from "./client.js";
 import { errorMessage } from "./internal.js";
-import { fetchAndStoreStreetView, readPanoGraphMetadataCache, storeStreetViewMetadata } from "./storage.js";
+import {
+  fetchAndStoreStreetView,
+  readPanoGraphMetadataCache,
+  readStreetViewImageRecognitionCache,
+  storeStreetViewImageRecognitionCache,
+  storeStreetViewMetadata
+} from "./storage.js";
 
 export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = {}): GoogleStreetViewPlugin {
   const fetchImpl = deps.fetch ?? fetch;
@@ -93,7 +99,7 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
       assertEnabled(config);
       const requestedLocation = normalizeLocation(input);
       const coordinateBucket = bucketForLocation(requestedLocation, config.coordinatePrecision);
-      return fetchAndStoreStreetView({
+      const result = await fetchAndStoreStreetView({
         config,
         requestedLocation,
         regionId: input.regionId,
@@ -102,6 +108,7 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
         now: deps.now ?? (() => new Date()),
         appendLog: deps.appendLog
       });
+      return input.recognizeImage ? await withImageRecognition(result) : result;
     },
     async getRandomStreetView(input = {}) {
       const config = runtimeConfig();
@@ -116,7 +123,7 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
         const requestedLocation = randomLocationInRegion(region, random);
         const coordinateBucket = bucketForLocation(requestedLocation, config.coordinatePrecision);
         try {
-          return await fetchAndStoreStreetView({
+          const result = await fetchAndStoreStreetView({
             config,
             requestedLocation,
             regionId: region.id,
@@ -125,6 +132,7 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
             now: deps.now ?? (() => new Date()),
             appendLog: deps.appendLog
           });
+          return input.recognizeImage ? await withImageRecognition(result) : result;
         } catch (error) {
           lastError = error;
           deps.appendLog?.("warn", `google streetview random attempt failed: attempt=${attempt + 1}/${attempts} region=${region.id} error=${errorMessage(error)}`);
@@ -146,6 +154,19 @@ export function createGoogleStreetViewPlugin(deps: GoogleStreetViewPluginDeps = 
     if (mapTilesSession && mapTilesSession.apiKey === config.apiKey && now().getTime() < refreshAt) return mapTilesSession;
     mapTilesSession = await createStreetViewMapTilesSession({ config, fetchImpl });
     return mapTilesSession;
+  }
+
+  async function withImageRecognition(result: Awaited<ReturnType<typeof fetchAndStoreStreetView>>) {
+    const cached = readStreetViewImageRecognitionCache(result.metadataPath);
+    if (cached) {
+      deps.appendLog?.("info", `google streetview image recognition cache hit: pano=${result.panoId ?? ""}`);
+      return { ...result, imageRecognition: cached };
+    }
+    if (!deps.recognizeImage) throw new Error("google streetview image recognition is not configured");
+    const imageRecognition = await deps.recognizeImage(result.filePath);
+    storeStreetViewImageRecognitionCache(result.metadataPath, imageRecognition);
+    deps.appendLog?.("info", `google streetview image recognition cached: pano=${result.panoId ?? ""}`);
+    return { ...result, imageRecognition };
   }
 }
 

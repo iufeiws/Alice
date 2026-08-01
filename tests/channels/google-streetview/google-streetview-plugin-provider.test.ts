@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGoogleStreetViewPlugin } from "../../../src/channels/google-streetview/src/index.js";
+import { storeStreetViewMetadata } from "../../../src/channels/google-streetview/src/storage.js";
 import {
   bytesResponse,
   configWithOutput,
@@ -61,6 +62,58 @@ test("provider_reusesStoredPanoWithoutDownloadingImageAgain", async () => {
   assert.equal(second.reused, true);
   assert.equal(second.filePath, first.filePath);
   assert.equal(requests.length, 3);
+});
+
+test("provider_recognizesOnlyWhenRequestedAndCachesResultByPano", async () => {
+  const root = tempOutputRoot();
+  const recognitionCalls: string[] = [];
+  const plugin = createGoogleStreetViewPlugin({
+    config: configWithOutput(root),
+    fetch: async (url) => {
+      if (String(url).includes("/metadata")) {
+        return jsonResponse({ status: "OK", pano_id: "pano-recognized", location: { lat: 35.1, lng: 139.1 } });
+      }
+      return bytesResponse(new Uint8Array([5]));
+    },
+    async recognizeImage(filePath) {
+      recognitionCalls.push(filePath);
+      return {
+        text: "A narrow street beside a red building.",
+        provider: "multimodal_llm",
+        model: "vision-model",
+        requestId: "recognition-1"
+      };
+    }
+  });
+
+  const imageOnly = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139 });
+  const recognized = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139, recognizeImage: true });
+  const cached = await plugin.getStreetViewByCoordinates({ lat: 35, lng: 139, recognizeImage: true });
+
+  assert.equal(imageOnly.imageRecognition, undefined);
+  assert.equal(recognized.imageRecognition?.text, "A narrow street beside a red building.");
+  assert.equal(cached.imageRecognition?.text, "A narrow street beside a red building.");
+  assert.deepEqual(recognitionCalls, [imageOnly.filePath]);
+  assert.deepEqual(storedMetadata(root, "pano-recognized").imageRecognition, {
+    text: "A narrow street beside a red building.",
+    provider: "multimodal_llm",
+    model: "vision-model",
+    requestId: "recognition-1"
+  });
+
+  storeStreetViewMetadata(configWithOutput(root), {
+    panoId: "pano-recognized",
+    lat: 35.1,
+    lng: 139.1,
+    heading: 45,
+    links: []
+  });
+  assert.deepEqual(storedMetadata(root, "pano-recognized").imageRecognition, {
+    text: "A narrow street beside a red building.",
+    provider: "multimodal_llm",
+    model: "vision-model",
+    requestId: "recognition-1"
+  });
 });
 
 test("provider_metadataLookupStoresMetadataWithoutImageDownload", async () => {

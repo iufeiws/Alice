@@ -39,7 +39,7 @@ export function createToolRuntime(input: {
   coreProfileStore: any;
   agentState: any;
   getDefaultTarget(): any;
-  getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
+  getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId" | "getStreetViewByCoordinates">;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   skillsRegistry: SkillRegistry;
   promptContextRuntime: PromptContextRuntime;

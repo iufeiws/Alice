@@ -9,7 +9,7 @@ import { checkLocationTool, checkLocationToolName, locationToolText } from "../p
 export type LocationToolsDeps = {
   configPath?: string;
   dbPath: string;
-  getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId">;
+  getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId" | "getStreetViewByCoordinates">;
   now?(): Date;
 };
 
@@ -29,7 +29,18 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
         ? await googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId })
         : await googleStreetView.getPanoGraphByCoordinates(state.location);
       const text = readableWorldWandererLocationText(pano.metadata);
-      return text ? { callId: call.id, ok: true, output: text } : toolError(call, locationToolText.addressUnavailable);
+      if (!text) return toolError(call, locationToolText.addressUnavailable);
+      const streetView = await googleStreetView.getStreetViewByCoordinates({
+        lat: pano.location.lat,
+        lng: pano.location.lng,
+        recognizeImage: true
+      });
+      if (!streetView.imageRecognition) throw new Error("google streetview image recognition returned no result");
+      return {
+        callId: call.id,
+        ok: true,
+        output: `${text}\n${streetView.imageRecognition.text}`
+      };
     }
   };
 }

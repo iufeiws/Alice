@@ -54,7 +54,8 @@ export function createApiServerStackRuntime(input: {
     queueForceWakeEvent: () => input.sleepCocoonEventRuntime.queueForceWakeEvent({ agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }),
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
-    processRestartContinuationStore: input.processRestartContinuationStore
+    processRestartContinuationStore: input.processRestartContinuationStore,
+    recognizeImage: input.apiToolingRuntime.recognizeImage
   });
   input.agentRunIndicatorRuntime?.setDelegate(apiCommunicationRuntime.agentRunIndicator);
   const apiAdminRuntime = createApiAdminRuntime({

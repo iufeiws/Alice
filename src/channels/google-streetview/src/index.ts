@@ -1,6 +1,7 @@
 export type {
   GoogleStreetViewBounds,
   GoogleStreetViewByCoordinatesInput,
+  GoogleStreetViewImageRecognition,
   GoogleStreetViewLocation,
   GoogleStreetViewMetadataResponse,
   GoogleStreetViewMetadataByCoordinatesInput,

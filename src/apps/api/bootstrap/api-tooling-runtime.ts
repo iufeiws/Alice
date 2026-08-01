@@ -76,6 +76,7 @@ export function createApiToolingRuntime(input: {
     bashRuntime: apiCapabilitiesRuntime.bashRuntime,
     toolPlugins: apiCapabilitiesRuntime.toolPlugins,
     llmRequests: apiCapabilitiesRuntime.llmRequests,
+    recognizeImage: apiCapabilitiesRuntime.recognizeImage,
     skillsRegistry: input.apiContextRuntime.skillsRegistry,
     visibleToolNames: apiCapabilitiesRuntime.visibleToolNames,
     adminLLMSessionRuntime: apiSupportRuntime.adminLLMSessionRuntime,

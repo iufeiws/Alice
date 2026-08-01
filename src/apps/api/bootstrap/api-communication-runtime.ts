@@ -35,6 +35,7 @@ export function createApiCommunicationRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
   processRestartContinuationStore?: any;
+  recognizeImage(filePath: string): Promise<any>;
 }) {
   let messageRuntime: any;
   let approvalService: ReturnType<typeof createFeishuApprovalService>;
@@ -56,7 +57,8 @@ export function createApiCommunicationRuntime(input: {
     time: input.time,
     asrPlugin: input.asrPlugin,
     getMessageRuntime: () => messageRuntime,
-    onFeishuCardAction: async (event) => await approvalService.handleCardAction(event)
+    onFeishuCardAction: async (event) => await approvalService.handleCardAction(event),
+    recognizeImage: input.recognizeImage
   });
   approvalService = createFeishuApprovalService({
     client: feishu.agentRunCardClient,
@@ -80,6 +82,7 @@ export function createApiCommunicationRuntime(input: {
     log: input.appendLog
   });
   input.outputRouter.onSent(async (output: { target: { plugin: string } }) => {
+    input.agentState.restartInactivityTimer();
     if (output.target.plugin === "feishu") await toolExecutionReporter.endSequence();
   });
   setLLMToolExecutionReporter(toolExecutionReporter);

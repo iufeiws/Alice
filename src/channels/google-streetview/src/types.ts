@@ -38,6 +38,7 @@ export type GoogleStreetViewPluginDeps = {
   env?: Record<string, string | undefined>;
   now?(): Date;
   random?(): number;
+  recognizeImage?(filePath: string): Promise<GoogleStreetViewImageRecognition>;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
 
@@ -46,11 +47,21 @@ export type GoogleStreetViewByCoordinatesInput = {
   lng: number;
   regionId?: string;
   reuseStoredForLocation?: boolean;
+  recognizeImage?: boolean;
 };
 
 export type GoogleStreetViewRandomInput = {
   regionId?: string;
   reuseStoredForLocation?: boolean;
+  recognizeImage?: boolean;
+};
+
+export type GoogleStreetViewImageRecognition = {
+  text: string;
+  provider: "multimodal_llm";
+  model?: string;
+  durationMs?: number;
+  requestId?: string;
 };
 
 export type GoogleStreetViewMetadataByCoordinatesInput = {
@@ -91,6 +102,7 @@ export type GoogleStreetViewResult = {
   source: GoogleStreetViewStoredSource | GoogleStreetViewRemoteSource;
   reused: boolean;
   metadata: GoogleStreetViewMetadataResponse | GoogleStreetViewPanoGraphMetadataResponse;
+  imageRecognition?: GoogleStreetViewImageRecognition;
 };
 
 export type GoogleStreetViewPlugin = {

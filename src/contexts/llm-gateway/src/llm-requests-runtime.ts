@@ -12,12 +12,17 @@ export function createLLMRequestsRuntime(input: {
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   subagentSessionRoot?: string;
+  agentState?: {
+    suspendInactivityTimer(): unknown;
+    restartInactivityTimer(): unknown;
+  };
 }) {
   const requestLogEntries = new WeakMap<object, LLMRequestLogEntry>();
   const subagentRequestSessions = new WeakMap<object, ReturnType<typeof createLLMSessionTranscriptLogger>>();
   return createLLMRequests({
     getTool: input.getTool,
     onRequestPrepared(requestInput, request) {
+      if (isMainAgent(requestInput.agentId)) input.agentState?.suspendInactivityTimer();
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
         const entry = input.appendLLMRequestLog(request, requestInput.agentId);
         if (entry) requestLogEntries.set(requestInput, entry);
@@ -44,6 +49,7 @@ export function createLLMRequestsRuntime(input: {
       });
     },
     onRequestSettled(requestInput) {
+      if (isMainAgent(requestInput.agentId)) input.agentState?.restartInactivityTimer();
       if (requestInput.agentId !== "chat" && requestInput.agentId !== "talk") clearSubagentSession(requestInput);
     },
     onLog(event) {
@@ -59,6 +65,10 @@ export function createLLMRequestsRuntime(input: {
       if (event.kind === "response_received") input.appendLog("info", `llm response received: agent=${event.agentId} round=${event.round} mode=${mode} model=${event.model ?? fallbackModel}`);
     }
   });
+
+  function isMainAgent(agentId: string): agentId is "chat" | "talk" {
+    return agentId === "chat" || agentId === "talk";
+  }
 
   function createSubagentSession(requestInput: object, agentId: string, metadata: Record<string, unknown> | undefined): ReturnType<typeof createLLMSessionTranscriptLogger> | undefined {
     if (!input.subagentSessionRoot) return undefined;

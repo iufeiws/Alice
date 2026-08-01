@@ -34,7 +34,7 @@ test("sleeping moves back to waiting at the next transition", () => {
   assert.equal(controller.getSnapshot().state, "waiting");
 });
 
-test("going_to_sleep postpones sleep on inbound messages without cancelling the cocoon", () => {
+test("going_to_sleep suspends sleep on inbound messages until activity settles", () => {
   let current = new Date("2026-05-24T16:00:00.000Z");
   const controller = createAgentStateController({
     store: memoryStore(),
@@ -53,9 +53,12 @@ test("going_to_sleep postpones sleep on inbound messages without cancelling the 
   controller.noteInboundMessage();
   assert.equal(controller.getSnapshot().state, "going_to_sleep");
   assert.equal(controller.getSnapshot().lastInboundAt, "2026-05-25T00:03:00.000");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T00:08:00.000");
+  assert.equal(controller.getSnapshot().nextTransitionAt, undefined);
   assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T00:00:00.000");
   assert.equal(controller.getSnapshot().sleepDurationMs, 8 * 60 * 60 * 1000);
+
+  controller.restartInactivityTimer();
+  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T00:08:00.000");
 
   current = new Date("2026-05-24T16:07:59.999Z");
   controller.tick();

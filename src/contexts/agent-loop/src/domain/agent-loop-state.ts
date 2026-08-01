@@ -45,6 +45,8 @@ export type AgentStateController = {
   tick(): AgentStateSnapshot;
   noteInboundMessage(): AgentStateSnapshot;
   noteInboundProcessed(): AgentStateSnapshot;
+  suspendInactivityTimer(): AgentStateSnapshot;
+  restartInactivityTimer(): AgentStateSnapshot;
   getInboundDelayMs(): number;
   canReplyToInbound(): boolean;
   canRunHeartbeat(): boolean;
@@ -66,7 +68,7 @@ const HOUR = 60 * MINUTE;
 
 const DEFAULT_INTIMACY = 50;
 const ACTIVE_TIMEOUT_MS = 5 * MINUTE;
-const WAITING_INACTIVE_TIMEOUT_MS = 15 * MINUTE;
+const WAITING_INACTIVE_TIMEOUT_MS = 30 * MINUTE;
 
 export function createJsonAgentStateStore(filePath: string): AgentStateStore {
   return {
@@ -219,23 +221,36 @@ export function createAgentStateController(options: AgentStateControllerOptions)
     },
     noteInboundMessage() {
       const inboundAt = currentIso();
-      const next = {
+      return commit({
         ...snapshot,
         lastInboundAt: inboundAt,
-        updatedAt: inboundAt
-      };
-      if (snapshot.state === "waiting") {
-        next.nextTransitionAt = addMsIso(WAITING_INACTIVE_TIMEOUT_MS);
-      } else if (snapshot.state === "idle" || snapshot.state === "curious" || snapshot.state === "going_to_sleep") {
-        next.nextTransitionAt = addMsIso(ACTIVE_TIMEOUT_MS);
-      }
-      return commit(next);
+        updatedAt: inboundAt,
+        nextTransitionAt: hasInactivityTimer(snapshot.state) ? undefined : snapshot.nextTransitionAt
+      });
     },
     noteInboundProcessed() {
       if (snapshot.state === "idle" || snapshot.state === "curious") {
         return transition("waiting", { reason: "inbound_processed" });
       }
       return clone(snapshot);
+    },
+    suspendInactivityTimer() {
+      if (!hasInactivityTimer(snapshot.state)) return clone(snapshot);
+      return commit({
+        ...snapshot,
+        updatedAt: currentIso(),
+        nextTransitionAt: undefined
+      });
+    },
+    restartInactivityTimer() {
+      const timeoutMs = inactivityTimeoutMs(snapshot.state);
+      if (timeoutMs === undefined) return clone(snapshot);
+      const restartedAt = currentIso();
+      return commit({
+        ...snapshot,
+        updatedAt: restartedAt,
+        nextTransitionAt: addMsIso(timeoutMs)
+      });
     },
     getInboundDelayMs() {
       return snapshot.responseDelayMs;
@@ -365,4 +380,14 @@ function canReplyToInbound(state: AgentBehaviorState): boolean {
 
 function canRunHeartbeat(state: AgentBehaviorState): boolean {
   return state !== "away" && state !== "sleeping";
+}
+
+function hasInactivityTimer(state: AgentBehaviorState): boolean {
+  return inactivityTimeoutMs(state) !== undefined;
+}
+
+function inactivityTimeoutMs(state: AgentBehaviorState): number | undefined {
+  if (state === "waiting") return WAITING_INACTIVE_TIMEOUT_MS;
+  if (state === "idle" || state === "curious" || state === "going_to_sleep") return ACTIVE_TIMEOUT_MS;
+  return undefined;
 }

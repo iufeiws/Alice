@@ -388,19 +388,20 @@ test("messageRuntime_waitingToIdle_clearsLlmSession", async () => {
       return store.insertMessageLog({ time: new Date().toISOString(), ...input });
     }
   });
+  const deadline = Date.parse(`${controller.getSnapshot().nextTransitionAt}Z`);
 
-  current = new Date("2026-05-25T00:14:59.999Z");
+  current = new Date(deadline - 1);
   await runtime.processNow();
   assert.deepEqual(clearReasons, []);
   assert.equal(controller.getSnapshot().state, "waiting");
 
-  current = new Date("2026-05-25T00:15:00.000Z");
+  current = new Date(deadline);
   await runtime.processNow();
   assert.deepEqual(clearReasons, ["mode_transition"]);
   assert.equal(controller.getSnapshot().state, "idle");
 });
 
-test("messageRuntime_goingToSleepInbound_keepsStateAndPostponesSleep", async () => {
+test("messageRuntime_goingToSleepInbound_keepsStateAndSuspendsSleep", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-going-to-sleep-postpone"), "alice.sqlite"));
   let current = new Date("2026-05-24T16:00:00.000Z");
   const controller = createAgentStateController({
@@ -437,7 +438,7 @@ test("messageRuntime_goingToSleepInbound_keepsStateAndPostponesSleep", async () 
 
   assert.equal(controller.getSnapshot().state, "going_to_sleep");
   assert.equal(controller.getSnapshot().lastInboundAt, "2026-05-25T00:03:00.000");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T00:08:00.000");
+  assert.equal(controller.getSnapshot().nextTransitionAt, undefined);
   assert.equal(controller.getSnapshot().sleepCocoonEnteredAt, "2026-05-25T00:00:00.000");
   assert.equal(controller.getSnapshot().sleepDurationMs, 8 * 60 * 60 * 1000);
 });

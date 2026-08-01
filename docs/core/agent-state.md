@@ -7,19 +7,19 @@
 - `going_to_sleep` 是真实的入睡倒计时状态。用户交互可以推迟入睡，但不能取消入睡。
 - `sleep_cocoon in` 只记录一次入睡指针，并保留到睡眠完成或睡眠茧被显式取消。
 - `working` 已废弃；普通聊天、Codex 任务、后台任务和普通 heartbeat 都不应进入 `working`。
-- 状态机必须实现每个状态的回复延迟、消息处理后落点、无消息计时和自动切换。
+- 状态机必须实现每个状态的回复延迟、消息处理后落点、活动计时和自动切换。
 - 测试应直接描述预期的睡眠和状态切换行为，让回归问题更容易暴露。
 
 ## 状态总表
 
-| 状态 | 含义 | 回复延迟 | 消息处理后落点 | 无消息计时与自动切换 |
+| 状态 | 含义 | 回复延迟 | 消息处理后落点 | 活动计时与自动切换 |
 | --- | --- | --- | --- | --- |
 | `idle` | 空闲 | 20-120 秒 | 处理用户消息后进入 `waiting`。 | 随机 2-15 分钟计时器；到期时以 `1/2 * 亲密度` 的概率进入 `waiting`，以 `0.1` 概率进入 `away`，否则继续 `idle`。 |
-| `waiting` | 等用户反馈 | 8-15 秒 | 处理用户消息后保持 `waiting`。 | 15 分钟未收到新消息，降级到 `idle`，并触发 LLM 会话更新。 |
+| `waiting` | 等用户反馈 | 8-15 秒 | 处理用户消息后保持 `waiting`。 | 活动计时恢复后 30 分钟没有新活动，降级到 `idle`，并触发 LLM 会话更新。 |
 | `away` | 暂离 | 5-30 分钟 | 不处理用户消息；回归后先进入 `waiting`，再按延迟规则一次性处理期间收到的全部未处理消息。 | 暂离计时结束后降级到 `waiting`；如果暂离期间有新消息，回归后回复时应给出暂离理由。 |
-| `curious` | 想发起话题 | 8-12 秒 | 处理用户消息后进入 `waiting`。 | 尝试延伸话题；5 分钟未收到新消息，降级到 `waiting`。 |
+| `curious` | 想发起话题 | 8-12 秒 | 处理用户消息后进入 `waiting`。 | 尝试延伸话题；活动计时恢复后 5 分钟没有新活动，降级到 `waiting`。 |
 | `working` | 正在处理任务（已废弃） | 不回复中间留言 | 不应出现；旧持久化状态恢复时回退到安全可用状态。 | 已废弃，当前不应由任何新流程进入。 |
-| `going_to_sleep` | 入睡中 | 8-15 秒 | 处理用户消息后仍保持 `going_to_sleep`；消息只推迟入睡，不取消睡眠茧。 | 5 分钟未收到新消息后进入 `sleeping`。 |
+| `going_to_sleep` | 入睡中 | 8-15 秒 | 处理用户消息后仍保持 `going_to_sleep`；消息只暂停入睡计时，不取消睡眠茧。 | 活动计时恢复后 5 分钟没有新活动，进入 `sleeping`。 |
 | `sleeping` | 睡眠 | 不回复 | 不处理用户消息；醒来后再按延迟规则一次性处理睡眠期间收到的全部未处理消息。 | 由 LLM 命令预约进入，必须先进入 `going_to_sleep`；睡眠 6-10 小时，结束时触发早安并进入 `waiting`。 |
 | `serious` | 严肃 | 8-15 秒 | 处理用户消息后保持 `serious`。 | 处理 Codex 等任务时的状态；不进入 `idle`，也不切入已废弃的 `working`。 |
 | `test` | 测试 | 8 秒 | 处理用户消息后保持 `test`。 | 用于测试/调试，不参与普通随机状态游走。 |
@@ -32,7 +32,7 @@
 
 `waiting`
 
-等待用户反馈状态。收到用户消息时按 8-15 秒延迟回复。15 分钟没有新消息时降级到 `idle`，并清理当前活跃 LLM session，使下一轮回复重建会话上下文。
+等待用户反馈状态。收到用户消息时按 8-15 秒延迟回复。活动计时恢复后 30 分钟没有新活动时降级到 `idle`，并清理当前活跃 LLM session，使下一轮回复重建会话上下文。
 
 `away`
 
@@ -40,7 +40,7 @@
 
 `curious`
 
-想发起话题状态。回复延迟为 8-12 秒，行为上应努力延伸话题。5 分钟没有新消息时降级到 `waiting`。
+想发起话题状态。回复延迟为 8-12 秒，行为上应努力延伸话题。活动计时恢复后 5 分钟没有新活动时降级到 `waiting`。
 
 `working`
 
@@ -48,7 +48,19 @@
 
 `going_to_sleep`
 
-入睡中状态。回复延迟为 8-15 秒。Agent 仍然醒着并可以回复，但每条用户入站消息都会把进入 `sleeping` 的 5 分钟倒计时重新向后推迟。
+入睡中状态。回复延迟为 8-15 秒。Agent 仍然醒着并可以回复；用户入站消息会暂停进入 `sleeping` 的倒计时，主 LLM 请求结束或消息成功发出后再从该时刻重新开始 5 分钟倒计时。
+
+## 活动计时语义
+
+`nextTransitionAt` 有值时表示计时中；字段缺失时表示活动计时暂停。暂停不是一个极远的伪 deadline。
+
+- 收到用户入站消息时暂停活动计时，并继续记录 `lastInboundAt`。
+- 发起 `chat` 或 `talk` 主 LLM 请求时暂停活动计时。
+- 主 LLM 请求成功返回、失败或取消并完成 settlement 后，从该时刻恢复活动计时。
+- 任意消息通过统一 output router 成功发出后，从发送成功时刻恢复活动计时；发送失败不刷新计时。
+- 普通工具执行本身不暂停或恢复活动计时。LLM 返回 tool call 后计时已经恢复，因此长时间工具执行期间仍可到期。
+- Memorize、图片识别、ASR 等后台或辅助 LLM 请求不改变 Agent 活动计时。
+- 恢复时按当前状态选择期限：`waiting` 为 30 分钟，`idle`、`curious`、`going_to_sleep` 为 5 分钟；其他状态保留各自的状态期限，不参与本活动计时。
 
 `sleeping`
 
@@ -157,7 +169,7 @@ Heartbeat 由 message runtime 管理，是驱动状态 tick、generated event �
 
 ### 未处理用户消息处理
 
-- 入站事件会先调用 `agentState.noteInboundMessage()`，再写入消息日志和 Core 侧消息表。
+- 入站事件会先调用 `agentState.noteInboundMessage()` 暂停活动计时，再写入消息日志和 Core 侧消息表。
 - 文本消息会进入未处理消息集合；非文本消息会立即标记为已处理，不进入普通 Core 文本处理队列。
 - `/force_wake` 是特殊命令：记录入站活动后，直接将状态设为 `waiting`，清理睡眠茧指针，清理活跃 LLM session，并排队一次强制唤醒 generated event；命令本身不进入普通消息处理。
 - 这里的“未处理消息”只是消息存储状态，不是 Agent 状态机里的独立状态。
@@ -170,7 +182,7 @@ Heartbeat 由 message runtime 管理，是驱动状态 tick、generated event �
   - `agentState.canReplyToInbound()` 为真；
   - 最新一条未处理消息距离当前时间已超过 `agentState.getInboundDelayMs()`，没有 agentState 时使用 runtime 默认 `getDelayMs()`。
 - 因此 `away`、`sleeping` 和已废弃的 `working` 状态不会处理用户消息。
-- `going_to_sleep` 可以处理用户消息；处理前的 `noteInboundMessage()` 已经把入睡 deadline 推迟。
+- `going_to_sleep` 可以处理用户消息；处理前的 `noteInboundMessage()` 会清除入睡 deadline，主 LLM 请求结束或消息成功发出后再恢复。
 - 一次消息处理以会话为单位；处理成功后写出 outbound、标记本次读取到的全部消息已处理，并在该会话没有剩余未处理消息时移出未处理会话集合。
 - 处理失败时记录错误日志；Core 内部失败路径会把该批消息标记为 core failed，避免同一批无限重试。
 
@@ -198,7 +210,7 @@ Agent state 测试：
 
 - `idle` 的回复延迟为 20-120 秒。
 - `idle` 的计时器为随机 2-15 分钟，到期后按概率进入 `waiting`、`away` 或继续 `idle`。
-- `waiting` 的回复延迟为 8-15 秒，15 分钟无消息后降级到 `idle`。
+- `waiting` 的回复延迟为 8-15 秒，活动计时恢复后 30 分钟没有新活动时降级到 `idle`。
 - `away` 的回复延迟为 5-30 分钟，计时结束后降级到 `waiting`。
 - `away` 期间收到新消息时，回归后的回复应能携带暂离理由。
 - `curious` 的回复延迟为 8-12 秒，5 分钟无消息后降级到 `waiting`。
@@ -207,7 +219,10 @@ Agent state 测试：
 - `serious` 不进入 `idle`，也不切入 `working`。
 - `going_to_sleep` 在 deadline 到期时切换到 `sleeping`。
 - `going_to_sleep` 在被推迟时保留 `sleepCocoonEnteredAt` 和 `sleepDurationMs`。
-- `going_to_sleep` 下调用 `noteInboundMessage()` 会更新 `lastInboundAt` 并推迟 `nextTransitionAt`。
+- `going_to_sleep` 下调用 `noteInboundMessage()` 会更新 `lastInboundAt` 并清除 `nextTransitionAt`。
+- 主 LLM 请求开始时暂停活动计时，成功、失败或取消 settlement 后恢复活动计时。
+- 消息成功发出后恢复活动计时，发送失败不刷新计时。
+- 普通工具执行和辅助 LLM 请求不改变活动计时。
 - `going_to_sleep` 下调用 `noteInboundMessage()` 不会把状态改成 `waiting`。
 - 普通聊天处理不能把 `going_to_sleep` 改成 `working` 或 `waiting`。
 - `noteWorkFinished()` 不能把 `going_to_sleep` 覆盖成 `waiting`。
@@ -218,8 +233,8 @@ Message runtime 测试：
 
 - `going_to_sleep` 期间的未处理消息会在配置的回复延迟后被处理。
 - 处理该消息后，Agent 状态仍然是 `going_to_sleep`。
-- 睡眠 deadline 会基于最新入站活动推迟。
-- 推迟后的 deadline 过去且没有活跃 session 后，heartbeat tick 会切换到 `sleeping`。
+- 睡眠 deadline 会在最新入站活动时暂停，并在主 LLM settlement 或消息发送成功后恢复。
+- 恢复后的 deadline 过去且没有活跃 session 后，heartbeat tick 会切换到 `sleeping`。
 - 活跃用户聊天或未处理用户消息会推迟入睡，但不会取消睡眠茧。
 - 普通入站处理期间不会观察到 `working` 状态。
 - `idle` 处理用户消息后落到 `waiting`。

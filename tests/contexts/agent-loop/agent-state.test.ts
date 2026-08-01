@@ -63,16 +63,10 @@ test("agent state writes current-time fields in the configured timezone", () => 
 
   controller.start();
   assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:00:00.000");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T08:15:00.000");
 
   current = new Date("2026-05-25T00:05:00.000Z");
   controller.tick();
   assert.equal(controller.getSnapshot().state, "waiting");
-
-  current = new Date("2026-05-25T00:15:00.000Z");
-  controller.tick();
-  assert.equal(controller.getSnapshot().state, "idle");
-  assert.equal(controller.getSnapshot().updatedAt, "2026-05-25T08:15:00.000");
 });
 
 test("agent state restores sleep cocoon fields", () => {

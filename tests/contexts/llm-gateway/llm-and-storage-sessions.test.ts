@@ -200,6 +200,118 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
   assert.deepEqual(responseRequestIds, [10]);
 });
 
+test("main LLM requests suspend inactivity until successful settlement", async () => {
+  const activity: string[] = [];
+  const runtime = createLLMRequestsRuntime({
+    getTool: () => undefined,
+    appendLLMRequestLog: () => undefined,
+    appendLLMResponseLog() {},
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent() {},
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "fallback" }),
+    appendLog() {},
+    agentState: {
+      suspendInactivityTimer: () => activity.push("suspend"),
+      restartInactivityTimer: () => activity.push("restart")
+    }
+  });
+
+  await runtime.send({
+    agentId: "chat",
+    client: {
+      async chat() {
+        assert.deepEqual(activity, ["suspend"]);
+        return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+      }
+    },
+    messages: [{ role: "user", content: "hello" }],
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(activity, ["suspend", "restart"]);
+});
+
+test("failed main LLM requests restore inactivity while auxiliary requests do not change it", async () => {
+  const activity: string[] = [];
+  const runtime = createLLMRequestsRuntime({
+    getTool: () => undefined,
+    appendLLMRequestLog: () => undefined,
+    appendLLMResponseLog() {},
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent() {},
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "fallback" }),
+    appendLog() {},
+    agentState: {
+      suspendInactivityTimer: () => activity.push("suspend"),
+      restartInactivityTimer: () => activity.push("restart")
+    }
+  });
+
+  await assert.rejects(runtime.send({
+    agentId: "talk",
+    client: { async chat() { throw new Error("network failed"); } },
+    messages: [{ role: "user", content: "hello" }],
+    toolNames: [],
+    round: 0
+  }), /network failed/);
+  assert.deepEqual(activity, ["suspend", "restart"]);
+
+  await runtime.send({
+    agentId: "asr",
+    client: {
+      async chat() {
+        return { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+      }
+    },
+    messages: [{ role: "user", content: "audio" }],
+    toolNames: [],
+    round: 0
+  });
+  assert.deepEqual(activity, ["suspend", "restart"]);
+});
+
+test("cancelled main LLM requests restore inactivity", async () => {
+  const activity: string[] = [];
+  let rejectRequest: ((error: Error) => void) | undefined;
+  const runtime = createLLMRequestsRuntime({
+    getTool: () => undefined,
+    appendLLMRequestLog: () => undefined,
+    appendLLMResponseLog() {},
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent() {},
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "fallback" }),
+    appendLog() {},
+    agentState: {
+      suspendInactivityTimer: () => activity.push("suspend"),
+      restartInactivityTimer: () => activity.push("restart")
+    }
+  });
+
+  const request = runtime.send({
+    agentId: "chat",
+    client: {
+      async chat() {
+        return await new Promise((_resolve, reject) => {
+          rejectRequest = reject;
+        });
+      }
+    },
+    messages: [{ role: "user", content: "hello" }],
+    toolNames: [],
+    round: 0
+  });
+  assert.deepEqual(activity, ["suspend"]);
+
+  assert.equal(runtime.cancelActive(), true);
+  rejectRequest?.(new Error("aborted"));
+  await assert.rejects(request, /llm_request_cancelled/);
+  assert.deepEqual(activity, ["suspend", "restart"]);
+});
+
 test("LLM requests runtime writes subagent session metadata", async () => {
   const { parsed } = await runSubagentSession("llm-subagent-metadata");
   assert.equal(parsed?.metadata.type, "llm_subagent_session");

@@ -13,17 +13,18 @@ test("waiting degrades to idle after inactivity", () => {
 
   controller.start();
   assert.equal(controller.getSnapshot().state, "waiting");
+  const deadline = Date.parse(`${controller.getSnapshot().nextTransitionAt}Z`);
 
-  current = new Date("2026-05-25T00:14:59.999Z");
+  current = new Date(deadline - 1);
   controller.tick();
   assert.equal(controller.getSnapshot().state, "waiting");
 
-  current = new Date("2026-05-25T00:15:00.000Z");
+  current = new Date(deadline);
   controller.tick();
   assert.equal(controller.getSnapshot().state, "idle");
 });
 
-test("inbound activity postpones inactive transitions before processing", () => {
+test("inbound activity suspends inactive transitions until activity settles", () => {
   let current = new Date("2026-05-25T00:00:00.000Z");
   const controller = createAgentStateController({
     store: memoryStore(),
@@ -35,9 +36,40 @@ test("inbound activity postpones inactive transitions before processing", () => 
   current = new Date("2026-05-25T00:00:00.001Z");
   controller.noteInboundMessage();
 
-  assert.equal(controller.getSnapshot().state, "idle");
-  assert.equal(controller.getSnapshot().nextTransitionAt, "2026-05-25T00:05:00.001");
+  assert.equal(controller.getSnapshot().nextTransitionAt, undefined);
 
+  current = new Date("2026-05-25T01:00:00.000Z");
+  controller.tick();
+  assert.equal(controller.getSnapshot().state, "idle");
+
+  controller.restartInactivityTimer();
+  assert.notEqual(controller.getSnapshot().nextTransitionAt, undefined);
+});
+
+test("LLM activity suspends and restarts waiting inactivity from settlement time", () => {
+  let current = new Date("2026-05-25T00:00:00.000Z");
+  const controller = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 0
+  });
+
+  current = new Date("2026-05-25T00:14:59.000Z");
+  controller.suspendInactivityTimer();
+  assert.equal(controller.getSnapshot().nextTransitionAt, undefined);
+
+  current = new Date("2026-05-25T01:00:00.000Z");
+  controller.tick();
+  assert.equal(controller.getSnapshot().state, "waiting");
+
+  controller.restartInactivityTimer();
+  const deadline = Date.parse(`${controller.getSnapshot().nextTransitionAt}Z`);
+
+  current = new Date(deadline - 1);
+  controller.tick();
+  assert.equal(controller.getSnapshot().state, "waiting");
+
+  current = new Date(deadline);
   controller.tick();
   assert.equal(controller.getSnapshot().state, "idle");
 });

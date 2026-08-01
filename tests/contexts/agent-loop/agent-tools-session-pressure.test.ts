@@ -429,7 +429,19 @@ test("chat agent clears session before the next request under token pressure", a
   assert.equal(scenario.requests[3].messages.some((message) => message.content === "final 2"), false);
 });
 
-function createTokenPressureScenario() {
+test("chat agent keeps the active session when token pressure reset is disabled", async () => {
+  const scenario = createTokenPressureScenario(false);
+
+  await runPreparedChatEvent(scenario.core, textEvent());
+  await runPreparedChatEvent(scenario.core, textEvent());
+  await runPreparedChatEvent(scenario.core, textEvent());
+
+  assert.deepEqual(scenario.events, ["completed", "completed", "completed"]);
+  assert.equal(scenario.previewCalls.length, 0);
+  assert.equal(scenario.requests.length, 4);
+});
+
+function createTokenPressureScenario(tokenPressureSessionResetEnabled = true) {
   const requests: LLMChatInput[] = [];
   const events: string[] = [];
   const previewCalls: Array<Record<string, unknown>> = [];
@@ -466,7 +478,7 @@ function createTokenPressureScenario() {
     }
   };
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_SESSION_RESET_ENABLED: String(tokenPressureSessionResetEnabled), LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),

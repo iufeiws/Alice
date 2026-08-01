@@ -96,6 +96,7 @@ type ChatAgentConfig = {
   llm: {
     model: string;
     temperature: number;
+    tokenPressureSessionResetEnabled: boolean;
     tokenPressureContextImportance: number;
     extraParams: Record<string, unknown>;
     followupExtraParams: Record<string, unknown>;
@@ -362,14 +363,15 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           shouldClearForInitiatedBehavior: () => Boolean(initiatedBehavior),
           isModeExpired: (session) => isModeExpired(session, time.now().epochMs),
           isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
-          shouldResetForTokenPressure: (session) => shouldResetSessionForTokenPressure({
-            session,
-            event,
-            plugin: findToolPlugin(toolPlugins, "Chat"),
-            model: deps.config.llm.model,
-            contextImportance: deps.config.llm.tokenPressureContextImportance,
-            noteLLMSessionUpdated
-          }),
+          shouldResetForTokenPressure: (session) => deps.config.llm.tokenPressureSessionResetEnabled
+            && shouldResetSessionForTokenPressure({
+              session,
+              event,
+              plugin: findToolPlugin(toolPlugins, "Chat"),
+              model: deps.config.llm.model,
+              contextImportance: deps.config.llm.tokenPressureContextImportance,
+              noteLLMSessionUpdated
+            }),
           modeFromSession: modeStateFromSession,
           clearSession(reason) {
             return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);

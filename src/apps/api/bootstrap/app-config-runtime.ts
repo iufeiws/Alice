@@ -12,6 +12,7 @@ export type LLMConfig = {
   temperature: number;
   timeoutMs: number;
   stream: boolean;
+  tokenPressureSessionResetEnabled: boolean;
   tokenPressureContextImportance: number;
   extraParams: Record<string, unknown>;
   followupExtraParams: Record<string, unknown>;
@@ -166,6 +167,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       temperature: envNumber(env.LLM_TEMPERATURE, 0.2),
       timeoutMs: envNumber(env.LLM_TIMEOUT_MS, 60_000),
       stream: envBool(env.LLM_STREAM_ENABLED, true),
+      tokenPressureSessionResetEnabled: envBool(env.LLM_TOKEN_PRESSURE_SESSION_RESET_ENABLED, false),
       tokenPressureContextImportance: envNumber(env.LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE, 1),
       extraParams: envJsonObject(env.LLM_EXTRA_PARAMS),
       followupExtraParams: env.LLM_FOLLOWUP_EXTRA_PARAMS === undefined

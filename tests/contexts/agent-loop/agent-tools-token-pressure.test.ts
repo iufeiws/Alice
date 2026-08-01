@@ -29,7 +29,7 @@ test("chat agent restores token pressure baseline from persisted session snapsho
     }
   };
   const baseDeps = {
-    config: loadConfig({ LLM_MODEL: "deepseek-v4-flash", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "deepseek-v4-flash", LLM_TOKEN_PRESSURE_SESSION_RESET_ENABLED: "true", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -103,7 +103,7 @@ test("chat agent token pressure comparison uses model-specific prices", async ()
       }
     };
     const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: model, LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+      config: loadConfig({ LLM_MODEL: model, LLM_TOKEN_PRESSURE_SESSION_RESET_ENABLED: "true", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
       llm,
       outputRouter: createOutputRouter(),
       intentRouter: createIntentRouter(),

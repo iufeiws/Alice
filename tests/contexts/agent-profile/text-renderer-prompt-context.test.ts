@@ -12,7 +12,7 @@ test("prompt context runtime exposes system_skills and installed_skills from the
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/custom-home/skills",
+    skillsDirPath: "/custom-home/.agent/skills",
     skillsRegistry: {
       available: () => [
         { name: "weather", description: "天气查询", source: "first-party" },
@@ -27,7 +27,7 @@ test("prompt context runtime exposes system_skills and installed_skills from the
   assert.equal(runtime.listVariables().length > 0, true);
   assert.equal(runtime.renderText("{{system_skills}}"), systemSkills);
   assert.equal(runtime.renderText("{{installed_skills}}"), installedSkills);
-  assert.equal(runtime.renderText("{{skills/dirPath}}"), "/custom-home/skills");
+  assert.equal(runtime.renderText("{{skills/dirPath}}"), "/custom-home/.agent/skills");
   assert.ok(systemSkills.includes("<system_skills>"));
   assert.ok(systemSkills.includes("<name>weather</name>"));
   assert.ok(!systemSkills.includes("lark-doc"));

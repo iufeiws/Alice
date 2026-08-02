@@ -6,6 +6,7 @@ const path = await import("node:path");
 
 export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSandboxConfig {
   const root = tmpDir("bash-sandbox");
+  const skillsDir = "/alice/.agent/skills";
   return {
     containerName: "test-bash-sandbox",
     image: "cimg/python:3.13-browsers",
@@ -15,7 +16,8 @@ export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSand
     hostCacheDir: path.join(root, "cache"),
     cacheDir: "/cache",
     tmpDir: "/tmp",
-    skillMounts: [{ id: "demo", hostPath: path.join(root, "skills", "demo"), containerPath: "/alice/skills/demo", readOnly: true }],
+    skillsDir,
+    skillMounts: [{ id: "demo", hostPath: path.join(root, "skills", "demo"), containerPath: path.posix.join(skillsDir, "demo"), readOnly: true }],
     mounts: [],
     network: "none",
     timeoutMs: 1000,

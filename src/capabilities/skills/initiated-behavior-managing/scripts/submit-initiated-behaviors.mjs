@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = "/alice/skills/initiated-behavior-managing/events";
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "events");
 
 for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
   if (!entry.isFile() || !entry.name.endsWith(".json")) throw new Error(`事件目录只能包含 JSON 文件：${entry.name}`);

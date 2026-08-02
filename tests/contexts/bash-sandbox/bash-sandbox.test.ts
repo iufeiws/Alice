@@ -94,7 +94,7 @@ test("config mounts installed skills read-write at the sandbox home", () => {
     containerPath: mount.containerPath,
     readOnly: mount.readOnly
   })), [
-    { hostPath: fs.realpathSync(".agents/skills"), containerPath: "/alice/skills", readOnly: false }
+    { hostPath: fs.realpathSync(".agents/skills"), containerPath: config.bashSandbox.skillsDir, readOnly: false }
   ]);
 });
 
@@ -112,7 +112,8 @@ test("config mounts the project codebase read-write inside the sandbox", () => {
 
 test("config rejects sensitive host paths", () => {
   assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: "/etc", containerPath: "/mnt/etc" }]) }), /sensitive host path/);
-  assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: "/alice/skills/generated", readOnly: false }]) }), /skills mount/);
+  const skillsDir = loadConfig({}).bashSandbox.skillsDir;
+  assert.throws(() => loadConfig({ BASH_SANDBOX_MOUNTS: JSON.stringify([{ hostPath: tmpDir("mount"), containerPath: `${skillsDir}/generated`, readOnly: false }]) }), /skills mount/);
 });
 
 function denyReason(value: ReturnType<typeof classifyBashCommand>): string {

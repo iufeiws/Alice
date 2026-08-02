@@ -4,6 +4,8 @@ import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
 import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type BashSandboxMountConfig } from "../../../contexts/bash-sandbox/src/index.js";
 
+const path = await import("node:path");
+
 export type LLMConfig = {
   provider: "openai-compatible" | "stub";
   baseURL?: string;
@@ -236,11 +238,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? ".sandbox/bash/cache",
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
+      skillsDir: env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills"),
       skillMounts: [],
       mounts: withDefaultMounts(
         parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
         installedSkillsRoot,
-        sandboxWorkspaceDir
+        sandboxWorkspaceDir,
+        env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills")
       ),
       network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
@@ -319,12 +323,12 @@ export function loadConfig(env: Env = process.env): AppConfig {
   };
 }
 
-function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot: string, workspaceDir: string): BashSandboxMountConfig[] {
+function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot: string, workspaceDir: string, skillsDir: string): BashSandboxMountConfig[] {
   const workspaceRoot = workspaceDir.replace(/\/+$/, "");
   const skillsMount: BashSandboxMountConfig = {
     id: "skills",
     hostPath: installedSkillsRoot,
-    containerPath: `${workspaceRoot}/skills`,
+    containerPath: skillsDir,
     readOnly: false
   };
   const codebaseMounts: BashSandboxMountConfig[] = [

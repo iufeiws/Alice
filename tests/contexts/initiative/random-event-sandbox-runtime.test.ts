@@ -11,7 +11,7 @@ function definition(id: string, weight = 1) {
   return { meta: { id, enabled: true, weight, priority: 0 }, messages: [] };
 }
 
-const skillSandboxRoot = "/alice/skills/initiated-behavior-managing";
+const skillSandboxRoot = path.posix.join(testConfig().skillsDir, "initiated-behavior-managing");
 
 function bashResult() {
   return { command: "submit", cwd: skillSandboxRoot, stdout: `${initiatedBehaviorManagingSubmissionMarker}\n`, stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false, denied: false };

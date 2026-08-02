@@ -80,6 +80,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         hostCacheDir: path.join(root, "sandbox", "cache"),
         cacheDir: "/cache",
         tmpDir: "/tmp",
+        skillsDir: "/alice/.agent/skills",
         skillMounts: [],
         mounts: [],
         network: "none",
@@ -110,7 +111,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         memoryStore: this.memoryStore,
         diaryStore: this.diaryStore,
         calendarStore: this.calendarStore,
-        skillsDirPath: `${this.config.bashSandbox.workspaceDir.replace(/\/+$/, "")}/skills`,
+        skillsDirPath: this.config.bashSandbox.skillsDir,
         skillsRegistry: { available: () => [] },
         worldWandererConfigPath: this.pluginConfigs?.worldWanderer?.configPath
       });

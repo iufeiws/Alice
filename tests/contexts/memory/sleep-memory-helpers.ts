@@ -63,6 +63,7 @@ export function makeMemorySandbox(root: string): { config: BashSandboxConfig; ru
     hostCacheDir: path.join(root, "sandbox", "cache"),
     cacheDir: "/cache",
     tmpDir: "/tmp",
+    skillsDir: "/alice/.agent/skills",
     skillMounts: [],
     mounts: [],
     network: "none",

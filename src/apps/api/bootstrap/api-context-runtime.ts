@@ -43,7 +43,7 @@ export function createApiContextRuntime(input: {
     dbPath: path.join(input.config.memoryFiles.root, "state", "initiated-behavior-runs.sqlite")
   });
   const calendarStore = createCalendarStore(path.join(input.config.memoryFiles.root, "alice.sqlite"));
-  const skillsDirPath = path.posix.join(input.config.bashSandbox.workspaceDir, "skills");
+  const skillsDirPath = input.config.bashSandbox.skillsDir;
   const firstPartySkillsRoot = {
     root: input.config.skills?.root ?? "src/capabilities/skills",
     source: "first-party" as const,

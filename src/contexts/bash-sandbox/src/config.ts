@@ -23,6 +23,7 @@ export type BashSandboxConfig = {
   hostCacheDir: string;
   cacheDir: string;
   tmpDir: string;
+  skillsDir: string;
   skillMounts: BashSandboxSkillMountConfig[];
   mounts: BashSandboxMountConfig[];
   network: "none" | "configured";
@@ -42,8 +43,8 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
     skillMounts: config.skillMounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) })),
     mounts: config.mounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) }))
   };
-  if (!normalized.workspaceDir.startsWith("/") || !normalized.cacheDir.startsWith("/") || !normalized.tmpDir.startsWith("/")) {
-    throw new Error("bashSandbox workspaceDir/cacheDir/tmpDir must be absolute container paths");
+  if (!normalized.workspaceDir.startsWith("/") || !normalized.cacheDir.startsWith("/") || !normalized.tmpDir.startsWith("/") || !normalized.skillsDir.startsWith("/")) {
+    throw new Error("bashSandbox workspaceDir/cacheDir/tmpDir/skillsDir must be absolute container paths");
   }
   rejectSensitiveHostPath(normalized.hostWorkspaceDir);
   rejectSensitiveHostPath(normalized.hostCacheDir);
@@ -51,7 +52,7 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
     rejectSensitiveHostPath(entry.hostPath);
     if (!entry.containerPath.startsWith("/")) throw new Error(`bashSandbox mount ${entry.containerPath} must be absolute`);
   }
-  const skillsRoot = `${normalized.workspaceDir.replace(/\/+$/, "")}/skills`;
+  const skillsRoot = normalized.skillsDir.replace(/\/+$/, "");
   for (const mount of normalized.mounts) {
     if (!mount.readOnly && mount.containerPath !== skillsRoot && isSameOrInside(mount.containerPath, skillsRoot)) {
       throw new Error("bashSandbox optional mounts cannot write under skills mount");
@@ -80,7 +81,7 @@ export function addBashSandboxSkillMount(config: BashSandboxConfig, mount: BashS
     hostPath: path.resolve(mount.hostPath)
   };
   rejectSensitiveHostPath(normalized.hostPath);
-  const skillsRoot = `${config.workspaceDir.replace(/\/+$/, "")}/skills`;
+  const skillsRoot = config.skillsDir.replace(/\/+$/, "");
   if (!isSameOrInside(normalized.containerPath, skillsRoot) || normalized.containerPath === skillsRoot) {
     throw new Error(`skill mount must be under ${skillsRoot}: ${normalized.containerPath}`);
   }

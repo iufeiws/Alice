@@ -32,24 +32,25 @@ test("skills registry formats first-party and third-party available skills only"
 test("skills registry derives a missing name from the skill directory", () => {
   const root = tmpDir("skills-directory-name");
   const skillRoot = writeSkill(root, "lark-shared", "description: Installed skill without a name.", "Use it\n");
-  const registry = createSkillRegistry({ roots: [{ root, source: "third-party" }] });
+  const config = testConfig();
+  const registry = createSkillRegistry({ roots: [{ root, source: "third-party", sandboxRoot: config.skillsDir }] });
 
   const skill = registry.get("lark-shared");
-
   assert.equal(skill?.id, "lark-shared");
   assert.equal(skill?.name, "lark-shared");
   assert.equal(skill?.hostRoot, skillRoot);
-  assert.equal(skill?.sandboxRoot, "/alice/skills/lark-shared");
+  assert.equal(skill?.sandboxRoot, `${config.skillsDir}/lark-shared`);
   assert.match(formatAvailableSkillsXml(registry), /<name>lark-shared<\/name>/);
 });
 
 test("skills registry hot reloads installed and removed skills", () => {
   const root = tmpDir("hot-reload-skills");
-  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const config = testConfig();
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party", sandboxRoot: config.skillsDir }] });
 
   assert.equal(registry.get("hot"), undefined);
   const skillRoot = writeSkill(root, "hot", "name: hot\ndescription: Hot-installed skill.", "Use it\n");
-  assert.equal(registry.get("hot")?.sandboxRoot, "/alice/skills/hot");
+  assert.equal(registry.get("hot")?.sandboxRoot, `${config.skillsDir}/hot`);
   fs.rmSync(skillRoot, { recursive: true });
   assert.equal(registry.get("hot"), undefined);
 });
@@ -84,14 +85,14 @@ test("Skill tool mounts loaded skill resources read-write", async () => {
     config,
     executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
   });
-  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party", sandboxRoot: config.skillsDir }] });
   const loader = createSkillLoader(registry, runtime);
   const tools = createSkillsTools({ loader });
 
   await tools.execute({ id: "load", toolName: "Skill", input: { skill: "demo" } });
 
-  assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: "/alice/skills/demo", readOnly: false }]);
-  assert.equal(loader.load("demo").resolveResource("scripts/run.sh"), "/alice/skills/demo/scripts/run.sh");
+  assert.deepEqual(config.skillMounts.map((mount) => ({ containerPath: mount.containerPath, readOnly: mount.readOnly })), [{ containerPath: `${config.skillsDir}/demo`, readOnly: false }]);
+  assert.equal(loader.load("demo").resolveResource("scripts/run.sh"), `${config.skillsDir}/demo/scripts/run.sh`);
   assert.throws(() => loader.load("demo").resolveResource("../escape"), /escapes/);
 });
 

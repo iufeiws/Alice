@@ -19,7 +19,7 @@ const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const promptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
 const stateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));
 const calendarStore = createCalendarStore(path.join(config.memoryFiles.root, "alice.sqlite"));
-const skillsDirPath = path.posix.join(config.bashSandbox.workspaceDir, "skills");
+const skillsDirPath = config.bashSandbox.skillsDir;
 const skillsRegistry = createSkillRegistry({
   roots: [
     { root: config.skills?.root ?? "src/capabilities/skills", source: "first-party", sandboxRoot: skillsDirPath },

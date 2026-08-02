@@ -59,5 +59,5 @@ Alice的主动行为本质为一段llm提示词, 这些提示词为JSON格式, �
 ## 递交
 你的修改结果需要通过提供的脚本命令递交:
 ```bash
-node /skills/initiated-behavior-managing/scripts/submit-initiated-behaviors.mjs
+node scripts/submit-initiated-behaviors.mjs
 ```

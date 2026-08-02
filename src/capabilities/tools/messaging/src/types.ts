@@ -59,6 +59,7 @@ export type MessagingPluginConfig = {
   splitMultilineSendChat: boolean;
   limitConsecutiveSends: boolean;
   feishuTypingEmojiEnabled: boolean;
+  mapMarkdownLikeToMarkdown: boolean;
 };
 
 export type MessagingToolPlugin = ToolPlugin & {

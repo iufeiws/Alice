@@ -181,7 +181,8 @@ test("admin plugin config patch returns messaging config values", async () => {
   assert.deepEqual(patchBody.configValue, {
     splitMultilineSendChat: false,
     limitConsecutiveSends: false,
-    feishuTypingEmojiEnabled: false
+    feishuTypingEmojiEnabled: false,
+    mapMarkdownLikeToMarkdown: false
   });
 });
 
@@ -205,7 +206,8 @@ test("admin plugin config patch persists messaging config", async () => {
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), {
     splitMultilineSendChat: false,
     limitConsecutiveSends: false,
-    feishuTypingEmojiEnabled: false
+    feishuTypingEmojiEnabled: false,
+    mapMarkdownLikeToMarkdown: false
   });
 });
 

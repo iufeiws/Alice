@@ -145,7 +145,7 @@ test("send_chat can keep newline text in one send from messaging config", async 
   const tools = createMessagingTools({
     store,
     sleep: async () => {},
-    config: { splitMultilineSendChat: false, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true },
+    config: { splitMultilineSendChat: false, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true, mapMarkdownLikeToMarkdown: false },
     outputRouter: {
       async send(output) {
         sent.push(output);
@@ -205,6 +205,86 @@ test("send_chat stores feishu core message without render markup", async () => {
   assert.deepEqual(stored.map((message) => message.senderName), ["core"]);
 });
 
+async function sendFeishuMarkdownLike(name: string, enabled: boolean, content: string) {
+  const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
+  seedUserInbound(store, "session-1", "feishu");
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T00:00:00.000Z")),
+    sleep: async () => {},
+    config: { splitMultilineSendChat: true, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true, mapMarkdownLikeToMarkdown: enabled },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_md_like",
+    toolName: "Chat", input: { action: "send",  type: "message", content, alice: "shell" }
+  });
+
+  return { result, sent, store };
+}
+
+test("send_chat maps markdown-like message to markdown when config enabled", async () => {
+  const { result, sent } = await sendFeishuMarkdownLike("messaging-send-markdown-like-on", true, "**加粗**内容");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["markdown"]);
+});
+
+test("send_chat keeps markdown-like message as text when config disabled", async () => {
+  const { result, sent } = await sendFeishuMarkdownLike("messaging-send-markdown-like-off", false, "**加粗**内容");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["text"]);
+});
+
+test("send_chat sends multiline markdown-like message as single markdown when config enabled", async () => {
+  const { result, sent } = await sendFeishuMarkdownLike("messaging-send-markdown-like-multiline", true, "## 计划\n- 买水\n- 充电");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["markdown"]);
+  assert.equal(sent[0].content.kind === "markdown" ? sent[0].content.markdown : "", "## 计划\n- 买水\n- 充电");
+});
+
+test("send_chat with config enabled still splits plain text messages", async () => {
+  const { sent } = await sendFeishuMarkdownLike("messaging-send-markdown-like-plain", true, "one\n\ntwo");
+
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+});
+
+test("send_chat keeps wechat markdown-like message as text when config enabled", async () => {
+  const store = createAliceStore(path.join(makeTempDir("messaging-send-markdown-like-wechat"), "alice.sqlite"));
+  seedUserInbound(store, "wechat:dm:wx-user", "wechat");
+  const sent: AgentOutput[] = [];
+  const tools = createMessagingTools({
+    store,
+    sleep: async () => {},
+    config: { splitMultilineSendChat: true, limitConsecutiveSends: true, feishuTypingEmojiEnabled: true, mapMarkdownLikeToMarkdown: true },
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: `sent_${sent.length}` };
+      }
+    },
+    getDefaultTarget: () => ({ plugin: "wechat", userId: "wx-user", sessionId: "wechat:dm:wx-user" })
+  });
+
+  const result = await tools.execute({
+    id: "call_send_md_like_wechat",
+    toolName: "Chat", input: { action: "send",  type: "message", content: "**加粗**内容" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["text"]);
+});
+
 test("send_chat blocks when the user has not replied recently", async () => {
   const store = createAliceStore(path.join(makeTempDir("messaging-send-wait-user"), "alice.sqlite"));
   for (let index = 0; index < 10; index += 1) {
@@ -251,7 +331,7 @@ test("send_chat can disable consecutive-send limit from messaging config", async
   let sendCalls = 0;
   const tools = createMessagingTools({
     store,
-    config: { splitMultilineSendChat: true, limitConsecutiveSends: false, feishuTypingEmojiEnabled: true },
+    config: { splitMultilineSendChat: true, limitConsecutiveSends: false, feishuTypingEmojiEnabled: true, mapMarkdownLikeToMarkdown: false },
     outputRouter: {
       async send() {
         sendCalls += 1;

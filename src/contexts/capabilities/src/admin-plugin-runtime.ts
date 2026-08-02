@@ -131,6 +131,7 @@ function messagingPluginEntry(): AdminPluginRegistryEntry {
       fields: [
         { key: "splitMultilineSendChat", label: "Split Multiline Chat Send", type: "switch", group: "general", description: "Split Chat action=send message content on newlines. Voice, markdown, image, and Feishu core markdown sends are never split." },
         { key: "limitConsecutiveSends", label: "Limit Consecutive Sends", type: "switch", group: "general", description: "Block Chat action=send after 10 recent outbound messages until the user replies." },
+        { key: "mapMarkdownLikeToMarkdown", label: "Map Markdown-like Message to Markdown", type: "switch", group: "general", description: "When Chat action=send type is message but the content looks like markdown (headings, lists, bold, code, links...), send it as markdown on Feishu." },
         { key: "feishuTypingEmojiEnabled", label: "Typing Emoji Indicator", type: "switch", group: "feishu", description: "Use the Feishu reaction-based typing indicator while Alice is preparing a reply." }
       ]
     },
@@ -153,7 +154,8 @@ function updateMessagingConfig(context: AdminRoutesContext, patch: Record<string
   const next: MessagingPluginConfig = {
     splitMultilineSendChat: patch.splitMultilineSendChat === undefined ? current.splitMultilineSendChat : booleanFromUnknown(patch.splitMultilineSendChat),
     limitConsecutiveSends: patch.limitConsecutiveSends === undefined ? current.limitConsecutiveSends : booleanFromUnknown(patch.limitConsecutiveSends),
-    feishuTypingEmojiEnabled: patch.feishuTypingEmojiEnabled === undefined ? current.feishuTypingEmojiEnabled : booleanFromUnknown(patch.feishuTypingEmojiEnabled)
+    feishuTypingEmojiEnabled: patch.feishuTypingEmojiEnabled === undefined ? current.feishuTypingEmojiEnabled : booleanFromUnknown(patch.feishuTypingEmojiEnabled),
+    mapMarkdownLikeToMarkdown: patch.mapMarkdownLikeToMarkdown === undefined ? current.mapMarkdownLikeToMarkdown : booleanFromUnknown(patch.mapMarkdownLikeToMarkdown)
   };
   writeMessagingConfig(context, next);
   return next;

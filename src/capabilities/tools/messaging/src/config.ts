@@ -14,7 +14,8 @@ export function normalizeMessagingPluginConfig(parsed: Record<string, unknown>):
   return {
     splitMultilineSendChat: booleanValue(parsed.splitMultilineSendChat, true, "splitMultilineSendChat"),
     limitConsecutiveSends: booleanValue(parsed.limitConsecutiveSends, true, "limitConsecutiveSends"),
-    feishuTypingEmojiEnabled: booleanValue(parsed.feishuTypingEmojiEnabled, true, "feishuTypingEmojiEnabled")
+    feishuTypingEmojiEnabled: booleanValue(parsed.feishuTypingEmojiEnabled, true, "feishuTypingEmojiEnabled"),
+    mapMarkdownLikeToMarkdown: booleanValue(parsed.mapMarkdownLikeToMarkdown, false, "mapMarkdownLikeToMarkdown")
   };
 }
 

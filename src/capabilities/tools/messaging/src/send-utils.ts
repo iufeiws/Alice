@@ -83,11 +83,34 @@ function unwrapFeishuInternalId(value: string | undefined): { id: string; prefix
   return match ? { id: match[1], prefixed: true } : { id: value, prefixed: false };
 }
 
-export function renderSendPart(target: MessagingToolTarget, type: SendType, content: string, senderName?: string): { type: SendType; content: string } {
-  if (target.plugin === "feishu" && type === "message" && senderName === "core") {
-    return { type: "markdown", content };
+export function renderSendPart(
+  target: MessagingToolTarget,
+  type: SendType,
+  content: string,
+  senderName?: string,
+  config?: Pick<MessagingPluginConfig, "mapMarkdownLikeToMarkdown">
+): { type: SendType; content: string } {
+  if (type === "message" && target.plugin === "feishu") {
+    if (senderName === "core" || (config?.mapMarkdownLikeToMarkdown && contentLooksLikeMarkdown(content))) {
+      return { type: "markdown", content };
+    }
   }
   return { type, content };
+}
+
+export function contentLooksLikeMarkdown(content: string): boolean {
+  // 行首特征：标题、无序/有序列表、引用、代码围栏、分隔线
+  if (/^(?:#{1,6})\s+/m.test(content)) return true;
+  if (/^\s*(?:[-*+])\s+\S/m.test(content)) return true;
+  if (/^\s*\d+[.)]\s+\S/m.test(content)) return true;
+  if (/^\s*>\s?/m.test(content)) return true;
+  if (/^\s*```/m.test(content)) return true;
+  if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/m.test(content)) return true;
+  // 行内特征：加粗、行内代码、链接
+  if (/\*\*[^*\n]+\*\*/.test(content)) return true;
+  if (/`[^`\n]+`/.test(content)) return true;
+  if (/\[[^\]\n]+\]\([^)\n]+\)/.test(content)) return true;
+  return false;
 }
 
 export function buildOutput(

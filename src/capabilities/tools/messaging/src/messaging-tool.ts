@@ -179,7 +179,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       : rawContent;
     if (!content.trim()) return toolError(call, messagingToolText.contentRequired);
     const config = resolveMessagingConfig();
-    const renderedType = renderSendPart(target, type, "", senderName).type;
+    const renderedType = renderSendPart(target, type, content, senderName, config).type;
     const parts = shouldSplitSendContent(config, type, renderedType)
       ? splitSendContentParts(content)
       : [type === "message" || type === "voice" ? content.trim() : content];
@@ -191,7 +191,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       if (type === "voice") {
         results.push(...await sendVoicePart(target, part, senderName));
       } else {
-        results.push(await sendOutputPart(target, type, part, { retry: true, senderName }));
+        results.push(await sendOutputPart(target, type, part, { retry: true, senderName }, config));
       }
     }
 
@@ -311,10 +311,11 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     target: MessagingToolTarget,
     type: SendType,
     content: string,
-    options: { transcript?: string; retry: boolean; skipWait?: boolean; senderName?: string }
+    options: { transcript?: string; retry: boolean; skipWait?: boolean; senderName?: string },
+    config?: MessagingPluginConfig
   ): Promise<SendPartResult> {
     if (!options.skipWait) await waitForMessageSendSlot(options.transcript ?? content);
-    const rendered = renderSendPart(target, type, content, options.senderName);
+    const rendered = renderSendPart(target, type, content, options.senderName, config);
     const output = buildOutput(target, rendered.type, rendered.content, time.now(), options.transcript, options.senderName);
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
     try {

@@ -17,7 +17,8 @@ test("messageRuntime_feishuTypingDisabled_skipsFeishuTypingStart", async () => {
   fs.writeFileSync(messagingConfigPath, `${JSON.stringify({
     splitMultilineSendChat: true,
     limitConsecutiveSends: true,
-    feishuTypingEmojiEnabled: false
+    feishuTypingEmojiEnabled: false,
+    mapMarkdownLikeToMarkdown: false
   })}\n`);
   const typingEvents: Array<{ sessionId?: string; typing: boolean }> = [];
   const indicatorTypingEvents: boolean[] = [];

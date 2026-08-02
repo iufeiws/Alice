@@ -134,7 +134,8 @@ export async function runMessageRuntimeWakeIndicator(trigger: "sleep_cocoon.wake
   fs.writeFileSync(messagingConfigPath, `${JSON.stringify({
     splitMultilineSendChat: true,
     limitConsecutiveSends: true,
-    feishuTypingEmojiEnabled: false
+    feishuTypingEmojiEnabled: false,
+    mapMarkdownLikeToMarkdown: false
   })}\n`);
   const events: string[] = [];
   let wakeEvent: AgentEvent | undefined = {

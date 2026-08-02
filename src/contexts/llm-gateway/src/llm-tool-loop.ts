@@ -1,5 +1,5 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
-import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutionReporter, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutionReporter, ToolExecutionReportSession, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
 import { promptMessageToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
@@ -587,18 +587,30 @@ function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, Registe
 }
 
 async function executeToolPlugin(tool: RegisteredTool, call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {
-  const report = tool.definition.suppressExecutionCard ? undefined : await toolExecutionReporter?.begin(call);
+  // 卡片 reporter 的 begin/finish 涉及飞书网络往返，改为后台执行，避免阻塞 tool 执行
+  const reportPromise = tool.definition.suppressExecutionCard
+    ? undefined
+    : settleExecutionReport(toolExecutionReporter?.begin(call));
+  const reportProgress = reportPromise
+    ? (content: string) => void reportPromise.then((report) => report?.appendProgress(content)).catch(() => undefined)
+    : context?.reportProgress;
   try {
     const result = await tool.plugin.execute(call, {
       ...context,
-      reportProgress: report ? (content) => void report.appendProgress(content) : context?.reportProgress
+      reportProgress
     });
-    await report?.finish(result);
+    void reportPromise?.then((report) => report?.finish(result)).catch(() => undefined);
     return result;
   } catch (error) {
-    await report?.fail(error);
+    void reportPromise?.then((report) => report?.fail(error)).catch(() => undefined);
     throw error;
   }
+}
+
+function settleExecutionReport(
+  value: ToolExecutionReportSession | Promise<ToolExecutionReportSession | undefined> | undefined
+): Promise<ToolExecutionReportSession | undefined> | undefined {
+  return value === undefined ? undefined : Promise.resolve(value).catch(() => undefined);
 }
 
 export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {

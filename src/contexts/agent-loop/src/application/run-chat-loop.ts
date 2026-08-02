@@ -10,14 +10,12 @@ import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
 import {
-  claimAgentLoopRequestWindow,
   type AgentFunctionCallLoopSpec,
   type AgentFunctionCallLoopResult,
   type AgentFunctionCallToolExecution
 } from "../runtime/agent-loop-runtime.js";
 
 const chatToolName = "Chat";
-const maxLLMRequestsPerMinute = 10;
 
 type ChatAgentTokenPressurePreviewBaseline = {
   inputTokens: number;
@@ -163,18 +161,6 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         await input.appendSessionContext(session);
       }
       if (session.messages.length === 0) return { stop: true, messages: session.messages };
-      const requestTime = input.time.now().epochMs;
-      const requestWindow = claimAgentLoopRequestWindow({
-        session,
-        nowMs: requestTime,
-        windowMs: 60_000,
-        maxRequests: maxLLMRequestsPerMinute
-      });
-      if (!requestWindow.allowed) {
-        input.onLLMLog?.({ kind: "rate_limited", round, stream: false, model: input.llmInput.model });
-        input.noteSessionUpdated();
-        return { stop: true, messages: session.messages };
-      }
       input.noteSessionUpdated();
       return { messages: session.messages };
     },

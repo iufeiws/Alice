@@ -154,7 +154,7 @@ test("Feishu agent run indicator clears all output blocks on streamed tool-only 
   assert.ok(session);
   await session.appendToolCallDelta({ index: 0, id: "call_1", name: "Search" });
   await session.appendToolCallDelta({ index: 0, arguments: "{\"query\":\"alice\"}" });
-  await waitFor(() => client.calls.some((call) => call.kind === "update" && call.block === "tools" && call.content === "Search {\"query\":\"alice\"}"));
+  await waitFor(() => client.calls.some((call) => call.kind === "update-blocks" && call.blocks.tools === "Search {\"query\":\"alice\"}"));
 
   assertUpdateIncludes(client, "reasoning", "");
   assertUpdateIncludes(client, "content", "");
@@ -275,8 +275,8 @@ test("Feishu agent run indicator streams current content while saving clean fina
   assert.ok(session);
   await session.appendReasoningDelta("c");
   await session.appendContentDelta("c");
-  await waitFor(() => client.calls.some((call) => call.kind === "update" && call.block === "reasoning" && call.content === "c")
-    && client.calls.some((call) => call.kind === "update" && call.block === "content" && call.content === "c"));
+  await waitFor(() => client.calls.some((call) => call.kind === "update-blocks" && call.blocks.reasoning === "c")
+    && client.calls.some((call) => call.kind === "update-blocks" && call.blocks.content === "c"));
   assertCardRecord(store, {
     messageId: "om_old",
     cardId: "card_old",

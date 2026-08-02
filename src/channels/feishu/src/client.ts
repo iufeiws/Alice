@@ -322,19 +322,26 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         cardId
       };
     },
-    async updateAgentRunCard(input) {
+    async updateAgentRunCardBlocks(input) {
       assertStarted(client);
-      await client.cardkit.v1.cardElement.content({
+      const actions = (Object.keys(input.blocks) as FeishuAgentRunCardBlock[]).map((block) => ({
+        action: "partial_update_element",
+        params: {
+          element_id: AGENT_RUN_CARD_ELEMENT_IDS[block],
+          partial_element: { content: cardMarkdownContent(input.blocks[block] ?? "") }
+        }
+      }));
+      await client.cardkit.v1.card.batchUpdate({
         path: {
-          card_id: input.cardId,
-          element_id: AGENT_RUN_CARD_ELEMENT_IDS[input.block]
+          card_id: input.cardId
         },
         data: {
-          content: cardMarkdownContent(input.content),
+          actions: JSON.stringify(actions),
           sequence: input.sequence,
-          uuid: `agent_run_${input.block}_${input.cardId}_${input.sequence}`
+          uuid: `agent_run_blocks_${input.cardId}_${input.sequence}`
         }
       });
+      deps.log?.("info", `[feishu] batch updated agent run card ${input.cardId} blocks=${Object.keys(input.blocks).join(",")} sequence=${input.sequence}`);
     },
     async setAgentRunCardStreaming(input) {
       assertStarted(client);

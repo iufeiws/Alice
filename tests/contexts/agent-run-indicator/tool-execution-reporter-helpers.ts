@@ -16,7 +16,7 @@ export function fakeFeishuCardClient(): FeishuDynamicCardClient & { calls: FakeT
     async createApprovalCard() { throw new Error("unused"); },
     async deleteMessage() { throw new Error("unused"); },
     async createAgentRunCard() { throw new Error("unused"); },
-    async updateAgentRunCard() { throw new Error("unused"); },
+    async updateAgentRunCardBlocks() { throw new Error("unused"); },
     async setAgentRunCardStreaming() { throw new Error("unused"); },
     async resolveAgentRunCardId() { return {}; },
     async createToolExecutionCard(input) {

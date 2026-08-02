@@ -300,10 +300,9 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   }
 
   async function updateBlock(card: ActiveCard, block: FeishuAgentRunCardBlock, content: string, nextBlocks?: IndicatorBlocks, nextSavedBlocks?: IndicatorBlocks): Promise<void> {
-    await callCardOperation(card, () => input.client.updateAgentRunCard({
+    await callCardOperation(card, () => input.client.updateAgentRunCardBlocks({
       cardId: card.cardId,
-      block,
-      content,
+      blocks: { [block]: content },
       sequence: card.nextSequence
     }), nextBlocks, nextSavedBlocks);
   }
@@ -313,10 +312,11 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   }
 
   async function updateBlocks(card: ActiveCard, blocks: IndicatorBlocks, nextSavedBlocks?: IndicatorBlocks): Promise<void> {
-    await updateBlock(card, "state", blocks.state);
-    await updateBlock(card, "reasoning", blocks.reasoning);
-    await updateBlock(card, "content", blocks.content);
-    await updateBlock(card, "tools", blocks.tools, blocks, nextSavedBlocks);
+    await callCardOperation(card, () => input.client.updateAgentRunCardBlocks({
+      cardId: card.cardId,
+      blocks,
+      sequence: card.nextSequence
+    }), blocks, nextSavedBlocks);
   }
 
   async function flushContent(card: ActiveCard, blocks: IndicatorBlocks): Promise<void> {

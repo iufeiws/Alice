@@ -25,7 +25,7 @@ type CardBlocks = {
 
 export type CardCall =
   | { kind: "create"; receiveId: string; blocks: CardBlocks }
-  | { kind: "update"; cardId: string; block: string; content: string; sequence: number }
+  | { kind: "update-blocks"; cardId: string; blocks: Partial<CardBlocks>; sequence: number }
   | { kind: "stream"; cardId: string; enabled: boolean; sequence: number }
   | { kind: "convert"; messageId: string }
   | { kind: "tool-create"; receiveId: string; toolName: string }
@@ -118,12 +118,11 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
       calls.push({ kind: "create", receiveId: input.receiveId, blocks: { ...input.blocks } });
       return { messageId: "om_new", cardId: "card_new" };
     },
-    async updateAgentRunCard(input) {
+    async updateAgentRunCardBlocks(input) {
       calls.push({
-        kind: "update",
+        kind: "update-blocks",
         cardId: input.cardId,
-        block: input.block,
-        content: input.content,
+        blocks: { ...input.blocks },
         sequence: input.sequence
       });
     },
@@ -204,7 +203,9 @@ export function assertCreatedCard(client: { calls: CardCall[] }, blocks: CardBlo
 }
 
 export function assertUpdateIncludes(client: { calls: CardCall[] }, block: string, content: string): void {
-  assert.ok(client.calls.some((call) => call.kind === "update" && call.block === block && call.content === content));
+  assert.ok(client.calls.some(
+    (call) => call.kind === "update-blocks" && call.blocks[block as keyof CardBlocks] === content
+  ));
 }
 
 export function assertStreamState(client: { calls: CardCall[] }, enabled: boolean): void {

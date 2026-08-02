@@ -14,6 +14,9 @@ export function createFeishuToolExecutionReporter(input: {
   const cardIdleMs = 5_000;
   const rootElementId = "tool_calls_root";
   let currentCard: ToolExecutionCardState | undefined;
+  // 首次建卡的单飞 promise：begin 不再阻塞 tool 执行后，多个 tool 的 begin 可能并发，
+  // 保证并发时只创建一次卡片实体。
+  let cardCreation: Promise<ToolExecutionCardState> | undefined;
 
   return {
     async begin(call) {
@@ -47,25 +50,54 @@ export function createFeishuToolExecutionReporter(input: {
     const renderedCall = renderCode(call.input);
     const initialResult = renderCode("");
     if (!currentCard) {
-      const ids = firstPanelIds();
-      const panel = createPanel(call.toolName, renderedCall, initialResult, ids);
+      const amCreator = cardCreation === undefined;
+      const card = await ensureCardCreated(receiveId, call, renderedCall, initialResult);
+      if (amCreator) {
+        card.activeSessions += 1;
+        return { card, panel: card.panels[0]! };
+      }
+      // 并发等待者：首张卡由创建者承载，这里追加自己的 panel
+      return await appendPanel(card, call, renderedCall, initialResult);
+    }
+
+    return await appendPanel(currentCard, call, renderedCall, initialResult);
+  }
+
+  function ensureCardCreated(receiveId: string, call: ToolCall, renderedCall: string, initialResult: string): Promise<ToolExecutionCardState> {
+    if (cardCreation) return cardCreation;
+    const ids = firstPanelIds();
+    const firstPanel = createPanel(call.toolName, renderedCall, initialResult, ids);
+    cardCreation = (async () => {
       const created = await input.client.createToolExecutionCard({
         receiveIdType: "open_id",
         receiveId,
-        toolName: panel.toolName,
-        call: panel.call,
-        result: panel.result,
+        toolName: firstPanel.toolName,
+        call: firstPanel.call,
+        result: firstPanel.result,
         titleElementId: rootElementId,
-        callElementId: panel.callElementId,
-        resultElementId: panel.resultElementId
+        callElementId: firstPanel.callElementId,
+        resultElementId: firstPanel.resultElementId
       });
-      currentCard = { cardId: created.cardId, panels: [panel], nextPanelIndex: 2, nextSequence: 1, activeSessions: 0, streaming: false, closed: false, queue: Promise.resolve() };
-      await setStreaming(currentCard, true);
-      currentCard.activeSessions += 1;
-      return { card: currentCard, panel };
-    }
+      const card: ToolExecutionCardState = {
+        cardId: created.cardId,
+        panels: [firstPanel],
+        nextPanelIndex: 2,
+        nextSequence: 1,
+        activeSessions: 0,
+        streaming: false,
+        closed: false,
+        queue: Promise.resolve()
+      };
+      currentCard = card;
+      await setStreaming(card, true);
+      return card;
+    })().finally(() => {
+      cardCreation = undefined;
+    });
+    return cardCreation;
+  }
 
-    const card = currentCard;
+  async function appendPanel(card: ToolExecutionCardState, call: ToolCall, renderedCall: string, initialResult: string): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
     const ids = nextPanelIds(card);
     const panel = createPanel(call.toolName, renderedCall, initialResult, ids);
     card.panels.push(panel);

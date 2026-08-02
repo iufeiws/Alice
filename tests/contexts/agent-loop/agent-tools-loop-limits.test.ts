@@ -59,56 +59,6 @@ test("chat agent throws on repeated assistant tool-call responses", async () => 
   assert.deepEqual(calls.filter((id) => id !== "append_append_Chat"), ["tool_view_1"]);
 });
 
-test("chat agent falls back after max llm requests when tool calls alternate", async () => {
-  const requests: LLMChatInput[] = [];
-  const calls: string[] = [];
-  const llm: LLMClient = {
-    async chat(input) {
-      requests.push(input);
-      const useSearch = requests.length % 2 === 0;
-      return {
-        message: {
-          role: "assistant",
-          content: "",
-          toolCalls: [{
-            id: `tool_${requests.length}`,
-            type: "function",
-            function: {
-              name: useSearch ? "Chat" : "Chat",
-              arguments: useSearch ? "{\"content\":\"loop\"}" : "{}"
-            }
-          }]
-        }
-      };
-    }
-  };
-  const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model" }),
-    llm,
-    outputRouter: createOutputRouter(),
-    intentRouter: createIntentRouter(),
-    sessionResolver: createSessionResolver(),
-    policy: createAllowAllPolicy(),
-    tools: [{
-      id: "messaging-test",
-      listTools() {
-        return [
-          { name: "Chat", description: "view", inputSchema: { type: "object" } },
-          { name: "Chat", description: "search", inputSchema: { type: "object" } }
-        ];
-      },
-      async execute(call) {
-        calls.push(call.toolName);
-        return { callId: call.id, ok: true, output: "ok" };
-      }
-    }]
-  });
-
-  await runPreparedChatEvent(core, textEvent());
-  assert.equal(requests.length, 10);
-  assert.equal(calls.length, 10);
-});
-
 test("chat agent throws on repeated assistant Chat send responses", async () => {
   const requests: LLMChatInput[] = [];
   const sent: string[] = [];

@@ -61,6 +61,7 @@ export function createToolRuntime(input: {
     voiceMessageTtsTrainingOutputDir: input.config.tts?.voiceMessageTrainingOutputDir,
     wechatVoiceFallbackToText: input.config.tts?.wechatVoiceFallbackToText,
     config: () => readMessagingPluginConfig(defaultMessagingPluginConfigPath),
+    bashSandbox: input.config.bashSandbox,
     getUserName: () => input.config.project.username,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,

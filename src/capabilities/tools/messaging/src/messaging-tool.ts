@@ -1,6 +1,9 @@
 import type { VoiceSynthesisResult } from "../../../../channels/tts/src/index.js";
+import fsp from "node:fs/promises";
+import path from "node:path";
 import type { AgentOutput, ToolCall, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
+import { resolveSandboxHostPath } from "../../../../contexts/bash-sandbox/src/index.js";
 import { createCurrentTimeProvider, todayMessagingAnchor } from "../../../../platform/time/src/index.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import { chatTool, messagingToolText } from "../profile.js";
@@ -10,6 +13,7 @@ import {
   delay,
   escapeXml,
   filterParentheticalSendContent,
+  isImageFile,
   messageDelayForContent,
   missingVoiceSynthesizer,
   normalizeSendError,
@@ -182,7 +186,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const renderedType = renderSendPart(target, type, content, senderName, config).type;
     const parts = shouldSplitSendContent(config, type, renderedType)
       ? splitSendContentParts(content)
-      : [type === "message" || type === "voice" ? content.trim() : content];
+      : [type === "message" || type === "voice" || type === "file" ? content.trim() : content];
     if (parts.length === 0) return toolError(call, messagingToolText.contentRequired);
     if (config.limitConsecutiveSends && !recentMessagesAllowSend(target)) return toolError(call, messagingToolText.waitForUserReplyBeforeSending);
 
@@ -190,6 +194,8 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     for (const part of parts) {
       if (type === "voice") {
         results.push(...await sendVoicePart(target, part, senderName));
+      } else if (type === "file") {
+        results.push(...await sendSandboxFilePart(target, part, senderName));
       } else {
         results.push(await sendOutputPart(target, type, part, { retry: true, senderName }, config));
       }
@@ -286,6 +292,45 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     return senderName === "core" || senderName === "shell" ? senderName : undefined;
   }
 
+  async function sendSandboxFilePart(target: MessagingToolTarget, sandboxPath: string, senderName?: string): Promise<SendPartResult[]> {
+    const config = deps.bashSandbox;
+    if (!config) return [{ ok: false, error: messagingToolText.sandboxSendDisabled, content: sandboxPath }];
+    const hostPath = resolveSandboxHostPath(config, sandboxPath);
+    if (!hostPath) return [{ ok: false, error: messagingToolText.sandboxPathOutside(sandboxPath), content: sandboxPath }];
+    let stat;
+    try {
+      stat = await fsp.stat(hostPath);
+    } catch {
+      return [{ ok: false, error: messagingToolText.sandboxFileNotFound(sandboxPath), content: sandboxPath }];
+    }
+    if (!stat.isFile()) return [{ ok: false, error: messagingToolText.sandboxNotAFile(sandboxPath), content: sandboxPath }];
+    const asImage = await isImageFile(hostPath);
+    const assetId = await stageSandboxFileForSend(hostPath);
+    if (!assetId) return [{ ok: false, error: messagingToolText.sandboxFileStageFailed(sandboxPath), content: sandboxPath }];
+    return [await sendOutputPart(target, asImage ? "image" : "file", assetId, {
+      filename: path.basename(hostPath),
+      retry: true,
+      senderName
+    })];
+  }
+
+  async function stageSandboxFileForSend(hostPath: string): Promise<string | undefined> {
+    try {
+      const assetRoot = path.resolve(deps.sandboxSendAssetRoot ?? "assets");
+      const outputDir = path.resolve(deps.sandboxSendOutputDir ?? "assets/plugin/send-file");
+      const relativeDir = path.relative(assetRoot, outputDir);
+      if (relativeDir.startsWith("..") || path.isAbsolute(relativeDir)) return undefined;
+      await fsp.mkdir(outputDir, { recursive: true });
+      const extension = path.extname(hostPath) || "";
+      const baseName = safeSendFileName(path.basename(hostPath, extension));
+      const fileName = `${baseName}_${time.now().epochMs}_${Math.random().toString(36).slice(2, 8)}${extension}`;
+      await fsp.copyFile(hostPath, path.join(outputDir, fileName));
+      return path.join(relativeDir, fileName);
+    } catch {
+      return undefined;
+    }
+  }
+
   async function archiveVoiceMessageTtsOutput(
     target: MessagingToolTarget,
     text: string,
@@ -311,12 +356,12 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     target: MessagingToolTarget,
     type: SendType,
     content: string,
-    options: { transcript?: string; retry: boolean; skipWait?: boolean; senderName?: string },
+    options: { transcript?: string; retry: boolean; skipWait?: boolean; senderName?: string; filename?: string },
     config?: MessagingPluginConfig
   ): Promise<SendPartResult> {
     if (!options.skipWait) await waitForMessageSendSlot(options.transcript ?? content);
     const rendered = renderSendPart(target, type, content, options.senderName, config);
-    const output = buildOutput(target, rendered.type, rendered.content, time.now(), options.transcript, options.senderName);
+    const output = buildOutput(target, rendered.type, rendered.content, time.now(), options.transcript, options.senderName, options.filename);
     const stored = deps.store.insertOutboundMessage(toStoredOutbound(output));
     try {
       markMessageAttemptedNow();
@@ -454,4 +499,9 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
 function toolError(call: ToolCall, error: string): ToolResult {
   return { callId: call.id, ok: false, error };
+}
+
+function safeSendFileName(value: string): string {
+  const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 96);
+  return cleaned || "file";
 }

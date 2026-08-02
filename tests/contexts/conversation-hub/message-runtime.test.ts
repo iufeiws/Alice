@@ -151,12 +151,82 @@ test("messageRuntime stores inbound image resources under chat_files before inse
 
   const [message] = store.listMessagesForConversation("session-1", 10);
   assert.equal(message.contentType, "image");
-  assert.equal(message.contentText, "assets/chat_files/2026-05/om_image-hello.png");
+  assert.equal(message.contentText, "assets/chat_files/2026-05/hello.png");
   assert.deepEqual(JSON.parse(message.contentJson ?? "{}"), {
     kind: "image",
-    assetId: "assets/chat_files/2026-05/om_image-hello.png"
+    assetId: "assets/chat_files/2026-05/hello.png"
   });
-  assert.equal(fs.readFileSync(path.join(root, "assets", "chat_files", "2026-05", "om_image-hello.png"), "utf8"), "png");
+  assert.equal(fs.readFileSync(path.join(root, "assets", "chat_files", "2026-05", "hello.png"), "utf8"), "png");
+});
+
+test("messageRuntime_sameAttachmentNameSameHash_reusesFileNameWithoutSuffix", async () => {
+  const root = makeTempDir("runtime-chat-files-same-hash");
+  const store = createAliceStore(path.join(root, "alice.sqlite"));
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 10_000,
+    store,
+    chatAgent: {
+      async prepareEventRun() {
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    chatFilesOutputRoot: path.join(root, "assets", "chat_files"),
+    async downloadInboundAttachment(input) {
+      fs.writeFileSync(input.filePath, "same-content");
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(imageResourceEvent("session-1", "om_1", "img_1", "hello.png"));
+  await runtime.ingestEvent(imageResourceEvent("session-1", "om_2", "img_2", "hello.png"));
+
+  const messages = store.listMessagesForConversation("session-1", 10);
+  assert.deepEqual(messages.map((message) => message.contentText), [
+    "assets/chat_files/2026-05/hello.png",
+    "assets/chat_files/2026-05/hello.png"
+  ]);
+  assert.deepEqual(fs.readdirSync(path.join(root, "assets", "chat_files", "2026-05")).sort(), ["hello.png"]);
+});
+
+test("messageRuntime_sameAttachmentNameDifferentHash_appendsNumericSuffix", async () => {
+  const root = makeTempDir("runtime-chat-files-diff-hash");
+  const store = createAliceStore(path.join(root, "alice.sqlite"));
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 10_000,
+    store,
+    chatAgent: {
+      async prepareEventRun() {
+        return [];
+      }
+    },
+    outputRouter: {
+      async sendAll() {}
+    },
+    chatFilesOutputRoot: path.join(root, "assets", "chat_files"),
+    async downloadInboundAttachment(input) {
+      fs.writeFileSync(input.filePath, input.event.source.rawMessageId ?? "content");
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(imageResourceEvent("session-1", "om_1", "img_1", "hello.png"));
+  await runtime.ingestEvent(imageResourceEvent("session-1", "om_2", "img_2", "hello.png"));
+
+  const messages = store.listMessagesForConversation("session-1", 10);
+  assert.deepEqual(messages.map((message) => message.contentText), [
+    "assets/chat_files/2026-05/hello.png",
+    "assets/chat_files/2026-05/hello_1.png"
+  ]);
+  assert.deepEqual(fs.readdirSync(path.join(root, "assets", "chat_files", "2026-05")).sort(), ["hello.png", "hello_1.png"]);
 });
 
 test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudio", async () => {

@@ -1,3 +1,5 @@
+import fsp from "node:fs/promises";
+import path from "node:path";
 import type { VoiceSynthesizer } from "../../../../channels/tts/src/index.js";
 import type { AgentOutput } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { sanitizeMessageText, summarizeAudioText } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -22,7 +24,7 @@ export function escapeXml(value: string): string {
 
 export function normalizeSendType(value: unknown): SendType | undefined {
   const text = stringValue(value) || "message";
-  if (text === "message" || text === "markdown" || text === "image" || text === "voice") return text;
+  if (text === "message" || text === "markdown" || text === "image" || text === "voice" || text === "file") return text;
   return undefined;
 }
 
@@ -119,7 +121,8 @@ export function buildOutput(
   content: string,
   now: CurrentTimeRecord,
   transcript?: string,
-  senderName?: string
+  senderName?: string,
+  filename?: string
 ): AgentOutput {
   return {
     id: createId("tool_out"),
@@ -136,7 +139,9 @@ export function buildOutput(
         ? { kind: "image", assetId: content }
         : type === "voice"
           ? { kind: "audio", assetId: content, transcript }
-          : { kind: "text", text: content },
+          : type === "file"
+            ? { kind: "file", assetId: content, filename: filename ?? path.basename(content) }
+            : { kind: "text", text: content },
     meta: {
       createdAt: now.iso,
       createdAtUtc: now.date.toISOString(),
@@ -145,6 +150,30 @@ export function buildOutput(
       allowStreaming: false
     }
   };
+}
+
+export async function isImageFile(filePath: string): Promise<boolean> {
+  let handle: fsp.FileHandle | undefined;
+  try {
+    handle = await fsp.open(filePath, "r");
+    const header = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const magic = header.subarray(0, bytesRead);
+    if (magic.length >= 8 && magic.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return true; // PNG
+    if (magic.length >= 3 && magic[0] === 0xff && magic[1] === 0xd8 && magic[2] === 0xff) return true; // JPEG
+    if (magic.length >= 4 && magic.subarray(0, 4).toString("ascii") === "GIF8") return true; // GIF
+    if (magic.length >= 12 && magic.subarray(0, 4).toString("ascii") === "RIFF" && magic.subarray(8, 12).toString("ascii") === "WEBP") return true; // WEBP
+    if (magic.length >= 2 && magic.subarray(0, 2).toString("ascii") === "BM") return true; // BMP
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+  return isImageExtension(path.extname(filePath));
+}
+
+export function isImageExtension(extension: string): boolean {
+  return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(extension.toLowerCase());
 }
 
 export function shouldSplitSendContent(config: MessagingPluginConfig, type: SendType, renderedType: SendType): boolean {

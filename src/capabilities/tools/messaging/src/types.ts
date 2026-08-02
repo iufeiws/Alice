@@ -1,5 +1,6 @@
 import type { VoiceSynthesizer } from "../../../../channels/tts/src/index.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
+import type { BashSandboxConfig } from "../../../../contexts/bash-sandbox/src/index.js";
 import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type {
   AliceStore
@@ -33,6 +34,9 @@ export type MessagingToolsDeps = {
   voiceMessageTtsTrainingOutputDir?: string;
   wechatVoiceFallbackToText?: boolean;
   config?: MessagingPluginConfig | (() => MessagingPluginConfig);
+  bashSandbox?: BashSandboxConfig;
+  sandboxSendOutputDir?: string;
+  sandboxSendAssetRoot?: string;
   getUserName?: () => string;
   getDefaultTarget?(): MessagingToolTarget | undefined;
   resolveOutputTarget?: ToolOutputTargetResolver;
@@ -67,7 +71,7 @@ export type MessagingToolPlugin = ToolPlugin & {
   noteLLMSessionCompleted(): void;
 };
 
-export type SendType = "message" | "markdown" | "image" | "voice";
+export type SendType = "message" | "markdown" | "image" | "voice" | "file";
 
 export type SendPartResult = {
   ok: boolean;

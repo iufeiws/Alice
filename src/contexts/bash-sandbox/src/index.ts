@@ -2,7 +2,7 @@ export type { BashSandboxConfig, BashSandboxMountConfig, BashSandboxSkillMountCo
 export { addBashSandboxSkillMount, parseBashSandboxMounts, validateBashSandboxConfig } from "./config.js";
 export type { BashSandboxRuntime, BashRuntimeResult } from "./bash-runtime.js";
 export { createBashSandboxRuntime } from "./bash-runtime.js";
-export { isAllowedCwd, normalizeContainerPath } from "./paths.js";
+export { isAllowedCwd, normalizeContainerPath, resolveSandboxHostPath } from "./paths.js";
 export type { BashPermissionDecision } from "./permission.js";
 export { classifyBashCommand } from "./permission.js";
 export type { DockerExecutor, DockerExecutorResult } from "./docker-executor.js";

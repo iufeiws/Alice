@@ -64,6 +64,7 @@ export function createSleepMemoryInductionRuntime(input: {
         apiKey: memoryPreset.apiKey,
         model: memoryPreset.model,
         temperature: memoryPreset.temperature,
+        maxTokens: memoryPreset.maxTokens,
         timeoutMs: memoryPreset.timeoutMs,
         stream: memoryPreset.stream,
         extraParams: memoryPreset.extraParams,

@@ -44,9 +44,13 @@ test("Memorize prompt uses one Layer for every target", () => {
 
   const persistent = buildMemoryPromptPreview(deps, "persistent").request.messages;
   const preferences = buildMemoryPromptPreview(deps, "userPreferences").request.messages;
+  const previewWithoutMaxTokens = buildMemoryPromptPreview(deps, "persistent");
+  const previewWithMaxTokens = buildMemoryPromptPreview({ ...deps, config: { maxTokens: 4096 } }, "persistent");
 
   assert.deepEqual(preferences, persistent);
   assert.equal(persistent.length, 3);
+  assert.equal(previewWithoutMaxTokens.request.maxTokens, undefined);
+  assert.equal(previewWithMaxTokens.request.maxTokens, 4096);
   assert.match(String(persistent[0]?.content), /hello/);
   assert.equal(persistent[1]?.toolCalls?.[0]?.id, "memorize_test_call");
   assert.match(String(persistent[2]?.content), /Asia\/Shanghai/);

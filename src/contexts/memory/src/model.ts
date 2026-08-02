@@ -131,7 +131,7 @@ export type MemoryPromptPreview = {
   request: {
     model?: string;
     temperature?: number;
-    maxTokens: number;
+    maxTokens?: number;
     extraParams?: Record<string, unknown>;
     followupExtraParams?: Record<string, unknown>;
     tools: LLMToolSpec[];

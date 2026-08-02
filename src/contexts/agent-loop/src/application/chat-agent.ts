@@ -108,6 +108,7 @@ type ChatLLMRuntimeConfig = {
   client?: LLMClient;
   model?: string;
   temperature?: number;
+  maxTokens?: number;
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
   presetName?: string;
@@ -537,6 +538,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             client: deps.llm,
             model: deps.config.llm.model,
             temperature: deps.config.llm.temperature,
+            maxTokens: undefined,
             extraParams: deps.config.llm.extraParams,
             followupExtraParams: deps.config.llm.followupExtraParams,
             presetName: undefined,
@@ -549,6 +551,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             client: llmConfig.client,
             model: llmConfig.model,
             temperature: llmConfig.temperature,
+            maxTokens: llmConfig.maxTokens,
             extraParams: llmConfig.extraParams,
             followupExtraParams: llmConfig.followupExtraParams,
             presetName: llmConfig.presetName,

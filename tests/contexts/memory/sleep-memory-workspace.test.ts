@@ -55,5 +55,7 @@ test("memorySelfTalk_validContent_returnsToolResult", async () => {
 
   assert.equal(result.ok, true);
   assert.equal(seen.length, 2);
+  assert.equal(seen[0]?.maxTokens, undefined);
+  assert.equal(seen[1]?.maxTokens, undefined);
   assert.equal(typeof result.results[0]?.toolCalls.find((entry) => entry.name === "self_talk")?.output, "string");
 });

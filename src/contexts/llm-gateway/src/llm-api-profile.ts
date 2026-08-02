@@ -10,6 +10,7 @@ export type LLMApiPreset = {
   apiKey?: string;
   model: string;
   temperature: number;
+  maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
   supportsImage: boolean;
@@ -90,6 +91,7 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     apiKey: typeof value.apiKey === "string" ? value.apiKey : undefined,
     model: String(value.model),
     temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
+    maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
     supportsImage: value.supportsImage === true,

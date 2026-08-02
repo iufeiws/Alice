@@ -27,6 +27,7 @@ export type MemoryAdminLLMApiPreset = {
   apiKey?: string;
   model: string;
   temperature: number;
+  maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
   extraParams: Record<string, unknown>;
@@ -299,6 +300,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
       apiKey: preset.apiKey,
       model: preset.model,
       temperature: preset.temperature,
+      maxTokens: preset.maxTokens,
       timeoutMs: preset.timeoutMs,
       stream: preset.stream,
       extraParams: preset.extraParams,

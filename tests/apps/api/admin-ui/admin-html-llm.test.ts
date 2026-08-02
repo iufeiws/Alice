@@ -26,6 +26,7 @@ test("llmApiPreset_initialRender_exposesPresetEditor", () => {
     "Base URL",
     "Model",
     "API Key",
+    "Max Tokens (optional)",
     "Timeout Ms",
     "Extra Params JSON",
     "Follow-up Extra Params JSON"
@@ -41,6 +42,7 @@ test("llmApiPreset_clientContract_usesPresetEndpointsAndStatuses", () => {
     "/admin/api/config/llm-presets/rename",
     "Choose API preset",
     "Saving preset...",
+    "Max Tokens must be a positive integer.",
     "Timeout Ms must be at least 1000",
     " is not valid JSON."
   ]);

@@ -68,6 +68,7 @@ test("llm api preset save stores extra params as part of the preset", async () =
     baseURL: "https://chat.example.test/v1",
     model: "chat-custom",
     temperature: "0.4",
+    maxTokens: "4096",
     timeoutMs: "90000",
     stream: true,
     extraParams: JSON.stringify({ top_p: 0.7, stream_options: { include_usage: true } }),
@@ -77,9 +78,11 @@ test("llm api preset save stores extra params as part of the preset", async () =
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual({
+    maxTokens: saved.maxTokens,
     extraParams: saved.extraParams,
     followupExtraParams: saved.followupExtraParams
   }, {
+    maxTokens: 4096,
     extraParams: { top_p: 0.7, stream_options: { include_usage: true } },
     followupExtraParams: { top_p: 0.2 }
   });
@@ -106,6 +109,30 @@ test("llm api preset save accepts long timeout values", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(saved.presets[0].timeoutMs, 600_000);
+  assert.equal(saved.presets[0].maxTokens, undefined);
+});
+
+test("llm api preset save rejects invalid max tokens", async () => {
+  const root = makeTempDir("admin-llm-preset-max-tokens");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const handler = createAdminHandler(baseContext(root, memoryStore, promptStore));
+
+  const response = createResponse();
+  await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
+    name: "Invalid Max Tokens",
+    baseURL: "https://chat.example.test/v1",
+    model: "chat-custom",
+    temperature: "0.4",
+    maxTokens: "1.5",
+    timeoutMs: "60000",
+    stream: true,
+    extraParams: "{}",
+    followupExtraParams: "{}"
+  }), response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "invalid_max_tokens");
 });
 
 test("admin birthday save writes a birthday calendar entry", async () => {

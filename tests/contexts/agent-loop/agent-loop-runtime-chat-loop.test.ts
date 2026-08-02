@@ -26,9 +26,11 @@ test("chat loop exposes visible tools to LLM requests", async () => {
   }];
   registerLLMToolLoopTools("default", tools);
   const exposedToolNames: string[][] = [];
+  const sentMaxTokens: Array<number | undefined> = [];
   const loop = buildChatAgentLoop({
     llmInput: {
       messages: session.messages,
+      maxTokens: 2048,
       toolNames: ["Chat", "test_tool"],
       assistantContentToolCall: {
         mode: "never",
@@ -42,8 +44,9 @@ test("chat loop exposes visible tools to LLM requests", async () => {
     ensureSession: async () => session,
     appendSessionContext: async () => {},
     llm: { async chat() { throw new Error("unused"); } },
-    async llmRequestSender({ round, toolNames }) {
+    async llmRequestSender({ round, toolNames, maxTokens }) {
       exposedToolNames.push(toolNames);
+      sentMaxTokens.push(maxTokens);
       if (round === 0) {
         return {
           message: {
@@ -71,6 +74,7 @@ test("chat loop exposes visible tools to LLM requests", async () => {
   loop.complete(await runAgentFunctionCallLoop(loop.spec));
 
   assert.deepEqual(exposedToolNames, [["Chat", "test_tool"], ["Chat", "test_tool"]]);
+  assert.deepEqual(sentMaxTokens, [2048, 2048]);
 });
 
 test("chat loop sends assistant content through ToolPlugin.execute", async () => {

@@ -40,6 +40,7 @@ export function createLLMLogRuntime(input: {
       timeUtc: now.date.toISOString(),
       model: request.model,
       temperature: request.temperature,
+      maxTokens: request.maxTokens,
       messages: request.messages.map((message) => ({ ...message })),
       tools: request.tools?.map((tool) => ({ ...tool, function: { ...tool.function } })),
       extraParams: request.extraParams,

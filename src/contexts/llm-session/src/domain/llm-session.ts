@@ -45,6 +45,7 @@ export type LLMRequestLogEntry = {
   timeUtc?: string;
   model?: string;
   temperature?: number;
+  maxTokens?: number;
   messages: LLMChatInput["messages"];
   tools?: LLMChatInput["tools"];
   extraParams?: Record<string, unknown>;

@@ -357,7 +357,7 @@ async function runMemoryOrganizationInduction(
             const request = {
               model: deps.config.model,
               temperature: deps.config.temperature,
-              maxTokens: 8192,
+              maxTokens: deps.config.maxTokens,
               extraParams,
               tools: memoryTools(),
               messages
@@ -370,7 +370,7 @@ async function runMemoryOrganizationInduction(
               messages,
               model: deps.config.model,
               temperature: deps.config.temperature,
-              maxTokens: 8192,
+              maxTokens: deps.config.maxTokens,
               extraParams,
               toolNames: [...memoryToolNames],
               inlineTools: memoryToolDefinitions(),

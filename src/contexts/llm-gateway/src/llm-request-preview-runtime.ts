@@ -33,18 +33,18 @@ export function createLLMRequestPreviewRuntime(input: {
     return undefined;
   }
 
-  async function getLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
+  async function getLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
     const profilePreview = await buildLLMRequestPreviewFromProfile(apiPreset);
     return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
   }
 
-  async function getTalkLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
+  async function getTalkLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
     const profilePreview = await buildLLMRequestPreviewFromProfile(apiPreset, input.getTalkPromptProfile());
     return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
   }
 
   async function buildLLMRequestPreviewFromProfile(
-    apiPreset?: { model?: string; temperature?: number; extraParams?: Record<string, unknown> },
+    apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> },
     profile = input.getPromptProfile()
   ): Promise<LLMRequestPreview | undefined> {
     const target = input.getDefaultTarget();
@@ -75,6 +75,7 @@ export function createLLMRequestPreviewRuntime(input: {
       time: previewTime.iso,
       model: apiPreset?.model,
       temperature: apiPreset?.temperature,
+      maxTokens: apiPreset?.maxTokens,
       extraParams: apiPreset?.extraParams ?? {},
       messages: await input.buildPromptPreviewMessages(profile, previewEvent, true),
       tools: input.visibleToolSpecs(profile)
@@ -120,6 +121,7 @@ export function createLLMRequestPreviewRuntime(input: {
       time: latestInbound.lastEventAt || latestInbound.createdAt,
       model: chatPreset?.model,
       temperature: chatPreset?.temperature,
+      maxTokens: chatPreset?.maxTokens,
       extraParams: chatPreset?.extraParams ?? {},
       messages: await input.buildPromptPreviewMessages(profile, previewEvent, true),
       tools: input.visibleToolSpecs(profile)

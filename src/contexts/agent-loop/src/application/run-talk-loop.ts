@@ -28,6 +28,7 @@ type TalkAgentLoopLLMConfig = {
   client: NonNullable<LLMRequestSenderInput["client"]>;
   model?: string;
   temperature?: number;
+  maxTokens?: number;
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;
   presetName?: string;
@@ -145,6 +146,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           messages,
           model: input.config.model,
           temperature: input.config.temperature,
+          maxTokens: input.config.maxTokens,
           extraParams: input.config.extraParams,
           presetName: input.config.presetName,
           toolNames: input.toolNames,

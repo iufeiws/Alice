@@ -57,7 +57,7 @@ export function buildMemoryPromptPreview(
     request: {
       model: deps.config?.model,
       temperature: deps.config?.temperature,
-      maxTokens: 8192,
+      maxTokens: deps.config?.maxTokens,
       extraParams: deps.config?.extraParams,
       followupExtraParams: deps.config?.followupExtraParams,
       tools: memoryTools(),

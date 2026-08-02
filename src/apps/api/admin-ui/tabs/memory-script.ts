@@ -78,6 +78,7 @@ export function renderMemoryScript(): string {
           baseURL: $("baseURL").value,
           model: $("model").value,
           temperature: $("temperature").value,
+          maxTokens: $("maxTokens").value,
           timeoutMs: $("timeoutMs").value,
           stream: $("streamEnabled").checked,
           supportsImage: $("supportsImage").checked,
@@ -90,7 +91,7 @@ export function renderMemoryScript(): string {
       }
 
       function bindLLMApiPresetFormDirtyTracking() {
-        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
+        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "maxTokens", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
           $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
         });
         $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
@@ -108,6 +109,7 @@ export function renderMemoryScript(): string {
         $("baseURL").value = preset.baseURL || "";
         $("model").value = preset.model || "";
         $("temperature").value = String(preset.temperature ?? "");
+        $("maxTokens").value = String(preset.maxTokens ?? "");
         $("timeoutMs").value = String(preset.timeoutMs ?? "");
         $("streamEnabled").checked = preset.stream !== false;
         $("supportsImage").checked = preset.supportsImage === true;
@@ -123,6 +125,7 @@ export function renderMemoryScript(): string {
         $("baseURL").value = "";
         $("model").value = "";
         $("temperature").value = "0.2";
+        $("maxTokens").value = "";
         $("timeoutMs").value = "60000";
         $("streamEnabled").checked = true;
         $("supportsImage").checked = false;
@@ -149,6 +152,11 @@ export function renderMemoryScript(): string {
         }
         const temperature = Number($("temperature").value);
         if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return "Temperature must be a number between 0 and 2.";
+        const maxTokensText = $("maxTokens").value.trim();
+        if (maxTokensText) {
+          const maxTokens = Number(maxTokensText);
+          if (!Number.isInteger(maxTokens) || maxTokens <= 0) return "Max Tokens must be a positive integer.";
+        }
         const timeoutMs = Number($("timeoutMs").value);
         if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) return "Timeout Ms must be at least 1000.";
         const extraParams = parseLLMApiJsonObject("Extra Params JSON", $("extraParams").value);

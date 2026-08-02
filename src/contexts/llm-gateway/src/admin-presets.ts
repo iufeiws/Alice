@@ -11,6 +11,7 @@ export type LLMApiPreset = {
   apiKey?: string;
   model: string;
   temperature: number;
+  maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
   supportsImage?: boolean;
@@ -33,6 +34,11 @@ export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<
   const apiKey = optionalString(body.apiKey) ?? existing?.apiKey;
   const model = requiredString(body.model);
   const temperature = numberFromUnknown(body.temperature, existing?.temperature ?? 0.2);
+  const maxTokens = body.maxTokens === undefined
+    ? existing?.maxTokens
+    : body.maxTokens === null || body.maxTokens === ""
+      ? undefined
+      : numberFromUnknown(body.maxTokens, Number.NaN);
   const timeoutMs = numberFromUnknown(body.timeoutMs, existing?.timeoutMs ?? 60_000);
   const stream = body.stream === undefined ? existing?.stream ?? true : booleanFromUnknown(body.stream);
   const supportsImage = body.supportsImage === undefined ? existing?.supportsImage ?? false : booleanFromUnknown(body.supportsImage);
@@ -42,10 +48,11 @@ export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<
   if (baseURL && !isValidHttpUrl(baseURL)) return { error: "invalid_base_url" };
   if (!model) return { error: "missing_model" };
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return { error: "invalid_temperature" };
+  if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens <= 0)) return { error: "invalid_max_tokens" };
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
   if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
   if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
-  return { name, baseURL, apiKey, model, temperature, timeoutMs, stream, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
+  return { name, baseURL, apiKey, model, temperature, maxTokens, timeoutMs, stream, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
 }
 
 export function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
@@ -126,6 +133,7 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     apiKey: typeof value.apiKey === "string" ? value.apiKey : undefined,
     model: String(value.model),
     temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
+    maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
     supportsImage: value.supportsImage === true,

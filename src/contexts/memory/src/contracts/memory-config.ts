@@ -5,6 +5,7 @@ export type MemorySummaryConfig = {
   apiKey?: string;
   model?: string;
   temperature: number;
+  maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
   extraParams: Record<string, unknown>;

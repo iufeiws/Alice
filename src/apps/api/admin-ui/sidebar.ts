@@ -33,6 +33,8 @@ export function renderAdminSidebar(): string {
               <input id="apiKey" name="apiKey" type="password" placeholder="Leave blank to keep unchanged" autocomplete="new-password" />
               <label for="temperature">Temperature</label>
               <input id="temperature" name="temperature" inputmode="decimal" />
+              <label for="maxTokens">Max Tokens (optional)</label>
+              <input id="maxTokens" name="maxTokens" type="number" min="1" step="1" inputmode="numeric" />
               <label for="timeoutMs">Timeout Ms</label>
               <input id="timeoutMs" name="timeoutMs" inputmode="numeric" />
               <label><input id="streamEnabled" name="stream" type="checkbox" /> Streaming</label>

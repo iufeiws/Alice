@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { recognizeImageWithPlugin, type ImageRecognitionConfig } from "../../../src/channels/image-recognition/src/index.js";
+import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 function multimodalPreset(name = "mimo") {
   return {
@@ -32,6 +33,7 @@ test("recognizeImageWithPlugin_sendsImagePromptAndPluginExtraParams", async () =
     filename: "photo.jpg",
     mimeType: "image/jpeg"
   }, config, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset(name) {
       assert.equal(name, "mimo");
       return multimodalPreset(name);
@@ -86,6 +88,7 @@ test("recognizeImageWithPlugin_rejectsNonImageMime", async () => {
     apiPresetName: "mimo",
     prompt: "configured prompt"
   }, {
+    promptRenderer: testPromptRuntime(),
     resolveApiPreset() {
       return multimodalPreset();
     },

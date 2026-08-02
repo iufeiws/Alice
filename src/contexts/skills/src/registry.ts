@@ -42,18 +42,18 @@ export function createSkillRegistry(input: { roots: SkillRootConfig[] }): SkillR
   };
 }
 
-export function formatAvailableSkillsXml(registry: SkillRegistry): string {
-  const skills = registry.available();
-  if (skills.length === 0) return "<available_skills>\n</available_skills>";
+export function formatAvailableSkillsXml(registry: SkillRegistry, source?: SkillMetadata["source"], tag = "available_skills"): string {
+  const skills = source === undefined ? registry.available() : registry.available().filter((skill) => skill.source === source);
+  if (skills.length === 0) return `<${tag}>\n</${tag}>`;
   return [
-    "<available_skills>",
+    `<${tag}>`,
     ...skills.map((skill) => [
       "  <skill>",
       `    <name>${escapeXml(skill.name)}</name>`,
       `    <description>${escapeXml(skill.description)}</description>`,
       "  </skill>"
     ].join("\n")),
-    "</available_skills>"
+    `</${tag}>`
   ].join("\n");
 }
 

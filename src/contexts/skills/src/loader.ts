@@ -1,6 +1,7 @@
 import type { BashSandboxSkillMountConfig } from "../../bash-sandbox/src/index.js";
 import type { SkillMetadata, SkillRegistry } from "./registry.js";
 import { resolveSkillResourcePath } from "./resource-paths.js";
+import { replaceSkillPlaceholders } from "./placeholders.js";
 import { parse as parseShellQuote } from "shell-quote";
 
 const fs = await import("node:fs");
@@ -24,7 +25,8 @@ export class SkillLoadError extends Error {
 export function createSkillLoader(
   registry: SkillRegistry,
   sandbox?: { mountSkill(mount: BashSandboxSkillMountConfig): BashSandboxSkillMountConfig },
-  onLoad?: (skill: SkillMetadata) => void
+  onLoad?: (skill: SkillMetadata) => void,
+  resolveVariable?: (name: string) => string | undefined
 ) {
   return {
     load(name: string, args = ""): LoadedSkill {
@@ -44,7 +46,7 @@ export function createSkillLoader(
         id: skill.id,
         name: skill.name,
         description: skill.description,
-        instructions,
+        instructions: expandVariablePlaceholders(instructions, resolveVariable),
         sandboxRoot: skill.sandboxRoot,
         resolveResource(relativePath) {
           return resolveSkillResourcePath(skill, relativePath);
@@ -52,6 +54,17 @@ export function createSkillLoader(
       };
     }
   };
+}
+
+function expandVariablePlaceholders(content: string, resolveVariable?: (name: string) => string | undefined): string {
+  if (!resolveVariable) return content;
+  const keys = [...new Set([...content.matchAll(/\{\{([A-Za-z0-9_.-]+)\}\}/g)].map((match) => match[1]))];
+  const values: Record<string, string> = {};
+  for (const key of keys) {
+    const value = resolveVariable(key);
+    if (value !== undefined) values[key] = value;
+  }
+  return replaceSkillPlaceholders(content, values);
 }
 
 function validateLoadable(skill: SkillMetadata): void {

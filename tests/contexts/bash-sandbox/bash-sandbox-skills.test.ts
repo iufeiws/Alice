@@ -120,3 +120,20 @@ test("Skill tool returns spec error codes", async () => {
   assert.equal(forked.error, "FORK_NOT_SUPPORTED");
   assert.equal(dynamic.error, "DYNAMIC_CONTEXT_NOT_SUPPORTED");
 });
+
+test("Skill loader expands prompt context variables and keeps unresolved placeholders literal", () => {
+  const root = tmpDir("skills-placeholders");
+  writeSkill(root, "installed", "name: installed\ndescription: Show installed skills.", "已安装:\n{{installed_skills}}\n{{unknown_variable}}\n");
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const runtime = createBashSandboxRuntime({
+    config: testConfig({ skillMounts: [] }),
+    executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
+  });
+  const loader = createSkillLoader(registry, runtime, undefined, (name) => name === "installed_skills" ? "<installed_skills>\n  <skill>demo</skill>\n</installed_skills>" : undefined);
+
+  const loaded = loader.load("installed");
+
+  assert.match(loaded.instructions, /<installed_skills>/);
+  assert.match(loaded.instructions, /<skill>demo<\/skill>/);
+  assert.match(loaded.instructions, /\{\{unknown_variable\}\}/);
+});

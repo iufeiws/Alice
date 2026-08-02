@@ -203,7 +203,15 @@ export function createToolRuntime(input: {
     sandbox: bashRuntime,
     getApprovalService: input.getApprovalService
   });
-  const skillsLoader = createSkillLoader(input.skillsRegistry, bashRuntime, (skill) => randomEventSandbox.prepareSkill(skill));
+  const skillsLoader = createSkillLoader(
+    input.skillsRegistry,
+    bashRuntime,
+    (skill) => randomEventSandbox.prepareSkill(skill),
+    (name) => {
+      const value = input.promptContextRuntime.getVariable(name);
+      return typeof value === "string" ? value : undefined;
+    }
+  );
   const skillsTools = createSkillsTools({ loader: skillsLoader });
   const bashTools = createBashTools({
     runtime: bashRuntime,

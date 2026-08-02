@@ -34,7 +34,8 @@ const variableNames = [
   "wakeBoundary/weekday",
   "calendar/context",
   "skills/dirPath",
-  "available_skills"
+  "system_skills",
+  "installed_skills"
 ];
 
 export function createPromptContextRuntime(input: {
@@ -63,7 +64,8 @@ export function createPromptContextRuntime(input: {
     if (name.startsWith("wakeBoundary/")) return wakeBoundaryVariable(name);
     if (name === "calendar/context") return calendarContext();
     if (name === "skills/dirPath") return input.skillsDirPath;
-    if (name === "available_skills") return formatAvailableSkillsXml(input.skillsRegistry);
+    if (name === "system_skills") return formatAvailableSkillsXml(input.skillsRegistry, "first-party", "system_skills");
+    if (name === "installed_skills") return formatAvailableSkillsXml(input.skillsRegistry, "third-party", "installed_skills");
     return undefined;
   }
 

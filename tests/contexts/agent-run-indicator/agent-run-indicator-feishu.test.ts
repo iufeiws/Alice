@@ -213,6 +213,42 @@ test("Feishu agent run indicator reuses persisted card and preserves empty block
   });
 });
 
+test("Feishu agent run indicator marks the persisted card failed and stops streaming", async () => {
+  const store = memoryCardStore({
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 7,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+    state: "正在输入中...",
+    reasoning: "",
+    content: "",
+    tools: ""
+  });
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 10_000,
+    getState: () => ({ state: "waiting" })
+  });
+
+  await indicator.fail?.(new Error("process_restart_recovery_failed"));
+
+  assertStreamState(client, false);
+  assertUpdateIncludes(client, "state", "失败");
+  assertCardRecord(store, {
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    updatedAt: fixedNow,
+    state: "失败",
+    reasoning: "",
+    content: "",
+    tools: ""
+  });
+});
+
 test("Feishu agent run indicator clears previous blocks on streamed content", async () => {
   const store = memoryCardStore({
     messageId: "om_old",

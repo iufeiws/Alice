@@ -8,6 +8,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 const CARD_LAYOUT_VERSION = 5;
 const TYPING_STATE_LABEL = "正在输入中...";
+const FAILED_STATE_LABEL = "失败";
 
 export type FeishuAgentRunIndicatorCardRecord = {
   messageId?: string;
@@ -131,6 +132,21 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         if (!typingInput.typing) return;
         card = await createCard(receiveId, { ...emptyBlocks(), state }, { ...emptyBlocks(), state });
         await updateState(card, state);
+      }
+    },
+    async fail(error) {
+      if (!input.enabled() || !input.client.isStarted()) return;
+      const receiveId = pairedFeishuUserId();
+      if (!receiveId) return;
+      const card = await loadStoredCard();
+      if (!card) return;
+      input.log?.("warn", `[agent-run-indicator] Feishu indicator card marked failed: ${errorMessage(error)}`);
+      try {
+        await updateState(card, FAILED_STATE_LABEL);
+        await updateStreaming(card, false);
+      } catch (failError) {
+        if (isMissingCardError(failError)) input.cardStore.delete();
+        input.log?.("error", `[agent-run-indicator] Feishu indicator card fail update failed: ${errorMessage(failError)}`);
       }
     }
   };

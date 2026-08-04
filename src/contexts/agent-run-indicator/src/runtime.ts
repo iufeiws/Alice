@@ -22,6 +22,9 @@ export function createAgentRunIndicatorRuntime(): AgentRunIndicatorRuntime {
     },
     setTyping(input: AgentRunIndicatorTypingInput): Promise<void> {
       return delegate?.setTyping?.(input) ?? Promise.resolve();
+    },
+    fail(error?: unknown): Promise<void> {
+      return delegate?.fail?.(error) ?? Promise.resolve();
     }
   };
 }

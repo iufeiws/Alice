@@ -31,6 +31,7 @@ export type AgentRunIndicator = {
   ensureReady?(): Promise<void>;
   createFreshCard?(): Promise<void>;
   setTyping?(input: AgentRunIndicatorTypingInput): Promise<void>;
+  fail?(error?: unknown): Promise<void>;
 };
 
 export type AgentRunIndicatorSession = {

@@ -81,3 +81,83 @@ test("restart checkpoint uses the same session id as the persisted Chat transcri
 
   assert.equal(savedRecords[0]?.sessionId, archive.readCurrent()?.id);
 });
+
+test("an unrelated persisted restart checkpoint is discarded without blocking a newer event", async () => {
+  let nowMs = Date.parse("2026-08-01T15:26:15.531Z");
+  const time = createCurrentTimeProvider("UTC", () => new Date(nowMs++));
+  let record: ProcessRestartContinuationRecord | undefined = {
+    version: 1,
+    sessionId: 8,
+    toolCallId: "restart_call",
+    restartCompleted: false,
+    event: {
+      ...textEvent(),
+      id: "evt_old",
+      externalSession: { scope: "dm", sessionId: "session-old" }
+    },
+    continuation: {
+      version: 1,
+      messages: [],
+      round: 0,
+      replyRound: 0,
+      totalToolCallCount: 1,
+      replyToolCallCount: 1,
+      invalidateSession: false,
+      result: {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{
+            id: "restart_call",
+            type: "function",
+            function: { name: "restart", arguments: "{}" }
+          }]
+        }
+      },
+      completeAfterToolCalls: false,
+      interruptedCallIndex: 0,
+      executedCalls: [],
+      toolMessages: [],
+      reachedToolCallLimit: false,
+      resetSession: false,
+      continueAfterReset: false,
+      yieldReturn: false
+    },
+    createdAt: "2026-08-01T15:20:00.000"
+  };
+  let requestCount = 0;
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    time,
+    llm: {
+      async chat() {
+        requestCount += 1;
+        return { message: { role: "assistant", content: "processed" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    tools: [],
+    createLLMSessionId() {
+      return 9;
+    },
+    processRestartContinuationStore: {
+      read: () => record,
+      save(value) {
+        record = value;
+      },
+      clear(toolCallId) {
+        if (record?.toolCallId !== toolCallId) return false;
+        record = undefined;
+        return true;
+      }
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+
+  assert.equal(requestCount, 1);
+  assert.equal(record, undefined);
+});

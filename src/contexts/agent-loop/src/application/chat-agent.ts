@@ -1,5 +1,4 @@
 import type { LLMChatInput, LLMChatResult, LLMClient } from "../../../llm-gateway/src/index.js";
-import { isDeepStrictEqual } from "node:util";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { PolicyEngine } from "../ports/policy.js";
@@ -275,13 +274,16 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       }
       if (persistedProcessRestart) {
         if (!loopSession || !matchesPersistedProcessRestartTranscript(persistedProcessRestart, loopSession, event)) {
+          const interruptedEventRecovery = persistedProcessRestart.event.externalSession.sessionId === event.externalSession.sessionId;
           deps.processRestartContinuationStore?.clear(persistedProcessRestart.toolCallId);
           activeProcessRestartToolCallId = undefined;
           persistedProcessRestart = undefined;
           clearLoopSession(() => deps.onLLMSessionCleared?.("process_restart_recovery_failed"));
-        } else if (persistedProcessRestart.sessionId !== loopSession.id) {
-          persistedProcessRestart = { ...persistedProcessRestart, sessionId: loopSession.id };
-          deps.processRestartContinuationStore?.save(persistedProcessRestart);
+          await failRunIndicatorOnRecoveryFailure(deps);
+          if (interruptedEventRecovery) {
+            // 恢复校验失败：被中断的消息已在处理流程中，直接放弃，不再降级重跑
+            return [];
+          }
         }
       }
       const buildPromptContext = () => makePromptContext({
@@ -785,12 +787,18 @@ function matchesPersistedProcessRestartTranscript(
   session: LLMSessionRecord,
   event: AgentEvent
 ): boolean {
+  if (record.sessionId !== session.id) return false;
   if (record.event.externalSession.sessionId !== event.externalSession.sessionId) return false;
   const interruptedCall = record.continuation.result.message.toolCalls?.[record.continuation.interruptedCallIndex];
   if (interruptedCall?.id !== record.toolCallId || interruptedCall.function.name !== restartToolName) return false;
-  const expectedMessages = [
-    ...record.continuation.messages,
-    record.continuation.result.message
-  ];
-  return isDeepStrictEqual(session.messages, expectedMessages);
+  return true;
+}
+
+async function failRunIndicatorOnRecoveryFailure(deps: ChatAgentDeps): Promise<void> {
+  if (!deps.agentRunIndicator?.fail) return;
+  try {
+    await deps.agentRunIndicator.fail(new Error("process_restart_recovery_failed"));
+  } catch (error) {
+    deps.onAgentRunIndicatorError?.(error);
+  }
 }

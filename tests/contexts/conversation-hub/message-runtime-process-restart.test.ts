@@ -83,7 +83,7 @@ test("message runtime resumes a persisted restart continuation once and complete
   await runtime.flushAll();
 });
 
-test("process restart recovery reconciles a legacy session id when the unfinished restart call matches", async () => {
+test("process restart recovery resumes a matching persisted restart continuation", async () => {
   const store = createAliceStore(path.join(makeTempDir("restart-session-reconcile"), "alice.sqlite"));
   await Promise.resolve();
   const inbound = textEvent("session-1", "message-legacy", "restart after deploy");
@@ -112,7 +112,7 @@ test("process restart recovery reconciles a legacy session id when the unfinishe
   };
   let record = {
     version: 1,
-    sessionId: 7,
+    sessionId: 8,
     toolCallId: "restart_call",
     restartCompleted: false,
     event: { ...inbound, meta: { ...inbound.meta, raw: { pendingIds: [pendingId] } } },
@@ -136,12 +136,10 @@ test("process restart recovery reconciles a legacy session id when the unfinishe
     },
     createdAt: "2026-05-24T00:00:00.000"
   } as ProcessRestartContinuationRecord | undefined;
-  const savedSessionIds: number[] = [];
   const continuationStore = {
     read: () => record,
     save(value: ProcessRestartContinuationRecord) {
       record = value;
-      savedSessionIds.push(value.sessionId);
     },
     clear(toolCallId: string) {
       if (record?.toolCallId !== toolCallId) return false;
@@ -201,13 +199,12 @@ test("process restart recovery reconciles a legacy session id when the unfinishe
   await runtime.recoverProcessRestartContinuation();
 
   assert.equal(requestCount, 1);
-  assert.deepEqual(savedSessionIds, [8, 8]);
   assert.equal(record, undefined);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   await runtime.flushAll();
 });
 
-test("process restart recovery discards an unrelated checkpoint and reruns the original message", async () => {
+test("process restart recovery abandons the interrupted event when the checkpoint session id mismatches", async () => {
   const store = createAliceStore(path.join(makeTempDir("restart-session-invalid"), "alice.sqlite"));
   await Promise.resolve();
   const inbound = textEvent("session-1", "message-invalid", "restart after deploy");
@@ -325,9 +322,9 @@ test("process restart recovery discards an unrelated checkpoint and reruns the o
 
   await runtime.recoverProcessRestartContinuation();
 
-  assert.equal(requestCount, 1);
+  assert.equal(requestCount, 0);
   assert.deepEqual(clearedReasons, ["process_restart_recovery_failed"]);
-  assert.equal(currentSession.id, 9);
+  assert.equal(currentSession, undefined);
   assert.equal(record, undefined);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   await runtime.flushAll();

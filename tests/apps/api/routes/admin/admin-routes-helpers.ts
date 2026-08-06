@@ -87,7 +87,6 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         timeoutMs: 60_000,
         outputLimitBytes: 128 * 1024,
         pidsLimit: 256,
-        auditLogPath: path.join(root, "sandbox", "audit.jsonl")
       },
       core: { timezone: "Asia/Shanghai" }
     },

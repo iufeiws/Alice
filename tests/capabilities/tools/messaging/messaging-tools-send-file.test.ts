@@ -35,8 +35,7 @@ function makeSandboxConfig(sandboxRoot: string): BashSandboxConfig {
     mounts: [],
     network: "none",
     timeoutMs: 60_000,
-    outputLimitBytes: 30_000,
-    auditLogPath: path.join(sandboxRoot, "audit.jsonl")
+    outputLimitBytes: 30_000
   };
 }
 

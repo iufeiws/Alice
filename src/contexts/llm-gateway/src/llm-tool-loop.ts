@@ -522,6 +522,7 @@ async function executeTool(
       externalSession: input.toolCallSource?.externalSession
     }, {
       ...baseExecutionContext,
+      signal: baseExecutionContext?.signal ?? request.signal,
       prepareProcessRestart: input.onProcessRestartCheckpoint
         ? async () => {
           await input.onProcessRestartCheckpoint?.(context.continuation());

@@ -18,6 +18,9 @@ export function createApiLifecycleRuntime(input: {
   serviceLock: { release(): void };
   appendLog(level: "info" | "warn" | "error", message: string): void;
   registerChannels(): void;
+  piRelay?: { start(): Promise<unknown>; stop?(): Promise<void> };
+  piSandboxRuntime?: { start(): Promise<void>; stop(): Promise<void> };
+  refreshPiTools?(): unknown;
 }) {
   input.registerChannels();
 
@@ -39,6 +42,8 @@ export function createApiLifecycleRuntime(input: {
       await input.ttsPlugin.voiceSynthesizer.shutdown?.();
       await input.messageRuntime.flushAll();
       await input.chatAgent.stop();
+      await input.piSandboxRuntime?.stop();
+      if (input.piRelay?.stop) await input.piRelay.stop();
     },
     releaseLock: () => input.serviceLock.release()
   });
@@ -49,7 +54,10 @@ export function createApiLifecycleRuntime(input: {
     chatAgent: input.chatAgent,
     scheduler,
     messageRuntime: input.messageRuntime,
-    appendLog: input.appendLog
+    appendLog: input.appendLog,
+    piRelay: input.piRelay,
+    piSandboxRuntime: input.piSandboxRuntime,
+    refreshPiTools: input.refreshPiTools
   });
 
   return {

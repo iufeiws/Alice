@@ -125,6 +125,7 @@ export type AdminPluginRegistryEntry = {
   setEnabled?(context: AdminRoutesContext, enabled: boolean): { config: unknown } | { error: string };
   reload?(context: AdminRoutesContext): { config: unknown } | { error: string };
   runtimeState?(context: AdminRoutesContext): unknown;
+  preview?(context: AdminRoutesContext): Promise<unknown> | unknown;
   test?(context: AdminRoutesContext, input: Record<string, unknown>): Promise<{ ok: true; result?: unknown } | { error: string }> | { ok: true; result?: unknown } | { error: string };
   uploadAsset?(context: AdminRoutesContext, assetKey: string, request: any): Promise<{ config: unknown; assetPath: string } | { error: string; statusCode?: number }>;
   configSchema?: {

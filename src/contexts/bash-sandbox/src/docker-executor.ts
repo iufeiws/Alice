@@ -34,6 +34,19 @@ export type DockerExecutor = {
   readFile?(input: { payload: Record<string, unknown>; timeoutMs: number; outputLimitBytes: number }): Promise<DockerExecutorResult>;
 };
 
+export async function ensureDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
+  await ensureContainer(config, containerMountKey(config));
+}
+
+export async function recreateDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
+  const inspect = await execFile("docker", ["inspect", "-f", "{{.State.Running}}", config.containerName], 10_000, 4096);
+  if (inspect.exitCode === 0) {
+    const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
+    if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to remove sandbox container");
+  }
+  await ensureContainer(config, "");
+}
+
 export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecutor {
   let mountKey = "";
   return {
@@ -140,10 +153,11 @@ async function ensureContainer(config: BashSandboxConfig, currentMountKey: strin
 }
 
 async function ensureImage(config: BashSandboxConfig): Promise<void> {
-  const inspect = await execFile("docker", ["image", "inspect", config.image], 10_000, 4096);
+  const image = config.piWorker?.enabled ? config.piWorker.image ?? config.image : config.image;
+  const inspect = await execFile("docker", ["image", "inspect", image], 10_000, 4096);
   if (inspect.exitCode === 0) return;
-  const pull = await execFile("docker", ["pull", config.image], 10 * 60_000, 64 * 1024);
-  if (pull.exitCode !== 0) throw new Error(pull.stderr || `failed to pull bash sandbox image: ${config.image}`);
+  const pull = await execFile("docker", ["pull", image], 10 * 60_000, 64 * 1024);
+  if (pull.exitCode !== 0) throw new Error(pull.stderr || `failed to pull bash sandbox image: ${image}`);
 }
 
 function createContainerArgs(config: BashSandboxConfig): string[] {
@@ -151,7 +165,7 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "run",
     "-d",
     "--name", config.containerName,
-    "--network", config.network === "none" ? "none" : "bridge",
+    "--network", config.piWorker?.enabled ? "bridge" : config.network === "none" ? "none" : "bridge",
     "--read-only",
     "--tmpfs", config.tmpDir,
     "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
@@ -175,9 +189,23 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
   if (config.cpuLimit) args.push("--cpus", config.cpuLimit);
   if (config.memoryLimit) args.push("--memory", config.memoryLimit);
   if (config.pidsLimit) args.push("--pids-limit", String(config.pidsLimit));
+  if (config.piWorker?.enabled) {
+    args.push("-p", `127.0.0.1:${config.piWorker.port}:8790`);
+    args.push("--add-host", "host.docker.internal:host-gateway");
+    args.push("-e", `PI_LLM_RELAY_URL=${config.piWorker.relayUrl ?? ""}`);
+    args.push("-e", `PI_LLM_RELAY_TOKEN=${config.piWorker.relayToken ?? ""}`);
+    args.push("-e", `PI_SANDBOX_CWD=${config.piWorker.sandboxCwd ?? config.defaultCwd}`);
+    args.push("-e", `PI_MAX_CONCURRENCY=${config.piWorker.maxConcurrency ?? 2}`);
+    args.push("-e", `PI_MAX_QUEUE_SIZE=${config.piWorker.maxQueueSize ?? 20}`);
+    args.push("-e", `PI_TASK_TIMEOUT_SECONDS=${config.piWorker.taskTimeoutSeconds ?? 900}`);
+    args.push("-e", `PI_AGENT_TIMEZONE=${config.piWorker.timezone ?? "Asia/Singapore"}`);
+    args.push("-e", `PI_SESSION_ROOT=${config.piWorker.containerDir}`);
+    args.push("-v", `${path.resolve(config.piWorker.hostDir)}:${config.piWorker.containerDir}:rw`);
+  }
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
-  args.push(config.image, "sleep", "infinity");
+  const image = config.piWorker?.enabled ? config.piWorker.image ?? config.image : config.image;
+  args.push(...(config.piWorker?.enabled ? [image, "node", "/pi-worker/worker.mjs"] : [image, "sleep", "infinity"]));
   return args;
 }
 
@@ -201,7 +229,8 @@ function containerMountKey(config: BashSandboxConfig): string {
   return JSON.stringify({
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
-    wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined
+    wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
+    piWorker: config.piWorker ? [config.piWorker.image, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.relayUrl, config.piWorker.relayToken ? crypto.createHash("sha256").update(config.piWorker.relayToken).digest("hex") : undefined, config.piWorker.sandboxCwd, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
   });
 }
 

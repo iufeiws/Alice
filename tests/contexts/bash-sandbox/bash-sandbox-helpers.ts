@@ -22,7 +22,6 @@ export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSand
     network: "none",
     timeoutMs: 1000,
     outputLimitBytes: 30_000,
-    auditLogPath: path.join(root, "audit.jsonl"),
     ...overrides
   };
 }

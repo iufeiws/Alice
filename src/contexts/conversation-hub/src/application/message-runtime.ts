@@ -299,9 +299,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       summary: contentText
     });
     if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
+      const wasSleeping = deps.agentState?.getSnapshot?.().state === "sleeping";
       deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
       deps.clearLLMSession?.("force_wake");
-      deps.onForceWake?.();
+      const wakeReady = wasSleeping ? deps.agentState?.waitForWake?.() : undefined;
+      void Promise.resolve(wakeReady).then(
+        () => deps.onForceWake?.(),
+        (error) => deps.appendLog("error", `pi sandbox restart on force wake failed: ${error instanceof Error ? error.message : String(error)}`)
+      );
       deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
       return;
     }

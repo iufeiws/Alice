@@ -5,7 +5,7 @@ type TokenUsageStore = ReturnType<typeof createTokenUsageStore>;
 
 type LLMResponseLogEntry = {
   id: number;
-  agentId?: "chat" | "talk";
+  agentId?: string;
   sessionId?: number;
   requestId?: number;
   time: string;
@@ -14,7 +14,7 @@ type LLMResponseLogEntry = {
 
 export function createTokenUsageRuntime(input: {
   getStore(): TokenUsageStore | undefined;
-  resolveModel(agentId: "chat" | "talk"): string | undefined;
+  resolveModel(agentId: string): string | undefined;
   appendLog(level: "info" | "warn", message: string): void;
 }) {
   return {
@@ -24,7 +24,7 @@ export function createTokenUsageRuntime(input: {
     getTokenUsageReport
   };
 
-  function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult, agentId: "chat" | "talk" = "chat"): void {
+  function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult, agentId = "chat"): void {
     recordTokenUsageEvent({
       createdAt: entry.time,
       createdAtUtc: entry.timeUtc,

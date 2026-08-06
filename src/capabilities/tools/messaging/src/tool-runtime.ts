@@ -1,4 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createMessagingTools, defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
 import { createWardrobeTools } from "../../wardrobe/src/index.js";
@@ -8,18 +9,20 @@ import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
-import { createBashTools } from "../../bash/src/index.js";
-import { createFileTools } from "../../file/src/index.js";
+import { createGlobTool } from "../../file/src/index.js";
 import { createSkillsTools } from "../../skills/src/index.js";
 import { createRestartTools, createSystemdRestartController } from "../../restart/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
-import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
+import { createBashSandboxRuntime, resolveSandboxHostPath } from "../../../../contexts/bash-sandbox/src/index.js";
 import { createSkillLoader, type SkillRegistry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { createRandomEventSandboxRuntime } from "../../../../contexts/initiative/src/application/random-event-sandbox-runtime.js";
+import type { PiSandboxRuntime } from "../../../../contexts/pi-sandbox/src/index.js";
+import { createPiToolAdapter } from "../../pi/src/pi-tool-adapter.js";
+import { createSubAgentTool } from "../../pi/src/subagent-tool.js";
 
 const path = await import("node:path");
 
@@ -47,6 +50,8 @@ export function createToolRuntime(input: {
   getApprovalService(): any;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
+  piSandboxRuntime?: PiSandboxRuntime;
+  recognizeImage?(filePath: string): Promise<{ text: string }>;
 }) {
   const resolveOutputTarget = createToolOutputTargetResolver({
     getDefaultTarget() {
@@ -214,18 +219,18 @@ export function createToolRuntime(input: {
     }
   );
   const skillsTools = createSkillsTools({ loader: skillsLoader });
-  const bashTools = createBashTools({
-    runtime: bashRuntime,
-    handleResult: randomEventSandbox.handleBashResult
-  });
-  const fileTools = createFileTools({
-    runtime: bashRuntime,
-    config: input.config.bashSandbox,
-    promptContextRuntime: input.promptContextRuntime
-  });
+  const globTools = createGlobTool({ runtime: bashRuntime, config: input.config.bashSandbox });
+  const piTools = input.piSandboxRuntime
+    ? createPiToolAdapter({
+      runtime: input.piSandboxRuntime,
+      recognizeImage: input.recognizeImage,
+      resolveImagePath: (containerPath) => resolveSandboxHostPath(input.config.bashSandbox, containerPath, input.config.bashSandbox.defaultCwd)
+    })
+    : undefined;
+  const subAgentTools = input.piSandboxRuntime ? createSubAgentTool({ runtime: input.piSandboxRuntime, agentState: input.agentState }) : undefined;
   const restartTools = createRestartTools(createSystemdRestartController());
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, bashTools];
+  const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, globTools, skillsTools, piTools, subAgentTools].filter(Boolean) as ToolPlugin[];
 
   return {
     messagingTools,
@@ -239,9 +244,10 @@ export function createToolRuntime(input: {
     restartTools,
     diceTools,
     locationTools,
-    bashTools,
+    globTools,
+    piTools,
+    subAgentTools,
     bashRuntime,
-    fileTools,
     skillsTools,
     skillsRegistry: input.skillsRegistry,
     skillsLoader,

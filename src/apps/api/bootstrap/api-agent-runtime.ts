@@ -38,7 +38,7 @@ export function createApiAgentRuntime(input: {
     time: input.time,
     getPromptRenderer: input.getPromptRenderer,
     visibleToolNames: (profile) => input.visibleToolNames(profile).filter((name: string) => name !== restartToolName),
-    toolPlugins: input.toolPlugins,
+    toolPlugins: input.toolPlugins.filter((plugin: { id?: string }) => plugin.id !== "subagent"),
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     agentLoopRuntime: input.agentLoopRuntime,

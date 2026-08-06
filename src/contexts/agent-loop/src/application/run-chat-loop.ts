@@ -106,6 +106,7 @@ export type ChatAgentLoopInput = {
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   agentRunIndicator?: AgentRunIndicator;
+  signal?: AbortSignal;
   onAgentRunIndicatorError?(error: unknown): void;
   onLLMLog?(event: {
     kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error";
@@ -177,7 +178,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         toolNames: visibleToolNames,
         toolVariables: input.buildTextVariables(input.event),
         stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream),
-        streamHandlers: input.llmInput.streamHandlers
+        streamHandlers: input.llmInput.streamHandlers,
+        signal: input.signal
       };
     },
     async sendRequest(request) {

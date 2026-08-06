@@ -14,6 +14,21 @@ export type BashSandboxSkillMountConfig = {
   readOnly: boolean;
 };
 
+export type PiWorkerContainerConfig = {
+  enabled: boolean;
+  image?: string;
+  hostDir: string;
+  containerDir: string;
+  port: number;
+  relayUrl?: string;
+  relayToken?: string;
+  sandboxCwd?: string;
+  maxConcurrency?: number;
+  maxQueueSize?: number;
+  taskTimeoutSeconds?: number;
+  timezone?: string;
+};
+
 export type BashSandboxConfig = {
   containerName: string;
   image: string;
@@ -32,7 +47,7 @@ export type BashSandboxConfig = {
   cpuLimit?: string;
   memoryLimit?: string;
   pidsLimit?: number;
-  auditLogPath: string;
+  piWorker?: PiWorkerContainerConfig;
 };
 
 export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandboxConfig {
@@ -51,6 +66,12 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
   for (const entry of [...normalized.skillMounts, ...normalized.mounts]) {
     rejectSensitiveHostPath(entry.hostPath);
     if (!entry.containerPath.startsWith("/")) throw new Error(`bashSandbox mount ${entry.containerPath} must be absolute`);
+  }
+  if (normalized.piWorker) {
+    if (!normalized.piWorker.hostDir || !normalized.piWorker.containerDir.startsWith("/") || !Number.isInteger(normalized.piWorker.port) || normalized.piWorker.port < 1 || normalized.piWorker.port > 65_535) {
+      throw new Error("invalid bashSandbox Pi Worker configuration");
+    }
+    rejectSensitiveHostPath(path.resolve(normalized.piWorker.hostDir));
   }
   const skillsRoot = normalized.skillsDir.replace(/\/+$/, "");
   for (const mount of normalized.mounts) {

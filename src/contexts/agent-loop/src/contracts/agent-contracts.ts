@@ -240,6 +240,7 @@ export type ToolResultLLMMessage = {
 };
 
 export type ToolExecutionContext = {
+  signal?: AbortSignal;
   lastCompletedToolName?: string;
   agentLoopRunSeq?: number;
   llmSessionId?: number;

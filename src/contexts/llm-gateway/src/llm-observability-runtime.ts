@@ -12,7 +12,7 @@ export function createLLMObservabilityRuntime(input: {
 }) {
   const tokenUsageRuntime = createTokenUsageRuntime({
     getStore: () => input.tokenUsageStore,
-    resolveModel: (agentId) => input.resolvePromptApiPreset(agentId === "talk" ? "talk" : "chat")?.model,
+    resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : agentId === "chat" ? input.resolvePromptApiPreset("chat")?.model : undefined,
     appendLog: input.appendLog
   });
 
@@ -25,7 +25,7 @@ export function createLLMObservabilityRuntime(input: {
     noteRequest: (entry, agentId = "chat") => input.agentLoopRuntime.noteLLMRequest(entry, agentId),
     noteResponse: (entry) => input.agentLoopRuntime.noteLLMResponse(entry),
     appendUsageLog: tokenUsageRuntime.appendLLMUsageLog,
-    resolveModel: (agentId) => input.resolvePromptApiPreset(agentId === "talk" ? "talk" : "chat")?.model,
+    resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : input.resolvePromptApiPreset("chat")?.model,
     recordTokenUsage: tokenUsageRuntime.recordTokenUsage
   });
 

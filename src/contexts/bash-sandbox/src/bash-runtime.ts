@@ -3,7 +3,6 @@ import type { BashSandboxConfig, BashSandboxSkillMountConfig } from "./config.js
 import { addBashSandboxSkillMount } from "./config.js";
 import type { DockerExecutor } from "./docker-executor.js";
 import { createDockerBashExecutor } from "./docker-executor.js";
-import { appendBashAuditEvent } from "./audit.js";
 import { classifyBashCommand } from "./permission.js";
 import { normalizeContainerPath } from "./paths.js";
 
@@ -52,9 +51,7 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
       const timeoutMs = numberValue(call.input.timeoutMs, input.config.timeoutMs);
       const permission = classifyBashCommand({ command, cwd, config: input.config, skillId: stringValue(call.input.skillId) || undefined });
       if (permission.state === "deny") {
-        const denied = result(command, cwd, "", "", null, false, 0, false, true, permission.reason);
-        appendBashAuditEvent(input.config, audit(call, denied, permission, input.config));
-        return denied;
+        return result(command, cwd, "", "", null, false, 0, false, true, permission.reason);
       }
       const executed = await executor.execute({
         command,
@@ -65,7 +62,6 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
         onStderr: (delta) => context?.reportProgress?.(`[stderr] ${delta}`)
       });
       const output = result(command, cwd, executed.stdout, executed.stderr, executed.exitCode, executed.timedOut, executed.durationMs, executed.truncated, false, undefined, executed.outputFiles);
-      appendBashAuditEvent(input.config, audit(call, output, permission, input.config));
       return output;
     },
     async runFileTool(toolInput) {
@@ -90,21 +86,6 @@ export function createBashSandboxRuntime(input: { config: BashSandboxConfig; exe
 
 function result(command: string, cwd: string, stdout: string, stderr: string, exitCode: number | null, timedOut: boolean, durationMs: number, truncated: boolean, denied: boolean, denyReason?: string, outputFiles?: BashRuntimeResult["outputFiles"]): BashRuntimeResult {
   return { command, cwd, stdout, stderr, outputFiles, exitCode, timedOut, durationMs, truncated, denied, denyReason };
-}
-
-function audit(call: ToolCall, output: BashRuntimeResult, permission: ReturnType<typeof classifyBashCommand>, config: BashSandboxConfig) {
-  return {
-    command: output.command,
-    cwd: output.cwd,
-    caller: call.requester?.plugin,
-    toolCallId: call.id,
-    permission,
-    network: config.network,
-    durationMs: output.durationMs,
-    exitCode: output.exitCode,
-    timedOut: output.timedOut,
-    truncated: output.truncated
-  };
 }
 
 function stringValue(value: unknown): string {

@@ -20,6 +20,7 @@ export function createApiToolingRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
   getApprovalService(): any;
+  piSandboxRuntime?: any;
 }) {
   const apiCapabilitiesRuntime = createApiCapabilitiesRuntime({
     config: input.config,
@@ -46,7 +47,8 @@ export function createApiToolingRuntime(input: {
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     memoryStore: input.apiContextRuntime.memoryStore,
     randomEventStore: input.apiContextRuntime.randomEventStore,
-    getApprovalService: input.getApprovalService
+    getApprovalService: input.getApprovalService,
+    piSandboxRuntime: input.piSandboxRuntime
   });
   const apiSupportRuntime = createApiSupportRuntime({
     config: input.config,
@@ -79,6 +81,8 @@ export function createApiToolingRuntime(input: {
     recognizeImage: apiCapabilitiesRuntime.recognizeImage,
     skillsRegistry: input.apiContextRuntime.skillsRegistry,
     visibleToolNames: apiCapabilitiesRuntime.visibleToolNames,
+    piSandboxRuntime: input.piSandboxRuntime,
+    refreshToolRegistry: apiCapabilitiesRuntime.refreshToolRegistry,
     adminLLMSessionRuntime: apiSupportRuntime.adminLLMSessionRuntime,
     sleepMemoryInductionRuntime: apiSupportRuntime.sleepMemoryInductionRuntime
   };

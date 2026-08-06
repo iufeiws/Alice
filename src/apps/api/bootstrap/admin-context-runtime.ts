@@ -48,6 +48,7 @@ export function createAdminRequestHandlerRuntime(input: {
   calendarStore: any;
   memoryInductionPromptStore: any;
   sandbox?: any;
+  piSandbox?: any;
   sleepMemoryInductionRuntime: { isActive(): boolean };
   ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): any;
   llmRequests: { send(input: any): Promise<any> };
@@ -131,6 +132,7 @@ export function createAdminRequestHandlerRuntime(input: {
     calendarStore: input.calendarStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
     sandbox: input.sandbox,
+    piSandbox: input.piSandbox,
     memoryAdminRuntime,
     getDailyShell: input.getDailyShell,
     dailyShellStore: input.dailyShellStore,

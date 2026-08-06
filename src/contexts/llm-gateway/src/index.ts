@@ -15,6 +15,8 @@ export * from "./llm-request-diff.js";
 export * from "./llm-request-preview-runtime.js";
 export * from "./llm-request-shape.js";
 export * from "./token-usage-runtime.js";
+export * from "./pi-preset-adapter.js";
+export * from "./pi-llm-relay.js";
 
 export type LLMContentPart =
   | { type: "text"; text: string }

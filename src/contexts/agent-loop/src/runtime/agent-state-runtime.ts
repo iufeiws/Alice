@@ -11,6 +11,7 @@ export function createAgentStateRuntime(input: {
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   queueMorningEvent(): void;
+  restartSandbox?(): Promise<void> | void;
   attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
@@ -22,6 +23,7 @@ export function createAgentStateRuntime(input: {
     }
   });
 
+  let wakeReady = Promise.resolve();
   let previousAgentBehaviorState = agentState.getSnapshot().state;
   agentState.onChange((snapshot) => {
     if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
@@ -46,22 +48,40 @@ export function createAgentStateRuntime(input: {
       if (snapshot.reason === "sleep_started") void input.sendSleepNotice();
       void input.triggerSleepMemoryInduction();
     }
-    if (previousAgentBehaviorState === "sleeping" && snapshot.state !== "sleeping" && snapshot.reason === "woke") {
-      const now = input.time.now();
-      const diaryStore = input.getDiaryStore();
-      diaryStore.recordWakeBoundary({
-        occurredAt: now.iso,
-        occurredAtUtc: now.date.toISOString(),
-        now: now.iso,
-        nowUtc: now.date.toISOString()
-      });
-      const daily = input.getDailyShellStore().reroll(now.date, input.time.timeZone);
-      void input.attemptDailyOutfitOnBodyGeneration?.(daily);
-      input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
-      input.queueMorningEvent();
+    if (previousAgentBehaviorState === "sleeping" && snapshot.state === "waiting") {
+      const completeWake = () => {
+        if (snapshot.reason !== "woke") return;
+        const now = input.time.now();
+        const diaryStore = input.getDiaryStore();
+        diaryStore.recordWakeBoundary({
+          occurredAt: now.iso,
+          occurredAtUtc: now.date.toISOString(),
+          now: now.iso,
+          nowUtc: now.date.toISOString()
+        });
+        const daily = input.getDailyShellStore().reroll(now.date, input.time.timeZone);
+        void input.attemptDailyOutfitOnBodyGeneration?.(daily);
+        input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
+        input.queueMorningEvent();
+      };
+      const restart = input.restartSandbox?.();
+      if (restart && typeof (restart as Promise<void>).then === "function") {
+        wakeReady = Promise.resolve(restart);
+        void Promise.resolve(restart).then(completeWake, (error) => {
+          input.appendLog("error", `pi sandbox restart on wake failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      } else {
+        wakeReady = Promise.resolve();
+        completeWake();
+      }
     }
     previousAgentBehaviorState = snapshot.state;
   });
 
-  return agentState;
+  return {
+    ...agentState,
+    waitForWake() {
+      return wakeReady;
+    }
+  };
 }

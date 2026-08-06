@@ -11,6 +11,7 @@ export function createApiControlRuntime(input: {
   triggerSleepMemoryInduction(): Promise<unknown>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
+  restartSandbox?(): Promise<void> | void;
 }) {
   const apiContextRuntime = createApiContextRuntime({
     config: input.config,
@@ -42,6 +43,7 @@ export function createApiControlRuntime(input: {
     clearLLMSession: () => input.getChatAgent().clearLLMSession("mode_transition"),
     sendSleepNotice: () => apiNoticeRuntime.outboundNoticeRuntime.sendSystemNoticeToDefaultTarget("少女已入眠"),
     triggerSleepMemoryInduction: input.triggerSleepMemoryInduction,
+    restartSandbox: input.restartSandbox,
     getDefaultTarget: () => apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,
     attemptDailyOutfitOnBodyGeneration: (daily) => attemptOutfitOnBodyGeneration(daily.outfit),
     appendLog: input.appendLog

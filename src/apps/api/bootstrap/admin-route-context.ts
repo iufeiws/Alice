@@ -23,6 +23,7 @@ import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/admin-prese
 import type { VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import type { AsrPluginConfig, AsrTranscribeError, AsrTranscribeInput, AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import type { ImageRecognitionConfig, ImageRecognitionError, ImageRecognitionInput, ImageRecognitionResult } from "../../../channels/image-recognition/src/index.js";
+import type { PiSandboxRuntime } from "../../../contexts/pi-sandbox/src/index.js";
 
 export type AdminRouteServices = {
   handleApiRoute(request: any, response: any): Promise<void>;
@@ -78,6 +79,10 @@ export type AdminRuntimeContext = {
   calendarStore: CalendarStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
   sandbox?: any;
+  piSandbox?: {
+    runtime?: PiSandboxRuntime;
+    health?(): unknown | Promise<unknown>;
+  };
   memoryAdminRuntime?: ReturnType<typeof createAdminMemoryRuntime>;
   runMemoryInductionForMessages?(messages: any[], windowStartAt: string | undefined, windowEndAt: string, apiPreset?: LLMApiPreset, target?: MemoryTarget, onRound?: (target: MemoryTarget, rounds: number, status?: string) => void): Promise<MemoryRunSummary>;
   llmSessionRoot?(): string;
@@ -140,6 +145,9 @@ export type AdminRuntimeContext = {
     };
     bashSandbox?: {
       envPath?: string;
+    };
+    pi?: {
+      configPath?: string;
     };
   };
   messageRuntime: {

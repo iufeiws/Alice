@@ -3,6 +3,7 @@ import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts
 import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
 import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type BashSandboxMountConfig } from "../../../contexts/bash-sandbox/src/index.js";
+import { readPiSandboxConfig, type PiSandboxConfig } from "../../../contexts/pi-sandbox/src/index.js";
 
 const path = await import("node:path");
 
@@ -52,6 +53,7 @@ export type AppConfig = {
     installedRoot: string;
   };
   bashSandbox: BashSandboxConfig;
+  piSandbox: PiSandboxConfig;
   photo: {
     selfieReferenceDir: string;
     selfieOutputDir: string;
@@ -252,8 +254,16 @@ export function loadConfig(env: Env = process.env): AppConfig {
       cpuLimit: env.BASH_SANDBOX_CPU_LIMIT,
       memoryLimit: env.BASH_SANDBOX_MEMORY_LIMIT,
       pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? undefined : envNumber(env.BASH_SANDBOX_PIDS_LIMIT, 256),
-      auditLogPath: env.BASH_SANDBOX_AUDIT_LOG_PATH ?? ".sandbox/bash/audit.jsonl"
+      piWorker: {
+        enabled: true,
+        image: env.PI_WORKER_IMAGE ?? "alice-pi-sandbox:latest",
+        hostDir: path.resolve("memory-files/pi-sessions"),
+        containerDir: "/alice/.agent/pi-sessions",
+        port: envNumber(env.PI_WORKER_CONTAINER_PORT, 8790),
+        sandboxCwd: env.PI_SANDBOX_CWD ?? sandboxWorkspaceDir
+      }
     }),
+    piSandbox: readPiSandboxConfig(),
     photo: {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",

@@ -12,6 +12,8 @@ import { imageRecognitionPluginEntry } from "./admin-plugin-image-recognition-ru
 import { generatePhotoOnBody, photoPluginEntry } from "./admin-plugin-photo-runtime.js";
 import { ttsPluginEntry } from "./admin-plugin-tts-runtime.js";
 import type { AdminPluginRegistryEntry, AdminPluginSummary, TtsAdminConfig } from "./admin-plugin-types.js";
+import { createPiPresetSnapshot } from "../../llm-gateway/src/pi-preset-adapter.js";
+import { readPiSandboxConfig, validatePiSandboxConfig, writePiSandboxConfig, type PiSandboxConfig } from "../../pi-sandbox/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -45,6 +47,10 @@ export async function handleAdminPluginApi(context: AdminRoutesContext, request:
 
   if (request.method === "GET" && action === "config") {
     writeAdminPluginConfig(context, response, pluginId);
+    return true;
+  }
+  if (request.method === "GET" && action === "preview") {
+    await previewAdminPlugin(context, response, pluginId);
     return true;
   }
   if (request.method === "PATCH" && action === "config") {
@@ -87,6 +93,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
   return [
     messagingPluginEntry(),
     bashSandboxPluginEntry(),
+    piSandboxPluginEntry(),
     asrPluginEntry(),
     imageRecognitionPluginEntry(),
     ttsPluginEntry(),
@@ -180,6 +187,134 @@ function messagingConfigMtime(context: AdminRoutesContext): string | undefined {
   return fs.existsSync(filePath) ? fs.statSync(filePath).mtime.toISOString() : undefined;
 }
 
+function piSandboxPluginEntry(): AdminPluginRegistryEntry {
+  return {
+    summary(context) {
+      const config = readPiConfigForAdmin(context);
+      return {
+        id: "pi_sandbox",
+        name: "Pi Sandbox",
+        kind: "tool",
+        status: "enabled",
+        health: config.llmPresetName ? "healthy" : "degraded",
+        description: "Docker-backed Pi Worker and SubAgent runtime.",
+        configurable: true,
+        switchable: false,
+        configSource: piConfigPath(context)
+      };
+    },
+    config(context) {
+      return readPiConfigForAdmin(context);
+    },
+    runtimeState(context) {
+      return context.piSandbox?.runtime ? { health: context.piSandbox.runtime.health().catch((error) => ({ ready: false, error: error instanceof Error ? error.message : String(error) })) } : undefined;
+    },
+    async preview(context) {
+      const config = readPiConfigForAdmin(context);
+      if (!config.llmPresetName) return { error: "pi_llm_preset_not_configured" };
+      if (!context.piSandbox?.runtime) return { error: "pi_worker_unavailable" };
+      return await context.piSandbox.runtime.previewPrompt({ presetName: config.llmPresetName });
+    },
+    patch(context, patch) {
+      const current = readPiConfigForAdmin(context);
+      const nextInput: PiSandboxConfig = {
+        ...current,
+        llmPresetName: piStringField(patch, "llmPresetName", current.llmPresetName),
+        sandboxCwd: piStringField(patch, "sandboxCwd", current.sandboxCwd),
+        maxConcurrency: piNumberField(patch, "maxConcurrency", current.maxConcurrency),
+        maxQueueSize: piNumberField(patch, "maxQueueSize", current.maxQueueSize),
+        taskTimeoutSeconds: piNumberField(patch, "taskTimeoutSeconds", current.taskTimeoutSeconds),
+        taskResultRetentionSeconds: piNumberField(patch, "taskResultRetentionSeconds", current.taskResultRetentionSeconds),
+        toolTimeoutSeconds: piNumberField(patch, "toolTimeoutSeconds", current.toolTimeoutSeconds),
+        workerStartupTimeoutMs: piNumberField(patch, "workerStartupTimeoutMs", current.workerStartupTimeoutMs),
+        relayHost: piStringField(patch, "relayHost", current.relayHost),
+        relayPort: piNumberField(patch, "relayPort", current.relayPort),
+        workerHost: piStringField(patch, "workerHost", current.workerHost),
+        workerPort: piNumberField(patch, "workerPort", current.workerPort)
+      };
+      const preset = readLLMApiPresets(context).find((entry) => entry.name === nextInput.llmPresetName);
+      if (!preset) return { error: "pi_llm_preset_not_found" };
+      try {
+        createPiPresetSnapshot(preset);
+        const next = validatePiSandboxConfig(nextInput);
+        writePiSandboxConfig(next, piConfigPath(context));
+        context.config.piSandbox = next;
+        return { config: next, restartRequired: true };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "invalid_pi_sandbox_config" };
+      }
+    },
+    reload(context) {
+      const config = readPiConfigForAdmin(context);
+      context.config.piSandbox = config;
+      return { config };
+    },
+    configSchema: {
+      groups: [
+        { key: "preset", label: "LLM" },
+        { key: "worker", label: "Worker" },
+        { key: "relay", label: "Relay" }
+      ],
+      fields: [
+        { key: "llmPresetName", label: "Alice LLM Preset", type: "select", group: "preset" },
+        { key: "sandboxCwd", label: "Sandbox CWD", type: "text", group: "worker" },
+        { key: "maxConcurrency", label: "Max Concurrency", type: "number", group: "worker", min: 1, max: 64, step: 1 },
+        { key: "maxQueueSize", label: "Max Queue Size", type: "number", group: "worker", min: 0, max: 10000, step: 1 },
+        { key: "taskTimeoutSeconds", label: "Task Timeout Seconds", type: "number", group: "worker", min: 1, max: 86400, step: 1 },
+        { key: "taskResultRetentionSeconds", label: "Task Result Retention Seconds", type: "number", group: "worker", min: 1, max: 31536000, step: 1 },
+        { key: "toolTimeoutSeconds", label: "Tool Timeout Ms", type: "number", group: "worker", min: 1000, max: 3600000, step: 1000 },
+        { key: "workerStartupTimeoutMs", label: "Worker Startup Timeout Ms", type: "number", group: "worker", min: 1000, max: 600000, step: 1000 },
+        { key: "relayHost", label: "Relay Host", type: "text", group: "relay" },
+        { key: "relayPort", label: "Relay Port", type: "number", group: "relay", min: 1, max: 65535, step: 1 },
+        { key: "workerHost", label: "Worker Host", type: "text", group: "relay" },
+        { key: "workerPort", label: "Worker Port", type: "number", group: "relay", min: 1, max: 65535, step: 1 }
+      ]
+    },
+    routePreview: ["Pi tool/SubAgent", "Docker Pi Worker", "host-side LLM relay"],
+    runtimeAccess: ["read and write only inside the Docker-visible sandbox", "use the selected Alice LLM preset through the dedicated relay"]
+  };
+}
+
+function readPiConfigForAdmin(context: AdminRoutesContext): PiSandboxConfig {
+  return readPiSandboxConfig(piConfigPath(context));
+}
+
+async function previewAdminPlugin(context: AdminRoutesContext, response: any, pluginId: string): Promise<void> {
+  const entry = findAdminPluginEntry(context, pluginId);
+  if (!entry) {
+    writeJson(response, 404, { ok: false, error: "plugin_not_found" });
+    return;
+  }
+  if (!entry.preview) {
+    writeJson(response, 400, { ok: false, error: "plugin_preview_unavailable" });
+    return;
+  }
+  let result: unknown;
+  try {
+    result = await entry.preview(context);
+  } catch (error) {
+    writeJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "plugin_preview_failed" });
+    return;
+  }
+  if (result && typeof result === "object" && "error" in result && typeof result.error === "string") {
+    writeJson(response, 400, { ok: false, error: result.error });
+    return;
+  }
+  writeJson(response, 200, { ok: true, ...(result && typeof result === "object" ? result : { result }) });
+}
+
+function piConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.pi?.configPath ?? "config/plugin/pi/config.json";
+}
+
+function piStringField(patch: Record<string, unknown>, key: string, fallback: string): string {
+  return patch[key] === undefined ? fallback : requiredString(patch[key]).trim();
+}
+
+function piNumberField(patch: Record<string, unknown>, key: string, fallback: number): number {
+  return patch[key] === undefined ? fallback : Number(patch[key]);
+}
+
 function bashSandboxPluginEntry(): AdminPluginRegistryEntry {
   return {
     summary(context) {
@@ -226,7 +361,6 @@ function bashSandboxPluginEntry(): AdminPluginRegistryEntry {
         { key: "cacheDir", label: "Container Cache Dir", type: "text", group: "paths" },
         { key: "skillsDir", label: "Container Skills Dir", type: "text", group: "paths" },
         { key: "tmpDir", label: "Container Tmp Dir", type: "text", group: "paths" },
-        { key: "auditLogPath", label: "Audit Log Path", type: "text", group: "paths" },
         { key: "timeoutMs", label: "Timeout Ms", type: "number", group: "limits", min: 1000, max: 3600000, step: 1000 },
         { key: "outputLimitBytes", label: "Output Limit Bytes", type: "number", group: "limits", min: 1024, max: 10485760, step: 1024 },
         { key: "cpuLimit", label: "CPU Limit", type: "text", group: "limits", description: "Docker --cpus value. Blank removes the env override." },
@@ -275,7 +409,6 @@ function updateBashSandboxConfig(context: AdminRoutesContext, patch: Record<stri
     cacheDir: bashSandboxStringField(patch, "cacheDir", current.cacheDir),
     skillsDir: bashSandboxStringField(patch, "skillsDir", current.skillsDir),
     tmpDir: bashSandboxStringField(patch, "tmpDir", current.tmpDir),
-    auditLogPath: bashSandboxStringField(patch, "auditLogPath", current.auditLogPath),
     network,
     timeoutMs: bashSandboxNumberField(patch, "timeoutMs", current.timeoutMs, 1000, 3_600_000),
     outputLimitBytes: bashSandboxNumberField(patch, "outputLimitBytes", current.outputLimitBytes, 1024, 10 * 1024 * 1024),
@@ -315,7 +448,6 @@ function readBashSandboxConfigForAdmin(context: AdminRoutesContext): BashSandbox
     cpuLimit: env.BASH_SANDBOX_CPU_LIMIT ?? current.cpuLimit,
     memoryLimit: env.BASH_SANDBOX_MEMORY_LIMIT ?? current.memoryLimit,
     pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? current.pidsLimit : Number(env.BASH_SANDBOX_PIDS_LIMIT),
-    auditLogPath: env.BASH_SANDBOX_AUDIT_LOG_PATH ?? current.auditLogPath
   });
 }
 
@@ -337,7 +469,6 @@ function writeBashSandboxEnv(context: AdminRoutesContext, config: BashSandboxCon
     BASH_SANDBOX_CPU_LIMIT: config.cpuLimit ?? null,
     BASH_SANDBOX_MEMORY_LIMIT: config.memoryLimit ?? null,
     BASH_SANDBOX_PIDS_LIMIT: config.pidsLimit === undefined ? null : String(config.pidsLimit),
-    BASH_SANDBOX_AUDIT_LOG_PATH: config.auditLogPath
   });
 }
 
@@ -538,7 +669,7 @@ async function uploadAdminPluginAsset(context: AdminRoutesContext, request: any,
 function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPluginRegistryEntry): unknown {
   const plugin = entry.summary(context);
   const configValue = entry.config?.(context) ?? {};
-  const configSchema = withDynamicPluginConfigSchema(plugin.id, entry.configSchema ?? { fields: [] }, configValue);
+  const configSchema = withDynamicPluginConfigSchema(context, plugin.id, entry.configSchema ?? { fields: [] }, configValue);
   return {
     plugin: {
       ...plugin,
@@ -554,7 +685,15 @@ function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPlugi
   };
 }
 
-function withDynamicPluginConfigSchema(pluginId: string, schema: NonNullable<AdminPluginRegistryEntry["configSchema"]>, configValue: unknown): NonNullable<AdminPluginRegistryEntry["configSchema"]> {
+function withDynamicPluginConfigSchema(context: AdminRoutesContext, pluginId: string, schema: NonNullable<AdminPluginRegistryEntry["configSchema"]>, configValue: unknown): NonNullable<AdminPluginRegistryEntry["configSchema"]> {
+  if (pluginId === "pi_sandbox") {
+    return {
+      ...schema,
+      fields: schema.fields.map((field) => field.key === "llmPresetName"
+        ? { ...field, options: publicLLMApiPresets(readLLMApiPresets(context)).map((preset) => ({ value: preset.name, label: preset.name })) }
+        : field)
+    };
+  }
   if (pluginId !== "tts") return schema;
   const config = configValue as TtsAdminConfig;
   const translationNames = Object.keys(config.translationPresets ?? {});

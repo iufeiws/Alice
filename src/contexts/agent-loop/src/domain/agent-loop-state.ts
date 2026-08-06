@@ -38,6 +38,7 @@ export type AgentStateStore = {
 export type AgentStateController = {
   start(): void;
   stop(): void;
+  activate(agentId: "chat"): AgentStateSnapshot;
   getSnapshot(): AgentStateSnapshot;
   setState(state: AgentBehaviorState, options?: { reason?: string; durationMs?: number; sleepDurationMs?: number; sleepCocoonEnteredAt?: string; sleepCocoonEnteredAtUtc?: string; resetSleepCocoonAuto?: boolean; clearSleepCocoon?: boolean }): AgentStateSnapshot;
   noteSleepCocoonAutoChecked(): AgentStateSnapshot;
@@ -47,6 +48,10 @@ export type AgentStateController = {
   noteInboundProcessed(): AgentStateSnapshot;
   suspendInactivityTimer(): AgentStateSnapshot;
   restartInactivityTimer(): AgentStateSnapshot;
+  acquirePiSubAgentHold(): AgentStateSnapshot;
+  releasePiSubAgentHold(): AgentStateSnapshot;
+  getPiSubAgentHoldCount(): number;
+  waitForWake?(): Promise<void>;
   getInboundDelayMs(): number;
   canReplyToInbound(): boolean;
   canRunHeartbeat(): boolean;
@@ -88,6 +93,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
   const random = options.random ?? Math.random;
 
   let snapshot = normalizeSnapshot(readPersisted(options.store), time, random, true);
+  let piSubAgentHoldCount = 0;
   const listeners = new Set<(snapshot: AgentStateSnapshot) => void>();
 
   function currentIso(): string {
@@ -131,7 +137,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
     if (state === "idle") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? randomRange(2 * MINUTE, 15 * MINUTE, random));
     } else if (state === "waiting") {
-      next.nextTransitionAt = addMsIso(opts.durationMs ?? WAITING_INACTIVE_TIMEOUT_MS);
+      next.nextTransitionAt = piSubAgentHoldCount > 0 ? undefined : addMsIso(opts.durationMs ?? WAITING_INACTIVE_TIMEOUT_MS);
     } else if (state === "curious" || state === "going_to_sleep" || state === "test") {
       next.nextTransitionAt = addMsIso(opts.durationMs ?? ACTIVE_TIMEOUT_MS);
     } else if (state === "away") {
@@ -199,7 +205,12 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       return clone(snapshot);
     },
     setState(state, opts = {}) {
+      if (piSubAgentHoldCount > 0 && state !== "waiting") throw new Error("agent_state_waiting_locked");
       return transition(state, opts);
+    },
+    activate(agentId) {
+      if (agentId !== "chat") throw new Error(`agent_activation_unsupported:${agentId}`);
+      return transition("waiting", { reason: "chat_activated" });
     },
     noteSleepCocoonAutoChecked() {
       const checkedAt = currentIso();
@@ -243,6 +254,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       });
     },
     restartInactivityTimer() {
+      if (piSubAgentHoldCount > 0) return clone(snapshot);
       const timeoutMs = inactivityTimeoutMs(snapshot.state);
       if (timeoutMs === undefined) return clone(snapshot);
       const restartedAt = currentIso();
@@ -251,6 +263,20 @@ export function createAgentStateController(options: AgentStateControllerOptions)
         updatedAt: restartedAt,
         nextTransitionAt: addMsIso(timeoutMs)
       });
+    },
+    acquirePiSubAgentHold() {
+      piSubAgentHoldCount += 1;
+      if (snapshot.state !== "waiting") return transition("waiting", { reason: "pi_subagent_started" });
+      return commit({ ...snapshot, updatedAt: currentIso(), nextTransitionAt: undefined });
+    },
+    releasePiSubAgentHold() {
+      if (piSubAgentHoldCount === 0) throw new Error("pi_subagent_hold_not_acquired");
+      piSubAgentHoldCount -= 1;
+      if (piSubAgentHoldCount > 0) return clone(snapshot);
+      return commit({ ...snapshot, updatedAt: currentIso(), nextTransitionAt: addMsIso(WAITING_INACTIVE_TIMEOUT_MS) });
+    },
+    getPiSubAgentHoldCount() {
+      return piSubAgentHoldCount;
     },
     getInboundDelayMs() {
       return snapshot.responseDelayMs;

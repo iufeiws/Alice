@@ -159,7 +159,7 @@ export type ChatAgentDeps = {
 export interface ChatAgent {
   start(): Promise<void>;
   stop(): Promise<void>;
-  prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
+  prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number; signal?: AbortSignal }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
   clearLLMSession(reason: LLMSessionClearReason): void;
@@ -189,6 +189,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
 
   return {
     async start() {
+      if (deps.state?.getSnapshot?.().state !== "sleeping") deps.state?.activate?.("chat");
       deps.state?.start();
       await Promise.all(channels.map((channel) => channel.start()));
     },
@@ -610,6 +611,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               return waitChatResumeMessages;
             },
             agentLoopRunSeq: loopSession.agentLoopRunSeq,
+            signal: options.signal,
             processRestartContinuation,
             onProcessRestartCheckpoint: deps.processRestartContinuationStore ? (continuation) => {
               const interruptedCall = continuation.result.message.toolCalls?.[continuation.interruptedCallIndex];

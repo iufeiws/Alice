@@ -59,24 +59,6 @@ test("bash tool includes host submission results without changing sandbox output
   assert.deepEqual(output.submission, { type: "test", status: "approved" });
 });
 
-test("bash runtime writes audit events for sandbox execution", async () => {
-  const config = testConfig({ outputLimitBytes: 5, mounts: [{ id: "data", hostPath: tmpDir("data"), containerPath: "/mnt/data", readOnly: true }] });
-  const runtime = createBashSandboxRuntime({
-    config,
-    executor: fakeExecutor(async () => ({ stdout: "abcdef", stderr: "", outputFiles: { stdout: { path: "/tmp/full.out", bytes: 6 } }, exitCode: 124, timedOut: true, durationMs: 9, truncated: true }))
-  });
-
-  await runtime.run({ id: "deny", toolName: "Bash", input: { command: "curl https://example.com" } });
-  await runtime.run({ id: "timeout", toolName: "Bash", input: { command: "ls /mnt/data" } });
-  const events = fs.readFileSync(config.auditLogPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
-
-  assert.equal(events[0].permission.state, "allow");
-  assert.equal(events[1].permission.state, "allow");
-  assert.equal(events[1].timedOut, true);
-  assert.equal(events[1].truncated, true);
-  assert.equal("optionalMounts" in events[1], false);
-});
-
 test("permission gate only enforces sandbox entry boundary", () => {
   const config = testConfig();
   const cwd = config.workspaceDir;

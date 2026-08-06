@@ -5,6 +5,7 @@ import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-
 import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../channels/image-recognition/src/index.js";
+import type { PiSandboxRuntime } from "../../../contexts/pi-sandbox/src/index.js";
 const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
@@ -33,6 +34,7 @@ export function createApiCapabilitiesRuntime(input: {
   memoryStore: any;
   randomEventStore: any;
   getApprovalService(): any;
+  piSandboxRuntime?: PiSandboxRuntime;
 }) {
   let getLLMRequestToolDefinition: (name: string) => any = () => undefined;
   const llmRequests = createLLMRequestsRuntime({
@@ -107,9 +109,12 @@ export function createApiCapabilitiesRuntime(input: {
     getGoogleStreetView: input.getGoogleStreetView,
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     appendLog: input.appendLog,
-    appendMessageLog: input.appendMessageLog
+    appendMessageLog: input.appendMessageLog,
+    piSandboxRuntime: input.piSandboxRuntime,
+    recognizeImage
   });
-  registerLLMToolLoopTools("default", toolRuntime.toolPlugins);
+  const refreshToolRegistry = () => registerLLMToolLoopTools("default", toolRuntime.toolPlugins);
+  refreshToolRegistry();
 
   const promptToolPreviewRuntime = createPromptToolPreviewRuntime({
     time: input.time,
@@ -133,7 +138,6 @@ export function createApiCapabilitiesRuntime(input: {
     bookcaseTools: toolRuntime.bookcaseTools,
     sleepCocoonTools: toolRuntime.sleepCocoonTools,
     calendarTools: toolRuntime.calendarTools,
-    bashTools: toolRuntime.bashTools,
     bashRuntime: toolRuntime.bashRuntime,
     skillsTools: toolRuntime.skillsTools,
     skillsRegistry: toolRuntime.skillsRegistry,
@@ -144,5 +148,6 @@ export function createApiCapabilitiesRuntime(input: {
     visibleToolSpecs: promptToolPreviewRuntime.visibleToolSpecs,
     visibleToolNames: promptToolPreviewRuntime.visibleToolNames,
     buildPromptPreviewMessages: promptToolPreviewRuntime.buildPromptPreviewMessages
+    ,refreshToolRegistry
   };
 }

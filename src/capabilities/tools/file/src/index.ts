@@ -253,6 +253,33 @@ export function createFileTools(input: { runtime: BashSandboxRuntime; config: Ba
   }
 }
 
+export function createGlobTool(input: { runtime: BashSandboxRuntime; config: BashSandboxConfig }): ToolPlugin {
+  return {
+    id: "glob",
+    listTools() {
+      return [globTool];
+    },
+    async execute(call) {
+      if (call.toolName !== "Glob") throw new Error(`glob_tool_unavailable:${call.toolName}`);
+      const payload: Record<string, unknown> = {
+        ...call.input,
+        pattern: requiredString(call.input.pattern, "pattern"),
+        allowed_roots: allowedRoots(input.config),
+        cwd: input.config.defaultCwd
+      };
+      if (call.input.path !== undefined) {
+        const searchPath = normalizeReadPath(requiredString(call.input.path, "path"));
+        if (!isAllowedCwd(input.config, searchPath)) throw new Error(`path is outside configured sandbox paths: ${searchPath}`);
+        payload.path = searchPath;
+      }
+      const result = await input.runtime.runFileTool({ toolName: "Glob", payload, outputLimitBytes: defaultMaxSizeBytes * 3 });
+      const output = parseToolJson<SandboxSearchOutput>(result, "Glob");
+      if (output.type !== "glob") throw new Error(`unsupported Glob output type: ${String((output as { type?: unknown }).type)}`);
+      return { callId: call.id, ok: true, output: output.content };
+    }
+  };
+}
+
 function allowedRoots(config: BashSandboxConfig): string[] {
   return [
     config.workspaceDir,

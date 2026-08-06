@@ -80,7 +80,7 @@ export type MessageRuntimeDeps = {
   agentState?: Pick<
     AgentStateController,
     "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "noteInboundMessage" | "onChange" | "tick"
-  > & Partial<Pick<AgentStateController, "getSnapshot" | "noteInboundProcessed" | "setState">>;
+  > & Partial<Pick<AgentStateController, "getSnapshot" | "noteInboundProcessed" | "setState" | "waitForWake">>;
   outputRouter: {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };

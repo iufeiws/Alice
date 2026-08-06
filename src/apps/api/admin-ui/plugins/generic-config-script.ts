@@ -44,12 +44,27 @@ export function renderGenericPluginConfigScript(): string {
       }
 
       function renderPluginConfigExtra(payload) {
+        if (payload.plugin?.id === "pi_sandbox") {
+          return '<h2>Final Pi System Prompt</h2><p class="muted">This is read-only and comes from the created Pi session. Prompt customization remains a future TODO.</p><button type="button" id="piPromptPreview" class="secondary">Refresh Prompt Preview</button><pre id="piPromptPreviewValue">Loading...</pre>';
+        }
         const extra = pluginConfigExtras[payload.plugin?.id];
         return extra?.html ? extra.html(payload) : "";
       }
 
       function afterRenderPluginConfig(payload) {
+        if (payload.plugin?.id === "pi_sandbox") {
+          loadPiPromptPreview();
+        }
         pluginConfigExtras[payload.plugin?.id]?.afterRender?.(payload);
+      }
+
+      async function loadPiPromptPreview() {
+        const output = $("piPromptPreviewValue");
+        if (!output) return;
+        output.textContent = "Loading...";
+        const payload = await fetch("/admin/api/plugins/pi_sandbox/preview").then((res) => res.json());
+        output.textContent = payload.ok ? (payload.systemPrompt || "") : "Preview failed: " + (payload.error || "unknown error");
+        if ($("piPromptPreview")) $("piPromptPreview").onclick = loadPiPromptPreview;
       }
 
       function renderPluginConfigGroupSelector(groups) {

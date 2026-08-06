@@ -461,6 +461,45 @@ test("admin plugin config patch persists world wanderer config", async () => {
   assert.equal("headingJitterDegrees" in saved, false);
 });
 
+test("admin Pi plugin validates preset and exposes the final prompt preview", async () => {
+  const root = makeTempDir("admin-pi-plugin");
+  const configPath = path.join(root, "config", "plugin", "pi", "config.json");
+  writePreset(root, "pi-preset");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ llmPresetName: "pi-preset" })}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    pluginConfigs: { pi: { configPath } },
+    piSandbox: {
+      runtime: {
+        async previewPrompt() {
+          return { sessionId: "preview-1", systemPrompt: "final system prompt" };
+        },
+        async health() {
+          return { ready: true };
+        }
+      }
+    }
+  };
+  const handler = createAdminHandler(context);
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/pi_sandbox/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(configBody.configValue.llmPresetName, "pi-preset");
+  assert.ok(configBody.configSchema.fields.some((field: { key: string; options?: Array<{ value: string }> }) => field.key === "llmPresetName" && field.options?.some((option) => option.value === "pi-preset")));
+
+  const previewResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/pi_sandbox/preview", {}), previewResponse);
+  assert.deepEqual(JSON.parse(previewResponse.body), { ok: true, sessionId: "preview-1", systemPrompt: "final system prompt" });
+
+  await assertPatchError(handler, "/admin/api/plugins/pi_sandbox/config", { llmPresetName: "missing" }, "pi_llm_preset_not_found");
+});
+
 test("prompt variables use empty world wanderer library prompt without fallback", async () => {
   const root = makeTempDir("admin-world-wanderer-library-variable");
   const configPath = path.join(root, "config", "plugin", "world-wanderer", "config.json");

@@ -39,7 +39,7 @@ export function createApiSupportRuntime(input: {
     promptContextRuntime: input.apiContextRuntime.promptContextRuntime,
     sandbox: input.piWorkerRuntime ? {
       runtime: input.piWorkerRuntime,
-      containerRoot: input.config.piWorkerConfig.sandboxCwd,
+      containerRoot: input.config.bashSandbox.workspaceDir,
       hostRoot: input.config.bashSandbox.hostWorkspaceDir
     } : undefined,
     stateStore: input.apiContextRuntime.sleepMemoryStateStore,

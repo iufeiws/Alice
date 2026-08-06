@@ -258,8 +258,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
         enabled: true,
         hostDir: path.resolve("memory-files/pi-sessions"),
         containerDir: path.posix.join(sandboxWorkspaceDir, ".pi-sessions"),
-        port: envNumber(env.PI_WORKER_CONTAINER_PORT, 8790),
-        sandboxCwd: env.PI_SANDBOX_CWD ?? sandboxWorkspaceDir
+        port: envNumber(env.PI_WORKER_CONTAINER_PORT, 8790)
       }
     }),
     piWorkerConfig: readPiWorkerConfig(),

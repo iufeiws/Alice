@@ -21,7 +21,6 @@ export type PiWorkerContainerConfig = {
   port: number;
   /** Host-side auth secret for the worker HTTP API; never exposed to the Agent. */
   workerToken?: string;
-  sandboxCwd?: string;
   maxConcurrency?: number;
   maxQueueSize?: number;
   taskTimeoutSeconds?: number;

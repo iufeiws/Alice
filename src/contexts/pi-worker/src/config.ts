@@ -1,11 +1,9 @@
 export type PiWorkerConfig = {
   llmPresetName: string;
-  sandboxCwd: string;
   maxConcurrency: number;
   maxQueueSize: number;
   taskTimeoutSeconds: number;
   toolTimeoutSeconds: number;
-  workerStartupTimeoutMs: number;
   relayHost: string;
   relayPort: number;
   workerHost: string;
@@ -14,12 +12,10 @@ export type PiWorkerConfig = {
 
 export const defaultPiWorkerConfig: PiWorkerConfig = {
   llmPresetName: "",
-  sandboxCwd: "/home/alice",
   maxConcurrency: 2,
   maxQueueSize: 20,
   taskTimeoutSeconds: 900,
   toolTimeoutSeconds: 60_000,
-  workerStartupTimeoutMs: 60_000,
   relayHost: "0.0.0.0",
   relayPort: 3411,
   workerHost: "127.0.0.1",
@@ -43,12 +39,10 @@ export function writePiWorkerConfig(config: PiWorkerConfig, filePath = "config/p
 export function validatePiWorkerConfig(value: Partial<PiWorkerConfig>): PiWorkerConfig {
   const config: PiWorkerConfig = { ...defaultPiWorkerConfig, ...value };
   if (typeof config.llmPresetName !== "string") throw new Error("invalid_pi_llm_preset_name");
-  if (!config.sandboxCwd.startsWith("/")) throw new Error("invalid_pi_worker_cwd");
   positiveInteger(config.maxConcurrency, "max_concurrency", 1, 64);
   positiveInteger(config.maxQueueSize, "max_queue_size", 0, 10_000);
   positiveInteger(config.taskTimeoutSeconds, "task_timeout_seconds", 1, 86_400);
   positiveInteger(config.toolTimeoutSeconds, "tool_timeout_ms", 1_000, 3_600_000);
-  positiveInteger(config.workerStartupTimeoutMs, "worker_startup_timeout_ms", 1_000, 600_000);
   port(config.relayPort, "relay_port");
   port(config.workerPort, "worker_port");
   if (!config.relayHost.trim() || !config.workerHost.trim()) throw new Error("invalid_pi_host");

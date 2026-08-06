@@ -76,7 +76,7 @@ export function createApiAdminRuntime(input: {
     memoryInductionPromptStore: input.apiContextRuntime.memoryInductionPromptStore,
     piWorker: input.piWorkerRuntime ? {
       runtime: input.piWorkerRuntime,
-      containerRoot: input.config.piWorkerConfig.sandboxCwd,
+      containerRoot: input.config.bashSandbox.workspaceDir,
       hostRoot: input.config.bashSandbox.hostWorkspaceDir
     } : undefined,
     sleepMemoryInductionRuntime: input.sleepMemoryInductionRuntime,

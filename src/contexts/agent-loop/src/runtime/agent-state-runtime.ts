@@ -11,7 +11,7 @@ export function createAgentStateRuntime(input: {
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   queueMorningEvent(): void;
-  restartSandbox?(): Promise<void> | void;
+  refreshPiWorkerAuthorization?(): Promise<void> | void;
   attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
@@ -64,11 +64,11 @@ export function createAgentStateRuntime(input: {
         input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
         input.queueMorningEvent();
       };
-      const restart = input.restartSandbox?.();
-      if (restart && typeof (restart as Promise<void>).then === "function") {
-        wakeReady = Promise.resolve(restart);
-        void Promise.resolve(restart).then(completeWake, (error) => {
-          input.appendLog("error", `sandbox restart on wake failed: ${error instanceof Error ? error.message : String(error)}`);
+      const refresh = input.refreshPiWorkerAuthorization?.();
+      if (refresh && typeof (refresh as Promise<void>).then === "function") {
+        wakeReady = Promise.resolve(refresh);
+        void Promise.resolve(refresh).then(completeWake, (error) => {
+          input.appendLog("error", `pi worker authorization refresh on wake failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       } else {
         wakeReady = Promise.resolve();

@@ -20,6 +20,8 @@ export type PiToolExecutionResult = {
 
 export type PiWorkerHealth = {
   ready: boolean;
+  /** Subagent invocations currently queued or running inside the worker. */
+  activeRuns: number;
   version: string;
   toolDefinitionGeneration: string;
   cwd: string;
@@ -130,7 +132,11 @@ export type PiInvocationSendInput = {
 export type PiWorkerRuntime = {
   start(): Promise<void>;
   stop(): Promise<void>;
-  restart(reason: "mount_changed" | "admin" | "wake" | "config"): Promise<void>;
+  /**
+   * 更新 worker 授权: 状态切换(wake)或配置变更(config)时调用。
+   * 由宿主 refreshAuthorization 执行一次握手; 容器重建不是本运行时职责。
+   */
+  refresh(reason: "wake" | "config"): Promise<void>;
   health(): Promise<PiWorkerHealth>;
   previewPrompt(input?: { presetName?: string; signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
   toolDefinitions(): PiToolDefinition[];

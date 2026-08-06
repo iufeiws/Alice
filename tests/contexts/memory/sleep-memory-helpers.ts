@@ -72,7 +72,7 @@ export function makeMemorySandbox(root: string): MemorySandbox {
   const runtime: PiWorkerRuntime = {
     async start() {},
     async stop() {},
-    async restart() {},
+    async refresh() {},
     async health() {
       throw new Error("health is not available in memory sandbox tests");
     },

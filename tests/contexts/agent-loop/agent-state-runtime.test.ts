@@ -139,7 +139,7 @@ const dailyShell = {
   date: "2026-05-26"
 };
 
-function createRuntime(root: string, calls: ReturnType<typeof createCalls>, restartSandbox?: () => Promise<void>) {
+function createRuntime(root: string, calls: ReturnType<typeof createCalls>, refreshPiWorkerAuthorization?: () => Promise<void>) {
   return createAgentStateRuntime({
     config: { memoryFiles: { root } },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T00:00:00.000Z")),
@@ -172,7 +172,7 @@ function createRuntime(root: string, calls: ReturnType<typeof createCalls>, rest
     queueMorningEvent() {
       calls.morningEvents += 1;
     },
-    restartSandbox,
+    refreshPiWorkerAuthorization,
     attemptDailyOutfitOnBodyGeneration(daily) {
       calls.onBodyDailies.push(daily);
     },

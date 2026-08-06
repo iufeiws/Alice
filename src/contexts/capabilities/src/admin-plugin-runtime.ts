@@ -220,12 +220,10 @@ function piWorkerPluginEntry(): AdminPluginRegistryEntry {
       const nextInput: PiWorkerConfig = {
         ...current,
         llmPresetName: piWorkerStringField(patch, "llmPresetName", current.llmPresetName),
-        sandboxCwd: piWorkerStringField(patch, "sandboxCwd", current.sandboxCwd),
         maxConcurrency: piWorkerNumberField(patch, "maxConcurrency", current.maxConcurrency),
         maxQueueSize: piWorkerNumberField(patch, "maxQueueSize", current.maxQueueSize),
         taskTimeoutSeconds: piWorkerNumberField(patch, "taskTimeoutSeconds", current.taskTimeoutSeconds),
         toolTimeoutSeconds: piWorkerNumberField(patch, "toolTimeoutSeconds", current.toolTimeoutSeconds),
-        workerStartupTimeoutMs: piWorkerNumberField(patch, "workerStartupTimeoutMs", current.workerStartupTimeoutMs),
         relayHost: piWorkerStringField(patch, "relayHost", current.relayHost),
         relayPort: piWorkerNumberField(patch, "relayPort", current.relayPort),
         workerHost: piWorkerStringField(patch, "workerHost", current.workerHost),
@@ -241,9 +239,9 @@ function piWorkerPluginEntry(): AdminPluginRegistryEntry {
         const runtime = context.piWorker?.runtime;
         if (!runtime) return { config: next, restartRequired: true };
         try {
-          await runtime.restart("config");
+          await runtime.refresh("config");
         } catch (error) {
-          return { error: `pi_worker_runtime_restart_failed:${error instanceof Error ? error.message : String(error)}` };
+          return { error: `pi_worker_runtime_refresh_failed:${error instanceof Error ? error.message : String(error)}` };
         }
         return { config: next, restartRequired: false };
       } catch (error) {
@@ -263,12 +261,10 @@ function piWorkerPluginEntry(): AdminPluginRegistryEntry {
       ],
       fields: [
         { key: "llmPresetName", label: "Alice LLM Preset", type: "select", group: "preset" },
-        { key: "sandboxCwd", label: "Sandbox CWD", type: "text", group: "worker" },
         { key: "maxConcurrency", label: "Max Concurrency", type: "number", group: "worker", min: 1, max: 64, step: 1 },
         { key: "maxQueueSize", label: "Max Queue Size", type: "number", group: "worker", min: 0, max: 10000, step: 1 },
         { key: "taskTimeoutSeconds", label: "Task Timeout Seconds", type: "number", group: "worker", min: 1, max: 86400, step: 1 },
         { key: "toolTimeoutSeconds", label: "Tool Timeout Ms", type: "number", group: "worker", min: 1000, max: 3600000, step: 1000 },
-        { key: "workerStartupTimeoutMs", label: "Worker Startup Timeout Ms", type: "number", group: "worker", min: 1000, max: 600000, step: 1000 },
         { key: "relayHost", label: "Relay Host", type: "text", group: "relay" },
         { key: "relayPort", label: "Relay Port", type: "number", group: "relay", min: 1, max: 65535, step: 1 },
         { key: "workerHost", label: "Worker Host", type: "text", group: "relay" },

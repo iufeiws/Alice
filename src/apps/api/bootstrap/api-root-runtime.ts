@@ -11,7 +11,7 @@ import { createJsonProcessRestartContinuationStore } from "../../../contexts/age
 import { createPiLLMRelay, type PiRelayCapability } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
 import { createPiPresetSnapshot } from "../../../contexts/llm-gateway/src/pi-preset-adapter.js";
 import { createPiWorkerRuntime, createPiWorkerHttpClient } from "../../../contexts/pi-worker/src/index.js";
-import { ensureDockerSandboxContainer, recreateDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
+import { ensureDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
 const path = await import("node:path");
 const crypto = await import("node:crypto");
 
@@ -41,7 +41,9 @@ export function createApiRootRuntime() {
     maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency,
     recordTokenUsageEvent: (event) => apiLLMRuntime.recordTokenUsageEvent(event)
   });
-  let piCapability: { token: string; capability: PiRelayCapability } | undefined;
+  let piCapability: { token: string; capability: PiRelayCapability; presetFingerprint: string } | undefined;
+  let relayGrantedAt = 0;
+  const PI_RELAY_AUTHORIZATION_TTL_MS = 8 * 60 * 60 * 1000;
   const workerToken = readOrCreateWorkerToken();
   foundation.config.bashSandbox.piWorker = {
     enabled: true,
@@ -49,7 +51,6 @@ export function createApiRootRuntime() {
     containerDir: "/home/alice/.pi-sessions",
     port: foundation.config.piWorkerConfig.workerPort,
     workerToken,
-    sandboxCwd: foundation.config.piWorkerConfig.sandboxCwd,
     maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency,
     maxQueueSize: foundation.config.piWorkerConfig.maxQueueSize,
     taskTimeoutSeconds: foundation.config.piWorkerConfig.taskTimeoutSeconds,
@@ -58,26 +59,7 @@ export function createApiRootRuntime() {
   const piWorkerClient = createPiWorkerHttpClient({ baseURL: `http://${foundation.config.piWorkerConfig.workerHost}:${foundation.config.piWorkerConfig.workerPort}`, token: workerToken });
   const piWorkerRuntime = createPiWorkerRuntime({
     worker: piWorkerClient,
-    ensureWorker: async () => {
-      let relayConfigured = false;
-      try {
-        syncPiWorkerToken();
-        relayConfigured = true;
-      } catch (error) {
-        if (!(error instanceof Error && error.message === "pi_llm_preset_not_found")) throw error;
-        foundation.appendLog("warn", "pi preset not configured; Pi Worker starts without relay capability");
-      }
-      await ensureDockerSandboxContainer(foundation.config.bashSandbox);
-      if (relayConfigured) await configurePiWorkerProcess();
-    },
-    restartWorker: async (reason) => {
-      if (piCapability) piRelay.revokeCapability(piCapability.token);
-      piCapability = undefined;
-      syncPiWorkerToken();
-      await configurePiWorkerProcess();
-      if (reason !== "config") await recreateDockerSandboxContainer(foundation.config.bashSandbox);
-    },
-    startupTimeoutMs: foundation.config.piWorkerConfig.workerStartupTimeoutMs,
+    refreshAuthorization: refreshPiWorkerAuthorization,
     reconcileOnStart: true,
     refreshToolRegistry: () => refreshDefaultToolRegistry?.(),
     appendLog: foundation.appendLog,
@@ -117,9 +99,7 @@ export function createApiRootRuntime() {
     store: foundation.store,
     getChatAgent: () => apiAgentStackRuntime.chatAgent,
     triggerSleepMemoryInduction: () => apiToolingRuntime.sleepMemoryInductionRuntime.trigger(),
-    restartSandbox: async () => {
-      await piWorkerRuntime.restart("wake");
-    },
+    refreshPiWorkerAuthorization: () => piWorkerRuntime.refresh("wake"),
     appendLog: foundation.appendLog,
     appendMessageLog: foundation.appendMessageLog
   });
@@ -215,17 +195,46 @@ export function createApiRootRuntime() {
     return createPiPresetSnapshot(preset);
   }
 
-  function syncPiWorkerToken() {
-    if (piCapability) return;
-    piCapability = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName, preset: piPresetSnapshot() });
-  }
-
-  async function configurePiWorkerProcess() {
-    if (!piCapability) throw new Error("pi_relay_capability_missing");
+  /**
+   * 懒授权握手(宿主侧): 保证 capability 与当前 preset 一致(指纹比对, 变更时轮换),
+   * 并向容器内 worker 下发 relayUrl/relayToken。
+   * - 轮换(revoke+新建)只在无 subagent 运行时进行; worker 不可达时保守不轮换。
+   * - reason="call" 且授权未过期且 worker 并非不可用时跳过下发(纯懒检查)。
+   * - 授权有效期 8 小时: reason="wake"|"config" 强制续期。
+   */
+  async function refreshPiWorkerAuthorization(input: { reason: "wake" | "config" | "call"; force?: boolean }): Promise<void> {
+    const fingerprint = JSON.stringify(piPresetSnapshot());
+    const needsRotation = piCapability !== undefined && piCapability.presetFingerprint !== fingerprint;
+    if (input.reason === "wake" || needsRotation) {
+      if (await anyRunningInvocation()) {
+        foundation.appendLog("info", `pi worker authorization update deferred: subagent running (reason=${input.reason})`);
+        return;
+      }
+    }
+    if (needsRotation) {
+      piRelay.revokeCapability(piCapability!.token);
+      piCapability = undefined;
+    }
+    if (!piCapability) {
+      const created = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName, preset: piPresetSnapshot() });
+      piCapability = { ...created, presetFingerprint: fingerprint };
+    }
+    if (input.reason === "call" && input.force !== true && relayGrantedAt && Date.now() - relayGrantedAt < PI_RELAY_AUTHORIZATION_TTL_MS) return;
+    await ensureDockerSandboxContainer(foundation.config.bashSandbox);
     await piWorkerClient.configure({
       relayUrl: `http://host.docker.internal:${foundation.config.piWorkerConfig.relayPort}/v1`,
       relayToken: piCapability.token
     });
+    relayGrantedAt = Date.now();
+  }
+
+  async function anyRunningInvocation(): Promise<boolean> {
+    try {
+      const health = await piWorkerClient.health();
+      return health.activeRuns > 0;
+    } catch {
+      return true; // worker 不可达时保守处理: 不轮换
+    }
   }
 
   function readOrCreateWorkerToken(): string {

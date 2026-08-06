@@ -3,17 +3,25 @@ import type { PiInvocationCompletion, PiModelConfig, PiWorkerRuntime, PiWorkerCl
 
 export function createPiWorkerRuntime(input: {
   worker: PiWorkerClient;
-  ensureWorker?(): Promise<void>;
+  /**
+   * 宿主侧授权握手: 确保 capability 有效并按需向 worker 下发 relay 配置。
+   * reason="call" 由懒授权检查触发(仅在不一致/过期时下发);
+   * reason="wake"|"config" 由 refresh() 触发(强制下发, 轮换受 0-running 守护)。
+   */
+  refreshAuthorization?(input: { reason: "wake" | "config" | "call"; force?: boolean }): Promise<void>;
   prepareModel?(input: { presetName?: string }): Promise<PiModelConfig> | PiModelConfig;
-  restartWorker?: (reason: "mount_changed" | "admin" | "wake" | "config") => Promise<void>;
   refreshToolRegistry?: () => void | Promise<void>;
-  startupTimeoutMs?: number;
+  /** 授权有效期; 到期后下一次 subagent 调用前重新握手。 */
+  authorizationTtlMs?: number;
   reconcileOnStart?: boolean;
   pollIntervalMs?: number;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   onInvocationCompleted?(completion: PiInvocationCompletion): Promise<void> | void;
 }): PiWorkerRuntime {
+  const authorizationTtlMs = input.authorizationTtlMs ?? 8 * 60 * 60 * 1000;
   let healthSnapshot: PiWorkerHealth | undefined;
+  /** 本进程上次成功握手的时刻; 0 = 尚未握手, 视为已过期。 */
+  let lastGrantedAt = 0;
   const completionListeners = new Set<(completion: PiInvocationCompletion) => Promise<void> | void>();
   const deliveredInvocations = new Set<string>();
   const deliveringInvocations = new Map<string, Promise<void>>();
@@ -25,8 +33,7 @@ export function createPiWorkerRuntime(input: {
     async start() {
       acceptingWatches = true;
       try {
-        await input.ensureWorker?.();
-        healthSnapshot = await waitForReadyHealth();
+        healthSnapshot = await ensureGranted();
       } catch (error) {
         input.appendLog?.("warn", `pi worker not ready: ${error instanceof Error ? error.message : String(error)}`);
         healthSnapshot = undefined;
@@ -38,14 +45,25 @@ export function createPiWorkerRuntime(input: {
       for (const timer of watchers.values()) clearTimeout(timer);
       watchers.clear();
     },
-    async restart(reason) {
+    async refresh(reason) {
       await this.stop();
-      await input.ensureWorker?.();
-      await input.restartWorker?.(reason);
-      healthSnapshot = await waitForReadyHealth();
-      await input.refreshToolRegistry?.();
-      await reconcileInvocations();
+      let failure: unknown;
+      try {
+        await input.refreshAuthorization?.({ reason });
+        lastGrantedAt = Date.now();
+        healthSnapshot = await input.worker.health();
+      } catch (error) {
+        failure = error;
+        healthSnapshot = undefined;
+      }
+      try {
+        await input.refreshToolRegistry?.();
+        await reconcileInvocations();
+      } catch (error) {
+        if (!failure) failure = error;
+      }
       await this.start();
+      if (failure) throw failure;
     },
     async health() {
       healthSnapshot = await input.worker.health();
@@ -53,6 +71,7 @@ export function createPiWorkerRuntime(input: {
     },
     async previewPrompt(previewInput = {}) {
       const modelConfig = await resolveModelConfig(previewInput.presetName);
+      healthSnapshot = await ensureGranted();
       return input.worker.previewSession({ ...modelConfig, signal: previewInput.signal });
     },
     toolDefinitions() {
@@ -66,6 +85,7 @@ export function createPiWorkerRuntime(input: {
     },
     async startSubAgent(subInput) {
       const modelConfig = await resolveModelConfig(subInput.presetName);
+      healthSnapshot = await ensureGranted();
       const invocation = await input.worker.startInvocation({
         message: subInput.message,
         timeoutSeconds: subInput.timeoutSeconds,
@@ -84,6 +104,7 @@ export function createPiWorkerRuntime(input: {
     },
     async sendSubAgent(sessionId, subInput) {
       const modelConfig = await resolveModelConfig(subInput.presetName);
+      healthSnapshot = await ensureGranted();
       const invocation = await input.worker.sendInvocation(sessionId, {
         message: subInput.message,
         mode: subInput.mode,
@@ -113,6 +134,26 @@ export function createPiWorkerRuntime(input: {
       return () => completionListeners.delete(listener);
     }
   };
+
+  /**
+   * 懒授权: subagent 调用前的单次握手。
+   * worker 健康且授权未过期 → 直接放行; 否则触发宿主握手(不一致时更新容器内授权),
+   * 然后以一次 health 确认结果。不重试 —— 失败由调用方重试整个调用。
+   */
+  async function ensureGranted(): Promise<PiWorkerHealth> {
+    let health: PiWorkerHealth | undefined;
+    try {
+      health = await input.worker.health();
+    } catch {
+      health = undefined; // worker 未就绪: 进入握手路径
+    }
+    if (health?.ready && Date.now() - lastGrantedAt < authorizationTtlMs) return health;
+    await input.refreshAuthorization?.({ reason: "call", force: !health?.ready });
+    lastGrantedAt = Date.now();
+    health = await input.worker.health();
+    if (!health?.ready) throw new Error("pi_worker_relay_not_ready");
+    return health;
+  }
 
   async function resolveModelConfig(presetName?: string): Promise<PiModelConfig> {
     const modelConfig = await input.prepareModel?.({ presetName });
@@ -145,26 +186,6 @@ export function createPiWorkerRuntime(input: {
     })();
     deliveringInvocations.set(key, delivery);
     return delivery;
-  }
-
-  async function waitForReadyHealth(): Promise<PiWorkerHealth> {
-    const deadline = Date.now() + (input.startupTimeoutMs ?? 60_000);
-    let lastError: unknown;
-    while (Date.now() <= deadline) {
-      try {
-        const health = await input.worker.health();
-        // The worker answering is enough: relay reachability depends on the
-        // host-side preset configuration, not on container state. Return the
-        // snapshot either way so tools keep working and SubAgent fails with an
-        // actionable preset error instead of a startup hang when no preset is
-        // configured yet.
-        return health;
-      } catch (error) {
-        lastError = error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw lastError instanceof Error ? lastError : new Error("pi_worker_startup_timeout");
   }
 
   function watch(sessionId: string): void {

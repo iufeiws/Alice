@@ -293,7 +293,7 @@ function containerMountKey(config: BashSandboxConfig): string {
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
-    piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.sandboxCwd, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
+    piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
   });
 }
 

@@ -266,7 +266,6 @@ test("admin plugin config never exposes pi worker tokens", async () => {
     containerDir: "/home/alice/.pi-sessions",
     port: 8790,
     workerToken: "secret-worker-token",
-    sandboxCwd: "/home/alice",
     maxConcurrency: 2,
     maxQueueSize: 20,
     taskTimeoutSeconds: 900,
@@ -570,7 +569,7 @@ test("admin Pi plugin saves project presets with project extra params", async ()
         async health() {
           return { ready: true };
         },
-        async restart(reason: "mount_changed" | "admin" | "wake" | "config") {
+        async refresh(reason: "wake" | "config") {
           restartReason = reason;
         }
       }

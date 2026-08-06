@@ -7,6 +7,7 @@ import { createSubAgentTool } from "../../../src/capabilities/tools/subagent/src
 
 const health: PiWorkerHealth = {
   ready: true,
+  activeRuns: 0,
   version: "1.2.3",
   toolDefinitionGeneration: "generation-a",
   cwd: "/home/alice",
@@ -122,11 +123,12 @@ test("reconcile re-delivers terminal invocations idempotently", async () => {
   await runtime.stop();
 });
 
-test("restart refreshes the tool registry from the new worker health before resolving", async () => {
+test("refresh refreshes the tool registry from the new worker health before resolving", async () => {
   let gen = "a";
   const worker = fakeWorker();
   worker.health = async () => ({
     ready: true,
+    activeRuns: 0,
     version: "1.2.3",
     toolDefinitionGeneration: "generation-a",
     cwd: "/home/alice",
@@ -139,17 +141,18 @@ test("restart refreshes the tool registry from the new worker health before reso
     worker,
     reconcileOnStart: false,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
-    restartWorker: async () => { order.push("worker"); gen = "b"; },
+    refreshAuthorization: async () => { order.push("worker"); gen = "b"; },
     refreshToolRegistry: () => { order.push("refresh"); capturedDefinitions = runtime.toolDefinitions(); }
   });
   await runtime.start();
-  await runtime.restart("wake");
+  await runtime.refresh("wake");
   assert.equal(capturedDefinitions[0].inputSchema.gen, "b");
-  assert.deepEqual(order, ["worker", "refresh"]);
+  // start() 先做一次初始握手, refresh("wake") 再做一次强制握手。
+  assert.deepEqual(order, ["worker", "worker", "refresh"]);
   await runtime.stop();
 });
 
-test("restart fails when the tool registry refresh fails", async () => {
+test("refresh fails when the tool registry refresh fails", async () => {
   const worker = fakeWorker();
   const runtime = createPiWorkerRuntime({
     worker,
@@ -157,7 +160,7 @@ test("restart fails when the tool registry refresh fails", async () => {
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     refreshToolRegistry: () => { throw new Error("pi_tool_registry_refresh_failed"); }
   });
-  await assert.rejects(runtime.restart("wake"), /pi_tool_registry_refresh_failed/);
+  await assert.rejects(runtime.refresh("wake"), /pi_tool_registry_refresh_failed/);
   await runtime.stop();
 });
 

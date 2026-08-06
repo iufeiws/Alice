@@ -24,13 +24,13 @@ function makeSandboxConfig(sandboxRoot: string): BashSandboxConfig {
   return {
     containerName: "alice-bash-sandbox",
     image: "cimg/python:3.13-browsers",
-    defaultCwd: "/alice",
+    defaultCwd: "/home/alice",
     hostWorkspaceDir: path.join(sandboxRoot, "workspace"),
-    workspaceDir: "/alice",
+    workspaceDir: "/home/alice",
     hostCacheDir: path.join(sandboxRoot, "cache"),
     cacheDir: "/cache",
     tmpDir: "/tmp",
-    skillsDir: "/alice/.agent/skills",
+    skillsDir: "/home/alice/.agent/skills",
     skillMounts: [],
     mounts: [],
     network: "none",
@@ -71,12 +71,12 @@ async function createSendFileHarness(name: string) {
 
 test("resolveSandboxHostPath maps container workspace path to host path", () => {
   const config = makeSandboxConfig("/tmp/sandbox-root");
-  assert.equal(resolveSandboxHostPath(config, "/alice/a/b.txt"), "/tmp/sandbox-root/workspace/a/b.txt");
+  assert.equal(resolveSandboxHostPath(config, "/home/alice/a/b.txt"), "/tmp/sandbox-root/workspace/a/b.txt");
   assert.equal(resolveSandboxHostPath(config, "/cache/npm/c.txt"), "/tmp/sandbox-root/cache/npm/c.txt");
   assert.equal(resolveSandboxHostPath(config, "/etc/passwd"), undefined);
   assert.equal(resolveSandboxHostPath(config, "/tmp/x.txt"), undefined);
-  assert.equal(resolveSandboxHostPath(config, "a/b.txt", "/alice"), "/tmp/sandbox-root/workspace/a/b.txt");
-  assert.equal(resolveSandboxHostPath(config, "/alice/../etc/passwd"), undefined);
+  assert.equal(resolveSandboxHostPath(config, "a/b.txt", "/home/alice"), "/tmp/sandbox-root/workspace/a/b.txt");
+  assert.equal(resolveSandboxHostPath(config, "/home/alice/../etc/passwd"), undefined);
 });
 
 test("send_file_sends_image_when_file_has_png_magic_bytes", async () => {
@@ -87,7 +87,7 @@ test("send_file_sends_image_when_file_has_png_magic_bytes", async () => {
   const result = await tools.execute({
     id: "call_send_image",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/photo.bin" }
+    input: { action: "send", type: "file", content: "/home/alice/photo.bin" }
   });
 
   assert.equal(result.ok, true);
@@ -106,7 +106,7 @@ test("send_file_sends_image_for_png_extension", async () => {
   const result = await tools.execute({
     id: "call_send_image_ext",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/photo.png" }
+    input: { action: "send", type: "file", content: "/home/alice/photo.png" }
   });
 
   assert.equal(result.ok, true);
@@ -122,7 +122,7 @@ test("send_file_sends_plain_file_with_filename", async () => {
   const result = await tools.execute({
     id: "call_send_file",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/report.txt" }
+    input: { action: "send", type: "file", content: "/home/alice/report.txt" }
   });
 
   assert.equal(result.ok, true);
@@ -147,7 +147,7 @@ test("send_file_fails_when_sandbox_not_configured", async () => {
   const result = await tools.execute({
     id: "call_send_file_no_sandbox",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/report.txt" }
+    input: { action: "send", type: "file", content: "/home/alice/report.txt" }
   });
 
   assert.equal(result.ok, false);
@@ -173,7 +173,7 @@ test("send_file_fails_when_file_missing", async () => {
   const result = await tools.execute({
     id: "call_send_file_missing",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/missing.txt" }
+    input: { action: "send", type: "file", content: "/home/alice/missing.txt" }
   });
 
   assert.equal(result.ok, false);
@@ -187,7 +187,7 @@ test("send_file_fails_when_path_is_directory", async () => {
   const result = await tools.execute({
     id: "call_send_file_dir",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/folder" }
+    input: { action: "send", type: "file", content: "/home/alice/folder" }
   });
 
   assert.equal(result.ok, false);
@@ -219,7 +219,7 @@ test("send_file_keeps_staged_asset_when_send_fails_for_retry", async () => {
   const result = await failingTools.execute({
     id: "call_send_file_fail",
     toolName: "Chat",
-    input: { action: "send", type: "file", content: "/alice/report.txt" }
+    input: { action: "send", type: "file", content: "/home/alice/report.txt" }
   });
 
   assert.equal(result.ok, false);

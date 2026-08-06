@@ -35,7 +35,7 @@ test("memorizeLoop_failedCompletion_doesNotCommitWorkspace", async () => {
               type: "function",
               function: {
                 name: "Read",
-                arguments: JSON.stringify({ path: "/alice/memory_organization/persistent-memory.md" })
+                arguments: JSON.stringify({ path: "/home/alice/memory_organization/persistent-memory.md" })
               }
             }]
           }
@@ -114,7 +114,7 @@ test("memorizeSender_followupRound_usesFollowupExtraParams", async () => {
             toolCalls: [{
               id: "read_1",
               type: "function",
-              function: { name: "Read", arguments: JSON.stringify({ path: "/alice/memory_organization/persistent-memory.md" }) }
+              function: { name: "Read", arguments: JSON.stringify({ path: "/home/alice/memory_organization/persistent-memory.md" }) }
             }]
           }
         };
@@ -213,7 +213,7 @@ test("memorizeLoop_oversizedWorkspaceFile_returnsErrorToModelBeforeCommit", asyn
   const memoryStore = createMarkdownMemoryStore(root);
   const sandbox = makeMemorySandbox(root);
   const hostPersistentPath = path.join(sandbox.hostRoot, "memory_organization", "persistent-memory.md");
-  const sandboxPersistentPath = "/alice/memory_organization/persistent-memory.md";
+  const sandboxPersistentPath = "/home/alice/memory_organization/persistent-memory.md";
   let calls = 0;
 
   const result = await runMemoryInductionForMessages({

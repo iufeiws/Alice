@@ -263,10 +263,10 @@ test("admin plugin config never exposes pi worker tokens", async () => {
   base.config.bashSandbox.piWorker = {
     enabled: true,
     hostDir: path.join(root, "pi-sessions"),
-    containerDir: "/alice/.agent/pi-sessions",
+    containerDir: "/home/alice/.pi-sessions",
     port: 8790,
     workerToken: "secret-worker-token",
-    sandboxCwd: "/alice",
+    sandboxCwd: "/home/alice",
     maxConcurrency: 2,
     maxQueueSize: 20,
     taskTimeoutSeconds: 900,

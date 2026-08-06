@@ -59,7 +59,7 @@ export function createTestMemoryPromptStore(root: string) {
  */
 export function makeMemorySandbox(root: string): MemorySandbox {
   const hostRoot = path.join(root, "sandbox", "workspace");
-  const containerRoot = "/alice";
+  const containerRoot = "/home/alice";
   fs.mkdirSync(hostRoot, { recursive: true });
 
   const hostPathFor = (containerPath: string): string => {

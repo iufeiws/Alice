@@ -37,7 +37,7 @@ test("memoryReadTool_validContent_recordsPiAdapterToolCall", async () => {
                 type: "function",
                 function: {
                   name: "Read",
-                  arguments: JSON.stringify({ path: "/alice/memory_organization/persistent-memory.md" })
+                  arguments: JSON.stringify({ path: "/home/alice/memory_organization/persistent-memory.md" })
                 }
               }]
             }
@@ -55,7 +55,7 @@ test("memoryReadTool_validContent_recordsPiAdapterToolCall", async () => {
   assert.equal(result.ok, true);
   assert.equal(seen.length, 2);
   assert.equal(typeof result.results[0]?.toolCalls.find((entry) => entry.name === "Read")?.output, "string");
-  assert.deepEqual(result.results[0]?.toolCalls.find((entry) => entry.name === "Read")?.input, { path: "/alice/memory_organization/persistent-memory.md" });
+  assert.deepEqual(result.results[0]?.toolCalls.find((entry) => entry.name === "Read")?.input, { path: "/home/alice/memory_organization/persistent-memory.md" });
 });
 
 test("memoryReadTool_emptyDiary_usesPlaceholderWithoutPersistingIt", async () => {
@@ -85,7 +85,7 @@ test("memoryReadTool_emptyDiary_usesPlaceholderWithoutPersistingIt", async () =>
                 type: "function",
                 function: {
                   name: "Read",
-                  arguments: JSON.stringify({ path: "/alice/memory_organization/diary.md" })
+                  arguments: JSON.stringify({ path: "/home/alice/memory_organization/diary.md" })
                 }
               }]
             }

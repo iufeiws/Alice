@@ -13,11 +13,11 @@ test("Pi SubAgent activity hold keeps Chat state waiting without a deadline", ()
     random: () => 0.5
   });
   state.setState("idle");
-  state.acquirePiSubAgentHold();
+  state.acquireSubAgentHold();
   assert.equal(state.getSnapshot().state, "waiting");
   assert.equal(state.getSnapshot().nextTransitionAt, undefined);
   assert.throws(() => state.setState("idle"), /agent_state_waiting_locked/);
-  state.releasePiSubAgentHold();
+  state.releaseSubAgentHold();
   assert.equal(state.getSnapshot().state, "waiting");
   assert.ok(state.getSnapshot().nextTransitionAt);
 });

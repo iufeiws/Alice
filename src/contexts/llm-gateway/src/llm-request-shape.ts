@@ -35,7 +35,7 @@ export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperat
 }
 
 export function formatPreviewContextLine(entry: StoredConversationMessage): string {
-  const speaker = entry.direction === "inbound" ? "User" : "Assistant";
+  const speaker = entry.direction === "outbound" ? "Assistant" : "User";
   const recalled = entry.isRecalled ? " [recalled]" : "";
   const read = entry.isRead ? " [read]" : "";
   const reactions = summarizePreviewReactions(entry.reactionsJson);

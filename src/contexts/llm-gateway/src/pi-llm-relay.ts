@@ -2,17 +2,18 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatResult } from "./index.js";
 import type { PiPresetSnapshot } from "./pi-preset-adapter.js";
+import { createOpenAIUpstreamRequester, type OpenAIUpstreamRequest } from "./llm-upstream-requester.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const DEFAULT_TIMEOUT_MS = 120_000;
 const allowedResponseHeaders = ["content-type", "cache-control", "x-request-id", "retry-after"];
 
 export type PiRelayCapability = {
   tokenHash: string;
   sandboxId: string;
   active: boolean;
-  expiresAt?: string;
-  sessionPresets: Map<string, PiPresetSnapshot>;
+  preset: PiPresetSnapshot;
+  /** Gateway-owned upstream transport (timeout/retry/auth); the relay never re-implements LLM interaction. */
+  requester: OpenAIUpstreamRequest;
 };
 
 export type PiRelayUsageRecorder = (input: {
@@ -31,10 +32,8 @@ export type PiRelayRequest = {
 };
 
 export type PiLLMRelay = {
-  createCapability(input: { sandboxId: string; token?: string }): { token: string; capability: PiRelayCapability };
+  createCapability(input: { sandboxId: string; preset: PiPresetSnapshot; token?: string }): { token: string; capability: PiRelayCapability };
   revokeCapability(token: string): void;
-  bindSession(input: { token: string; sessionId: string; preset: PiPresetSnapshot }): void;
-  releaseSession(input: { token: string; sessionId: string }): void;
   handle(request: Request | PiRelayRequest): Promise<Response>;
   start(): Promise<{ close(): Promise<void>; port: number }>;
   stop(): Promise<void>;
@@ -47,20 +46,28 @@ export function createPiLLMRelay(input: {
   port?: number;
   fetchImpl?: typeof fetch;
   maxBodyBytes?: number;
+  maxConcurrency?: number;
 }): PiLLMRelay {
-  const fetchImpl = input.fetchImpl ?? fetch;
   const maxBodyBytes = input.maxBodyBytes ?? MAX_BODY_BYTES;
+  const slots = createConcurrencySlots(input.maxConcurrency ?? 1);
   const capabilities = new Map<string, PiRelayCapability>();
   let activeServer: { close(callback: (error?: Error) => void): void } | undefined;
 
   return {
     createCapability(capabilityInput) {
       const token = capabilityInput.token ?? randomToken();
+      const preset = freezePreset(capabilityInput.preset);
       const capability = {
         tokenHash: hashToken(token),
         sandboxId: capabilityInput.sandboxId,
         active: true,
-        sessionPresets: new Map<string, PiPresetSnapshot>()
+        preset,
+        requester: createOpenAIUpstreamRequester({
+          baseURL: preset.baseURL,
+          apiKey: preset.apiKey,
+          timeoutMs: preset.timeoutMs,
+          fetchImpl: input.fetchImpl
+        })
       } satisfies PiRelayCapability;
       capabilities.set(capability.tokenHash, capability);
       return { token, capability };
@@ -70,52 +77,93 @@ export function createPiLLMRelay(input: {
       const capability = capabilities.get(hash);
       if (capability) capability.active = false;
     },
-    bindSession(bindInput) {
-      const capability = requireCapability(bindInput.token);
-      capability.sessionPresets.set(bindInput.sessionId, Object.freeze({
-        ...bindInput.preset,
-        extraParams: Object.freeze({ ...bindInput.preset.extraParams })
-      }));
-    },
-    releaseSession(releaseInput) {
-      capabilities.get(hashToken(releaseInput.token))?.sessionPresets.delete(releaseInput.sessionId);
-    },
-    async handle(request) {
-      return await handleRelayRequest(request, { capabilities, fetchImpl, maxBodyBytes, time: input.time, recordTokenUsageEvent: input.recordTokenUsageEvent });
+    handle(request) {
+      return handleRelayRequest(request, {
+        capabilities,
+        maxBodyBytes,
+        slots,
+        time: input.time,
+        recordTokenUsageEvent: input.recordTokenUsageEvent
+      });
     },
     async start() {
       const http = await import("node:http");
       const server = http.createServer(async (req, res) => {
         const chunks: Buffer[] = [];
         let size = 0;
-        for await (const chunk of req) {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          size += buffer.byteLength;
-          if (size > maxBodyBytes) {
-            res.statusCode = 413;
-            res.end("request_body_too_large");
-            req.destroy();
+        try {
+          for await (const chunk of req) {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            size += buffer.byteLength;
+            if (size > maxBodyBytes) {
+              res.statusCode = 413;
+              res.end("request_body_too_large");
+              req.destroy();
+              return;
+            }
+            chunks.push(buffer);
+          }
+          const response = await handleRelayRequest({
+            method: req.method,
+            url: req.url,
+            headers: nodeHeaders(req.headers),
+            body: Buffer.concat(chunks)
+          }, {
+            capabilities,
+            maxBodyBytes,
+            slots,
+            time: input.time,
+            recordTokenUsageEvent: input.recordTokenUsageEvent
+          });
+          res.statusCode = response.status;
+          response.headers.forEach((value, key) => res.setHeader(key, value));
+          if (response.body) {
+            const reader = response.body.getReader();
+            let finished = false;
+            // The Pi agent may abort mid-stream (session cancel/timeout); the
+            // upstream must be torn down so the concurrency slot is released
+            // instead of lingering until the relay timeout.
+            res.on("close", () => {
+              if (!finished) void reader.cancel().catch(() => {});
+            });
+            try {
+              while (true) {
+                const next = await reader.read();
+                if (next.done) break;
+                res.write(next.value);
+              }
+              res.end();
+            } catch (error) {
+              // Upstream errors are raised by the LLM gateway requester; surface
+              // them as 502 instead of leaving the client hanging.
+              if (res.headersSent) {
+                res.destroy();
+                return;
+              }
+              res.statusCode = 502;
+              res.setHeader("content-type", "application/json");
+              res.end(JSON.stringify({
+                error: { message: error instanceof Error ? error.message : String(error), type: "pi_relay_upstream_failed" }
+              }));
+            } finally {
+              finished = true;
+            }
             return;
           }
-          chunks.push(buffer);
-        }
-        const response = await handleRelayRequest({
-          method: req.method,
-          url: req.url,
-          headers: nodeHeaders(req.headers),
-          body: Buffer.concat(chunks)
-        }, { capabilities, fetchImpl, maxBodyBytes, time: input.time, recordTokenUsageEvent: input.recordTokenUsageEvent });
-        res.statusCode = response.status;
-        response.headers.forEach((value, key) => res.setHeader(key, value));
-        if (response.body) {
-          const reader = response.body.getReader();
-          while (true) {
-            const next = await reader.read();
-            if (next.done) break;
-            res.write(next.value);
+          res.end();
+        } catch (error) {
+          // Upstream errors are raised by the LLM gateway requester; surface
+          // them as 502 instead of leaving the client hanging.
+          if (res.headersSent) {
+            res.destroy();
+            return;
           }
+          res.statusCode = 502;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({
+            error: { message: error instanceof Error ? error.message : String(error), type: "pi_relay_upstream_failed" }
+          }));
         }
-        res.end();
       });
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -138,20 +186,35 @@ export function createPiLLMRelay(input: {
       activeServer = undefined;
     }
   };
+}
 
-  function requireCapability(token: string): PiRelayCapability {
-    const capability = capabilities.get(hashToken(token));
-    if (!capability || !capability.active) throw new Error("pi_relay_capability_invalid");
-    return capability;
-  }
+function freezePreset(preset: PiPresetSnapshot): PiPresetSnapshot {
+  return Object.freeze({
+    ...preset,
+    extraParams: Object.freeze({ ...preset.extraParams })
+  });
+}
+
+function createConcurrencySlots(max: number): { acquire(): boolean; release(): void } {
+  let active = 0;
+  return {
+    acquire() {
+      if (active >= max) return false;
+      active += 1;
+      return true;
+    },
+    release() {
+      active = Math.max(0, active - 1);
+    }
+  };
 }
 
 async function handleRelayRequest(
   request: Request | PiRelayRequest,
   input: {
     capabilities: Map<string, PiRelayCapability>;
-    fetchImpl: typeof fetch;
     maxBodyBytes: number;
+    slots: { acquire(): boolean; release(): void };
     time: CurrentTimeProvider;
     recordTokenUsageEvent: PiRelayUsageRecorder;
   }
@@ -164,7 +227,8 @@ async function handleRelayRequest(
   const token = bearerToken(headers.get("authorization"));
   if (!token) return relayError(401, "pi_relay_capability_required");
   const capability = findCapability(input.capabilities, token);
-  if (!capability || !capability.active || (capability.expiresAt && capability.expiresAt <= input.time.now().iso)) return relayError(403, "pi_relay_capability_invalid");
+  if (!capability || !capability.active) return relayError(403, "pi_relay_capability_invalid");
+  const preset = capability.preset;
   let body: Buffer;
   try {
     body = await readBody(request, input.maxBodyBytes);
@@ -178,10 +242,8 @@ async function handleRelayRequest(
   } catch {
     return relayError(400, "pi_relay_invalid_json");
   }
-  const sessionId = sessionIdFrom(headers, parsed);
-  if (!sessionId) return relayError(400, "pi_relay_session_required");
-  const preset = capability.sessionPresets.get(sessionId);
-  if (!preset) return relayError(403, "pi_relay_session_not_bound");
+  // Session id is diagnostics only; it never participates in authorization.
+  const _sessionId = sessionIdFrom(headers, parsed);
   if (parsed.model !== preset.model) return relayError(400, "pi_relay_model_not_allowed");
   const upstreamBody: Record<string, unknown> = {
     ...parsed,
@@ -193,50 +255,120 @@ async function handleRelayRequest(
   delete upstreamBody.authorization;
   delete upstreamBody.apiKey;
   delete upstreamBody.baseURL;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), preset.timeoutMs || DEFAULT_TIMEOUT_MS);
-  let upstream: Response;
+
+  if (!input.slots.acquire()) return relayError(429, "pi_relay_concurrency_limit");
+  let response: Response;
   try {
-    upstream = await input.fetchImpl(`${preset.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: headers.get("accept") ?? "application/json",
-        authorization: `Bearer ${preset.apiKey}`
-      },
-      body: JSON.stringify(upstreamBody),
-      signal: controller.signal
+    // Upstream transport (timeout, retry, auth) belongs to the LLM gateway.
+    const attempt = await capability.requester({
+      path: "/chat/completions",
+      init: {
+        method: "POST",
+        headers: { accept: headers.get("accept") ?? "application/json" },
+        body: JSON.stringify(upstreamBody)
+      }
     });
-  } finally {
-    clearTimeout(timeout);
+    const upstream = attempt.response;
+    // cleanup() clears the upstream timeout; it must stay armed until the body
+    // is fully consumed so a stalled stream is aborted instead of holding the
+    // concurrency slot forever.
+    response = await forwardResponse(upstream, preset, input, () => input.slots.release(), attempt.cleanup, attempt.abort);
+  } catch (error) {
+    input.slots.release();
+    throw error;
   }
-  const response = await forwardResponse(upstream, preset, input);
   return response;
 }
 
-async function forwardResponse(response: Response, preset: PiPresetSnapshot, input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder }): Promise<Response> {
+async function forwardResponse(
+  response: Response,
+  preset: PiPresetSnapshot,
+  input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder },
+  release: () => void,
+  cleanup: () => void,
+  abort: () => void
+): Promise<Response> {
   const responseHeaders = new Headers();
   for (const name of allowedResponseHeaders) {
     const value = response.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
-  if (!response.body) return new Response(null, { status: response.status, headers: responseHeaders });
+  if (!response.body) {
+    cleanup();
+    release();
+    return new Response(null, { status: response.status, headers: responseHeaders });
+  }
   if (!isSse(response.headers.get("content-type"))) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (response.ok) recordUsageFromJson(bytes, preset, input);
-    return new Response(bytes, { status: response.status, headers: responseHeaders });
+    try {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (response.ok) recordUsageFromJson(bytes, preset, input);
+      return new Response(bytes, { status: response.status, headers: responseHeaders });
+    } finally {
+      cleanup();
+      release();
+    }
   }
   const [clientBody, observerBody] = response.body.tee();
-  void observeSseUsage(observerBody, preset, input);
-  return new Response(clientBody, { status: response.status, headers: responseHeaders });
+  // The concurrency slot tracks the upstream stream lifetime: it is released
+  // when the usage observer finishes (EOF, error, or abort). A client cancel
+  // aborts the upstream transport instead, so the slot is not released while
+  // an upstream stream is still consuming capacity.
+  void observeSseUsage(observerBody, preset, input)
+    .catch(() => {
+      // Upstream aborted (timeout or client cancel); nothing to record.
+    })
+    .finally(() => {
+      cleanup();
+      release();
+    });
+  return new Response(withClientCancel(clientBody, abort), { status: response.status, headers: responseHeaders });
 }
+
+/** Wrap a stream so the client can cancel the upstream transport when it disconnects. */
+function withClientCancel(stream: ReadableStream<Uint8Array>, abort: () => void): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(next.value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel() {
+      abort();
+      return reader.cancel();
+    }
+  });
+}
+
+type SseMetadata = { id?: string; model?: string; finish_reason?: string };
 
 async function observeSseUsage(body: ReadableStream<Uint8Array>, preset: PiPresetSnapshot, input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder }): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let usage: Record<string, unknown> | undefined;
-  let metadata: { id?: string; model?: string; finish_reason?: string } = {};
+  let metadata: SseMetadata = {};
+  const consumeFrame = (payload: string) => {
+    if (payload === "[DONE]") return;
+    try {
+      const parsed = JSON.parse(payload) as { usage?: Record<string, unknown> | null; model?: string; id?: string; choices?: Array<{ finish_reason?: string }> };
+      if (parsed.usage) usage = parsed.usage;
+      metadata = {
+        id: parsed.id ?? metadata.id,
+        model: parsed.model ?? metadata.model,
+        finish_reason: parsed.choices?.[0]?.finish_reason ?? metadata.finish_reason
+      };
+    } catch {
+      // A partial or provider-specific SSE frame is not a usage event.
+    }
+  };
   while (true) {
     const next = await reader.read();
     if (next.done) break;
@@ -244,34 +376,10 @@ async function observeSseUsage(body: ReadableStream<Uint8Array>, preset: PiPrese
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (payload === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(payload) as { usage?: Record<string, unknown> | null; model?: string; id?: string; choices?: Array<{ finish_reason?: string }> };
-        if (parsed.usage) usage = parsed.usage;
-        metadata = {
-          id: parsed.id ?? metadata.id,
-          model: parsed.model ?? metadata.model,
-          finish_reason: parsed.choices?.[0]?.finish_reason ?? metadata.finish_reason
-        };
-      } catch {
-        // A partial or provider-specific SSE frame is not a usage event.
-      }
+      if (line.startsWith("data:")) consumeFrame(line.slice(5).trim());
     }
   }
-  if (buffer.startsWith("data:")) {
-    const payload = buffer.slice(5).trim();
-    if (payload !== "[DONE]") {
-      try {
-        const parsed = JSON.parse(payload) as { usage?: Record<string, unknown> | null; model?: string; id?: string; choices?: Array<{ finish_reason?: string }> };
-        if (parsed.usage) usage = parsed.usage;
-        metadata = { id: parsed.id ?? metadata.id, model: parsed.model ?? metadata.model, finish_reason: parsed.choices?.[0]?.finish_reason ?? metadata.finish_reason };
-      } catch {
-        // A partial or provider-specific SSE frame is not a usage event.
-      }
-    }
-  }
+  if (buffer.startsWith("data:")) consumeFrame(buffer.slice(5).trim());
   if (usage) recordUsage({ ...metadata, usage }, preset, input);
 }
 

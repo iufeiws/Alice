@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertPiPresetCompatible, createPiPresetSnapshot, piModelConfig } from "../../../src/contexts/llm-gateway/src/pi-preset-adapter.js";
+import { createPiPresetSnapshot } from "../../../src/contexts/llm-gateway/src/pi-preset-adapter.js";
 
 const preset = {
   name: "local",
@@ -30,27 +30,34 @@ test("Pi preset snapshot retains only approved upstream fields", () => {
     supportsImage: true,
     extraParams: { top_p: 0.8 }
   });
-  assert.deepEqual(piModelConfig(snapshot, "http://host.docker.internal:3411/v1"), {
-    id: "model-a",
-    api: "openai-completions",
-    baseUrl: "http://host.docker.internal:3411/v1",
-    reasoning: false,
-    input: ["text", "image"],
-    temperature: 0.3,
-    maxTokens: 1024
+});
+test("Pi preset snapshot accepts project preset parameters and ignores followup-only parameters", () => {
+  const snapshot = createPiPresetSnapshot({
+    ...preset,
+    extraParams: {
+      stream_options: { include_usage: true },
+      tool_choice: "auto",
+      unknown_project_parameter: "preserve"
+    },
+    followupExtraParams: {
+      reasoning_effort: "high"
+    }
+  });
+
+  assert.deepEqual(snapshot.extraParams, {
+    stream_options: { include_usage: true },
+    tool_choice: "auto",
+    unknown_project_parameter: "preserve"
   });
 });
-test("Pi preset rejects request-shaping extra params instead of ignoring them", () => {
-  assert.throws(() => assertPiPresetCompatible({
-    extraParams: { tool_choice: "auto" },
-    followupExtraParams: {}
-  }), /pi_preset_incompatible_extra_param:tool_choice/);
-  assert.throws(() => assertPiPresetCompatible({
-    extraParams: { unknown_param: true },
-    followupExtraParams: {}
-  }), /pi_preset_incompatible_extra_param:unknown_param/);
-  assert.throws(() => assertPiPresetCompatible({
-    extraParams: {},
-    followupExtraParams: { temperature: 0.2 }
-  }), /pi_preset_followup_extra_params_unsupported/);
+
+test("Pi preset snapshot accepts project presets without optional upstream credentials", () => {
+  const snapshot = createPiPresetSnapshot({
+    ...preset,
+    baseURL: "",
+    apiKey: undefined
+  });
+
+  assert.equal(snapshot.baseURL, "");
+  assert.equal(snapshot.apiKey, undefined);
 });

@@ -5,6 +5,7 @@ import {
   sanitizeLLMResponseMessage,
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
+import { createOpenAIUpstreamRequester } from "./llm-upstream-requester.js";
 
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
@@ -14,6 +15,7 @@ export * from "./llm-observability-runtime.js";
 export * from "./llm-request-diff.js";
 export * from "./llm-request-preview-runtime.js";
 export * from "./llm-request-shape.js";
+export * from "./llm-upstream-requester.js";
 export * from "./token-usage-runtime.js";
 export * from "./pi-preset-adapter.js";
 export * from "./pi-llm-relay.js";
@@ -189,60 +191,12 @@ type OpenAIToolCall = NonNullable<
   NonNullable<NonNullable<OpenAIChatCompletionResponse["choices"]>[number]["message"]>["tool_calls"]
 >[number];
 
-const openAIRetryAttempts = 2;
-const openAIRetryDelayMs = 2_000;
-
 export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LLMClient {
   const baseURL = config.baseURL.replace(/\/+$/, "");
-
-  async function fetchOpenAI(path: string, init: RequestInit, signal?: AbortSignal): Promise<{
-    response: Response;
-    cleanup(): void;
-    abort(): void;
-  }> {
-    for (let attempt = 1; attempt <= openAIRetryAttempts; attempt += 1) {
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      if (signal?.aborted) controller.abort();
-      signal?.addEventListener("abort", abort, { once: true });
-      const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
-      const cleanup = () => {
-        signal?.removeEventListener("abort", abort);
-        clearTimeout(timeout);
-      };
-
-      try {
-        const response = await fetch(`${baseURL}${path}`, {
-          ...init,
-          signal: controller.signal,
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${config.apiKey}`,
-            ...(init.headers ?? {})
-          }
-        });
-        if (attempt < openAIRetryAttempts && isRetryableOpenAIStatus(response.status) && !signal?.aborted) {
-          cleanup();
-          try {
-            await response.body?.cancel();
-          } catch {
-            // Response body may already be closed by the runtime.
-          }
-          await sleep(openAIRetryDelayMs, signal);
-          continue;
-        }
-        return { response, cleanup, abort: () => controller.abort() };
-      } catch (error) {
-        cleanup();
-        if (attempt >= openAIRetryAttempts || signal?.aborted) throw error;
-        await sleep(openAIRetryDelayMs, signal);
-      }
-    }
-    throw new Error("unreachable OpenAI fetch retry state");
-  }
+  const requestUpstream = createOpenAIUpstreamRequester({ baseURL, apiKey: config.apiKey, timeoutMs: config.timeoutMs });
 
   async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
-    const { response, cleanup } = await fetchOpenAI(path, init, signal);
+    const { response, cleanup } = await requestUpstream({ path, init, signal });
     try {
       if (!response.ok) {
         const body = await response.text();
@@ -261,10 +215,14 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     handlers: LLMStreamHandlers | undefined,
     signal?: AbortSignal
   ): Promise<LLMChatResult> {
-    const fetchAttempt = await fetchOpenAI(path, {
-      method: "POST",
-      body: JSON.stringify({ ...body, stream: true })
-    }, signal);
+    const fetchAttempt = await requestUpstream({
+      path,
+      init: {
+        method: "POST",
+        body: JSON.stringify({ ...body, stream: true })
+      },
+      signal
+    });
     const { response } = fetchAttempt;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let completed = false;
@@ -448,29 +406,6 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     return config.messageSanitization?.removeParenthesizedAssistantResponseContent
       ?? defaultLLMMessageSanitizationOptions.removeParenthesizedAssistantResponseContent;
   }
-}
-
-function isRetryableOpenAIStatus(status: number): boolean {
-  return status === 502 || status === 503;
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException("aborted", "AbortError"));
-      return;
-    }
-    const timeout = setTimeout(done, ms);
-    const abort = () => {
-      clearTimeout(timeout);
-      reject(new DOMException("aborted", "AbortError"));
-    };
-    function done() {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }
-    signal?.addEventListener("abort", abort, { once: true });
-  });
 }
 
 function toOpenAIMessage(message: LLMMessage): Record<string, unknown> {

@@ -9,7 +9,8 @@ import { createLocationTools } from "../../location/src/index.js";
 import { createCalendarTools } from "../../calendar/src/index.js";
 import { createFinishAndWaitTools } from "../../finish-and-wait/src/index.js";
 import { createDiceTools } from "../../dice/src/index.js";
-import { createGlobTool } from "../../file/src/index.js";
+import { createFileTools } from "../../file/src/index.js";
+import { createShellTools } from "../../shell/src/index.js";
 import { createSkillsTools } from "../../skills/src/index.js";
 import { createRestartTools, createSystemdRestartController } from "../../restart/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
@@ -20,9 +21,8 @@ import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { createRandomEventSandboxRuntime } from "../../../../contexts/initiative/src/application/random-event-sandbox-runtime.js";
-import type { PiSandboxRuntime } from "../../../../contexts/pi-sandbox/src/index.js";
-import { createPiToolAdapter } from "../../pi/src/pi-tool-adapter.js";
-import { createSubAgentTool } from "../../pi/src/subagent-tool.js";
+import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
+import { createSubAgentTool } from "../../subagent/src/index.js";
 
 const path = await import("node:path");
 
@@ -50,7 +50,7 @@ export function createToolRuntime(input: {
   getApprovalService(): any;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
-  piSandboxRuntime?: PiSandboxRuntime;
+  piWorkerRuntime?: PiWorkerRuntime;
   recognizeImage?(filePath: string): Promise<{ text: string }>;
 }) {
   const resolveOutputTarget = createToolOutputTargetResolver({
@@ -219,18 +219,18 @@ export function createToolRuntime(input: {
     }
   );
   const skillsTools = createSkillsTools({ loader: skillsLoader });
-  const globTools = createGlobTool({ runtime: bashRuntime, config: input.config.bashSandbox });
-  const piTools = input.piSandboxRuntime
-    ? createPiToolAdapter({
-      runtime: input.piSandboxRuntime,
-      recognizeImage: input.recognizeImage,
-      resolveImagePath: (containerPath) => resolveSandboxHostPath(input.config.bashSandbox, containerPath, input.config.bashSandbox.defaultCwd)
-    })
-    : undefined;
-  const subAgentTools = input.piSandboxRuntime ? createSubAgentTool({ runtime: input.piSandboxRuntime, agentState: input.agentState }) : undefined;
+  const fileTools = createFileTools({
+    bashSandbox: bashRuntime,
+    config: input.config.bashSandbox,
+    piWorker: input.piWorkerRuntime,
+    recognizeImage: input.recognizeImage,
+    resolveImagePath: (containerPath: string) => resolveSandboxHostPath(input.config.bashSandbox, containerPath, input.config.bashSandbox.defaultCwd)
+  });
+  const shellTools = input.piWorkerRuntime ? createShellTools({ runtime: input.piWorkerRuntime }) : undefined;
+  const subAgentTools = input.piWorkerRuntime ? createSubAgentTool({ runtime: input.piWorkerRuntime, resolveOutputTarget, agentState: input.agentState }) : undefined;
   const restartTools = createRestartTools(createSystemdRestartController());
 
-  const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, globTools, skillsTools, piTools, subAgentTools].filter(Boolean) as ToolPlugin[];
+  const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, shellTools, subAgentTools].filter(Boolean) as ToolPlugin[];
 
   return {
     messagingTools,
@@ -244,8 +244,8 @@ export function createToolRuntime(input: {
     restartTools,
     diceTools,
     locationTools,
-    globTools,
-    piTools,
+    fileTools,
+    shellTools,
     subAgentTools,
     bashRuntime,
     skillsTools,

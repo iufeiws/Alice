@@ -27,47 +27,107 @@ export type PiWorkerHealth = {
   toolDefinitions: PiToolDefinition[];
 };
 
-export type PiSessionStatus = "queued" | "running" | "completed" | "failed" | "timed_out" | "aborted" | "interrupted";
+/**
+ * Invocation status. queued/running belong to a live invocation; the terminal
+ * statuses are the last observed outcome of an invocation. A Pi session itself
+ * has no terminal state and can be invoked again after it is idle.
+ */
+export type PiInvocationStatus = "queued" | "running" | "completed" | "failed" | "interrupted" | "timed_out" | "aborted";
 
-export type PiSessionEvent = {
-  cursor: string;
-  type: "status" | "tool_call" | "tool_result" | "assistant" | "usage" | "terminal" | "completion_delivered";
-  at: string;
-  data: Record<string, unknown>;
+/** Model runtime fields the container accepts; sampling stays on the relay. */
+export type PiModelConfig = {
+  model: string;
+  maxTokens?: number;
+  supportsImage: boolean;
+  reasoning: boolean;
 };
 
-export type PiSession = {
+/**
+ * One invocation on a persistent Pi session. `invocationId` is the stable
+ * Pi JSONL entry id of the `alice_pi_invocation` custom entry that represents
+ * the invocation; it never comes from an Alice-generated id.
+ */
+export type PiInvocation = {
+  invocationId: string;
   sessionId: string;
-  status: PiSessionStatus;
-  task: string;
+  status: PiInvocationStatus;
+};
+
+/** Lightweight runtime projection of a Pi session; not an Alice session mirror. */
+export type PiSessionSnapshot = {
+  sessionId: string;
+  idle: boolean;
+  invocationStatus?: PiInvocationStatus;
   createdAt: string;
   updatedAt: string;
-  terminalResult?: string;
-  terminalError?: string;
-  completionDelivered?: boolean;
-  requester?: Record<string, unknown>;
-  notificationTarget?: Record<string, unknown>;
-  usage?: Record<string, unknown>;
-  transcript?: unknown[];
-  systemPrompt?: string;
-  events?: PiSessionEvent[];
+  /** All terminal invocations observed so far; the host watcher deduplicates. */
+  terminalCompletions?: PiInvocationCompletion[];
+  /** Latest terminal invocation payload, used by the host completion watcher. */
+  lastInvocation?: PiInvocationCompletion;
+};
+
+export type PiSessionListEntry = {
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+};
+
+export type PiSessionReadView = "context" | "messages" | "tree";
+
+export type PiSessionReadResult = {
+  sessionId: string;
+  idle: boolean;
+  invocationStatus?: PiInvocationStatus;
+  /** Effective model context (compaction-aware, current branch). */
+  context?: { messages: unknown[] };
+  /** Current branch messages. */
+  messages?: unknown[];
+  /** Pi native entry tree. */
+  tree?: unknown[];
+};
+
+/** Completion payload produced when an invocation finishes or is reconciled. */
+export type PiInvocationCompletion = {
+  sessionId: string;
+  invocationId: string;
+  status: Exclude<PiInvocationStatus, "queued" | "running">;
+  /** Final assistant content, or the accurate error text for failed statuses. */
+  text: string;
+  /** Invocation-time message target saved in the Pi custom entry. */
+  messageTarget?: Record<string, unknown>;
 };
 
 export type PiWorkerClient = {
+  configure(input: { relayUrl: string; relayToken: string }): Promise<{ ok: true }>;
   health(signal?: AbortSignal): Promise<PiWorkerHealth>;
   executeTool(input: { requestId: string; toolName: string; input: Record<string, unknown>; signal?: AbortSignal }): Promise<PiToolExecutionResult>;
-  createSession(input: { task: string; timeoutSeconds?: number; requester?: Record<string, unknown>; notificationTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<Pick<PiSession, "sessionId" | "status">>;
-  startSession(sessionId: string, input?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean; signal?: AbortSignal }): Promise<Pick<PiSession, "sessionId" | "status">>;
-  previewSession(input: { sessionId: string; model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean; signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
-  getSession(sessionId: string, signal?: AbortSignal): Promise<PiSession>;
-  listSessions(signal?: AbortSignal): Promise<PiSession[]>;
-  listSessionEvents(sessionId: string, cursor?: string, signal?: AbortSignal): Promise<{ events: PiSessionEvent[]; nextCursor?: string }>;
-  cancelSession(sessionId: string, signal?: AbortSignal): Promise<PiSession>;
-  markInterrupted(sessionId: string, signal?: AbortSignal): Promise<PiSession>;
-  markCompletionDelivered(sessionId: string, signal?: AbortSignal): Promise<PiSession>;
+  startInvocation(input: PiInvocationStartInput & { signal?: AbortSignal }): Promise<PiInvocation>;
+  sendInvocation(sessionId: string, input: PiInvocationSendInput & { signal?: AbortSignal }): Promise<PiInvocation>;
+  listSessions(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
+  readSession(sessionId: string, view?: PiSessionReadView, signal?: AbortSignal): Promise<PiSessionReadResult>;
+  sessionStatus(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  waitSession(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  cancelSession(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  forkSession(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
+  previewSession(input: PiModelConfig & { signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
+  reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
 };
 
-export type PiSandboxRuntime = {
+export type PiInvocationStartInput = {
+  message: string;
+  timeoutSeconds?: number;
+  messageTarget?: Record<string, unknown>;
+} & PiModelConfig;
+
+export type PiInvocationSendInput = {
+  message: string;
+  mode?: "prompt" | "steer" | "follow_up";
+  timeoutSeconds?: number;
+  messageTarget?: Record<string, unknown>;
+} & PiModelConfig;
+
+export type PiWorkerRuntime = {
   start(): Promise<void>;
   stop(): Promise<void>;
   restart(reason: "mount_changed" | "admin" | "wake" | "config"): Promise<void>;
@@ -75,18 +135,16 @@ export type PiSandboxRuntime = {
   previewPrompt(input?: { presetName?: string; signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
   toolDefinitions(): PiToolDefinition[];
   executeTool(input: { requestId: string; toolName: string; input: Record<string, unknown>; context?: ToolExecutionContext }): Promise<PiToolExecutionResult>;
-  startSubAgent(input: { task: string; timeoutSeconds?: number; requester?: Record<string, unknown>; notificationTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<Pick<PiSession, "sessionId" | "status">>;
-  statusSubAgent(sessionId: string, cursor?: string, signal?: AbortSignal): Promise<PiSession & { nextCursor?: string }>;
-  cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSession>;
-  reconcileInterrupted(signal?: AbortSignal): Promise<PiSession[]>;
-  onTerminal(listener: (session: PiSession) => Promise<void> | void): () => void;
-};
-
-export type PiCompletionMessage = {
-  sessionId: string;
-  status: Exclude<PiSessionStatus, "queued" | "running">;
-  text: string;
-  target?: Record<string, unknown>;
+  startSubAgent(input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
+  listSubAgents(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
+  readSubAgent(sessionId: string, view?: PiSessionReadView, signal?: AbortSignal): Promise<PiSessionReadResult>;
+  sendSubAgent(sessionId: string, input: { message: string; mode?: "prompt" | "steer" | "follow_up"; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
+  statusSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  waitSubAgent(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  forkSubAgent(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
+  reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
+  onInvocationCompleted(listener: (completion: PiInvocationCompletion) => Promise<void> | void): () => void;
 };
 
 export function piToolResultToToolResult(callId: string, result: PiToolExecutionResult): ToolResult {

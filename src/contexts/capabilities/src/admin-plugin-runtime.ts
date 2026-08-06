@@ -4,7 +4,7 @@ import { publicLLMApiPresets, readLLMApiPresets } from "../../llm-gateway/src/ad
 import { writeJson } from "../../../apps/api/routes/admin-http.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import { booleanFromUnknown, numberFromUnknown, optionalString, requiredString } from "../../../shared/admin-input/src/index.js";
-import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig } from "../../bash-sandbox/src/index.js";
+import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type PiWorkerContainerConfig } from "../../bash-sandbox/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../apps/api/bootstrap/admin-route-context.js";
 import { asrPluginEntry } from "./admin-plugin-asr-runtime.js";
 import { googleStreetViewPluginEntry, worldWandererPluginEntry } from "./admin-plugin-geo-runtime.js";
@@ -13,7 +13,7 @@ import { generatePhotoOnBody, photoPluginEntry } from "./admin-plugin-photo-runt
 import { ttsPluginEntry } from "./admin-plugin-tts-runtime.js";
 import type { AdminPluginRegistryEntry, AdminPluginSummary, TtsAdminConfig } from "./admin-plugin-types.js";
 import { createPiPresetSnapshot } from "../../llm-gateway/src/pi-preset-adapter.js";
-import { readPiSandboxConfig, validatePiSandboxConfig, writePiSandboxConfig, type PiSandboxConfig } from "../../pi-sandbox/src/index.js";
+import { readPiWorkerConfig, validatePiWorkerConfig, writePiWorkerConfig, type PiWorkerConfig } from "../../pi-worker/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -93,7 +93,7 @@ function adminPluginRegistry(_context: AdminRoutesContext): AdminPluginRegistryE
   return [
     messagingPluginEntry(),
     bashSandboxPluginEntry(),
-    piSandboxPluginEntry(),
+    piWorkerPluginEntry(),
     asrPluginEntry(),
     imageRecognitionPluginEntry(),
     ttsPluginEntry(),
@@ -187,66 +187,72 @@ function messagingConfigMtime(context: AdminRoutesContext): string | undefined {
   return fs.existsSync(filePath) ? fs.statSync(filePath).mtime.toISOString() : undefined;
 }
 
-function piSandboxPluginEntry(): AdminPluginRegistryEntry {
+function piWorkerPluginEntry(): AdminPluginRegistryEntry {
   return {
     summary(context) {
-      const config = readPiConfigForAdmin(context);
+      const config = readPiWorkerConfigForAdmin(context);
       return {
-        id: "pi_sandbox",
-        name: "Pi Sandbox",
+        id: "pi_worker",
+        name: "Pi Worker",
         kind: "tool",
         status: "enabled",
         health: config.llmPresetName ? "healthy" : "degraded",
         description: "Docker-backed Pi Worker and SubAgent runtime.",
         configurable: true,
         switchable: false,
-        configSource: piConfigPath(context)
+        configSource: piWorkerConfigPath(context)
       };
     },
     config(context) {
-      return readPiConfigForAdmin(context);
+      return readPiWorkerConfigForAdmin(context);
     },
     runtimeState(context) {
-      return context.piSandbox?.runtime ? { health: context.piSandbox.runtime.health().catch((error) => ({ ready: false, error: error instanceof Error ? error.message : String(error) })) } : undefined;
+      return context.piWorker?.runtime ? { health: context.piWorker.runtime.health().catch((error) => ({ ready: false, error: error instanceof Error ? error.message : String(error) })) } : undefined;
     },
     async preview(context) {
-      const config = readPiConfigForAdmin(context);
+      const config = readPiWorkerConfigForAdmin(context);
       if (!config.llmPresetName) return { error: "pi_llm_preset_not_configured" };
-      if (!context.piSandbox?.runtime) return { error: "pi_worker_unavailable" };
-      return await context.piSandbox.runtime.previewPrompt({ presetName: config.llmPresetName });
+      if (!context.piWorker?.runtime) return { error: "pi_worker_unavailable" };
+      return await context.piWorker.runtime.previewPrompt({ presetName: config.llmPresetName });
     },
-    patch(context, patch) {
-      const current = readPiConfigForAdmin(context);
-      const nextInput: PiSandboxConfig = {
+    async patch(context, patch) {
+      const current = readPiWorkerConfigForAdmin(context);
+      const nextInput: PiWorkerConfig = {
         ...current,
-        llmPresetName: piStringField(patch, "llmPresetName", current.llmPresetName),
-        sandboxCwd: piStringField(patch, "sandboxCwd", current.sandboxCwd),
-        maxConcurrency: piNumberField(patch, "maxConcurrency", current.maxConcurrency),
-        maxQueueSize: piNumberField(patch, "maxQueueSize", current.maxQueueSize),
-        taskTimeoutSeconds: piNumberField(patch, "taskTimeoutSeconds", current.taskTimeoutSeconds),
-        taskResultRetentionSeconds: piNumberField(patch, "taskResultRetentionSeconds", current.taskResultRetentionSeconds),
-        toolTimeoutSeconds: piNumberField(patch, "toolTimeoutSeconds", current.toolTimeoutSeconds),
-        workerStartupTimeoutMs: piNumberField(patch, "workerStartupTimeoutMs", current.workerStartupTimeoutMs),
-        relayHost: piStringField(patch, "relayHost", current.relayHost),
-        relayPort: piNumberField(patch, "relayPort", current.relayPort),
-        workerHost: piStringField(patch, "workerHost", current.workerHost),
-        workerPort: piNumberField(patch, "workerPort", current.workerPort)
+        llmPresetName: piWorkerStringField(patch, "llmPresetName", current.llmPresetName),
+        sandboxCwd: piWorkerStringField(patch, "sandboxCwd", current.sandboxCwd),
+        maxConcurrency: piWorkerNumberField(patch, "maxConcurrency", current.maxConcurrency),
+        maxQueueSize: piWorkerNumberField(patch, "maxQueueSize", current.maxQueueSize),
+        taskTimeoutSeconds: piWorkerNumberField(patch, "taskTimeoutSeconds", current.taskTimeoutSeconds),
+        toolTimeoutSeconds: piWorkerNumberField(patch, "toolTimeoutSeconds", current.toolTimeoutSeconds),
+        workerStartupTimeoutMs: piWorkerNumberField(patch, "workerStartupTimeoutMs", current.workerStartupTimeoutMs),
+        relayHost: piWorkerStringField(patch, "relayHost", current.relayHost),
+        relayPort: piWorkerNumberField(patch, "relayPort", current.relayPort),
+        workerHost: piWorkerStringField(patch, "workerHost", current.workerHost),
+        workerPort: piWorkerNumberField(patch, "workerPort", current.workerPort)
       };
       const preset = readLLMApiPresets(context).find((entry) => entry.name === nextInput.llmPresetName);
       if (!preset) return { error: "pi_llm_preset_not_found" };
       try {
         createPiPresetSnapshot(preset);
-        const next = validatePiSandboxConfig(nextInput);
-        writePiSandboxConfig(next, piConfigPath(context));
-        context.config.piSandbox = next;
-        return { config: next, restartRequired: true };
+        const next = validatePiWorkerConfig(nextInput);
+        writePiWorkerConfig(next, piWorkerConfigPath(context));
+        context.config.piWorkerConfig = next;
+        const runtime = context.piWorker?.runtime;
+        if (!runtime) return { config: next, restartRequired: true };
+        try {
+          await runtime.restart("config");
+        } catch (error) {
+          return { error: `pi_worker_runtime_restart_failed:${error instanceof Error ? error.message : String(error)}` };
+        }
+        return { config: next, restartRequired: false };
       } catch (error) {
-        return { error: error instanceof Error ? error.message : "invalid_pi_sandbox_config" };
+        return { error: error instanceof Error ? error.message : "invalid_pi_worker_config" };
       }
     },
     reload(context) {
-      const config = readPiConfigForAdmin(context);
-      context.config.piSandbox = config;
+      const config = readPiWorkerConfigForAdmin(context);
+      context.config.piWorkerConfig = config;
       return { config };
     },
     configSchema: {
@@ -261,7 +267,6 @@ function piSandboxPluginEntry(): AdminPluginRegistryEntry {
         { key: "maxConcurrency", label: "Max Concurrency", type: "number", group: "worker", min: 1, max: 64, step: 1 },
         { key: "maxQueueSize", label: "Max Queue Size", type: "number", group: "worker", min: 0, max: 10000, step: 1 },
         { key: "taskTimeoutSeconds", label: "Task Timeout Seconds", type: "number", group: "worker", min: 1, max: 86400, step: 1 },
-        { key: "taskResultRetentionSeconds", label: "Task Result Retention Seconds", type: "number", group: "worker", min: 1, max: 31536000, step: 1 },
         { key: "toolTimeoutSeconds", label: "Tool Timeout Ms", type: "number", group: "worker", min: 1000, max: 3600000, step: 1000 },
         { key: "workerStartupTimeoutMs", label: "Worker Startup Timeout Ms", type: "number", group: "worker", min: 1000, max: 600000, step: 1000 },
         { key: "relayHost", label: "Relay Host", type: "text", group: "relay" },
@@ -270,13 +275,13 @@ function piSandboxPluginEntry(): AdminPluginRegistryEntry {
         { key: "workerPort", label: "Worker Port", type: "number", group: "relay", min: 1, max: 65535, step: 1 }
       ]
     },
-    routePreview: ["Pi tool/SubAgent", "Docker Pi Worker", "host-side LLM relay"],
+    routePreview: ["File/Shell tools/SubAgent", "Docker Pi Worker", "host-side LLM relay"],
     runtimeAccess: ["read and write only inside the Docker-visible sandbox", "use the selected Alice LLM preset through the dedicated relay"]
   };
 }
 
-function readPiConfigForAdmin(context: AdminRoutesContext): PiSandboxConfig {
-  return readPiSandboxConfig(piConfigPath(context));
+function readPiWorkerConfigForAdmin(context: AdminRoutesContext): PiWorkerConfig {
+  return readPiWorkerConfig(piWorkerConfigPath(context));
 }
 
 async function previewAdminPlugin(context: AdminRoutesContext, response: any, pluginId: string): Promise<void> {
@@ -303,15 +308,15 @@ async function previewAdminPlugin(context: AdminRoutesContext, response: any, pl
   writeJson(response, 200, { ok: true, ...(result && typeof result === "object" ? result : { result }) });
 }
 
-function piConfigPath(context: AdminRoutesContext): string {
-  return context.pluginConfigs?.pi?.configPath ?? "config/plugin/pi/config.json";
+function piWorkerConfigPath(context: AdminRoutesContext): string {
+  return context.pluginConfigs?.piWorker?.configPath ?? "config/plugin/pi-worker/config.json";
 }
 
-function piStringField(patch: Record<string, unknown>, key: string, fallback: string): string {
+function piWorkerStringField(patch: Record<string, unknown>, key: string, fallback: string): string {
   return patch[key] === undefined ? fallback : requiredString(patch[key]).trim();
 }
 
-function piNumberField(patch: Record<string, unknown>, key: string, fallback: number): number {
+function piWorkerNumberField(patch: Record<string, unknown>, key: string, fallback: number): number {
   return patch[key] === undefined ? fallback : Number(patch[key]);
 }
 
@@ -351,7 +356,7 @@ function bashSandboxPluginEntry(): AdminPluginRegistryEntry {
         { key: "network", label: "Network", type: "select", group: "runtime", options: [
           { value: "none", label: "none" },
           { value: "configured", label: "configured" }
-        ], description: "Takes effect after Alice restarts. configured enables Docker bridge networking and inherited proxy env." },
+        ], description: "Takes effect after Alice restarts. configured enables Docker bridge networking and inherited proxy env. The Pi Worker shares this container, so configured also gives the in-container Bash Docker bridge network access; Pi Worker requires configured and cannot be saved as none." },
         { key: "containerName", label: "Container Name", type: "text", group: "runtime" },
         { key: "image", label: "Image", type: "text", group: "runtime" },
         { key: "defaultCwd", label: "Default CWD", type: "text", group: "runtime" },
@@ -379,16 +384,21 @@ function bashSandboxPluginEntry(): AdminPluginRegistryEntry {
       "start or exec in the configured Docker container",
       "read/write configured workspace and cache mounts",
       "read optional mounts according to their readOnly flag",
-      "network access only when BASH_SANDBOX_NETWORK=configured after restart"
+      "network access only when BASH_SANDBOX_NETWORK=configured after restart",
+      "configured also grants the in-container Bash Docker bridge networking because the Pi Worker shares this container"
     ]
   };
 }
 
-type BashSandboxPublicConfig = Omit<BashSandboxConfig, "skillMounts">;
+type BashSandboxPublicConfig = Omit<BashSandboxConfig, "skillMounts" | "piWorker"> & {
+  piWorker?: Omit<PiWorkerContainerConfig, "workerToken">;
+};
 
 function publicBashSandboxConfig(config: BashSandboxConfig): BashSandboxPublicConfig {
-  const { skillMounts: _skillMounts, ...publicConfig } = config;
-  return publicConfig;
+  const { skillMounts: _skillMounts, piWorker, ...publicConfig } = config;
+  if (!piWorker) return publicConfig;
+  const { workerToken: _workerToken, ...publicPiWorker } = piWorker;
+  return { ...publicConfig, piWorker: publicPiWorker };
 }
 
 function updateBashSandboxConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: BashSandboxConfig } | { error: string } {
@@ -442,7 +452,7 @@ function readBashSandboxConfigForAdmin(context: AdminRoutesContext): BashSandbox
     skillsDir: env.BASH_SANDBOX_SKILLS_DIR ?? current.skillsDir,
     tmpDir: env.BASH_SANDBOX_TMP_DIR ?? current.tmpDir,
     mounts: env.BASH_SANDBOX_MOUNTS === undefined ? current.mounts : parseBashSandboxMounts(JSON.parse(env.BASH_SANDBOX_MOUNTS)),
-    network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
+    network: env.BASH_SANDBOX_NETWORK === "none" ? "none" : "configured",
     timeoutMs: env.BASH_SANDBOX_TIMEOUT_MS === undefined ? current.timeoutMs : Number(env.BASH_SANDBOX_TIMEOUT_MS),
     outputLimitBytes: env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES === undefined ? current.outputLimitBytes : Number(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES),
     cpuLimit: env.BASH_SANDBOX_CPU_LIMIT ?? current.cpuLimit,
@@ -554,7 +564,7 @@ async function patchAdminPluginConfig(context: AdminRoutesContext, request: any,
     return;
   }
   const body = await readJsonBody(request);
-  const result = entry.patch(context, body);
+  const result = await entry.patch(context, body);
   if ("error" in result) {
     writeJson(response, 400, { ok: false, error: result.error });
     return;
@@ -686,7 +696,7 @@ function adminPluginConfigPayload(context: AdminRoutesContext, entry: AdminPlugi
 }
 
 function withDynamicPluginConfigSchema(context: AdminRoutesContext, pluginId: string, schema: NonNullable<AdminPluginRegistryEntry["configSchema"]>, configValue: unknown): NonNullable<AdminPluginRegistryEntry["configSchema"]> {
-  if (pluginId === "pi_sandbox") {
+  if (pluginId === "pi_worker") {
     return {
       ...schema,
       fields: schema.fields.map((field) => field.key === "llmPresetName"

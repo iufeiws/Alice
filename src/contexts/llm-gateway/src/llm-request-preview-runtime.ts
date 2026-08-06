@@ -85,7 +85,7 @@ export function createLLMRequestPreviewRuntime(input: {
   async function buildLLMRequestPreviewFromMessages(): Promise<LLMRequestPreview | undefined> {
     const recent = input.listRecentMessages();
     const latestInbound = [...recent].reverse().find((message) => (
-      message.direction === "inbound" &&
+      (message.direction === "inbound" || message.direction === "both") &&
       !message.isRecalled &&
       !message.isRead &&
       !message.coreProcessedAt

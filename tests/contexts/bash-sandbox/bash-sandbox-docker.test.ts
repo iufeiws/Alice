@@ -35,7 +35,16 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.equal(result.streamedBeforeCommandFinished, true);
 });
 
-async function runWithFakeDocker(onStdout?: (delta: string) => void) {
+test("docker executor starts the Pi worker from the existing wrapper mount", async () => {
+  const { calls } = await runWithFakeDocker(undefined, true);
+  const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
+  assert.match(runCall, /cimg\/python:3\.13-browsers/);
+  assert.match(runCall, /command -v pi/);
+  assert.match(runCall, /npm install -g @earendil-works\/pi-coding-agent@latest/);
+  assert.match(runCall, /node \/sandbox\/bin\/worker\.mjs/);
+});
+
+async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorker = false) {
   const root = tmpDir("fake-docker");
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
@@ -84,6 +93,14 @@ exit 64
       network: "configured",
       hostWorkspaceDir: path.join(root, "alice"),
       hostCacheDir: path.join(root, "cache"),
+      ...(withPiWorker ? {
+        piWorker: {
+          enabled: true,
+          hostDir: path.join(root, "pi-sessions"),
+          containerDir: "/alice/.agent/pi-sessions",
+          port: 8790
+        }
+      } : {}),
       mounts: [
         { id: "skills", hostPath: path.join(root, "installed-skills"), containerPath: "/alice/.agent/skills", readOnly: false },
         { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }

@@ -29,7 +29,7 @@ export function createApiAdminRuntime(input: {
   setTimeZone(timeZone: string): void;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
-  piSandboxRuntime?: any;
+  piWorkerRuntime?: any;
 }) {
   const runtimeState: ApiRuntimeState = { feishuStarted: false, wechatStarted: false };
   const requestHandler = createAdminRequestHandlerRuntime({
@@ -74,11 +74,11 @@ export function createApiAdminRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,
     memoryInductionPromptStore: input.apiContextRuntime.memoryInductionPromptStore,
-    sandbox: {
-      config: input.config.bashSandbox,
-      runtime: input.apiCapabilitiesRuntime.bashRuntime
-    },
-    piSandbox: { runtime: input.piSandboxRuntime },
+    piWorker: input.piWorkerRuntime ? {
+      runtime: input.piWorkerRuntime,
+      containerRoot: input.config.piWorkerConfig.sandboxCwd,
+      hostRoot: input.config.bashSandbox.hostWorkspaceDir
+    } : undefined,
     sleepMemoryInductionRuntime: input.sleepMemoryInductionRuntime,
     ensureMemoryConsoleSession: (windowEndAt, windowStartAt) => input.adminLLMSessionRuntime.memoryConsoleRuntime.ensureSession(windowEndAt, windowStartAt),
     llmRequests: input.apiCapabilitiesRuntime.llmRequests,

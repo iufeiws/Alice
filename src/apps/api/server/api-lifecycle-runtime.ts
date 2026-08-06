@@ -19,8 +19,8 @@ export function createApiLifecycleRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   registerChannels(): void;
   piRelay?: { start(): Promise<unknown>; stop?(): Promise<void> };
-  piSandboxRuntime?: { start(): Promise<void>; stop(): Promise<void> };
-  refreshPiTools?(): unknown;
+  piWorkerRuntime?: { start(): Promise<void>; stop(): Promise<void> };
+  refreshToolRegistry?(): unknown;
 }) {
   input.registerChannels();
 
@@ -42,7 +42,7 @@ export function createApiLifecycleRuntime(input: {
       await input.ttsPlugin.voiceSynthesizer.shutdown?.();
       await input.messageRuntime.flushAll();
       await input.chatAgent.stop();
-      await input.piSandboxRuntime?.stop();
+      await input.piWorkerRuntime?.stop();
       if (input.piRelay?.stop) await input.piRelay.stop();
     },
     releaseLock: () => input.serviceLock.release()
@@ -56,8 +56,8 @@ export function createApiLifecycleRuntime(input: {
     messageRuntime: input.messageRuntime,
     appendLog: input.appendLog,
     piRelay: input.piRelay,
-    piSandboxRuntime: input.piSandboxRuntime,
-    refreshPiTools: input.refreshPiTools
+    piWorkerRuntime: input.piWorkerRuntime,
+    refreshToolRegistry: input.refreshToolRegistry
   });
 
   return {

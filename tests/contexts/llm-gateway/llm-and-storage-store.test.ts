@@ -121,7 +121,7 @@ test("sqlite store marks initialized inbound logs processed", () => {
 test("sqlite store initializes schema version", () => {
   const { dbPath } = createStoreWithInboundLog("db-schema-version");
   const db: any = new sqlite.DatabaseSync(dbPath);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 9);
 });
 
 test("sqlite store inserts inbound core-facing message state", () => {

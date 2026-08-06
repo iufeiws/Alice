@@ -214,7 +214,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
 
   function recentMessagesAllowSend(target: MessagingToolTarget): boolean {
     return deps.store.listMessagesForConversation(target.sessionId, recentUserReplyWindow)
-      .some((message) => message.direction === "inbound" && message.senderRole === "user");
+      .some((message) => (message.direction === "inbound" || message.direction === "both") && message.senderRole === "user");
   }
 
   function viewSentMessageResults(callId: string, target: MessagingToolTarget, results: SendPartResult[]): ToolResult {

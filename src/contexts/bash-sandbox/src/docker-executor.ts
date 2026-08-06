@@ -9,6 +9,7 @@ const { StringDecoder } = await import("node:string_decoder");
 const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
 const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
 const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
+const PI_WORKER_CONTAINER_REVISION = "sandbox-bin-worker-v2";
 
 export type DockerExecutorResult = {
   stdout: string;
@@ -153,7 +154,7 @@ async function ensureContainer(config: BashSandboxConfig, currentMountKey: strin
 }
 
 async function ensureImage(config: BashSandboxConfig): Promise<void> {
-  const image = config.piWorker?.enabled ? config.piWorker.image ?? config.image : config.image;
+  const image = config.image;
   const inspect = await execFile("docker", ["image", "inspect", image], 10_000, 4096);
   if (inspect.exitCode === 0) return;
   const pull = await execFile("docker", ["pull", image], 10 * 60_000, 64 * 1024);
@@ -165,7 +166,7 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "run",
     "-d",
     "--name", config.containerName,
-    "--network", config.piWorker?.enabled ? "bridge" : config.network === "none" ? "none" : "bridge",
+    "--network", config.network === "none" ? "none" : "bridge",
     "--read-only",
     "--tmpfs", config.tmpDir,
     "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
@@ -191,10 +192,7 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
   if (config.pidsLimit) args.push("--pids-limit", String(config.pidsLimit));
   if (config.piWorker?.enabled) {
     args.push("-p", `127.0.0.1:${config.piWorker.port}:8790`);
-    args.push("--add-host", "host.docker.internal:host-gateway");
-    args.push("-e", `PI_LLM_RELAY_URL=${config.piWorker.relayUrl ?? ""}`);
-    args.push("-e", `PI_LLM_RELAY_TOKEN=${config.piWorker.relayToken ?? ""}`);
-    args.push("-e", `PI_SANDBOX_CWD=${config.piWorker.sandboxCwd ?? config.defaultCwd}`);
+    args.push("-e", `PI_WORKER_TOKEN=${config.piWorker.workerToken ?? ""}`);
     args.push("-e", `PI_MAX_CONCURRENCY=${config.piWorker.maxConcurrency ?? 2}`);
     args.push("-e", `PI_MAX_QUEUE_SIZE=${config.piWorker.maxQueueSize ?? 20}`);
     args.push("-e", `PI_TASK_TIMEOUT_SECONDS=${config.piWorker.taskTimeoutSeconds ?? 900}`);
@@ -204,8 +202,16 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
   }
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
-  const image = config.piWorker?.enabled ? config.piWorker.image ?? config.image : config.image;
-  args.push(...(config.piWorker?.enabled ? [image, "node", "/pi-worker/worker.mjs"] : [image, "sleep", "infinity"]));
+  if (config.piWorker?.enabled) {
+    args.push(
+      config.image,
+      "sh",
+      "-lc",
+      "command -v pi >/dev/null 2>&1 || npm install -g @earendil-works/pi-coding-agent@latest; export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/bin/worker.mjs"
+    );
+  } else {
+    args.push(config.image, "sleep", "infinity");
+  }
   return args;
 }
 
@@ -227,10 +233,11 @@ function formatTruncatedStream(stream: "stdout" | "stderr", filePath: string, by
 
 function containerMountKey(config: BashSandboxConfig): string {
   return JSON.stringify({
+    image: config.image,
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
-    piWorker: config.piWorker ? [config.piWorker.image, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.relayUrl, config.piWorker.relayToken ? crypto.createHash("sha256").update(config.piWorker.relayToken).digest("hex") : undefined, config.piWorker.sandboxCwd, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
+    piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.sandboxCwd, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
   });
 }
 

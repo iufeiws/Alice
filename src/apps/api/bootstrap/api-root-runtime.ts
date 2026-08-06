@@ -3,20 +3,23 @@ import { createApiRuntimeState } from "./api-runtime-state.js";
 import { createApiLLMRuntime } from "./api-llm-runtime.js";
 import { createApiToolingRuntime } from "./api-tooling-runtime.js";
 import { createApiServerStackRuntime } from "../server/api-server-stack-runtime.js";
+import { updateEnvFile } from "../server/env-file.js";
 import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
 import { createApiControlRuntime } from "./api-control-runtime.js";
 import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { createJsonProcessRestartContinuationStore } from "../../../contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
-import { createPiLLMRelay } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
+import { createPiLLMRelay, type PiRelayCapability } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
 import { createPiPresetSnapshot } from "../../../contexts/llm-gateway/src/pi-preset-adapter.js";
-import { createPiSandboxRuntime, createPiWorkerHttpClient } from "../../../contexts/pi-sandbox/src/index.js";
+import { createPiWorkerRuntime, createPiWorkerHttpClient } from "../../../contexts/pi-worker/src/index.js";
 import { ensureDockerSandboxContainer, recreateDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
 const path = await import("node:path");
+const crypto = await import("node:crypto");
 
 export function createApiRootRuntime() {
   const apiRuntimeState = createApiRuntimeState();
   const agentLoopRuntime = createAgentLoopRuntime();
   const foundation = createApiFoundationRuntime();
+  let refreshDefaultToolRegistry: (() => void) | undefined;
   const processRestartContinuationStore = createJsonProcessRestartContinuationStore(
     path.join(foundation.config.memoryFiles.root, "agent-loop", "process-restart-continuation.json")
   );
@@ -33,88 +36,79 @@ export function createApiRootRuntime() {
   });
   const piRelay = createPiLLMRelay({
     time: foundation.currentTime,
-    host: foundation.config.piSandbox.relayHost,
-    port: foundation.config.piSandbox.relayPort,
+    host: foundation.config.piWorkerConfig.relayHost,
+    port: foundation.config.piWorkerConfig.relayPort,
+    maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency,
     recordTokenUsageEvent: (event) => apiLLMRuntime.recordTokenUsageEvent(event)
   });
-  let piCapability = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName });
+  let piCapability: { token: string; capability: PiRelayCapability } | undefined;
+  const workerToken = readOrCreateWorkerToken();
   foundation.config.bashSandbox.piWorker = {
     enabled: true,
-    image: foundation.config.bashSandbox.piWorker?.image,
     hostDir: path.resolve("memory-files/pi-sessions"),
     containerDir: "/alice/.agent/pi-sessions",
-    port: foundation.config.piSandbox.workerPort,
-    relayUrl: `http://host.docker.internal:${foundation.config.piSandbox.relayPort}/v1`,
-    relayToken: piCapability.token,
-    sandboxCwd: foundation.config.piSandbox.sandboxCwd,
-    maxConcurrency: foundation.config.piSandbox.maxConcurrency,
-    maxQueueSize: foundation.config.piSandbox.maxQueueSize,
-    taskTimeoutSeconds: foundation.config.piSandbox.taskTimeoutSeconds,
+    port: foundation.config.piWorkerConfig.workerPort,
+    workerToken,
+    sandboxCwd: foundation.config.piWorkerConfig.sandboxCwd,
+    maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency,
+    maxQueueSize: foundation.config.piWorkerConfig.maxQueueSize,
+    taskTimeoutSeconds: foundation.config.piWorkerConfig.taskTimeoutSeconds,
     timezone: foundation.config.core.timezone
   };
-  const piSandboxRuntime = createPiSandboxRuntime({
-    worker: createPiWorkerHttpClient({ baseURL: `http://${foundation.config.piSandbox.workerHost}:${foundation.config.piSandbox.workerPort}` }),
-    ensureWorker: () => ensureDockerSandboxContainer(foundation.config.bashSandbox),
-    restartWorker: async () => {
-      piRelay.revokeCapability(piCapability.token);
-      piCapability = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName });
-      foundation.config.bashSandbox.piWorker!.relayToken = piCapability.token;
-      await recreateDockerSandboxContainer(foundation.config.bashSandbox);
+  const piWorkerClient = createPiWorkerHttpClient({ baseURL: `http://${foundation.config.piWorkerConfig.workerHost}:${foundation.config.piWorkerConfig.workerPort}`, token: workerToken });
+  const piWorkerRuntime = createPiWorkerRuntime({
+    worker: piWorkerClient,
+    ensureWorker: async () => {
+      let relayConfigured = false;
+      try {
+        syncPiWorkerToken();
+        relayConfigured = true;
+      } catch (error) {
+        if (!(error instanceof Error && error.message === "pi_llm_preset_not_found")) throw error;
+        foundation.appendLog("warn", "pi preset not configured; Pi Worker starts without relay capability");
+      }
+      await ensureDockerSandboxContainer(foundation.config.bashSandbox);
+      if (relayConfigured) await configurePiWorkerProcess();
     },
-    startupTimeoutMs: foundation.config.piSandbox.workerStartupTimeoutMs,
-    reconcileOnStart: false,
+    restartWorker: async (reason) => {
+      if (piCapability) piRelay.revokeCapability(piCapability.token);
+      piCapability = undefined;
+      syncPiWorkerToken();
+      await configurePiWorkerProcess();
+      if (reason !== "config") await recreateDockerSandboxContainer(foundation.config.bashSandbox);
+    },
+    startupTimeoutMs: foundation.config.piWorkerConfig.workerStartupTimeoutMs,
+    reconcileOnStart: true,
+    refreshToolRegistry: () => refreshDefaultToolRegistry?.(),
     appendLog: foundation.appendLog,
-    prepareSession: async ({ sessionId, presetName }) => {
-      const preset = foundation.readLLMApiPresets().find((entry: { name: string }) => entry.name === (presetName || foundation.config.piSandbox.llmPresetName));
-      if (!preset || !sessionId) throw new Error("pi_llm_preset_not_found");
-      const snapshot = createPiPresetSnapshot(preset);
-      piRelay.bindSession({ token: piCapability.token, sessionId, preset: snapshot });
-      return {
-        model: snapshot.model,
-        temperature: snapshot.temperature,
-        maxTokens: snapshot.maxTokens,
-        extraParams: snapshot.extraParams,
-        supportsImage: snapshot.supportsImage,
-        reasoning: typeof snapshot.extraParams.reasoning_effort === "string"
-          || (snapshot.extraParams.thinking !== undefined && snapshot.extraParams.thinking !== false)
-      };
-    },
-    preparePreviewSession: async ({ sessionId, presetName }) => {
-      const preset = foundation.readLLMApiPresets().find((entry: { name: string }) => entry.name === (presetName || foundation.config.piSandbox.llmPresetName));
+    prepareModel: async ({ presetName }) => {
+      const preset = foundation.readLLMApiPresets().find((entry: { name: string }) => entry.name === (presetName || foundation.config.piWorkerConfig.llmPresetName));
       if (!preset) throw new Error("pi_llm_preset_not_found");
       const snapshot = createPiPresetSnapshot(preset);
-      piRelay.bindSession({ token: piCapability.token, sessionId, preset: snapshot });
       return {
         model: snapshot.model,
-        temperature: snapshot.temperature,
         maxTokens: snapshot.maxTokens,
-        extraParams: snapshot.extraParams,
         supportsImage: snapshot.supportsImage,
         reasoning: typeof snapshot.extraParams.reasoning_effort === "string"
           || (snapshot.extraParams.thinking !== undefined && snapshot.extraParams.thinking !== false)
       };
     },
-    onTerminal: async (session) => {
-      const communication = apiServerStackRuntime.apiCommunicationRuntime;
-      const target = session.notificationTarget ?? {};
-      const source = session.requester ?? {};
-      await communication.messageRuntime.ingestEvent({
-        id: `pi:${session.sessionId}:${session.status}`,
-        source: {
-          plugin: typeof source.plugin === "string" ? source.plugin : "web-admin",
-          accountId: typeof source.accountId === "string" ? source.accountId : undefined,
-          channelId: typeof source.channelId === "string" ? source.channelId : undefined,
-          userId: typeof source.userId === "string" ? source.userId : undefined
-        },
-        externalSession: {
-          scope: target.scope === "group" || target.scope === "topic" || target.scope === "admin" || target.scope === "desktop" ? target.scope : "dm",
-          sessionId: typeof target.sessionId === "string" ? target.sessionId : ""
-        },
-        type: session.status === "completed" ? "job.completed" : "job.failed",
-        payload: { kind: "text", text: session.terminalResult ?? session.terminalError ?? session.status },
-        meta: { receivedAt: session.updatedAt, raw: { piSessionId: session.sessionId } }
+    onInvocationCompleted: async (completion) => {
+      const target = completion.messageTarget ?? {};
+      const plugin = typeof target.plugin === "string" && target.plugin ? target.plugin : "web-admin";
+      const conversationId = typeof target.sessionId === "string" && target.sessionId ? target.sessionId : "default";
+      await apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.deliverPiInvocationCompletion({
+        plugin,
+        conversationId,
+        piSessionId: completion.sessionId,
+        piInvocationId: completion.invocationId,
+        text: completion.text,
+        senderName: foundation.config.project.username,
+        senderId: typeof target.userId === "string" ? target.userId : undefined,
+        accountId: typeof target.accountId === "string" ? target.accountId : undefined,
+        channelId: typeof target.channelId === "string" ? target.channelId : undefined,
+        userId: typeof target.userId === "string" ? target.userId : undefined
       });
-      piRelay.releaseSession({ token: piCapability.token, sessionId: session.sessionId });
     }
   });
   const apiControlRuntime = createApiControlRuntime({
@@ -123,7 +117,9 @@ export function createApiRootRuntime() {
     store: foundation.store,
     getChatAgent: () => apiAgentStackRuntime.chatAgent,
     triggerSleepMemoryInduction: () => apiToolingRuntime.sleepMemoryInductionRuntime.trigger(),
-    restartSandbox: () => piSandboxRuntime.restart("wake"),
+    restartSandbox: async () => {
+      await piWorkerRuntime.restart("wake");
+    },
     appendLog: foundation.appendLog,
     appendMessageLog: foundation.appendMessageLog
   });
@@ -155,8 +151,9 @@ export function createApiRootRuntime() {
     appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendMessageLog: foundation.appendMessageLog,
-    piSandboxRuntime
+    piWorkerRuntime
   });
+  refreshDefaultToolRegistry = apiToolingRuntime.refreshToolRegistry;
   const apiAgentStackRuntime = createApiAgentStackRuntime({
     config: foundation.config,
     activeLLM: foundation.activeLLM,
@@ -205,10 +202,39 @@ export function createApiRootRuntime() {
     appendMessageLog: foundation.appendMessageLog,
     processRestartContinuationStore,
     piRelay,
-    piSandboxRuntime
+    piWorkerRuntime
   });
 
   return {
     start: () => apiServerStackRuntime.start()
   };
+
+  function piPresetSnapshot() {
+    const preset = foundation.readLLMApiPresets().find((entry: { name: string }) => entry.name === foundation.config.piWorkerConfig.llmPresetName);
+    if (!preset) throw new Error("pi_llm_preset_not_found");
+    return createPiPresetSnapshot(preset);
+  }
+
+  function syncPiWorkerToken() {
+    if (piCapability) return;
+    piCapability = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName, preset: piPresetSnapshot() });
+  }
+
+  async function configurePiWorkerProcess() {
+    if (!piCapability) throw new Error("pi_relay_capability_missing");
+    await piWorkerClient.configure({
+      relayUrl: `http://host.docker.internal:${foundation.config.piWorkerConfig.relayPort}/v1`,
+      relayToken: piCapability.token
+    });
+  }
+
+  function readOrCreateWorkerToken(): string {
+    const existing = foundation.config.bashSandbox.piWorker?.workerToken;
+    if (existing) return existing;
+    const fromEnv = process.env.PI_WORKER_TOKEN;
+    const token = fromEnv || crypto.randomBytes(32).toString("base64url");
+    // Persisted so a live container keeps answering after a host restart.
+    updateEnvFile(".env", { PI_WORKER_TOKEN: token });
+    return token;
+  }
 }

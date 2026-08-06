@@ -30,7 +30,7 @@ export function createApiServerStackRuntime(input: {
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
   processRestartContinuationStore?: any;
   piRelay?: any;
-  piSandboxRuntime?: any;
+  piWorkerRuntime?: any;
 }) {
   const apiCommunicationRuntime = createApiCommunicationRuntime({
     config: input.config,
@@ -87,7 +87,7 @@ export function createApiServerStackRuntime(input: {
     setTimeZone: (timeZone) => input.time.setTimeZone(timeZone),
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
-    piSandboxRuntime: input.piSandboxRuntime
+    piWorkerRuntime: input.piWorkerRuntime
   });
   const apiLifecycleRuntime = createApiLifecycleRuntime({
     config: input.config,
@@ -106,8 +106,8 @@ export function createApiServerStackRuntime(input: {
       input.chatAgent.registerChannel(apiCommunicationRuntime.wechat);
     },
     piRelay: input.piRelay,
-    piSandboxRuntime: input.piSandboxRuntime,
-    refreshPiTools: input.apiToolingRuntime.refreshToolRegistry
+    piWorkerRuntime: input.piWorkerRuntime,
+    refreshToolRegistry: input.apiToolingRuntime.refreshToolRegistry
   });
 
   return {

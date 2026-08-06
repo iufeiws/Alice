@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": ""
+      "content": "想{{user}}了"
     }
   ]
 }

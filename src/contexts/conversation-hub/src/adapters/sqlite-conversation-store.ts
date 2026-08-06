@@ -6,7 +6,9 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 type DatabaseSync = any;
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
+
+export type MessageDirection = "inbound" | "outbound" | "both";
 
 export type StoredMessageLog = {
   id: number;
@@ -36,7 +38,7 @@ export type StoredConversationMessage = {
   plugin: string;
   externalMessageId?: string;
   conversationId: string;
-  direction: "inbound" | "outbound";
+  direction: MessageDirection;
   senderId?: string;
   senderRole: "user" | "assistant" | "system";
   senderName?: string;
@@ -56,6 +58,8 @@ export type StoredConversationMessage = {
   coreProcessedAt?: string;
   coreBatchId?: string;
   sendFailureReason?: string;
+  piSessionId?: string;
+  piInvocationId?: string;
 };
 
 export type AliceStore = {
@@ -66,6 +70,7 @@ export type AliceStore = {
   listUnprocessedInboundForSession(sessionId: string, limit: number): StoredMessageLog[];
   markMessageLogsProcessed(ids: number[], processedAt: string, batchId: string): void;
   upsertInboundMessage(input: UpsertInboundMessageInput): StoredConversationMessage;
+  upsertBothMessage(input: UpsertBothMessageInput): StoredConversationMessage;
   insertOutboundMessage(input: InsertOutboundMessageInput): StoredConversationMessage;
   listMessages(limit: number): StoredConversationMessage[];
   listMessagesChronological(limit?: number): StoredConversationMessage[];
@@ -107,6 +112,26 @@ export type UpsertInboundMessageInput = {
   lastEventAt?: string;
   lastEventAtUtc?: string;
   coreProcessedAt?: string;
+};
+
+/**
+ * One logical message that faces both Alice and the user: it enters the Alice
+ * conversation context / Core pending queue as a user (Albert) message and is
+ * also delivered to the user as a system notice. `piSessionId + piInvocationId`
+ * deduplicates re-delivery after Worker/Alice reconnects.
+ */
+export type UpsertBothMessageInput = {
+  plugin: string;
+  conversationId: string;
+  piSessionId: string;
+  piInvocationId: string;
+  senderId?: string;
+  senderName?: string;
+  contentType: string;
+  contentText: string;
+  contentJson?: string;
+  createdAt: string;
+  createdAtUtc?: string;
 };
 
 export type InsertOutboundMessageInput = {
@@ -156,6 +181,7 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
   }
   initializeMessageLogDatabase(logDb);
   initializeMessageDatabase(messageDb);
+  migrateMessageDatabase(messageDb);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   logDb.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS message_logs_external_event_id_idx
@@ -166,6 +192,11 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
     CREATE UNIQUE INDEX IF NOT EXISTS messages_external_message_id_idx
       ON messages(plugin, external_message_id)
       WHERE external_message_id IS NOT NULL;
+  `);
+  messageDb.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_pi_invocation_idx
+      ON messages(pi_session_id, pi_invocation_id)
+      WHERE pi_session_id IS NOT NULL AND pi_invocation_id IS NOT NULL;
   `);
   return {
     insertMessageLog(input) {
@@ -295,6 +326,37 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       );
       return messageDb.prepare(conversationMessageSelect("WHERE id = ?")).get(Number(result.lastInsertRowid));
     },
+    upsertBothMessage(input) {
+      const createdAtUtc = input.createdAtUtc ?? toUtcIso(input.createdAt, time.timeZone);
+      const createdAt = localIsoFromUtc(createdAtUtc, time.timeZone);
+      const existing = messageDb.prepare(conversationMessageSelect("WHERE pi_session_id = ? AND pi_invocation_id = ? LIMIT 1"))
+        .get(input.piSessionId, input.piInvocationId);
+      if (existing) return existing;
+      messageDb.prepare(`
+        INSERT OR IGNORE INTO messages(
+          plugin, conversation_id, direction, sender_id, sender_role, sender_name,
+          content_type, content_text, content_json, created_at, created_at_utc, status,
+          is_read, is_recalled, reactions_json, last_event_at, last_event_at_utc,
+          pi_session_id, pi_invocation_id
+        ) VALUES (?, ?, 'both', ?, 'user', ?, ?, ?, ?, ?, ?, 'sending', 0, 0, '{}', ?, ?, ?, ?)
+      `).run(
+        input.plugin,
+        input.conversationId,
+        input.senderId ?? null,
+        input.senderName ?? null,
+        input.contentType,
+        input.contentText,
+        input.contentJson ?? null,
+        createdAt,
+        createdAtUtc,
+        createdAt,
+        createdAtUtc,
+        input.piSessionId,
+        input.piInvocationId
+      );
+      return messageDb.prepare(conversationMessageSelect("WHERE pi_session_id = ? AND pi_invocation_id = ?"))
+        .get(input.piSessionId, input.piInvocationId);
+    },
     insertOutboundMessage(input) {
       const createdAtUtc = input.createdAtUtc ?? toUtcIso(input.createdAt, time.timeZone);
       const createdAt = localIsoFromUtc(createdAtUtc, time.timeZone);
@@ -403,7 +465,9 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
             m.last_event_at_utc AS lastEventAtUtc,
             m.core_processed_at AS coreProcessedAt,
             m.core_batch_id AS coreBatchId,
-            m.send_failure_reason AS sendFailureReason
+            m.send_failure_reason AS sendFailureReason,
+            m.pi_session_id AS piSessionId,
+            m.pi_invocation_id AS piInvocationId
           FROM messages_fts f
           JOIN messages m ON m.id = f.rowid
           WHERE ${clauses.join(" AND ")}
@@ -419,13 +483,13 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return messageDb.prepare(`
         SELECT conversation_id AS conversationId, MAX(id) AS latestMessageId, MAX(created_at) AS latestTime
         FROM messages
-        WHERE direction = 'inbound' AND core_processed_at IS NULL AND is_read = 0
+        WHERE direction IN ('inbound', 'both') AND core_processed_at IS NULL AND is_read = 0
         GROUP BY conversation_id
         ORDER BY latestMessageId ASC
       `).all();
     },
     listUnprocessedCoreMessagesForConversation(conversationId, limit) {
-      return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? AND direction = 'inbound' AND core_processed_at IS NULL AND is_read = 0 ORDER BY id ASC LIMIT ?"))
+      return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? AND direction IN ('inbound', 'both') AND core_processed_at IS NULL AND is_read = 0 ORDER BY id ASC LIMIT ?"))
         .all(conversationId, limit);
     },
     markMessagesCoreProcessed(ids, processedAt, batchId) {
@@ -444,8 +508,8 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
           read_at = COALESCE(read_at, ?),
           last_event_at = CASE WHEN is_read = 0 THEN ? ELSE last_event_at END,
           last_event_at_utc = CASE WHEN is_read = 0 THEN ? ELSE last_event_at_utc END,
-          core_processed_at = CASE WHEN direction = 'inbound' AND sender_role = 'user' THEN COALESCE(core_processed_at, ?) ELSE core_processed_at END,
-          core_batch_id = CASE WHEN direction = 'inbound' AND sender_role = 'user' THEN COALESCE(core_batch_id, ?) ELSE core_batch_id END
+          core_processed_at = CASE WHEN direction IN ('inbound', 'both') AND sender_role = 'user' THEN COALESCE(core_processed_at, ?) ELSE core_processed_at END,
+          core_batch_id = CASE WHEN direction IN ('inbound', 'both') AND sender_role = 'user' THEN COALESCE(core_batch_id, ?) ELSE core_batch_id END
         WHERE id IN (${placeholders})
       `).run(readAt, readAt, readAtUtc, readAt, batchId, ...ids);
     },
@@ -468,7 +532,9 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
     markMessageRead(plugin, externalMessageId, readAt, readAtUtc) {
       const lastEventAtUtc = readAtUtc ?? toUtcIso(readAt, time.timeZone);
       const lastEventAt = localIsoFromUtc(lastEventAtUtc, time.timeZone);
-      const result = messageDb.prepare("UPDATE messages SET is_read = 1, read_at = COALESCE(read_at, ?), last_event_at = ?, last_event_at_utc = ? WHERE plugin = ? AND external_message_id = ?")
+      // External read receipts never mark direction='both' messages as read;
+      // only Alice's own read flow can set isRead on those.
+      const result = messageDb.prepare("UPDATE messages SET is_read = 1, read_at = COALESCE(read_at, ?), last_event_at = ?, last_event_at_utc = ? WHERE plugin = ? AND external_message_id = ? AND direction <> 'both'")
         .run(lastEventAt, lastEventAt, lastEventAtUtc, plugin, externalMessageId);
       return Number(result.changes) > 0;
     },
@@ -549,7 +615,9 @@ function initializeMessageDatabase(db: DatabaseSync): void {
       last_event_at_utc TEXT,
       core_processed_at TEXT,
       core_batch_id TEXT,
-      send_failure_reason TEXT
+      send_failure_reason TEXT,
+      pi_session_id TEXT,
+      pi_invocation_id TEXT
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -574,6 +642,13 @@ function initializeMessageDatabase(db: DatabaseSync): void {
       INSERT INTO messages_fts(rowid, content_text, plugin, conversation_id) VALUES (new.id, new.content_text, new.plugin, new.conversation_id);
     END;
   `);
+}
+
+/** Additive migration for existing message databases (schema version 9). */
+function migrateMessageDatabase(db: DatabaseSync): void {
+  const columns = new Set((db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((entry) => entry.name));
+  if (!columns.has("pi_session_id")) db.exec("ALTER TABLE messages ADD COLUMN pi_session_id TEXT");
+  if (!columns.has("pi_invocation_id")) db.exec("ALTER TABLE messages ADD COLUMN pi_invocation_id TEXT");
 }
 
 function messageLogSelect(suffix: string): string {
@@ -627,7 +702,9 @@ function conversationMessageSelect(suffix: string): string {
       last_event_at_utc AS lastEventAtUtc,
       core_processed_at AS coreProcessedAt,
       core_batch_id AS coreBatchId,
-      send_failure_reason AS sendFailureReason
+      send_failure_reason AS sendFailureReason,
+      pi_session_id AS piSessionId,
+      pi_invocation_id AS piInvocationId
     FROM messages
     ${suffix}
   `;

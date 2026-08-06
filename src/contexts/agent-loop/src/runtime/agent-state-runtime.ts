@@ -68,7 +68,7 @@ export function createAgentStateRuntime(input: {
       if (restart && typeof (restart as Promise<void>).then === "function") {
         wakeReady = Promise.resolve(restart);
         void Promise.resolve(restart).then(completeWake, (error) => {
-          input.appendLog("error", `pi sandbox restart on wake failed: ${error instanceof Error ? error.message : String(error)}`);
+          input.appendLog("error", `sandbox restart on wake failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       } else {
         wakeReady = Promise.resolve();

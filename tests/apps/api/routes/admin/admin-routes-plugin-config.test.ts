@@ -253,6 +253,46 @@ test("admin plugin config exposes bash sandbox env settings", async () => {
   assert.ok(Array.isArray(configBody.configSchema.fields));
 });
 
+test("admin plugin config never exposes pi worker tokens", async () => {
+  const root = makeTempDir("admin-bash-sandbox-plugin-redact");
+  const envPath = path.join(root, ".env");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const base = baseContext(root, memoryStore, promptStore);
+  base.config.bashSandbox.network = "configured";
+  base.config.bashSandbox.piWorker = {
+    enabled: true,
+    hostDir: path.join(root, "pi-sessions"),
+    containerDir: "/alice/.agent/pi-sessions",
+    port: 8790,
+    workerToken: "secret-worker-token",
+    sandboxCwd: "/alice",
+    maxConcurrency: 2,
+    maxQueueSize: 20,
+    taskTimeoutSeconds: 900,
+    timezone: "Asia/Singapore"
+  };
+  const handler = createAdminHandler({
+    ...base,
+    pluginConfigs: { bashSandbox: { envPath } }
+  });
+
+  const configResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/bash_sandbox/config", {}), configResponse);
+  const configBody = JSON.parse(configResponse.body);
+  assert.equal(configResponse.statusCode, 200);
+  assert.equal(configBody.configValue.piWorker.port, 8790);
+  assert.equal(configBody.configValue.piWorker.relayUrl, undefined);
+  assert.equal(configBody.configValue.piWorker.workerToken, undefined);
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/bash_sandbox/config", { image: "node:22-bookworm" }), patchResponse);
+  const patchBody = JSON.parse(patchResponse.body);
+  assert.equal(patchResponse.statusCode, 200);
+  assert.equal(patchBody.configValue.piWorker.relayUrl, undefined);
+  assert.equal(patchBody.configValue.piWorker.workerToken, undefined);
+});
+
 test("admin plugin config patch returns bash sandbox restart requirement", async () => {
   const { patchResponse, patchBody } = await patchBashSandboxConfig();
 
@@ -463,7 +503,7 @@ test("admin plugin config patch persists world wanderer config", async () => {
 
 test("admin Pi plugin validates preset and exposes the final prompt preview", async () => {
   const root = makeTempDir("admin-pi-plugin");
-  const configPath = path.join(root, "config", "plugin", "pi", "config.json");
+  const configPath = path.join(root, "config", "plugin", "pi-worker", "config.json");
   writePreset(root, "pi-preset");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ llmPresetName: "pi-preset" })}\n`);
@@ -472,8 +512,8 @@ test("admin Pi plugin validates preset and exposes the final prompt preview", as
   const base = baseContext(root, memoryStore, promptStore);
   const context = {
     ...base,
-    pluginConfigs: { pi: { configPath } },
-    piSandbox: {
+    pluginConfigs: { piWorker: { configPath } },
+    piWorker: {
       runtime: {
         async previewPrompt() {
           return { sessionId: "preview-1", systemPrompt: "final system prompt" };
@@ -487,17 +527,73 @@ test("admin Pi plugin validates preset and exposes the final prompt preview", as
   const handler = createAdminHandler(context);
 
   const configResponse = createResponse();
-  await handler(createRequest("GET", "/admin/api/plugins/pi_sandbox/config", {}), configResponse);
+  await handler(createRequest("GET", "/admin/api/plugins/pi_worker/config", {}), configResponse);
   const configBody = JSON.parse(configResponse.body);
   assert.equal(configResponse.statusCode, 200);
   assert.equal(configBody.configValue.llmPresetName, "pi-preset");
   assert.ok(configBody.configSchema.fields.some((field: { key: string; options?: Array<{ value: string }> }) => field.key === "llmPresetName" && field.options?.some((option) => option.value === "pi-preset")));
 
   const previewResponse = createResponse();
-  await handler(createRequest("GET", "/admin/api/plugins/pi_sandbox/preview", {}), previewResponse);
+  await handler(createRequest("GET", "/admin/api/plugins/pi_worker/preview", {}), previewResponse);
   assert.deepEqual(JSON.parse(previewResponse.body), { ok: true, sessionId: "preview-1", systemPrompt: "final system prompt" });
 
-  await assertPatchError(handler, "/admin/api/plugins/pi_sandbox/config", { llmPresetName: "missing" }, "pi_llm_preset_not_found");
+  await assertPatchError(handler, "/admin/api/plugins/pi_worker/config", { llmPresetName: "missing" }, "pi_llm_preset_not_found");
+});
+
+test("admin Pi plugin saves project presets with project extra params", async () => {
+  const root = makeTempDir("admin-pi-project-preset");
+  const configPath = path.join(root, "config", "plugin", "pi-worker", "config.json");
+  writePreset(root, "pi-preset");
+  const presetPath = path.join(root, "config", "llm-api-presets.json");
+  const presetFile = JSON.parse(fs.readFileSync(presetPath, "utf8"));
+  presetFile.presets[0].extraParams = {
+    stream_options: { include_usage: true },
+    tool_choice: "auto",
+    project_specific_parameter: "preserve"
+  };
+  presetFile.presets[0].followupExtraParams = { reasoning_effort: "high" };
+  fs.writeFileSync(presetPath, `${JSON.stringify(presetFile)}\n`);
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  let previewPresetName = "";
+  let restartReason = "";
+  const base = baseContext(root, memoryStore, promptStore);
+  const context = {
+    ...base,
+    pluginConfigs: { piWorker: { configPath } },
+    piWorker: {
+      runtime: {
+        async previewPrompt(input: { presetName: string }) {
+          previewPresetName = input.presetName;
+          return { sessionId: "preview-1", systemPrompt: "final system prompt" };
+        },
+        async health() {
+          return { ready: true };
+        },
+        async restart(reason: "mount_changed" | "admin" | "wake" | "config") {
+          restartReason = reason;
+        }
+      }
+    }
+  };
+  const handler = createAdminHandler(context);
+
+  const patchResponse = createResponse();
+  await handler(createRequest("PATCH", "/admin/api/plugins/pi_worker/config", { llmPresetName: "pi-preset" }), patchResponse);
+  assert.equal(patchResponse.statusCode, 200);
+  assert.deepEqual(JSON.parse(patchResponse.body), {
+    ok: true,
+    restartRequired: false,
+    plugin: JSON.parse(patchResponse.body).plugin,
+    configValue: JSON.parse(patchResponse.body).configValue
+  });
+  assert.equal(restartReason, "config");
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).llmPresetName, "pi-preset");
+
+  const previewResponse = createResponse();
+  await handler(createRequest("GET", "/admin/api/plugins/pi_worker/preview", {}), previewResponse);
+  assert.deepEqual(JSON.parse(previewResponse.body), { ok: true, sessionId: "preview-1", systemPrompt: "final system prompt" });
+  assert.equal(previewPresetName, "pi-preset");
 });
 
 test("prompt variables use empty world wanderer library prompt without fallback", async () => {

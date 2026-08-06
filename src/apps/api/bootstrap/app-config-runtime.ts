@@ -3,7 +3,7 @@ import type { MemorySummaryConfig } from "../../../contexts/memory/src/contracts
 import type { FeishuConfig } from "../../../channels/feishu/src/types.js";
 import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
 import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type BashSandboxMountConfig } from "../../../contexts/bash-sandbox/src/index.js";
-import { readPiSandboxConfig, type PiSandboxConfig } from "../../../contexts/pi-sandbox/src/index.js";
+import { readPiWorkerConfig, type PiWorkerConfig } from "../../../contexts/pi-worker/src/index.js";
 
 const path = await import("node:path");
 
@@ -53,7 +53,7 @@ export type AppConfig = {
     installedRoot: string;
   };
   bashSandbox: BashSandboxConfig;
-  piSandbox: PiSandboxConfig;
+  piWorkerConfig: PiWorkerConfig;
   photo: {
     selfieReferenceDir: string;
     selfieOutputDir: string;
@@ -248,7 +248,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
         sandboxWorkspaceDir,
         env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills")
       ),
-      network: env.BASH_SANDBOX_NETWORK === "configured" ? "configured" : "none",
+      network: env.BASH_SANDBOX_NETWORK === "none" ? "none" : "configured",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),
       outputLimitBytes: envNumber(env.BASH_SANDBOX_OUTPUT_LIMIT_BYTES, 30_000),
       cpuLimit: env.BASH_SANDBOX_CPU_LIMIT,
@@ -256,14 +256,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       pidsLimit: env.BASH_SANDBOX_PIDS_LIMIT === undefined ? undefined : envNumber(env.BASH_SANDBOX_PIDS_LIMIT, 256),
       piWorker: {
         enabled: true,
-        image: env.PI_WORKER_IMAGE ?? "alice-pi-sandbox:latest",
         hostDir: path.resolve("memory-files/pi-sessions"),
         containerDir: "/alice/.agent/pi-sessions",
         port: envNumber(env.PI_WORKER_CONTAINER_PORT, 8790),
         sandboxCwd: env.PI_SANDBOX_CWD ?? sandboxWorkspaceDir
       }
     }),
-    piSandbox: readPiSandboxConfig(),
+    piWorkerConfig: readPiWorkerConfig(),
     photo: {
       selfieReferenceDir: env.SELFIE_REFERENCE_DIR ?? "assets/selfie/references",
       selfieOutputDir: env.SELFIE_OUTPUT_DIR ?? "assets/generated/selfies",

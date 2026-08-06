@@ -23,7 +23,8 @@ import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/admin-prese
 import type { VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import type { AsrPluginConfig, AsrTranscribeError, AsrTranscribeInput, AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import type { ImageRecognitionConfig, ImageRecognitionError, ImageRecognitionInput, ImageRecognitionResult } from "../../../channels/image-recognition/src/index.js";
-import type { PiSandboxRuntime } from "../../../contexts/pi-sandbox/src/index.js";
+import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
+import type { MemorySandbox } from "../../../contexts/memory/src/model.js";
 
 export type AdminRouteServices = {
   handleApiRoute(request: any, response: any): Promise<void>;
@@ -78,9 +79,9 @@ export type AdminRuntimeContext = {
   diaryStore: DiaryStore;
   calendarStore: CalendarStore;
   memoryInductionPromptStore: MemoryInductionPromptStore;
-  sandbox?: any;
-  piSandbox?: {
-    runtime?: PiSandboxRuntime;
+  memorySandbox?: MemorySandbox;
+  piWorker?: {
+    runtime?: PiWorkerRuntime;
     health?(): unknown | Promise<unknown>;
   };
   memoryAdminRuntime?: ReturnType<typeof createAdminMemoryRuntime>;
@@ -146,7 +147,7 @@ export type AdminRuntimeContext = {
     bashSandbox?: {
       envPath?: string;
     };
-    pi?: {
+    piWorker?: {
       configPath?: string;
     };
   };

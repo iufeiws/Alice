@@ -47,8 +47,7 @@ export function createAdminRequestHandlerRuntime(input: {
   diaryStore: any;
   calendarStore: any;
   memoryInductionPromptStore: any;
-  sandbox?: any;
-  piSandbox?: any;
+  piWorker?: any;
   sleepMemoryInductionRuntime: { isActive(): boolean };
   ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): any;
   llmRequests: { send(input: any): Promise<any> };
@@ -83,7 +82,7 @@ export function createAdminRequestHandlerRuntime(input: {
     memoryStore: input.memoryStore,
     diaryStore: input.diaryStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
-    sandbox: input.sandbox,
+    sandbox: input.piWorker,
     promptContextRuntime: input.getPromptRenderer(),
     agentState: input.agentState,
     isHeartbeatPaused: () => Boolean(input.messageRuntime.getStatus?.()?.heartbeatPaused),
@@ -131,8 +130,8 @@ export function createAdminRequestHandlerRuntime(input: {
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
-    sandbox: input.sandbox,
-    piSandbox: input.piSandbox,
+    memorySandbox: input.piWorker,
+    piWorker: input.piWorker,
     memoryAdminRuntime,
     getDailyShell: input.getDailyShell,
     dailyShellStore: input.dailyShellStore,

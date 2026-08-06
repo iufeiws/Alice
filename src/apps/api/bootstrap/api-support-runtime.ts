@@ -16,6 +16,7 @@ export function createApiSupportRuntime(input: {
   getLLMRequestSender(): any;
   sendMemoryFailureNotice(): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  piWorkerRuntime?: any;
 }) {
   const adminLLMSessionRuntime = createAdminLLMSessionRuntime({
     sessionRoot: input.apiLLMRuntime.llmSessionArchive.root,
@@ -36,10 +37,11 @@ export function createApiSupportRuntime(input: {
     memoryStore: input.apiContextRuntime.memoryStore,
     promptStore: input.apiContextRuntime.memoryInductionPromptStore,
     promptContextRuntime: input.apiContextRuntime.promptContextRuntime,
-    sandbox: {
-      config: input.config.bashSandbox,
-      runtime: input.bashRuntime
-    },
+    sandbox: input.piWorkerRuntime ? {
+      runtime: input.piWorkerRuntime,
+      containerRoot: input.config.piWorkerConfig.sandboxCwd,
+      hostRoot: input.config.bashSandbox.hostWorkspaceDir
+    } : undefined,
     stateStore: input.apiContextRuntime.sleepMemoryStateStore,
     diaryStore: input.apiContextRuntime.diaryStore,
     getMessageStore: () => input.store,

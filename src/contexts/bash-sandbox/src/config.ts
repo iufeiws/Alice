@@ -16,12 +16,11 @@ export type BashSandboxSkillMountConfig = {
 
 export type PiWorkerContainerConfig = {
   enabled: boolean;
-  image?: string;
   hostDir: string;
   containerDir: string;
   port: number;
-  relayUrl?: string;
-  relayToken?: string;
+  /** Host-side auth secret for the worker HTTP API; never exposed to the Agent. */
+  workerToken?: string;
   sandboxCwd?: string;
   maxConcurrency?: number;
   maxQueueSize?: number;
@@ -70,6 +69,9 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
   if (normalized.piWorker) {
     if (!normalized.piWorker.hostDir || !normalized.piWorker.containerDir.startsWith("/") || !Number.isInteger(normalized.piWorker.port) || normalized.piWorker.port < 1 || normalized.piWorker.port > 65_535) {
       throw new Error("invalid bashSandbox Pi Worker configuration");
+    }
+    if (normalized.piWorker.enabled && normalized.network === "none") {
+      throw new Error("invalid_pi_worker_network");
     }
     rejectSensitiveHostPath(path.resolve(normalized.piWorker.hostDir));
   }

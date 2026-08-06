@@ -1,50 +1,60 @@
-import type { PiSession, PiSessionEvent, PiToolExecutionResult, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
+import type { PiInvocation, PiInvocationCompletion, PiSessionListEntry, PiSessionReadResult, PiSessionReadView, PiSessionSnapshot, PiToolExecutionResult, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
 
-export function createPiWorkerHttpClient(input: { baseURL: string; fetchImpl?: typeof fetch }): PiWorkerClient {
+export function createPiWorkerHttpClient(input: { baseURL: string; token?: string; fetchImpl?: typeof fetch }): PiWorkerClient {
   const fetchImpl = input.fetchImpl ?? fetch;
   const baseURL = input.baseURL.replace(/\/+$/, "");
+  const authHeaders: Record<string, string> = input.token ? { authorization: `Bearer ${input.token}` } : {};
 
   return {
+    configure(body) {
+      return request<{ ok: true }>("/config", { method: "POST", body });
+    },
     health(signal) {
       return request<PiWorkerHealth>("/health", { method: "GET", signal });
     },
     executeTool(body) {
-      return request<PiToolExecutionResult>("/tools/execute", { method: "POST", body, signal: body.signal });
+      const errorCode = body.toolName === "bash" ? "shell_tool_request_failed" : "file_tool_request_failed";
+      return request<PiToolExecutionResult>("/tools/execute", { method: "POST", body, signal: body.signal }, errorCode);
     },
-    createSession(body) {
-      return request<Pick<PiSession, "sessionId" | "status">>("/sessions", { method: "POST", body, signal: body.signal });
+    startInvocation(body) {
+      return request<PiInvocation>("/invocations", { method: "POST", body, signal: body.signal });
     },
-    startSession(sessionId, body = {}) {
-      return request<Pick<PiSession, "sessionId" | "status">>(`/sessions/${encodeURIComponent(sessionId)}/start`, { method: "POST", body, signal: body.signal });
+    sendInvocation(sessionId, body) {
+      return request<PiInvocation>(`/sessions/${encodeURIComponent(sessionId)}/send`, { method: "POST", body, signal: body.signal });
+    },
+    listSessions(signal) {
+      return request<PiSessionListEntry[]>("/sessions", { method: "GET", signal });
+    },
+    readSession(sessionId, view, signal) {
+      const suffix = view ? `?view=${encodeURIComponent(view)}` : "";
+      return request<PiSessionReadResult>(`/sessions/${encodeURIComponent(sessionId)}${suffix}`, { method: "GET", signal });
+    },
+    sessionStatus(sessionId, signal) {
+      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/status`, { method: "GET", signal });
+    },
+    waitSession(sessionId, timeoutSeconds, signal) {
+      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/wait`, { method: "POST", body: { timeoutSeconds }, signal });
+    },
+    cancelSession(sessionId, signal) {
+      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", signal });
+    },
+    forkSession(sessionId, entryId, signal) {
+      return request<{ sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId }, signal });
     },
     previewSession(body) {
       return request<{ sessionId: string; systemPrompt: string }>("/preview", { method: "POST", body, signal: body.signal });
     },
-    getSession(sessionId, signal) {
-      return request<PiSession>(`/sessions/${encodeURIComponent(sessionId)}`, { method: "GET", signal });
-    },
-    listSessions(signal) {
-      return request<PiSession[]>("/sessions", { method: "GET", signal });
-    },
-    listSessionEvents(sessionId, cursor, signal) {
-      const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-      return request<{ events: PiSessionEvent[]; nextCursor?: string }>(`/sessions/${encodeURIComponent(sessionId)}/events${suffix}`, { method: "GET", signal });
-    },
-    cancelSession(sessionId, signal) {
-      return request<PiSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", signal });
-    },
-    markInterrupted(sessionId, signal) {
-      return request<PiSession>(`/sessions/${encodeURIComponent(sessionId)}/interrupted`, { method: "POST", signal });
-    },
-    markCompletionDelivered(sessionId, signal) {
-      return request<PiSession>(`/sessions/${encodeURIComponent(sessionId)}/completion-delivered`, { method: "POST", signal });
+    reconcileInvocations(signal) {
+      return request<PiInvocationCompletion[]>("/reconcile", { method: "POST", signal });
     }
   };
 
-  async function request<T>(path: string, init: { method: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
+  async function request<T>(path: string, init: { method: string; body?: unknown; signal?: AbortSignal }, errorCode = "pi_worker_request_failed"): Promise<T> {
+    const headers: Record<string, string> = { ...authHeaders };
+    if (init.body !== undefined) headers["content-type"] = "application/json";
     const response = await fetchImpl(`${baseURL}${path}`, {
       method: init.method,
-      headers: init.body === undefined ? undefined : { "content-type": "application/json" },
+      headers,
       body: init.body === undefined ? undefined : JSON.stringify(stripSignal(init.body)),
       signal: init.signal
     });
@@ -55,7 +65,7 @@ export function createPiWorkerHttpClient(input: { baseURL: string; fetchImpl?: t
     } catch {
       payload = text;
     }
-    if (!response.ok) throw new Error(`pi_worker_request_failed:${response.status}:${typeof payload === "string" ? payload : JSON.stringify(payload)}`);
+    if (!response.ok) throw new Error(`${errorCode}:${response.status}:${typeof payload === "string" ? payload : JSON.stringify(payload)}`);
     return payload as T;
   }
 }

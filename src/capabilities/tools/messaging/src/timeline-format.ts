@@ -114,7 +114,7 @@ export function appendCurrentTime(output: string, currentTime: string, prefix?: 
 }
 
 export function isUnreadUserMessage(message: StoredConversationMessage): boolean {
-  return !message.isRead && message.direction === "inbound" && message.senderRole === "user";
+  return !message.isRead && (message.direction === "inbound" || message.direction === "both") && message.senderRole === "user";
 }
 
 function formatMessageContentLine(message: StoredConversationMessage, userName: string): string {

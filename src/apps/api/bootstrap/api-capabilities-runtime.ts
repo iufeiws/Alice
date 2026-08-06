@@ -5,7 +5,7 @@ import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-
 import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../channels/image-recognition/src/index.js";
-import type { PiSandboxRuntime } from "../../../contexts/pi-sandbox/src/index.js";
+import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
 const path = await import("node:path");
 
 export function createApiCapabilitiesRuntime(input: {
@@ -34,7 +34,7 @@ export function createApiCapabilitiesRuntime(input: {
   memoryStore: any;
   randomEventStore: any;
   getApprovalService(): any;
-  piSandboxRuntime?: PiSandboxRuntime;
+  piWorkerRuntime?: PiWorkerRuntime;
 }) {
   let getLLMRequestToolDefinition: (name: string) => any = () => undefined;
   const llmRequests = createLLMRequestsRuntime({
@@ -110,7 +110,7 @@ export function createApiCapabilitiesRuntime(input: {
     getWorldWandererStreetViewReferenceImage: input.getWorldWandererStreetViewReferenceImage,
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
-    piSandboxRuntime: input.piSandboxRuntime,
+    piWorkerRuntime: input.piWorkerRuntime,
     recognizeImage
   });
   const refreshToolRegistry = () => registerLLMToolLoopTools("default", toolRuntime.toolPlugins);

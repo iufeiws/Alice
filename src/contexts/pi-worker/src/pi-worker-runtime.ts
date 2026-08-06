@@ -1,39 +1,37 @@
-import { createId } from "../../../shared/uuid/src/index.js";
 import type { ToolExecutionContext } from "../../agent-loop/src/contracts/agent-contracts.js";
-import type { PiSession, PiSandboxRuntime, PiSessionStatus, PiWorkerClient, PiWorkerHealth, PiToolDefinition } from "./contracts.js";
+import type { PiInvocationCompletion, PiModelConfig, PiWorkerRuntime, PiWorkerClient, PiWorkerHealth, PiToolDefinition } from "./contracts.js";
 
-const terminalStatuses = new Set<PiSessionStatus>(["completed", "failed", "timed_out", "aborted", "interrupted"]);
-
-export function createPiSandboxRuntime(input: {
+export function createPiWorkerRuntime(input: {
   worker: PiWorkerClient;
   ensureWorker?(): Promise<void>;
-  prepareSession?(input: { sessionId?: string; task: string; presetName?: string }): Promise<{ model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean } | void> | { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean } | void;
-  preparePreviewSession?(input: { sessionId: string; presetName?: string }): Promise<{ model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean } | void> | { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown>; supportsImage?: boolean; reasoning?: boolean } | void;
+  prepareModel?(input: { presetName?: string }): Promise<PiModelConfig> | PiModelConfig;
   restartWorker?: (reason: "mount_changed" | "admin" | "wake" | "config") => Promise<void>;
+  refreshToolRegistry?: () => void | Promise<void>;
   startupTimeoutMs?: number;
   reconcileOnStart?: boolean;
   pollIntervalMs?: number;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
-  onTerminal?(session: PiSession): Promise<void> | void;
-}): PiSandboxRuntime {
+  onInvocationCompleted?(completion: PiInvocationCompletion): Promise<void> | void;
+}): PiWorkerRuntime {
   let healthSnapshot: PiWorkerHealth | undefined;
-  const terminalListeners = new Set<(session: PiSession) => Promise<void> | void>();
-  const deliveringTerminalSessions = new Set<string>();
-  if (input.onTerminal) terminalListeners.add(input.onTerminal);
+  const completionListeners = new Set<(completion: PiInvocationCompletion) => Promise<void> | void>();
+  const deliveredInvocations = new Set<string>();
+  const deliveringInvocations = new Map<string, Promise<void>>();
+  if (input.onInvocationCompleted) completionListeners.add(input.onInvocationCompleted);
   const watchers = new Map<string, ReturnType<typeof setTimeout>>();
   let acceptingWatches = false;
 
   return {
     async start() {
       acceptingWatches = true;
-      await input.ensureWorker?.();
-      healthSnapshot = await waitForReadyHealth();
-      if (input.reconcileOnStart !== false) await reconcileInterrupted();
-      const sessions = await input.worker.listSessions();
-      for (const session of sessions) {
-        if (session.status === "queued" || session.status === "running") watch(session.sessionId);
-        else if (terminalStatuses.has(session.status) && !session.completionDelivered) await notifyTerminal(session);
+      try {
+        await input.ensureWorker?.();
+        healthSnapshot = await waitForReadyHealth();
+      } catch (error) {
+        input.appendLog?.("warn", `pi worker not ready: ${error instanceof Error ? error.message : String(error)}`);
+        healthSnapshot = undefined;
       }
+      if (healthSnapshot && input.reconcileOnStart !== false) await reconcileInvocations();
     },
     async stop() {
       acceptingWatches = false;
@@ -45,7 +43,8 @@ export function createPiSandboxRuntime(input: {
       await input.ensureWorker?.();
       await input.restartWorker?.(reason);
       healthSnapshot = await waitForReadyHealth();
-      await reconcileInterrupted();
+      await input.refreshToolRegistry?.();
+      await reconcileInvocations();
       await this.start();
     },
     async health() {
@@ -53,9 +52,8 @@ export function createPiSandboxRuntime(input: {
       return healthSnapshot;
     },
     async previewPrompt(previewInput = {}) {
-      const sessionId = createId("pi_preview");
-      const modelConfig = await input.preparePreviewSession?.({ sessionId, presetName: previewInput.presetName });
-      return input.worker.previewSession({ ...modelConfig, sessionId, signal: previewInput.signal });
+      const modelConfig = await resolveModelConfig(previewInput.presetName);
+      return input.worker.previewSession({ ...modelConfig, signal: previewInput.signal });
     },
     toolDefinitions() {
       return healthSnapshot?.toolDefinitions ?? [];
@@ -66,40 +64,87 @@ export function createPiSandboxRuntime(input: {
       if (!healthSnapshot) await this.health();
       return input.worker.executeTool({ ...toolInput, signal });
     },
-    async startSubAgent(sessionInput) {
-      const session = await input.worker.createSession(sessionInput);
-      const modelConfig = await input.prepareSession?.({ sessionId: session.sessionId, task: sessionInput.task, presetName: sessionInput.presetName });
-      const started = await input.worker.startSession(session.sessionId, { ...modelConfig, signal: sessionInput.signal });
-      watch(session.sessionId);
-      return started;
+    async startSubAgent(subInput) {
+      const modelConfig = await resolveModelConfig(subInput.presetName);
+      const invocation = await input.worker.startInvocation({
+        message: subInput.message,
+        timeoutSeconds: subInput.timeoutSeconds,
+        messageTarget: subInput.messageTarget,
+        ...modelConfig,
+        signal: subInput.signal
+      });
+      watch(invocation.sessionId);
+      return invocation;
     },
-    async statusSubAgent(sessionId, cursor, signal) {
-      const session = await input.worker.getSession(sessionId, signal);
-      const events = await input.worker.listSessionEvents(sessionId, cursor, signal);
-      return { ...session, events: events.events, nextCursor: events.nextCursor };
+    async listSubAgents(signal) {
+      return input.worker.listSessions(signal);
+    },
+    async readSubAgent(sessionId, view, signal) {
+      return input.worker.readSession(sessionId, view, signal);
+    },
+    async sendSubAgent(sessionId, subInput) {
+      const modelConfig = await resolveModelConfig(subInput.presetName);
+      const invocation = await input.worker.sendInvocation(sessionId, {
+        message: subInput.message,
+        mode: subInput.mode,
+        timeoutSeconds: subInput.timeoutSeconds,
+        messageTarget: subInput.messageTarget,
+        ...modelConfig,
+        signal: subInput.signal
+      });
+      watch(sessionId);
+      return invocation;
+    },
+    async statusSubAgent(sessionId, signal) {
+      return input.worker.sessionStatus(sessionId, signal);
+    },
+    async waitSubAgent(sessionId, timeoutSeconds, signal) {
+      return input.worker.waitSession(sessionId, timeoutSeconds, signal);
     },
     async cancelSubAgent(sessionId, signal) {
-      const session = await input.worker.cancelSession(sessionId, signal);
-      if (terminalStatuses.has(session.status)) await notifyTerminal(session);
-      return session;
+      return input.worker.cancelSession(sessionId, signal);
     },
-    reconcileInterrupted,
-    onTerminal(listener) {
-      terminalListeners.add(listener);
-      return () => terminalListeners.delete(listener);
+    async forkSubAgent(sessionId, entryId, signal) {
+      return input.worker.forkSession(sessionId, entryId, signal);
+    },
+    reconcileInvocations,
+    onInvocationCompleted(listener) {
+      completionListeners.add(listener);
+      return () => completionListeners.delete(listener);
     }
   };
 
-  async function reconcileInterrupted(signal?: AbortSignal): Promise<PiSession[]> {
-    const sessions = await input.worker.listSessions(signal);
-    const interrupted: PiSession[] = [];
-    for (const session of sessions) {
-      if (session.status !== "queued" && session.status !== "running") continue;
-      const next = await input.worker.markInterrupted(session.sessionId, signal);
-      interrupted.push(next);
-      await notifyTerminal(next);
+  async function resolveModelConfig(presetName?: string): Promise<PiModelConfig> {
+    const modelConfig = await input.prepareModel?.({ presetName });
+    if (!modelConfig) throw new Error("pi_llm_preset_not_found");
+    return modelConfig;
+  }
+
+  async function reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]> {
+    const completions = await input.worker.reconcileInvocations(signal);
+    for (const completion of completions) {
+      await deliverCompletion(completion);
     }
-    return interrupted;
+    return completions;
+  }
+
+  async function deliverCompletion(completion: PiInvocationCompletion): Promise<void> {
+    const key = `${completion.sessionId}:${completion.invocationId}`;
+    if (deliveredInvocations.has(key)) return;
+    const inFlight = deliveringInvocations.get(key);
+    if (inFlight) return inFlight;
+    const delivery = (async () => {
+      try {
+        for (const listener of completionListeners) await listener(completion);
+        // Only mark delivered after every listener succeeded, so a delivery
+        // error leaves the completion retryable by the next reconciliation.
+        deliveredInvocations.add(key);
+      } finally {
+        deliveringInvocations.delete(key);
+      }
+    })();
+    deliveringInvocations.set(key, delivery);
+    return delivery;
   }
 
   async function waitForReadyHealth(): Promise<PiWorkerHealth> {
@@ -108,8 +153,12 @@ export function createPiSandboxRuntime(input: {
     while (Date.now() <= deadline) {
       try {
         const health = await input.worker.health();
-        if (health.ready && health.relayReachable) return health;
-        lastError = new Error("pi_worker_not_ready");
+        // The worker answering is enough: relay reachability depends on the
+        // host-side preset configuration, not on container state. Return the
+        // snapshot either way so tools keep working and SubAgent fails with an
+        // actionable preset error instead of a startup hang when no preset is
+        // configured yet.
+        return health;
       } catch (error) {
         lastError = error;
       }
@@ -123,28 +172,20 @@ export function createPiSandboxRuntime(input: {
     const poll = async () => {
       watchers.delete(sessionId);
       try {
-        const session = await input.worker.getSession(sessionId);
-        if (terminalStatuses.has(session.status)) {
-          await notifyTerminal(session);
-          return;
+        const snapshot = await input.worker.sessionStatus(sessionId);
+        if (snapshot.terminalCompletions?.length) {
+          for (const completion of snapshot.terminalCompletions) await deliverCompletion(completion);
+        } else if (snapshot.lastInvocation) {
+          await deliverCompletion(snapshot.lastInvocation);
         }
-        if (acceptingWatches) watchers.set(sessionId, setTimeout(() => void poll(), input.pollIntervalMs ?? 500));
+        if (!snapshot.idle && acceptingWatches) {
+          watchers.set(sessionId, setTimeout(() => void poll(), input.pollIntervalMs ?? 500));
+        }
       } catch (error) {
         input.appendLog?.("warn", `pi session watch failed: session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
         if (acceptingWatches) watchers.set(sessionId, setTimeout(() => void poll(), input.pollIntervalMs ?? 500));
       }
     };
     watchers.set(sessionId, setTimeout(() => void poll(), 0));
-  }
-
-  async function notifyTerminal(session: PiSession): Promise<void> {
-    if (session.completionDelivered || deliveringTerminalSessions.has(session.sessionId)) return;
-    deliveringTerminalSessions.add(session.sessionId);
-    try {
-      for (const listener of terminalListeners) await listener(session);
-      await input.worker.markCompletionDelivered(session.sessionId);
-    } finally {
-      deliveringTerminalSessions.delete(session.sessionId);
-    }
   }
 }

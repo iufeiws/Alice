@@ -121,7 +121,7 @@ export type AdminPluginConfigField = {
 export type AdminPluginRegistryEntry = {
   summary(context: AdminRoutesContext): AdminPluginSummary;
   config?(context: AdminRoutesContext): unknown;
-  patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown; restartRequired?: boolean } | { error: string };
+  patch?(context: AdminRoutesContext, patch: Record<string, unknown>): { config: unknown; restartRequired?: boolean } | { error: string } | Promise<{ config: unknown; restartRequired?: boolean } | { error: string }>;
   setEnabled?(context: AdminRoutesContext, enabled: boolean): { config: unknown } | { error: string };
   reload?(context: AdminRoutesContext): { config: unknown } | { error: string };
   runtimeState?(context: AdminRoutesContext): unknown;

@@ -19,8 +19,8 @@ export function createApiStartupRuntime(input: {
     resumeHeartbeat?(): void;
   };
   piRelay?: { start(): Promise<unknown> };
-  piSandboxRuntime?: { start(): Promise<void> };
-  refreshPiTools?(): unknown;
+  piWorkerRuntime?: { start(): Promise<void> };
+  refreshToolRegistry?(): unknown;
   appendLog: AppendLog;
 }) {
   return {
@@ -31,8 +31,8 @@ export function createApiStartupRuntime(input: {
     const persistedHeartbeatPaused = input.config.core?.heartbeatPaused === true;
     input.messageRuntime.pauseHeartbeat?.();
     await input.piRelay?.start();
-    await input.piSandboxRuntime?.start();
-    input.refreshPiTools?.();
+    await input.piWorkerRuntime?.start();
+    input.refreshToolRegistry?.();
     await input.chatAgent.start();
     await input.messageRuntime.recoverProcessRestartContinuation?.();
     input.scheduler.start();

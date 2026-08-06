@@ -14,7 +14,7 @@ import {
   buildTimedYieldEvent
 } from "./message-event-builders.js";
 import { persistInboundAttachment } from "./inbound-attachments.js";
-import type { MessageRuntime, MessageRuntimeDeps, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
+import type { MessageRuntime, MessageRuntimeDeps, DeliverPiInvocationCompletionInput, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
 import { extractSentMessageCreatedAtUtc, extractSentMessageId, isPromise, safeJson } from "./message-runtime-utils.js";
 
 export type SystemNoticeStore = {
@@ -244,6 +244,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       }
     },
     sendSystemNotice,
+    deliverPiInvocationCompletion,
     recoverPendingSessions() {
       recoverPendingSessionsFromStore();
     },
@@ -305,7 +306,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       const wakeReady = wasSleeping ? deps.agentState?.waitForWake?.() : undefined;
       void Promise.resolve(wakeReady).then(
         () => deps.onForceWake?.(),
-        (error) => deps.appendLog("error", `pi sandbox restart on force wake failed: ${error instanceof Error ? error.message : String(error)}`)
+        (error) => deps.appendLog("error", `sandbox restart on force wake failed: ${error instanceof Error ? error.message : String(error)}`)
       );
       deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
       return;
@@ -657,6 +658,97 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       },
       appendMessageLog: deps.appendMessageLog
     }, input);
+  }
+
+  async function deliverPiInvocationCompletion(input: DeliverPiInvocationCompletionInput): Promise<void> {
+    const receivedTime = time.now();
+    const message = deps.store.upsertBothMessage({
+      plugin: input.plugin,
+      conversationId: input.conversationId,
+      piSessionId: input.piSessionId,
+      piInvocationId: input.piInvocationId,
+      senderId: input.senderId,
+      senderName: input.senderName,
+      contentType: "text",
+      contentText: input.text,
+      contentJson: safeJson({ kind: "text", text: input.text }),
+      createdAt: receivedTime.iso,
+      createdAtUtc: receivedTime.date.toISOString()
+    });
+    const target: SystemNoticeTarget = {
+      plugin: input.plugin,
+      accountId: input.accountId,
+      channelId: input.channelId,
+      userId: input.userId,
+      sessionId: input.conversationId
+    };
+    // User-facing system notice delivery, reusing the existing notice send path
+    // without inserting a second outbound/system message.
+    if (message.status === "sending") {
+      const text = normalizeSystemNoticeText(input.text);
+      if (text) {
+        const output: AgentOutput = {
+          id: createId("out"),
+          target,
+          content: { kind: "text", text: formatSystemNoticeForSend(text) },
+          meta: {
+            createdAt: receivedTime.iso,
+            createdAtUtc: receivedTime.date.toISOString(),
+            urgency: "normal",
+            allowStreaming: false
+          }
+        };
+        try {
+          const sendResults = await deps.outputRouter.sendAll([output]);
+          const resultList = Array.isArray(sendResults) ? sendResults : [];
+          const sentAtUtc = time.now().date.toISOString();
+          deps.store.markOutboundMessageSent(message.id, extractSentMessageId(resultList[0]), sentAtUtc, extractSentMessageCreatedAtUtc(resultList[0]));
+          deps.appendMessageLog({
+            direction: "outbound",
+            plugin: input.plugin,
+            kind: "text",
+            target: input.conversationId,
+            sessionId: input.conversationId,
+            status: "sent",
+            summary: text
+          });
+        } catch (error) {
+          const failedTime = time.now();
+          const reason = error instanceof Error ? error.message : String(error);
+          deps.store.markOutboundMessageFailed(message.id, failedTime.iso, reason, failedTime.date.toISOString());
+          deps.appendMessageLog({
+            direction: "outbound",
+            plugin: input.plugin,
+            kind: "text",
+            target: input.conversationId,
+            sessionId: input.conversationId,
+            status: "send_failed",
+            processedAt: failedTime.iso,
+            processedBatchId: "send_failed",
+            error: reason,
+            summary: text
+          });
+        }
+      }
+    }
+    // Alice/Core pending: the both message enters the Core queue independently
+    // of the user-facing send status.
+    if (!message.coreProcessedAt) {
+      deps.agentState?.noteInboundMessage();
+      agentLoopRuntime.noteInboundUserMessageInterrupt(input.conversationId);
+      markPending(input.conversationId);
+    }
+    deps.appendMessageLog({
+      direction: "inbound",
+      plugin: input.plugin,
+      kind: "text",
+      target: input.conversationId,
+      sessionId: input.conversationId,
+      rawMessageId: `pi:${input.piSessionId}:${input.piInvocationId}`,
+      externalEventId: `pi:${input.piSessionId}:${input.piInvocationId}`,
+      status: "received",
+      summary: input.text
+    });
   }
 
   function typingTargetFromPending(sessionId: string, pending: StoredConversationMessage[], event: AgentEvent, typing: boolean) {

@@ -9,6 +9,7 @@ import type {
   StoredConversationMessage,
   StoredMessageLog,
   UpdateMessageReactionInput,
+  UpsertBothMessageInput,
   UpsertInboundMessageInput
 } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 
@@ -62,6 +63,7 @@ export type MessageRuntimeDeps = {
   store: {
     insertMessageLog(input: Omit<StoredMessageLog, "id">): StoredMessageLog;
     upsertInboundMessage(input: UpsertInboundMessageInput): StoredConversationMessage;
+    upsertBothMessage(input: UpsertBothMessageInput): StoredConversationMessage;
     insertOutboundMessage(input: InsertOutboundMessageInput): StoredConversationMessage;
     listMessages(limit: number): StoredConversationMessage[];
     listMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
@@ -107,10 +109,31 @@ export type SendSystemNoticeInput = {
   writeLog?: boolean;
 };
 
+/**
+ * Deliver a Pi invocation completion as one logical `both` message: it enters
+ * the Alice conversation/Core pending queue as an Albert user message and is
+ * also sent to the invocation's original message target as a system notice.
+ * `accountId`/`channelId`/`userId` come from the invocation-saved target and
+ * are required for channel senders (e.g. Feishu) to resolve the receive id.
+ */
+export type DeliverPiInvocationCompletionInput = {
+  plugin: string;
+  conversationId: string;
+  piSessionId: string;
+  piInvocationId: string;
+  text: string;
+  senderName?: string;
+  senderId?: string;
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+};
+
 export type MessageRuntime = {
   ingestEvent(event: AgentEvent): Promise<void>;
   ingestLifecycle(event: MessageLifecycleEvent): void;
   sendSystemNotice(input: SendSystemNoticeInput): Promise<void>;
+  deliverPiInvocationCompletion(input: DeliverPiInvocationCompletionInput): Promise<void>;
   recoverPendingSessions(): void;
   recoverProcessRestartContinuation(): Promise<void>;
   pauseHeartbeat(): void;

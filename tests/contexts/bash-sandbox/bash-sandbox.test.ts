@@ -1,62 +1,34 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createBashTools } from "../../../src/capabilities/tools/bash/src/index.js";
 import { createBashSandboxRuntime, classifyBashCommand } from "../../../src/contexts/bash-sandbox/src/index.js";
 import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.js";
 import { fakeExecutor, testConfig, tmpDir } from "./bash-sandbox-helpers.js";
 
 const fs = await import("node:fs");
 
-test("bash tool executes through sandbox runtime by default", async () => {
-  const tools = createBashTools({
-    runtime: createBashSandboxRuntime({
-      config: testConfig(),
-      executor: fakeExecutor(async () => ({ stdout: "sandbox\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
-    })
+test("bash sandbox runtime executes through the executor by default", async () => {
+  const runtime = createBashSandboxRuntime({
+    config: testConfig(),
+    executor: fakeExecutor(async () => ({ stdout: "sandbox\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
   });
 
-  const result = await tools.execute({ id: "bash_1", toolName: "Bash", input: { command: "echo hello" } });
-  const output = JSON.parse(String(result.output));
+  const output = await runtime.run({ id: "bash_1", toolName: "Bash", input: { command: "echo hello" } });
 
-  assert.equal(result.ok, true);
   assert.equal(output.denied, false);
   assert.equal(output.stdout, "sandbox\n");
 });
 
-test("bash tool returns docker result without throwing on non-zero exit", async () => {
-  const tools = createBashTools({
-    runtime: createBashSandboxRuntime({
-      config: testConfig(),
-      executor: fakeExecutor(async () => ({ stdout: "", stderr: "nope", exitCode: 2, timedOut: false, durationMs: 3, truncated: false }))
-    })
+test("bash sandbox runtime returns docker result without throwing on non-zero exit", async () => {
+  const runtime = createBashSandboxRuntime({
+    config: testConfig(),
+    executor: fakeExecutor(async () => ({ stdout: "", stderr: "nope", exitCode: 2, timedOut: false, durationMs: 3, truncated: false }))
   });
 
-  const result = await tools.execute({ id: "bash_2", toolName: "Bash", input: { command: "echo hello" } });
-  const output = JSON.parse(String(result.output));
+  const output = await runtime.run({ id: "bash_2", toolName: "Bash", input: { command: "echo hello" } });
 
-  assert.equal(result.ok, true);
   assert.equal(output.denied, false);
   assert.equal(output.exitCode, 2);
   assert.equal(output.stderr, "nope");
-});
-
-test("bash tool includes host submission results without changing sandbox output", async () => {
-  const tools = createBashTools({
-    runtime: createBashSandboxRuntime({
-      config: testConfig(),
-      executor: fakeExecutor(async () => ({ stdout: "marker\n", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
-    }),
-    async handleResult(result) {
-      assert.equal(result.stdout, "marker\n");
-      return { type: "test", status: "approved" };
-    }
-  });
-
-  const result = await tools.execute({ id: "bash_submission", toolName: "Bash", input: { command: "submit" } });
-  const output = JSON.parse(String(result.output));
-
-  assert.equal(output.stdout, "marker\n");
-  assert.deepEqual(output.submission, { type: "test", status: "approved" });
 });
 
 test("permission gate only enforces sandbox entry boundary", () => {

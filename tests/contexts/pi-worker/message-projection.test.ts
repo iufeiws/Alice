@@ -45,10 +45,15 @@ test("isVisibleMessage: assistant tool-use messages are dropped", () => {
   assert.equal(isVisibleMessage({ role: "assistant", content: "text", toolCalls: [{ id: "c1" }] }), false);
 });
 
-test("isVisibleMessage: thinking/progress/tool-result blocks make assistant messages invisible", () => {
+test("isVisibleMessage: thinking blocks are stripped before visibility, progress/tool-result blocks still drop the message", () => {
   assert.equal(isVisibleMessage({ role: "assistant", content: [{ type: "thinking", thinking: "…" }] }), false);
   assert.equal(isVisibleMessage({ role: "assistant", content: [{ type: "text", text: "t" }, { type: "progress" }] }), false);
   assert.equal(isVisibleMessage({ role: "assistant", content: [{ type: "tool_result", output: "x" }] }), false);
+});
+
+test("isVisibleMessage: assistant messages with thinking plus text stay visible", () => {
+  assert.equal(isVisibleMessage({ role: "assistant", content: [{ type: "thinking", thinking: "思考" }, { type: "text", text: "最终答案" }] }), true);
+  assert.equal(isVisibleMessage({ role: "assistant", content: [{ type: "text", text: "最终答案" }, { type: "thinking", thinking: "思考" }] }), true);
 });
 
 test("isVisibleMessage: assistant messages without non-empty text are dropped", () => {
@@ -71,12 +76,30 @@ test("projectVisibleMessages filters to visible user/assistant messages only", (
   ]);
 });
 
+test("projectVisibleMessages strips thinking blocks from visible assistant content", () => {
+  const entries = [
+    { id: "m1", type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: "思考" }, { type: "text", text: "答复" }] } }
+  ];
+  assert.deepEqual(projectVisibleMessages(entries), [
+    { role: "assistant", content: [{ type: "text", text: "答复" }] }
+  ]);
+});
+
 test("projectLatestAssistantMessageAfter ignores tool-use and empty assistant messages", () => {
   const entries = REAL_SESSION_ENTRIES;
   assert.deepEqual(projectLatestAssistantMessageAfter(entries, "m7"), { role: "assistant", content: [{ type: "text", text: "最终答案" }] });
   assert.deepEqual(projectLatestAssistantMessageAfter(entries, "m1"), { role: "assistant", content: [{ type: "text", text: "最终答案" }] });
   assert.equal(projectLatestAssistantMessageAfter(entries, "m9"), undefined);
   assert.equal(projectLatestAssistantMessageAfter(entries, "missing"), undefined);
+});
+
+test("projectLatestAssistantMessageAfter returns text even when the reply carries thinking blocks", () => {
+  const entries = [
+    { id: "inv-1", type: "custom", customType: "alice_pi_invocation", data: { message: "task" } },
+    { id: "m1", type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } },
+    { id: "m2", type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: "思考" }, { type: "text", text: "答复" }] } }
+  ];
+  assert.deepEqual(projectLatestAssistantMessageAfter(entries, "inv-1"), { role: "assistant", content: [{ type: "text", text: "答复" }] });
 });
 
 test("parseMessageAccess accepts integer and start:end slice only", () => {

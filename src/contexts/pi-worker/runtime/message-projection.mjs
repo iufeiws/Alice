@@ -8,18 +8,25 @@
 // SubAgent profile 不复制任何 Pi 消息结构判断。
 
 /**
- * assistant 消息只在携带非空自然语言文本时可见：
+ * assistant 消息只在剥离 thinking 后仍携带非空自然语言文本时可见：
+ * - 过滤前先剥离 content 中的 thinking block（思考不返回宿主, 也不影响可见性）；
  * - 带 tool call（content 中的 toolCall block 或 message.toolCalls）不可见；
- * - thinking / progress / tool result 等非文本 block 使消息不可见；
- * - 没有任何文本内容（空数组、空字符串）的占位消息不可见。
+ * - progress / tool result 等非文本 block 使消息不可见；
+ * - 剥离后没有任何文本内容（空数组、空字符串）的占位消息不可见。
  */
+function stripThinkingBlocks(content) {
+  if (!Array.isArray(content)) return content;
+  return content.filter((part) => !(part && typeof part === "object" && part.type === "thinking"));
+}
+
 export function isVisibleMessage(message) {
   if (message?.role !== "user" && message?.role !== "assistant") return false;
   if (message.role === "user") return true;
   if (Array.isArray(message.toolCalls) && message.toolCalls.length) return false;
-  const parts = typeof message.content === "string"
-    ? (message.content ? [{ type: "text", text: message.content }] : [])
-    : Array.isArray(message.content) ? message.content : [];
+  const content = stripThinkingBlocks(message.content);
+  const parts = typeof content === "string"
+    ? (content ? [{ type: "text", text: content }] : [])
+    : Array.isArray(content) ? content : [];
   if (parts.some((part) => !part || typeof part !== "object" || part.type !== "text")) return false;
   const text = parts.map((part) => (typeof part.text === "string" ? part.text : "")).join("");
   return text.trim().length > 0;
@@ -29,7 +36,7 @@ export function isVisibleMessage(message) {
 export function projectVisibleMessages(entries) {
   return entries
     .filter((entry) => entry?.type === "message" && isVisibleMessage(entry.message))
-    .map((entry) => ({ role: entry.message.role, content: entry.message.content }));
+    .map((entry) => ({ role: entry.message.role, content: stripThinkingBlocks(entry.message.content) }));
 }
 
 /** entryId 之后（含）的最后一条可见 assistant 消息；无则 undefined。 */
@@ -38,7 +45,7 @@ export function projectLatestAssistantMessageAfter(entries, entryId) {
   if (index < 0) return undefined;
   return entries.slice(index)
     .filter((entry) => entry?.type === "message" && isVisibleMessage(entry.message) && entry.message.role === "assistant")
-    .map((entry) => ({ role: "assistant", content: entry.message.content }))
+    .map((entry) => ({ role: "assistant", content: stripThinkingBlocks(entry.message.content) }))
     .at(-1);
 }
 

@@ -44,7 +44,7 @@ test("docker executor starts the Pi worker from the existing wrapper mount", asy
   const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
   assert.match(runCall, /alice-bash-sandbox:/);
   assert.match(runCall, /export NODE_PATH=/);
-  assert.match(runCall, /node \/sandbox\/bin\/worker\.mjs/);
+  assert.match(runCall, /node --no-use-env-proxy \/sandbox\/pi-worker\/worker\.mjs/);
 });
 
 async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorker = false) {

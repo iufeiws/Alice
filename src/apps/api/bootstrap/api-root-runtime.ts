@@ -221,8 +221,9 @@ export function createApiRootRuntime() {
     }
     if (input.reason === "call" && input.force !== true && relayGrantedAt && Date.now() - relayGrantedAt < PI_RELAY_AUTHORIZATION_TTL_MS) return;
     await ensureDockerSandboxContainer(foundation.config.bashSandbox);
+    const relayHostname = foundation.config.bashSandbox.piWorker?.relayHostname ?? "172.17.0.1";
     await piWorkerClient.configure({
-      relayUrl: `http://host.docker.internal:${foundation.config.piWorkerConfig.relayPort}/v1`,
+      relayUrl: `http://${relayHostname}:${foundation.config.piWorkerConfig.relayPort}/v1`,
       relayToken: piCapability.token
     });
     relayGrantedAt = Date.now();

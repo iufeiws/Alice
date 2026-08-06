@@ -25,6 +25,12 @@ export type PiWorkerContainerConfig = {
   maxQueueSize?: number;
   taskTimeoutSeconds?: number;
   timezone?: string;
+  /**
+   * 容器内 worker 访问宿主 relay 的地址(host 部分)。
+   * 用 docker 网桥网关 IP 而非 host.docker.internal: 即使容器残留代理 env,
+   * mihomo 的 IP-CIDR DIRECT 规则也会放行本地网段, 不会因域名解析失败而 502。
+   */
+  relayHostname?: string;
 };
 
 export type BashSandboxConfig = {
@@ -68,6 +74,9 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
   if (normalized.piWorker) {
     if (!normalized.piWorker.hostDir || !normalized.piWorker.containerDir.startsWith("/") || !Number.isInteger(normalized.piWorker.port) || normalized.piWorker.port < 1 || normalized.piWorker.port > 65_535) {
       throw new Error("invalid bashSandbox Pi Worker configuration");
+    }
+    if (normalized.piWorker.relayHostname !== undefined && !normalized.piWorker.relayHostname.trim()) {
+      throw new Error("invalid bashSandbox Pi Worker relay hostname");
     }
     if (normalized.piWorker.enabled && normalized.network === "none") {
       throw new Error("invalid_pi_worker_network");

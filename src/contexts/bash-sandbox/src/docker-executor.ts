@@ -12,7 +12,9 @@ const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
 const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
 const PI_WORKER_RUNTIME_CONTAINER_DIR = "/sandbox/pi-worker";
 const PI_WORKER_RUNTIME_HOST_DIR = path.resolve("src/contexts/pi-worker/runtime");
-const PI_WORKER_CONTAINER_REVISION = "pi-worker-runtime-v1";
+// v2: worker 以 --no-use-env-proxy 启动, 直连宿主 relay, 避免容器内
+// HTTP_PROXY(host.docker.internal:7890 -> mihomo) 劫持 host↔容器本地流量。
+const PI_WORKER_CONTAINER_REVISION = "pi-worker-runtime-v2";
 const ALICE_CONTAINER_USER_REVISION = "alice-user-v1";
 const CONTAINER_MOUNT_KEY_LABEL = "com.alice.sandbox.mount-key";
 
@@ -245,7 +247,7 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
       image,
       "sh",
       "-lc",
-      "export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/pi-worker/worker.mjs"
+      "export NODE_PATH=\"$(npm root -g)\"; exec node --no-use-env-proxy /sandbox/pi-worker/worker.mjs"
     );
   } else {
     args.push(image, "sleep", "infinity");

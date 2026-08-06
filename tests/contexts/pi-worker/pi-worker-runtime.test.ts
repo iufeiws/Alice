@@ -9,7 +9,7 @@ const health: PiWorkerHealth = {
   ready: true,
   version: "1.2.3",
   toolDefinitionGeneration: "generation-a",
-  cwd: "/alice",
+  cwd: "/home/alice",
   relayReachable: true,
   toolDefinitions: [
     { name: "read", description: "native read", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
@@ -44,6 +44,25 @@ test("Shell tool plugin exposes the static Bash definition and forwards it with 
   await runtime.stop();
 });
 
+test("File and shell text results reach the LLM as plain text", async () => {
+  const worker = fakeWorker();
+  worker.executeTool = async ({ toolName }) => ({
+    ok: true,
+    content: [{ type: "text", text: toolName === "read" ? "test\nalice\nPI_MAX_CONCURRENCY=2" : "stdout" }]
+  });
+  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const fileTool = createFileTools({ piWorker: runtime });
+  const shellTool = createShellTools({ runtime });
+
+  const fileResult = await fileTool.execute({ id: "call-file-text", toolName: "Read", input: { path: "/tmp/env" } });
+  const shellResult = await shellTool.execute({ id: "call-shell-text", toolName: "Bash", input: { command: "env" } });
+
+  assert.equal(fileResult.output, "test\nalice\nPI_MAX_CONCURRENCY=2");
+  assert.equal(shellResult.output, "stdout");
+  await runtime.stop();
+});
+
 test("SubAgent start returns the Pi session and invocation ids without waiting for completion", async () => {
   const worker = fakeWorker();
   const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, pollIntervalMs: 10_000, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
@@ -57,12 +76,13 @@ test("SubAgent start returns the Pi session and invocation ids without waiting f
 
 test("Pi image tool results become image follow-up attachments for multimodal Chat", async () => {
   const worker = fakeWorker();
-  worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", path: "/alice/photo.png", mime: "image/png" }] });
+  worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", path: "/home/alice/photo.png", mime: "image/png" }] });
   const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createFileTools({ piWorker: runtime, resolveImagePath: (value) => `/host${value}` });
   const result = await tool.execute({ id: "call-image", toolName: "Read", input: {} }, { llmCapabilities: { supportsImage: true } });
-  assert.deepEqual(result.llmFollowupAttachments, [{ kind: "image", path: "/host/alice/photo.png", mime: "image/png" }]);
+  assert.equal(result.output, "photo");
+  assert.deepEqual(result.llmFollowupAttachments, [{ kind: "image", path: "/host/home/alice/photo.png", mime: "image/png" }]);
   await runtime.stop();
 });
 
@@ -109,7 +129,7 @@ test("restart refreshes the tool registry from the new worker health before reso
     ready: true,
     version: "1.2.3",
     toolDefinitionGeneration: "generation-a",
-    cwd: "/alice",
+    cwd: "/home/alice",
     relayReachable: true,
     toolDefinitions: [{ name: "read", description: "native read", inputSchema: { gen } }]
   });

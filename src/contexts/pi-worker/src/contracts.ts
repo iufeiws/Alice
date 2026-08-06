@@ -149,5 +149,9 @@ export type PiWorkerRuntime = {
 
 export function piToolResultToToolResult(callId: string, result: PiToolExecutionResult): ToolResult {
   if (!result.ok) return { callId, ok: false, output: result.output, error: result.error };
-  return { callId, ok: true, output: result.output ?? result.content ?? "" };
+  return { callId, ok: true, output: result.output ?? piContentText(result.content) };
+}
+
+function piContentText(content: PiContent[] | undefined): string {
+  return content?.filter((part): part is Extract<PiContent, { type: "text" }> => part.type === "text").map((part) => part.text).join("") ?? "";
 }

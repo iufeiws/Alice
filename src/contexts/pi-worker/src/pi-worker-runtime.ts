@@ -99,15 +99,14 @@ export function createPiWorkerRuntime(input: {
     async listSubAgents(signal) {
       return input.worker.listSessions(signal);
     },
-    async readSubAgent(sessionId, view, signal) {
-      return input.worker.readSession(sessionId, view, signal);
+    async messagesSubAgent(sessionId, access, signal) {
+      return input.worker.sessionMessages(sessionId, access, signal);
     },
     async sendSubAgent(sessionId, subInput) {
       const modelConfig = await resolveModelConfig(subInput.presetName);
       healthSnapshot = await ensureGranted();
       const invocation = await input.worker.sendInvocation(sessionId, {
         message: subInput.message,
-        mode: subInput.mode,
         timeoutSeconds: subInput.timeoutSeconds,
         messageTarget: subInput.messageTarget,
         ...modelConfig,
@@ -117,7 +116,7 @@ export function createPiWorkerRuntime(input: {
       return invocation;
     },
     async statusSubAgent(sessionId, signal) {
-      return input.worker.sessionStatus(sessionId, signal);
+      return input.worker.subAgentStatus(sessionId, signal);
     },
     async waitSubAgent(sessionId, timeoutSeconds, signal) {
       return input.worker.waitSession(sessionId, timeoutSeconds, signal);

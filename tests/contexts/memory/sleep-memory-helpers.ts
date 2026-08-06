@@ -116,7 +116,7 @@ export function makeMemorySandbox(root: string): MemorySandbox {
     async listSubAgents() {
       return [];
     },
-    async readSubAgent() {
+    async messagesSubAgent() {
       throw new Error("subagent is not available in memory sandbox tests");
     },
     async sendSubAgent() {

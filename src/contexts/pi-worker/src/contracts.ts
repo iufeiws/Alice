@@ -75,19 +75,18 @@ export type PiSessionListEntry = {
   messageCount: number;
 };
 
-export type PiSessionReadView = "context" | "messages" | "tree";
+export type PiVisibleMessage = { role: "user" | "assistant"; content: unknown };
 
-export type PiSessionReadResult = {
-  sessionId: string;
-  idle: boolean;
-  invocationStatus?: PiInvocationStatus;
-  /** Effective model context (compaction-aware, current branch). */
-  context?: { messages: unknown[] };
-  /** Current branch messages. */
-  messages?: unknown[];
-  /** Pi native entry tree. */
-  tree?: unknown[];
+export type PiSubAgentStatus = {
+  updatedAt: string;
+  messages: number;
+  status: PiInvocationStatus;
 };
+
+export type PiSubAgentWaitResult =
+  | { status: "running" }
+  | { status: "completed"; message: PiVisibleMessage & { role: "assistant" } }
+  | { status: Exclude<PiInvocationStatus, "queued" | "running" | "completed"> };
 
 /** Completion payload produced when an invocation finishes or is reconciled. */
 export type PiInvocationCompletion = {
@@ -107,10 +106,11 @@ export type PiWorkerClient = {
   startInvocation(input: PiInvocationStartInput & { signal?: AbortSignal }): Promise<PiInvocation>;
   sendInvocation(sessionId: string, input: PiInvocationSendInput & { signal?: AbortSignal }): Promise<PiInvocation>;
   listSessions(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
-  readSession(sessionId: string, view?: PiSessionReadView, signal?: AbortSignal): Promise<PiSessionReadResult>;
+  sessionMessages(sessionId: string, access: string, signal?: AbortSignal): Promise<PiVisibleMessage[]>;
   sessionStatus(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
-  waitSession(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSessionSnapshot>;
-  cancelSession(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  subAgentStatus(sessionId: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
+  waitSession(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
+  cancelSession(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
   forkSession(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
   previewSession(input: PiModelConfig & { signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
   reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
@@ -124,7 +124,6 @@ export type PiInvocationStartInput = {
 
 export type PiInvocationSendInput = {
   message: string;
-  mode?: "prompt" | "steer" | "follow_up";
   timeoutSeconds?: number;
   messageTarget?: Record<string, unknown>;
 } & PiModelConfig;
@@ -143,11 +142,11 @@ export type PiWorkerRuntime = {
   executeTool(input: { requestId: string; toolName: string; input: Record<string, unknown>; context?: ToolExecutionContext }): Promise<PiToolExecutionResult>;
   startSubAgent(input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
   listSubAgents(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
-  readSubAgent(sessionId: string, view?: PiSessionReadView, signal?: AbortSignal): Promise<PiSessionReadResult>;
-  sendSubAgent(sessionId: string, input: { message: string; mode?: "prompt" | "steer" | "follow_up"; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
-  statusSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
-  waitSubAgent(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSessionSnapshot>;
-  cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  messagesSubAgent(sessionId: string, access: string, signal?: AbortSignal): Promise<PiVisibleMessage[]>;
+  sendSubAgent(sessionId: string, input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
+  statusSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
+  waitSubAgent(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
+  cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
   forkSubAgent(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
   reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
   onInvocationCompleted(listener: (completion: PiInvocationCompletion) => Promise<void> | void): () => void;

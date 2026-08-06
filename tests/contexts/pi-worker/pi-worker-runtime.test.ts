@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPiWorkerRuntime, type PiInvocationCompletion, type PiSessionSnapshot, type PiToolDefinition, type PiWorkerClient, type PiWorkerHealth } from "../../../src/contexts/pi-worker/src/index.js";
+import { createPiWorkerRuntime, type PiInvocationCompletion, type PiInvocationStatus, type PiSessionSnapshot, type PiToolDefinition, type PiWorkerClient, type PiWorkerHealth } from "../../../src/contexts/pi-worker/src/index.js";
 import { createFileTools } from "../../../src/capabilities/tools/file/src/index.js";
 import { createShellTools } from "../../../src/capabilities/tools/shell/src/index.js";
 import { createSubAgentTool } from "../../../src/capabilities/tools/subagent/src/index.js";
+import { subAgentTool } from "../../../src/capabilities/tools/subagent/profile.js";
 
 const health: PiWorkerHealth = {
   ready: true,
@@ -64,14 +65,68 @@ test("File and shell text results reach the LLM as plain text", async () => {
   await runtime.stop();
 });
 
-test("SubAgent start returns the Pi session and invocation ids without waiting for completion", async () => {
+test("SubAgent spawn returns only the session id without waiting for completion", async () => {
   const worker = fakeWorker();
   const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, pollIntervalMs: 10_000, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createSubAgentTool({ runtime });
-  const result = await tool.execute({ id: "call-2", toolName: "SubAgent", input: { action: "start", message: "inspect the workspace" } });
+  const result = await tool.execute({ id: "call-2", toolName: "SubAgent", input: { action: "spawn", message: "inspect the workspace" } });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.output, { invocationId: "inv-1", sessionId: "session-1", status: "running" });
+  assert.deepEqual(result.output, { sessionId: "session-1" });
+  await runtime.stop();
+});
+
+test("SubAgent exposes only the seven public actions with their fixed description", () => {
+  assert.equal(subAgentTool.description, [
+    "spawn：创建新的持久化 SubAgent session 并提交第一条任务消息，立即返回 sessionId，不等待任务完成。",
+    "messages：先过滤指定 session 的可见 user/assistant 消息，再用 access 按 Python 索引或切片语义读取，例如 -1、:3、2:。",
+    "send：向已有 session 提交一条新任务消息并立即返回原 sessionId；需要结果时再调用 wait 或 messages。",
+    "status：非阻塞查询 session 的单一状态、最后更新时间和可见消息数量，状态包含 queued、running 及五种终态。",
+    "wait：等待 session 当前任务结束；完成时返回最新 assistant 消息，等待结束时仍未完成则返回 running，其他终态只返回状态。",
+    "cancel：请求取消 session 当前运行或排队的任务，成功返回 cancelled，session 保持可复用。",
+    "fork：从指定 session 创建独立的新 session，可用 entryId 指定历史分支点，成功返回新 sessionId。"
+  ].join("\n"));
+  const actions = (subAgentTool.inputSchema.oneOf as Array<{ properties: { action: { const: string } } }>).map((entry) => entry.properties.action.const);
+  assert.deepEqual(actions, ["spawn", "messages", "send", "status", "wait", "cancel", "fork"]);
+});
+
+test("SubAgent projects messages, status, wait, cancel and fork without internal fields", async () => {
+  const worker = fakeWorker();
+  worker.sessionMessages = async (_sessionId: string, access: string) => {
+    assert.equal(access, ":3");
+    return [{ role: "user", content: "task" }, { role: "assistant", content: "done" }];
+  };
+  worker.subAgentStatus = async () => ({ updatedAt: "2026-08-05T12:00:00.000", messages: 2, status: "completed" });
+  worker.waitSession = async () => ({ status: "completed", message: { role: "assistant", content: "done" } });
+  worker.cancelSession = async () => "cancelled";
+  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const tool = createSubAgentTool({ runtime });
+  assert.deepEqual((await tool.execute({ id: "messages", toolName: "SubAgent", input: { action: "messages", sessionId: "session-1", access: ":3" } })).output, [
+    { role: "user", content: "task" }, { role: "assistant", content: "done" }
+  ]);
+  assert.deepEqual((await tool.execute({ id: "status", toolName: "SubAgent", input: { action: "status", sessionId: "session-1" } })).output, { updatedAt: "2026-08-05T12:00:00.000", messages: 2, status: "completed" });
+  assert.deepEqual((await tool.execute({ id: "wait", toolName: "SubAgent", input: { action: "wait", sessionId: "session-1" } })).output, { status: "completed", message: { role: "assistant", content: "done" } });
+  assert.equal((await tool.execute({ id: "cancel", toolName: "SubAgent", input: { action: "cancel", sessionId: "session-1" } })).output, "cancelled");
+  assert.deepEqual((await tool.execute({ id: "fork", toolName: "SubAgent", input: { action: "fork", sessionId: "session-1" } })).output, { sessionId: "session-2" });
+  await runtime.stop();
+});
+
+test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", async () => {
+  const worker = fakeWorker();
+  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const tool = createSubAgentTool({ runtime });
+  for (const input of [
+    { action: "start", message: "task" },
+    { action: "read", sessionId: "session-1", view: "messages" },
+    { action: "list" },
+    { action: "send", sessionId: "session-1", message: "task", mode: "prompt" },
+    { action: "fork", sessionId: "session-1", entryId: "" },
+    { action: "status", sessionId: "session-1", extra: true }
+  ]) {
+    await assert.rejects(tool.execute({ id: "invalid", toolName: "SubAgent", input }), /invalid_subagent_input/);
+  }
   await runtime.stop();
 });
 
@@ -217,7 +272,7 @@ test("SubAgent hold pairs one-for-one with running invocations", async () => {
     }
   });
 
-  await tool.execute({ id: "call-1", toolName: "SubAgent", input: { action: "start", message: "first" } });
+  await tool.execute({ id: "call-1", toolName: "SubAgent", input: { action: "spawn", message: "first" } });
   assert.deepEqual(holds, { acquired: 1, released: 0 });
   // Second invocation on the same session (send while the first is still active).
   await tool.execute({ id: "call-2", toolName: "SubAgent", input: { action: "send", sessionId: "session-1", message: "more" } });
@@ -276,7 +331,7 @@ test("SubAgent resolves the completion target through the output target resolver
     runtime,
     resolveOutputTarget: () => ({ plugin: "wechat", sessionId: "chat-1", userId: "u1", channelId: "c1" })
   });
-  const result = await tool.execute({ id: "call-1", toolName: "SubAgent", input: { action: "start", message: "hi" } });
+  const result = await tool.execute({ id: "call-1", toolName: "SubAgent", input: { action: "spawn", message: "hi" } });
   assert.equal(result.ok, true);
   assert.deepEqual(captured, [{ scope: undefined, plugin: "wechat", sessionId: "chat-1", userId: "u1", channelId: "c1", accountId: undefined }]);
   await runtime.stop();
@@ -295,7 +350,7 @@ test("SubAgent falls back to externalSession when the resolver is absent", async
   await tool.execute({
     id: "call-1",
     toolName: "SubAgent",
-    input: { action: "start", message: "hi" },
+    input: { action: "spawn", message: "hi" },
     requester: { plugin: "feishu", userId: "u9", accountId: "a1", channelId: "ch1" },
     externalSession: { scope: "dm", sessionId: "chat-9" }
   });
@@ -326,15 +381,20 @@ function fakeWorker(): PiWorkerClient & { lastTool?: unknown } {
     },
     sendInvocation: async (sessionId) => ({ invocationId: "inv-2", sessionId, status: "queued" }),
     listSessions: async () => [],
-    readSession: async () => ({ sessionId: "session-1", idle: true, invocationStatus: "completed" }),
+    sessionMessages: async () => [],
+    subAgentStatus: async () => ({ updatedAt: "2026-08-05T12:00:00.000", messages: 0, status: snapshot.invocationStatus ?? "completed" }),
     sessionStatus: async () => {
       if (snapshot.invocationStatus === "running") {
         snapshot = { ...snapshot, idle: true, invocationStatus: "completed", lastInvocation: { sessionId: "session-1", invocationId: "inv-1", status: "completed", text: "done" } };
       }
       return snapshot;
     },
-    waitSession: async () => snapshot,
-    cancelSession: async () => ({ ...snapshot, idle: true, invocationStatus: "aborted" }),
+    waitSession: async () => {
+      if (snapshot.invocationStatus === "running") return { status: "running" as const };
+      if (snapshot.invocationStatus === "completed") return { status: "completed" as const, message: { role: "assistant" as const, content: "done" } };
+      return { status: snapshot.invocationStatus as Exclude<PiInvocationStatus, "queued" | "running" | "completed"> };
+    },
+    cancelSession: async () => "cancelled" as const,
     forkSession: async () => ({ sessionId: "session-2" }),
     previewSession: async () => ({ sessionId: "preview-1", systemPrompt: "preview" }),
     reconcileInvocations: async () => []

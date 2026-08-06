@@ -4,14 +4,16 @@ import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.j
 import { subAgentTool } from "../profile.js";
 
 export type SubAgentInput =
-  | { action: "start"; message: string; timeoutSeconds?: number }
-  | { action: "list" }
-  | { action: "read"; sessionId: string; view?: "context" | "messages" | "tree" }
-  | { action: "send"; sessionId: string; message: string; mode?: "prompt" | "steer" | "follow_up"; timeoutSeconds?: number }
+  | { action: "spawn"; message: string; timeoutSeconds?: number }
+  | { action: "messages"; sessionId: string; access: string }
+  | { action: "send"; sessionId: string; message: string; timeoutSeconds?: number }
   | { action: "status"; sessionId: string }
   | { action: "wait"; sessionId: string; timeoutSeconds?: number }
   | { action: "cancel"; sessionId: string }
   | { action: "fork"; sessionId: string; entryId?: string };
+
+// Future plan only: `list` may gain its own input and dispatch branch later.
+// It is intentionally absent from the public union and cannot be called now.
 
 export function createSubAgentTool(input: { runtime: PiWorkerRuntime; resolveOutputTarget?: ToolOutputTargetResolver; agentState?: { acquireSubAgentHold(): unknown; releaseSubAgentHold(): unknown } }): ToolPlugin {
   // Holds pair one-for-one with running invocations: a session with several
@@ -30,7 +32,7 @@ export function createSubAgentTool(input: { runtime: PiWorkerRuntime; resolveOut
     async execute(call, context) {
       const value = parseInput(call);
       const messageTarget = messageTargetFromCall(call, input.resolveOutputTarget);
-      if (value.action === "start") {
+      if (value.action === "spawn") {
         const invocation = await input.runtime.startSubAgent({
           message: value.message,
           timeoutSeconds: value.timeoutSeconds,
@@ -41,14 +43,12 @@ export function createSubAgentTool(input: { runtime: PiWorkerRuntime; resolveOut
           activeInvocations.add(`${invocation.sessionId}:${invocation.invocationId}`);
           input.agentState?.acquireSubAgentHold();
         }
-        return { callId: call.id, ok: true, output: invocation };
+        return { callId: call.id, ok: true, output: { sessionId: invocation.sessionId } };
       }
-      if (value.action === "list") return { callId: call.id, ok: true, output: await input.runtime.listSubAgents(context?.signal) };
-      if (value.action === "read") return { callId: call.id, ok: true, output: await input.runtime.readSubAgent(value.sessionId, value.view, context?.signal) };
+      if (value.action === "messages") return { callId: call.id, ok: true, output: await input.runtime.messagesSubAgent(value.sessionId, value.access, context?.signal) };
       if (value.action === "send") {
         const invocation = await input.runtime.sendSubAgent(value.sessionId, {
           message: value.message,
-          mode: value.mode,
           timeoutSeconds: value.timeoutSeconds,
           messageTarget,
           signal: context?.signal
@@ -57,7 +57,7 @@ export function createSubAgentTool(input: { runtime: PiWorkerRuntime; resolveOut
           activeInvocations.add(`${invocation.sessionId}:${invocation.invocationId}`);
           input.agentState?.acquireSubAgentHold();
         }
-        return { callId: call.id, ok: true, output: invocation };
+        return { callId: call.id, ok: true, output: { sessionId: invocation.sessionId } };
       }
       if (value.action === "status") return { callId: call.id, ok: true, output: await input.runtime.statusSubAgent(value.sessionId, context?.signal) };
       if (value.action === "wait") return { callId: call.id, ok: true, output: await input.runtime.waitSubAgent(value.sessionId, value.timeoutSeconds, context?.signal) };
@@ -94,31 +94,35 @@ function messageTargetFromCall(call: ToolCall, resolveOutputTarget?: ToolOutputT
 function parseInput(call: ToolCall): SubAgentInput {
   const input = call.input as Record<string, unknown>;
   const action = input.action;
-  if (action === "start" && typeof input.message === "string" && input.message.trim()) {
+  if (action === "spawn" && onlyKeys(input, ["action", "message", "timeoutSeconds"]) && typeof input.message === "string" && input.message.trim() && validTimeout(input.timeoutSeconds)) {
     return { action, message: input.message, ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {}) };
   }
-  if (action === "list") return { action };
-  if (action === "read" && typeof input.sessionId === "string" && input.sessionId.trim()) {
-    const view = input.view;
-    return { action, sessionId: input.sessionId, ...(view === "context" || view === "messages" || view === "tree" ? { view } : {}) };
+  if (action === "messages" && onlyKeys(input, ["action", "sessionId", "access"]) && typeof input.sessionId === "string" && input.sessionId.trim() && typeof input.access === "string" && input.access.trim()) {
+    return { action, sessionId: input.sessionId, access: input.access };
   }
-  if (action === "send" && typeof input.sessionId === "string" && input.sessionId.trim() && typeof input.message === "string" && input.message.trim()) {
-    const mode = input.mode;
+  if (action === "send" && onlyKeys(input, ["action", "sessionId", "message", "timeoutSeconds"]) && typeof input.sessionId === "string" && input.sessionId.trim() && typeof input.message === "string" && input.message.trim() && validTimeout(input.timeoutSeconds)) {
     return {
       action,
       sessionId: input.sessionId,
       message: input.message,
-      ...(mode === "steer" || mode === "follow_up" || mode === "prompt" ? { mode } : {}),
       ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {})
     };
   }
-  if (action === "status" && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
-  if (action === "wait" && typeof input.sessionId === "string" && input.sessionId.trim()) {
+  if (action === "status" && onlyKeys(input, ["action", "sessionId"]) && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
+  if (action === "wait" && onlyKeys(input, ["action", "sessionId", "timeoutSeconds"]) && typeof input.sessionId === "string" && input.sessionId.trim() && validTimeout(input.timeoutSeconds)) {
     return { action, sessionId: input.sessionId, ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {}) };
   }
-  if (action === "cancel" && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
-  if (action === "fork" && typeof input.sessionId === "string" && input.sessionId.trim()) {
-    return { action, sessionId: input.sessionId, ...(typeof input.entryId === "string" && input.entryId.trim() ? { entryId: input.entryId } : {}) };
+  if (action === "cancel" && onlyKeys(input, ["action", "sessionId"]) && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
+  if (action === "fork" && onlyKeys(input, ["action", "sessionId", "entryId"]) && typeof input.sessionId === "string" && input.sessionId.trim() && (input.entryId === undefined || typeof input.entryId === "string" && input.entryId.trim())) {
+    return { action, sessionId: input.sessionId, ...(typeof input.entryId === "string" ? { entryId: input.entryId } : {}) };
   }
   throw new Error("invalid_subagent_input");
+}
+
+function onlyKeys(input: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(input).every((key) => allowed.includes(key));
+}
+
+function validTimeout(value: unknown): boolean {
+  return value === undefined || typeof value === "number" && Number.isFinite(value) && value > 0;
 }

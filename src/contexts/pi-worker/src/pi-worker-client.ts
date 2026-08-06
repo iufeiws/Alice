@@ -1,4 +1,4 @@
-import type { PiInvocation, PiInvocationCompletion, PiSessionListEntry, PiSessionReadResult, PiSessionReadView, PiSessionSnapshot, PiToolExecutionResult, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
+import type { PiInvocation, PiInvocationCompletion, PiSessionListEntry, PiSessionSnapshot, PiSubAgentStatus, PiSubAgentWaitResult, PiToolExecutionResult, PiVisibleMessage, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
 
 export function createPiWorkerHttpClient(input: { baseURL: string; token?: string; fetchImpl?: typeof fetch }): PiWorkerClient {
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -25,18 +25,20 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
     listSessions(signal) {
       return request<PiSessionListEntry[]>("/sessions", { method: "GET", signal });
     },
-    readSession(sessionId, view, signal) {
-      const suffix = view ? `?view=${encodeURIComponent(view)}` : "";
-      return request<PiSessionReadResult>(`/sessions/${encodeURIComponent(sessionId)}${suffix}`, { method: "GET", signal });
+    sessionMessages(sessionId, access, signal) {
+      return request<PiVisibleMessage[]>(`/sessions/${encodeURIComponent(sessionId)}/messages?access=${encodeURIComponent(access)}`, { method: "GET", signal });
     },
     sessionStatus(sessionId, signal) {
-      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/status`, { method: "GET", signal });
+      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/snapshot`, { method: "GET", signal });
+    },
+    subAgentStatus(sessionId, signal) {
+      return request<PiSubAgentStatus>(`/sessions/${encodeURIComponent(sessionId)}/status`, { method: "GET", signal });
     },
     waitSession(sessionId, timeoutSeconds, signal) {
-      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/wait`, { method: "POST", body: { timeoutSeconds }, signal });
+      return request<PiSubAgentWaitResult>(`/sessions/${encodeURIComponent(sessionId)}/wait`, { method: "POST", body: { timeoutSeconds }, signal });
     },
     cancelSession(sessionId, signal) {
-      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", signal });
+      return request<"cancelled">(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", signal });
     },
     forkSession(sessionId, entryId, signal) {
       return request<{ sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId }, signal });

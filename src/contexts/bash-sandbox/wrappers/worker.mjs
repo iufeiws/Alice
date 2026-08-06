@@ -1,0 +1,720 @@
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { timingSafeEqual } from "node:crypto";
+import { loadPiModule, readPiPackageVersion } from "./pi-module-loader.mjs";
+
+const packageName = "@earendil-works/pi-coding-agent";
+const relayProviderId = "alice-pi-relay";
+const exposedPiToolNames = new Set(["read", "write", "edit", "bash"]);
+const port = Number(process.env.PI_WORKER_PORT || 8790);
+const workerToken = process.env.PI_WORKER_TOKEN;
+if (!workerToken) throw new Error("pi_worker_token_missing");
+const cwd = process.env.HOME || "/";
+const sessionRoot = process.env.PI_SESSION_ROOT || "/home/alice/.pi-sessions";
+const piAgentDir = path.join(sessionRoot, ".pi-agent");
+const maxBodyBytes = 4 * 1024 * 1024;
+const maxConcurrency = positiveInteger(process.env.PI_MAX_CONCURRENCY, 2);
+const maxQueueSize = positiveInteger(process.env.PI_MAX_QUEUE_SIZE, 20);
+const defaultTaskTimeoutSeconds = positiveInteger(process.env.PI_TASK_TIMEOUT_SECONDS, 900);
+const invocationCustomType = "alice_pi_invocation";
+
+// Runtime projections only. The Pi JSONL sessions are the source of truth.
+const sessions = new Map(); // sessionId -> session record
+const activeRuns = new Set(); // sessionIds currently running an invocation
+let piModule;
+let piLoadError;
+let relayUrl = "";
+let relayToken = "";
+
+fs.mkdirSync(sessionRoot, { recursive: true });
+
+const server = http.createServer(async (request, response) => {
+  const requestController = new AbortController();
+  request.once("aborted", () => requestController.abort());
+  try {
+    const body = await readBody(request);
+    const result = await route(request, body, requestController.signal);
+    response.statusCode = result.status;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(result.body));
+  } catch (error) {
+    response.statusCode = error?.message === "worker_body_too_large" ? 413 : 500;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+  }
+});
+
+server.listen(port, "0.0.0.0", () => {
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  console.log(`[pi-worker] listening on port=${actualPort}`);
+});
+
+async function route(request, body, signal) {
+  const url = new URL(request.url || "/", "http://worker.local");
+  const isHealth = request.method === "GET" && url.pathname === "/health";
+  if (!isHealth && !authenticate(request)) {
+    return { status: 401, body: { error: "pi_worker_auth_required" } };
+  }
+  if (request.method === "GET" && url.pathname === "/health") return { status: 200, body: await health() };
+  if (request.method === "POST" && url.pathname === "/config") return { status: 200, body: configure(body) };
+  if (request.method === "POST" && url.pathname === "/tools/execute") return { status: 200, body: await executeTool(body, signal) };
+  if (request.method === "POST" && url.pathname === "/preview") return { status: 200, body: await previewSession(body) };
+  if (request.method === "POST" && url.pathname === "/invocations") return { status: 200, body: await startInvocation(body) };
+  if (request.method === "POST" && url.pathname === "/reconcile") return { status: 200, body: await reconcileInvocations() };
+  if (request.method === "GET" && url.pathname === "/sessions") return { status: 200, body: await listSessions() };
+  const match = /^\/sessions\/([^/]+)(?:\/(messages|snapshot|status|send|wait|cancel|fork))?$/.exec(url.pathname);
+  if (!match) return { status: 404, body: { error: "worker_route_not_found" } };
+  const sessionId = decodeURIComponent(match[1]);
+  const action = match[2];
+  if (request.method === "GET" && action === "messages") return { status: 200, body: await sessionMessages(sessionId, url.searchParams.get("access")) };
+  if (request.method === "GET" && action === "snapshot") return { status: 200, body: await sessionSnapshot(sessionId) };
+  if (request.method === "GET" && action === "status") return { status: 200, body: await subAgentStatus(sessionId) };
+  if (request.method === "POST" && action === "send") return { status: 200, body: await sendInvocation(sessionId, body) };
+  if (request.method === "POST" && action === "wait") return { status: 200, body: await waitSession(sessionId, body) };
+  if (request.method === "POST" && action === "cancel") return { status: 200, body: await cancelSession(sessionId) };
+  if (request.method === "POST" && action === "fork") return { status: 200, body: await forkSession(sessionId, body) };
+  return { status: 404, body: { error: "worker_route_not_found" } };
+}
+
+function configure(input) {
+  if (!input || typeof input.relayUrl !== "string" || !input.relayUrl.trim() || typeof input.relayToken !== "string" || !input.relayToken.trim()) throw new Error("invalid_pi_worker_runtime_config");
+  relayUrl = input.relayUrl;
+  relayToken = input.relayToken;
+  return { ok: true };
+}
+
+async function health() {
+  await loadPi();
+  const toolDefinitions = getToolDefinitions().filter((tool) => exposedPiToolNames.has(tool.name));
+  const relayReachable = await canReachRelay();
+  return {
+    ready: relayReachable,
+    activeRuns: [...sessions.values()].filter((record) => !isSessionIdle(record)).length,
+    version: readInstalledPiVersion(),
+    toolDefinitionGeneration: hash(JSON.stringify(toolDefinitions)),
+    cwd,
+    relayReachable,
+    toolDefinitions
+  };
+}
+
+function readInstalledPiVersion() {
+  return readPiPackageVersion(piPackageRoot());
+}
+
+async function executeTool(input, signal) {
+  await loadPi();
+  if (!input || typeof input.toolName !== "string" || !input.requestId) throw new Error("invalid_worker_tool_request");
+  const tool = getToolDefinitions(true).find((entry) => exposedPiToolNames.has(entry.name) && entry.name === input.toolName);
+  if (!tool || typeof tool.execute !== "function") throw new Error(`pi_tool_unavailable:${input.toolName}`);
+  const result = await tool.execute(input.requestId, input.input || {}, signal, () => {});
+  return normalizeToolResult(result);
+}
+
+// ============================================================================
+// Invocations
+// ============================================================================
+
+async function startInvocation(input) {
+  await loadPi();
+  const message = requiredString(input?.message, "pi_invocation_message_required");
+  const modelConfig = modelConfigFrom(input);
+  const sessionManager = piModule.SessionManager.create(cwd, sessionRoot);
+  const sessionId = sessionManager.getSessionId();
+  const record = createSessionRecord(sessionId, sessionManager, sessionManager.getSessionFile());
+  record.agentSession = await createAgentSessionFor(sessionManager, modelConfig);
+  const invocationId = enqueueInvocation(record, { message, ...input });
+  sessions.set(sessionId, record);
+  pumpSessions();
+  return { invocationId, sessionId, status: record.invocations.get(invocationId).status };
+}
+
+async function sendInvocation(sessionId, input) {
+  await loadPi();
+  const message = requiredString(input?.message, "pi_invocation_message_required");
+  const record = await openSessionRecord(sessionId);
+  const modelConfig = modelConfigFrom(input);
+  if (!record.agentSession) {
+    record.agentSession = await createAgentSessionFor(record.sessionManager, modelConfig);
+  }
+  const invocationId = enqueueInvocation(record, { message, ...input });
+  pumpSessions();
+  return { invocationId, sessionId, status: record.invocations.get(invocationId).status };
+}
+
+async function listSessions() {
+  await loadPi();
+  const infos = await piModule.SessionManager.list(cwd, sessionRoot);
+  return infos.map((info) => ({
+    sessionId: info.id,
+    createdAt: new Date(info.created).toISOString(),
+    updatedAt: new Date(info.modified).toISOString(),
+    messageCount: info.messageCount
+  }));
+}
+
+async function sessionMessages(sessionId, access) {
+  const record = await openSessionRecord(sessionId);
+  return accessVisibleMessages(visibleMessages(record.sessionManager), access);
+}
+
+function sessionSnapshot(sessionId) {
+  return openSessionRecord(sessionId).then((record) => snapshot(record));
+}
+
+async function subAgentStatus(sessionId) {
+  const record = await openSessionRecord(sessionId);
+  const status = currentInvocationStatus(record);
+  if (!status) throw new Error("pi_session_invocation_missing");
+  return { updatedAt: updatedAt(record.sessionManager), messages: visibleMessages(record.sessionManager).length, status };
+}
+
+async function waitSession(sessionId, input) {
+  const record = await openSessionRecord(sessionId);
+  const timeoutSeconds = positiveInteger(input?.timeoutSeconds, defaultTaskTimeoutSeconds);
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() <= deadline) {
+    if (isSessionIdle(record)) return waitResult(record);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return isSessionIdle(record) ? waitResult(record) : { status: "running" };
+}
+
+async function cancelSession(sessionId) {
+  const record = await openSessionRecord(sessionId);
+  if (record.activeRunInvocationIds.size > 0) {
+    record.cancelRequested = true;
+    void record.agentSession?.abort?.();
+  } else {
+    // Mark queued invocations aborted; the session remains reusable.
+    for (const invocation of record.invocations.values()) {
+      if (invocation.status === "queued") {
+        invocation.status = "aborted";
+        invocation.finalText = "pi_session_aborted";
+      }
+    }
+  }
+  return "cancelled";
+}
+
+async function forkSession(sessionId, input) {
+  await loadPi();
+  const record = await openSessionRecord(sessionId);
+  const entryId = input?.entryId;
+  if (entryId !== undefined && (typeof entryId !== "string" || !entryId.trim())) throw new Error("pi_fork_entry_id_invalid");
+  let forked;
+  if (entryId !== undefined) {
+    const fresh = piModule.SessionManager.open(record.sessionManager.getSessionFile(), sessionRoot, cwd);
+    fresh.createBranchedSession(entryId);
+    forked = fresh;
+  } else {
+    forked = piModule.SessionManager.forkFrom(record.sessionManager.getSessionFile(), cwd, sessionRoot);
+  }
+  const newSessionId = forked.getSessionId();
+  const newRecord = createSessionRecord(newSessionId, forked, forked.getSessionFile());
+  sessions.set(newSessionId, newRecord);
+  return { sessionId: newSessionId };
+}
+
+async function previewSession(input) {
+  await loadPi();
+  const modelConfig = modelConfigFrom(input);
+  const sessionManager = piModule.SessionManager.inMemory(cwd);
+  let session;
+  try {
+    session = await createAgentSessionFor(sessionManager, modelConfig);
+    const systemPrompt = session.agent.state.systemPrompt;
+    if (typeof systemPrompt !== "string") throw new Error("pi_system_prompt_unavailable");
+    return { sessionId: sessionManager.getSessionId(), systemPrompt };
+  } finally {
+    session?.dispose?.();
+  }
+}
+
+async function reconcileInvocations() {
+  await loadPi();
+  const results = [];
+  // 1. Sessions tracked by this worker process: report terminal invocations accurately.
+  for (const record of sessions.values()) {
+    for (const invocation of record.invocations.values()) {
+      if (invocation.status === "queued" || invocation.status === "running") continue;
+      results.push(completionFrom(record, invocation));
+    }
+  }
+  // 2. Sessions unknown to this process (fresh worker after a container restart):
+  //    scan the persisted Pi JSONL sessions.
+  const known = new Set(sessions.keys());
+  for (const fileName of fs.readdirSync(sessionRoot)) {
+    if (!fileName.endsWith(".jsonl")) continue;
+    let manager;
+    try {
+      manager = piModule.SessionManager.open(path.join(sessionRoot, fileName), sessionRoot, cwd);
+    } catch {
+      continue;
+    }
+    const sessionId = manager.getSessionId();
+    if (known.has(sessionId)) continue;
+    for (const entry of manager.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== invocationCustomType) continue;
+      const text = assistantTextAfter(manager, entry.id);
+      results.push({
+        sessionId,
+        invocationId: entry.id,
+        status: text === undefined ? "interrupted" : "completed",
+        text: text ?? "pi_session_interrupted",
+        messageTarget: entry.data?.messageTarget
+      });
+    }
+  }
+  return results;
+}
+
+// ============================================================================
+// Session records
+// ============================================================================
+
+function createSessionRecord(sessionId, sessionManager, sessionFile) {
+  return {
+    sessionId,
+    sessionManager,
+    sessionFile,
+    agentSession: undefined,
+    invocations: new Map(), // invocationId -> { invocationId, status, messageTarget, timeoutSeconds, finalText }
+    activeRunInvocationIds: new Set(),
+    cancelRequested: false
+  };
+}
+
+function enqueueInvocation(record, input) {
+  if (queuedInvocationCount() >= maxQueueSize) throw new Error("pi_queue_full");
+  const invocationId = appendInvocationEntry(record, input);
+  const invocation = {
+    invocationId,
+    status: "queued",
+    messageTarget: input.messageTarget,
+    timeoutSeconds: input.timeoutSeconds,
+    message: input.message
+  };
+  record.invocations.set(invocationId, invocation);
+  return invocationId;
+}
+
+function appendInvocationEntry(record, input) {
+  const entryId = record.sessionManager.appendCustomEntry(invocationCustomType, {
+    message: input.message,
+    messageTarget: input.messageTarget,
+    timeoutSeconds: input.timeoutSeconds
+  });
+  return entryId;
+}
+
+function queuedInvocationCount() {
+  let count = 0;
+  for (const record of sessions.values()) {
+    for (const invocation of record.invocations.values()) {
+      if (invocation.status === "queued") count += 1;
+    }
+  }
+  return count;
+}
+
+function pumpSessions() {
+  while (activeRuns.size < maxConcurrency) {
+    const candidate = findQueuedInvocation();
+    if (!candidate) return;
+    const { sessionId, invocationId } = candidate;
+    const record = sessions.get(sessionId);
+    if (record.activeRunInvocationIds.size > 0) continue;
+    activeRuns.add(sessionId);
+    record.activeRunInvocationIds.add(invocationId);
+    record.invocations.get(invocationId).status = "running";
+    void runInvocation(sessionId, invocationId);
+  }
+}
+
+function findQueuedInvocation() {
+  for (const record of sessions.values()) {
+    if (record.activeRunInvocationIds.size > 0) continue;
+    for (const invocation of record.invocations.values()) {
+      if (invocation.status === "queued") return { sessionId: record.sessionId, invocationId: invocation.invocationId };
+    }
+  }
+  return undefined;
+}
+
+async function runInvocation(sessionId, invocationId) {
+  const record = sessions.get(sessionId);
+  if (!record) return;
+  const timers = new Map();
+  let runTimedOut = false;
+  for (const id of record.activeRunInvocationIds) {
+    const invocation = record.invocations.get(id);
+    const timeoutSeconds = positiveInteger(invocation?.timeoutSeconds, defaultTaskTimeoutSeconds);
+    const timer = setTimeout(() => {
+      runTimedOut = true;
+      void record.agentSession?.abort?.();
+    }, timeoutSeconds * 1000);
+    timers.set(id, timer);
+  }
+  try {
+    const invocation = record.invocations.get(invocationId);
+    await record.agentSession.prompt(invocation?.message ?? "");
+    if (runTimedOut) finalizeRun(record, "timed_out", "pi_session_timed_out");
+    else if (record.cancelRequested) finalizeRun(record, "aborted", "pi_session_aborted");
+    else finalizeRun(record, "completed", finalAssistantText(record.sessionManager));
+  } catch (error) {
+    const errorText = error instanceof Error ? error.message : String(error);
+    if (runTimedOut) finalizeRun(record, "timed_out", "pi_session_timed_out");
+    else if (record.cancelRequested) finalizeRun(record, "aborted", "pi_session_aborted");
+    else finalizeRun(record, "failed", errorText);
+  } finally {
+    for (const timer of timers.values()) clearTimeout(timer);
+    record.cancelRequested = false;
+    activeRuns.delete(sessionId);
+    pumpSessions();
+  }
+}
+
+function finalizeRun(record, status, text) {
+  for (const id of record.activeRunInvocationIds) {
+    const invocation = record.invocations.get(id);
+    if (!invocation) continue;
+    invocation.status = status;
+    invocation.finalText = text;
+  }
+  record.activeRunInvocationIds.clear();
+}
+
+function completionFrom(record, invocation) {
+  return {
+    sessionId: record.sessionId,
+    invocationId: invocation.invocationId,
+    status: invocation.status,
+    text: invocation.finalText ?? (invocation.status === "completed" ? finalAssistantText(record.sessionManager) : "pi_session_interrupted"),
+    messageTarget: invocation.messageTarget
+  };
+}
+
+function latestInvocation(record, active) {
+  return [...record.invocations.values()].reverse().find((invocation) => active
+    ? invocation.status === "queued" || invocation.status === "running"
+    : invocation.status !== "queued" && invocation.status !== "running");
+}
+
+function snapshot(record) {
+  const terminal = latestInvocation(record, false);
+  const active = latestInvocation(record, true);
+  const lastTerminal = record.activeRunInvocationIds.size === 0 ? terminal : undefined;
+  // Every terminal invocation, active or not: the host watcher deduplicates by
+  // sessionId+invocationId, so earlier completions are never dropped when a
+  // session runs several invocations without an idle poll in between.
+  const terminalCompletions = [...record.invocations.values()]
+    .filter((invocation) => invocation.status !== "queued" && invocation.status !== "running")
+    .map((invocation) => completionFrom(record, invocation));
+  return {
+    sessionId: record.sessionId,
+    idle: isSessionIdle(record),
+    invocationStatus: active?.status ?? terminal?.status,
+    createdAt: record.sessionManager.getHeader()?.timestamp || nowIso(),
+    updatedAt: updatedAt(record.sessionManager),
+    terminalCompletions,
+    lastInvocation: lastTerminal ? completionFrom(record, lastTerminal) : undefined
+  };
+}
+
+function isSessionIdle(record) {
+  return record.activeRunInvocationIds.size === 0 && ![...record.invocations.values()].some((invocation) => invocation.status === "queued");
+}
+
+function currentInvocationStatus(record) {
+  const active = latestInvocation(record, true);
+  const terminal = latestInvocation(record, false);
+  return active?.status ?? terminal?.status;
+}
+
+function waitResult(record) {
+  const invocation = latestInvocation(record, false);
+  if (!invocation) throw new Error("pi_session_invocation_missing");
+  if (invocation.status !== "completed") return { status: invocation.status };
+  const message = latestAssistantMessageAfter(record.sessionManager, invocation.invocationId);
+  if (!message) throw new Error("pi_session_assistant_message_missing");
+  return { status: "completed", message };
+}
+
+// ============================================================================
+// Session opening / Pi session creation
+// ============================================================================
+
+async function openSessionRecord(sessionId) {
+  const existing = sessions.get(sessionId);
+  if (existing) return existing;
+  await loadPi();
+  const manager = openSessionManager(sessionId);
+  const record = createSessionRecord(sessionId, manager, manager.getSessionFile());
+  // Rebuild the runtime projection of historical invocations from the Pi JSONL.
+  for (const entry of manager.getEntries()) {
+    if (entry.type !== "custom" || entry.customType !== invocationCustomType) continue;
+    const text = assistantTextAfter(manager, entry.id);
+    record.invocations.set(entry.id, {
+      invocationId: entry.id,
+      status: text === undefined ? "interrupted" : "completed",
+      messageTarget: entry.data?.messageTarget,
+      timeoutSeconds: entry.data?.timeoutSeconds,
+      message: typeof entry.data?.message === "string" ? entry.data.message : "",
+      finalText: text ?? "pi_session_interrupted"
+    });
+  }
+  sessions.set(sessionId, record);
+  return record;
+}
+
+function openSessionManager(sessionId) {
+  const filePath = findSessionFile(sessionId);
+  if (!filePath) throw new Error("pi_session_not_found");
+  return piModule.SessionManager.open(filePath, sessionRoot, cwd);
+}
+
+function findSessionFile(sessionId) {
+  for (const fileName of fs.readdirSync(sessionRoot)) {
+    if (!fileName.endsWith(".jsonl")) continue;
+    const filePath = path.join(sessionRoot, fileName);
+    let manager;
+    try {
+      manager = piModule.SessionManager.open(filePath, sessionRoot, cwd);
+    } catch {
+      continue;
+    }
+    if (manager.getSessionId() === sessionId) return filePath;
+  }
+  return undefined;
+}
+
+async function createAgentSessionFor(sessionManager, modelConfig) {
+  if (!relayUrl || !relayToken) throw new Error("pi_relay_configuration_missing");
+  if (typeof modelConfig.model !== "string" || !modelConfig.model.trim()) throw new Error("pi_model_required");
+
+  const modelRuntime = await piModule.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
+  modelRuntime.registerProvider(relayProviderId, {
+    name: "Alice Pi Relay",
+    baseUrl: relayUrl,
+    authHeader: true,
+    api: "openai-completions",
+    headers: { "x-pi-session-id": sessionManager.getSessionId() },
+    models: [{
+      id: modelConfig.model,
+      name: modelConfig.model,
+      reasoning: modelConfig.reasoning === true,
+      input: modelConfig.supportsImage === true ? ["text", "image"] : ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: modelConfig.maxTokens ?? 8_192,
+      // Console Go rejects the OpenAI `developer` role. Pi otherwise enables
+      // it automatically for reasoning models registered under custom providers.
+      compat: { supportsDeveloperRole: false, supportsUsageInStreaming: true }
+    }]
+  });
+  await modelRuntime.setRuntimeApiKey(relayProviderId, relayToken, { allowNetwork: false });
+  const model = modelRuntime.getModel(relayProviderId, modelConfig.model);
+  if (!model) throw new Error("pi_relay_model_unavailable");
+
+  const result = await piModule.createAgentSession({
+    cwd,
+    agentDir: piAgentDir,
+    model,
+    modelRuntime,
+    tools: ["read", "bash", "edit", "write"],
+    sessionManager
+  });
+  return result.session;
+}
+
+async function loadPi() {
+  if (piModule) return piModule;
+  if (piLoadError) throw piLoadError;
+  try {
+    piModule = await loadPiModule(piPackageRoot());
+    return piModule;
+  } catch (error) {
+    piLoadError = new Error(`pi_package_load_failed:${error instanceof Error ? error.message : String(error)}`);
+    throw piLoadError;
+  }
+}
+
+function piPackageRoot() {
+  const nodeModules = process.env.NODE_PATH?.split(path.delimiter).find((entry) => entry.trim());
+  if (!nodeModules) throw new Error("pi_global_node_path_missing");
+  return path.join(nodeModules, packageName);
+}
+
+function getToolDefinitions(withExecutors = false) {
+  const candidate = piModule.createCodingTools(cwd);
+  if (!Array.isArray(candidate)) throw new Error("pi_tool_definitions_unavailable");
+  return candidate.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.parameters,
+    ...(withExecutors ? { execute: tool.execute } : {})
+  }));
+}
+
+// ============================================================================
+// Pi JSONL helpers
+// ============================================================================
+
+function assistantTextAfter(manager, entryId) {
+  const entries = manager.getEntries();
+  const index = entries.findIndex((entry) => entry.id === entryId);
+  if (index < 0) return undefined;
+  const message = entries.slice(index).find((entry) => entry.type === "message" && entry.message?.role === "assistant");
+  return message ? messageText(message.message) : undefined;
+}
+
+function visibleMessages(manager) {
+  return manager.getEntries()
+    .filter((entry) => entry.type === "message" && visibleMessage(entry.message))
+    .map((entry) => ({ role: entry.message.role, content: entry.message.content }));
+}
+
+function latestAssistantMessageAfter(manager, entryId) {
+  const entries = manager.getEntries();
+  const index = entries.findIndex((entry) => entry.id === entryId);
+  if (index < 0) return undefined;
+  return entries.slice(index)
+    .filter((entry) => entry.type === "message" && visibleMessage(entry.message) && entry.message.role === "assistant")
+    .map((entry) => ({ role: "assistant", content: entry.message.content }))
+    .at(-1);
+}
+
+function visibleMessage(message) {
+  if (message?.role !== "user" && message?.role !== "assistant") return false;
+  if (message.role === "user") return true;
+  if (Array.isArray(message.toolCalls) && message.toolCalls.length) return false;
+  const content = Array.isArray(message.content) ? message.content : [message.content];
+  return !content.some((part) => part && typeof part === "object" && ["tool_call", "tool_use", "tool_result", "thinking", "progress", "toolCall", "toolUse", "toolResult"].includes(part.type));
+}
+
+function accessVisibleMessages(messages, access) {
+  const parsed = parseMessageAccess(access);
+  if (parsed.kind === "index") {
+    const index = parsed.index < 0 ? messages.length + parsed.index : parsed.index;
+    if (index < 0 || index >= messages.length) throw new Error("subagent_message_access_out_of_range");
+    return [messages[index]];
+  }
+  return messages.slice(parsed.start, parsed.end);
+}
+
+function parseMessageAccess(access) {
+  if (typeof access !== "string") throw new Error("invalid_subagent_message_access");
+  if (/^-?\d+$/.test(access)) return { kind: "index", index: Number(access) };
+  const match = /^(-?\d*)?:(-?\d*)?$/.exec(access);
+  if (!match) throw new Error("invalid_subagent_message_access");
+  return {
+    kind: "slice",
+    start: match[1] === "" || match[1] === undefined ? undefined : Number(match[1]),
+    end: match[2] === "" || match[2] === undefined ? undefined : Number(match[2])
+  };
+}
+
+function finalAssistantText(manager) {
+  const messages = manager.buildSessionContext().messages ?? [];
+  const message = [...messages].reverse().find((entry) => entry?.role === "assistant");
+  return messageText(message);
+}
+
+function updatedAt(manager) {
+  const entries = manager.getEntries();
+  return entries.at(-1)?.timestamp || manager.getHeader()?.timestamp || nowIso();
+}
+
+function messageText(message) {
+  if (typeof message?.content === "string") return message.content;
+  return Array.isArray(message?.content)
+    ? message.content.filter((part) => part?.type === "text").map((part) => part.text).join("")
+    : "";
+}
+
+async function canReachRelay() {
+  if (!relayUrl) return false;
+  try {
+    const relay = new URL(relayUrl);
+    relay.pathname = relay.pathname.replace(/\/v1\/?$/, "") + "/health";
+    const response = await fetch(relay);
+    return response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeToolResult(result) {
+  if (!result || typeof result !== "object") return { ok: true, output: result };
+  return {
+    ok: result.isError !== true,
+    content: result.content,
+    output: result.output,
+    details: result.details,
+    error: result.isError === true ? result.error || "pi_tool_failed" : undefined
+  };
+}
+
+function modelConfigFrom(input) {
+  return {
+    model: typeof input?.model === "string" ? input.model : undefined,
+    maxTokens: Number.isInteger(input?.maxTokens) ? input.maxTokens : undefined,
+    supportsImage: input?.supportsImage === true,
+    reasoning: input?.reasoning === true
+  };
+}
+
+function requiredString(value, message) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(message);
+  return value;
+}
+
+function authenticate(request) {
+  const header = request.headers?.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const candidate = header.slice("Bearer ".length).trim();
+  const left = Buffer.from(candidate);
+  const right = Buffer.from(workerToken);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+async function readBody(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBodyBytes) throw new Error("worker_body_too_large");
+    chunks.push(chunk);
+  }
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function hash(value) {
+  let result = 2166136261;
+  for (const char of value) result = Math.imul(result ^ char.charCodeAt(0), 16777619);
+  return `pi-tools-${(result >>> 0).toString(16)}`;
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nowIso() {
+  const current = new Date();
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: process.env.PI_AGENT_TIMEZONE || "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(current).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${String(current.getMilliseconds()).padStart(3, "0")}`;
+}

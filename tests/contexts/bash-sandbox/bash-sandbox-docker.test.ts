@@ -12,6 +12,7 @@ test("docker executor prepares a missing image", async () => {
 
   assert.equal(calls.some((call) => call === "image inspect cimg/python:3.13-browsers"), true);
   assert.equal(calls.some((call) => call === "pull cimg/python:3.13-browsers"), true);
+  assert.equal(calls.some((call) => call.startsWith("build --build-arg BASE_IMAGE=cimg/python:3.13-browsers")), true);
 });
 
 test("docker executor runs with configured sandbox contract", async () => {
@@ -24,12 +25,15 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /HTTPS_PROXY=http:\/\/host\.docker\.internal:7890/);
   assert.match(runCall, /NO_PROXY=localhost,127\.0\.0\.1/);
   assert.match(runCall, /PATH=\/sandbox\/bin:/);
-  assert.match(runCall, /HOME=\/alice/);
-  assert.match(runCall, /BASH_ENV=\/alice\/\.bashrc/);
-  assert.match(runCall, /-w \/alice/);
+  assert.match(runCall, /--user alice/);
+  assert.match(runCall, /--label com\.alice\.sandbox\.mount-key=/);
+  assert.match(runCall, /HOME=\/home\/alice/);
+  assert.match(runCall, /BASH_ENV=\/home\/alice\/\.bashrc/);
+  assert.match(runCall, /-w \/home\/alice/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);
-  assert.ok(runCall.indexOf(":/alice/.agent/skills:rw") < runCall.indexOf(":/alice/.agent/skills/demo:ro"));
+  assert.match(runCall, /:\/home\/alice\/\.agent:rw/);
+  assert.ok(runCall.indexOf(":/home/alice/.agent:rw") < runCall.indexOf(":/home/alice/.agent/skills/demo:ro"));
   assert.equal(result.stdout.trim(), "docker-ok");
   assert.equal(progress.join(""), "docker-ok");
   assert.equal(result.streamedBeforeCommandFinished, true);
@@ -38,9 +42,8 @@ test("docker executor runs with configured sandbox contract", async () => {
 test("docker executor starts the Pi worker from the existing wrapper mount", async () => {
   const { calls } = await runWithFakeDocker(undefined, true);
   const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
-  assert.match(runCall, /cimg\/python:3\.13-browsers/);
-  assert.match(runCall, /command -v pi/);
-  assert.match(runCall, /npm install -g @earendil-works\/pi-coding-agent@latest/);
+  assert.match(runCall, /alice-bash-sandbox:/);
+  assert.match(runCall, /export NODE_PATH=/);
   assert.match(runCall, /node \/sandbox\/bin\/worker\.mjs/);
 });
 
@@ -56,6 +59,7 @@ async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorke
 echo "$@" >> "${log}"
 if [ "$1 $2" = "image inspect" ]; then exit 1; fi
 if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "build" ]; then exit 0; fi
 if [ "$1" = "inspect" ]; then exit 1; fi
 if [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "exec" ]; then
@@ -97,12 +101,12 @@ exit 64
         piWorker: {
           enabled: true,
           hostDir: path.join(root, "pi-sessions"),
-          containerDir: "/alice/.agent/pi-sessions",
+          containerDir: "/home/alice/.pi-sessions",
           port: 8790
         }
       } : {}),
       mounts: [
-        { id: "skills", hostPath: path.join(root, "installed-skills"), containerPath: "/alice/.agent/skills", readOnly: false },
+        { id: "agent", hostPath: path.join(root, "agent"), containerPath: "/home/alice/.agent", readOnly: false },
         { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }
       ]
     });

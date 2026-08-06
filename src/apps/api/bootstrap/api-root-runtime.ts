@@ -46,7 +46,7 @@ export function createApiRootRuntime() {
   foundation.config.bashSandbox.piWorker = {
     enabled: true,
     hostDir: path.resolve("memory-files/pi-sessions"),
-    containerDir: "/alice/.agent/pi-sessions",
+    containerDir: "/home/alice/.pi-sessions",
     port: foundation.config.piWorkerConfig.workerPort,
     workerToken,
     sandboxCwd: foundation.config.piWorkerConfig.sandboxCwd,

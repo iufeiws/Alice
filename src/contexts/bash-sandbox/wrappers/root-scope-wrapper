@@ -2,7 +2,7 @@
 set -euo pipefail
 
 tool="${ALICE_BASH_WRAPPER_TOOL:-$(basename "$0")}"
-roots=(/alice /tmp /cache /assets)
+roots=(/home/alice /tmp /cache /assets)
 
 real_command() {
   local name="$1"

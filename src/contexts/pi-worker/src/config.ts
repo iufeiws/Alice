@@ -14,7 +14,7 @@ export type PiWorkerConfig = {
 
 export const defaultPiWorkerConfig: PiWorkerConfig = {
   llmPresetName: "",
-  sandboxCwd: "/alice",
+  sandboxCwd: "/home/alice",
   maxConcurrency: 2,
   maxQueueSize: 20,
   taskTimeoutSeconds: 900,

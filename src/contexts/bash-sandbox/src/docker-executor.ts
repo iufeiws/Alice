@@ -3,6 +3,7 @@ import type { BashSandboxConfig } from "./config.js";
 const childProcess = await import("node:child_process");
 const crypto = await import("node:crypto");
 const fs = await import("node:fs");
+const os = await import("node:os");
 const path = await import("node:path");
 const { StringDecoder } = await import("node:string_decoder");
 
@@ -10,6 +11,8 @@ const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "
 const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
 const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
 const PI_WORKER_CONTAINER_REVISION = "sandbox-bin-worker-v2";
+const ALICE_CONTAINER_USER_REVISION = "alice-user-v1";
+const CONTAINER_MOUNT_KEY_LABEL = "com.alice.sandbox.mount-key";
 
 export type DockerExecutorResult = {
   stdout: string;
@@ -36,7 +39,7 @@ export type DockerExecutor = {
 };
 
 export async function ensureDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
-  await ensureContainer(config, containerMountKey(config));
+  await ensureContainer(config);
 }
 
 export async function recreateDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
@@ -45,14 +48,14 @@ export async function recreateDockerSandboxContainer(config: BashSandboxConfig):
     const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
     if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to remove sandbox container");
   }
-  await ensureContainer(config, "");
+  await ensureContainer(config);
 }
 
 export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecutor {
   let mountKey = "";
   return {
     async execute(input) {
-      mountKey = await ensureContainer(config, mountKey);
+      mountKey = await ensureContainer(config);
       const startedAt = Date.now();
       const seconds = Math.max(1, Math.ceil(input.timeoutMs / 1000));
       const captured = await runCapturedCommand(config, input.command, input.cwd, seconds, input.timeoutMs + 2000, input.onStdout, input.onStderr);
@@ -61,7 +64,7 @@ export function createDockerBashExecutor(config: BashSandboxConfig): DockerExecu
       return { ...output, exitCode: captured.exitCode, timedOut, durationMs: Date.now() - startedAt };
     },
     async runFileTool(input) {
-      mountKey = await ensureContainer(config, mountKey);
+      mountKey = await ensureContainer(config);
       const startedAt = Date.now();
       const result = await execFile("docker", ["exec", config.containerName, `/sandbox/bin/${input.toolName}`, JSON.stringify(input.payload)], input.timeoutMs, input.outputLimitBytes);
       return { ...result, durationMs: Date.now() - startedAt, truncated: false };
@@ -132,15 +135,20 @@ async function removeContainerFiles(config: BashSandboxConfig, ...filePaths: str
   if (result.exitCode !== 0) throw new Error(result.stderr || "failed to remove bash output temp files");
 }
 
-async function ensureContainer(config: BashSandboxConfig, currentMountKey: string): Promise<string> {
-  await ensureImage(config);
+async function ensureContainer(config: BashSandboxConfig): Promise<string> {
+  const image = await ensureSandboxImage(config);
   fs.mkdirSync(config.hostWorkspaceDir, { recursive: true });
   fs.mkdirSync(config.hostCacheDir, { recursive: true });
+  if (config.piWorker?.enabled) fs.mkdirSync(path.resolve(config.piWorker.hostDir), { recursive: true });
+  const agentMount = config.mounts.find((mount) => mount.id === "agent");
+  if (agentMount) fs.mkdirSync(agentMount.hostPath, { recursive: true });
   const nextMountKey = containerMountKey(config);
-  const inspect = await execFile("docker", ["inspect", "-f", "{{.State.Running}}", config.containerName], 10_000, 4096);
-  if (inspect.exitCode === 0 && inspect.stdout.trim() === "true" && currentMountKey === nextMountKey) return currentMountKey;
+  const inspect = await execFile("docker", ["inspect", "-f", `{{.State.Running}}|{{index .Config.Labels "${CONTAINER_MOUNT_KEY_LABEL}"}}`, config.containerName], 10_000, 4096);
+  const [running, savedMountKey] = inspect.stdout.trim().split("|");
+  const matchesMountKey = savedMountKey === mountKeyDigest(config);
+  if (inspect.exitCode === 0 && running === "true" && matchesMountKey) return nextMountKey;
   if (inspect.exitCode === 0) {
-    if (currentMountKey === nextMountKey) {
+    if (matchesMountKey) {
       const start = await execFile("docker", ["start", config.containerName], 10_000, 4096);
       if (start.exitCode !== 0) throw new Error(start.stderr || "failed to start bash sandbox container");
       return nextMountKey;
@@ -148,12 +156,36 @@ async function ensureContainer(config: BashSandboxConfig, currentMountKey: strin
     const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
     if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to recreate bash sandbox container");
   }
-  const create = await execFile("docker", createContainerArgs(config), 30_000, 8192);
+  const create = await execFile("docker", createContainerArgs(config, image), 30_000, 8192);
   if (create.exitCode !== 0) throw new Error(create.stderr || "failed to create bash sandbox container");
   return nextMountKey;
 }
 
-async function ensureImage(config: BashSandboxConfig): Promise<void> {
+async function ensureSandboxImage(config: BashSandboxConfig): Promise<string> {
+  await ensureBaseImage(config);
+  const image = aliceUserImageName(config.image);
+  const inspect = await execFile("docker", ["image", "inspect", image], 10_000, 4096);
+  if (inspect.exitCode === 0) return image;
+
+  const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), "alice-sandbox-image-"));
+  try {
+    const dockerfile = path.join(buildRoot, "Dockerfile");
+    fs.writeFileSync(dockerfile, aliceUserDockerfile);
+    const build = await execFile("docker", [
+      "build",
+      "--build-arg", `BASE_IMAGE=${config.image}`,
+      "-t", image,
+      "-f", dockerfile,
+      buildRoot
+    ], 10 * 60_000, 64 * 1024);
+    if (build.exitCode !== 0) throw new Error(build.stderr || `failed to build sandbox image: ${image}`);
+    return image;
+  } finally {
+    fs.rmSync(buildRoot, { recursive: true, force: true });
+  }
+}
+
+async function ensureBaseImage(config: BashSandboxConfig): Promise<void> {
   const image = config.image;
   const inspect = await execFile("docker", ["image", "inspect", image], 10_000, 4096);
   if (inspect.exitCode === 0) return;
@@ -161,7 +193,7 @@ async function ensureImage(config: BashSandboxConfig): Promise<void> {
   if (pull.exitCode !== 0) throw new Error(pull.stderr || `failed to pull bash sandbox image: ${image}`);
 }
 
-function createContainerArgs(config: BashSandboxConfig): string[] {
+function createContainerArgs(config: BashSandboxConfig, image: string): string[] {
   const args = [
     "run",
     "-d",
@@ -169,9 +201,10 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
     "--network", config.network === "none" ? "none" : "bridge",
     "--read-only",
     "--tmpfs", config.tmpDir,
-    "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+    "--label", `${CONTAINER_MOUNT_KEY_LABEL}=${mountKeyDigest(config)}`,
+    "--user", "alice",
     "-e", `HOME=${config.workspaceDir}`,
-    "-e", "BASH_ENV=/alice/.bashrc",
+    "-e", `BASH_ENV=${config.workspaceDir}/.bashrc`,
     "-e", `NPM_CONFIG_CACHE=${config.cacheDir}/npm`,
     "-e", `PIP_CACHE_DIR=${config.cacheDir}/pip`,
     "-e", `PATH=${WRAPPER_CONTAINER_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
@@ -204,16 +237,39 @@ function createContainerArgs(config: BashSandboxConfig): string[] {
   for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   if (config.piWorker?.enabled) {
     args.push(
-      config.image,
+      image,
       "sh",
       "-lc",
-      "command -v pi >/dev/null 2>&1 || npm install -g @earendil-works/pi-coding-agent@latest; export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/bin/worker.mjs"
+      "export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/bin/worker.mjs"
     );
   } else {
-    args.push(config.image, "sleep", "infinity");
+    args.push(image, "sleep", "infinity");
   }
   return args;
 }
+
+function aliceUserImageName(baseImage: string): string {
+  const digest = crypto.createHash("sha256").update(`${ALICE_CONTAINER_USER_REVISION}:${baseImage}`).digest("hex").slice(0, 16);
+  return `alice-bash-sandbox:${digest}`;
+}
+
+const aliceUserDockerfile = `ARG BASE_IMAGE
+FROM \${BASE_IMAGE}
+USER root
+RUN set -eu; \\
+  if getent passwd alice >/dev/null 2>&1; then \\
+    test "\$(id -u alice)" = "1000"; \\
+  else \\
+    if getent passwd 1000 >/dev/null 2>&1; then \\
+      echo "uid 1000 is already assigned to another user" >&2; exit 1; \\
+    fi; \\
+    if ! getent group 1000 >/dev/null 2>&1; then groupadd --gid 1000 alice; fi; \\
+    useradd --uid 1000 --gid 1000 --create-home --shell /bin/sh alice; \\
+  fi; \\
+  mkdir -p /home/alice; chown alice /home/alice; \\
+  if ! command -v pi >/dev/null 2>&1; then npm install -g @earendil-works/pi-coding-agent@latest; fi
+USER alice
+`;
 
 function containerTmpPath(config: BashSandboxConfig, filename: string): string {
   return `${config.tmpDir.replace(/\/+$/, "") || "/tmp"}/${filename}`;
@@ -239,6 +295,10 @@ function containerMountKey(config: BashSandboxConfig): string {
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
     piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.sandboxCwd, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
   });
+}
+
+function mountKeyDigest(config: BashSandboxConfig): string {
+  return crypto.createHash("sha256").update(containerMountKey(config)).digest("hex");
 }
 
 function execFile(command: string, args: string[], timeoutMs: number, outputLimitBytes: number, onStdout?: (delta: string) => void, onStderr?: (delta: string) => void): Promise<Omit<DockerExecutorResult, "durationMs" | "truncated">> {

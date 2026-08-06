@@ -747,7 +747,7 @@ function resolveAssetPath(assetId: string): string {
     throw new Error("Feishu asset paths must be local project asset paths");
   }
   if (path.isAbsolute(assetId)) {
-    // Allow arbitrary local absolute paths (e.g. /alice/opencli/shots/...),
+    // Allow arbitrary local absolute paths (e.g. /home/alice/opencli/shots/...),
     // so assets outside the read-only assets/ mount can be sent.
     return assetId;
   }

@@ -143,7 +143,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
   const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
   const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".agents/skills";
-  const sandboxWorkspaceDir = env.BASH_SANDBOX_WORKSPACE_DIR ?? "/alice";
+  const sandboxWorkspaceDir = env.BASH_SANDBOX_WORKSPACE_DIR ?? "/home/alice";
 
   return {
     project: {
@@ -234,7 +234,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     bashSandbox: validateBashSandboxConfig({
       containerName: env.BASH_SANDBOX_CONTAINER_NAME ?? "alice-bash-sandbox",
       image: env.BASH_SANDBOX_IMAGE ?? "cimg/python:3.13-browsers",
-      defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? "/alice",
+      defaultCwd: env.BASH_SANDBOX_DEFAULT_CWD ?? "/home/alice",
       hostWorkspaceDir: env.BASH_SANDBOX_HOST_WORKSPACE_DIR ?? ".sandbox/bash/alice",
       workspaceDir: sandboxWorkspaceDir,
       hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? ".sandbox/bash/cache",
@@ -257,7 +257,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       piWorker: {
         enabled: true,
         hostDir: path.resolve("memory-files/pi-sessions"),
-        containerDir: "/alice/.agent/pi-sessions",
+        containerDir: path.posix.join(sandboxWorkspaceDir, ".pi-sessions"),
         port: envNumber(env.PI_WORKER_CONTAINER_PORT, 8790),
         sandboxCwd: env.PI_SANDBOX_CWD ?? sandboxWorkspaceDir
       }
@@ -334,10 +334,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
 
 function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot: string, workspaceDir: string, skillsDir: string): BashSandboxMountConfig[] {
   const workspaceRoot = workspaceDir.replace(/\/+$/, "");
-  const skillsMount: BashSandboxMountConfig = {
-    id: "skills",
-    hostPath: installedSkillsRoot,
-    containerPath: skillsDir,
+  const agentMount: BashSandboxMountConfig = {
+    id: "agent",
+    hostPath: path.dirname(path.resolve(installedSkillsRoot)),
+    containerPath: path.posix.dirname(skillsDir),
     readOnly: false
   };
   const codebaseMounts: BashSandboxMountConfig[] = [
@@ -347,10 +347,10 @@ function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot
     { id: "codebase_scripts", hostPath: "scripts", containerPath: `${workspaceRoot}/codebase/scripts`, readOnly: false },
     { id: "codebase_docs", hostPath: "docs", containerPath: `${workspaceRoot}/codebase/docs`, readOnly: false }
   ];
-  const defaultContainerPaths = new Set([skillsMount, ...codebaseMounts].map((mount) => mount.containerPath));
+  const defaultContainerPaths = new Set([agentMount, ...codebaseMounts].map((mount) => mount.containerPath));
   const optional = mounts.filter((mount) => !defaultContainerPaths.has(mount.containerPath));
   if (!mounts.some((mount) => mount.containerPath === "/assets")) {
     optional.unshift({ id: "assets", hostPath: "assets", containerPath: "/assets", readOnly: true });
   }
-  return [skillsMount, ...codebaseMounts, ...optional];
+  return [agentMount, ...codebaseMounts, ...optional];
 }

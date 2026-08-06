@@ -48,19 +48,19 @@ test("config mounts installed skills read-write at the sandbox home", () => {
     containerPath: mount.containerPath,
     readOnly: mount.readOnly
   })), [
-    { hostPath: fs.realpathSync(".agents/skills"), containerPath: config.bashSandbox.skillsDir, readOnly: false }
+    { hostPath: fs.realpathSync(".agents"), containerPath: "/home/alice/.agent", readOnly: false }
   ]);
 });
 
 test("config mounts the project codebase read-write inside the sandbox", () => {
   const config = loadConfig({});
 
-  assert.deepEqual(config.bashSandbox.mounts.filter((mount) => mount.containerPath.startsWith("/alice/codebase/")), [
-    { id: "codebase_src", hostPath: fs.realpathSync("src"), containerPath: "/alice/codebase/src", readOnly: false },
-    { id: "codebase_memory_files", hostPath: fs.realpathSync("memory-files"), containerPath: "/alice/codebase/memory-files", readOnly: false },
-    { id: "codebase_tests", hostPath: fs.realpathSync("tests"), containerPath: "/alice/codebase/tests", readOnly: false },
-    { id: "codebase_scripts", hostPath: fs.realpathSync("scripts"), containerPath: "/alice/codebase/scripts", readOnly: false },
-    { id: "codebase_docs", hostPath: fs.realpathSync("docs"), containerPath: "/alice/codebase/docs", readOnly: false }
+  assert.deepEqual(config.bashSandbox.mounts.filter((mount) => mount.containerPath.startsWith("/home/alice/codebase/")), [
+    { id: "codebase_src", hostPath: fs.realpathSync("src"), containerPath: "/home/alice/codebase/src", readOnly: false },
+    { id: "codebase_memory_files", hostPath: fs.realpathSync("memory-files"), containerPath: "/home/alice/codebase/memory-files", readOnly: false },
+    { id: "codebase_tests", hostPath: fs.realpathSync("tests"), containerPath: "/home/alice/codebase/tests", readOnly: false },
+    { id: "codebase_scripts", hostPath: fs.realpathSync("scripts"), containerPath: "/home/alice/codebase/scripts", readOnly: false },
+    { id: "codebase_docs", hostPath: fs.realpathSync("docs"), containerPath: "/home/alice/codebase/docs", readOnly: false }
   ]);
 });
 

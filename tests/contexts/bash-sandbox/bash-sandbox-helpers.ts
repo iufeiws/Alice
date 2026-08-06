@@ -6,13 +6,13 @@ const path = await import("node:path");
 
 export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSandboxConfig {
   const root = tmpDir("bash-sandbox");
-  const skillsDir = "/alice/.agent/skills";
+  const skillsDir = "/home/alice/.agent/skills";
   return {
     containerName: "test-bash-sandbox",
     image: "cimg/python:3.13-browsers",
-    defaultCwd: "/alice",
+    defaultCwd: "/home/alice",
     hostWorkspaceDir: path.join(root, "alice"),
-    workspaceDir: "/alice",
+    workspaceDir: "/home/alice",
     hostCacheDir: path.join(root, "cache"),
     cacheDir: "/cache",
     tmpDir: "/tmp",
